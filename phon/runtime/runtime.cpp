@@ -353,6 +353,9 @@ void Runtime::math_op(char op)
 					auto x = cast<intptr_t>(v1);
 					auto y = cast<intptr_t>(v2);
 					pop(2);
+					if ((y < 0 && x > (std::numeric_limits<intptr_t>::max)() + y) || (y > 0 && x < (std::numeric_limits<intptr_t>::min)() + y)) {
+						RUNTIME_ERROR("[Math error] Integer overflow");
+					}
 					push_int(x - y);
 				}
 				else
@@ -373,6 +376,22 @@ void Runtime::math_op(char op)
 					auto x = cast<intptr_t>(v1);
 					auto y = cast<intptr_t>(v2);
 					pop(2);
+
+					if (x != 0 && y != 0)
+					{
+						// Special case: MIN * -1 overflows (or -1 * MIN)
+						// because -MIN > MAX in two's complement.
+						if ((x == -1 && y == (std::numeric_limits<intptr_t>::min)()) ||
+							(y == -1 && x == (std::numeric_limits<intptr_t>::min)())) {
+							RUNTIME_ERROR("[Math error] Integer overflow");
+							}
+						// General case: if |result / x| != |y|, it wrapped.
+						// Safe to divide because x != 0.
+						if (std::abs(x) > (std::numeric_limits<intptr_t>::max)() / std::abs(y)) {
+							RUNTIME_ERROR("[Math error] Integer overflow");
+						}
+					}
+
 					push_int(x * y);
 				}
 				else
@@ -413,6 +432,10 @@ void Runtime::math_op(char op)
 					auto x = cast<intptr_t>(v1);
 					auto y = cast<intptr_t>(v2);
 					pop(2);
+					if (y == 0) {
+						pop(2);
+						RUNTIME_ERROR("[Math error] Division by zero");
+					}
 					push_int(x % y);
 				}
 				else
@@ -1316,7 +1339,7 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				std::span<Variant> args(&v, count);
 				auto method = cls->get_method(set_item_string);
 				if (!method) {
-					RUNTIME_ERROR("[Type error] % type is not index-assignable");
+					RUNTIME_ERROR("[Type error] % type is not index-assignable", cls->name());
 				}
 				auto c = method->find_closure(args);
 				if (!c) {
@@ -1919,7 +1942,7 @@ void Runtime::push_call_frame(TObject<Closure> *closure, int nlocal)
 
 	current_frame++;
 
-	if (current_frame >= frames + MAX_CALL_FRAME)
+	if (current_frame >= frames + MAX_CALL_FRAME) [[unlikely]]
 	{
 		throw error("[Runtime error] Stack overflow (maximum call depth exceeded)");
 	}
@@ -2003,7 +2026,7 @@ void Runtime::get_index(int count, bool by_ref)
 	auto cls = v.get_class();
 	auto method = cls->get_method(get_item_string);
 	if (!method) {
-		RUNTIME_ERROR("[Type error] % type is not indexable");
+		RUNTIME_ERROR("[Type error] % type is not indexable", cls->name());
 	}
 	auto closure = method->find_closure(args);
 	if (!closure) {
@@ -2124,6 +2147,8 @@ void Runtime::mark_candidates()
 
 	while (candidate != nullptr)
 	{
+		auto next = candidate->next;
+
 		if (candidate->is_purple())
 		{
 			mark_grey(candidate);
@@ -2136,7 +2161,7 @@ void Runtime::mark_candidates()
 				delete candidate;
 			}
 		}
-		candidate = candidate->next;
+		candidate = next;
 	}
 }
 
@@ -2356,32 +2381,54 @@ void Runtime::call(int narg)
 
 Variant Runtime::import_module(const String &name)
 {
-	auto it = imports.find(name);
-	if (it == imports.end()) {
-		return reload_module(name);
+	auto path = find_import(name);
+	auto it = imports.find(path);
+	if (it != imports.end()) {
+		return it->second;
 	}
 
-	return it->second;
+	return reload_module(path);
 }
 
-Variant Runtime::reload_module(const String &name)
+Variant Runtime::reload_module(const String &path)
 {
-	auto path = find_import(name);
 	auto result = do_file(path);
-	imports.insert({ path, result });
+	imports[path] = result;
 
 	return result;
 }
 
 void Runtime::printf(const char *fmt, ...) const
 {
-	char buffer[256];
 	va_list args;
 
+	// First call: measure the required size.
 	va_start(args, fmt);
-	vsnprintf(buffer, 256, fmt, args);
+	int len = vsnprintf(nullptr, 0, fmt, args);
 	va_end(args);
-	this->print(buffer);
+
+	if (len < 0) return; // encoding error
+
+	// Fast path: use a stack buffer for short strings.
+	constexpr int STACK_SIZE = 256;
+
+	if (len < STACK_SIZE)
+	{
+		char buffer[STACK_SIZE];
+		va_start(args, fmt);
+		vsnprintf(buffer, STACK_SIZE, fmt, args);
+		va_end(args);
+		this->print(buffer);
+	}
+	else
+	{
+		// Slow path: heap-allocate for long strings.
+		std::string buffer(len + 1, '\0');
+		va_start(args, fmt);
+		vsnprintf(buffer.data(), buffer.size(), fmt, args);
+		va_end(args);
+		this->print(buffer.c_str());
+	}
 }
 
 Handle<Class> Runtime::create_dynamic_type(String name, Class *parent)

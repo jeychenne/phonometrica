@@ -60,12 +60,6 @@ Variant::Variant(const Variant &other)
 	retain();
 }
 
-Variant::Variant(Variant &other)
-{
-	copy_fields(other);
-	retain();
-}
-
 Variant::Variant(Variant &&other) noexcept
 {
 	copy_fields(other);
@@ -105,12 +99,7 @@ void Variant::release()
 	}
 	else if (this->is_alias())
 	{
-		auto count = as.alias->ref_count - 1;
 		as.alias->release();
-		if (count == 1)
-		{
-			*this = std::move(as.alias->variant);
-		}
 	}
 }
 
@@ -174,7 +163,7 @@ const std::type_info *Variant::type_info() const
 
 String Variant::class_name() const
 {
-	static String null("Null");
+	static const String null("Null");
 
 	switch (data_type())
 	{
@@ -228,7 +217,7 @@ bool Variant::operator==(const Variant &other) const
 
 	if (v1.data_type() == v2.data_type())
 	{
-		switch (data_type())
+		switch (v1.data_type())
 		{
 			case Datatype::String:
 			{
@@ -449,7 +438,7 @@ String Variant::as_string() const
 		}
 		case Datatype::Null:
 		{
-			static String null("null");
+			static const String null("null");
 			return null;
 		}
 	}
@@ -493,11 +482,11 @@ String Variant::to_json(int spacing) const
 		}
 		case Datatype::Alias:
 		{
-			return resolve().to_string();
+			return resolve().to_json(spacing);
 		}
 		case Datatype::Null:
 		{
-			static String null("null");
+			static const String null("null");
 			return null;
 		}
 	}
@@ -577,7 +566,11 @@ size_t Variant::hash() const
 		case Datatype::Integer:
 			return meta::hash(static_cast<uint64_t>((raw_cast<intptr_t>(*this))));
 		case Datatype::Float:
-			return meta::hash(static_cast<uint64_t>((raw_cast<double>(*this))));
+		{
+			uint64_t bits;
+			std::memcpy(&bits, &raw_cast<double>(*this), sizeof(bits));
+			return meta::hash(bits);
+		}
 		case Datatype::Object:
 			return as.object->hash();
 		case Datatype::Boolean:
@@ -606,6 +599,33 @@ Variant & Variant::make_alias()
 Variant &Variant::resolve()
 {
 	Variant *v = this;
+
+	while (v->is_alias())
+	{
+		if (v == &v->as.alias->variant) {
+			break; // self-referencing alias
+		}
+
+		// If we're the sole reference, eliminate the alias.
+		if (v->as.alias->ref_count == 1)
+		{
+			auto alias = v->as.alias;
+			// Move the value out. alias->variant becomes Null.
+			Variant tmp(std::move(alias->variant));
+			// Free the alias. Its destructor runs ~Variant on the
+			// now-Null variant inside it — a no-op.
+			delete alias;
+			// Detach v from the dead alias, then take the value.
+			v->zero();
+			v->swap(tmp);
+			// tmp is now Null, its destructor is a no-op.
+			// v holds the direct value. If that value is itself
+			// an alias (chained), the while loop continues.
+			continue;
+		}
+
+		v = &v->as.alias->variant;
+	}
 
 	while (v->is_alias())
 	{

@@ -48,8 +48,6 @@ public:
 
 	Variant(const Variant &other);
 
-	Variant(Variant &other);
-
 	Variant(Variant &&other) noexcept;
 
 	Variant(std::nullptr_t) : Variant() { }
@@ -72,11 +70,20 @@ public:
 	Variant(QString s) : Variant(String(s)) { }
 #endif
 
-	template<class T>
+	template<class T,
+		typename = std::enable_if_t<
+			!std::is_same_v<std::decay_t<T>, Variant>
+			&& !std::is_same_v<std::decay_t<T>, bool>
+			&& !std::is_same_v<std::decay_t<T>, std::nullptr_t>
+			&& !std::is_arithmetic_v<std::decay_t<T>>
+			&& !std::is_same_v<std::decay_t<T>, String>
+			&& !std::is_same_v<std::decay_t<T>, const char*>
+			&& !std::is_same_v<std::decay_t<T>, Substring>
+	>>
 	Variant(T &&val) :
 			m_data_type(Datatype::Object)
 	{
-		using Type = typename std::remove_reference<typename std::remove_cv<T>::type>::type;
+		using Type = std::remove_reference<typename std::remove_cv<T>::type>::type;
 		as.object = new TObject<Type>(std::forward<Type>(val));
 	}
 
@@ -161,7 +168,13 @@ public:
 	double get_number() const;
 
 	template<class T>
-	Handle<T> handle() { return reinterpret_cast<Handle<T> &>(as.storage); }
+	Handle<T> handle()
+	{
+		assert(m_data_type == Datatype::Object && "handle<T>() called on non-object Variant");
+		assert(as.object->type_info() == &typeid(T) && "handle<T>() type mismatch");
+
+		return reinterpret_cast<Handle<T> &>(as.storage);
+	}
 
 	Variant & unshare();
 
@@ -194,6 +207,9 @@ private:
 
 	using largest_type_t = typename std::conditional<sizeof(void *) >= sizeof(double), void *, double>::type;
 	using storage_t = std::aligned_storage<sizeof(largest_type_t), alignof(largest_type_t)>::type;
+
+	static_assert(sizeof(String) == sizeof(void*), "Variant storage assumes String is pointer-sized");
+	static_assert(sizeof(Handle<Class>) <= sizeof(storage_t), "Handle doesn't fit in Variant storage");
 
 	// Boxed or unboxed value.
 	union Storage
@@ -378,6 +394,7 @@ struct Alias final
 
 	void release()
 	{
+		assert(ref_count > 0);
 		if (--ref_count == 0) {
 			delete this;
 		}

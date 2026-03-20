@@ -173,7 +173,7 @@ static Variant math_roundn(Runtime &, std::span<Variant> args)
 	double n = args[1].resolve().get_number();
 	double p = pow(10, n);
 	if (!std::isfinite(x)) return std::nan("");
-	if (x == 0) return x;
+	if (x == 0) return double(x);
 
 	return double(std::round(x * p) / p);
 }
