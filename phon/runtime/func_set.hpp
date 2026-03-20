@@ -30,7 +30,7 @@ static Variant set_get_field(Runtime &rt, std::span<Variant> args)
 	auto &key = cast<String>(args[1]);
 
 	if (key == rt.length_string) {
-		return set.size();
+		return intptr_t(set.size());
 	}
 
 	throw error("[Index error] Set type has no member named \"%\"", key);

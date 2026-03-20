@@ -264,13 +264,14 @@ void Function::add_closure(Handle<Closure> c)
 
 Handle<Closure> Function::find_closure(std::span<Variant> args)
 {
-	call_types.resize(args.size());
+	std::vector<Class*> arg_types(args.size());
+
 	for (size_t i = 0; i < args.size(); i++) {
-		call_types[i] = args[i].get_class();
+		arg_types[i] = args[i].get_class();
 	}
 
 	// We first check if a method with this particular signature has already been called. If so, we use it.
-	auto it = cache.find(call_types);
+	auto it = cache.find(arg_types);
 	if (it != cache.end()) {
 		return it->second;
 	}
@@ -292,7 +293,7 @@ Handle<Closure> Function::find_closure(std::span<Variant> args)
 		else if (r->arg_count() > args.size()) {
 			break; // routines are sorted by their number of arguments, so we won't find a better match at this point.
 		}
-		int cost = r->get_cost(call_types);
+		int cost = r->get_cost(arg_types);
 
 		if (cost <= best_cost)
 		{
@@ -314,7 +315,7 @@ Handle<Closure> Function::find_closure(std::span<Variant> args)
 		for (auto &c : closures)
 		{
 			auto r = c->routine.get();
-			if (r->get_cost(call_types) == best_cost) {
+			if (r->get_cost(arg_types) == best_cost) {
 				signatures.append(r->get_definition());
 			}
 		}
@@ -323,7 +324,7 @@ Handle<Closure> Function::find_closure(std::span<Variant> args)
 	}
 
 	// Cache the closure to avoid searching for it on the next call with the same signature
-	cache[call_types] = candidate;
+	cache[std::move(arg_types)] = candidate;
 
 	return candidate;
 }

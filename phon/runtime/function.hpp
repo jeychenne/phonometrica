@@ -237,7 +237,7 @@ class Function final
 {
 public:
 
-	explicit Function(String name) : _name(std::move(name)) { call_types.reserve(4); }
+	explicit Function(String name) : _name(std::move(name)) {  }
 
 	Function(const Function &) = delete;
 
@@ -284,9 +284,6 @@ private:
 
 	// Runtime cache
 	std::unordered_map<std::vector<Class*>,Handle<Closure>,CacheHasher> cache;
-
-	// Buffer to store arguments' types when the function is called
-	std::vector<Class*> call_types;
 
 	ParamBitset ref_flags;
 
