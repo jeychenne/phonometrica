@@ -53,7 +53,13 @@ Signal<int> Sound::update_loading;
 Sound::Sound(Directory *parent, String path) :
 		Document(meta::get_class<Sound>(), parent, std::move(path))
 {
-
+    if (has_path()) {
+        auto h = handle();
+        m_sample_rate = h.samplerate();
+        m_nchannel = h.channels();
+        m_nframes = h.frames();
+        m_duration = double(m_nframes) / m_sample_rate;
+    }
 }
 
 void Sound::set_sound_formats()
@@ -96,62 +102,61 @@ const Array<String> &Sound::common_sound_formats()
 
 void Sound::load()
 {
-	auto h = handle();
-	int nchannel = h.channels();
-	h.seek(0, SEEK_SET);
-	// Samples are rows and channels are columns. For instance, the 5th sample in the second channel is at (i=5, j=2).
-	m_data = Array<double>((intptr_t) h.frames(), (intptr_t) nchannel);
-	auto slice = size_t(this->channel_size() / 100);
-	auto msg = String::format("Reading file %s from disk...", this->label().data());
-	start_loading(msg, "Loading data", 100);
-	size_t accumulator = 0;
-	int counter = 1;
+    auto h = handle();
+    h.seek(0, SEEK_SET);
 
-	if (nchannel == 1)
-	{
-		auto ptr = m_data.begin();
-		auto end = m_data.end();
+    m_data = Array<float>((intptr_t) m_nframes, (intptr_t) m_nchannel);
+    auto slice = size_t(m_nframes / 100);
+    auto msg = String::format("Reading file %s from disk...", this->label().data());
+    start_loading(msg, "Loading data", 100);
+    size_t accumulator = 0;
+    int counter = 1;
 
-		while (ptr < end)
-		{
-			auto count = m_handle.readf(ptr, BUFFER_SIZE);
-			ptr += count * m_handle.channels();
-			accumulator += count;
-			while (accumulator >= slice)
-			{
-				update_loading(counter++);
-				accumulator = accumulator - slice;
-			}
-		}
-	}
-	else
-	{
-		Array<double> buffer;
-		buffer.resize(BUFFER_SIZE * nchannel);
-		auto ptr = buffer.begin();
-		intptr_t count = 1; // dummy value to enter the loop
-		intptr_t ioffset = 0;
+    if (m_nchannel == 1)
+    {
+        auto ptr = m_data.begin();
+        auto end = m_data.end();
 
-		while (count != 0)
-		{
-			count = (intptr_t) h.readf(ptr, BUFFER_SIZE);
-			auto p = ptr;
-			for (intptr_t i = 1; i <= count; ++i)
-			{
-				for (intptr_t j = 1; j <= nchannel; j++) {
-					m_data(ioffset+i, j) = *p++;
-				}
-			}
-			ioffset += count;
-			accumulator += count;
-			while (accumulator >= slice)
-			{
-				update_loading(counter++);
-				accumulator -=  slice;
-			}
-		}
-	}
-	h.seek(0, SEEK_SET);
+        while (ptr < end)
+        {
+            auto count = h.readf(ptr, BUFFER_SIZE);  // readf(float*) overload
+            ptr += count * m_nchannel;
+            accumulator += count;
+            while (accumulator >= slice)
+            {
+                update_loading(counter++);
+                accumulator -= slice;
+            }
+        }
+    }
+    else
+    {
+        Array<float> buffer;
+        buffer.resize(BUFFER_SIZE * m_nchannel);
+        auto ptr = buffer.begin();
+        intptr_t count = 1;
+        intptr_t ioffset = 0;
+
+        while (count != 0)
+        {
+            count = (intptr_t) h.readf(ptr, BUFFER_SIZE);
+            auto p = ptr;
+            for (intptr_t i = 1; i <= count; ++i)
+            {
+                for (intptr_t j = 1; j <= m_nchannel; j++) {
+                    m_data(ioffset+i, j) = *p++;
+                }
+            }
+            ioffset += count;
+            accumulator += count;
+            while (accumulator >= slice)
+            {
+                update_loading(counter++);
+                accumulator -= slice;
+            }
+        }
+    }
+    h.seek(0, SEEK_SET);
 }
 
 void Sound::write()
@@ -207,22 +212,6 @@ String Sound::libsndfile_version()
 	return sf_version.split("-")[2];
 }
 
-double Sound::duration() const
-{
-    auto h = handle();
-    return double(h.frames()) / h.samplerate();
-}
-
-int Sound::sample_rate() const
-{
-	return handle().samplerate();
-}
-
-intptr_t Sound::nframes() const
-{
-	return handle().frames();
-}
-
 SndfileHandle Sound::handle() const
 {
 	if (m_handle) {
@@ -237,11 +226,6 @@ SndfileHandle Sound::handle() const
 #endif
 
 	return m_handle;
-}
-
-int Sound::nchannel() const
-{
-    return handle().channels();
 }
 
 void Sound::convert(const String &path, int sample_rate, Sound::Format fmt)
@@ -770,32 +754,22 @@ void Sound::initialize(Runtime &rt)
 
 double Sound::max_value() const
 {
-	return *std::max_element(m_data.begin(), m_data.end());
+    return static_cast<double>(*std::max_element(m_data.begin(), m_data.end()));
 }
 
 double Sound::min_value() const
 {
-	return *std::min_element(m_data.begin(), m_data.end());
+    return static_cast<double>(*std::min_element(m_data.begin(), m_data.end()));
 }
 
-const Array<double> &Sound::data() const
+const Array<float> &Sound::data() const
 {
 	return m_data;
 }
 
-Array<double> &Sound::data()
+Array<float> &Sound::data()
 {
 	return m_data;
-}
-
-intptr_t Sound::channel_size() const
-{
-	return (intptr_t) m_handle.frames();
-}
-
-intptr_t Sound::size() const
-{
-	return intptr_t(m_handle.frames() * m_handle.channels());
 }
 
 double Sound::frame_to_time(intptr_t index) const
@@ -809,12 +783,7 @@ intptr_t Sound::time_to_frame(double time) const
 	return std::min<intptr_t>(s, m_handle.frames());
 }
 
-bool Sound::is_mono() const
-{
-	return nchannel() == 1;
-}
-
-std::span<const double> Sound::get_channel_view(int n) const
+std::span<const float> Sound::channel_view(int n) const
 {
 	assert(n <= nchannel());
 	auto start = m_data.data() + (n-1) * channel_size();
@@ -822,61 +791,68 @@ std::span<const double> Sound::get_channel_view(int n) const
 	return { start, start + channel_size() };
 }
 
+std::span<const float> Sound::channel_view(int n, intptr_t first_sample, intptr_t last_sample) const
+{
+    assert(n >= 1 && n <= m_nchannel);
+    assert(first_sample >= 1 && last_sample <= m_nframes);
+    auto base = m_data.data() + (n-1) * m_nframes;
+    return { base + first_sample - 1, base + last_sample };
+}
+
 Array<double> Sound::get_channel(int n, intptr_t first_sample, intptr_t last_sample) const
 {
-	assert(first_sample >= 1 && first_sample <= channel_size());
-	assert(last_sample > first_sample && last_sample <= channel_size());
+    assert(first_sample >= 1 && first_sample <= m_nframes);
+    assert(last_sample >= first_sample && last_sample <= m_nframes);
 
-	if (n == 0)
-	{
-		return average_channels(first_sample, last_sample);
-	}
-	else
-	{
-		auto data = get_channel_view(n);
-		auto start = data.data() + first_sample - 1;
-		auto end = data.data() + last_sample;
+    if (n == 0)
+    {
+        return average_channels(first_sample, last_sample);
+    }
 
-		return Array<double>(start, end);
-	}
+    auto view = channel_view(n, first_sample, last_sample);
+    Array<double> result;
+    result.reserve(view.size());
+
+    for (auto sample : view) {
+        result.append(static_cast<double>(sample));
+    }
+
+    return result;
 }
 
 Array<double> Sound::average_channels(intptr_t first_frame, intptr_t last_frame) const
 {
-	if (last_frame < 0) last_frame = (intptr_t) m_handle.frames() - 1;
-	assert(first_frame >= 0);
-	auto len = intptr_t(last_frame - first_frame + 1);
-	Array<double> result(len, 0.0);
-	auto nchannel = this->nchannel();
-	auto ptr = result.data();
+    if (last_frame < 0) last_frame = m_nframes;
+    assert(first_frame >= 1);
+    auto len = last_frame - first_frame + 1;
+    Array<double> result(len, 0.0);
 
-	for (intptr_t i = first_frame+1; i <= last_frame; i++)
-	{
-		double value = 0.0;
-		for (intptr_t j = 1; j <= nchannel; j++) {
-			value += m_data(i, j);
-		}
-		*ptr++ = value / nchannel;
-	}
+    for (intptr_t i = 1; i <= len; i++)
+    {
+        double value = 0.0;
+        for (intptr_t j = 1; j <= m_nchannel; j++) {
+            value += m_data(first_frame + i - 1, j);
+        }
+        result[i] = value / m_nchannel;
+    }
 
-	return result;
+    return result;
 }
 
 double Sound::get_sample(int channel, intptr_t index) const
 {
-	assert(index >= 1 && index <= channel_size());
+    assert(index >= 1 && index <= m_nframes);
 
-	if (channel == 0)
-	{
-		double value = 0.0;
-		for (intptr_t j = 1; j <= nchannel(); ++j) {
-			value += m_data(index, j);
-		}
+    if (channel == 0)
+    {
+        double value = 0.0;
+        for (intptr_t j = 1; j <= m_nchannel; ++j) {
+            value += m_data(index, j);
+        }
+        return value / m_nchannel;
+    }
 
-		return value / nchannel();
-	}
-
-	return m_data(index, channel);
+    return static_cast<double>(m_data(index, channel));
 }
 
 speech::PitchTracker Sound::get_pitch_tracker(const String &name)
