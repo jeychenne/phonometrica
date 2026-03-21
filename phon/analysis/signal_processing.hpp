@@ -1,0 +1,102 @@
+/***********************************************************************************************************************
+ *                                                                                                                     *
+ * Copyright (C) 1997-2005  Kåre Sjölander <kare@speech.kth.se>                                                        *
+ * Copyright (C) 1992-2019 Paul Boersma                                                                                *
+ * Copyright (C) 2019-2025 Julien Eychenne <jeychenne@gmail.com>                                                       *
+ *                                                                                                                     *
+ * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
+ * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
+ * later version.                                                                                                      *
+ *                                                                                                                     *
+ * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied  *
+ * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more       *
+ * details.                                                                                                            *
+ *                                                                                                                     *
+ * You should have received a copy of the GNU General Public License along with this program. If not, see              *
+ * <http://www.gnu.org/licenses/>.                                                                                     *
+ *                                                                                                                     *
+ * Created: 31/03/2019                                                                                                 *
+ *                                                                                                                     *
+ * Purpose: signal processing routines.                                                                                *
+ *                                                                                                                     *
+ * Note: This file contains code derived from the Snack Sound Toolkit. See file BSD.txt. The latest version can be     *
+ * found at http://www.speech.kth.se/snack/.                                                                           *
+ *                                                                                                                     *
+ ***********************************************************************************************************************/
+
+#ifndef PHONOMETRICA_SIGNAL_PROCESSING_HPP
+#define PHONOMETRICA_SIGNAL_PROCESSING_HPP
+
+#include <cmath>
+#include <complex>
+#include <vector>
+#include <span>
+#include <phon/array.hpp>
+#include <phon/utils/matrix.hpp>
+#include <phon/analysis/dsp_utils.hpp>
+
+namespace phonometrica { namespace speech {
+
+enum class WindowType
+{
+    Bartlett,
+    Blackman,
+    Gaussian,
+    Hamming,
+    Hann,
+    Kaiser,
+    Rectangular
+};
+
+enum class PitchTracker
+{
+	Harvest,
+	Reaper,
+	Rapt,
+	Swipe
+};
+
+class FFT
+{
+public:
+
+	FFT(intptr_t nfft);
+
+	~FFT();
+
+	Array<std::complex<double>> &process(const Array<double> &data);
+
+private:
+
+	void *impl;
+
+	intptr_t nfft;
+
+	Array<double> input;
+	Array<std::complex<double>> output;
+};
+
+
+Array<double> create_window(intptr_t N, intptr_t fftlen, WindowType type);
+
+// Get intensity for a frame.
+double get_intensity(std::span<double> frame, std::span<double> window);
+
+Array<double> get_intensity(std::span<double> input, int samplerate, intptr_t window_size, double time_step, WindowType type = WindowType::Hamming);
+
+
+// Calculate LPC coefficients from a speech frame.
+std::vector<double> get_lpc_coefficients(const Array<double> &frame, int npole);
+
+// Get formant frequencies and bandwidths from a set of LPC coefficients.
+bool get_formants(const std::vector<double> &lpc_coeffs, double Fs, std::vector<double> &freqs, std::vector<double> &bw);
+
+Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr_t noverlap, intptr_t window_size, WindowType window_type = WindowType::Hann);
+
+Array<double> medfilt1(const Array<double> &signal, int n);
+
+std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold);
+
+}} // namespace phonometrica::speech
+
+#endif // PHONOMETRICA_SIGNAL_PROCESSING_HPP
