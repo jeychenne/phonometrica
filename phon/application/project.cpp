@@ -25,7 +25,7 @@
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/bookmark.hpp>
-#include <phon/application/macros.hpp>
+#include <phon/application/constants.hpp>
 #include <phon/utils/helpers.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/text.hpp>

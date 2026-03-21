@@ -1,6 +1,6 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
  * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
  * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
@@ -20,7 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <phon/application/annotation.hpp>
-#include <phon/application/macros.hpp>
+#include <phon/application/constants.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/object.hpp>
 #include <phon/application/project.hpp>
@@ -28,14 +28,11 @@
 
 namespace phonometrica {
 
-Signal<const Handle<Annotation>&, const AutoEvent&, const String&> Annotation::edit_event;
 
 Annotation::Annotation(Directory *parent, String path) :
 		Document(meta::get_class<Annotation>(), parent, std::move(path))
 {
 	m_type = guess_type();
-	// Native files are loaded in 2 steps: first, we load the metadata when the file is created. Next,
-	// we load the graph when open() is called.
 	if (is_native() && has_path()) preload();
 }
 
@@ -69,7 +66,6 @@ void Annotation::preload()
 
 void Annotation::load()
 {
-	// Newly created annotations don't have a path yet.
 	if (m_path.empty() && is_native()) return;
 
 	if (m_type == Undefined) {
@@ -82,7 +78,7 @@ void Annotation::load()
 			read_from_native();
 			break;
 		case Type::TextGrid:
-			m_graph.read_textgrid(m_path);
+			read_textgrid(m_path, m_layers);
 			break;
 		default:
 			throw error("Cannot load annotation: unsupported format");
@@ -140,14 +136,13 @@ Annotation::Type Annotation::guess_type()
 	return Type::Undefined;
 }
 
-const EventList & Annotation::get_layer_events(intptr_t i) const
+const Array<Event> &Annotation::get_layer_events(intptr_t i) const
 {
-	return m_graph.get_layer_events(i);
+	return m_layers[i].events;
 }
 
 void Annotation::save_metadata()
 {
-	// Native files store their metadata directly, other files need to write them to the database.
 	if (m_type != Native) {
 		Document::save_metadata();
 	}
@@ -166,32 +161,29 @@ bool Annotation::uses_external_metadata() const
 
 void Annotation::initialize(Runtime &rt)
 {
-    auto annot_get_field = [](Runtime &, std::span<Variant> args) -> Variant  {
-        auto &annot = cast<Annotation>(args[0]);
-        auto &key = cast<String>(args[1]);
+	auto annot_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto &key = cast<String>(args[1]);
 
-	    // Don't open the annotation yet if we just want its path
-	    if (key == "path")
-        {
-        	return annot.path();
-        }
-	    annot.open();
+		if (key == "path") {
+			return annot.path();
+		}
+		annot.open();
 
-        if (key == "sound")
-        {
+		if (key == "sound")
+		{
 			if (annot.has_sound()) {
 				return annot.sound();
 			}
-
-			return Variant();    	
-        }
-        if (key == "nlayer") {
+			return Variant();
+		}
+		if (key == "nlayer") {
 			return annot.layer_count();
-        }
-        throw error("[Index error] Annotation type has no member named \"%\"", key);
-    };
+		}
+		throw error("[Index error] Annotation type has no member named \"%\"", key);
+	};
 
-	auto bind_to_sound = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto bind_to_sound = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto &path = cast<String>(args[1]);
 		auto project = Project::get();
@@ -201,15 +193,14 @@ void Annotation::initialize(Runtime &rt)
 		return Variant();
 	};
 
-	auto get_event_count = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_event_count = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer_index = cast<intptr_t>(args[1]);
 		annot.open();
 
 		try
 		{
-			auto layer = annot.graph().get(layer_index);
-			return layer->count();
+			return annot.layers()[layer_index].count();
 		}
 		catch (...)
 		{
@@ -217,14 +208,13 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-	auto get_layer_count = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_layer_count = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		annot.open();
-
-		return annot.graph().layer_count();
+		return annot.layer_count();
 	};
 
-	auto get_event_start = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_event_start = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto event = cast<intptr_t>(args[2]);
@@ -232,8 +222,7 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			auto e = annot.get_event(layer, event);
-			return e->start_time();
+			return annot.get_event(layer, event).start;
 		}
 		catch (...)
 		{
@@ -241,7 +230,7 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-	auto get_event_end = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_event_end = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto event = cast<intptr_t>(args[2]);
@@ -249,8 +238,7 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			auto e = annot.get_event(layer, event);
-			return e->end_time();
+			return annot.get_event(layer, event).end;
 		}
 		catch (...)
 		{
@@ -258,24 +246,23 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-    auto get_event_text = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_event_text = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto event = cast<intptr_t>(args[2]);
 		annot.open();
 
-	    try
-	    {
-		    auto e = annot.get_event(layer, event);
-		   	return e->text();
-	    }
-	    catch (...)
-	    {
-		    throw error("[Index error] Couldn't find event % on layer %", event, layer);
-	    }
-    };
+		try
+		{
+			return annot.get_event(layer, event).text;
+		}
+		catch (...)
+		{
+			throw error("[Index error] Couldn't find event % on layer %", event, layer);
+		}
+	};
 
-	auto get_event_index = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_event_index = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto time = cast<double>(args[2]);
@@ -291,17 +278,16 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-	auto set_event_text = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto set_event_text = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto event = cast<intptr_t>(args[2]);
-		auto &text = cast<intptr_t>(args[3]);
+		auto &text = cast<String>(args[3]);
 		annot.open();
 
 		try
 		{
-			auto e = annot.get_event(layer, event);
-			e->set_text(text);
+			annot.set_event_text(layer, event, text);
 			return Variant();
 		}
 		catch (...)
@@ -310,7 +296,7 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-	auto get_layer_label = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto get_layer_label = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		annot.open();
@@ -321,10 +307,9 @@ void Annotation::initialize(Runtime &rt)
 		{
 			throw error("[Index error] Couldn't find layer %", layer);
 		}
-		
 	};
 
-	auto set_layer_label = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto set_layer_label = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto &value = cast<String>(args[2]);
@@ -339,7 +324,7 @@ void Annotation::initialize(Runtime &rt)
 		}
 	};
 
-	auto add_interval = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto add_interval = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto start = cast<double>(args[2]);
@@ -348,11 +333,10 @@ void Annotation::initialize(Runtime &rt)
 
 		annot.open();
 		annot.add_interval(layer, start, end, text);
-
 		return Variant();
 	};
 
-	auto add_instant = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto add_instant = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto time = cast<double>(args[2]);
@@ -360,11 +344,10 @@ void Annotation::initialize(Runtime &rt)
 
 		annot.open();
 		annot.add_instant(layer, time, text);
-
 		return Variant();
 	};
 
-	auto remove_interval = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto remove_interval = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto layer = cast<intptr_t>(args[1]);
 		auto start = cast<double>(args[2]);
@@ -372,27 +355,15 @@ void Annotation::initialize(Runtime &rt)
 
 		annot.open();
 		annot.remove_interval(layer, start, end);
-
 		return Variant();
 	};
 
-	auto remove_events = [](Runtime &, std::span<Variant> args) -> Variant  {
+	auto remove_events = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto i = cast<intptr_t>(args[1]);
 
 		annot.open();
 		annot.remove_events(i);
-
-		return Variant();
-	};
-
-	auto clear_layer = [](Runtime &, std::span<Variant> args) -> Variant  {
-		auto &annot = cast<Annotation>(args[0]);
-		auto i = cast<intptr_t>(args[1]);
-
-		annot.open();
-		annot.clear_layer(i);
-
 		return Variant();
 	};
 
@@ -411,20 +382,19 @@ void Annotation::initialize(Runtime &rt)
 	rt.add_global("set_layer_label", set_layer_label,  { CLS(Annotation), CLS(intptr_t), CLS(String) });
 	rt.add_global("add_interval", add_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number), CLS(String) });
 	rt.add_global("add_instant", add_instant,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(String) });
-	rt.add_global("add_interval", remove_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number) });
+	rt.add_global("remove_interval", remove_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number) });
 	rt.add_global("remove_events", remove_events,  { CLS(Annotation), CLS(intptr_t) });
-	//rt.add_global("clear_layer", clear_layer,  { CLS(Annotation), CLS(intptr_t) });
 #undef CLS
 }
 
 bool Annotation::modified() const
 {
-    return Document::modified() || m_graph.modified();
+	return Document::modified() || m_modified;
 }
 
 bool Annotation::content_modified() const
 {
-	return m_graph.modified() || Document::content_modified();
+	return m_modified || Document::content_modified();
 }
 
 String Annotation::left_context(intptr_t layer, intptr_t event, intptr_t offset, intptr_t length, const String &separator) const
@@ -433,12 +403,12 @@ String Annotation::left_context(intptr_t layer, intptr_t event, intptr_t offset,
 	{
 		String context(length);
 		auto &events = get_layer_events(layer);
-		auto it = events[event]->text().begin() + offset;
-		context.append(events[event]->text().rmid(it, length));
+		auto it = events[event].text.begin() + offset;
+		context.append(events[event].text.rmid(it, length));
 
 		while (context.grapheme_count() != length && --event > 0)
 		{
-			auto &label = events[event]->text();
+			auto &label = events[event].text;
 			auto prefix = label.right(length - context.grapheme_count() - separator.size());
 			context.prepend(separator);
 			context.prepend(prefix);
@@ -448,7 +418,7 @@ String Annotation::left_context(intptr_t layer, intptr_t event, intptr_t offset,
 	}
 	catch (std::exception &e)
 	{
-		throw error("Could not extract left context in annotation % in evnt % on layer %: %",
+		throw error("Could not extract left context in annotation % in event % on layer %: %",
 					path(), event, layer, e.what());
 	}
 }
@@ -459,12 +429,12 @@ String Annotation::right_context(intptr_t layer, intptr_t event, intptr_t offset
 	{
 		String context(length);
 		auto &events = get_layer_events(layer);
-		auto it = events[event]->text().begin() + offset;
-		context.append(events[event]->text().mid(it, length));
+		auto it = events[event].text.begin() + offset;
+		context.append(events[event].text.mid(it, length));
 
 		while (context.grapheme_count() != length && ++event <= events.size())
 		{
-			auto &label = events[event]->text();
+			auto &label = events[event].text;
 			auto suffix = label.left(length - context.grapheme_count() - separator.size());
 			context.append(separator);
 			context.append(suffix);
@@ -479,9 +449,10 @@ String Annotation::right_context(intptr_t layer, intptr_t event, intptr_t offset
 	}
 }
 
-void Annotation::set_event_text(AutoEvent &event, const String &new_text)
+void Annotation::set_event_text(intptr_t layer, intptr_t event, const String &new_text)
 {
-	m_graph.set_event_text(event, new_text);
+	m_layers[layer].set_event_text(event, new_text);
+	m_modified = true;
 }
 
 void Annotation::metadata_to_xml(xml_node meta_node)
@@ -500,20 +471,22 @@ void Annotation::write_as_native(const String &path)
 
 	auto root = doc.append_child("Phonometrica");
 	auto attr = root.append_attribute("class");
-    attr.set_value(class_name().data());
-    auto meta_node = root.append_child("Metadata");
-    metadata_to_xml(meta_node);
-    auto graph_node = root.append_child("Graph");
-    m_graph.to_xml(graph_node);
+	attr.set_value(class_name().data());
+	auto meta_node = root.append_child("Metadata");
+	metadata_to_xml(meta_node);
+	auto graph_node = root.append_child("Graph");
+	layers_to_xml(graph_node, m_layers);
 
-    auto &p = path.empty() ? m_path : path;
-    write_xml(doc, p);
+	auto &p = path.empty() ? m_path : path;
+	write_xml(doc, p);
+	m_modified = false;
 }
 
 void Annotation::write_as_textgrid(const String &path)
 {
 	open();
-	m_graph.write_textgrid(path);
+	phonometrica::write_textgrid(path, m_layers);
+	m_modified = false;
 }
 
 void Annotation::read_from_native()
@@ -529,17 +502,17 @@ void Annotation::read_from_native()
 		throw error("Invalid XML project root in %", m_path);
 	}
 
-    auto attr = root.attribute("class");
+	auto attr = root.attribute("class");
 
 	if (!attr || class_name() != attr.as_string()) {
-	    throw error("[Input/Output] Expected an annotation file, got a % file instead", attr.as_string());
+		throw error("[Input/Output] Expected an annotation file, got a % file instead", attr.as_string());
 	}
 
 	for (auto node = root.first_child(); node; node = node.next_sibling())
 	{
 		if (node.name() == graph_tag)
 		{
-			m_graph.from_xml(node);
+			layers_from_xml(node, m_layers);
 		}
 	}
 }
@@ -557,132 +530,153 @@ void Annotation::metadata_from_xml(xml_node meta_node)
 			auto path = project->import_file(node.text().get());
 			auto sound = recast<Sound>(project->get(path));
 			set_sound(sound, false);
-
 			return;
 		}
 	}
 }
 
-AutoEvent Annotation::get_event(intptr_t layer, intptr_t event) const
+const Event &Annotation::get_event(intptr_t layer, intptr_t event) const
 {
-	return m_graph.get_event(layer, event);
+	return m_layers.at(layer).events.at(event);
 }
 
 intptr_t Annotation::layer_count() const
 {
-	return m_graph.layer_count();
+	return m_layers.size();
 }
 
 void Annotation::create_layer(intptr_t index, const String &name, bool has_instants)
 {
-	if (index > this->layer_count()) {
-		index = -1;
-	}
-	auto layer = m_graph.add_layer(index, name, has_instants);
+	Layer layer(name, has_instants);
 
 	// Create one empty interval that spans the whole file.
-	if (!has_instants)
+	if (!has_instants && has_sound())
 	{
-		m_graph.add_interval(layer->index, 0, m_sound->duration(), String());
+		layer.add_interval(0, m_sound->duration(), String());
 	}
-	m_graph.set_modified(true);
+
+	if (index > m_layers.size()) {
+		m_layers.append(std::move(layer));
+	}
+	else {
+		m_layers.insert(index, std::move(layer));
+	}
+	m_modified = true;
 }
 
 void Annotation::remove_layer(intptr_t index)
 {
-	m_graph.remove_layer(index);
-	m_graph.set_modified(true);
+	m_layers.remove_at(index);
+	m_modified = true;
 }
 
 void Annotation::clear_layer(intptr_t index)
 {
-	m_graph.clear_layer(index);
+	m_layers[index].clear_texts();
+	m_modified = true;
 }
 
 void Annotation::discard_changes()
 {
 	Element::discard_changes();
-	m_graph.set_modified(false);
+	m_modified = false;
 }
 
 void Annotation::duplicate_layer(intptr_t index, intptr_t new_index)
 {
-	m_graph.duplicate_layer(index, new_index);
+	auto copy = m_layers[index].duplicate(m_layers[index].label);
+
+	if (new_index > m_layers.size()) {
+		m_layers.append(std::move(copy));
+	}
+	else {
+		m_layers.insert(new_index, std::move(copy));
+	}
+	m_modified = true;
 }
 
 String Annotation::get_layer_label(intptr_t index) const
 {
-	return m_graph.get_layer_label(index);
+	return m_layers.at(index).label;
 }
 
 void Annotation::set_layer_label(intptr_t index, String value)
 {
-	m_graph.set_layer_label(index, std::move(value));
+	m_layers.at(index).label = std::move(value);
+	m_modified = true;
 }
 
-AutoEvent Annotation::find_enclosing_event(const AutoEvent &e, intptr_t layer) const
+const Event *Annotation::find_enclosing_event(double start_time, double end_time, intptr_t layer) const
 {
-	return m_graph.find_enclosing_event(e, layer);
+	return m_layers.at(layer).find_enclosing_event(start_time, end_time);
 }
 
-std::span<AutoEvent> Annotation::get_slice(intptr_t layer_index, double start_time, double end_time) const
+std::span<const Event> Annotation::get_slice(intptr_t layer_index, double start_time, double end_time) const
 {
-	return m_graph.get_slice(layer_index, start_time, end_time);
+	return m_layers.at(layer_index).get_slice(start_time, end_time);
 }
 
-AutoEvent Annotation::find_event_starting_at(intptr_t layer_index, double time) const
+const Event *Annotation::find_event_starting_at(intptr_t layer_index, double time) const
 {
-	return m_graph.find_event_starting_at(layer_index, time);
+	return m_layers.at(layer_index).find_event_starting_at(time);
 }
 
-AutoEvent Annotation::find_event_ending_at(intptr_t layer_index, double time) const
+const Event *Annotation::find_event_ending_at(intptr_t layer_index, double time) const
 {
-	return m_graph.find_event_ending_at(layer_index, time);
+	return m_layers.at(layer_index).find_event_ending_at(time);
 }
 
-AutoEvent Annotation::find_previous_event(intptr_t layer_index, double time) const
+const Event *Annotation::find_previous_event(intptr_t layer_index, double time) const
 {
-	return m_graph.find_previous_event(layer_index, time);
+	return m_layers.at(layer_index).find_previous_event(time);
 }
 
-AutoEvent Annotation::find_next_event(intptr_t layer_index, double time) const
+const Event *Annotation::find_next_event(intptr_t layer_index, double time) const
 {
-	return m_graph.find_next_event(layer_index, time);
+	return m_layers.at(layer_index).find_next_event(time);
 }
 
 intptr_t Annotation::get_event_index(intptr_t layer_index, double time) const
 {
-	return m_graph.get_event_index(layer_index, time);
+	return m_layers.at(layer_index).get_event_index(time);
 }
 
 intptr_t Annotation::get_event_at_time(intptr_t layer_index, double time) const
 {
-	return m_graph.time_to_event_index(layer_index, time);
+	return m_layers.at(layer_index).find_index(time);
 }
 
 bool Annotation::layer_has_instants(intptr_t index) const
 {
-	return m_graph.get(index)->has_instants;
+	return m_layers.at(index).has_instants;
 }
 
 void Annotation::add_interval(intptr_t index, double start, double end, const String &text)
 {
-	m_graph.add_interval(index, start, end, text);
+	m_layers[index].add_interval(start, end, text);
+	m_modified = true;
 }
 
 void Annotation::add_instant(intptr_t index, double time, const String &text)
 {
-	m_graph.add_instant(index, time, text);
+	m_layers[index].add_instant(time, text);
+	m_modified = true;
 }
 
 void Annotation::remove_interval(intptr_t index, double start, double end)
 {
-	m_graph.remove_interval(index, start, end);
+	double mid = start + (end - start) / 2;
+	auto idx = m_layers[index].find_index(mid);
+	if (idx > 0) {
+		m_layers[index].remove_event(idx);
+	}
+	m_modified = true;
 }
 
 void Annotation::remove_events(intptr_t index)
 {
-	m_graph.remove_events(index);
+	m_layers[index].clear();
+	m_modified = true;
 }
 
 } // namespace phonometrica

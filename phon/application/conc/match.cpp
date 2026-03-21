@@ -1,6 +1,6 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
  * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
  * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
@@ -23,15 +23,17 @@
 
 namespace phonometrica {
 
-Match::Target::Target(const AutoEvent &e, String value, intptr_t layer, intptr_t offset, bool is_ref) :
-		event(e), value(std::move(value)), layer((int)layer), offset((int)offset), is_reference(is_ref)
+Match::Target::Target(double start_time, double end_time, String value, intptr_t layer, intptr_t offset, bool is_ref) :
+		start_time(start_time), end_time(end_time), value(std::move(value)),
+		layer((int)layer), offset((int)offset), is_reference(is_ref)
 {
 
 }
 
 bool Match::Target::operator==(const Match::Target &other) const
 {
-	return (this->event == other.event && this->offset == other.offset && this->value == other.value);
+	return (this->start_time == other.start_time && this->end_time == other.end_time
+	        && this->offset == other.offset && this->value == other.value);
 }
 
 bool Match::Target::operator!=(const Match::Target &other) const
@@ -41,7 +43,6 @@ bool Match::Target::operator!=(const Match::Target &other) const
 
 bool Match::Target::operator<(const Match::Target &other) const
 {
-	// Same layer?
 	if (this->layer < other.layer) {
 		return true;
 	}
@@ -49,16 +50,13 @@ bool Match::Target::operator<(const Match::Target &other) const
 		return false;
 	}
 
-	// Same event?
-	if (this->event->start_time() < other.event->start_time()) {
+	if (this->start_time < other.start_time) {
 		return true;
 	}
-	if (this->event->start_time() > other.event->start_time()) {
+	if (this->start_time > other.start_time) {
 		return false;
 	}
 
-	// Compare offsets: we don't need too look at the value since values at a given offset will
-	// always be identical.
 	return this->offset < other.offset;
 }
 
@@ -71,13 +69,15 @@ Match::Match(const Handle<Annotation> &annot, std::unique_ptr<Target> t) :
 Match::Match(const Match &other) : m_annot(other.annotation())
 {
 	auto target = other.m_target.get();
-	m_target = std::make_unique<Target>(target->event, target->value, target->layer, target->offset, target->is_reference);
+	m_target = std::make_unique<Target>(target->start_time, target->end_time, target->value,
+	                                    target->layer, target->offset, target->is_reference);
 	target = target->next.get();
 	auto new_target = m_target.get();
 
 	while (target)
 	{
-		new_target->next = std::make_unique<Target>(target->event, target->value, target->layer, target->offset, target->is_reference);
+		new_target->next = std::make_unique<Target>(target->start_time, target->end_time, target->value,
+		                                            target->layer, target->offset, target->is_reference);
 		target = target->next.get();
 		new_target = new_target->next.get();
 	}
@@ -95,11 +95,6 @@ Match::Target *Match::get(intptr_t i) const
 	}
 
 	return t;
-}
-
-const AutoEvent &Match::get_event(intptr_t i) const
-{
-	return get(i)->event;
 }
 
 intptr_t Match::get_layer(intptr_t i) const
@@ -158,7 +153,7 @@ void Match::to_xml(xml_node root) const
 
 	while (target)
 	{
-		auto index = m_annot->get_event_index(target->layer, target->start_time());
+		auto index = m_annot->get_event_index(target->layer, target->start_time);
 		assert(index != 0);
 		auto subnode = targets_node.append_child("Target");
 		subnode.append_attribute("layer").set_value(target->layer);
@@ -177,21 +172,18 @@ bool Match::valid()
 
 void Match::append(std::unique_ptr<Target> next)
 {
-	auto t = m_target.get();
-
-	while (t) {
-		t = t->next.get();
-	}
+	auto &t = last_target();
+	t.next = std::move(next);
 }
 
 double Match::get_start_time(intptr_t i) const
 {
-	return get_event(i)->start_time();
+	return get(i)->start_time;
 }
 
 double Match::get_end_time(intptr_t i) const
 {
-	return get_event(i)->end_time();
+	return get(i)->end_time;
 }
 
 bool Match::operator==(const Match &other) const
@@ -238,7 +230,6 @@ bool Match::operator<(const Match &other) const
 
 	while (t1)
 	{
-		// A match with fewer targets is ranked lower.
 		if (!t2) {
 			return true;
 		}
@@ -252,21 +243,24 @@ bool Match::operator<(const Match &other) const
 		t2 = t2->next.get();
 	}
 
-	// Matches are equal
 	return false;
 }
 
 bool Match::update(intptr_t target_index, bool &modified)
 {
 	auto target = this->get(target_index);
-	auto &text = target->event->text();
+
+	// Re-read the event text from the annotation to check if it still matches.
+	auto &event = m_annot->get_event(target->layer, 
+		m_annot->get_event_at_time(target->layer, target->start_time));
+
 	modified = false;
 
-	if (target->offset + target->value.size() > text.size()) {
+	if (target->offset + target->value.size() > event.text.size()) {
 		return false;
 	}
 
-	auto start = text.begin() + target->offset;
+	auto start = event.text.begin() + target->offset;
 	String new_value(start, target->value.size());
 	modified = (new_value != target->value);
 
@@ -280,8 +274,8 @@ bool Match::update(intptr_t target_index, bool &modified)
 Handle<Bookmark> Match::to_bookmark(intptr_t target_index, const String &title, const String &notes, std::pair<String, String> context) const
 {
 	auto target = get(target_index);
-	auto b = make_handle<TimeStamp>(nullptr, title, m_annot, target->layer, target->start_time(),
-			target->end_time(), target->value, std::move(context));
+	auto b = make_handle<TimeStamp>(nullptr, title, m_annot, target->layer, target->start_time,
+			target->end_time, target->value, std::move(context));
 	b->set_notes(notes);
 
 	return b;

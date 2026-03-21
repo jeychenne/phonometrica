@@ -1,6 +1,6 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
  * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
  * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
@@ -36,18 +36,11 @@ public:
 
 	struct Target
 	{
-		Target(const AutoEvent &e, String value, intptr_t layer, intptr_t offset, bool is_ref);
+		Target(double start_time, double end_time, String value, intptr_t layer, intptr_t offset, bool is_ref);
 
-		double start_time() const { return event->start_time(); }
+		double start_time;
 
-		double end_time() const { return event->end_time(); }
-
-		bool operator==(const Target &other) const;
-		bool operator!=(const Target &other) const;
-		bool operator<(const Target &other) const;
-
-		// Event where the match occurred.
-		AutoEvent event;
+		double end_time;
 
 		// Matched text.
 		String value;
@@ -63,6 +56,10 @@ public:
 
 		// Next target in a complex query (null in a simple query).
 		std::unique_ptr<Target> next;
+
+		bool operator==(const Target &other) const;
+		bool operator!=(const Target &other) const;
+		bool operator<(const Target &other) const;
 	};
 
 	Match() = default;
@@ -70,8 +67,6 @@ public:
 	Match(const Match &other);
 
 	Match(const Handle<Annotation> &annot, std::unique_ptr<Target> t);
-
-	const AutoEvent &get_event(intptr_t i) const;
 
 	double get_start_time(intptr_t i) const;
 
@@ -126,7 +121,5 @@ struct MatchLess
 };
 
 } // namespace phonometrica
-
-
 
 #endif // PHONOMETRICA_MATCH_HPP
