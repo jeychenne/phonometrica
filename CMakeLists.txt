@@ -17,6 +17,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(EMBED_SCRIPTS      "Embed scripts as strings"            OFF)
 option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
 option(WITH_APPLICATION   "Build the application layer"         ON)
+option(WITH_GUI           "Build the user interface"            ON)
 option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
 
 
@@ -246,8 +247,31 @@ if(WITH_APPLICATION)
 endif(WITH_APPLICATION)
 
 
+#############################
+##  GUI (Qt)               ##
+#############################
+
+if(WITH_GUI)
+    add_definitions(-DPHON_GUI=1)
+
+    set(CMAKE_AUTOMOC ON)
+    set(CMAKE_AUTORCC ON)
+
+    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+
+    file(GLOB_RECURSE GUI_SOURCES
+        phon/gui/*.cpp
+    )
+
+    add_library(phon-gui STATIC ${GUI_SOURCES})
+    set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets)
+endif()
+
+
 ####################
 ##  EXECUTABLE    ##
+##  (replaces the existing section)
 ####################
 
 add_executable(${PROJECT_NAME} phonometrica.cpp)
@@ -255,6 +279,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE phon-runtime pcre2-8)
 
 if(WITH_APPLICATION)
     target_link_libraries(${PROJECT_NAME} PRIVATE phon-app)
+endif()
+
+if(WITH_GUI)
+    target_link_libraries(${PROJECT_NAME} PRIVATE phon-gui Qt6::Widgets)
 endif()
 
 if(WIN32)

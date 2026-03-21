@@ -1,17 +1,9 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
- * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
- * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
- * later version.                                                                                                      *
- *                                                                                                                     *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied  *
- * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more       *
- * details.                                                                                                            *
- *                                                                                                                     *
- * You should have received a copy of the GNU General Public License along with this program. If not, see              *
- * <http://www.gnu.org/licenses/>.                                                                                     *
+ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
+ * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
  *                                                                                                                     *
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
@@ -372,38 +364,8 @@ String Settings::resources_directory()
 	return std_resource_path;
 }
 
-#ifdef PHON_GUI
-wxFont Settings::get_mono_font()
-{
-	assert(mono_font.IsOk());
-	return mono_font;
-}
-
-void Settings::set_mono_font(const wxFont &font)
-{
-	mono_font = font;
-}
-#endif // PHON_GUI
-
 void Settings::post_initialize()
 {
-#ifdef PHON_GUI
-	// Ensure we have a valid Monospace font
-	try
-	{
-        auto &map = get_table("font");
-        auto size = int(cast<intptr_t>(map["size"]));
-        auto family = wxFontFamily(cast<intptr_t>(map["family"]));
-        auto style = wxFontStyle(cast<intptr_t>(map["style"]));
-        auto name = wxString(cast<String>(map["name"]));
-		mono_font = wxFont(size, family, style, wxFONTWEIGHT_NORMAL, false, name);
-	}
-	catch (...)
-	{
-		reset_mono_font();
-	}
-#endif
-
 	// Ensure newly added settings are available
 	auto &phon = cast<Module>((*runtime)[phon_key]);
 	auto &settings = cast<Table>(phon.get(settings_key)).data();
