@@ -33,7 +33,6 @@
 #include <span>
 #include <phon/array.hpp>
 #include <phon/utils/matrix.hpp>
-#include <phon/analysis/dsp_utils.hpp>
 
 namespace phonometrica { namespace speech {
 
@@ -96,6 +95,11 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 Array<double> medfilt1(const Array<double> &signal, int n);
 
 std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold);
+
+// Apply pre-emphasis for formant analysis.
+void pre_emphasis(Array<double> &data, double Fs, double threshold);
+
+void apply_gaussian_window(std::span<double> win, size_t N);
 
 }} // namespace phonometrica::speech
 
