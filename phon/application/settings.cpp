@@ -22,7 +22,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <phon/application/macros.hpp>
+#include <phon/application/constants.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/runtime/file.hpp>

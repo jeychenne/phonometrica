@@ -1,6 +1,6 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
  * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
  * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
@@ -23,7 +23,7 @@
 #define PHONOMETRICA_ANNOTATION_HPP
 
 #include <phon/application/sound.hpp>
-#include <phon/application/agraph.hpp>
+#include <phon/application/annotation_data.hpp>
 #include <phon/error.hpp>
 
 namespace phonometrica {
@@ -57,7 +57,7 @@ public:
 
 	void set_sound(const Handle<Sound> &value, bool mutate = true);
 
-	const EventList &get_layer_events(intptr_t i) const;
+	const Array<Event> &get_layer_events(intptr_t i) const;
 
 	bool is_textgrid() const { return m_type == TextGrid; }
 
@@ -65,15 +65,13 @@ public:
 
 	static void initialize(Runtime &rt);
 
-	const LayerList &layers() const { return m_graph.layers(); }
+	const Array<Layer> &layers() const { return m_layers; }
 
-	AGraph &graph() { return m_graph; }
-
-	intptr_t size() const { return m_graph.layer_count(); }
+	intptr_t size() const { return m_layers.size(); }
 
 	bool modified() const override;
 
-	void set_event_text(AutoEvent &event, const String &new_text);
+	void set_event_text(intptr_t layer, intptr_t event, const String &new_text);
 
 	String left_context(intptr_t layer, intptr_t event, intptr_t offset, intptr_t length, const String &separator = String()) const;
 
@@ -83,7 +81,7 @@ public:
 
 	void write_as_textgrid(const String &path = String());
 
-	AutoEvent get_event(intptr_t layer, intptr_t event) const;
+	const Event &get_event(intptr_t layer, intptr_t event) const;
 
 	intptr_t layer_count() const;
 
@@ -95,7 +93,7 @@ public:
 
 	void discard_changes() override;
 
-	std::span<AutoEvent> get_slice(intptr_t layer_index, double start_time, double end_time) const;
+	std::span<const Event> get_slice(intptr_t layer_index, double start_time, double end_time) const;
 
 	void duplicate_layer(intptr_t index, intptr_t new_index);
 
@@ -105,17 +103,17 @@ public:
 
 	void set_layer_label(intptr_t index, String value);
 
-	AutoEvent find_enclosing_event(const AutoEvent &e, intptr_t layer) const;
+	const Event *find_enclosing_event(double start_time, double end_time, intptr_t layer) const;
 
 	bool content_modified() const override;
 
-	AutoEvent find_event_starting_at(intptr_t layer_index, double time) const;
+	const Event *find_event_starting_at(intptr_t layer_index, double time) const;
 
-	AutoEvent find_event_ending_at(intptr_t layer_index, double time) const;
+	const Event *find_event_ending_at(intptr_t layer_index, double time) const;
 
-	AutoEvent find_previous_event(intptr_t layer_index, double time) const;
+	const Event *find_previous_event(intptr_t layer_index, double time) const;
 
-	AutoEvent find_next_event(intptr_t layer_index, double time) const;
+	const Event *find_next_event(intptr_t layer_index, double time) const;
 
 	intptr_t get_event_index(intptr_t layer_index, double time) const;
 
@@ -129,7 +127,9 @@ public:
 
 	void remove_events(intptr_t index);
 
-	static Signal<const Handle<Annotation>&, const AutoEvent&, const String&> edit_event;
+	bool graph_modified() const { return m_modified; }
+
+	void set_graph_modified(bool value) { m_modified = value; }
 
 protected:
 
@@ -155,10 +155,11 @@ private:
 
 	Handle<Sound> m_sound;
 
-	AGraph m_graph;
+	Array<Layer> m_layers;
 
 	Type m_type = Undefined;
 
+	bool m_modified = false;
 };
 
 

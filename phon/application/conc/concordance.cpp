@@ -134,10 +134,10 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 		return String::convert(m_matches[i]->get_layer(1));
 	}
 	else if (j == 3) {
-		return String::format("%.4f", m_matches[i]->get_event(1)->start_time());
+        return String::format("%.4f", m_matches[i]->get_start_time(1));
 	}
 	else if (j == 4) {
-		return String::format("%.4f", m_matches[i]->get_event(1)->end_time());
+        return String::format("%.4f", m_matches[i]->get_end_time(1));
 	}
 	else if (j == 5 && has_context()) {
 		return get_left_context(i);
@@ -415,12 +415,12 @@ void Concordance::parse_matches_from_xml(xml_node root)
 
 					if (last_target)
 					{
-						last_target->next = std::make_unique<Match::Target>(event, value, layer, offset, is_ref);
+                        last_target->next = std::make_unique<Match::Target>(event.start, event.end, value, layer, offset, is_ref);
 						last_target = last_target->next.get();
 					}
 					else
 					{
-						first_target = std::make_unique<Match::Target>(event, value, layer, offset, is_ref);
+                        first_target = std::make_unique<Match::Target>(event.start, event.end, value, layer, offset, is_ref);
 						last_target = first_target.get();
 					}
 				}
@@ -753,7 +753,7 @@ std::pair<String, String> Concordance::get_kwic_context(const Match &match, cons
 
 	if (target)
 	{
-		auto i = annot->get_event_index(target->layer, target->start_time());
+        auto i = annot->get_event_index(target->layer, target->start_time);
 		assert(i != 0);
 		auto offset = target->offset;
 		ctx.first = annot->left_context(target->layer, i, offset, m_context_length, sep);
@@ -773,10 +773,10 @@ std::pair<String, String> Concordance::get_labels_context(const Match &match) co
 	{
 		auto &annot = *match.annotation();
 		auto &events = annot.get_layer_events(target->layer);
-		auto i = annot.get_event_index(target->layer, target->start_time());
+        auto i = annot.get_event_index(target->layer, target->start_time);
 		assert(i != 0);
-		ctx.first = (i == 1) ? String() : events[i-1]->text();
-		ctx.second = (i == events.size()) ? String() : events[i+1]->text();
+        ctx.first = (i == 1) ? String() : events[i-1].text;
+        ctx.second = (i == events.size()) ? String() : events[i+1].text;
 	}
 
 	return ctx;

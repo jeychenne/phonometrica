@@ -614,7 +614,7 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 		{
 			auto &layer = layers[i];
 
-			if (constraint.layer_regex->match(layer->label))
+            if (constraint.layer_regex->match(layer.label))
 			{
 				matches = find_matches(annot, constraint, std::move(matches), i, blacklist, op, is_ref);
 			}
@@ -681,13 +681,13 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto start = previous_target.event->start_time();
-					auto end = previous_target.event->end_time();
+                    auto start = previous_target.start_time;
+                    auto end = previous_target.end_time;
 					auto events = annot->get_slice(layer_index, start, end);
 
 					for (auto &event : events)
 					{
-						if (op == Op::StrictDominance && (event->start_time() <= start || event->end_time() >= end))
+                        if (op == Op::StrictDominance && (event.start <= start || event.end >= end))
 						{
 							continue;
 						}
@@ -706,12 +706,12 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto time = previous_target.event->start_time();
+                    auto time = previous_target.start_time;
 					auto event = annot->find_event_starting_at(layer_index, time);
-					if (event && event->end_time() == previous_target.end_time())
+                    if (event && event->end == previous_target.end_time)
 					{
 						intptr_t pos = 0;
-						auto target = find_target(event, constraint, layer_index, pos, is_ref);
+                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
 							previous_target.next = std::move(target);
@@ -725,12 +725,12 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto time = previous_target.event->start_time();
+                    auto time = previous_target.start_time;
 					auto event = annot->find_event_starting_at(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-						auto target = find_target(event, constraint, layer_index, pos, is_ref);
+                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
 							previous_target.next = std::move(target);
@@ -744,12 +744,12 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto time = previous_target.event->end_time();
+                    auto time = previous_target.end_time;
 					auto event = annot->find_event_ending_at(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-						auto target = find_target(event, constraint, layer_index, pos, is_ref);
+                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
 							previous_target.next = std::move(target);
@@ -763,12 +763,12 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto time = previous_target.event->start_time();
+                    auto time = previous_target.start_time;
 					auto event = annot->find_previous_event(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-						auto target = find_target(event, constraint, layer_index, pos, is_ref);
+                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
 							previous_target.next = std::move(target);
@@ -782,12 +782,12 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				for (auto &match : matches)
 				{
 					auto &previous_target = match->last_target();
-					auto time = previous_target.event->end_time();
+                    auto time = previous_target.end_time;
 					auto event = annot->find_next_event(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-						auto target = find_target(event, constraint, layer_index, pos, is_ref);
+                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
 							previous_target.next = std::move(target);
@@ -808,7 +808,7 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 }
 
 std::unique_ptr<Match::Target>
-Query::find_target(const AutoEvent &event, const Constraint &constraint, intptr_t layer_index, intptr_t &pos, bool is_ref) const
+Query::find_target(const Event &event, const Constraint &constraint, intptr_t layer_index, intptr_t &pos, bool is_ref) const
 {
 	switch (constraint.op)
 	{
@@ -816,16 +816,16 @@ Query::find_target(const AutoEvent &event, const Constraint &constraint, intptr_
 		{
 			if (constraint.case_sensitive)
 			{
-				if (event->text() == constraint.target)
+                if (event.text == constraint.target)
 				{
 					pos = -1;
-					return std::make_unique<Match::Target>(event, constraint.target, layer_index, 0, is_ref);
+                    return std::make_unique<Match::Target>(event.start, event.end, constraint.target, layer_index, 0, is_ref);
 				}
 			}
-			else if (String::iequals(event->text(), constraint.target))
+            else if (String::iequals(event.text, constraint.target))
 			{
 				pos = -1;
-				return std::make_unique<Match::Target>(event, event->text(), layer_index, 0, is_ref);
+                return std::make_unique<Match::Target>(event.start, event.end, event.text, layer_index, 0, is_ref);
 			}
 		}
 		break;
@@ -833,19 +833,19 @@ Query::find_target(const AutoEvent &event, const Constraint &constraint, intptr_
 		{
 			if (constraint.case_sensitive)
 			{
-				auto &text = event->text();
+                auto &text = event.text;
 				auto it = text.begin() + pos;
 				if ((it = text.find(constraint.target, it)) != text.end())
 				{
 					auto offset = intptr_t (it - text.begin());
 					pos = offset + constraint.target.size();
 
-					return std::make_unique<Match::Target>(event, constraint.target, layer_index, offset, is_ref);
+                    return std::make_unique<Match::Target>(event.start, event.end, constraint.target, layer_index, offset, is_ref);
 				}
 			}
 			else
 			{
-				auto &text = event->text();
+                auto &text = event.text;
 				auto it = text.begin() + pos;
 				if ((it = text.ifind(constraint.target, it)) != text.end())
 				{
@@ -855,7 +855,7 @@ Query::find_target(const AutoEvent &event, const Constraint &constraint, intptr_
 					String value(it, intptr_t(end-it));
 					pos = intptr_t(end - text.begin());
 
-					return  std::make_unique<Match::Target>(event, std::move(value), layer_index, offset, is_ref);
+                    return  std::make_unique<Match::Target>(event.start, event.end, std::move(value), layer_index, offset, is_ref);
 				}
 			}
 		}
@@ -863,15 +863,15 @@ Query::find_target(const AutoEvent &event, const Constraint &constraint, intptr_
 		case Constraint::Operator::Matches:
 		{
 			auto &re = *constraint.regex;
-			auto &text = event->text();
+            auto &text = event.text;
 			auto it = text.begin() + pos;
-			if (re.match(event->text(), it))
+            if (re.match(event.text, it))
 			{
 				auto matched_text = re.capture(0);
 				auto offset = intptr_t (re.capture_start_iter(0) - text.begin());
 				pos = intptr_t (re.capture_end_iter(0) - text.begin());
 
-				return std::make_unique<Match::Target>(event, std::move(matched_text), layer_index, offset, is_ref);
+                return std::make_unique<Match::Target>(event.start, event.end, std::move(matched_text), layer_index, offset, is_ref);
 			}
 		}
 		break;
