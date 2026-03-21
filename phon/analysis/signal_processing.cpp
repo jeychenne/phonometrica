@@ -490,4 +490,51 @@ Array<std::complex<double>> &FFT::process(const Array<double> &data)
 
 	return output;
 }
+
+/// Pre-emphasis filter.
+///
+/// Standard first-order FIR high-pass filter that increases the spectral
+/// slope by +6 dB/octave above the given threshold frequency.
+///
+/// Algorithm (from published description):
+///   alpha = exp(-2 * pi * threshold * dt)
+///   data[i] = data[i] - alpha * data[i-1]
+///
+void pre_emphasis(Array<double> &data, double Fs, double threshold)
+{
+	const auto n = data.size();
+	if (n < 2 || threshold <= 0.0 || Fs <= 0.0) return;
+
+	const double alpha = std::exp(-2.0 * M_PI * threshold / Fs);
+
+	// Process backwards to avoid needing a temporary buffer.
+	for (auto i = n - 1; i >= 1; --i) {
+		data[i] -= alpha * data[i - 1];
+	}
+}
+
+/// Apply a Gaussian window in-place.
+///
+/// The Gaussian taper used is:  exp(-3 * (j / half_N)^2)
+/// where j is the sample offset from the window center and half_N = N/2.
+/// This yields a -3 dB bandwidth of 1.2982804 / window_duration.
+///
+/// N is the nominal window length in samples. For Gaussian analysis,
+/// the actual span (win.size()) is typically 2*N to capture the tails;
+/// samples beyond ±N/2 are attenuated by the exponential decay.
+///
+void apply_gaussian_window(std::span<double> win, size_t N)
+{
+	const auto len = win.size();
+	if (len == 0 || N == 0) return;
+
+	const double half_N = static_cast<double>(N) / 2.0;
+	const double center = static_cast<double>(len - 1) / 2.0;
+
+	for (size_t i = 0; i < len; ++i) {
+		double offset = (static_cast<double>(i) - center) / half_N;
+		win[i] *= std::exp(-3.0 * offset * offset);
+	}
+}
+
 }} // namespace phonometrica::speech
