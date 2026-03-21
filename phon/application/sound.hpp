@@ -28,8 +28,6 @@
 #endif
 
 #include <cmath>
-#include <memory>
-
 #include <sndfile.hh>
 #include <phon/application/vfs.hpp>
 #include <phon/third_party/rtaudio/RtAudio.h>
@@ -76,23 +74,15 @@ public:
 
 	static speech::PitchTracker get_pitch_tracker(const String &name);
 
-	double duration() const;
-
-	int sample_rate() const;
-
-	intptr_t nframes() const;
-
 	double max_value() const;
 
 	double min_value() const;
 
-    const Array<double> &data() const;
+    const Array<float> &data() const;
 
-    Array<double> &data();
+    Array<float> &data();
 
     SndfileHandle handle() const;
-
-    int nchannel() const;
 
     void convert(const String &path, int sample_rate, Format fmt);
 
@@ -112,13 +102,21 @@ public:
 
 	static void initialize(Runtime &rt);
 
-	intptr_t channel_size() const;
-
-	intptr_t size() const;
-
 	Array<double> get_channel(int n, intptr_t first_sample, intptr_t last_sample) const;
 
-	bool is_mono() const;
+    double duration() const { return m_duration; }
+
+    int sample_rate() const { return m_sample_rate; }
+
+    intptr_t nframes() const { return m_nframes; }
+
+    int nchannel() const { return m_nchannel; }
+
+    intptr_t channel_size() const { return m_nframes; }
+
+    intptr_t size() const { return m_nframes * m_nchannel; }
+
+    bool is_mono() const { return m_nchannel == 1; }
 
 	double frame_to_time(intptr_t index) const;
 
@@ -137,6 +135,11 @@ public:
 
 	int get_intensity_window_size() const;
 
+
+    std::span<const float> channel_view(int n) const;
+
+    std::span<const float> channel_view(int n, intptr_t first_sample, intptr_t last_sample) const;
+
 	static Signal<const String&, const String&, int> start_loading;
 
 	static Signal<int> update_loading;
@@ -149,13 +152,17 @@ private:
 
 	Array<double> average_channels(intptr_t first_frame = 0, intptr_t last_frame = -1) const;
 
-	std::span<const double> get_channel_view(int n) const;
-
 	static Array<String> the_supported_sound_formats, the_common_sound_formats;
 
-	Array<double> m_data;
+    Array<float> m_data;
 
-	mutable SndfileHandle m_handle;
+    mutable SndfileHandle m_handle;
+
+    // Cached metadata:
+    int m_sample_rate = 0;
+    int m_nchannel = 0;
+    intptr_t m_nframes = 0;
+    double m_duration = 0.0;
 };
 
 namespace traits {
