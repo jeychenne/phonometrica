@@ -1,17 +1,9 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne                                                                             *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
- * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
- * License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any      *
- * later version.                                                                                                      *
- *                                                                                                                     *
- * This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied  *
- * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more       *
- * details.                                                                                                            *
- *                                                                                                                     *
- * You should have received a copy of the GNU General Public License along with this program. If not, see              *
- * <http://www.gnu.org/licenses/>.                                                                                     *
+ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
+ * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
  *                                                                                                                     *
  * Created: 28/02/2019                                                                                                 *
  *                                                                                                                     *
@@ -218,7 +210,7 @@ void Project::load()
 		bind_annotations();
 		notify_update();
 		stop_activity();
-		emit(project_loaded);
+        emit_signal(project_loaded);
 	}
 	catch (std::exception &e)
 	{
@@ -273,13 +265,13 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 			{
 				auto annot = make_handle<Annotation>(folder, std::move(path));
 				vfile = recast<Document>(annot);
-				emit(annotation_loaded, std::move(annot));
+                emit_signal(annotation_loaded, std::move(annot));
 			}
 			else if (cls == "Sound")
 			{
 				auto sound = make_handle<Sound>(folder, std::move(path));
 				vfile = recast<Document>(sound);
-				emit(sound_loaded, std::move(sound));
+                emit_signal(sound_loaded, std::move(sound));
 			}
 			else
 			{
@@ -374,7 +366,7 @@ void Project::parse_scripts(xml_node root, Directory *folder)
 				auto script = make_handle<Script>(folder, std::move(path));
 				folder->append(script, false);
 				register_file(script->path(), script);
-//				emit(script_loaded, make_handle<Script>(script));
+//				emit_signal(script_loaded, make_handle<Script>(script));
 			}
 			else
 			{
@@ -456,7 +448,7 @@ void Project::parse_data(xml_node root, Directory *folder)
 				dataset->from_xml(node, m_directory);
 				folder->append(dataset, false);
 				register_file(dataset->path(), dataset);
-//				emit(dataset_loaded, make_handle<AutoDataset>(std::move(dataset)));
+//				emit_signal(dataset_loaded, make_handle<AutoDataset>(std::move(dataset)));
 			}
 			else if (cls == std::string_view("Concordance"))
 			{
@@ -688,10 +680,10 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		vfile = recast<Document>(annot);
 		parent->append(vfile);
 		if (importing) {
-			emit(annotation_imported, annot);
+            emit_signal(annotation_imported, annot);
 		}
 		else {
-			emit(annotation_loaded, annot);
+            emit_signal(annotation_loaded, annot);
 		}
 	}
 	else if (Sound::supports_format(ext) && (static_cast<int>(type)&static_cast<int>(FileType::Sound)))
@@ -700,10 +692,10 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		vfile = recast<Document>(sound);
 		parent->append(vfile);
 		if (importing) {
-			emit(sound_imported, sound);
+            emit_signal(sound_imported, sound);
 		}
 		else {
-			emit(sound_loaded, sound);
+            emit_signal(sound_loaded, sound);
 		}
 	}
 	else if (ext == PHON_EXT_QUERY)
@@ -772,7 +764,7 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		auto dataset = make_handle<Dataset>(p, std::move(path));
 		vfile = recast<Document>(dataset);
 		p->append(vfile);
-//		emit(dataset_loaded, std::move(dataset));
+//		emit_signal(dataset_loaded, std::move(dataset));
 	}
 	else if ((ext == PHON_EXT_SCRIPT || ext == ".phon-script"))
 	{
@@ -792,7 +784,7 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
         auto script = make_handle<Script>(p, std::move(path));
 		vfile = recast<Document>(script);
 		p->append(vfile);
-		//emit(script_loaded, make_handle<Handle<Script>>(std::move(script)));
+        //emit_signal(script_loaded, make_handle<Handle<Script>>(std::move(script)));
 	}
 	else
 	{
@@ -835,10 +827,10 @@ String Project::import_file(String path)
         m_modified = true;
         auto &f = m_files[path];
         if (f->is<Annotation>()) {
-	        emit(annotation_imported, recast<Annotation>(f));
+            emit_signal(annotation_imported, recast<Annotation>(f));
         }
         else if (f->is<Sound>()) {
-        	emit(sound_imported, recast<Sound>(f));
+            emit_signal(sound_imported, recast<Sound>(f));
         }
 	}
 	// Try to find a sound that matches the annotation's name.
@@ -1249,7 +1241,7 @@ bool Project::is_root(const Directory *folder) const
     return folder == m_corpus.get() || folder == m_scripts.get() || folder == m_queries.get() || folder == m_data.get() || folder == m_bookmarks.get();
 }
 
-void Project::emit(const String &signal, Variant value)
+void Project::emit_signal(const String &signal, Variant value)
 {
     rt.push(rt[emit_name]);
     rt.push(signal);
@@ -1257,7 +1249,7 @@ void Project::emit(const String &signal, Variant value)
     rt.call(2);
 }
 
-void Project::emit(const String &signal)
+void Project::emit_signal(const String &signal)
 {
     rt.push(rt[emit_name]);
     rt.push(signal);
