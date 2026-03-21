@@ -14,9 +14,10 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ##  COMPILATION OPTIONS  ##
 ###########################
 
-option(EMBED_SCRIPTS   "Embed scripts as strings"         OFF)
-option(ENABLE_LOGGING  "Enable logging (always on in debug)" OFF)
-option(BUILD_UNIT_TEST "Build unit tests"                  OFF)
+option(EMBED_SCRIPTS      "Embed scripts as strings"            OFF)
+option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
+option(WITH_APPLICATION   "Build the application layer"         ON)
+option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
 
 
 ###########################
@@ -127,12 +128,134 @@ else()
 endif()
 
 
+#############################
+##  APPLICATION LAYER LIB  ##
+#############################
+
+if(WITH_APPLICATION)
+
+    # ---- System libraries ----
+
+    # libsndfile
+    find_package(PkgConfig QUIET)
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(SNDFILE QUIET sndfile)
+    endif()
+    if(NOT SNDFILE_FOUND)
+        find_library(SNDFILE_LIBRARIES NAMES sndfile libsndfile-1)
+        find_path(SNDFILE_INCLUDE_DIRS sndfile.h)
+    endif()
+    if(SNDFILE_INCLUDE_DIRS)
+        include_directories(${SNDFILE_INCLUDE_DIRS})
+    endif()
+
+    # FFTW3
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(FFTW3 QUIET fftw3)
+    endif()
+    if(NOT FFTW3_FOUND)
+        find_library(FFTW3_LIBRARIES NAMES fftw3)
+        find_path(FFTW3_INCLUDE_DIRS fftw3.h)
+    endif()
+    if(FFTW3_INCLUDE_DIRS)
+        include_directories(${FFTW3_INCLUDE_DIRS})
+    endif()
+
+    add_definitions(-DPHON_USE_FFTW=1)
+
+    # ---- Vendored header-only libraries ----
+
+    add_definitions(-DEIGEN_MPL2_ONLY)  # Eigen already present in third_party/
+
+    include_directories(
+        ${CMAKE_SOURCE_DIR}/phon/third_party            # Eigen, LBFGSpp
+        ${CMAKE_SOURCE_DIR}/phon/third_party/sptk4/include
+        ${CMAKE_SOURCE_DIR}/phon/third_party/world
+        ${CMAKE_SOURCE_DIR}/phon/third_party/REAPER
+    )
+
+    # ---- Platform-specific audio backend ----
+
+    if(WIN32)
+        add_definitions(-D__WINDOWS_DS__=1)
+        add_definitions(-DENABLE_SNDFILE_WINDOWS_PROTOTYPES=1)
+    elseif(APPLE)
+        add_definitions(-D__MACOSX_CORE__=1)
+    else()
+        add_definitions(-D__LINUX_ALSA__=1)
+    endif()
+
+    # ---- Application sources ----
+
+    file(GLOB APP_SOURCES
+        phon/application/*.cpp
+        phon/application/conc/*.cpp
+        phon/analysis/*.cpp
+    )
+
+    # ---- Vendored compiled sources ----
+
+    file(GLOB VENDOR_APP_SOURCES
+        phon/third_party/pugixml/pugixml.cpp
+        phon/third_party/rtaudio/RtAudio.cpp
+        phon/third_party/sqlite/sqlite3.c
+        phon/third_party/r8brain/*.cpp
+        phon/third_party/sptk4/*.cc
+        phon/third_party/REAPER/core/*.cc
+        phon/third_party/REAPER/epoch_tracker/*.cc
+        phon/third_party/REAPER/wave/*.cc
+        phon/third_party/Snack/*.cc
+        phon/third_party/swipe/*.c
+        phon/third_party/swipe/*.cpp
+        phon/third_party/FIR-filter-class/filt.cpp
+        phon/third_party/world/*.cc
+        phon/third_party/zip/zip.cpp
+    )
+
+    add_library(phon-app STATIC ${APP_SOURCES} ${VENDOR_APP_SOURCES})
+    set_property(TARGET phon-app PROPERTY POSITION_INDEPENDENT_CODE ON)
+    target_link_libraries(phon-app PRIVATE phon-runtime)
+
+    # ---- Platform link libraries ----
+
+    if(WIN32)
+        target_link_libraries(phon-app PRIVATE
+            ${SNDFILE_LIBRARIES}
+            ${FFTW3_LIBRARIES}
+            ole32 comctl32 winmm uuid Rpcrt4 User32 dsound
+        )
+    elseif(APPLE)
+        find_library(LIB_ICONV iconv)
+        if(NOT LIB_ICONV)
+            message(FATAL_ERROR "iconv not found")
+        endif()
+        target_link_libraries(phon-app PRIVATE
+            ${SNDFILE_LIBRARIES}
+            ${FFTW3_LIBRARIES}
+            pthread dl ${LIB_ICONV}
+            "-framework Foundation" "-framework CoreAudio"
+        )
+    else()
+        target_link_libraries(phon-app PRIVATE
+            ${SNDFILE_LIBRARIES}
+            ${FFTW3_LIBRARIES}
+            pthread dl asound
+        )
+    endif()
+
+endif(WITH_APPLICATION)
+
+
 ####################
 ##  EXECUTABLE    ##
 ####################
 
 add_executable(${PROJECT_NAME} phonometrica.cpp)
 target_link_libraries(${PROJECT_NAME} PRIVATE phon-runtime pcre2-8)
+
+if(WITH_APPLICATION)
+    target_link_libraries(${PROJECT_NAME} PRIVATE phon-app)
+endif()
 
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE shlwapi)
@@ -149,4 +272,8 @@ if(BUILD_UNIT_TEST)
     file(GLOB TEST_SOURCES unit_test/*.cpp)
     add_executable(test_phon ${TEST_SOURCES})
     target_link_libraries(test_phon PRIVATE phon-runtime pcre2-8)
+
+    if(WITH_APPLICATION)
+        target_link_libraries(test_phon PRIVATE phon-app)
+    endif()
 endif()
