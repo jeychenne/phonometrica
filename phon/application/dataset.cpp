@@ -71,66 +71,116 @@ void Dataset::write()
 
 void Dataset::read_from_csv(std::string_view sep)
 {
-	assert(!m_path.empty());
-	auto raw_data = utils::parse_csv(m_path, sep);
-	if (raw_data.empty()) return;
+    assert(!m_path.empty());
+    auto raw_data = utils::parse_csv(m_path, sep);
+    if (raw_data.empty()) return;
 
-	// Parse header.
-	for (auto &label : raw_data.take_first())
-	{
-		if (label.ends_with(".num"))
-		{
-			label.remove_last(".num");
-			m_columns.append(std::make_unique<TColumn<double>>());
-		}
-		else if (label.ends_with(".bool"))
-		{
-			label.remove_last(".bool");
-			m_columns.append(std::make_unique<TColumn<bool>>());
-		}
-		else
-		{
-			if (label.ends_with(".text")) label.remove_last(".text");
-			m_columns.append(std::make_unique<TColumn<String>>());
-		}
-		m_labels.append(std::move(label));
-	}
+    // Parse header.
+    for (auto &label : raw_data.take_first())
+    {
+        if (label.ends_with(".num"))
+        {
+            label.remove_last(".num");
+            m_columns.append(std::make_unique<TColumn<double>>());
+        }
+        else if (label.ends_with(".bool"))
+        {
+            label.remove_last(".bool");
+            m_columns.append(std::make_unique<TColumn<bool>>());
+        }
+        else
+        {
+            if (label.ends_with(".text")) label.remove_last(".text");
+            m_columns.append(std::make_unique<TColumn<String>>());
+        }
+        m_labels.append(std::move(label));
+    }
 
-	// Parse data.
-	if (raw_data.empty()) return;
-	nrow = raw_data.size();
-	ncol = m_labels.size();
-	for (auto &col : m_columns) col->resize(nrow);
+    // Parse data.
+    if (raw_data.empty()) return;
+    nrow = raw_data.size();
+    ncol = m_labels.size();
+    for (auto &col : m_columns) col->resize(nrow);
 
-	for (intptr_t i = 1; i <= nrow; i++)
-	{
-		auto &row = raw_data[i];
+    for (intptr_t i = 1; i <= nrow; i++)
+    {
+        auto &row = raw_data[i];
 
-		for (intptr_t j = 1; j <= ncol; j++)
-		{
-			auto col = m_columns[j].get();
+        for (intptr_t j = 1; j <= ncol; j++)
+        {
+            auto col = m_columns[j].get();
 
-			switch (m_columns[j]->type())
-			{
-				case Type::Numeric:
-				{
-					double value = row[j].to_float();
-					cast_num(col)->set(i, value);
-					break;
-				}
-				case Type::Boolean:
-				{
-					bool value = row[j].to_bool();
-					cast_bool(col)->set(i, value);
-					break;
-				}
-				default:
-				{
-					cast_string(col)->set(i, std::move(row[j]));
-				}
-			}
-		}
-	}
+            switch (m_columns[j]->type())
+            {
+            case ColumnType::Numeric:
+            {
+                double value = row[j].to_float();
+                cast_num(col)->set(i, value);
+                break;
+            }
+            case ColumnType::Boolean:
+            {
+                bool value = row[j].to_bool();
+                cast_bool(col)->set(i, value);
+                break;
+            }
+            default:
+            {
+                cast_string(col)->set(i, std::move(row[j]));
+            }
+            }
+        }
+    }
+
+    // Second pass: auto-detect column types for columns that had no type suffix.
+    for (intptr_t j = 1; j <= ncol; j++)
+    {
+        auto col = m_columns[j].get();
+        if (col->type() != ColumnType::Text) continue;
+
+        auto *text_col = cast_string(col);
+        bool all_numeric = true;
+        bool all_boolean = true;
+
+        for (intptr_t i = 1; i <= nrow; i++)
+        {
+            auto &val = text_col->get(i);
+            if (val.empty())
+            {
+                all_boolean = false;
+                continue;
+            }
+
+            bool ok;
+            val.to_float(&ok);
+            if (!ok) all_numeric = false;
+
+            if (val != "true" && val != "false") all_boolean = false;
+
+            if (!all_numeric && !all_boolean) break;
+        }
+
+        if (all_numeric)
+        {
+            auto num_col = std::make_unique<TColumn<double>>(nrow);
+            for (intptr_t i = 1; i <= nrow; i++)
+            {
+                auto &val = text_col->get(i);
+                num_col->set(i, val.empty() ? std::nan("") : val.to_float());
+            }
+            m_columns[j] = std::move(num_col);
+        }
+        else if (all_boolean)
+        {
+            auto bool_col = std::make_unique<TColumn<bool>>(nrow);
+            for (intptr_t i = 1; i <= nrow; i++)
+            {
+                auto &val = text_col->get(i);
+                bool_col->set(i, val == "true");
+            }
+            m_columns[j] = std::move(bool_col);
+        }
+    }
 }
 
 String Dataset::get_header(intptr_t j) const
@@ -144,9 +194,9 @@ String Dataset::get_cell(intptr_t i, intptr_t j) const
 
 	switch (col->type())
 	{
-		case Type::Numeric:
+        case ColumnType::Numeric:
 			return String::convert(cast_num(col)->get(i));
-		case Type::Boolean:
+        case ColumnType::Boolean:
 			return String::convert(cast_bool(col)->get(i));
 		default:
 			return cast_string(col)->get(i);
@@ -159,7 +209,7 @@ void Dataset::set_cell(intptr_t i, intptr_t j, const String &value)
 
 	switch (col->type())
 	{
-		case Type::Numeric:
+        case ColumnType::Numeric:
 		{
 			bool ok;
 			double result = value.to_float(&ok);
@@ -169,7 +219,7 @@ void Dataset::set_cell(intptr_t i, intptr_t j, const String &value)
 			cast_num(col)->set(i, result);
 		}
 		break;
-		case Type::Boolean:
+        case ColumnType::Boolean:
 		{
 			cast_bool(col)->set(i, value.to_bool());
 		}
@@ -184,14 +234,82 @@ void Dataset::initialize(Runtime &)
 
 }
 
-Dataset::Type Dataset::Column::find_type(const std::type_info &t) const
+Dataset::ColumnType Dataset::Column::find_type(const std::type_info &t) const
 {
 	if (t == typeid(String))
-		return Type::Text;
+        return ColumnType::Text;
 	if (t == typeid(double))
-		return Type::Numeric;
+        return ColumnType::Numeric;
 	assert(t == typeid(bool));
-	return Type::Boolean;
+    return ColumnType::Boolean;
+}
+
+Dataset::ColumnType Dataset::column_type(intptr_t j) const
+{
+    return m_columns[j]->type();
+}
+
+bool Dataset::is_numeric(intptr_t j) const
+{
+    return m_columns[j]->type() == ColumnType::Numeric;
+}
+
+bool Dataset::is_text(intptr_t j) const
+{
+    return m_columns[j]->type() == ColumnType::Text;
+}
+
+bool Dataset::is_boolean(intptr_t j) const
+{
+    return m_columns[j]->type() == ColumnType::Boolean;
+}
+
+std::span<const double> Dataset::numeric_column(intptr_t j) const
+{
+    auto col = m_columns[j].get();
+    if (col->type() != ColumnType::Numeric) {
+        throw error("Column '%' is not numeric", m_labels[j]);
+    }
+    auto &data = cast_num(col)->data;
+    return { data.begin(), data.end() };
+}
+
+std::span<const String> Dataset::text_column(intptr_t j) const
+{
+    auto col = m_columns[j].get();
+    if (col->type() != ColumnType::Text) {
+        throw error("Column '%' is not text", m_labels[j]);
+    }
+    auto &data = cast_string(col)->data;
+    return { data.begin(), data.end() };
+}
+
+std::span<const bool> Dataset::boolean_column(intptr_t j) const
+{
+    auto col = m_columns[j].get();
+    if (col->type() != ColumnType::Boolean) {
+        throw error("Column '%' is not boolean", m_labels[j]);
+    }
+    auto &data = cast_bool(col)->data;
+    return { data.begin(), data.end() };
+}
+
+Array<String> Dataset::get_levels(intptr_t j) const
+{
+    auto col = m_columns[j].get();
+    if (col->type() != ColumnType::Text) {
+        throw error("Column '%' is not text", m_labels[j]);
+    }
+    auto &data = cast_string(col)->data;
+    std::set<String> unique;
+    for (auto &val : data) {
+        unique.insert(val);
+    }
+    Array<String> levels;
+    for (auto &val : unique) {
+        levels.append(val);
+    }
+    return levels;
 }
 
 } // namespace phonometrica
