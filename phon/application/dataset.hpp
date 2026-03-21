@@ -30,6 +30,13 @@ class Dataset final : public DataTable
 {
 public:
 
+    enum class ColumnType
+    {
+        Boolean,
+        Numeric,
+        Text
+    };
+
 	Dataset(Directory *parent, String path = String());
 
 	Dataset(const Dataset &other);
@@ -46,22 +53,33 @@ public:
 
 	bool empty() const override { return nrow == 0; }
 
+
+    ColumnType column_type(intptr_t j) const;
+
+    bool is_numeric(intptr_t j) const;
+
+    bool is_text(intptr_t j) const;
+
+    bool is_boolean(intptr_t j) const;
+
+    std::span<const double> numeric_column(intptr_t j) const;
+
+    std::span<const String> text_column(intptr_t j) const;
+
+    std::span<const bool> boolean_column(intptr_t j) const;
+
+    // Get the unique values in a text column (for factor levels).
+    Array<String> get_levels(intptr_t j) const;
+
 	static void initialize(Runtime &rt);
 
 private:
-
-	enum class Type
-	{
-		Boolean,
-		Numeric,
-		Text
-	};
 
 	struct Column
 	{
 		virtual ~Column();
 
-		virtual Type type() const = 0;
+        virtual ColumnType type() const = 0;
 
 		virtual void resize(intptr_t size) = 0;
 
@@ -69,7 +87,7 @@ private:
 
 	protected:
 
-		Type find_type(const std::type_info &t) const;
+        ColumnType find_type(const std::type_info &t) const;
 	};
 
 	template<class T>
@@ -83,7 +101,7 @@ private:
 
 		TColumn(const Array<T> &d) : data(d) { }
 
-		Type type() const override { return find_type(typeid(T)); }
+        ColumnType type() const override { return find_type(typeid(T)); }
 
 		const T &get(intptr_t i) const { return data[i]; }
 
