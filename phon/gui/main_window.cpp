@@ -23,6 +23,7 @@
 #include <phon/gui/view.hpp>
 #include <phon/gui/view_panel.hpp>
 #include <phon/gui/script_view.hpp>
+#include <phon/gui/sound_view.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -253,6 +254,12 @@ void MainWindow::createDockWidgets()
 
 void MainWindow::createStatusBar()
 {
+	m_progress_bar = new QProgressBar(this);
+	m_progress_bar->setMaximumWidth(200);
+	m_progress_bar->setMaximumHeight(16);
+	m_progress_bar->setTextVisible(false);
+	m_progress_bar->setVisible(false);
+	statusBar()->addPermanentWidget(m_progress_bar);
 	statusBar()->showMessage(tr("Ready"));
 }
 
@@ -695,6 +702,39 @@ void MainWindow::onDocumentRequested(Document *doc)
 		return;
 	}
 
+	// Handle sound files
+	if (doc->is<Sound>())
+	{
+		auto *sound = static_cast<Sound *>(doc);
+
+		// Connect to the Sound loading signals for progress feedback.
+		statusBar()->showMessage(tr("Loading %1...").arg(qlabel));
+		m_progress_bar->setValue(0);
+		m_progress_bar->setVisible(true);
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		QApplication::processEvents();
+
+		auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
+			m_progress_bar->setMaximum(max);
+			QApplication::processEvents();
+		});
+
+		auto conn2 = Sound::update_loading.connect([this](int value) {
+			m_progress_bar->setValue(value);
+			QApplication::processEvents();
+		});
+
+		auto *view = new SoundView(Handle<Sound>(sound));
+		addViewTab(view);
+
+		conn1.disconnect();
+		conn2.disconnect();
+		QApplication::restoreOverrideCursor();
+		m_progress_bar->setVisible(false);
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
 	// Fallback placeholder for other document types
 	auto &path = doc->path();
 	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
@@ -720,10 +760,6 @@ ViewPanel *MainWindow::addViewTab(View *view)
 		int index = m_viewer->indexOf(panel);
 		if (index >= 0)
 			m_viewer->setTabText(index, title);
-	});
-
-	connect(view, &View::addedToProject, [this]() {
-		m_file_manager->refresh();
 	});
 
 	int tabIndex = m_viewer->addTab(panel, panel->label());

@@ -39,7 +39,12 @@ public:
 
 	bool paused() const;
 	bool running() const;
+	bool finished_naturally() const;
 	bool has_error() const { return m_error != nullptr; }
+
+	// Thread-safe accessor for the current playback time (in seconds).
+	// Meant to be polled from a QTimer on the main thread.
+	double currentPlaybackTime() const;
 
 	void raise_error();
 
