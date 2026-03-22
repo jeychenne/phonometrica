@@ -14,10 +14,10 @@
 #ifndef PHONOMETRICA_SCRIPT_VIEW_HPP
 #define PHONOMETRICA_SCRIPT_VIEW_HPP
 
-#include <QWidget>
 #include <QToolBar>
 #include <QAction>
 #include <phon/runtime.hpp>
+#include <phon/gui/view.hpp>
 #include <phon/application/script.hpp>
 
 namespace phonometrica {
@@ -26,7 +26,7 @@ class ScriptEditor;
 class SearchBar;
 class Console;
 
-class ScriptView : public QWidget
+class ScriptView : public View
 {
 	Q_OBJECT
 
@@ -34,23 +34,21 @@ public:
 
 	ScriptView(Runtime &rt, Console *console, const Handle<Script> &script, QWidget *parent = nullptr);
 
-	void save();
-	void execute();
-	void find();
-	void replace();
-	void escape();
+	// ── View interface ─────────────────────────────────
 
-	bool isModified() const;
-	void discardChanges();
+	QString label() const override;
+	String path() const override;
+	bool isModified() const override;
+	bool save() override;
+	void discardChanges() override;
+	void execute() override;
+	void find() override;
+	void replace() override;
+	void escape() override;
 
-	QString label() const;
-	String path() const;
+	// ── Script-specific ────────────────────────────────
 
 	Handle<Script> script() const { return m_script; }
-
-signals:
-
-	void titleChanged(const QString &title);
 
 private slots:
 

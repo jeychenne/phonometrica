@@ -19,6 +19,8 @@
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
+#include <phon/gui/view.hpp>
+#include <phon/gui/view_panel.hpp>
 #include <phon/gui/script_view.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
@@ -194,20 +196,26 @@ void MainWindow::createCentralWidget()
 	m_viewer->setDocumentMode(true);
 
 	connect(m_viewer, &QTabWidget::tabCloseRequested, [this](int index) {
-		auto *sv = qobject_cast<ScriptView *>(m_viewer->widget(index));
-		if (sv && sv->isModified())
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(index));
+
+		if (panel && panel->isModified())
 		{
 			auto answer = QMessageBox::question(this, tr("Unsaved changes"),
-				tr("The script \"%1\" has unsaved changes. Save before closing?").arg(sv->label()),
+				tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
 				QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
 
 			if (answer == QMessageBox::Cancel)
 				return;
 			if (answer == QMessageBox::Save)
-				sv->save();
+				panel->saveAll();
 			else
-				sv->discardChanges();
+			{
+				// Discard changes in all views.
+				for (auto *v : panel->views())
+					v->discardChanges();
+			}
 		}
+
 		m_viewer->removeTab(index);
 	});
 
@@ -602,18 +610,18 @@ void MainWindow::onDocumentRequested(Document *doc)
 	// Check if this document is already open in a tab.
 	for (int i = 0; i < m_viewer->count(); i++)
 	{
-		// Check by ScriptView identity for scripts
-		auto *sv = qobject_cast<ScriptView *>(m_viewer->widget(i));
-		if (sv && sv->path() == doc->path())
-		{
-			m_viewer->setCurrentIndex(i);
-			return;
-		}
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel)
+			continue;
 
-		if (m_viewer->tabText(i) == qlabel)
+		// Check all views in the panel for a matching path.
+		for (auto *v : panel->views())
 		{
-			m_viewer->setCurrentIndex(i);
-			return;
+			if (v->path() == doc->path())
+			{
+				m_viewer->setCurrentIndex(i);
+				return;
+			}
 		}
 	}
 
@@ -640,61 +648,75 @@ void MainWindow::onDocumentRequested(Document *doc)
 
 
 // ---------------------------------------------------------
-//  Script view helpers
+//  Tab / View helpers
 // ---------------------------------------------------------
 
-void MainWindow::openScript(const Handle<Script> &script)
+ViewPanel *MainWindow::addViewTab(View *view)
 {
-	auto *view = new ScriptView(m_runtime, m_console, script, m_viewer);
+	auto *panel = new ViewPanel(view, m_viewer);
 
-	connect(view, &ScriptView::titleChanged, [this, view](const QString &title) {
-		int index = m_viewer->indexOf(view);
+	connect(panel, &ViewPanel::titleChanged, [this, panel](const QString &title) {
+		int index = m_viewer->indexOf(panel);
 		if (index >= 0)
 			m_viewer->setTabText(index, title);
 	});
 
-	int tabIndex = m_viewer->addTab(view, view->label());
+	int tabIndex = m_viewer->addTab(panel, panel->label());
 	m_viewer->setCurrentIndex(tabIndex);
+
+	return panel;
 }
 
-ScriptView *MainWindow::currentScriptView() const
+void MainWindow::openScript(const Handle<Script> &script)
 {
-	return qobject_cast<ScriptView *>(m_viewer->currentWidget());
+	auto *view = new ScriptView(m_runtime, m_console, script);
+	addViewTab(view);
+}
+
+ViewPanel *MainWindow::currentPanel() const
+{
+	return qobject_cast<ViewPanel *>(m_viewer->currentWidget());
+}
+
+View *MainWindow::currentView() const
+{
+	auto *panel = currentPanel();
+	return panel ? panel->activeView() : nullptr;
 }
 
 
 // ---------------------------------------------------------
-//  View-level actions (forwarded to active ScriptView)
+//  View-level actions (forwarded to active view)
 // ---------------------------------------------------------
 
 void MainWindow::onSaveCurrentView()
 {
-	if (auto *sv = currentScriptView())
-		sv->save();
+	if (auto *v = currentView())
+		v->save();
 }
 
 void MainWindow::onExecuteCurrentView()
 {
-	if (auto *sv = currentScriptView())
-		sv->execute();
+	if (auto *v = currentView())
+		v->execute();
 }
 
 void MainWindow::onEscapeCurrentView()
 {
-	if (auto *sv = currentScriptView())
-		sv->escape();
+	if (auto *v = currentView())
+		v->escape();
 }
 
 void MainWindow::onFind()
 {
-	if (auto *sv = currentScriptView())
-		sv->find();
+	if (auto *v = currentView())
+		v->find();
 }
 
 void MainWindow::onReplace()
 {
-	if (auto *sv = currentScriptView())
-		sv->replace();
+	if (auto *v = currentView())
+		v->replace();
 }
 
 } // namespace phonometrica

@@ -29,7 +29,8 @@ class Runtime;
 class Project;
 class FileManager;
 class Document;
-class ScriptView;
+class View;
+class ViewPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -59,7 +60,7 @@ private slots:
 	void onFind();
 	void onReplace();
 
-	// View actions
+	// View actions (forwarded to active view in the current panel)
 	void onSaveCurrentView();
 	void onExecuteCurrentView();
 	void onEscapeCurrentView();
@@ -91,14 +92,22 @@ private:
 	QString lastDirectory() const;
 	void setLastDirectory(const QString &path);
 
+	// Add a view wrapped in a ViewPanel to the tab widget.
+	ViewPanel *addViewTab(View *view);
+
 	void openScript(const Handle<Script> &script);
-	ScriptView *currentScriptView() const;
+
+	// Returns the ViewPanel in the current tab (or nullptr).
+	ViewPanel *currentPanel() const;
+
+	// Returns the active View in the current panel (or nullptr).
+	View *currentView() const;
 
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;
 
-	// Central area: tabbed views for sounds, annotations, scripts, etc.
+	// Central area: tabbed panels (each panel contains one or more views).
 	QTabWidget *m_viewer = nullptr;
 
 	// Dock widgets

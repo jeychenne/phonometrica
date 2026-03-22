@@ -31,7 +31,7 @@
 namespace phonometrica {
 
 ScriptView::ScriptView(Runtime &rt, Console *console, const Handle<Script> &script, QWidget *parent) :
-	QWidget(parent), m_runtime(rt), m_console(console), m_script(script)
+	View(parent), m_runtime(rt), m_console(console), m_script(script)
 {
 	setupUi();
 
@@ -67,7 +67,7 @@ void ScriptView::setupUi()
 	m_save_action = m_toolbar->addAction(QIcon(":/icons/save.png"),
 		tr("Save script (" CTRL_KEY "S)"));
 	m_save_action->setEnabled(false);
-	connect(m_save_action, &QAction::triggered, this, &ScriptView::save);
+	connect(m_save_action, &QAction::triggered, this, [this]() { save(); });
 
 	m_toolbar->addSeparator();
 
@@ -130,7 +130,7 @@ void ScriptView::setupUi()
 //  Save
 // ─────────────────────────────────────────────────
 
-void ScriptView::save()
+bool ScriptView::save()
 {
 	if (!m_script->has_path())
 	{
@@ -139,7 +139,7 @@ void ScriptView::save()
 			tr("Phonometrica script (*.phon)"));
 
 		if (path.isEmpty())
-			return;
+			return false;
 
 		auto bytes = path.toUtf8();
 		m_script->set_path(String(bytes.constData(), bytes.size()), false);
@@ -151,6 +151,7 @@ void ScriptView::save()
 	m_script->save();
 	m_save_action->setEnabled(false);
 	emit titleChanged(label());
+	return true;
 }
 
 
@@ -211,6 +212,7 @@ void ScriptView::onModification()
 		m_script->set_pending_modifications();
 		m_save_action->setEnabled(true);
 		emit titleChanged(label());
+		emit modificationChanged(true);
 	}
 }
 
