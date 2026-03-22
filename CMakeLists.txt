@@ -330,6 +330,16 @@ if(WITH_GUI)
         icons/double_right.png
         icons/toggle_off.png
         icons/toggle_on.png
+        icons/play.png
+        icons/stop.png
+        icons/back.png
+        icons/next.png
+        icons/zoom_minus.png
+        icons/zoom_plus.png
+        icons/collapse.png
+        icons/expand.png
+        icons/mouse.png
+        icons/selection.png
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

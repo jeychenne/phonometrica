@@ -120,19 +120,22 @@ int AudioPlayer::playback(void *out, void *, unsigned int nframe, double stream_
 	actual_frames_read = end_pos - current_pos;
 
 	if (actual_frames_read > 0) {
-		// Get channel data directly from Sound object
+		// Get channel data directly from Sound's in-memory data using zero-copy views.
+		// channel_view returns std::span<const float>; we widen to double into pre-allocated buffers.
 		if (player->m_sound_data->is_mono()) {
-			// Mono: get the single channel and duplicate it
-			auto channel_data = player->m_sound_data->get_channel(1, current_pos, end_pos - 1);
-			std::copy(channel_data.begin(), channel_data.end(), player->m_left_channel_buffer.begin());
-			std::copy(channel_data.begin(), channel_data.end(), player->m_right_channel_buffer.begin());
+			auto view = player->m_sound_data->channel_view(1, current_pos, end_pos - 1);
+			for (size_t i = 0; i < view.size(); ++i) {
+				double s = static_cast<double>(view[i]);
+				player->m_left_channel_buffer[i] = s;
+				player->m_right_channel_buffer[i] = s;
+			}
 		} else {
-			// Stereo: get left and right channels separately
-			auto left_channel = player->m_sound_data->get_channel(1, current_pos, end_pos - 1);
-			auto right_channel = player->m_sound_data->get_channel(2, current_pos, end_pos - 1);
-
-			std::copy(left_channel.begin(), left_channel.end(), player->m_left_channel_buffer.begin());
-			std::copy(right_channel.begin(), right_channel.end(), player->m_right_channel_buffer.begin());
+			auto left_view = player->m_sound_data->channel_view(1, current_pos, end_pos - 1);
+			auto right_view = player->m_sound_data->channel_view(2, current_pos, end_pos - 1);
+			for (size_t i = 0; i < left_view.size(); ++i)
+				player->m_left_channel_buffer[i] = static_cast<double>(left_view[i]);
+			for (size_t i = 0; i < right_view.size(); ++i)
+				player->m_right_channel_buffer[i] = static_cast<double>(right_view[i]);
 		}
 	}
 
@@ -289,6 +292,16 @@ void AudioPlayer::initialize_resampling(uint32_t output_rate) {
 
 bool AudioPlayer::paused() const {
 	return m_paused.load(std::memory_order_relaxed);
+}
+
+bool AudioPlayer::finished_naturally() const {
+	return m_finished_naturally.load(std::memory_order_relaxed);
+}
+
+double AudioPlayer::currentPlaybackTime() const {
+	double input_rate = m_sound_data->sample_rate();
+	auto pos = m_current_source_position.load(std::memory_order_relaxed);
+	return static_cast<double>(pos) / input_rate;
 }
 
 void AudioPlayer::raise_error() {

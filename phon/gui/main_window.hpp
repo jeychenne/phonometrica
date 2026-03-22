@@ -20,6 +20,7 @@
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
+#include <QProgressBar>
 #include <QAction>
 #include <QMenu>
 
@@ -135,6 +136,9 @@ private:
 	QAction *m_redo_action = nullptr;
 	QAction *m_find_action = nullptr;
 	QAction *m_replace_action = nullptr;
+
+	// Progress bar in the status bar (for loading sounds, etc.)
+	QProgressBar *m_progress_bar = nullptr;
 };
 
 } // namespace phonometrica
