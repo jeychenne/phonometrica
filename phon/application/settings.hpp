@@ -112,6 +112,10 @@ public:
 
     static void reset_recent_projects();
 
+    // Callback to load a bundled script by name. Set by the GUI layer.
+    // The argument is a script name (e.g. "signal"), the return value is its content.
+    static std::function<String(const String &)> load_script;
+
 private:
 
 	static Runtime *runtime;
