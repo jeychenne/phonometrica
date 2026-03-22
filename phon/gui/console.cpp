@@ -34,6 +34,9 @@ Console::Console(Runtime &rt, QWidget *parent) :
 	setFont(QFont("Monospace", 12));
 #endif
 
+	// Make the console accessible from the runtime (used by ScriptView::execute).
+	rt.console = this;
+
 	// Redirect runtime output to the console.
 	if (!rt.is_text_mode())
 	{
@@ -223,6 +226,19 @@ void Console::appendOutput(const QString &text)
 	cursor.movePosition(QTextCursor::End);
 	cursor.insertText(text, QTextCharFormat());
 	setTextCursor(cursor);
+	goToEnd();
+}
+
+void Console::appendNewLine()
+{
+	auto cursor = textCursor();
+	cursor.movePosition(QTextCursor::End);
+	cursor.insertText("\n", QTextCharFormat());
+	setTextCursor(cursor);
+}
+
+void Console::scrollToEnd()
+{
 	goToEnd();
 }
 

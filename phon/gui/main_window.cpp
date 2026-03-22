@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
+#include <phon/gui/script_view.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -111,6 +112,29 @@ QMenu *MainWindow::createEditMenu()
 	m_undo_action->setEnabled(false);
 	m_redo_action->setEnabled(false);
 
+	menu->addSeparator();
+
+	m_find_action = menu->addAction(tr("Find..."), QKeySequence::Find, this, &MainWindow::onFind);
+	m_replace_action = menu->addAction(tr("Replace..."), QKeySequence(tr("Ctrl+H")), this, &MainWindow::onReplace);
+
+	// Save current view (Ctrl+S)
+	auto *saveView = new QAction(this);
+	saveView->setShortcut(QKeySequence::Save);
+	connect(saveView, &QAction::triggered, this, &MainWindow::onSaveCurrentView);
+	addAction(saveView);
+
+	// Execute script (Ctrl+Return)
+	auto *execView = new QAction(this);
+	execView->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Return));
+	connect(execView, &QAction::triggered, this, &MainWindow::onExecuteCurrentView);
+	addAction(execView);
+
+	// Escape
+	auto *escapeAction = new QAction(this);
+	escapeAction->setShortcut(QKeySequence(Qt::Key_Escape));
+	connect(escapeAction, &QAction::triggered, this, &MainWindow::onEscapeCurrentView);
+	addAction(escapeAction);
+
 	return menu;
 }
 
@@ -170,7 +194,20 @@ void MainWindow::createCentralWidget()
 	m_viewer->setDocumentMode(true);
 
 	connect(m_viewer, &QTabWidget::tabCloseRequested, [this](int index) {
-		// TODO: check for unsaved changes before closing
+		auto *sv = qobject_cast<ScriptView *>(m_viewer->widget(index));
+		if (sv && sv->isModified())
+		{
+			auto answer = QMessageBox::question(this, tr("Unsaved changes"),
+				tr("The script \"%1\" has unsaved changes. Save before closing?").arg(sv->label()),
+				QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+			if (answer == QMessageBox::Cancel)
+				return;
+			if (answer == QMessageBox::Save)
+				sv->save();
+			else
+				sv->discardChanges();
+		}
 		m_viewer->removeTab(index);
 	});
 
@@ -342,7 +379,8 @@ void MainWindow::setLastDirectory(const QString &path)
 
 void MainWindow::onNewScript()
 {
-	// TODO: create a script editor tab
+	auto script = make_handle<Script>(Project::get()->scripts().get());
+	openScript(script);
 	statusBar()->showMessage(tr("New script"), 2000);
 }
 
@@ -564,6 +602,14 @@ void MainWindow::onDocumentRequested(Document *doc)
 	// Check if this document is already open in a tab.
 	for (int i = 0; i < m_viewer->count(); i++)
 	{
+		// Check by ScriptView identity for scripts
+		auto *sv = qobject_cast<ScriptView *>(m_viewer->widget(i));
+		if (sv && sv->path() == doc->path())
+		{
+			m_viewer->setCurrentIndex(i);
+			return;
+		}
+
 		if (m_viewer->tabText(i) == qlabel)
 		{
 			m_viewer->setCurrentIndex(i);
@@ -571,6 +617,16 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 	}
 
+	// Handle scripts with a proper editor
+	if (doc->is<Script>())
+	{
+		auto *script = static_cast<Script *>(doc);
+		openScript(Handle<Script>(script));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
+	// Fallback placeholder for other document types
 	auto &path = doc->path();
 	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
 	auto *placeholder = new QLabel(tr("<h3>%1</h3><p>%2</p>").arg(qlabel, qpath));
@@ -580,6 +636,65 @@ void MainWindow::onDocumentRequested(Document *doc)
 	m_viewer->setCurrentIndex(tabIndex);
 
 	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+}
+
+
+// ---------------------------------------------------------
+//  Script view helpers
+// ---------------------------------------------------------
+
+void MainWindow::openScript(const Handle<Script> &script)
+{
+	auto *view = new ScriptView(m_runtime, m_console, script, m_viewer);
+
+	connect(view, &ScriptView::titleChanged, [this, view](const QString &title) {
+		int index = m_viewer->indexOf(view);
+		if (index >= 0)
+			m_viewer->setTabText(index, title);
+	});
+
+	int tabIndex = m_viewer->addTab(view, view->label());
+	m_viewer->setCurrentIndex(tabIndex);
+}
+
+ScriptView *MainWindow::currentScriptView() const
+{
+	return qobject_cast<ScriptView *>(m_viewer->currentWidget());
+}
+
+
+// ---------------------------------------------------------
+//  View-level actions (forwarded to active ScriptView)
+// ---------------------------------------------------------
+
+void MainWindow::onSaveCurrentView()
+{
+	if (auto *sv = currentScriptView())
+		sv->save();
+}
+
+void MainWindow::onExecuteCurrentView()
+{
+	if (auto *sv = currentScriptView())
+		sv->execute();
+}
+
+void MainWindow::onEscapeCurrentView()
+{
+	if (auto *sv = currentScriptView())
+		sv->escape();
+}
+
+void MainWindow::onFind()
+{
+	if (auto *sv = currentScriptView())
+		sv->find();
+}
+
+void MainWindow::onReplace()
+{
+	if (auto *sv = currentScriptView())
+		sv->replace();
 }
 
 } // namespace phonometrica

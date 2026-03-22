@@ -36,6 +36,12 @@ public:
 	// Display a new prompt at the current position.
 	void addPrompt();
 
+	// Append a newline (used before script output so it doesn't land on the prompt line).
+	void appendNewLine();
+
+	// Scroll to the end of the console.
+	void scrollToEnd();
+
 	// Run a script file in the console.
 	void runScript(const QString &path);
 

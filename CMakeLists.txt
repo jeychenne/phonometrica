@@ -259,6 +259,27 @@ if(WITH_GUI)
 
     find_package(Qt6 REQUIRED COMPONENTS Widgets)
 
+    # QScintilla (Qt wrapper for the Scintilla editor component).
+    # Try pkg-config first, then fall back to a manual search.
+    if(PKG_CONFIG_FOUND)
+        pkg_check_modules(QSCINTILLA QUIET qscintilla2-qt6)
+    endif()
+    if(NOT QSCINTILLA_FOUND)
+        find_library(QSCINTILLA_LIBRARIES NAMES qscintilla2_qt6 qscintilla2-qt6 qscintilla2)
+        find_path(QSCINTILLA_INCLUDE_DIRS Qsci/qsciscintilla.h
+            PATH_SUFFIXES qt6)
+        if(QSCINTILLA_LIBRARIES AND QSCINTILLA_INCLUDE_DIRS)
+            set(QSCINTILLA_FOUND TRUE)
+        endif()
+    endif()
+    if(NOT QSCINTILLA_FOUND)
+        message(FATAL_ERROR "QScintilla not found. Install libqscintilla2-qt6-dev (Debian/Ubuntu), "
+                            "qscintilla2 (Homebrew), or qscintilla (vcpkg).")
+    endif()
+    if(QSCINTILLA_INCLUDE_DIRS)
+        include_directories(${QSCINTILLA_INCLUDE_DIRS})
+    endif()
+
     file(GLOB_RECURSE GUI_SOURCES
         phon/gui/*.cpp
     )
@@ -267,7 +288,7 @@ if(WITH_GUI)
 
     set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets)
+    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets ${QSCINTILLA_LIBRARIES})
 endif()
 
 
@@ -301,6 +322,14 @@ if(WITH_GUI)
         icons/dataset.png
         icons/csv.png
         icons/document.png
+        icons/save.png
+        icons/start.png
+        icons/hint.png
+        icons/binary.png
+        icons/double_left.png
+        icons/double_right.png
+        icons/toggle_off.png
+        icons/toggle_on.png
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

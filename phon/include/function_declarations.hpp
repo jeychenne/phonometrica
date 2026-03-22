@@ -1,4 +1,8 @@
-static std::vector<std::pair<const char*, std::vector<wxString>>> function_declarations = {
+#include <vector>
+#include <utility>
+#include <QString>
+
+static std::vector<std::pair<const char*, std::vector<QString>>> function_declarations = {
 	{ "clear",  {
 		"clear(ref table as Table)\nRemoves all the elements in the table.\002",
 		"clear(ref list as List)\nEmpty the content of the list.\001"
