@@ -20,19 +20,31 @@
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/settings.hpp>
 
 namespace phonometrica {
+
+static constexpr int MAX_RECENT = 10;
+
 
 MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 	QMainWindow(parent), m_runtime(rt)
 {
-	setWindowTitle("Phonometrica");
 	resize(1200, 800);
 
 	createCentralWidget();
 	createDockWidgets();
 	createMenus();
 	createStatusBar();
+
+	auto *project = Project::get();
+	if (project)
+	{
+		project->notify_update.connect([this]() { updateWindowTitle(); });
+		project->notify_closed.connect([this]() { updateWindowTitle(); });
+	}
+
+	updateWindowTitle();
 }
 
 void MainWindow::createMenus()
@@ -54,8 +66,30 @@ QMenu *MainWindow::createFileMenu()
 	menu->addSeparator();
 
 	menu->addAction(tr("Open project..."), QKeySequence(tr("Ctrl+O")), this, &MainWindow::onOpenProject);
+
+	m_recent_menu = menu->addMenu(tr("Recent projects"));
+	rebuildRecentMenu();
+
+	menu->addAction(tr("Open most recent project"), QKeySequence(tr("Ctrl+Shift+O")), this, [this]() {
+		try
+		{
+			auto &lst = Settings::get_list("recent_projects");
+			if (lst.empty()) return;
+			auto path = cast<String>(lst[1]);
+			Project::get()->open(path);
+			m_file_manager->refresh();
+			updateRecentProjects(path);
+			updateWindowTitle();
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Error"),
+				tr("Could not open project: %1").arg(e.what()));
+		}
+	});
+
 	menu->addAction(tr("Add files to project..."), QKeySequence(tr("Ctrl+Shift+A")), this, &MainWindow::onAddFiles);
-	menu->addAction(tr("Add directory to project..."), this, &MainWindow::onAddFolder);
+	menu->addAction(tr("Add content of directory to project..."), this, &MainWindow::onAddFolder);
 	menu->addAction(tr("Close project"), this, &MainWindow::onCloseProject);
 	menu->addSeparator();
 
@@ -83,7 +117,6 @@ QMenu *MainWindow::createEditMenu()
 QMenu *MainWindow::createAnalysisMenu()
 {
 	auto *menu = new QMenu(tr("&Analysis"), this);
-	// Placeholder — will be populated when query/analysis features are wired up.
 	menu->addAction(tr("(coming soon)"))->setEnabled(false);
 	return menu;
 }
@@ -91,7 +124,6 @@ QMenu *MainWindow::createAnalysisMenu()
 QMenu *MainWindow::createToolsMenu()
 {
 	auto *menu = new QMenu(tr("&Tools"), this);
-	// Placeholder — plugins will be loaded here.
 	menu->addAction(tr("(coming soon)"))->setEnabled(false);
 	return menu;
 }
@@ -142,7 +174,6 @@ void MainWindow::createCentralWidget()
 		m_viewer->removeTab(index);
 	});
 
-	// Show a welcome message when no tabs are open
 	auto *welcome = new QLabel(tr("<h2>Welcome to Phonometrica</h2>"
 	                              "<p>Open a project or add files to get started.</p>"));
 	welcome->setAlignment(Qt::AlignCenter);
@@ -189,7 +220,137 @@ void MainWindow::createStatusBar()
 }
 
 
-// --- Slots ---
+// ---------------------------------------------------------
+//  Window title
+// ---------------------------------------------------------
+
+void MainWindow::updateWindowTitle()
+{
+	auto *project = Project::get();
+
+	// Window title is always just "Phonometrica"
+	setWindowTitle(tr("Phonometrica"));
+
+	// Project name goes in the dock widget title
+	if (project && m_project_dock)
+	{
+		auto label = project->label();
+		auto title = QString::fromUtf8(label.data(), (int) label.size());
+		if (project->modified())
+			title += tr(" *");
+		m_project_dock->setWindowTitle(title);
+	}
+	else if (m_project_dock)
+	{
+		m_project_dock->setWindowTitle(tr("Project"));
+	}
+}
+
+
+// ---------------------------------------------------------
+//  Recent projects
+// ---------------------------------------------------------
+
+void MainWindow::updateRecentProjects(const String &mostRecent)
+{
+	try
+	{
+		auto &lst = Settings::get_list("recent_projects");
+
+		if (!mostRecent.empty())
+		{
+			lst.remove(mostRecent);
+			lst.prepend(mostRecent);
+
+			while (lst.size() > MAX_RECENT)
+				lst.pop_back();
+		}
+	}
+	catch (...)
+	{
+	}
+
+	rebuildRecentMenu();
+}
+
+void MainWindow::rebuildRecentMenu()
+{
+	if (!m_recent_menu)
+		return;
+
+	m_recent_menu->clear();
+
+	try
+	{
+		auto &lst = Settings::get_list("recent_projects");
+
+		for (intptr_t i = 1; i <= lst.size() && i <= MAX_RECENT; i++)
+		{
+			auto path = cast<String>(lst[i]);
+			auto qpath = QString::fromUtf8(path.data(), (int) path.size());
+			m_recent_menu->addAction(qpath, [this, path]() {
+				try
+				{
+					Project::get()->open(path);
+					m_file_manager->refresh();
+					updateRecentProjects(path);
+					updateWindowTitle();
+				}
+				catch (std::exception &e)
+				{
+					QMessageBox::warning(this, tr("Error"),
+						tr("Could not open project: %1").arg(e.what()));
+				}
+			});
+		}
+
+		if (!lst.empty())
+		{
+			m_recent_menu->addSeparator();
+			m_recent_menu->addAction(tr("Clear recent projects"), [this]() {
+				Settings::reset_recent_projects();
+				rebuildRecentMenu();
+			});
+		}
+	}
+	catch (...)
+	{
+	}
+
+	m_recent_menu->setEnabled(!m_recent_menu->isEmpty());
+}
+
+
+// ---------------------------------------------------------
+//  File dialog helpers
+// ---------------------------------------------------------
+
+QString MainWindow::lastDirectory() const
+{
+	try
+	{
+		auto dir = Settings::get_last_directory();
+		if (!dir.empty())
+			return QString::fromUtf8(dir.data(), (int) dir.size());
+	}
+	catch (...) { }
+
+	return QString();
+}
+
+void MainWindow::setLastDirectory(const QString &path)
+{
+	if (!path.isEmpty())
+	{
+		auto bytes = path.toUtf8();
+		Settings::set_last_directory(String(bytes.constData(), bytes.size()));
+	}
+}
+
+
+// ---------------------------------------------------------
+//  Slots
+// ---------------------------------------------------------
 
 void MainWindow::onNewScript()
 {
@@ -200,44 +361,81 @@ void MainWindow::onNewScript()
 void MainWindow::onOpenProject()
 {
 	auto path = QFileDialog::getOpenFileName(this, tr("Open project"),
-		QString(), tr("Phonometrica project (*.phon-project)"));
+		lastDirectory(), tr("Phonometrica project (*.phon-project)"));
 
-	if (!path.isEmpty())
+	if (path.isEmpty())
+		return;
+
+	setLastDirectory(path);
+
+	try
 	{
-		auto bytes = path.toUtf8();
-		Project::get()->open(String(bytes.constData(), bytes.size()));
+		Project::get()->open(String(path.toUtf8().constData()));
 		m_file_manager->refresh();
+		updateRecentProjects(String(path.toUtf8().constData()));
+		updateWindowTitle();
 		statusBar()->showMessage(tr("Opened project: %1").arg(path), 3000);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::warning(this, tr("Error"),
+			tr("Could not open project: %1").arg(e.what()));
 	}
 }
 
 void MainWindow::onAddFiles()
 {
-	auto files = QFileDialog::getOpenFileNames(this, tr("Add files to project"));
+	auto files = QFileDialog::getOpenFileNames(this, tr("Add files to project"),
+		lastDirectory());
 
-	if (!files.isEmpty())
+	if (files.isEmpty())
+		return;
+
+	setLastDirectory(files.first());
+
+	auto *project = Project::get();
+	int added = 0;
+
+	for (auto &f : files)
 	{
-		auto *project = Project::get();
-		for (auto &f : files)
+		try
 		{
-			auto bytes = f.toUtf8();
-			project->import_file(String(bytes.constData(), bytes.size()));
+			project->import_file(String(f.toUtf8().constData()));
+			added++;
 		}
-		m_file_manager->refresh();
-		statusBar()->showMessage(tr("Added %1 file(s)").arg(files.size()), 3000);
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Import error"),
+				tr("Could not import \"%1\": %2").arg(f, e.what()));
+		}
 	}
+
+	m_file_manager->refresh();
+	updateWindowTitle();
+	statusBar()->showMessage(tr("Added %1 file(s)").arg(added), 3000);
 }
 
 void MainWindow::onAddFolder()
 {
-	auto dir = QFileDialog::getExistingDirectory(this, tr("Add directory to project"));
+	auto dir = QFileDialog::getExistingDirectory(this, tr("Add directory to project"),
+		lastDirectory());
 
-	if (!dir.isEmpty())
+	if (dir.isEmpty())
+		return;
+
+	setLastDirectory(dir);
+
+	try
 	{
-		auto bytes = dir.toUtf8();
-		Project::get()->import_directory(String(bytes.constData(), bytes.size()));
+		Project::get()->import_directory(String(dir.toUtf8().constData()));
 		m_file_manager->refresh();
+		updateWindowTitle();
 		statusBar()->showMessage(tr("Added directory: %1").arg(dir), 3000);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::warning(this, tr("Import error"),
+			tr("Could not import directory: %1").arg(e.what()));
 	}
 }
 
@@ -253,11 +451,23 @@ void MainWindow::onCloseProject()
 		if (answer == QMessageBox::Cancel)
 			return;
 		if (answer == QMessageBox::Save)
-			project->save();
+		{
+			if (!project->has_path())
+			{
+				onSaveProjectAs();
+				if (!project->has_path())
+					return;
+			}
+			else
+			{
+				project->save();
+			}
+		}
 	}
 
 	Project::close();
 	m_file_manager->refresh();
+	updateWindowTitle();
 	statusBar()->showMessage(tr("Project closed"), 2000);
 }
 
@@ -269,20 +479,41 @@ void MainWindow::onSaveProject()
 		onSaveProjectAs();
 		return;
 	}
-	project->save();
-	statusBar()->showMessage(tr("Project saved"), 2000);
+
+	try
+	{
+		project->save();
+		updateWindowTitle();
+		statusBar()->showMessage(tr("Project saved"), 2000);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::warning(this, tr("Error"),
+			tr("Could not save project: %1").arg(e.what()));
+	}
 }
 
 void MainWindow::onSaveProjectAs()
 {
 	auto path = QFileDialog::getSaveFileName(this, tr("Save project as"),
-		QString(), tr("Phonometrica project (*.phon-project)"));
+		lastDirectory(), tr("Phonometrica project (*.phon-project)"));
 
-	if (!path.isEmpty())
+	if (path.isEmpty())
+		return;
+
+	setLastDirectory(path);
+
+	try
 	{
-		auto bytes = path.toUtf8();
-		Project::get()->save(String(bytes.constData(), bytes.size()));
+		Project::get()->save(String(path.toUtf8().constData()));
+		updateRecentProjects(String(path.toUtf8().constData()));
+		updateWindowTitle();
 		statusBar()->showMessage(tr("Project saved as: %1").arg(path), 3000);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::warning(this, tr("Error"),
+			tr("Could not save project: %1").arg(e.what()));
 	}
 }
 
@@ -298,7 +529,18 @@ void MainWindow::onQuit()
 		if (answer == QMessageBox::Cancel)
 			return;
 		if (answer == QMessageBox::Save)
-			project->save();
+		{
+			if (!project->has_path())
+			{
+				onSaveProjectAs();
+				if (!project->has_path())
+					return;
+			}
+			else
+			{
+				project->save();
+			}
+		}
 	}
 	close();
 }
@@ -328,8 +570,6 @@ void MainWindow::onDocumentRequested(Document *doc)
 	if (!doc)
 		return;
 
-	// TODO: open the document in the appropriate viewer tab.
-	// For now, show a placeholder with the file path.
 	auto label = doc->label();
 	auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
 
@@ -343,7 +583,6 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 	}
 
-	// Create a placeholder tab for now.
 	auto &path = doc->path();
 	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
 	auto *placeholder = new QLabel(tr("<h3>%1</h3><p>%2</p>").arg(qlabel, qpath));

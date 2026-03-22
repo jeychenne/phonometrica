@@ -14,6 +14,7 @@
 #ifndef PHONOMETRICA_MAIN_WINDOW_HPP
 #define PHONOMETRICA_MAIN_WINDOW_HPP
 
+#include <phon/string.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
@@ -75,7 +76,15 @@ private:
 	QMenu *createWindowMenu();
 	QMenu *createHelpMenu();
 
+	void updateWindowTitle();
+	void updateRecentProjects(const String &mostRecent = String());
+	void rebuildRecentMenu();
+	QString lastDirectory() const;
+	void setLastDirectory(const QString &path);
+
 	Runtime &m_runtime;
+
+	QMenu *m_recent_menu = nullptr;
 
 	// Central area: tabbed views for sounds, annotations, scripts, etc.
 	QTabWidget *m_viewer = nullptr;
