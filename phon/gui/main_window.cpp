@@ -16,6 +16,7 @@
 #include <QStatusBar>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QCloseEvent>
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
@@ -43,7 +44,10 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 	auto *project = Project::get();
 	if (project)
 	{
-		project->notify_update.connect([this]() { updateWindowTitle(); });
+		project->notify_update.connect([this]() {
+			updateWindowTitle();
+			m_file_manager->refresh();
+		});
 		project->notify_closed.connect([this]() { updateWindowTitle(); });
 	}
 
@@ -553,30 +557,87 @@ void MainWindow::onSaveProjectAs()
 
 void MainWindow::onQuit()
 {
-	auto *project = Project::get();
-	if (project && project->modified())
+	close(); // This triggers closeEvent().
+}
+
+void MainWindow::closeEvent(QCloseEvent *event)
+{
+	if (!promptSaveUnsavedTabs())
 	{
-		auto answer = QMessageBox::question(this, tr("Quit"),
-			tr("The project has unsaved changes. Save before quitting?"),
+		event->ignore();
+		return;
+	}
+
+	if (!promptSaveProject())
+	{
+		event->ignore();
+		return;
+	}
+
+	event->accept();
+}
+
+bool MainWindow::promptSaveUnsavedTabs()
+{
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel || !panel->isModified())
+			continue;
+
+		// Bring the tab into view so the user knows which one we're asking about.
+		m_viewer->setCurrentIndex(i);
+
+		auto answer = QMessageBox::question(this, tr("Unsaved changes"),
+			tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
 			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
 
 		if (answer == QMessageBox::Cancel)
-			return;
+			return false;
+
 		if (answer == QMessageBox::Save)
 		{
-			if (!project->has_path())
-			{
-				onSaveProjectAs();
-				if (!project->has_path())
-					return;
-			}
-			else
-			{
-				project->save();
-			}
+			if (!panel->saveAll())
+				return false; // Save was cancelled (e.g. user dismissed the file dialog).
+		}
+		else
+		{
+			for (auto *v : panel->views())
+				v->discardChanges();
 		}
 	}
-	close();
+
+	return true;
+}
+
+bool MainWindow::promptSaveProject()
+{
+	auto *project = Project::get();
+	if (!project || !project->modified())
+		return true;
+
+	auto answer = QMessageBox::question(this, tr("Quit"),
+		tr("The project has unsaved changes. Save before quitting?"),
+		QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+	if (answer == QMessageBox::Cancel)
+		return false;
+
+	if (answer == QMessageBox::Save)
+	{
+		if (!project->has_path())
+		{
+			onSaveProjectAs();
+			if (!project->has_path())
+				return false; // User cancelled the "save as" dialog.
+		}
+		else
+		{
+			project->save();
+		}
+	}
+
+	return true;
 }
 
 void MainWindow::onUndo()
@@ -659,6 +720,10 @@ ViewPanel *MainWindow::addViewTab(View *view)
 		int index = m_viewer->indexOf(panel);
 		if (index >= 0)
 			m_viewer->setTabText(index, title);
+	});
+
+	connect(view, &View::addedToProject, [this]() {
+		m_file_manager->refresh();
 	});
 
 	int tabIndex = m_viewer->addTab(panel, panel->label());

@@ -64,6 +64,9 @@ signals:
 
 	// Emitted when the modification state changes.
 	void modificationChanged(bool modified);
+
+	// Emitted when this view registers a new file with the project.
+	void addedToProject();
 };
 
 } // namespace phonometrica
