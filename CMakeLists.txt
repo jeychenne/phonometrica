@@ -14,7 +14,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ##  COMPILATION OPTIONS  ##
 ###########################
 
-option(EMBED_SCRIPTS      "Embed scripts as strings"            OFF)
+option(EMBED_SCRIPTS      "Embed scripts as strings"            ON)
 option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
 option(WITH_APPLICATION   "Build the application layer"         ON)
 option(WITH_GUI           "Build the user interface"            ON)
@@ -264,17 +264,18 @@ if(WITH_GUI)
     )
 
     add_library(phon-gui STATIC ${GUI_SOURCES})
+
     set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
+
     target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets)
 endif()
 
 
 ####################
 ##  EXECUTABLE    ##
-##  (replaces the existing section)
 ####################
 
-add_executable(${PROJECT_NAME} phonometrica.cpp)
+add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE phon-runtime pcre2-8)
 
 if(WITH_APPLICATION)
@@ -283,6 +284,24 @@ endif()
 
 if(WITH_GUI)
     target_link_libraries(${PROJECT_NAME} PRIVATE phon-gui Qt6::Widgets)
+
+    qt6_add_resources(${PROJECT_NAME} "icons" FILES
+        icons/corpus.svg
+        icons/search.svg
+        icons/terminal.svg
+        icons/spreadsheet.svg
+        icons/favorite.svg
+        icons/folder.png
+        icons/sound.png
+        icons/annotation.png
+        icons/textgrid.png
+        icons/script.png
+        icons/bookmark.png
+        icons/query.png
+        icons/dataset.png
+        icons/csv.png
+        icons/document.png
+    )
 endif()
 
 if(WIN32)
@@ -290,6 +309,7 @@ if(WIN32)
 else()
     target_link_libraries(${PROJECT_NAME} PRIVATE m)
 endif()
+
 
 
 ####################

@@ -18,6 +18,8 @@
 #include <QMessageBox>
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
+#include <phon/gui/file_manager.hpp>
+#include <phon/application/project.hpp>
 
 namespace phonometrica {
 
@@ -121,7 +123,8 @@ QMenu *MainWindow::createHelpMenu()
 			   "<p>An open-source platform for the annotation "
 			   "and analysis of speech corpora.</p>"
                "<p>&copy; 2019-2026 Julien Eychenne</p>"
-               "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>"));
+               "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>"
+               "<a target=\"_blank\" href=\"https://icons8.com/icon/Wy3XKG1CjyKf/database\">Database</a> icons by <a target=\"_blank\" href=\"https://icons8.com\">Icons8</a>"));
 	});
 
 	return menu;
@@ -154,20 +157,10 @@ void MainWindow::createDockWidgets()
 	m_project_dock = new QDockWidget(tr("Project"), this);
 	m_project_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-	m_project_tree = new QTreeWidget(m_project_dock);
-	m_project_tree->setHeaderHidden(true);
-	m_project_tree->setRootIsDecorated(true);
+	m_file_manager = new FileManager(Project::get(), m_project_dock);
+	connect(m_file_manager, &FileManager::documentRequested, this, &MainWindow::onDocumentRequested);
 
-	// Create the five root folders
-	auto *corpus_item = new QTreeWidgetItem(m_project_tree, {tr("Corpus")});
-    auto *queries_item = new QTreeWidgetItem(m_project_tree, {tr("Queries")});
-    auto *scripts_item = new QTreeWidgetItem(m_project_tree, {tr("Scripts")});
-    auto *data_item = new QTreeWidgetItem(m_project_tree, {tr("Data tables")});
-    auto *bookmarks_item = new QTreeWidgetItem(m_project_tree, {tr("Bookmarks")});
-
-	corpus_item->setExpanded(true);
-
-	m_project_dock->setWidget(m_project_tree);
+	m_project_dock->setWidget(m_file_manager);
 	addDockWidget(Qt::LeftDockWidgetArea, m_project_dock);
 
 	// Console dock (bottom)
@@ -211,7 +204,9 @@ void MainWindow::onOpenProject()
 
 	if (!path.isEmpty())
 	{
-		// TODO: Project::get()->open(path)
+		auto bytes = path.toUtf8();
+		Project::get()->open(String(bytes.constData(), bytes.size()));
+		m_file_manager->refresh();
 		statusBar()->showMessage(tr("Opened project: %1").arg(path), 3000);
 	}
 }
@@ -222,7 +217,13 @@ void MainWindow::onAddFiles()
 
 	if (!files.isEmpty())
 	{
-		// TODO: for each file, Project::get()->import_file(path)
+		auto *project = Project::get();
+		for (auto &f : files)
+		{
+			auto bytes = f.toUtf8();
+			project->import_file(String(bytes.constData(), bytes.size()));
+		}
+		m_file_manager->refresh();
 		statusBar()->showMessage(tr("Added %1 file(s)").arg(files.size()), 3000);
 	}
 }
@@ -233,20 +234,42 @@ void MainWindow::onAddFolder()
 
 	if (!dir.isEmpty())
 	{
-		// TODO: Project::get()->import_directory(path)
+		auto bytes = dir.toUtf8();
+		Project::get()->import_directory(String(bytes.constData(), bytes.size()));
+		m_file_manager->refresh();
 		statusBar()->showMessage(tr("Added directory: %1").arg(dir), 3000);
 	}
 }
 
 void MainWindow::onCloseProject()
 {
-	// TODO: check for unsaved changes, then Project::close()
+	auto *project = Project::get();
+	if (project->modified())
+	{
+		auto answer = QMessageBox::question(this, tr("Close project"),
+			tr("The project has unsaved changes. Save before closing?"),
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+		if (answer == QMessageBox::Cancel)
+			return;
+		if (answer == QMessageBox::Save)
+			project->save();
+	}
+
+	Project::close();
+	m_file_manager->refresh();
 	statusBar()->showMessage(tr("Project closed"), 2000);
 }
 
 void MainWindow::onSaveProject()
 {
-	// TODO: Project::get()->save()
+	auto *project = Project::get();
+	if (!project->has_path())
+	{
+		onSaveProjectAs();
+		return;
+	}
+	project->save();
 	statusBar()->showMessage(tr("Project saved"), 2000);
 }
 
@@ -257,14 +280,26 @@ void MainWindow::onSaveProjectAs()
 
 	if (!path.isEmpty())
 	{
-		// TODO: Project::get()->save(path)
+		auto bytes = path.toUtf8();
+		Project::get()->save(String(bytes.constData(), bytes.size()));
 		statusBar()->showMessage(tr("Project saved as: %1").arg(path), 3000);
 	}
 }
 
 void MainWindow::onQuit()
 {
-	// TODO: check for unsaved changes
+	auto *project = Project::get();
+	if (project && project->modified())
+	{
+		auto answer = QMessageBox::question(this, tr("Quit"),
+			tr("The project has unsaved changes. Save before quitting?"),
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+		if (answer == QMessageBox::Cancel)
+			return;
+		if (answer == QMessageBox::Save)
+			project->save();
+	}
 	close();
 }
 
@@ -286,6 +321,38 @@ void MainWindow::onToggleProjectPanel(bool visible)
 void MainWindow::onToggleConsolePanel(bool visible)
 {
 	m_console_dock->setVisible(visible);
+}
+
+void MainWindow::onDocumentRequested(Document *doc)
+{
+	if (!doc)
+		return;
+
+	// TODO: open the document in the appropriate viewer tab.
+	// For now, show a placeholder with the file path.
+	auto label = doc->label();
+	auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
+
+	// Check if this document is already open in a tab.
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		if (m_viewer->tabText(i) == qlabel)
+		{
+			m_viewer->setCurrentIndex(i);
+			return;
+		}
+	}
+
+	// Create a placeholder tab for now.
+	auto &path = doc->path();
+	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
+	auto *placeholder = new QLabel(tr("<h3>%1</h3><p>%2</p>").arg(qlabel, qpath));
+	placeholder->setAlignment(Qt::AlignCenter);
+
+	int tabIndex = m_viewer->addTab(placeholder, qlabel);
+	m_viewer->setCurrentIndex(tabIndex);
+
+	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
 }
 
 } // namespace phonometrica
