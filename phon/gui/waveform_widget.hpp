@@ -23,6 +23,14 @@
 
 namespace phonometrica {
 
+// Waveform amplitude scaling mode.
+enum class Scaling
+{
+	Local,  // Fit to visible window peak (Praat default).
+	Global, // Fit to file peak.
+	Fixed   // Always -1 to +1.
+};
+
 class WaveformWidget : public QWidget
 {
 	Q_OBJECT
@@ -33,6 +41,9 @@ public:
 	WaveformWidget(TimeModel *model, const Handle<Sound> &sound, int channel, QWidget *parent = nullptr);
 
 	void setGlobalMagnitude(double value);
+	double magnitude() const { return m_magnitude; }
+
+	void setScaling(Scaling mode);
 
 	void setMouseTracking(bool enabled);
 
@@ -75,6 +86,7 @@ private:
 
 	double m_magnitude = 1.0;
 	double m_global_magnitude = 1.0;
+	Scaling m_scaling = Scaling::Local;
 
 	// Dragging state for selection.
 	bool m_dragging = false;

@@ -85,6 +85,10 @@ signals:
 	// Emitted when the selection changes.
 	void selectionChanged(Element *elem);
 
+protected:
+
+	bool eventFilter(QObject *obj, QEvent *event) override;
+
 private slots:
 
 	void onDoubleClicked(const QModelIndex &proxyIndex);

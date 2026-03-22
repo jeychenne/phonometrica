@@ -27,6 +27,8 @@ TimeAxisWidget::TimeAxisWidget(TimeModel *model, QWidget *parent) :
 	connect(m_model, &TimeModel::viewportChanged, this, &TimeAxisWidget::onViewportChanged);
 	connect(m_model, &TimeModel::selectionChanged, this, &TimeAxisWidget::onSelectionChanged);
 	connect(m_model, &TimeModel::selectionCleared, this, &TimeAxisWidget::onSelectionCleared);
+	connect(m_model, &TimeModel::cursorChanged, this, &TimeAxisWidget::onCursorChanged);
+	connect(m_model, &TimeModel::cursorCleared, this, &TimeAxisWidget::onCursorCleared);
 }
 
 void TimeAxisWidget::onViewportChanged(double, double)
@@ -40,6 +42,16 @@ void TimeAxisWidget::onSelectionChanged(double, double)
 }
 
 void TimeAxisWidget::onSelectionCleared()
+{
+	update();
+}
+
+void TimeAxisWidget::onCursorChanged(double)
+{
+	update();
+}
+
+void TimeAxisWidget::onCursorCleared()
 {
 	update();
 }
@@ -64,7 +76,7 @@ void TimeAxisWidget::paintEvent(QPaintEvent *)
 
 	// Track rectangles occupied by selection labels so we can avoid overlaps
 	// when drawing the window boundary labels.
-	QRect used_area1, used_area2;
+	QRect used_area1, used_area2, used_area_cursor;
 
 	if (m_model->hasSelection())
 	{
@@ -119,6 +131,30 @@ void TimeAxisWidget::paintEvent(QPaintEvent *)
 		}
 	}
 
+	// Mouse tracking cursor label (gray, matches the dashed cursor line).
+	if (m_model->hasCursor())
+	{
+		QString time = QString::number(m_model->cursorTime(), 'f', 4);
+		int tw = fm.horizontalAdvance(time);
+		int th = fm.height();
+		int x = int(timeToX(m_model->cursorTime())) + 3;
+		int y = h - th - 1;
+
+		if (x + tw > width())
+			x = width() - tw;
+
+		QRect rect(x, y, tw, th);
+
+		if (!rect.intersects(used_area1) && !rect.intersects(used_area2))
+		{
+			painter.save();
+			painter.setPen(Qt::gray);
+			painter.drawText(x, y + fm.ascent(), time);
+			painter.restore();
+			used_area_cursor = rect;
+		}
+	}
+
 	// Window start label (left-aligned).
 	{
 		QString from = QString::number(m_model->windowStart(), 'f', 4);
@@ -128,7 +164,7 @@ void TimeAxisWidget::paintEvent(QPaintEvent *)
 		int y = h - th - 1;
 		QRect rect(x, y, tw, th);
 
-		if (!rect.intersects(used_area1) && !rect.intersects(used_area2))
+		if (!rect.intersects(used_area1) && !rect.intersects(used_area2) && !rect.intersects(used_area_cursor))
 			painter.drawText(x, y + fm.ascent(), from);
 	}
 
@@ -141,7 +177,7 @@ void TimeAxisWidget::paintEvent(QPaintEvent *)
 		int y = h - th - 1;
 		QRect rect(x, y, tw, th);
 
-		if (!rect.intersects(used_area1) && !rect.intersects(used_area2))
+		if (!rect.intersects(used_area1) && !rect.intersects(used_area2) && !rect.intersects(used_area_cursor))
 			painter.drawText(x, y + fm.ascent(), to);
 	}
 }

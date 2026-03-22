@@ -12,10 +12,12 @@
  ***********************************************************************************************************************/
 
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QFrame>
 #include <algorithm>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/time_axis_widget.hpp>
+#include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
@@ -68,15 +70,34 @@ void SoundView::setupUi()
 	createToolBar();
 	layout->addWidget(m_toolbar);
 
+	// Middle section: Y axis | plot column (time axis + waveforms + annotation layers).
+	auto *mid_layout = new QHBoxLayout;
+	mid_layout->setContentsMargins(0, 0, 0, 0);
+	mid_layout->setSpacing(0);
+
+	m_y_axis = new YAxisWidget(m_model, this);
+	mid_layout->addWidget(m_y_axis);
+
+	auto *plot_layout = new QVBoxLayout;
+	plot_layout->setContentsMargins(0, 0, 0, 0);
+	plot_layout->setSpacing(0);
+
 	// Time axis: shows viewport boundaries and selection times.
 	m_time_axis = new TimeAxisWidget(m_model, this);
-	layout->addWidget(m_time_axis);
+	plot_layout->addWidget(m_time_axis);
 
 	// Waveforms
-	createWaveforms(layout);
+	createWaveforms(plot_layout);
+
+	// Register all waveforms with the Y axis (hidden ones are skipped during paint).
+	for (auto *wf : m_waveforms)
+		m_y_axis->addWaveform(wf);
 
 	// Hook for annotation layers (subclass override).
-	addAnnotationLayers(layout);
+	addAnnotationLayers(plot_layout);
+
+	mid_layout->addLayout(plot_layout, 1);
+	layout->addLayout(mid_layout, 1);
 
 	// SoundZoom: visual connector between waveforms and wavebar.
 	m_zoom = new SoundZoom(this);
@@ -158,6 +179,39 @@ void SoundView::createToolBar()
 	mouse_action->setCheckable(true);
 	mouse_action->setChecked(false);
 	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
+
+	m_toolbar->addSeparator();
+
+	// Waveform menu button with scaling options.
+	auto *wave_menu = new QMenu(this);
+	auto *scaling_group = new QActionGroup(this);
+	scaling_group->setExclusive(true);
+
+	auto *local_action = wave_menu->addAction(tr("Local scaling"));
+	local_action->setCheckable(true);
+	local_action->setChecked(true);
+	local_action->setData(static_cast<int>(Scaling::Local));
+	scaling_group->addAction(local_action);
+
+	auto *global_action = wave_menu->addAction(tr("Global scaling"));
+	global_action->setCheckable(true);
+	global_action->setData(static_cast<int>(Scaling::Global));
+	scaling_group->addAction(global_action);
+
+	auto *fixed_action = wave_menu->addAction(tr("Fixed (-1..+1)"));
+	fixed_action->setCheckable(true);
+	fixed_action->setData(static_cast<int>(Scaling::Fixed));
+	scaling_group->addAction(fixed_action);
+
+	connect(scaling_group, &QActionGroup::triggered, this, &SoundView::onScalingChanged);
+
+	auto *wave_button = new QToolButton(this);
+	wave_button->setStyleSheet("QToolButton::menu-indicator { subcontrol-position: bottom right; }");
+	wave_button->setIcon(QIcon(":/icons/waveform.png"));
+	wave_button->setToolTip(tr("Waveform settings"));
+	wave_button->setPopupMode(QToolButton::InstantPopup);
+	wave_button->setMenu(wave_menu);
+	m_toolbar->addWidget(wave_button);
 }
 
 void SoundView::createWaveforms(QLayout *layout)
@@ -274,6 +328,14 @@ void SoundView::onToggleMouseTracking(bool checked)
 {
 	for (auto *wf : m_waveforms)
 		wf->setMouseTracking(checked);
+}
+
+void SoundView::onScalingChanged(QAction *action)
+{
+	auto mode = static_cast<Scaling>(action->data().toInt());
+	for (auto *wf : m_waveforms)
+		wf->setScaling(mode);
+	m_y_axis->update();
 }
 
 

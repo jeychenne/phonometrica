@@ -49,7 +49,25 @@ WaveformWidget::WaveformWidget(TimeModel *model, const Handle<Sound> &sound, int
 void WaveformWidget::setGlobalMagnitude(double value)
 {
 	m_global_magnitude = value;
-	m_magnitude = value;
+	// Only update the active magnitude if we're in global mode.
+	if (m_scaling == Scaling::Global)
+	{
+		m_magnitude = value;
+		m_cache_valid = false;
+		update();
+	}
+}
+
+void WaveformWidget::setScaling(Scaling mode)
+{
+	if (m_scaling == mode)
+		return;
+	m_scaling = mode;
+	if (mode == Scaling::Fixed)
+		m_magnitude = 1.0;
+	else if (mode == Scaling::Global)
+		m_magnitude = m_global_magnitude;
+	// Local magnitude is recomputed on every draw.
 	m_cache_valid = false;
 	update();
 }
@@ -181,6 +199,22 @@ std::vector<double> WaveformWidget::computeWaveform()
 
 		auto sample_count = (intptr_t)channels[0].size();
 
+		// Update magnitude for local scaling mode.
+		if (m_scaling == Scaling::Local)
+		{
+			double peak = 0;
+			for (intptr_t x = 0; x < sample_count; x++)
+			{
+				double s = 0;
+				for (int c = 0; c < nchannel; c++)
+					s += channels[c][x];
+				s /= nchannel;
+				double a = std::abs(s);
+				if (a > peak) peak = a;
+			}
+			m_magnitude = (peak > 0) ? peak : 1.0;
+		}
+
 		if (sample_count >= w * 2)
 		{
 			std::vector<double> wave(w * 2);
@@ -235,6 +269,18 @@ std::vector<double> WaveformWidget::computeWaveform()
 		// Specific channel — use channel_view for zero-copy access.
 		auto data = m_sound->channel_view(m_channel, first_sample, last_sample);
 		auto sample_count = (intptr_t)data.size();
+
+		// Update magnitude for local scaling mode.
+		if (m_scaling == Scaling::Local)
+		{
+			double peak = 0;
+			for (intptr_t x = 0; x < sample_count; x++)
+			{
+				double a = std::abs(double(data[x]));
+				if (a > peak) peak = a;
+			}
+			m_magnitude = (peak > 0) ? peak : 1.0;
+		}
 
 		if (sample_count >= w * 2)
 		{
@@ -356,6 +402,10 @@ void WaveformWidget::mousePressEvent(QMouseEvent *event)
 		m_dragging = true;
 		m_drag_start_time = xToTime(event->position().x());
 		m_model->setSelection(m_drag_start_time, m_drag_start_time);
+	}
+	else if (event->button() == Qt::MiddleButton)
+	{
+		m_model->zoomToSelection();
 	}
 }
 

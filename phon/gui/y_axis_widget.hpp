@@ -7,48 +7,44 @@
  *                                                                                                                     *
  * Created: 22/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Widget to display time information between the toolbar and the plots in sound and annotation views.        *
- *          Shows the current viewport boundaries (left/right) and selection times in a contrasting colour.             *
- *          Clicking the widget clears the current selection.                                                           *
+ * Purpose: Widget to display amplitude labels to the left of the waveforms in sound and annotation views.             *
+ *          Draws +magnitude / 0 / -magnitude for each registered waveform, positioned to match the waveform's         *
+ *          vertical extent. Clicking the widget clears the current selection.                                          *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_TIME_AXIS_WIDGET_HPP
-#define PHONOMETRICA_TIME_AXIS_WIDGET_HPP
+#ifndef PHONOMETRICA_Y_AXIS_WIDGET_HPP
+#define PHONOMETRICA_Y_AXIS_WIDGET_HPP
 
+#include <vector>
 #include <QWidget>
 #include <phon/gui/time_model.hpp>
 
 namespace phonometrica {
 
-class TimeAxisWidget final : public QWidget
+class WaveformWidget;
+
+class YAxisWidget final : public QWidget
 {
 	Q_OBJECT
 
 public:
 
-	TimeAxisWidget(TimeModel *model, QWidget *parent = nullptr);
+	YAxisWidget(TimeModel *model, QWidget *parent = nullptr);
+
+	void addWaveform(WaveformWidget *wf);
 
 protected:
 
 	void paintEvent(QPaintEvent *event) override;
 	void mousePressEvent(QMouseEvent *event) override;
 
-private slots:
-
-	void onViewportChanged(double start, double end);
-	void onSelectionChanged(double t1, double t2);
-	void onSelectionCleared();
-	void onCursorChanged(double time);
-	void onCursorCleared();
-
 private:
 
-	double timeToX(double t) const;
-
 	TimeModel *m_model;
+	std::vector<WaveformWidget *> m_waveforms;
 };
 
 } // namespace phonometrica
 
-#endif // PHONOMETRICA_TIME_AXIS_WIDGET_HPP
+#endif // PHONOMETRICA_Y_AXIS_WIDGET_HPP
