@@ -341,6 +341,7 @@ if(WITH_GUI)
         icons/expand.png
         icons/mouse.png
         icons/selection.png
+        icons/waveform.png
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

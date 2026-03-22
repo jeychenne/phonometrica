@@ -18,11 +18,15 @@
 #include <vector>
 #include <memory>
 #include <QToolBar>
+#include <QToolButton>
 #include <QLabel>
 #include <QTimer>
+#include <QMenu>
+#include <QActionGroup>
 #include <phon/gui/view.hpp>
 #include <phon/gui/time_model.hpp>
 #include <phon/gui/time_axis_widget.hpp>
+#include <phon/gui/y_axis_widget.hpp>
 #include <phon/application/sound.hpp>
 
 namespace phonometrica {
@@ -62,6 +66,7 @@ private slots:
 	void onMoveForward();
 	void onMoveBackward();
 	void onToggleMouseTracking(bool checked);
+	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
 	void onViewportChanged(double start, double end);
@@ -86,6 +91,7 @@ private:
 
 	QToolBar *m_toolbar = nullptr;
 	TimeAxisWidget *m_time_axis = nullptr;
+	YAxisWidget *m_y_axis = nullptr;
 	QLabel *m_status_label = nullptr;
 
 	WaveBar *m_wavebar = nullptr;

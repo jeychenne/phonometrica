@@ -187,8 +187,26 @@ void FileManager::setupUi()
     connect(m_search, &QLineEdit::textChanged, this, &FileManager::onFilterTextChanged);
     layout->addWidget(m_search);
 
+	m_tree->viewport()->installEventFilter(this);
+
     // Make sure roots are visible in the file manager
     refresh();
+}
+
+bool FileManager::eventFilter(QObject *obj, QEvent *event)
+{
+	if (obj == m_tree->viewport() && event->type() == QEvent::MouseButtonPress)
+	{
+		auto *me = static_cast<QMouseEvent *>(event);
+		if (me->button() == Qt::MiddleButton)
+		{
+			QModelIndex index = m_tree->indexAt(me->pos());
+			if (index.isValid())
+				m_tree->setExpanded(index, !m_tree->isExpanded(index));
+			return true;
+		}
+	}
+	return QWidget::eventFilter(obj, event);
 }
 
 void FileManager::setupKeyboardShortcuts()
