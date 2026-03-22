@@ -106,9 +106,9 @@ void SoundView::createToolBar()
 	m_toolbar->setIconSize(QSize(24, 24));
 	m_toolbar->setMovable(false);
 
-	auto *play_action = m_toolbar->addAction(QIcon(":/icons/play.png"),
+	m_play_action = m_toolbar->addAction(QIcon(":/icons/play.png"),
 		tr("Play current window"));
-	connect(play_action, &QAction::triggered, this, &SoundView::onPlayWindow);
+	connect(m_play_action, &QAction::triggered, this, &SoundView::onPlayWindow);
 
 	m_play_sel_action = m_toolbar->addAction(QIcon(":/icons/selection.png"),
 		tr("Play selection"));
@@ -303,6 +303,27 @@ void SoundView::onViewportChanged(double, double)
 
 void SoundView::onPlayWindow()
 {
+	if (m_was_playing && !m_player->paused())
+	{
+		// Currently playing → pause.
+		m_player->pause();
+		m_playback_timer->stop();
+		m_play_action->setIcon(QIcon(":/icons/play.png"));
+		m_play_action->setToolTip(tr("Resume playback"));
+		return;
+	}
+
+	if (m_was_playing && m_player->paused())
+	{
+		// Currently paused → resume.
+		m_player->resume();
+		m_playback_timer->start();
+		m_play_action->setIcon(QIcon(":/icons/pause.png"));
+		m_play_action->setToolTip(tr("Pause playback"));
+		return;
+	}
+
+	// Not playing → start.
 	if (m_model->hasSpanSelection())
 		startPlayback(m_model->selectionStart(), m_model->selectionEnd());
 	else
@@ -330,6 +351,8 @@ void SoundView::startPlayback(double from, double to)
 
 	m_player->play(from, to);
 	m_was_playing = true;
+	m_play_action->setIcon(QIcon(":/icons/pause.png"));
+	m_play_action->setToolTip(tr("Pause playback"));
 	m_playback_timer->start();
 }
 
@@ -338,6 +361,8 @@ void SoundView::stopPlayback()
 	m_playback_timer->stop();
 	m_player->stop();
 	m_model->clearPlayback();
+	m_play_action->setIcon(QIcon(":/icons/play.png"));
+	m_play_action->setToolTip(tr("Play current window"));
 	m_was_playing = false;
 }
 
@@ -348,6 +373,8 @@ void SoundView::onPlaybackTick()
 		// Playback has ended (naturally or due to error).
 		m_playback_timer->stop();
 		m_model->clearPlayback();
+		m_play_action->setIcon(QIcon(":/icons/play.png"));
+		m_play_action->setToolTip(tr("Play current window"));
 		m_was_playing = false;
 		return;
 	}
