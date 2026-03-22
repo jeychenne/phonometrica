@@ -331,6 +331,7 @@ if(WITH_GUI)
         icons/toggle_off.png
         icons/toggle_on.png
         icons/play.png
+        icons/pause.png
         icons/stop.png
         icons/back.png
         icons/next.png

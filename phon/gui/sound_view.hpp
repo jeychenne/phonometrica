@@ -98,6 +98,7 @@ private:
 
 	QAction *m_zoom_sel_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
+	QAction *m_play_action = nullptr;
 
 	// Audio playback
 	std::unique_ptr<AudioPlayer> m_player;
