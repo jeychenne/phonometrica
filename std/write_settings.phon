@@ -1,0 +1,30 @@
+########################################################################################################################
+# Copyright (C) 2019 Julien Eychenne <jeychenne@gmail.com>                                                             #
+#                                                                                                                      #
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public    #
+# License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any       #
+# later version.                                                                                                       #
+#                                                                                                                      #
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied   #
+# warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more        #
+# details.                                                                                                             #
+#                                                                                                                      #
+# You should have received a copy of the GNU General Public License along with this program. If not, see               #
+# <http://www.gnu.org/licenses/>.                                                                                      #
+#                                                                                                                      #
+# Created: 23/02/2019                                                                                                  #
+#                                                                                                                      #
+# purpose: Write user settings.                                                                                        #
+#                                                                                                                      #
+########################################################################################################################
+
+let settings = dump_json(phon.settings)
+let f = File(get_config_path(), "w")
+
+write_line(f, "# This file was generated automatically.")
+write_line(f, "# Do not edit it unless you know what you are doing.")
+# This line is for compatibility with Phonometrica < 0.8. It is no longer needed
+write(f, "phon.settings = ")
+write(f, settings)
+close(f)
+

@@ -11,8 +11,8 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-
 #ifdef PHON_GUI
+#include <QFile>
 #include <QApplication>
 #include <phon/gui/main_window.hpp>
 #include <phon/application/settings.hpp>
@@ -20,12 +20,6 @@
 #else
 #include <phon/runtime.hpp>
 #endif
-
-
-#include <phon/include/initialize_phon.hpp>
-#include <phon/include/signal_phon.hpp>
-#include <phon/include/speech_analysis_phon.hpp>
-
 
 
 using namespace phonometrica;
@@ -42,6 +36,18 @@ static void show_usage()
 static void initialize(Runtime &rt)
 {
 #ifdef PHON_GUI
+    // Set up the script loader from Qt resources.
+    Settings::load_script = [](const String &name) -> String {
+        auto qname = QString::fromUtf8(name.data(), (int) name.size());
+        QFile file(QString(":/std/%1.phon").arg(qname));
+        if (!file.open(QIODevice::ReadOnly))
+        {
+            throw error("Cannot load bundled script \"%\"", name);
+        }
+        auto bytes = file.readAll();
+        return {bytes.constData(), bytes.size()};
+    };
+
 	rt["phon"] = make_handle<Module>(&rt, "phon");
 	Settings::initialize(&rt);
 	Settings::read();

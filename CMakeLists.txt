@@ -302,6 +302,15 @@ if(WITH_GUI)
         icons/csv.png
         icons/document.png
     )
+
+    qt6_add_resources(${PROJECT_NAME} "std" FILES
+        std/signal.phon
+        std/initialize.phon
+        std/speech_analysis.phon
+        std/read_settings.phon
+        std/write_settings.phon
+    )
+
 endif()
 
 if(WIN32)

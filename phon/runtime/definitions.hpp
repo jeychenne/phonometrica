@@ -39,11 +39,9 @@
 
 
 #ifdef PHON_EMBED_SCRIPTS
-#define run_script(runtime, name) runtime.do_string(name##_script)
-#define get_script_content(runtime, name) name##_script
+#define run_script(runtime, name) runtime.do_string(Settings::load_script(#name))
 #else
 #define run_script(rt, name) rt.do_file(Settings::get_std_script(#name))
-#define get_script_content(rt, name) File::read_all(Settings::get_std_script(rt, #name))
 #endif
 
 namespace phonometrica {

@@ -1,0 +1,96 @@
+########################################################################################################################
+# Copyright (C) 2019-2025 Julien Eychenne <jeychenne@gmail.com>                                                        #
+#                                                                                                                      #
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public    #
+# License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any       #
+# later version.                                                                                                       #
+#                                                                                                                      #
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied   #
+# warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more        #
+# details.                                                                                                             #
+#                                                                                                                      #
+# You should have received a copy of the GNU General Public License along with this program. If not, see               #
+# <http://www.gnu.org/licenses/>.                                                                                      #
+#                                                                                                                      #
+# Created: 23/02/2019                                                                                                  #
+#                                                                                                                      #
+# purpose: a simple signal/slot (a.k.a event/callback) mechanism. Signals are unique identifiers generated with        #
+# create_signal(). A signal can be connected/disconnected to/from a number of slots. Slots can be pure                 #
+# Phonometrica functions or C++ functions exposed to the scripting engine. Phonometrica's slots are allowed to         #
+# return a value. Values returned by all the slots connected to an event are collected into a list, which is           #
+# returned by emit().                                                                                                  #
+#                                                                                                                      #
+########################################################################################################################
+
+# Table mapping a signal to a list of callbacks
+let bindings = {}
+let slot_id = 0
+
+# Create a new signal, which is represented as a string
+function create_signal() 
+	let id = slot_id
+	slot_id += 1
+	
+	return "__SIGNAL_" & id
+end
+
+# Connect a signal to a slot
+function connect(id as String, slot as Function)
+	if not contains(bindings, id) then
+		bindings[id] = [ slot ]
+	else
+		let callbacks	= ref bindings[id]
+
+		# Check whether the signal is already there
+		foreach s in callbacks do
+			if slot == s then
+				return
+			end
+		end
+
+		append(callbacks, slot)
+	end
+end
+
+# Disconnect a signal from a slot
+function disconnect(id as String, slot as Function)
+	if contains(bindings, id) then
+		let callbacks = ref bindings[id]
+
+		for i = callbacks.length downto 1 do
+			if callbacks[i] == slot then
+				remove_at(callbacks, i)
+				return
+			end
+		end
+	end
+end
+
+# Emit a signal, with an argument which will be passed to each slot the event is connected to.
+function emit(id as String, args as Object)
+	if contains(bindings, id) then
+		let callbacks = bindings[id]
+		let result = []
+
+		foreach callback in callbacks do
+			append(result, callback(args))
+		end
+
+		return result
+	end
+end
+
+# Emit a signal without any argument
+function emit(id as String)
+	emit(id, null)
+end
+
+
+# Define standard events
+SIGNAL_ANNOTATION_IMPORTED = "__SIGNAL_ANNOTATION_IMPORTED"
+SIGNAL_SOUND_IMPORTED = "__SIGNAL_SOUND_IMPORTED"
+SIGNAL_ANNOTATION_LOADED = "__SIGNAL_ANNOTATION_LOADED"
+SIGNAL_SOUND_LOADED = "__SIGNAL_SOUND_LOADED"
+SIGNAL_SCRIPT_LOADED = "__SIGNAL_SCRIPT_LOADED"
+SIGNAL_DATASET_LOADED = "__SIGNAL_DATASET_LOADED"
+SIGNAL_PROJECT_LOADED = "__SIGNAL_PROJECT_LOADED"

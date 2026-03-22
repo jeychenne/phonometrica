@@ -1,0 +1,159 @@
+########################################################################################################################
+# Copyright (C) 2019-2025 Léa Courdès-Murphy <lea.courdes.murphy@gmail.com>, Julien Eychenne <jeychenne@gmail.com>     #
+#                                                                                                                      #
+# This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public    #
+# License as published by the Free Software Foundation, either version 2 of the License, or (at your option) any       #
+# later version.                                                                                                       #
+#                                                                                                                      #
+# This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied   #
+# warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more        #
+# details.                                                                                                             #
+#                                                                                                                      #
+# You should have received a copy of the GNU General Public License along with this program. If not, see               #
+# <http://www.gnu.org/licenses/>.                                                                                      #
+#                                                                                                                      #
+# Created: 18/10/2019                                                                                                  #
+#                                                                                                                      #
+# Purpose: Save annotations in a text file.        				                                                       #
+#                                                                                                                      #
+########################################################################################################################
+
+# Insert check list for annotations
+let labels = []
+let values = []
+
+let annotation_files = get_annotations()
+
+foreach annot in annotation_files do
+	let path = annot.path
+	# This is the real value we are interested in
+	append(values, path)
+	# This is the label that will be displayed
+	append(labels, get_base_name(path))
+end
+
+
+# Setup user interface as a JSON object. 
+let default_output = join_path(get_user_directory(), "output.txt")
+let ui = {
+    "title": "Export annotations to plain text...",
+    "width": 500,
+	"height": 550,
+    "items": [
+        { "type": "label", "text": "Choose output file:" },
+        { "type": "file_selector", "name": "path", "title": "Select text file...", "default": default_output, "save": true },
+        { "type": "label", "text": "Select layers separated by a comma, or leave empty to process all layers:" },
+        { "type": "field", "name": "layers", "default": "1"},
+        { "type": "label", "text": "Choose annotations:"},
+		{ "type": "check_list", "name": "annotations", "labels": labels, "values": values },
+        { "type": "label", "text": "Choose event separator:"},
+        { "type": "radio_buttons", "name": "separator", "values": ["space", "new line", "none"] }    
+    ]
+}
+
+
+# `result` will contain a JSON object if the user pressed "OK", or null otherwise.
+let result = create_dialog(ui)
+
+# Process the result.
+if result then
+	let sep = result["separator"]
+
+	# Open the file in write mode
+	let path = result["path"]
+	let output_file = File(path, "w")
+	
+	##### Annotation file loop
+	
+	# Create a list depending on the annotation files chosen
+	let annotations = ref result["annotations"]
+	if is_empty(annotations) then
+		for i = 1 to annotation_files.length do 
+			append(annotations, annotation_files[i].path)
+		end
+	end
+
+	# Loop starts
+	foreach id in annotations do
+
+		for j = 1 to annotation_files.length do
+			if	annotation_files[j].path == id then
+	
+				let annotation_file_name = get_base_name(annotation_files[j].path)
+				let annotation_file_name_length = annotation_file_name.length
+				
+				# Write the title of each annotation file in the output file
+				let esthetic = ""
+		
+				for k = 1 to annotation_file_name_length do
+					esthetic = esthetic & "%"
+				end
+				
+				write_line(output_file, esthetic)
+				write_line(output_file, annotation_file_name)
+				write_line(output_file, esthetic)
+				write_line(output_file, "")
+			
+				##### Tier loop
+				let tiers_list = [ ]
+				let n = 0
+		
+				# Create a list depending on the layer chosen		
+				if is_empty(result["layers"]) then
+					let nlayer = annotation_files[j].nlayer
+					for l = 1 to nlayer do
+						append(tiers_list, l)
+					end
+				else	
+					let nlayer_temp = result["layers"]
+					foreach l in split(nlayer_temp, ",") do
+						append(tiers_list, int(l))
+					end
+				end
+
+				foreach tier in tiers_list do
+					
+					# Write the title of each layer in the output file
+					let layer_title = get_layer_label(annotation_files[j], tier)
+					write_line(output_file, "%%%% Layer: " & layer_title)
+					write_line(output_file, "")
+				
+					##### Intervals loop
+					let n_interval = get_event_count(annotation_files[j], tier)
+			
+					for m = 1 to n_interval do 
+						let text_in_interval = get_event_text(annotation_files[j], tier, m)
+						
+						if is_empty(text_in_interval) then
+							continue
+						end
+							
+						# Write the text from each interval in the output file. Type of writing depending on which separator is chosen.
+						if sep == 1 then
+							write(output_file, text_in_interval & " ")
+						elsif sep == 2 then
+							write_line(output_file, text_in_interval)				
+						elsif sep == 3 then
+							write(output_file, text_in_interval)
+						end
+					end
+				
+					write_line(output_file, "")
+					write_line(output_file, "")
+				end
+			end	
+
+		end	
+		write_line(output_file, "")
+		write_line(output_file, "")
+		write_line(output_file, "")
+	
+	end
+	close(output_file)
+
+	let show = ask("Annotations have been written to '" & path & "'.\nWould you like to view the file?")
+
+	if show then
+		view_text(path, get_base_name(path))
+	end
+end

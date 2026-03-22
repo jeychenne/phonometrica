@@ -18,14 +18,12 @@
 #include <phon/application/settings.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/runtime/file.hpp>
-#include <phon/include/read_settings_phon.hpp>
-#include <phon/include/write_settings_phon.hpp>
-
 
 namespace phonometrica {
 
 Runtime *Settings::runtime = nullptr;
 String Settings::std_resource_path;
+std::function<String(const String &)> Settings::load_script;
 
 static String phon_key("phon"), settings_key("settings");
 static String last_dir_key("last_directory");
@@ -305,12 +303,12 @@ void Settings::read()
 		content = File::read_all(path);
 		if (content.trim().empty())
 		{
-			content = read_settings_script;
+            content = load_script("read_settings");
 		}
 	}
 	else
 	{
-		content = read_settings_script;
+        content = load_script("read_settings");
 	}
 	Variant result;
 
@@ -321,7 +319,7 @@ void Settings::read()
 	catch (std::exception &)
 	{
 		// TODO: notify user that settings are invalid and have been reinitialized.
-		result = runtime->do_string(read_settings_script);
+        result = run_script((*runtime), "read_settings");
 	}
 	// Versions of Phonometrica prior to 0.8 created phon.settings in settings.phon.
 	// We now simply store a table in this file, and create settings.phon ourselves to
