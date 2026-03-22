@@ -42,6 +42,10 @@ public:
 
 	~MainWindow() override = default;
 
+protected:
+
+	void closeEvent(QCloseEvent *event) override;
+
 private slots:
 
 	// File menu
@@ -102,6 +106,12 @@ private:
 
 	// Returns the active View in the current panel (or nullptr).
 	View *currentView() const;
+
+	// Prompt to save all modified tabs. Returns false if user cancelled.
+	bool promptSaveUnsavedTabs();
+
+	// Prompt to save the project if modified. Returns false if user cancelled.
+	bool promptSaveProject();
 
 	Runtime &m_runtime;
 

@@ -132,7 +132,9 @@ void ScriptView::setupUi()
 
 bool ScriptView::save()
 {
-	if (!m_script->has_path())
+	bool firstSave = !m_script->has_path();
+
+	if (firstSave)
 	{
 		auto path = QFileDialog::getSaveFileName(this, tr("Save script as..."),
 			QStringLiteral("untitled.phon"),
@@ -143,13 +145,24 @@ bool ScriptView::save()
 
 		auto bytes = path.toUtf8();
 		m_script->set_path(String(bytes.constData(), bytes.size()), false);
-		Project::get()->modify();
 	}
 
 	auto text = m_editor->text().toUtf8();
 	m_script->set_content(String(text.constData(), text.size()), true);
 	m_script->save();
+
+	if (firstSave)
+	{
+		// Register the script with the project so it appears in the file manager.
+		auto *project = Project::get();
+		m_script->parent()->append(recast<Element>(m_script), false);
+		project->register_file(m_script->path(), recast<Document>(m_script));
+		project->modify();
+		emit addedToProject();
+	}
+
 	m_save_action->setEnabled(false);
+	m_script->discard_changes();
 	emit titleChanged(label());
 	return true;
 }
