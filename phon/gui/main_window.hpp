@@ -16,6 +16,7 @@
 
 #include <phon/string.hpp>
 #include <phon/gui/console.hpp>
+#include <phon/application/script.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
@@ -28,6 +29,7 @@ class Runtime;
 class Project;
 class FileManager;
 class Document;
+class ScriptView;
 
 class MainWindow : public QMainWindow
 {
@@ -54,6 +56,13 @@ private slots:
 	// Edit menu
 	void onUndo();
 	void onRedo();
+	void onFind();
+	void onReplace();
+
+	// View actions
+	void onSaveCurrentView();
+	void onExecuteCurrentView();
+	void onEscapeCurrentView();
 
 	// Window menu
 	void onToggleProjectPanel(bool visible);
@@ -82,6 +91,9 @@ private:
 	QString lastDirectory() const;
 	void setLastDirectory(const QString &path);
 
+	void openScript(const Handle<Script> &script);
+	ScriptView *currentScriptView() const;
+
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;
@@ -102,6 +114,8 @@ private:
 	// Edit actions (need references for enable/disable)
 	QAction *m_undo_action = nullptr;
 	QAction *m_redo_action = nullptr;
+	QAction *m_find_action = nullptr;
+	QAction *m_replace_action = nullptr;
 };
 
 } // namespace phonometrica
