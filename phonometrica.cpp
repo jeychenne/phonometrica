@@ -11,7 +11,6 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <iostream>
 
 #ifdef PHON_GUI
 #include <QApplication>
@@ -22,11 +21,11 @@
 #include <phon/runtime.hpp>
 #endif
 
-#ifdef PHON_EMBED_SCRIPTS
+
 #include <phon/include/initialize_phon.hpp>
 #include <phon/include/signal_phon.hpp>
 #include <phon/include/speech_analysis_phon.hpp>
-#endif
+
 
 
 using namespace phonometrica;
@@ -53,11 +52,9 @@ static void initialize(Runtime &rt)
 
 	Sound::set_sound_formats();
 
-#ifdef PHON_EMBED_SCRIPTS
 	run_script(rt, initialize);
 	run_script(rt, signal);
 	run_script(rt, speech_analysis);
-#endif
 #endif // PHON_GUI
 }
 

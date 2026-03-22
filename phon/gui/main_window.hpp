@@ -17,7 +17,6 @@
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
-#include <QTreeWidget>
 #include <QPlainTextEdit>
 #include <QAction>
 #include <QMenu>
@@ -25,6 +24,9 @@
 namespace phonometrica {
 
 class Runtime;
+class Project;
+class FileManager;
+class Document;
 
 class MainWindow : public QMainWindow
 {
@@ -56,6 +58,9 @@ private slots:
 	void onToggleProjectPanel(bool visible);
 	void onToggleConsolePanel(bool visible);
 
+	// File manager
+	void onDocumentRequested(Document *doc);
+
 private:
 
 	void createMenus();
@@ -79,8 +84,8 @@ private:
 	QDockWidget *m_project_dock = nullptr;
 	QDockWidget *m_console_dock = nullptr;
 
-	// Project manager placeholder (will become its own class)
-	QTreeWidget *m_project_tree = nullptr;
+	// Project file manager
+	FileManager *m_file_manager = nullptr;
 
 	// Console placeholder (will become its own class)
 	QPlainTextEdit *m_console = nullptr;
