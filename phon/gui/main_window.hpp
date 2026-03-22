@@ -15,10 +15,10 @@
 #define PHONOMETRICA_MAIN_WINDOW_HPP
 
 #include <phon/string.hpp>
+#include <phon/gui/console.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
-#include <QPlainTextEdit>
 #include <QAction>
 #include <QMenu>
 
@@ -96,8 +96,8 @@ private:
 	// Project file manager
 	FileManager *m_file_manager = nullptr;
 
-	// Console placeholder (will become its own class)
-	QPlainTextEdit *m_console = nullptr;
+	// Interactive scripting console
+	class Console *m_console = nullptr;
 
 	// Edit actions (need references for enable/disable)
 	QAction *m_undo_action = nullptr;

@@ -197,19 +197,7 @@ void MainWindow::createDockWidgets()
 	// Console dock (bottom)
 	m_console_dock = new QDockWidget(tr("Console"), this);
 	m_console_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
-
-	m_console = new QPlainTextEdit(m_console_dock);
-	m_console->setReadOnly(true);
-	m_console->setMaximumBlockCount(1000);
-
-#if PHON_MACOS
-	m_console->setFont(QFont("Monaco", 13));
-#elif PHON_WINDOWS
-	m_console->setFont(QFont("Consolas", 10));
-#else
-	m_console->setFont(QFont("Monospace", 12));
-#endif
-
+	m_console = new Console(m_runtime, m_console_dock);
 	m_console_dock->setWidget(m_console);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);
 }
