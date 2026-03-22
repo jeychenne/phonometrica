@@ -15,6 +15,7 @@
 #include <QFrame>
 #include <algorithm>
 #include <phon/gui/sound_view.hpp>
+#include <phon/gui/time_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
@@ -66,6 +67,10 @@ void SoundView::setupUi()
 
 	createToolBar();
 	layout->addWidget(m_toolbar);
+
+	// Time axis: shows viewport boundaries and selection times.
+	m_time_axis = new TimeAxisWidget(m_model, this);
+	layout->addWidget(m_time_axis);
 
 	// Waveforms
 	createWaveforms(layout);

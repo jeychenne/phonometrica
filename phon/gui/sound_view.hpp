@@ -22,6 +22,7 @@
 #include <QTimer>
 #include <phon/gui/view.hpp>
 #include <phon/gui/time_model.hpp>
+#include <phon/gui/time_axis_widget.hpp>
 #include <phon/application/sound.hpp>
 
 namespace phonometrica {
@@ -84,6 +85,7 @@ private:
 	TimeModel *m_model;
 
 	QToolBar *m_toolbar = nullptr;
+	TimeAxisWidget *m_time_axis = nullptr;
 	QLabel *m_status_label = nullptr;
 
 	WaveBar *m_wavebar = nullptr;
