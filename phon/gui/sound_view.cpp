@@ -25,6 +25,9 @@
 #include <phon/gui/sound_zoom.hpp>
 #include <phon/application/audio_player.hpp>
 
+static constexpr const char *PLAY_ICON = ":/icons/play.svg";
+static constexpr const char *PAUSE_ICON = ":/icons/pause.svg";
+
 namespace phonometrica {
 
 SoundView::SoundView(const Handle<Sound> &sound, QWidget *parent) :
@@ -136,49 +139,49 @@ void SoundView::createToolBar()
 	m_toolbar->setIconSize(QSize(24, 24));
 	m_toolbar->setMovable(false);
 
-	m_play_action = m_toolbar->addAction(QIcon(":/icons/play.png"),
+	m_play_action = m_toolbar->addAction(QIcon(PLAY_ICON),
 		tr("Play current window"));
 	connect(m_play_action, &QAction::triggered, this, &SoundView::onPlayWindow);
 
-	m_play_sel_action = m_toolbar->addAction(QIcon(":/icons/selection.png"),
+	m_play_sel_action = m_toolbar->addAction(QIcon(":/icons/play-selection.svg"),
 		tr("Play selection"));
 	m_play_sel_action->setEnabled(false);
 	connect(m_play_sel_action, &QAction::triggered, this, &SoundView::onPlaySelection);
 
-	auto *stop_action = m_toolbar->addAction(QIcon(":/icons/stop.png"),
+	auto *stop_action = m_toolbar->addAction(QIcon(":/icons/square.svg"),
 		tr("Stop playing"));
 	connect(stop_action, &QAction::triggered, this, &SoundView::onStop);
 
 	m_toolbar->addSeparator();
 
-	auto *back_action = m_toolbar->addAction(QIcon(":/icons/back.png"),
+	auto *back_action = m_toolbar->addAction(QIcon(":/icons/arrow-left-from-line.svg"),
 		tr("Shift window backward"));
 	connect(back_action, &QAction::triggered, this, &SoundView::onMoveBackward);
 
-	auto *fwd_action = m_toolbar->addAction(QIcon(":/icons/next.png"),
+	auto *fwd_action = m_toolbar->addAction(QIcon(":/icons/arrow-right-from-line.svg"),
 		tr("Shift window forward"));
 	connect(fwd_action, &QAction::triggered, this, &SoundView::onMoveForward);
 
-	auto *zoom_out_action = m_toolbar->addAction(QIcon(":/icons/zoom_minus.png"),
+	auto *zoom_out_action = m_toolbar->addAction(QIcon(":/icons/zoom-out.svg"),
 		tr("Zoom out"));
 	connect(zoom_out_action, &QAction::triggered, this, &SoundView::onZoomOut);
 
-	auto *zoom_in_action = m_toolbar->addAction(QIcon(":/icons/zoom_plus.png"),
+	auto *zoom_in_action = m_toolbar->addAction(QIcon(":/icons/zoom-in.svg"),
 		tr("Zoom in"));
 	connect(zoom_in_action, &QAction::triggered, this, &SoundView::onZoomIn);
 
-	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/collapse.png"),
+	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/minimize-2.svg"),
 		tr("Zoom to selection"));
 	m_zoom_sel_action->setEnabled(false);
 	connect(m_zoom_sel_action, &QAction::triggered, this, &SoundView::onZoomToSelection);
 
-	auto *view_all_action = m_toolbar->addAction(QIcon(":/icons/expand.png"),
+	auto *view_all_action = m_toolbar->addAction(QIcon(":/icons/maximize-2.svg"),
 		tr("View whole file"));
 	connect(view_all_action, &QAction::triggered, this, &SoundView::onViewAll);
 
 	m_toolbar->addSeparator();
 
-	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.png"),
+	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.svg"),
 		tr("Enable mouse tracking"));
 	mouse_action->setCheckable(true);
 	mouse_action->setChecked(false);
@@ -214,7 +217,7 @@ void SoundView::createToolBar()
 	auto *wave_button = new QToolButton(this);
 	wave_button->setPopupMode(QToolButton::MenuButtonPopup);
 	connect(wave_button, &QToolButton::clicked, wave_button, &QToolButton::showMenu);
-	wave_button->setIcon(QIcon(":/icons/waveform.png"));
+	wave_button->setIcon(QIcon(":/icons/waves.svg"));
 	wave_button->setToolTip(tr("Waveform settings"));
 	wave_button->setMenu(wave_menu);
 	m_toolbar->addWidget(wave_button);
@@ -245,7 +248,7 @@ void SoundView::createToolBar()
 		connect(channel_group, &QActionGroup::triggered, this, &SoundView::onChannelAction);
 
 		auto *channel_button = new QToolButton(this);
-		channel_button->setIcon(QIcon(":/icons/layout.png"));
+		channel_button->setIcon(QIcon(":/icons/layers.svg"));
 		channel_button->setToolTip(tr("Select visible channels"));
 		channel_button->setPopupMode(QToolButton::MenuButtonPopup);
 		connect(channel_button, &QToolButton::clicked, channel_button, &QToolButton::showMenu);
@@ -415,7 +418,7 @@ void SoundView::onPlayWindow()
 		// Currently playing → pause.
 		m_player->pause();
 		m_playback_timer->stop();
-		m_play_action->setIcon(QIcon(":/icons/play.png"));
+		m_play_action->setIcon(QIcon(PLAY_ICON));
 		m_play_action->setToolTip(tr("Resume playback"));
 		return;
 	}
@@ -425,7 +428,7 @@ void SoundView::onPlayWindow()
 		// Currently paused → resume.
 		m_player->resume();
 		m_playback_timer->start();
-		m_play_action->setIcon(QIcon(":/icons/pause.png"));
+		m_play_action->setIcon(QIcon(PAUSE_ICON));
 		m_play_action->setToolTip(tr("Pause playback"));
 		return;
 	}
@@ -458,7 +461,7 @@ void SoundView::startPlayback(double from, double to)
 
 	m_player->play(from, to);
 	m_was_playing = true;
-	m_play_action->setIcon(QIcon(":/icons/pause.png"));
+	m_play_action->setIcon(QIcon(PAUSE_ICON));
 	m_play_action->setToolTip(tr("Pause playback"));
 	m_playback_timer->start();
 }
@@ -468,7 +471,7 @@ void SoundView::stopPlayback()
 	m_playback_timer->stop();
 	m_player->stop();
 	m_model->clearPlayback();
-	m_play_action->setIcon(QIcon(":/icons/play.png"));
+	m_play_action->setIcon(QIcon(PLAY_ICON));
 	m_play_action->setToolTip(tr("Play current window"));
 	m_was_playing = false;
 }
@@ -480,7 +483,7 @@ void SoundView::onPlaybackTick()
 		// Playback has ended (naturally or due to error).
 		m_playback_timer->stop();
 		m_model->clearPlayback();
-		m_play_action->setIcon(QIcon(":/icons/play.png"));
+		m_play_action->setIcon(QIcon(PLAY_ICON));
 		m_play_action->setToolTip(tr("Play current window"));
 		m_was_playing = false;
 		return;
