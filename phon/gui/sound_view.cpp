@@ -101,6 +101,7 @@ void SoundView::setupUi()
 
 	// SoundZoom: visual connector between waveforms and wavebar.
 	m_zoom = new SoundZoom(this);
+	m_zoom->setLeftOffset(m_y_axis->minimumWidth());
 	layout->addWidget(m_zoom);
 
 	// Wavebar at the bottom.
