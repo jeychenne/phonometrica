@@ -14,6 +14,7 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFrame>
+#include <QKeyEvent>
 #include <algorithm>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/time_axis_widget.hpp>
@@ -22,7 +23,6 @@
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
 #include <phon/application/audio_player.hpp>
-#include <phon/application/macros.hpp>
 
 namespace phonometrica {
 
@@ -124,6 +124,8 @@ void SoundView::setupUi()
 	connect(m_model, &TimeModel::selectionChanged, this, &SoundView::onSelectionChanged);
 	connect(m_model, &TimeModel::selectionCleared, this, &SoundView::onSelectionCleared);
 	connect(m_model, &TimeModel::viewportChanged, this, &SoundView::onViewportChanged);
+
+	setFocusPolicy(Qt::StrongFocus);
 }
 
 void SoundView::createToolBar()
@@ -448,6 +450,35 @@ void SoundView::onPlaybackTick()
 
 	double t = m_player->currentPlaybackTime();
 	m_model->setPlaybackTime(t);
+}
+
+void SoundView::keyPressEvent(QKeyEvent *event)
+{
+	switch (event->key())
+	{
+	case Qt::Key_Space:
+		onPlayWindow();
+		break;
+	case Qt::Key_Escape:
+		onStop();
+		break;
+	case Qt::Key_Left:
+		m_model->moveBackward();
+		break;
+	case Qt::Key_Right:
+		m_model->moveForward();
+		break;
+	case Qt::Key_Plus:
+	case Qt::Key_Equal: // unshifted + on most keyboards
+		m_model->zoomIn();
+		break;
+	case Qt::Key_Minus:
+		m_model->zoomOut();
+		break;
+	default:
+		View::keyPressEvent(event);
+		break;
+	}
 }
 
 } // namespace phonometrica
