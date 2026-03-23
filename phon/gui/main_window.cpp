@@ -186,8 +186,7 @@ QMenu *MainWindow::createHelpMenu()
 			   "<p>An open-source platform for the annotation "
 			   "and analysis of speech corpora.</p>"
                "<p>&copy; 2019-2026 Julien Eychenne</p>"
-               "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>"
-               "<a target=\"_blank\" href=\"https://icons8.com/icon/Wy3XKG1CjyKf/database\">Database</a> icons by <a target=\"_blank\" href=\"https://icons8.com\">Icons8</a>"));
+               "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>"));
 	});
 
 	return menu;
