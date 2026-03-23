@@ -57,6 +57,8 @@ protected:
 	// Subclass hook: AnnotationView will add annotation layers here.
 	virtual void addAnnotationLayers(QLayout *layout) {}
 
+	void keyPressEvent(QKeyEvent *event) override;
+
 private slots:
 
 	void onViewAll();
