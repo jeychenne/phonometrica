@@ -27,6 +27,8 @@
 
 static constexpr const char *PLAY_ICON = ":/icons/play.svg";
 static constexpr const char *PAUSE_ICON = ":/icons/pause.svg";
+static constexpr const char *PLAY_SEL_ICON = ":/icons/play-selection.svg";
+static constexpr const char *PAUSE_SEL_ICON = ":/icons/pause-selection.svg";
 
 namespace phonometrica {
 
@@ -143,7 +145,7 @@ void SoundView::createToolBar()
 		tr("Play current window"));
 	connect(m_play_action, &QAction::triggered, this, &SoundView::onPlayWindow);
 
-	m_play_sel_action = m_toolbar->addAction(QIcon(":/icons/play-selection.svg"),
+	m_play_sel_action = m_toolbar->addAction(QIcon(PLAY_SEL_ICON),
 		tr("Play selection"));
 	m_play_sel_action->setEnabled(false);
 	connect(m_play_sel_action, &QAction::triggered, this, &SoundView::onPlaySelection);
@@ -413,9 +415,9 @@ void SoundView::onViewportChanged(double, double)
 
 void SoundView::onPlayWindow()
 {
-	if (m_was_playing && !m_player->paused())
+	if (m_was_playing && m_active_play_action == m_play_action && !m_player->paused())
 	{
-		// Currently playing → pause.
+		// Currently playing via this button → pause.
 		m_player->pause();
 		m_playback_timer->stop();
 		m_play_action->setIcon(QIcon(PLAY_ICON));
@@ -423,9 +425,9 @@ void SoundView::onPlayWindow()
 		return;
 	}
 
-	if (m_was_playing && m_player->paused())
+	if (m_was_playing && m_active_play_action == m_play_action && m_player->paused())
 	{
-		// Currently paused → resume.
+		// Currently paused via this button → resume.
 		m_player->resume();
 		m_playback_timer->start();
 		m_play_action->setIcon(QIcon(PAUSE_ICON));
@@ -433,19 +435,43 @@ void SoundView::onPlayWindow()
 		return;
 	}
 
-	// Not playing → start.
-	if (m_model->hasSpanSelection())
-		startPlayback(m_model->selectionStart(), m_model->selectionEnd());
-	else
-		startPlayback(m_model->windowStart(), m_model->windowEnd());
+	// Not playing (or playing from the other button) → start.
+	if (m_was_playing)
+		stopPlayback();
+
+	startPlayback(m_play_action, m_model->windowStart(), m_model->windowEnd());
 }
 
 void SoundView::onPlaySelection()
 {
+	if (m_was_playing && m_active_play_action == m_play_sel_action && !m_player->paused())
+	{
+		// Currently playing selection → pause.
+		m_player->pause();
+		m_playback_timer->stop();
+		m_play_sel_action->setIcon(QIcon(PLAY_SEL_ICON));
+		m_play_sel_action->setToolTip(tr("Resume selection playback"));
+		return;
+	}
+
+	if (m_was_playing && m_active_play_action == m_play_sel_action && m_player->paused())
+	{
+		// Currently paused selection → resume.
+		m_player->resume();
+		m_playback_timer->start();
+		m_play_sel_action->setIcon(QIcon(PAUSE_SEL_ICON));
+		m_play_sel_action->setToolTip(tr("Pause selection playback"));
+		return;
+	}
+
+	// Not playing (or playing from the other button) → start.
+	if (m_was_playing)
+		stopPlayback();
+
 	if (m_model->hasSpanSelection())
-		startPlayback(m_model->selectionStart(), m_model->selectionEnd());
+		startPlayback(m_play_sel_action, m_model->selectionStart(), m_model->selectionEnd());
 	else if (m_model->hasPointSelection())
-		startPlayback(m_model->selectionStart(), m_model->windowEnd());
+		startPlayback(m_play_sel_action, m_model->selectionStart(), m_model->windowEnd());
 }
 
 void SoundView::onStop()
@@ -453,16 +479,27 @@ void SoundView::onStop()
 	stopPlayback();
 }
 
-void SoundView::startPlayback(double from, double to)
+void SoundView::startPlayback(QAction *source, double from, double to)
 {
 	// Stop any ongoing playback.
 	if (m_player->running())
 		stopPlayback();
 
+	m_active_play_action = source;
 	m_player->play(from, to);
 	m_was_playing = true;
-	m_play_action->setIcon(QIcon(PAUSE_ICON));
-	m_play_action->setToolTip(tr("Pause playback"));
+
+	if (source == m_play_action)
+	{
+		source->setIcon(QIcon(PAUSE_ICON));
+		source->setToolTip(tr("Pause playback"));
+	}
+	else
+	{
+		source->setIcon(QIcon(PAUSE_SEL_ICON));
+		source->setToolTip(tr("Pause selection playback"));
+	}
+
 	m_playback_timer->start();
 }
 
@@ -471,8 +508,20 @@ void SoundView::stopPlayback()
 	m_playback_timer->stop();
 	m_player->stop();
 	m_model->clearPlayback();
-	m_play_action->setIcon(QIcon(PLAY_ICON));
-	m_play_action->setToolTip(tr("Play current window"));
+
+	// Restore the icon on whichever button was active.
+	if (m_active_play_action == m_play_action)
+	{
+		m_play_action->setIcon(QIcon(PLAY_ICON));
+		m_play_action->setToolTip(tr("Play current window"));
+	}
+	else if (m_active_play_action == m_play_sel_action)
+	{
+		m_play_sel_action->setIcon(QIcon(PLAY_SEL_ICON));
+		m_play_sel_action->setToolTip(tr("Play selection"));
+	}
+
+	m_active_play_action = nullptr;
 	m_was_playing = false;
 }
 
@@ -480,12 +529,8 @@ void SoundView::onPlaybackTick()
 {
 	if (!m_player->running())
 	{
-		// Playback has ended (naturally or due to error).
-		m_playback_timer->stop();
-		m_model->clearPlayback();
-		m_play_action->setIcon(QIcon(PLAY_ICON));
-		m_play_action->setToolTip(tr("Play current window"));
-		m_was_playing = false;
+		// Playback has ended naturally.
+		stopPlayback();
 		return;
 	}
 

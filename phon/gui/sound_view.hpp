@@ -86,7 +86,7 @@ private:
 	void createToolBar();
 	void createWaveforms(QLayout *layout);
 	void updateStatusText();
-	void startPlayback(double from, double to);
+	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
 
 	Handle<Sound> m_sound;
@@ -115,6 +115,7 @@ private:
 	std::unique_ptr<AudioPlayer> m_player;
 	QTimer *m_playback_timer = nullptr;
 	bool m_was_playing = false;
+	QAction *m_active_play_action = nullptr;
 };
 
 } // namespace phonometrica
