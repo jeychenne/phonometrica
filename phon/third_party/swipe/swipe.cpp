@@ -39,13 +39,7 @@
 #include <limits.h>
 #include <stdbool.h>
 
-#ifdef PHON_USE_FFTW
-#include <fftw3.h>   // http://www.fftw.org/
-#else
-
-#include <ffts.h>
-
-#endif
+#include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -119,25 +113,14 @@ double fixnan(double x)
 }
 
 // a helper function for loudness() for individual fft slices
-#ifdef PHON_USE_FFTW
-void La(matrix L, vector f, vector fERBs, fftw_plan plan, fftw_complex* fo, int w2, int hi, int i)
-#else
-void La(matrix L, vector f, vector fERBs, ffts_plan_t *plan, std::complex<float> *fo, int w2, int hi, int i)
-#endif
+void La(matrix L, vector f, vector fERBs, const std::complex<double> *fo, int w2, int hi, int i)
 {
 	int j;
 
-#ifdef PHON_USE_FFTW
-	fftw_execute(plan);
-#endif
 	vector a = makev(w2);
 	for (j = 0; j < w2; j++) // this iterates over only the first half
 	{
-#if PHON_USE_FFTW
-		a.v[j] = sqrt(fo[j][0] * fo[j][0] + fo[j][1] * fo[j][1]);
-#else
-		a.v[j] = sqrt(std::real(fo[j]) * std::real(fo[j]) + std::imag(fo[j]) * std::imag(fo[j]));
-#endif
+		a.v[j] = sqrt(fo[j].real() * fo[j].real() + fo[j].imag() * fo[j].imag());
 	}
 
 	vector a2 = spline(f, a); // a2 is now the result of the cubic spline
@@ -162,16 +145,14 @@ matrix loudness(vector x, vector fERBs, double nyquist, int w, int w2)
 	int offset = 0;
 	double td = nyquist / w2; // this is equivalent to fstep
 
-#if PHON_USE_FFTW
-	// testing showed this configuration of fftw to be fastest
-	double *fi = (double*) fftw_malloc(sizeof(double) * w);
-	fftw_complex *fo = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * w);
-	fftw_plan plan = fftw_plan_dft_r2c_1d(w, fi, fo, FFTW_ESTIMATE);
-#else
-	std::vector<std::complex<float>> fi(w);
-	std::vector<std::complex<float>> fo(w);
-	ffts_plan_t *plan = ffts_init_1d(w, FFTS_FORWARD);
-#endif
+	std::vector<double> fi(w, 0.0);
+	std::vector<std::complex<double>> fo(w / 2 + 1);
+
+	// pocketfft setup — constant for all frames in this call.
+	pocketfft::shape_t shape{static_cast<size_t>(w)};
+	pocketfft::stride_t stride_in{sizeof(double)};
+	pocketfft::stride_t stride_out{sizeof(std::complex<double>)};
+
 	vector hann = makev(w); // this defines the Hann[ing] window
 	for (i = 0; i < w; i++)
 		hann.v[i] = .5 - (.5 * cos(2. * M_PI * ((double) i / w)));
@@ -185,29 +166,19 @@ matrix loudness(vector x, vector fERBs, double nyquist, int w, int w2)
 	for (/* j = w2 */; j < w; j++)
 		fi[j] = x.v[j - w2] * hann.v[j];
 
-#ifdef PHON_USE_FFTW
-	La(L, f, fERBs, plan, fo, w2, hi, 0);
-#else
-	ffts_execute(plan, fi.data(), fo.data());
-	La(L, f, fERBs, plan, fo.data(), w2, hi, 0);
-#endif
+	pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+	               fi.data(), fo.data(), 1.0);
+	La(L, f, fERBs, fo.data(), w2, hi, 0);
 
 	for (i = 1; i < L.x - 2; i++)
 	{
 		for (j = 0; j < w; j++)
 		{
-#ifdef PHON_USE_FFTW
 			fi[j] = x.v[j + offset] * hann.v[j];
-#else
-			fi[j] = {(float)(x.v[j + offset] * hann.v[j]), 0.};
-#endif
 		}
-#ifdef PHON_USE_FFTW
-		La(L, f, fERBs, plan, fo, w2, hi, i);
-#else
-		ffts_execute(plan, fi.data(), fo.data());
-		La(L, f, fERBs, plan, fo.data(), w2, hi, i);
-#endif
+		pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+		               fi.data(), fo.data(), 1.0);
+		La(L, f, fERBs, fo.data(), w2, hi, i);
 		offset += w2;
 	}
 
@@ -215,28 +186,17 @@ matrix loudness(vector x, vector fERBs, double nyquist, int w, int w2)
 	{ // right two boundary cases
 		for (j = 0; j < x.x - offset; j++) // this dies at x.x + w2
 		{
-		#ifdef PHON_USE_FFTW
 			fi[j] = x.v[j + offset] * hann.v[j];
-		#else
-			fi[j] = {(float)(x.v[j + offset] * hann.v[j]), 0.};
-		#endif
 		}
 
 		for (/* j = x.x - offset */; j < w; j++)
 		{
-		#ifdef PHON_USE_FFTW
 			fi[j] = 0.; // once again, 0. * hann.v[j]
-		#else
-			fi[j] = {0.0, 0.0};
-		#endif
 		}
 
-#ifdef PHON_USE_FFTW
-		La(L, f, fERBs, plan, fo, w2, hi, i);
-#else
-		ffts_execute(plan, fi.data(), fo.data());
-		La(L, f, fERBs, plan, fo.data(), w2, hi, i);
-#endif
+		pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+		               fi.data(), fo.data(), 1.0);
+		La(L, f, fERBs, fo.data(), w2, hi, i);
 		offset += w2;
 	} // now L is fully valued
 	freev(hann);
@@ -254,14 +214,6 @@ matrix loudness(vector x, vector fERBs, double nyquist, int w, int w2)
 				L.m[i][j] /= td;
 		} // otherwise, it is already 0.
 	}
-
-#ifdef PHON_USE_FFTW
-	fftw_destroy_plan(plan);
-	fftw_free(fi);
-	fftw_free(fo);
-#else
-	ffts_free(plan);
-#endif
 
 	return (L);
 }

@@ -31,7 +31,7 @@
 #include <memory>
 #include <algorithm>
 #include <numeric> // std::iota
-#include <fftw3.h>
+#include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
 #include <phon/analysis/signal_processing.hpp>
 #include <phon/third_party/sptk4/include/SPTK/analysis/pitch_extraction_by_harvest.h>
 #include <phon/third_party/sptk4/include/SPTK/analysis/pitch_extraction_by_reaper.h>
@@ -148,7 +148,7 @@ double get_intensity(std::span<double> frame, std::span<double> window)
 	constexpr double Iref = 4.0e-10;
 	double power = 0.0;
 
-	for (intptr_t i = 0; i < frame.size(); i++)
+	for (intptr_t i = 0; i < (intptr_t)frame.size(); i++)
 	{
 		auto value = frame[i] * window[i];
 		power += value * value;
@@ -370,8 +370,12 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 
 	Array<std::complex<double>> result(nrow, ncol, {0.0, 0.0});
 	std::vector<double> input(nfft, 0.0);
-	std::vector<std::complex<double>> output(nfft, std::complex<double>(0, 0));
-	fftw_plan plan = fftw_plan_dft_r2c_1d(nfft, input.data(), (fftw_complex*)output.data(), FFTW_ESTIMATE);
+	std::vector<std::complex<double>> output(nfft / 2 + 1, std::complex<double>(0, 0));
+
+	pocketfft::shape_t shape{static_cast<size_t>(nfft)};
+	pocketfft::stride_t stride_in{sizeof(double)};
+	pocketfft::stride_t stride_out{sizeof(std::complex<double>)};
+
 	auto len = data.size();
 	auto win = create_window(window_size, nfft, window_type);
 	intptr_t j = 1;
@@ -387,7 +391,8 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 		for (intptr_t n = window_size + 1; n <= nfft; n++) {
 			*buffer++ = 0.0;
 		}
-		fftw_execute(plan);
+		pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+		               input.data(), output.data(), 1.0);
 		auto z = output.begin();
 
 		for (intptr_t i = 1; i <= nrow; i++) {
@@ -396,7 +401,6 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 		j++;
 	}
 	assert(j-1 == result.ncol());
-	fftw_free(plan);
 
 	return result;
 }
@@ -464,18 +468,18 @@ std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input
 
 FFT::FFT(intptr_t length) : nfft(length), input(length, 0.0), output(length, std::complex<double>(0, 0))
 {
-	impl = fftw_plan_dft_r2c_1d((int)length, input.data(), (fftw_complex*)output.data(), FFTW_ESTIMATE);
+	// No plan needed — pocketfft is stateless.
+	impl = nullptr;
 }
 
 FFT::~FFT()
 {
-	fftw_free(reinterpret_cast<fftw_plan>(impl));
+	// Nothing to free — pocketfft is header-only and stateless.
 }
 
 Array<std::complex<double>> &FFT::process(const Array<double> &data)
 {
 	auto len = (std::min<intptr_t>)(data.size(), nfft);
-	std::copy(data.begin(), data.begin()+len, input.begin());
 	auto sample = data.begin();
 	auto buffer = input.begin();
 
@@ -486,7 +490,13 @@ Array<std::complex<double>> &FFT::process(const Array<double> &data)
 	for (intptr_t n = len + 1; n <= nfft; n++) {
 		*buffer++ = 0.0;
 	}
-	fftw_execute(reinterpret_cast<fftw_plan>(impl));
+
+	// pocketfft r2c produces nfft/2+1 complex values.
+	pocketfft::shape_t shape{static_cast<size_t>(nfft)};
+	pocketfft::stride_t stride_in{sizeof(double)};
+	pocketfft::stride_t stride_out{sizeof(std::complex<double>)};
+	pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+	               input.data(), output.data(), 1.0);
 
 	return output;
 }
@@ -496,20 +506,21 @@ Array<std::complex<double>> &FFT::process(const Array<double> &data)
 /// Standard first-order FIR high-pass filter that increases the spectral
 /// slope by +6 dB/octave above the given threshold frequency.
 ///
-/// Algorithm (from published description):
+/// Algorithm:
 ///   alpha = exp(-2 * pi * threshold * dt)
-///   data[i] = data[i] - alpha * data[i-1]
+///   x[i] = x[i] - alpha * x[i-1]
 ///
 void pre_emphasis(Array<double> &data, double Fs, double threshold)
 {
 	const auto n = data.size();
+	auto x = data.data();
 	if (n < 2 || threshold <= 0.0 || Fs <= 0.0) return;
 
 	const double alpha = std::exp(-2.0 * M_PI * threshold / Fs);
 
 	// Process backwards to avoid needing a temporary buffer.
-	for (auto i = n - 1; i >= 1; --i) {
-		data[i] -= alpha * data[i - 1];
+	for (auto i = n - 1; i >= 1; i--) {
+		x[i] -= alpha * x[i - 1];
 	}
 }
 

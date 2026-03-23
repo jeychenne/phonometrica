@@ -20,6 +20,7 @@
 #include <phon/gui/time_axis_widget.hpp>
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
+#include <phon/gui/spectrogram_widget.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
 #include <phon/application/audio_player.hpp>
@@ -94,6 +95,9 @@ void SoundView::setupUi()
 	// Waveforms
 	createWaveforms(plot_layout);
 
+	// Spectrograms (one per channel, hidden by default).
+	createSpectrograms(plot_layout);
+
 	// Register all waveforms with the Y axis (hidden ones are skipped during paint).
 	for (auto *wf : m_waveforms)
 		m_y_axis->addWaveform(wf);
@@ -155,11 +159,11 @@ void SoundView::createToolBar()
 
 	m_toolbar->addSeparator();
 
-	auto *back_action = m_toolbar->addAction(QIcon(":/icons/arrow-left-from-line.svg"),
+	auto *back_action = m_toolbar->addAction(QIcon(":/icons/arrow-left.svg"),
 		tr("Shift window backward"));
 	connect(back_action, &QAction::triggered, this, &SoundView::onMoveBackward);
 
-	auto *fwd_action = m_toolbar->addAction(QIcon(":/icons/arrow-right-from-line.svg"),
+	auto *fwd_action = m_toolbar->addAction(QIcon(":/icons/arrow-right.svg"),
 		tr("Shift window forward"));
 	connect(fwd_action, &QAction::triggered, this, &SoundView::onMoveForward);
 
@@ -223,6 +227,13 @@ void SoundView::createToolBar()
 	wave_button->setMenu(wave_menu);
 	m_toolbar->addWidget(wave_button);
 
+	// Spectrogram toggle.
+	m_spectrogram_action = m_toolbar->addAction(QIcon(":/icons/sheet.svg"),
+		tr("Show spectrogram"));
+	m_spectrogram_action->setCheckable(true);
+	m_spectrogram_action->setChecked(false);
+	connect(m_spectrogram_action, &QAction::toggled, this, &SoundView::onToggleSpectrogram);
+
 	if (m_sound->nchannel() > 1)
 	{
 		auto *channel_menu = new QMenu(this);
@@ -281,6 +292,24 @@ void SoundView::createWaveforms(QLayout *layout)
 		auto *wf = new WaveformWidget(m_model, m_sound, c, this);
 		m_waveforms.push_back(wf);
 		layout->addWidget(wf);
+	}
+}
+
+void SoundView::createSpectrograms(QLayout *layout)
+{
+	// Channel 0 = average of all channels.
+	auto *avg = new SpectrogramWidget(m_model, m_sound, 0, this);
+	avg->setVisible(false);
+	m_spectrograms.push_back(avg);
+	layout->addWidget(avg);
+
+	// One spectrogram per channel.
+	for (int c = 1; c <= m_sound->nchannel(); c++)
+	{
+		auto *sg = new SpectrogramWidget(m_model, m_sound, c, this);
+		sg->setVisible(false);
+		m_spectrograms.push_back(sg);
+		layout->addWidget(sg);
 	}
 }
 
@@ -372,6 +401,21 @@ void SoundView::onToggleMouseTracking(bool checked)
 {
 	for (auto *wf : m_waveforms)
 		wf->setMouseTracking(checked);
+	for (auto *sg : m_spectrograms)
+		sg->setMouseTracking(checked);
+}
+
+void SoundView::onToggleSpectrogram(bool checked)
+{
+	m_show_spectrogram = checked;
+	// Show/hide spectrograms matching visible channels.
+	m_spectrograms[0]->setVisible(checked && m_show_average);
+	for (int c = 1; c <= m_sound->nchannel(); c++)
+	{
+		bool ch_visible = std::find(m_visible_channels.begin(),
+			m_visible_channels.end(), c) != m_visible_channels.end();
+		m_spectrograms[c]->setVisible(checked && ch_visible);
+	}
 }
 
 void SoundView::onScalingChanged(QAction *action)
@@ -594,6 +638,10 @@ void SoundView::onChannelAction(QAction *action)
 	}
 
 	m_waveforms[channel]->setVisible(show);
+
+	// Also toggle the corresponding spectrogram if visible.
+	if (m_show_spectrogram)
+		m_spectrograms[channel]->setVisible(show);
 
 	if (channel == 0)
 	{
