@@ -206,10 +206,10 @@ void SoundView::createToolBar()
 	connect(scaling_group, &QActionGroup::triggered, this, &SoundView::onScalingChanged);
 
 	auto *wave_button = new QToolButton(this);
-	wave_button->setStyleSheet("QToolButton::menu-indicator { subcontrol-position: bottom right; }");
+	wave_button->setPopupMode(QToolButton::MenuButtonPopup);
+	connect(wave_button, &QToolButton::clicked, wave_button, &QToolButton::showMenu);
 	wave_button->setIcon(QIcon(":/icons/waveform.png"));
 	wave_button->setToolTip(tr("Waveform settings"));
-	wave_button->setPopupMode(QToolButton::InstantPopup);
 	wave_button->setMenu(wave_menu);
 	m_toolbar->addWidget(wave_button);
 }
