@@ -190,14 +190,6 @@ void SoundView::createToolBar()
 
 	m_toolbar->addSeparator();
 
-	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.svg"),
-		tr("Enable mouse tracking"));
-	mouse_action->setCheckable(true);
-	mouse_action->setChecked(false);
-	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
-
-	m_toolbar->addSeparator();
-
 	// Waveform menu button with scaling options.
 	auto *wave_menu = new QMenu(this);
 	auto *scaling_group = new QActionGroup(this);
@@ -271,6 +263,15 @@ void SoundView::createToolBar()
 		channel_button->setMenu(channel_menu);
 		m_toolbar->addWidget(channel_button);
 	}
+
+	m_toolbar->addSeparator();
+
+	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.svg"),
+		tr("Enable mouse tracking"));
+	mouse_action->setCheckable(true);
+	mouse_action->setChecked(false);
+	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
+
 }
 
 void SoundView::createWaveforms(QLayout *layout)
