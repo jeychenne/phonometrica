@@ -431,34 +431,34 @@ QIcon ProjectModel::iconForElement(Element *elem) const
     // Root directories get their own icons.
     if (auto *dir = dynamic_cast<Directory *>(elem))
     {
-        if (dir == rootAt(0)) return QIcon(":/icons/corpus.svg");
+        if (dir == rootAt(0)) return QIcon(":/icons/database.svg");
         if (dir == rootAt(1)) return QIcon(":/icons/search.svg");
-        if (dir == rootAt(2)) return QIcon(":/icons/terminal.svg");
-        if (dir == rootAt(3)) return QIcon(":/icons/spreadsheet.svg");
-        if (dir == rootAt(4)) return QIcon(":/icons/favorite.svg");
+        if (dir == rootAt(2)) return QIcon(":/icons/square-terminal.svg");
+        if (dir == rootAt(3)) return QIcon(":/icons/sheet.svg");
+        if (dir == rootAt(4)) return QIcon(":/icons/book-marked.svg");
 
         return iconProvider.icon(QFileIconProvider::Folder);
     }
 
     if (dynamic_cast<Sound *>(elem))
-        return iconProvider.icon(QFileInfo("/dummy/file.wav"));
+    	return QIcon(":/icons/file-volume.svg");
 
     if (dynamic_cast<Annotation *>(elem))
-        return iconProvider.icon(QFileInfo("/dummy/file.txt"));
+    	return QIcon(":/icons/file-text.svg");
 
     if (dynamic_cast<Script *>(elem))
-        return QIcon(":/icons/script.png");
+        return QIcon(":/icons/file-terminal.svg");
 
     if (dynamic_cast<Bookmark *>(elem))
-        return QIcon(":/icons/bookmark.png");
+        return QIcon(":/icons/file-heart.svg");
 
     if (dynamic_cast<Dataset *>(elem))
-        return QIcon(":/icons/dataset.png");
+        return QIcon(":/icons/file-spreadsheet.svg");
 
     if (dynamic_cast<Query *>(elem))
-        return QIcon(":/icons/query.png");
+        return QIcon(":/icons/file-search-corner.svg");
 
-    return QIcon(":/icons/document.png");
+	return iconProvider.icon(QFileInfo("/dummy/file.txt"));
 }
 
 

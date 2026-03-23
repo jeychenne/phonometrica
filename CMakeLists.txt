@@ -307,22 +307,34 @@ if(WITH_GUI)
     target_link_libraries(${PROJECT_NAME} PRIVATE phon-gui Qt6::Widgets)
 
     qt6_add_resources(${PROJECT_NAME} "icons" FILES
-        icons/corpus.svg
+        icons/database.svg
         icons/search.svg
-        icons/terminal.svg
-        icons/spreadsheet.svg
-        icons/favorite.svg
-        icons/folder.png
-        icons/sound.png
-        icons/annotation.png
-        icons/textgrid.png
+        icons/file-text.svg
+        icons/square-terminal.svg
+        icons/sheet.svg
+        icons/book-marked.svg
         icons/script.png
-        icons/bookmark.png
-        icons/query.png
-        icons/dataset.png
-        icons/csv.png
-        icons/document.png
-        icons/save.png
+        icons/file-search-corner.svg
+        icons/file-spreadsheet.svg
+        icons/file-terminal.svg
+        icons/file-volume.svg
+        icons/file-heart.svg
+        icons/layers.svg
+        icons/waves.svg
+        icons/play.svg
+        icons/pause.svg
+        icons/square.svg
+        icons/arrow-left-from-line.svg
+        icons/arrow-right-from-line.svg
+        icons/zoom-in.svg
+        icons/zoom-out.svg
+        icons/minimize-2.svg
+        icons/maximize-2.svg
+        icons/mouse.svg
+            icons/play-selection.svg
+            icons/pause-selection.svg
+
+
         icons/start.png
         icons/hint.png
         icons/binary.png
@@ -342,6 +354,7 @@ if(WITH_GUI)
         icons/mouse.png
         icons/selection.png
         icons/waveform.png
+        icons/layout.png
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
