@@ -11,11 +11,12 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFrame>
 #include <QKeyEvent>
-#include <algorithm>
+#include <QMessageBox>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/time_axis_widget.hpp>
 #include <phon/gui/y_axis_widget.hpp>
@@ -208,6 +209,8 @@ void SoundView::createToolBar()
 
 	connect(scaling_group, &QActionGroup::triggered, this, &SoundView::onScalingChanged);
 
+
+
 	auto *wave_button = new QToolButton(this);
 	wave_button->setPopupMode(QToolButton::MenuButtonPopup);
 	connect(wave_button, &QToolButton::clicked, wave_button, &QToolButton::showMenu);
@@ -215,6 +218,40 @@ void SoundView::createToolBar()
 	wave_button->setToolTip(tr("Waveform settings"));
 	wave_button->setMenu(wave_menu);
 	m_toolbar->addWidget(wave_button);
+
+	if (m_sound->nchannel() > 1)
+	{
+		auto *channel_menu = new QMenu(this);
+		auto *channel_group = new QActionGroup(this);
+		channel_group->setExclusive(false);
+
+		auto *avg_action = channel_menu->addAction(tr("Average channels"));
+		avg_action->setCheckable(true);
+		avg_action->setChecked(false);
+		avg_action->setData(0);
+		channel_group->addAction(avg_action);
+
+		channel_menu->addSeparator();
+
+		for (int c = 1; c <= m_sound->nchannel(); c++)
+		{
+			auto *ch_action = channel_menu->addAction(tr("Channel %1").arg(c));
+			ch_action->setCheckable(true);
+			ch_action->setChecked(true);
+			ch_action->setData(c);
+			channel_group->addAction(ch_action);
+		}
+
+		connect(channel_group, &QActionGroup::triggered, this, &SoundView::onChannelAction);
+
+		auto *channel_button = new QToolButton(this);
+		channel_button->setIcon(QIcon(":/icons/layout.png"));
+		channel_button->setToolTip(tr("Select visible channels"));
+		channel_button->setPopupMode(QToolButton::MenuButtonPopup);
+		connect(channel_button, &QToolButton::clicked, channel_button, &QToolButton::showMenu);
+		channel_button->setMenu(channel_menu);
+		m_toolbar->addWidget(channel_button);
+	}
 }
 
 void SoundView::createWaveforms(QLayout *layout)
@@ -482,4 +519,54 @@ void SoundView::keyPressEvent(QKeyEvent *event)
 	}
 }
 
+void SoundView::onChannelAction(QAction *action)
+{
+	int channel = action->data().toInt();
+	bool show = action->isChecked();
+
+	// Guard: don't allow unchecking everything.
+	if (!show)
+	{
+		int visible_count = m_show_average ? 1 : 0;
+		visible_count += (int)m_visible_channels.size();
+
+		// Are we about to remove the last one?
+		bool removing_last = false;
+		if (channel == 0 && m_show_average)
+			removing_last = (visible_count == 1);
+		else if (channel != 0 && std::find(m_visible_channels.begin(), m_visible_channels.end(), channel) != m_visible_channels.end())
+			removing_last = (visible_count == 1);
+
+		if (removing_last)
+		{
+			QMessageBox::warning(this, tr("Channel selection"),
+				tr("At least one channel must be visible."));
+			action->setChecked(true);
+			return;
+		}
+	}
+
+	m_waveforms[channel]->setVisible(show);
+
+	if (channel == 0)
+	{
+		m_show_average = show;
+	}
+	else
+	{
+		if (show)
+		{
+			if (std::find(m_visible_channels.begin(), m_visible_channels.end(), channel) == m_visible_channels.end())
+				m_visible_channels.push_back(channel);
+		}
+		else
+		{
+			m_visible_channels.erase(
+				std::remove(m_visible_channels.begin(), m_visible_channels.end(), channel),
+				m_visible_channels.end());
+		}
+	}
+
+	m_y_axis->update();
+}
 } // namespace phonometrica
