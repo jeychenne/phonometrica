@@ -234,9 +234,10 @@ endif(WITH_APPLICATION)
 ##  GUI (Qt)               ##
 #############################
 
+
+
 if(WITH_GUI)
     add_definitions(-DPHON_GUI=1)
-
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTORCC ON)
 
@@ -315,6 +316,7 @@ if(WITH_GUI)
         icons/mouse.svg
         icons/play-selection.svg
         icons/pause-selection.svg
+        icons/spectrum.svg
         icons/phonometrica.svg
     )
 

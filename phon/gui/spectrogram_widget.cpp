@@ -26,7 +26,6 @@ namespace phonometrica {
 static const QColor SELECTION_COLOR(209, 116, 23, 50);
 static const QColor POINT_SEL_COLOR(199, 179, 0);
 static const QColor PLAYBACK_COLOR(255, 0, 0);
-static const QColor AXIS_TEXT_COLOR(255, 255, 255);  // white on dark spectrogram background
 
 SpectrogramWidget::SpectrogramWidget(TimeModel *model, const Handle<Sound> &sound, int channel, QWidget *parent) :
 	QWidget(parent), m_model(model), m_sound(sound), m_channel(channel)
@@ -93,7 +92,7 @@ void SpectrogramWidget::setMouseTracking(bool enabled)
 
 
 // ─────────────────────────────────────────────────
-//  Coordinate mapping
+//  Coordinate mapping (in logical pixels)
 // ─────────────────────────────────────────────────
 
 double SpectrogramWidget::timeToX(double t) const
@@ -119,10 +118,10 @@ double SpectrogramWidget::yPosToHertz(int y) const
 
 
 // ─────────────────────────────────────────────────
-//  Spectrogram computation
+//  Spectrogram computation (in physical pixels)
 // ─────────────────────────────────────────────────
 
-Matrix<double> SpectrogramWidget::computeSpectrogram()
+Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 {
 	using namespace speech;
 
@@ -145,8 +144,6 @@ Matrix<double> SpectrogramWidget::computeSpectrogram()
 	auto half_nfft = nfft / 2;
 
 	std::vector<double> amplitude(half_nfft, 0.0);
-	intptr_t w = width();
-	intptr_t h = height();
 
 	if (w <= 0 || h <= 0) {
 		return Matrix<double>(0, 0);
@@ -254,7 +251,6 @@ Matrix<double> SpectrogramWidget::computeSpectrogram()
 				double delta = a2 - a1;
 				double remainder = freq - bin;
 				double amp = a1 + (delta * remainder);
-				// amp might be NaN if the raw amplitude is 0.
 				raster(x, y - 1) = amp;
 			}
 		}
@@ -270,18 +266,20 @@ Matrix<double> SpectrogramWidget::computeSpectrogram()
 
 void SpectrogramWidget::rebuildCache()
 {
-	int w = width();
-	int h = height();
+	const double dpr = devicePixelRatioF();
+	const int pw = int(width() * dpr);   // physical pixel width
+	const int ph = int(height() * dpr);  // physical pixel height
 
-	if (w <= 0 || h <= 0) {
+	if (pw <= 0 || ph <= 0) {
 		m_cache = QImage();
 		m_cache_valid = true;
 		return;
 	}
 
-	auto raster = computeSpectrogram();
+	auto raster = computeSpectrogram(pw, ph);
 
-	m_cache = QImage(w, h, QImage::Format_RGB32);
+	m_cache = QImage(pw, ph, QImage::Format_RGB32);
+	m_cache.setDevicePixelRatio(dpr);
 	m_cache.fill(Qt::white);
 
 	if (raster.rows() == 0 || raster.cols() == 0) {
@@ -310,14 +308,14 @@ void SpectrogramWidget::rebuildCache()
 		min_dB = (std::max)(min_dB, max_dB - m_dynamic_range);
 
 		// The image must be filled with frequency reversed: high frequencies at the top.
-		// raster columns go 0 (low freq) to h-1 (high freq).
-		// Image rows go 0 (top = high freq) to h-1 (bottom = low freq).
-		for (int img_y = 0; img_y < h; img_y++)
+		// raster columns go 0 (low freq) to ph-1 (high freq).
+		// Image rows go 0 (top = high freq) to ph-1 (bottom = low freq).
+		for (int img_y = 0; img_y < ph; img_y++)
 		{
-			int freq_j = h - 1 - img_y; // reverse: top = high freq
+			int freq_j = ph - 1 - img_y; // reverse: top = high freq
 			auto *scanline = reinterpret_cast<QRgb *>(m_cache.scanLine(img_y));
 
-			for (int img_x = 0; img_x < w; img_x++)
+			for (int img_x = 0; img_x < pw; img_x++)
 			{
 				double value = (std::max)(raster(img_x, freq_j), min_dB);
 				if (std::isnan(value)) value = min_dB;
@@ -334,25 +332,6 @@ void SpectrogramWidget::rebuildCache()
 	m_cache_valid = true;
 }
 
-void SpectrogramWidget::drawFrequencyAxis(QPainter &p)
-{
-	QFontMetrics fm = p.fontMetrics();
-	int padding = 3;
-
-	// Use a semi-transparent background for readability over the spectrogram.
-	p.setPen(AXIS_TEXT_COLOR);
-
-	// Top label: max frequency.
-	QString top = QString("%1 Hz").arg(int(m_max_freq));
-	int tw = fm.horizontalAdvance(top);
-	p.drawText(width() - tw - padding, fm.ascent() + padding, top);
-
-	// Bottom label: 0 Hz.
-	QString bottom("0 Hz");
-	tw = fm.horizontalAdvance(bottom);
-	p.drawText(width() - tw - padding, height() - padding, bottom);
-}
-
 
 // ─────────────────────────────────────────────────
 //  Painting
@@ -366,6 +345,8 @@ void SpectrogramWidget::paintEvent(QPaintEvent *)
 	QPainter p(this);
 
 	// Draw the cached spectrogram image.
+	// Because m_cache has its devicePixelRatio set, Qt handles the
+	// physical-to-logical mapping automatically.
 	if (!m_cache.isNull())
 		p.drawImage(0, 0, m_cache);
 
@@ -418,9 +399,6 @@ void SpectrogramWidget::paintEvent(QPaintEvent *)
 			p.drawLine(QPointF(x, 0), QPointF(x, h));
 		}
 	}
-
-	// Draw frequency axis labels.
-	drawFrequencyAxis(p);
 }
 
 void SpectrogramWidget::resizeEvent(QResizeEvent *)

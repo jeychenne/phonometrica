@@ -65,16 +65,14 @@ private:
 
 	void rebuildCache();
 
-	// Compute the spectrogram raster: an (width x height) matrix of dB values.
-	Matrix<double> computeSpectrogram();
+	// Compute the spectrogram raster: a (w x h) matrix of dB values.
+	// w and h are in physical pixels (accounting for device pixel ratio).
+	Matrix<double> computeSpectrogram(int w, int h);
 
 	// Map between time/frequency and pixel coordinates.
 	double timeToX(double t) const;
 	double xToTime(double x) const;
 	double yPosToHertz(int y) const;
-
-	// Draw the frequency axis labels on the right side of the widget.
-	void drawFrequencyAxis(QPainter &p);
 
 	TimeModel *m_model;
 	Handle<Sound> m_sound;

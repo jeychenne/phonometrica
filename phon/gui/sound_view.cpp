@@ -102,6 +102,10 @@ void SoundView::setupUi()
 	for (auto *wf : m_waveforms)
 		m_y_axis->addWaveform(wf);
 
+	// Register all spectrograms with the Y axis.
+	for (auto *sg : m_spectrograms)
+		m_y_axis->addSpectrogram(sg);
+
 	// Hook for annotation layers (subclass override).
 	addAnnotationLayers(plot_layout);
 
@@ -228,7 +232,7 @@ void SoundView::createToolBar()
 	m_toolbar->addWidget(wave_button);
 
 	// Spectrogram toggle.
-	m_spectrogram_action = m_toolbar->addAction(QIcon(":/icons/sheet.svg"),
+	m_spectrogram_action = m_toolbar->addAction(QIcon(":/icons/spectrum.svg"),
 		tr("Show spectrogram"));
 	m_spectrogram_action->setCheckable(true);
 	m_spectrogram_action->setChecked(false);
@@ -416,6 +420,7 @@ void SoundView::onToggleSpectrogram(bool checked)
 			m_visible_channels.end(), c) != m_visible_channels.end();
 		m_spectrograms[c]->setVisible(checked && ch_visible);
 	}
+	m_y_axis->update();
 }
 
 void SoundView::onScalingChanged(QAction *action)
