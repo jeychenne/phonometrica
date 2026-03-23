@@ -313,7 +313,6 @@ if(WITH_GUI)
         icons/square-terminal.svg
         icons/sheet.svg
         icons/book-marked.svg
-        icons/script.png
         icons/file-search-corner.svg
         icons/file-spreadsheet.svg
         icons/file-terminal.svg
