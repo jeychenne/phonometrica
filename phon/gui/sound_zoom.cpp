@@ -32,6 +32,12 @@ void SoundZoom::setSelection(double x1, double x2)
 	update();
 }
 
+void SoundZoom::setLeftOffset(int offset)
+{
+	m_left_offset = offset;
+	update();
+}
+
 void SoundZoom::paintEvent(QPaintEvent *)
 {
 	if (m_sel_x1 < 0)
@@ -43,9 +49,8 @@ void SoundZoom::paintEvent(QPaintEvent *)
 	int w = width();
 	int h = height();
 
-	// Trapezoid: top-left (0,0) → bottom-left (sel_x1, h) → bottom-right (sel_x2, h) → top-right (w, 0).
 	QPainterPath path;
-	path.moveTo(0, 0);
+	path.moveTo(m_left_offset, 0);
 	path.lineTo(m_sel_x1, h);
 	path.lineTo(m_sel_x2, h);
 	path.lineTo(w, 0);

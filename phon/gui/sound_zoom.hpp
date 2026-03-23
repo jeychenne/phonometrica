@@ -28,6 +28,8 @@ public:
 
 	explicit SoundZoom(QWidget *parent = nullptr);
 
+	void setLeftOffset(int offset);
+
 public slots:
 
 	// Called when the wavebar viewport pixel coordinates change.
@@ -41,6 +43,7 @@ private:
 
 	double m_sel_x1 = -1;
 	double m_sel_x2 = -1;
+	int m_left_offset = 0;
 };
 
 } // namespace phonometrica
