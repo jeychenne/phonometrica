@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QFrame>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <phon/gui/sound_view.hpp>

@@ -331,30 +331,9 @@ if(WITH_GUI)
         icons/minimize-2.svg
         icons/maximize-2.svg
         icons/mouse.svg
-            icons/play-selection.svg
-            icons/pause-selection.svg
-
-
-        icons/start.png
-        icons/hint.png
-        icons/binary.png
-        icons/double_left.png
-        icons/double_right.png
-        icons/toggle_off.png
-        icons/toggle_on.png
-        icons/play.png
-        icons/pause.png
-        icons/stop.png
-        icons/back.png
-        icons/next.png
-        icons/zoom_minus.png
-        icons/zoom_plus.png
-        icons/collapse.png
-        icons/expand.png
-        icons/mouse.png
-        icons/selection.png
-        icons/waveform.png
-        icons/layout.png
+        icons/play-selection.svg
+        icons/pause-selection.svg
+        icons/phonometrica.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
