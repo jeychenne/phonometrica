@@ -72,6 +72,7 @@ private slots:
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
 	void onViewportChanged(double start, double end);
+	void onChannelAction(QAction *action);
 
 	// Playback
 	void onPlayWindow();
