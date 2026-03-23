@@ -150,20 +150,6 @@ if(WITH_APPLICATION)
         include_directories(${SNDFILE_INCLUDE_DIRS})
     endif()
 
-    # FFTW3
-    if(PKG_CONFIG_FOUND)
-        pkg_check_modules(FFTW3 QUIET fftw3)
-    endif()
-    if(NOT FFTW3_FOUND)
-        find_library(FFTW3_LIBRARIES NAMES fftw3)
-        find_path(FFTW3_INCLUDE_DIRS fftw3.h)
-    endif()
-    if(FFTW3_INCLUDE_DIRS)
-        include_directories(${FFTW3_INCLUDE_DIRS})
-    endif()
-
-    add_definitions(-DPHON_USE_FFTW=1)
-
     # ---- Vendored header-only libraries ----
 
     add_definitions(-DEIGEN_MPL2_ONLY)  # Eigen already present in third_party/
@@ -222,7 +208,6 @@ if(WITH_APPLICATION)
     if(WIN32)
         target_link_libraries(phon-app PRIVATE
             ${SNDFILE_LIBRARIES}
-            ${FFTW3_LIBRARIES}
             ole32 comctl32 winmm uuid Rpcrt4 User32 dsound
         )
     elseif(APPLE)
@@ -232,14 +217,12 @@ if(WITH_APPLICATION)
         endif()
         target_link_libraries(phon-app PRIVATE
             ${SNDFILE_LIBRARIES}
-            ${FFTW3_LIBRARIES}
             pthread dl ${LIB_ICONV}
             "-framework Foundation" "-framework CoreAudio"
         )
     else()
         target_link_libraries(phon-app PRIVATE
             ${SNDFILE_LIBRARIES}
-            ${FFTW3_LIBRARIES}
             pthread dl asound
         )
     endif()
@@ -323,8 +306,8 @@ if(WITH_GUI)
         icons/play.svg
         icons/pause.svg
         icons/square.svg
-        icons/arrow-left-from-line.svg
-        icons/arrow-right-from-line.svg
+        icons/arrow-left.svg
+        icons/arrow-right.svg
         icons/zoom-in.svg
         icons/zoom-out.svg
         icons/minimize-2.svg

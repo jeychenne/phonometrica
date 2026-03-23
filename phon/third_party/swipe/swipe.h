@@ -24,8 +24,7 @@
  *  Kyle Gorman
 */
 
-// This version includes modifications by Sevag Hanssian to use FFTS instead of FFTW.
-// See: https://github.com/sevagh/pitch-detection/blob/master/src/swipe.cpp
+// This version includes modifications to use pocketfft instead of FFTW.
 
 #include <stdint.h>
 #include "vector.h"

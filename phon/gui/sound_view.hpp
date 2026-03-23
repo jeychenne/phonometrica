@@ -33,6 +33,7 @@ namespace phonometrica {
 
 class AudioPlayer;
 class WaveformWidget;
+class SpectrogramWidget;
 class WaveBar;
 class SoundZoom;
 
@@ -68,6 +69,7 @@ private slots:
 	void onMoveForward();
 	void onMoveBackward();
 	void onToggleMouseTracking(bool checked);
+	void onToggleSpectrogram(bool checked);
 	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
@@ -85,6 +87,7 @@ private:
 	void setupUi();
 	void createToolBar();
 	void createWaveforms(QLayout *layout);
+	void createSpectrograms(QLayout *layout);
 	void updateStatusText();
 	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
@@ -103,13 +106,18 @@ private:
 	// Channel 0 = average, channels 1..N = individual.
 	std::vector<WaveformWidget *> m_waveforms;
 
+	// One spectrogram per channel (same indexing as waveforms).
+	std::vector<SpectrogramWidget *> m_spectrograms;
+
 	// Track which channels are visible.
 	std::vector<int> m_visible_channels;
 	bool m_show_average = false;
+	bool m_show_spectrogram = false;
 
 	QAction *m_zoom_sel_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
 	QAction *m_play_action = nullptr;
+	QAction *m_spectrogram_action = nullptr;
 
 	// Audio playback
 	std::unique_ptr<AudioPlayer> m_player;
