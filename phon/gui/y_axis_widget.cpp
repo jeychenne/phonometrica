@@ -15,6 +15,7 @@
 #include <QMouseEvent>
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
+#include <phon/gui/spectrogram_widget.hpp>
 
 namespace phonometrica {
 
@@ -33,6 +34,11 @@ YAxisWidget::YAxisWidget(TimeModel *model, QWidget *parent) :
 void YAxisWidget::addWaveform(WaveformWidget *wf)
 {
 	m_waveforms.push_back(wf);
+}
+
+void YAxisWidget::addSpectrogram(SpectrogramWidget *sg)
+{
+	m_spectrograms.push_back(sg);
 }
 
 void YAxisWidget::paintEvent(QPaintEvent *)
@@ -76,6 +82,32 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 		tw = fm.horizontalAdvance(bottom);
 		x = w - tw - LABEL_PADDING;
 		int y_bot = y_offset + wf_height - fm.height();
+		painter.drawText(x, y_bot + fm.ascent(), bottom);
+	}
+
+	for (auto *sg : m_spectrograms)
+	{
+		if (!sg->isVisible())
+			continue;
+
+		QPoint top_left = mapFromGlobal(sg->mapToGlobal(QPoint(0, 0)));
+		int y_offset = top_left.y();
+		int sg_height = sg->height();
+
+		if (sg_height < fm.height() * 2)
+			continue;
+
+		// Top label: max frequency.
+		QString top = QString("%1 Hz").arg(int(sg->maxFrequency()));
+		int tw = fm.horizontalAdvance(top);
+		int x = w - tw - LABEL_PADDING;
+		painter.drawText(x, y_offset + fm.ascent(), top);
+
+		// Bottom label: 0 Hz.
+		QString bottom("0 Hz");
+		tw = fm.horizontalAdvance(bottom);
+		x = w - tw - LABEL_PADDING;
+		int y_bot = y_offset + sg_height - fm.height();
 		painter.drawText(x, y_bot + fm.ascent(), bottom);
 	}
 }

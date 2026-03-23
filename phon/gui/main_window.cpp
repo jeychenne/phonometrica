@@ -95,16 +95,16 @@ QMenu *MainWindow::createFileMenu()
 				tr("Could not open project: %1").arg(e.what()));
 		}
 	});
-
+	menu->addSeparator();
 	menu->addAction(tr("Add files to project..."), QKeySequence(tr("Ctrl+Shift+A")), this, &MainWindow::onAddFiles);
 	menu->addAction(tr("Add content of directory to project..."), this, &MainWindow::onAddFolder);
-	menu->addAction(tr("Close project"), this, &MainWindow::onCloseProject);
 	menu->addSeparator();
 
 	menu->addAction(tr("Save project"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::onSaveProject);
 	menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
 	menu->addSeparator();
-
+	menu->addAction(tr("Close project"), this, &MainWindow::onCloseProject);
+	menu->addSeparator();
 	menu->addAction(tr("Quit"), QKeySequence::Quit, this, &MainWindow::onQuit);
 
 	return menu;

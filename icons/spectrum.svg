@@ -1,0 +1,22 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="black"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+  >
+  <!-- baseline -->
+  <path d="M3 20H21" />
+
+  <!-- spectrum bars -->
+  <path d="M5 20V13" />
+  <path d="M8 20V9" />
+  <path d="M11 20V4" />  <!-- highest peak -->
+  <path d="M14 20V7" />
+  <path d="M17 20V11" />
+  <path d="M20 20V15" />
+</svg>

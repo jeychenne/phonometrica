@@ -14,6 +14,7 @@
 #include <cstring>
 #include <cstdarg>
 #include <cmath>
+#include <charconv>
 #include <phon/string.hpp>
 #include <phon/error.hpp>
 #include <phon/utils/alloc.hpp>
@@ -1561,9 +1562,10 @@ double String::to_float(Substring str, bool *ok)
 			break;
 		}
 	}
-
+	
 	if (numeric) {
-		sscanf(str.data(), "%lf", &value);
+		auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
+		if (ec != std::errc{}) numeric = false;
 	}
 
 	// Only throw an error if ok is null

@@ -114,6 +114,10 @@ Array<double> create_window(intptr_t N, intptr_t fftlen, WindowType type)
         break;
     case WindowType::Gaussian:
     {
+		// apply_gaussian_window uses *= so we must seed with 1.0 first;
+		// otherwise the zero-initialized array stays zero.
+		for (i = 0; i < N; i++)
+			win[i] = 1.0;
 		apply_gaussian_window(result, N);
     }
 	    break;
@@ -122,6 +126,7 @@ Array<double> create_window(intptr_t N, intptr_t fftlen, WindowType type)
         for (i = 0; i < N; i++)
             win[i] = (double) (0.54 - 0.46 * cos(i * 2.0 * M_PI / (N - 1)));
     }
+	    break;
 	case WindowType::Kaiser:
 	{
 		constexpr double beta = 0.5;
@@ -506,9 +511,9 @@ Array<std::complex<double>> &FFT::process(const Array<double> &data)
 /// Standard first-order FIR high-pass filter that increases the spectral
 /// slope by +6 dB/octave above the given threshold frequency.
 ///
-/// Algorithm:
+/// Algorithm (from published description):
 ///   alpha = exp(-2 * pi * threshold * dt)
-///   x[i] = x[i] - alpha * x[i-1]
+///   data[i] = data[i] - alpha * data[i-1]
 ///
 void pre_emphasis(Array<double> &data, double Fs, double threshold)
 {
@@ -524,27 +529,34 @@ void pre_emphasis(Array<double> &data, double Fs, double threshold)
 	}
 }
 
-/// Apply a Gaussian window in-place.
+/// Edge-corrected Gaussian window for spectral analysis.
 ///
-/// The Gaussian taper used is:  exp(-3 * (j / half_N)^2)
-/// where j is the sample offset from the window center and half_N = N/2.
-/// This yields a -3 dB bandwidth of 1.2982804 / window_duration.
+/// Fills win[0..N-1] with a truncated Gaussian taper defined as:
 ///
-/// N is the nominal window length in samples. For Gaussian analysis,
-/// the actual span (win.size()) is typically 2*N to capture the tails;
-/// samples beyond ±N/2 are attenuated by the exponential decay.
+///   w(t) = [G(t) - G_edge] / [1 - G_edge]
 ///
-void apply_gaussian_window(std::span<double> win, size_t N)
+/// where G(t) = exp(-alpha * t^2), t = 2*(n - center)/(N+1) maps each
+/// sample to approximately [-1, 1], and G_edge = exp(-alpha) is the
+/// uncorrected value at the window boundary.  Subtracting G_edge and
+/// renormalising forces the window to reach exactly zero at the edges,
+/// preventing spectral leakage from truncated Gaussian tails.
+///
+/// alpha = 12 yields a -3 dB bandwidth of sqrt(2*12*ln(2)) / pi ≈ 1.2983
+/// divided by the window duration, matching the Gaussian window used in Praat.
+	void apply_gaussian_window(std::span<double> win, size_t N)
 {
-	const auto len = win.size();
-	if (len == 0 || N == 0) return;
+	if (N == 0) return;
 
-	const double half_N = static_cast<double>(N) / 2.0;
-	const double center = static_cast<double>(len - 1) / 2.0;
+	constexpr double alpha = 12.0;
+	const double edge = std::exp(-alpha);
+	const double scale = 1.0 / (1.0 - edge);
+	const double half_span = 0.5 * static_cast<double>(N + 1);
 
-	for (size_t i = 0; i < len; ++i) {
-		double offset = (static_cast<double>(i) - center) / half_N;
-		win[i] *= std::exp(-3.0 * offset * offset);
+	for (size_t n = 0; n < N; n++)
+	{
+		// Normalised distance from centre: t ∈ approximately [-1, 1].
+		double t = (static_cast<double>(n) + 1.0 - half_span) / half_span;
+		win[n] = (std::exp(-alpha * t * t) - edge) * scale;
 	}
 }
 
