@@ -67,7 +67,7 @@ Eigen::VectorXd calculate_ac(const Eigen::VectorXd& data) {
     return Eigen::Map<Eigen::VectorXd>(ac_result.data(), n);
 }
 
-std::vector<double> get_pitch(const Array<double> &idat, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.45)
+std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.45)
 {
     std::span<const double> input{idat.data(), size_t(idat.size())};
     const int win_len = static_cast<int>(std::floor(3.0 * sample_rate / min_pitch));
