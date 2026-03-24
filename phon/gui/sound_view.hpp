@@ -36,6 +36,7 @@ namespace phonometrica {
 class AudioPlayer;
 class WaveformWidget;
 class SpectrogramWidget;
+class PitchWidget;
 class IntensityWidget;
 class WaveBar;
 class SoundZoom;
@@ -79,6 +80,9 @@ private slots:
 	void onIntensitySettings();
 	void onToggleFormants(bool checked);
 	void onFormantSettings();
+	void onTogglePitch(bool checked);
+	void onPitchSettings();
+	void onSelectWindow();
 	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
@@ -97,7 +101,9 @@ private:
 	void createToolBar();
 	void createWaveforms(QVBoxLayout *layout);
 	void createSpectrograms(QVBoxLayout *layout);
+	void createPitchTracks(QVBoxLayout *layout);
 	void createIntensityTracks(QVBoxLayout *layout);
+	QFrame *createSeparator();
 	void updatePlotVisibility();
 	void updateTopPlot();
 	void updateStatusText();
@@ -121,10 +127,16 @@ private:
 	// One spectrogram per channel (same indexing as waveforms).
 	std::vector<SpectrogramWidget *> m_spectrograms;
 
+	// One pitch track per channel (same indexing as waveforms).
+	std::vector<PitchWidget *> m_pitches;
+
 	// One intensity track per channel (same indexing as waveforms).
 	std::vector<IntensityWidget *> m_intensities;
 
-	// Separator lines between intensity channels.
+	// Separator lines: one per widget (same indexing). Each line follows its widget in the layout.
+	std::vector<QFrame *> m_wave_lines;
+	std::vector<QFrame *> m_spectrogram_lines;
+	std::vector<QFrame *> m_pitch_lines;
 	std::vector<QFrame *> m_intensity_lines;
 
 	// Track which channels are visible.
@@ -132,6 +144,7 @@ private:
 	bool m_show_average = false;
 	bool m_show_waveform = true;
 	bool m_show_spectrogram = false;
+	bool m_show_pitch = false;
 	bool m_show_intensity = false;
 	bool m_show_formants = false;
 
@@ -147,6 +160,9 @@ private:
 
 	// Intensity menu: show toggle.
 	QAction *m_show_intensity_action = nullptr;
+
+	// Pitch menu: show toggle.
+	QAction *m_show_pitch_action = nullptr;
 
 	// Formant menu: show toggle.
 	QAction *m_show_formants_action = nullptr;
