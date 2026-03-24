@@ -16,6 +16,7 @@
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
 #include <phon/gui/spectrogram_widget.hpp>
+#include <phon/gui/pitch_widget.hpp>
 #include <phon/gui/intensity_widget.hpp>
 
 namespace phonometrica {
@@ -45,6 +46,11 @@ void YAxisWidget::addSpectrogram(SpectrogramWidget *sg)
 void YAxisWidget::addIntensity(IntensityWidget *iw)
 {
 	m_intensities.push_back(iw);
+}
+
+void YAxisWidget::addPitch(PitchWidget *pw)
+{
+	m_pitches.push_back(pw);
 }
 
 void YAxisWidget::paintEvent(QPaintEvent *)
@@ -117,6 +123,32 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 		painter.drawText(x, y_bot + fm.ascent(), bottom);
 	}
 
+	for (auto *pw : m_pitches)
+	{
+		if (!pw->isVisible())
+			continue;
+
+		QPoint top_left = mapFromGlobal(pw->mapToGlobal(QPoint(0, 0)));
+		int y_offset = top_left.y();
+		int pw_height = pw->height();
+
+		if (pw_height < fm.height() * 2)
+			continue;
+
+		// Top label: max pitch.
+		QString top = QString("%1 Hz").arg(int(pw->maxPitch()));
+		int tw = fm.horizontalAdvance(top);
+		int x = w - tw - LABEL_PADDING;
+		painter.drawText(x, y_offset + fm.ascent(), top);
+
+		// Bottom label: min pitch.
+		QString bottom = QString("%1 Hz").arg(int(pw->minPitch()));
+		tw = fm.horizontalAdvance(bottom);
+		x = w - tw - LABEL_PADDING;
+		int y_bot = y_offset + pw_height - fm.height();
+		painter.drawText(x, y_bot + fm.ascent(), bottom);
+	}
+
 	for (auto *iw : m_intensities)
 	{
 		if (!iw->isVisible())
@@ -140,6 +172,32 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 		tw = fm.horizontalAdvance(bottom);
 		x = w - tw - LABEL_PADDING;
 		int y_bot = y_offset + iw_height - fm.height();
+		painter.drawText(x, y_bot + fm.ascent(), bottom);
+	}
+
+	for (auto *pw : m_pitches)
+	{
+		if (!pw->isVisible())
+			continue;
+
+		QPoint top_left = mapFromGlobal(pw->mapToGlobal(QPoint(0, 0)));
+		int y_offset = top_left.y();
+		int pw_height = pw->height();
+
+		if (pw_height < fm.height() * 2)
+			continue;
+
+		// Top label: max pitch.
+		QString top = QString("%1 Hz").arg(int(pw->maxPitch()));
+		int tw = fm.horizontalAdvance(top);
+		int x = w - tw - LABEL_PADDING;
+		painter.drawText(x, y_offset + fm.ascent(), top);
+
+		// Bottom label: min pitch.
+		QString bottom = QString("%1 Hz").arg(int(pw->minPitch()));
+		tw = fm.horizontalAdvance(bottom);
+		x = w - tw - LABEL_PADDING;
+		int y_bot = y_offset + pw_height - fm.height();
 		painter.drawText(x, y_bot + fm.ascent(), bottom);
 	}
 }

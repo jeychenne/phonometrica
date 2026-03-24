@@ -1,0 +1,26 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <!-- left bracket -->
+  <polyline points="8 4 4 4 4 20 8 20" />
+  
+  <!-- right bracket -->
+  <polyline points="16 4 20 4 20 20 16 20" />
+  
+  <!-- center horizontal line -->
+  <line x1="7" y1="12" x2="17" y2="12" />
+  
+  <!-- left arrow -->
+  <polyline points="10 9 7 12 10 15" />
+  
+  <!-- right arrow -->
+  <polyline points="14 9 17 12 14 15" />
+</svg>
