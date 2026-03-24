@@ -9,7 +9,7 @@
  *                                                                                                                     *
  * Purpose: Widget to display amplitude labels to the left of the waveforms in sound and annotation views.             *
  *          Draws +magnitude / 0 / -magnitude for each registered waveform, positioned to match the waveform's         *
- *          vertical extent. Clicking the widget clears the current selection.                                          *
+ *          vertical extent. Clicking the widget clears the current selection.                                         *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
