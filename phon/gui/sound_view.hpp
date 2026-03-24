@@ -23,6 +23,8 @@
 #include <QTimer>
 #include <QMenu>
 #include <QActionGroup>
+#include <QFrame>
+#include <QVBoxLayout>
 #include <phon/gui/view.hpp>
 #include <phon/gui/time_model.hpp>
 #include <phon/gui/time_axis_widget.hpp>
@@ -91,10 +93,11 @@ private:
 
 	void setupUi();
 	void createToolBar();
-	void createWaveforms(QLayout *layout);
-	void createSpectrograms(QLayout *layout);
-	void createIntensityTracks(QLayout *layout);
+	void createWaveforms(QVBoxLayout *layout);
+	void createSpectrograms(QVBoxLayout *layout);
+	void createIntensityTracks(QVBoxLayout *layout);
 	void updatePlotVisibility();
+	void updateTopPlot();
 	void updateStatusText();
 	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
@@ -118,6 +121,9 @@ private:
 
 	// One intensity track per channel (same indexing as waveforms).
 	std::vector<IntensityWidget *> m_intensities;
+
+	// Separator lines between intensity channels.
+	std::vector<QFrame *> m_intensity_lines;
 
 	// Track which channels are visible.
 	std::vector<int> m_visible_channels;

@@ -77,6 +77,15 @@ void WaveformWidget::setMouseTracking(bool enabled)
 	m_mouse_tracking_enabled = enabled;
 }
 
+void WaveformWidget::setTopPlot(bool top)
+{
+	if (m_is_top != top)
+	{
+		m_is_top = top;
+		update();
+	}
+}
+
 
 // ─────────────────────────────────────────────────
 //  Coordinate mapping
@@ -370,6 +379,29 @@ void WaveformWidget::paintEvent(QPaintEvent *)
 		{
 			p.setPen(QPen(Qt::gray, 1, Qt::DashLine));
 			p.drawLine(QPointF(x, 0), QPointF(x, h));
+
+			// Draw the cursor time label on the top-most visible plot.
+			if (m_is_top)
+			{
+				QString time = QString::number(m_model->cursorTime(), 'f', 4);
+				QFont font = p.font();
+				font.setPointSizeF(font.pointSizeF() * 0.9);
+				p.setFont(font);
+				QFontMetrics fm(font);
+				int tw = fm.horizontalAdvance(time);
+				int th = fm.height();
+				int pad = 2;
+
+				// Place label to the right of the cursor; flip to the left near the edge.
+				int lx = int(x) + 4;
+				if (lx + tw + pad > w)
+					lx = int(x) - tw - 4;
+				int ly = pad;
+
+				p.fillRect(lx - pad, ly, tw + 2 * pad, th + pad, QColor(255, 255, 255, 180));
+				p.setPen(Qt::darkGray);
+				p.drawText(lx, ly + fm.ascent(), time);
+			}
 		}
 	}
 

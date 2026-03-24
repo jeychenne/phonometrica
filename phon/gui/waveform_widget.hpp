@@ -47,6 +47,9 @@ public:
 
 	void setMouseTracking(bool enabled);
 
+	// When true, this widget draws the cursor time label.
+	void setTopPlot(bool top);
+
 protected:
 
 	void paintEvent(QPaintEvent *event) override;
@@ -93,6 +96,7 @@ private:
 	double m_drag_start_time = -1;
 
 	bool m_mouse_tracking_enabled = false;
+	bool m_is_top = false;
 };
 
 } // namespace phonometrica
