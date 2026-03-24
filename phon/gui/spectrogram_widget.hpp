@@ -44,6 +44,11 @@ public:
 
 	void readSettings();
 
+	// Formant overlay.
+	void setShowFormants(bool show);
+	bool showFormants() const { return m_show_formants; }
+	void readFormantSettings();
+
 protected:
 
 	void paintEvent(QPaintEvent *event) override;
@@ -72,6 +77,11 @@ private:
 	// w and h are in physical pixels (accounting for device pixel ratio).
 	Matrix<double> computeSpectrogram(int w, int h);
 
+	// Formant estimation for the current viewport.
+	void rebuildFormantCache();
+	void drawFormants(QPainter &p);
+	double hertzToY(double hz) const;
+
 	// Map between time/frequency and pixel coordinates.
 	double timeToX(double t) const;
 	double xToTime(double x) const;
@@ -91,6 +101,19 @@ private:
 	double m_preemph_threshold;       // Pre-emphasis threshold (Hz).
 	int m_dynamic_range;              // Dynamic range in dB.
 	speech::WindowType m_window_type; // Window function.
+
+	// Formant overlay.
+	bool m_show_formants = false;
+	int m_nformant = 4;
+	double m_formant_max_freq = 5500;
+	double m_formant_window_length = 0.025;
+	double m_formant_time_step = 0.01;
+	int m_lpc_order = 10;
+
+	// Cached formant data: m_formant_freqs[i][j] = frequency of formant j at time i.
+	std::vector<double> m_formant_times;
+	std::vector<std::vector<double>> m_formant_freqs;
+	bool m_formants_valid = false;
 
 	// Dragging state for selection.
 	bool m_dragging = false;

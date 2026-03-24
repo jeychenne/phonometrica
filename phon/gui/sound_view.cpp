@@ -24,6 +24,7 @@
 #include <phon/gui/spectrogram_settings_dialog.hpp>
 #include <phon/gui/intensity_widget.hpp>
 #include <phon/gui/intensity_settings_dialog.hpp>
+#include <phon/gui/formant_settings_dialog.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
 #include <phon/application/audio_player.hpp>
@@ -69,6 +70,12 @@ SoundView::SoundView(const Handle<Sound> &sound, QWidget *parent) :
 	catch (...) {
 		m_show_intensity = false;
 	}
+	try {
+		m_show_formants = Settings::get_boolean("sound_plots", "formants");
+	}
+	catch (...) {
+		m_show_formants = false;
+	}
 
 	// All channels visible by default, average hidden.
 	for (int i = 1; i <= m_sound->nchannel(); i++)
@@ -88,6 +95,8 @@ SoundView::SoundView(const Handle<Sound> &sound, QWidget *parent) :
 		m_show_spectrogram_action->setChecked(m_show_spectrogram);
 	if (m_show_intensity_action)
 		m_show_intensity_action->setChecked(m_show_intensity);
+	if (m_show_formants_action)
+		m_show_formants_action->setChecked(m_show_formants);
 
 	// Set initial viewport after all widgets are connected.
 	// Show the first 10 seconds (or the whole file if shorter).
@@ -294,6 +303,27 @@ void SoundView::createToolBar()
 	spectrum_button->setMenu(spectrum_menu);
 	m_toolbar->addWidget(spectrum_button);
 
+	// ── Formant menu button ──────────────────────────
+	auto *formant_menu = new QMenu(this);
+
+	m_show_formants_action = formant_menu->addAction(tr("Show formants"));
+	m_show_formants_action->setCheckable(true);
+	m_show_formants_action->setChecked(false);
+	connect(m_show_formants_action, &QAction::toggled, this, &SoundView::onToggleFormants);
+
+	formant_menu->addSeparator();
+
+	auto *formant_settings_action = formant_menu->addAction(tr("Formant settings..."));
+	connect(formant_settings_action, &QAction::triggered, this, &SoundView::onFormantSettings);
+
+	auto *formant_button = new QToolButton(this);
+	formant_button->setPopupMode(QToolButton::MenuButtonPopup);
+	connect(formant_button, &QToolButton::clicked, formant_button, &QToolButton::showMenu);
+	formant_button->setIcon(QIcon(":/icons/waves.svg"));
+	formant_button->setToolTip(tr("Formant settings"));
+	formant_button->setMenu(formant_menu);
+	m_toolbar->addWidget(formant_button);
+
 	// ── Intensity menu button ─────────────────────────
 	auto *intensity_menu = new QMenu(this);
 
@@ -353,6 +383,7 @@ void SoundView::createToolBar()
 	layout_button->setToolTip(tr("Select visible channels"));
 	layout_button->setMenu(layout_menu);
 	m_toolbar->addWidget(layout_button);
+	m_toolbar->addSeparator();
 
 	// ── Mouse tracking toggle ─────────────────────────
 	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.svg"),
@@ -588,6 +619,28 @@ void SoundView::onIntensitySettings()
 	}
 }
 
+void SoundView::onToggleFormants(bool checked)
+{
+	m_show_formants = checked;
+	Settings::set_value("sound_plots", "formants", checked);
+	for (auto *sg : m_spectrograms)
+		sg->setShowFormants(checked);
+}
+
+void SoundView::onFormantSettings()
+{
+	FormantSettingsDialog dlg(this);
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		for (auto *sg : m_spectrograms)
+		{
+			sg->readFormantSettings();
+			sg->update();
+		}
+	}
+}
+
 void SoundView::updatePlotVisibility()
 {
 	// Waveforms: honour both m_show_waveform and channel visibility.
@@ -626,6 +679,10 @@ void SoundView::updatePlotVisibility()
 			m_visible_channels.end(), c) != m_visible_channels.end();
 		m_intensity_lines[i]->setVisible(m_show_intensity && ch_visible);
 	}
+
+	// Formants are overlaid on spectrograms, not separate widgets.
+	for (auto *sg : m_spectrograms)
+		sg->setShowFormants(m_show_formants);
 
 	m_y_axis->update();
 	updateTopPlot();
