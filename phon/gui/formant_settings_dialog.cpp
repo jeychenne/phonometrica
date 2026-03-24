@@ -29,7 +29,7 @@ FormantSettingsDialog::FormantSettingsDialog(QWidget *parent) :
 
 	auto *main_layout = new QVBoxLayout(this);
 
-	main_layout->addWidget(new QLabel(tr("Number of formants:")));
+	main_layout->addWidget(new QLabel(tr("Number of visible formants:")));
 	m_nformant_edit = new QLineEdit;
 	main_layout->addWidget(m_nformant_edit);
 
