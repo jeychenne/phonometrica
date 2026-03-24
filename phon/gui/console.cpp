@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QTextBlock>
 #include <QScrollBar>
+#include <phon/string.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/runtime.hpp>
 #include <phon/runtime/file.hpp>
@@ -158,13 +159,12 @@ void Console::runCode(const QString &code)
 
 	try
 	{
-		auto bytes = code.toUtf8();
-		auto result = m_runtime.do_string(String(bytes.constData(), bytes.size()));
+		auto result = m_runtime.do_string(code);
 
 		if (!result.is_null())
 		{
 			auto s = result.to_string(true);
-			appendOutput(QString::fromUtf8(s.data(), (int) s.size()));
+			appendOutput(s);
 		}
 	}
 	catch (std::exception &e)

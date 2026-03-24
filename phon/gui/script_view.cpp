@@ -64,18 +64,18 @@ void ScriptView::setupUi()
 	m_toolbar->setIconSize(QSize(24, 24));
 	m_toolbar->setMovable(false);
 
-	m_save_action = m_toolbar->addAction(QIcon(":/icons/save.png"),
+	m_save_action = m_toolbar->addAction(QIcon(":/icons/save.svg"),
 		tr("Save script (" CTRL_KEY "S)"));
 	m_save_action->setEnabled(false);
 	connect(m_save_action, &QAction::triggered, this, [this]() { save(); });
 
 	m_toolbar->addSeparator();
 
-	auto *run_action = m_toolbar->addAction(QIcon(":/icons/start.png"),
+	auto *run_action = m_toolbar->addAction(QIcon(":/icons/play.svg"),
 		tr("Execute script or selection (" CTRL_KEY RETURN_KEY ")"));
 	connect(run_action, &QAction::triggered, this, &ScriptView::execute);
 
-	m_hint_action = m_toolbar->addAction(QIcon(":/icons/hint.png"),
+	m_hint_action = m_toolbar->addAction(QIcon(":/icons/info.svg"),
 		tr("Activate auto-completion and call tips"));
 	m_hint_action->setCheckable(true);
 	bool autohints = false;
@@ -83,25 +83,25 @@ void ScriptView::setupUi()
 	m_hint_action->setChecked(autohints);
 	connect(m_hint_action, &QAction::toggled, this, &ScriptView::onToggleHints);
 
-	auto *bytecode_action = m_toolbar->addAction(QIcon(":/icons/binary.png"),
+	auto *bytecode_action = m_toolbar->addAction(QIcon(":/icons/binary.svg"),
 		tr("View bytecode"));
 	connect(bytecode_action, &QAction::triggered, this, &ScriptView::onViewBytecode);
 
 	m_toolbar->addSeparator();
 
-	auto *indent_action = m_toolbar->addAction(QIcon(":/icons/double_right.png"),
+	auto *indent_action = m_toolbar->addAction(QIcon(":/icons/arrow-right-to-line.svg"),
 		tr("Indent line or selection"));
 	connect(indent_action, &QAction::triggered, this, &ScriptView::onIndentSelection);
 
-	auto *unindent_action = m_toolbar->addAction(QIcon(":/icons/double_left.png"),
+	auto *unindent_action = m_toolbar->addAction(QIcon(":/icons/arrow-left-to-line.svg"),
 		tr("Unindent line or selection"));
 	connect(unindent_action, &QAction::triggered, this, &ScriptView::onUnindentSelection);
 
-	auto *comment_action = m_toolbar->addAction(QIcon(":/icons/toggle_off.png"),
+	auto *comment_action = m_toolbar->addAction(QIcon(":/icons/toggle-left.svg"),
 		tr("Comment line or selection"));
 	connect(comment_action, &QAction::triggered, this, &ScriptView::onCommentSelection);
 
-	auto *uncomment_action = m_toolbar->addAction(QIcon(":/icons/toggle_on.png"),
+	auto *uncomment_action = m_toolbar->addAction(QIcon(":/icons/toggle-right.svg"),
 		tr("Uncomment line or selection"));
 	connect(uncomment_action, &QAction::triggered, this, &ScriptView::onUncommentSelection);
 

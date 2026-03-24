@@ -106,28 +106,36 @@ include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2)
 ##  SCRIPTING ENGINE LIB ##
 ###########################
 
+if(WITH_GUI)
+    find_package(Qt6 REQUIRED COMPONENTS Core)
+endif()
+
 include_directories(${CMAKE_SOURCE_DIR})
 
 file(GLOB_RECURSE RUNTIME_SOURCES
-    phon/runtime/*.cpp
-    phon/utils/*.cpp
+        phon/runtime/*.cpp
+        phon/utils/*.cpp
 )
 
 set(THIRDPARTY_SOURCES
-    phon/third_party/utf8proc/utf8proc.c
+        phon/third_party/utf8proc/utf8proc.c
 )
 
 add_library(phon-runtime STATIC ${RUNTIME_SOURCES} ${THIRDPARTY_SOURCES})
 set_property(TARGET phon-runtime PROPERTY POSITION_INDEPENDENT_CODE ON)
-
 target_link_libraries(phon-runtime PRIVATE pcre2-8)
+
+if(WITH_GUI)
+    target_link_libraries(phon-runtime PUBLIC Qt6::Core)
+    #add_definitions(-DPHON_WITH_QT=1)
+    target_compile_definitions(phon-runtime PUBLIC PHON_WITH_QT=1)
+endif()
 
 if(WIN32)
     target_link_libraries(phon-runtime PRIVATE shlwapi)
 else()
     target_link_libraries(phon-runtime PRIVATE m)
 endif()
-
 
 #############################
 ##  APPLICATION LAYER LIB  ##
@@ -317,6 +325,13 @@ if(WITH_GUI)
         icons/play-selection.svg
         icons/pause-selection.svg
         icons/spectrum.svg
+        icons/save.svg
+        icons/info.svg
+        icons/binary.svg
+        icons/arrow-left-to-line.svg
+        icons/arrow-right-to-line.svg
+        icons/toggle-left.svg
+        icons/toggle-right.svg
         icons/phonometrica.svg
     )
 
