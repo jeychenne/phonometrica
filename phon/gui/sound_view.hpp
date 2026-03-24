@@ -77,6 +77,8 @@ private slots:
 	void onSpectrogramSettings();
 	void onToggleIntensity(bool checked);
 	void onIntensitySettings();
+	void onToggleFormants(bool checked);
+	void onFormantSettings();
 	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
@@ -131,6 +133,7 @@ private:
 	bool m_show_waveform = true;
 	bool m_show_spectrogram = false;
 	bool m_show_intensity = false;
+	bool m_show_formants = false;
 
 	QAction *m_zoom_sel_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
@@ -144,6 +147,9 @@ private:
 
 	// Intensity menu: show toggle.
 	QAction *m_show_intensity_action = nullptr;
+
+	// Formant menu: show toggle.
+	QAction *m_show_formants_action = nullptr;
 
 	// Audio playback
 	std::unique_ptr<AudioPlayer> m_player;

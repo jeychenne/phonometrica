@@ -41,6 +41,7 @@ SpectrogramWidget::SpectrogramWidget(TimeModel *model, const Handle<Sound> &soun
 	}
 	catch (std::exception &) {
 		Settings::reset_spectrogram();
+		Settings::reset_formants();
 		readSettings();
 	}
 
@@ -85,6 +86,29 @@ void SpectrogramWidget::readSettings()
 	}
 
 	m_cache_valid = false;
+	readFormantSettings();
+}
+
+void SpectrogramWidget::readFormantSettings()
+{
+	String category("formants");
+	m_nformant = (int) Settings::get_number(category, "number_of_formants");
+	m_formant_window_length = Settings::get_number(category, "window_size");
+	m_lpc_order = (int) Settings::get_number(category, "lpc_order");
+	m_formant_max_freq = Settings::get_number(category, "max_frequency");
+	m_formant_time_step = Settings::get_number(category, "time_step");
+
+	m_formants_valid = false;
+}
+
+void SpectrogramWidget::setShowFormants(bool show)
+{
+	if (m_show_formants != show)
+	{
+		m_show_formants = show;
+		m_formants_valid = false;
+		update();
+	}
 }
 
 void SpectrogramWidget::setMouseTracking(bool enabled)
@@ -125,6 +149,12 @@ double SpectrogramWidget::yPosToHertz(int y) const
 {
 	auto h = height();
 	return (m_max_freq * (h - y)) / h;
+}
+
+double SpectrogramWidget::hertzToY(double hz) const
+{
+	auto h = double(height());
+	return h - (hz * h / m_max_freq);
 }
 
 
@@ -345,6 +375,94 @@ void SpectrogramWidget::rebuildCache()
 
 
 // ─────────────────────────────────────────────────
+//  Formant estimation
+// ─────────────────────────────────────────────────
+
+void SpectrogramWidget::rebuildFormantCache()
+{
+	m_formant_times.clear();
+	m_formant_freqs.clear();
+	m_formants_valid = true;
+
+	auto window_duration = m_model->windowDuration();
+
+	// At least 2 measurements per window.
+	if (window_duration <= 2 * m_formant_time_step)
+		return;
+	// At most 2 measurements per pixel.
+	if (window_duration / m_formant_time_step > width() * 2)
+		return;
+
+	try
+	{
+		auto npoint = int(ceil((window_duration - m_formant_time_step) / m_formant_time_step));
+		if (npoint <= 0) return;
+
+		double t = m_model->windowStart();
+
+		for (int i = 0; i < npoint; i++)
+		{
+			t += m_formant_time_step;
+			m_formant_times.push_back(t);
+
+			std::vector<double> point_freqs(m_nformant, std::nan(""));
+
+			try
+			{
+				auto result = m_sound->get_formants(m_channel, t, m_nformant,
+					m_formant_max_freq, m_formant_window_length, m_lpc_order);
+
+				for (int j = 0; j < m_nformant; j++)
+				{
+					double f = result(j + 1, 1); // 1-based Array: row = formant, col 1 = frequency
+					if (std::isfinite(f) && f > 50 && f < m_formant_max_freq - 50)
+						point_freqs[j] = f;
+				}
+			}
+			catch (...)
+			{
+				// Edge effect — leave NaN.
+			}
+
+			m_formant_freqs.push_back(std::move(point_freqs));
+		}
+	}
+	catch (...)
+	{
+		m_formant_times.clear();
+		m_formant_freqs.clear();
+	}
+}
+
+void SpectrogramWidget::drawFormants(QPainter &p)
+{
+	if (m_formant_times.empty())
+		return;
+
+	p.setRenderHint(QPainter::Antialiasing);
+	p.setPen(Qt::NoPen);
+	p.setBrush(QColor(255, 0, 0)); // red dots
+
+	const double radius = 1.5;
+
+	for (size_t i = 0; i < m_formant_times.size(); i++)
+	{
+		double x = timeToX(m_formant_times[i]);
+
+		for (int j = 0; j < m_nformant; j++)
+		{
+			double f = m_formant_freqs[i][j];
+			if (std::isnan(f)) continue;
+			if (f > m_max_freq) continue; // outside visible range
+
+			double y = hertzToY(f);
+			p.drawEllipse(QPointF(x, y), radius, radius);
+		}
+	}
+}
+
+
+// ─────────────────────────────────────────────────
 //  Painting
 // ─────────────────────────────────────────────────
 
@@ -360,6 +478,14 @@ void SpectrogramWidget::paintEvent(QPaintEvent *)
 	// physical-to-logical mapping automatically.
 	if (!m_cache.isNull())
 		p.drawImage(0, 0, m_cache);
+
+	// Draw formant overlay.
+	if (m_show_formants)
+	{
+		if (!m_formants_valid)
+			rebuildFormantCache();
+		drawFormants(p);
+	}
 
 	int w = width();
 	int h = height();
@@ -437,6 +563,7 @@ void SpectrogramWidget::paintEvent(QPaintEvent *)
 void SpectrogramWidget::resizeEvent(QResizeEvent *)
 {
 	m_cache_valid = false;
+	m_formants_valid = false;
 }
 
 
@@ -512,6 +639,7 @@ void SpectrogramWidget::leaveEvent(QEvent *)
 void SpectrogramWidget::onViewportChanged(double, double)
 {
 	m_cache_valid = false;
+	m_formants_valid = false;
 	update();
 }
 
