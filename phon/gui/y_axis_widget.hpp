@@ -24,6 +24,7 @@ namespace phonometrica {
 
 class WaveformWidget;
 class SpectrogramWidget;
+class IntensityWidget;
 
 class YAxisWidget final : public QWidget
 {
@@ -35,6 +36,7 @@ public:
 
 	void addWaveform(WaveformWidget *wf);
 	void addSpectrogram(SpectrogramWidget *sg);
+	void addIntensity(IntensityWidget *iw);
 
 protected:
 
@@ -46,6 +48,7 @@ private:
 	TimeModel *m_model;
 	std::vector<WaveformWidget *> m_waveforms;
 	std::vector<SpectrogramWidget *> m_spectrograms;
+	std::vector<IntensityWidget *> m_intensities;
 };
 
 } // namespace phonometrica

@@ -16,6 +16,7 @@
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
 #include <phon/gui/spectrogram_widget.hpp>
+#include <phon/gui/intensity_widget.hpp>
 
 namespace phonometrica {
 
@@ -39,6 +40,11 @@ void YAxisWidget::addWaveform(WaveformWidget *wf)
 void YAxisWidget::addSpectrogram(SpectrogramWidget *sg)
 {
 	m_spectrograms.push_back(sg);
+}
+
+void YAxisWidget::addIntensity(IntensityWidget *iw)
+{
+	m_intensities.push_back(iw);
 }
 
 void YAxisWidget::paintEvent(QPaintEvent *)
@@ -108,6 +114,32 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 		tw = fm.horizontalAdvance(bottom);
 		x = w - tw - LABEL_PADDING;
 		int y_bot = y_offset + sg_height - fm.height();
+		painter.drawText(x, y_bot + fm.ascent(), bottom);
+	}
+
+	for (auto *iw : m_intensities)
+	{
+		if (!iw->isVisible())
+			continue;
+
+		QPoint top_left = mapFromGlobal(iw->mapToGlobal(QPoint(0, 0)));
+		int y_offset = top_left.y();
+		int iw_height = iw->height();
+
+		if (iw_height < fm.height() * 2)
+			continue;
+
+		// Top label: max intensity.
+		QString top = QString("%1 dB").arg(int(iw->maxIntensity()));
+		int tw = fm.horizontalAdvance(top);
+		int x = w - tw - LABEL_PADDING;
+		painter.drawText(x, y_offset + fm.ascent(), top);
+
+		// Bottom label: min intensity.
+		QString bottom = QString("%1 dB").arg(int(iw->minIntensity()));
+		tw = fm.horizontalAdvance(bottom);
+		x = w - tw - LABEL_PADDING;
+		int y_bot = y_offset + iw_height - fm.height();
 		painter.drawText(x, y_bot + fm.ascent(), bottom);
 	}
 }

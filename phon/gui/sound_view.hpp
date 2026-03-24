@@ -34,6 +34,7 @@ namespace phonometrica {
 class AudioPlayer;
 class WaveformWidget;
 class SpectrogramWidget;
+class IntensityWidget;
 class WaveBar;
 class SoundZoom;
 
@@ -69,7 +70,11 @@ private slots:
 	void onMoveForward();
 	void onMoveBackward();
 	void onToggleMouseTracking(bool checked);
+	void onToggleWaveform(bool checked);
 	void onToggleSpectrogram(bool checked);
+	void onSpectrogramSettings();
+	void onToggleIntensity(bool checked);
+	void onIntensitySettings();
 	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
@@ -88,6 +93,8 @@ private:
 	void createToolBar();
 	void createWaveforms(QLayout *layout);
 	void createSpectrograms(QLayout *layout);
+	void createIntensityTracks(QLayout *layout);
+	void updatePlotVisibility();
 	void updateStatusText();
 	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
@@ -109,15 +116,28 @@ private:
 	// One spectrogram per channel (same indexing as waveforms).
 	std::vector<SpectrogramWidget *> m_spectrograms;
 
+	// One intensity track per channel (same indexing as waveforms).
+	std::vector<IntensityWidget *> m_intensities;
+
 	// Track which channels are visible.
 	std::vector<int> m_visible_channels;
 	bool m_show_average = false;
+	bool m_show_waveform = true;
 	bool m_show_spectrogram = false;
+	bool m_show_intensity = false;
 
 	QAction *m_zoom_sel_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
 	QAction *m_play_action = nullptr;
-	QAction *m_spectrogram_action = nullptr;
+
+	// Waveform menu: show toggle + channel actions.
+	QAction *m_show_wave_action = nullptr;
+
+	// Spectrogram menu: show toggle.
+	QAction *m_show_spectrogram_action = nullptr;
+
+	// Intensity menu: show toggle.
+	QAction *m_show_intensity_action = nullptr;
 
 	// Audio playback
 	std::unique_ptr<AudioPlayer> m_player;
