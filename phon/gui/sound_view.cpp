@@ -242,34 +242,6 @@ void SoundView::createToolBar()
 	m_show_wave_action->setChecked(true);
 	connect(m_show_wave_action, &QAction::toggled, this, &SoundView::onToggleWaveform);
 
-	// Channel selection (only for multichannel files).
-	if (m_sound->nchannel() > 1)
-	{
-		wave_menu->addSeparator();
-
-		auto *channel_group = new QActionGroup(this);
-		channel_group->setExclusive(false);
-
-		auto *avg_action = wave_menu->addAction(tr("Average channels"));
-		avg_action->setCheckable(true);
-		avg_action->setChecked(false);
-		avg_action->setData(0);
-		channel_group->addAction(avg_action);
-
-		wave_menu->addSeparator();
-
-		for (int c = 1; c <= m_sound->nchannel(); c++)
-		{
-			auto *ch_action = wave_menu->addAction(tr("Channel %1").arg(c));
-			ch_action->setCheckable(true);
-			ch_action->setChecked(true);
-			ch_action->setData(c);
-			channel_group->addAction(ch_action);
-		}
-
-		connect(channel_group, &QActionGroup::triggered, this, &SoundView::onChannelAction);
-	}
-
 	// Scaling options.
 	wave_menu->addSeparator();
 	auto *scaling_group = new QActionGroup(this);
@@ -345,11 +317,44 @@ void SoundView::createToolBar()
 
 	m_toolbar->addSeparator();
 
-	// ── Mouse tracking toggle (on the right) ──────────
-	auto *spacer = new QWidget(this);
-	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
-	m_toolbar->addWidget(spacer);
+	// ── Layout menu button (always present) ───────────
+	auto *layout_menu = new QMenu(this);
 
+	auto *channel_group = new QActionGroup(this);
+	channel_group->setExclusive(false);
+
+	auto *avg_action = layout_menu->addAction(tr("Average channels"));
+	avg_action->setCheckable(true);
+	avg_action->setChecked(false);
+	avg_action->setData(0);
+	channel_group->addAction(avg_action);
+
+	// For mono files, averaging is meaningless: disable the action.
+	if (m_sound->is_mono())
+		avg_action->setEnabled(false);
+
+	layout_menu->addSeparator();
+
+	for (int c = 1; c <= m_sound->nchannel(); c++)
+	{
+		auto *ch_action = layout_menu->addAction(tr("Channel %1").arg(c));
+		ch_action->setCheckable(true);
+		ch_action->setChecked(true);
+		ch_action->setData(c);
+		channel_group->addAction(ch_action);
+	}
+
+	connect(channel_group, &QActionGroup::triggered, this, &SoundView::onChannelAction);
+
+	auto *layout_button = new QToolButton(this);
+	layout_button->setPopupMode(QToolButton::MenuButtonPopup);
+	connect(layout_button, &QToolButton::clicked, layout_button, &QToolButton::showMenu);
+	layout_button->setIcon(QIcon(":/icons/layers.svg"));
+	layout_button->setToolTip(tr("Select visible channels"));
+	layout_button->setMenu(layout_menu);
+	m_toolbar->addWidget(layout_button);
+
+	// ── Mouse tracking toggle ─────────────────────────
 	auto *mouse_action = m_toolbar->addAction(QIcon(":/icons/mouse.svg"),
 		tr("Enable mouse tracking"));
 	mouse_action->setCheckable(true);
@@ -357,12 +362,15 @@ void SoundView::createToolBar()
 	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
 }
 
-void SoundView::createWaveforms(QLayout *layout)
+void SoundView::createWaveforms(QVBoxLayout *layout)
 {
+	// Stretch factor for large plots (waveforms, spectrograms).
+	const int large_stretch = 2;
+
 	// Channel 0 = average of all channels.
 	auto *avg = new WaveformWidget(m_model, m_sound, 0, this);
 	m_waveforms.push_back(avg);
-	layout->addWidget(avg);
+	layout->addWidget(avg, large_stretch);
 
 	// One waveform per channel.
 	for (int c = 1; c <= m_sound->nchannel(); c++)
@@ -379,17 +387,20 @@ void SoundView::createWaveforms(QLayout *layout)
 
 		auto *wf = new WaveformWidget(m_model, m_sound, c, this);
 		m_waveforms.push_back(wf);
-		layout->addWidget(wf);
+		layout->addWidget(wf, large_stretch);
 	}
 }
 
-void SoundView::createSpectrograms(QLayout *layout)
+void SoundView::createSpectrograms(QVBoxLayout *layout)
 {
+	// Stretch factor for large plots (waveforms, spectrograms).
+	const int large_stretch = 2;
+
 	// Channel 0 = average of all channels.
 	auto *avg = new SpectrogramWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
 	m_spectrograms.push_back(avg);
-	layout->addWidget(avg);
+	layout->addWidget(avg, large_stretch);
 
 	// One spectrogram per channel.
 	for (int c = 1; c <= m_sound->nchannel(); c++)
@@ -397,25 +408,40 @@ void SoundView::createSpectrograms(QLayout *layout)
 		auto *sg = new SpectrogramWidget(m_model, m_sound, c, this);
 		sg->setVisible(false);
 		m_spectrograms.push_back(sg);
-		layout->addWidget(sg);
+		layout->addWidget(sg, large_stretch);
 	}
 }
 
-void SoundView::createIntensityTracks(QLayout *layout)
+void SoundView::createIntensityTracks(QVBoxLayout *layout)
 {
+	// Stretch factor for small plots (intensity, pitch).
+	const int small_stretch = 1;
+
 	// Channel 0 = average of all channels.
 	auto *avg = new IntensityWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
 	m_intensities.push_back(avg);
-	layout->addWidget(avg);
+	layout->addWidget(avg, small_stretch);
 
 	// One intensity track per channel.
 	for (int c = 1; c <= m_sound->nchannel(); c++)
 	{
+		// Add a thin separator between intensity tracks (same as waveforms).
+		if (c > 1 || m_sound->nchannel() > 1)
+		{
+			auto *line = new QFrame(this);
+			line->setFrameShape(QFrame::HLine);
+			line->setFrameShadow(QFrame::Sunken);
+			line->setFixedHeight(1);
+			line->setVisible(false);
+			m_intensity_lines.push_back(line);
+			layout->addWidget(line);
+		}
+
 		auto *iw = new IntensityWidget(m_model, m_sound, c, this);
 		iw->setVisible(false);
 		m_intensities.push_back(iw);
-		layout->addWidget(iw);
+		layout->addWidget(iw, small_stretch);
 	}
 }
 
@@ -591,7 +617,41 @@ void SoundView::updatePlotVisibility()
 		m_intensities[c]->setVisible(m_show_intensity && ch_visible);
 	}
 
+	// Intensity separator lines: visible when the intensity track below them is visible.
+	for (size_t i = 0; i < m_intensity_lines.size(); i++)
+	{
+		// Line i sits before channel (i + 1) in the intensity vector.
+		int c = (int)i + 1;
+		bool ch_visible = std::find(m_visible_channels.begin(),
+			m_visible_channels.end(), c) != m_visible_channels.end();
+		m_intensity_lines[i]->setVisible(m_show_intensity && ch_visible);
+	}
+
 	m_y_axis->update();
+	updateTopPlot();
+}
+
+void SoundView::updateTopPlot()
+{
+	// Clear the top flag on all plots.
+	for (auto *wf : m_waveforms) wf->setTopPlot(false);
+	for (auto *sg : m_spectrograms) sg->setTopPlot(false);
+	for (auto *iw : m_intensities) iw->setTopPlot(false);
+
+	// The top plot is the first non-hidden widget in layout order:
+	// waveforms → spectrograms → intensities.
+	// We use !isHidden() rather than isVisible() because the latter
+	// returns false during construction when the parent window has
+	// not been shown yet.
+	for (auto *wf : m_waveforms) {
+		if (!wf->isHidden()) { wf->setTopPlot(true); return; }
+	}
+	for (auto *sg : m_spectrograms) {
+		if (!sg->isHidden()) { sg->setTopPlot(true); return; }
+	}
+	for (auto *iw : m_intensities) {
+		if (!iw->isHidden()) { iw->setTopPlot(true); return; }
+	}
 }
 
 void SoundView::onScalingChanged(QAction *action)
