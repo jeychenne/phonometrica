@@ -332,6 +332,10 @@ if(WITH_GUI)
         icons/arrow-right-to-line.svg
         icons/toggle-left.svg
         icons/toggle-right.svg
+        icons/ear.svg
+        icons/pitch.svg
+        icons/waveform.svg
+        icons/formants.svg
         icons/phonometrica.svg
     )
 

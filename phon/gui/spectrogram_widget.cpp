@@ -83,6 +83,8 @@ void SpectrogramWidget::readSettings()
 		Settings::set_value(category, "window_type", "Gaussian");
 		m_window_type = WindowType::Gaussian;
 	}
+
+	m_cache_valid = false;
 }
 
 void SpectrogramWidget::setMouseTracking(bool enabled)
