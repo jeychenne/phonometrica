@@ -9,6 +9,7 @@
  *                                                                                                                     *
  * Purpose: Dialog to edit pitch tracking settings (method, min/max pitch, time step, voicing threshold).              *
  *          The voicing threshold has both a text entry and a slider whose range depends on the selected method.        *
+ *          Praat-specific parameters (octave jump cost, voicing cost) are shown only when Praat is selected.           *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -19,6 +20,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QSlider>
+#include <QLabel>
 #include <QPushButton>
 
 namespace phonometrica {
@@ -44,8 +46,8 @@ private:
 	void displayValues();
 	void updateSliderRange(const QString &method);
 	void setVoicingDefault(const QString &method);
+	void updatePraatFieldsVisibility(const QString &method);
 
-	// Convert between slider integer and floating-point threshold.
 	int thresholdToSlider(double value) const;
 	double sliderToThreshold(int value) const;
 
@@ -56,11 +58,16 @@ private:
 	QLineEdit *m_voicing_edit;
 	QSlider *m_voicing_slider;
 
-	// Current slider range (in hundredths).
+	// Praat-specific fields.
+	QLabel *m_octave_label;
+	QLineEdit *m_octave_edit;
+	QLabel *m_voicing_cost_label;
+	QLineEdit *m_voicing_cost_edit;
+
 	int m_slider_min = 0;
 	int m_slider_max = 100;
 
-	bool m_updating = false; // guard against signal loops
+	bool m_updating = false;
 };
 
 } // namespace phonometrica

@@ -30,6 +30,7 @@ WaveBar::WaveBar(TimeModel *model, const Handle<Sound> &sound, QWidget *parent) 
 {
 	setFixedHeight(50);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	setMouseTracking(true);
 
 	// Compute global peak magnitude across all channels (once).
 	// Data is stored as contiguous channels, but for peak magnitude we just
@@ -192,9 +193,10 @@ void WaveBar::paintEvent(QPaintEvent *)
 
 	p.drawPath(path);
 
-	// Draw viewport rectangle: use pending selection during drag, model viewport otherwise.
+	// Draw viewport rectangle: use pending selection during new-selection drag,
+	// model viewport otherwise (slide/resize update the model in real time).
 	double x1, x2;
-	if (m_dragging && m_pending_x1 >= 0)
+	if (m_drag_mode == DragMode::NewSelection && m_pending_x1 >= 0)
 	{
 		x1 = m_pending_x1;
 		x2 = m_pending_x2;
@@ -217,38 +219,115 @@ void WaveBar::resizeEvent(QResizeEvent *)
 //  Mouse interaction
 // ─────────────────────────────────────────────────
 
+WaveBar::HitZone WaveBar::hitTest(double x) const
+{
+	double vx1 = timeToX(m_model->windowStart());
+	double vx2 = timeToX(m_model->windowEnd());
+
+	if (x >= vx1 - EDGE_GRAB_PX && x <= vx1 + EDGE_GRAB_PX)
+		return HitZone::LeftEdge;
+	if (x >= vx2 - EDGE_GRAB_PX && x <= vx2 + EDGE_GRAB_PX)
+		return HitZone::RightEdge;
+	if (x > vx1 + EDGE_GRAB_PX && x < vx2 - EDGE_GRAB_PX)
+		return HitZone::Inside;
+	return HitZone::Outside;
+}
+
 void WaveBar::mousePressEvent(QMouseEvent *event)
 {
-	if (event->button() == Qt::LeftButton)
+	if (event->button() != Qt::LeftButton)
+		return;
+
+	double x = event->position().x();
+	bool force_new = event->modifiers() & Qt::AltModifier;
+	auto zone = hitTest(x);
+
+	if (force_new || zone == HitZone::Outside)
 	{
-		m_dragging = true;
-		m_drag_start_x = event->position().x();
-		m_pending_x1 = m_drag_start_x;
-		m_pending_x2 = m_drag_start_x;
+		// Start a brand-new viewport selection.
+		m_drag_mode = DragMode::NewSelection;
+		m_drag_start_x = x;
+		m_pending_x1 = x;
+		m_pending_x2 = x;
+	}
+	else if (zone == HitZone::LeftEdge)
+	{
+		m_drag_mode = DragMode::ResizeLeft;
+		m_drag_start_x = x;
+	}
+	else if (zone == HitZone::RightEdge)
+	{
+		m_drag_mode = DragMode::ResizeRight;
+		m_drag_start_x = x;
+	}
+	else // Inside
+	{
+		m_drag_mode = DragMode::SlideViewport;
+		m_drag_start_x = x;
+		m_slide_start_t1 = m_model->windowStart();
+		m_slide_start_t2 = m_model->windowEnd();
+		setCursor(Qt::ClosedHandCursor);
 	}
 }
 
 void WaveBar::mouseMoveEvent(QMouseEvent *event)
 {
-	if (!m_dragging)
-		return;
-
 	double x = std::clamp(event->position().x(), 0.0, (double)width());
-	m_pending_x1 = std::min(m_drag_start_x, x);
-	m_pending_x2 = std::max(m_drag_start_x, x);
 
-	// Repaint the wavebar locally (no model update yet).
-	update();
-	emit viewportPixelsChanged(m_pending_x1, m_pending_x2);
+	if (m_drag_mode == DragMode::None)
+	{
+		// Update cursor shape based on hover position.
+		auto zone = hitTest(event->position().x());
+		if (zone == HitZone::LeftEdge || zone == HitZone::RightEdge)
+			setCursor(Qt::SizeHorCursor);
+		else if (zone == HitZone::Inside)
+			setCursor(Qt::OpenHandCursor);
+		else
+			setCursor(Qt::ArrowCursor);
+		return;
+	}
+
+	if (m_drag_mode == DragMode::NewSelection)
+	{
+		m_pending_x1 = std::min(m_drag_start_x, x);
+		m_pending_x2 = std::max(m_drag_start_x, x);
+		update();
+		emit viewportPixelsChanged(m_pending_x1, m_pending_x2);
+	}
+	else if (m_drag_mode == DragMode::SlideViewport)
+	{
+		double dt = xToTime(x) - xToTime(m_drag_start_x);
+		double t1 = m_slide_start_t1 + dt;
+		double t2 = m_slide_start_t2 + dt;
+		double dur = t2 - t1;
+
+		// Clamp to file boundaries without changing the window duration.
+		if (t1 < 0) { t1 = 0; t2 = dur; }
+		if (t2 > m_sound->duration()) { t2 = m_sound->duration(); t1 = t2 - dur; }
+
+		m_model->setViewport(t1, t2);
+	}
+	else if (m_drag_mode == DragMode::ResizeLeft)
+	{
+		double t = std::clamp(xToTime(x), 0.0, m_model->windowEnd() - 0.001);
+		m_model->setViewport(t, m_model->windowEnd());
+	}
+	else if (m_drag_mode == DragMode::ResizeRight)
+	{
+		double t = std::clamp(xToTime(x), m_model->windowStart() + 0.001, m_sound->duration());
+		m_model->setViewport(m_model->windowStart(), t);
+	}
 }
 
 void WaveBar::mouseReleaseEvent(QMouseEvent *event)
 {
-	if (event->button() == Qt::LeftButton && m_dragging)
-	{
-		m_dragging = false;
+	if (event->button() != Qt::LeftButton || m_drag_mode == DragMode::None)
+		return;
 
-		double x = std::clamp(event->position().x(), 0.0, (double)width());
+	double x = std::clamp(event->position().x(), 0.0, (double)width());
+
+	if (m_drag_mode == DragMode::NewSelection)
+	{
 		double x1 = std::min(m_drag_start_x, x);
 		double x2 = std::max(m_drag_start_x, x);
 
@@ -267,6 +346,10 @@ void WaveBar::mouseReleaseEvent(QMouseEvent *event)
 		m_pending_x1 = -1;
 		m_pending_x2 = -1;
 	}
+	// SlideViewport and Resize modes already updated the model during drag.
+
+	m_drag_mode = DragMode::None;
+	setCursor(Qt::ArrowCursor);
 }
 
 void WaveBar::wheelEvent(QWheelEvent *event)
@@ -280,7 +363,8 @@ void WaveBar::wheelEvent(QWheelEvent *event)
 
 void WaveBar::leaveEvent(QEvent *)
 {
-	// Nothing for now.
+	if (m_drag_mode == DragMode::None)
+		setCursor(Qt::ArrowCursor);
 }
 
 

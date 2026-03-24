@@ -75,9 +75,24 @@ void PitchWidget::readSettings()
 	else if (method == "swipe") {
 		m_algorithm = speech::PitchTracker::Swipe;
 	}
+	else if (method == "praat") {
+		m_algorithm = speech::PitchTracker::Praat;
+	}
 	else {
 		// Fallback to reaper if unknown method.
 		m_algorithm = speech::PitchTracker::Reaper;
+	}
+
+	// Praat-specific parameters (read always, used only by Praat).
+	try {
+		m_octave_jump_cost = Settings::get_number(category, "octave_jump_cost");
+	} catch (...) {
+		m_octave_jump_cost = 0.35;
+	}
+	try {
+		m_voicing_cost = Settings::get_number(category, "voicing_cost");
+	} catch (...) {
+		m_voicing_cost = 0.45;
 	}
 
 	m_cache_valid = false;
@@ -156,7 +171,7 @@ std::vector<double> PitchWidget::computePitch()
 	auto sample_rate = m_sound->sample_rate();
 
 	return speech::get_pitch(m_algorithm, input, sample_rate, m_min_pitch, m_max_pitch,
-	                         m_time_step, m_voicing_threshold);
+	                         m_time_step, m_voicing_threshold, m_octave_jump_cost, m_voicing_cost);
 }
 
 

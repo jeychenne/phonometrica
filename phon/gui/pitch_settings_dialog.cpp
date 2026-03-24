@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QLabel>
 #include <QDialogButtonBox>
 #include <QMessageBox>
 #include <phon/gui/pitch_settings_dialog.hpp>
@@ -27,6 +26,7 @@ namespace phonometrica {
 //   SWIPE:    0.2 <= T <= 0.5   (default: 0.3)
 //   REAPER:  -0.5 <= T <= 1.6   (default: 0.9)
 //   Harvest:  0.0 <= T <= 0.2   (default: 0.01)
+//   Praat:    0.0 <= T <= 1.0   (default: 0.45)
 
 struct ThresholdInfo
 {
@@ -40,6 +40,7 @@ static ThresholdInfo getThresholdInfo(const QString &method)
 	if (method == "rapt")    return { -0.6,  0.7, 0.0  };
 	if (method == "swipe")   return {  0.2,  0.5, 0.3  };
 	if (method == "harvest") return {  0.0,  0.2, 0.01 };
+	if (method == "praat")   return {  0.0,  1.0, 0.45 };
 	/* reaper (default) */   return { -0.5,  1.6, 0.9  };
 }
 
@@ -57,6 +58,7 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	m_method_combo->addItem(tr("Harvest"), QStringLiteral("harvest"));
 	m_method_combo->addItem(tr("RAPT"), QStringLiteral("rapt"));
 	m_method_combo->addItem(tr("Swipe"), QStringLiteral("swipe"));
+	m_method_combo->addItem(tr("Praat"), QStringLiteral("praat"));
 	main_layout->addWidget(m_method_combo);
 
 	main_layout->addWidget(new QLabel(tr("Minimum pitch (Hz):")));
@@ -79,6 +81,17 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	m_voicing_slider->setTickPosition(QSlider::TicksBelow);
 	m_voicing_slider->setTickInterval(10);
 	main_layout->addWidget(m_voicing_slider);
+
+	// Praat-specific fields (hidden unless Praat is selected).
+	m_octave_label = new QLabel(tr("Octave jump cost:"));
+	main_layout->addWidget(m_octave_label);
+	m_octave_edit = new QLineEdit;
+	main_layout->addWidget(m_octave_edit);
+
+	m_voicing_cost_label = new QLabel(tr("Voicing cost:"));
+	main_layout->addWidget(m_voicing_cost_label);
+	m_voicing_cost_edit = new QLineEdit;
+	main_layout->addWidget(m_voicing_cost_edit);
 
 	// ── Buttons ──────────────────────────────────────
 	main_layout->addSpacing(10);
@@ -107,10 +120,8 @@ void PitchSettingsDialog::onOk()
 	bool ok;
 	String category("pitch_tracking");
 
-	// ── Method ────────────────────────────────────────
 	auto method = m_method_combo->currentData().toString();
 
-	// ── Minimum pitch ─────────────────────────────────
 	String text_min(m_min_edit->text().toUtf8().constData());
 	auto min_pitch = text_min.to_int(&ok);
 	if (!ok || min_pitch < 1)
@@ -119,7 +130,6 @@ void PitchSettingsDialog::onOk()
 		return;
 	}
 
-	// ── Maximum pitch ─────────────────────────────────
 	String text_max(m_max_edit->text().toUtf8().constData());
 	auto max_pitch = text_max.to_int(&ok);
 	if (!ok || max_pitch <= min_pitch)
@@ -128,7 +138,6 @@ void PitchSettingsDialog::onOk()
 		return;
 	}
 
-	// ── Time step ─────────────────────────────────────
 	String text_step(m_step_edit->text().toUtf8().constData());
 	auto step = text_step.to_float(&ok);
 	if (!ok || step <= 0.0)
@@ -137,7 +146,6 @@ void PitchSettingsDialog::onOk()
 		return;
 	}
 
-	// ── Voicing threshold ─────────────────────────────
 	String text_voicing(m_voicing_edit->text().toUtf8().constData());
 	auto voicing = text_voicing.to_float(&ok);
 	if (!ok)
@@ -151,6 +159,29 @@ void PitchSettingsDialog::onOk()
 	Settings::set_value(category, "maximum_pitch", max_pitch);
 	Settings::set_value(category, "time_step", step);
 	Settings::set_value(category, "voicing_threshold", voicing);
+
+	// Save Praat-specific parameters.
+	if (method == "praat")
+	{
+		String text_octave(m_octave_edit->text().toUtf8().constData());
+		auto octave_cost = text_octave.to_float(&ok);
+		if (!ok || octave_cost < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave jump cost"));
+			return;
+		}
+
+		String text_vcost(m_voicing_cost_edit->text().toUtf8().constData());
+		auto vcost = text_vcost.to_float(&ok);
+		if (!ok || vcost < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voicing cost"));
+			return;
+		}
+
+		Settings::set_value(category, "octave_jump_cost", octave_cost);
+		Settings::set_value(category, "voicing_cost", vcost);
+	}
 
 	accept();
 }
@@ -185,9 +216,24 @@ void PitchSettingsDialog::displayValues()
 	auto voicing = Settings::get_number(category, "voicing_threshold");
 	m_voicing_edit->setText(QString::number(voicing, 'g'));
 
-	// Set slider range for current method, then position the slider.
 	updateSliderRange(qmethod);
 	m_voicing_slider->setValue(thresholdToSlider(voicing));
+
+	// Praat-specific fields.
+	try {
+		auto octave = Settings::get_number(category, "octave_jump_cost");
+		m_octave_edit->setText(QString::number(octave, 'g'));
+	} catch (...) {
+		m_octave_edit->setText("0.35");
+	}
+	try {
+		auto vcost = Settings::get_number(category, "voicing_cost");
+		m_voicing_cost_edit->setText(QString::number(vcost, 'g'));
+	} catch (...) {
+		m_voicing_cost_edit->setText("0.45");
+	}
+
+	updatePraatFieldsVisibility(qmethod);
 
 	m_updating = false;
 }
@@ -199,6 +245,7 @@ void PitchSettingsDialog::onMethodChanged(int)
 	auto method = m_method_combo->currentData().toString();
 	updateSliderRange(method);
 	setVoicingDefault(method);
+	updatePraatFieldsVisibility(method);
 }
 
 void PitchSettingsDialog::updateSliderRange(const QString &method)
@@ -217,6 +264,15 @@ void PitchSettingsDialog::setVoicingDefault(const QString &method)
 	m_voicing_edit->setText(QString::number(info.default_value, 'g'));
 	m_voicing_slider->setValue(thresholdToSlider(info.default_value));
 	m_updating = false;
+}
+
+void PitchSettingsDialog::updatePraatFieldsVisibility(const QString &method)
+{
+	bool is_praat = (method == "praat");
+	m_octave_label->setVisible(is_praat);
+	m_octave_edit->setVisible(is_praat);
+	m_voicing_cost_label->setVisible(is_praat);
+	m_voicing_cost_edit->setVisible(is_praat);
 }
 
 void PitchSettingsDialog::onSliderMoved(int value)
@@ -238,7 +294,6 @@ void PitchSettingsDialog::onVoicingEdited()
 	if (!ok) return;
 
 	m_updating = true;
-	// Clamp to slider range for the slider position, but don't change the text.
 	int slider_val = thresholdToSlider(value);
 	slider_val = std::clamp(slider_val, m_slider_min, m_slider_max);
 	m_voicing_slider->setValue(slider_val);

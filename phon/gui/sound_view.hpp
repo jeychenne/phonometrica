@@ -83,6 +83,12 @@ private slots:
 	void onTogglePitch(bool checked);
 	void onPitchSettings();
 	void onSelectWindow();
+	void onGetFormants();
+	void onGetMeanFormants();
+	void onGetPitch();
+	void onGetMeanPitch();
+	void onGetIntensity();
+	void onGetMeanIntensity();
 	void onScalingChanged(QAction *action);
 	void onSelectionChanged(double t1, double t2);
 	void onSelectionCleared();
@@ -109,6 +115,7 @@ private:
 	void updateStatusText();
 	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
+	void showMeasurement(const QString &text);
 
 	Handle<Sound> m_sound;
 	TimeModel *m_model;
