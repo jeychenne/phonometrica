@@ -75,12 +75,23 @@ private:
 	double m_magnitude = 0.0;
 
 	// Drag state.
-	bool m_dragging = false;
+	enum class DragMode { None, NewSelection, SlideViewport, ResizeLeft, ResizeRight };
+
+	DragMode m_drag_mode = DragMode::None;
 	double m_drag_start_x = -1;
+
+	// For sliding: the viewport boundaries at the moment the drag started.
+	double m_slide_start_t1 = 0;
+	double m_slide_start_t2 = 0;
 
 	// Pending selection during drag (pixel coordinates). Only committed on release.
 	double m_pending_x1 = -1;
 	double m_pending_x2 = -1;
+
+	// Hit-test helpers.
+	static constexpr double EDGE_GRAB_PX = 5;
+	enum class HitZone { Outside, LeftEdge, RightEdge, Inside };
+	HitZone hitTest(double x) const;
 };
 
 } // namespace phonometrica

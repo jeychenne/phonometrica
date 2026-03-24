@@ -526,6 +526,8 @@ void Settings::reset_pitch_tracking()
 	map["maximum_pitch"] = intptr_t(500);
 	map["time_step"] = 0.01;
 	map["voicing_threshold"] = 0.9;
+	map["octave_jump_cost"] = 0.35;
+	map["voicing_cost"] = 0.45;
 
 	Settings::set_value("pitch_tracking", std::move(table));
 }

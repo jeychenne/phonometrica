@@ -337,6 +337,14 @@ void SoundView::createToolBar()
 
 	formant_menu->addSeparator();
 
+	auto *get_formants_action = formant_menu->addAction(tr("Get formants"));
+	connect(get_formants_action, &QAction::triggered, this, &SoundView::onGetFormants);
+
+	auto *get_mean_formants_action = formant_menu->addAction(tr("Get mean formants"));
+	connect(get_mean_formants_action, &QAction::triggered, this, &SoundView::onGetMeanFormants);
+
+	formant_menu->addSeparator();
+
 	auto *formant_settings_action = formant_menu->addAction(tr("Formant settings..."));
 	connect(formant_settings_action, &QAction::triggered, this, &SoundView::onFormantSettings);
 
@@ -358,6 +366,14 @@ void SoundView::createToolBar()
 
 	pitch_menu->addSeparator();
 
+	auto *get_pitch_action = pitch_menu->addAction(tr("Get pitch"));
+	connect(get_pitch_action, &QAction::triggered, this, &SoundView::onGetPitch);
+
+	auto *get_mean_pitch_action = pitch_menu->addAction(tr("Get mean pitch"));
+	connect(get_mean_pitch_action, &QAction::triggered, this, &SoundView::onGetMeanPitch);
+
+	pitch_menu->addSeparator();
+
 	auto *pitch_settings_action = pitch_menu->addAction(tr("Pitch settings..."));
 	connect(pitch_settings_action, &QAction::triggered, this, &SoundView::onPitchSettings);
 
@@ -376,6 +392,14 @@ void SoundView::createToolBar()
 	m_show_intensity_action->setCheckable(true);
 	m_show_intensity_action->setChecked(false);
 	connect(m_show_intensity_action, &QAction::toggled, this, &SoundView::onToggleIntensity);
+
+	intensity_menu->addSeparator();
+
+	auto *get_intensity_action = intensity_menu->addAction(tr("Get intensity"));
+	connect(get_intensity_action, &QAction::triggered, this, &SoundView::onGetIntensity);
+
+	auto *get_mean_intensity_action = intensity_menu->addAction(tr("Get mean intensity"));
+	connect(get_mean_intensity_action, &QAction::triggered, this, &SoundView::onGetMeanIntensity);
 
 	intensity_menu->addSeparator();
 
@@ -784,6 +808,315 @@ void SoundView::onSelectWindow()
 		}
 
 		m_model->setViewport(from, to);
+	}
+}
+
+void SoundView::showMeasurement(const QString &text)
+{
+	m_status_label->setText(text);
+}
+
+
+// ─────────────────────────────────────────────────
+//  Measurements: Formants
+// ─────────────────────────────────────────────────
+
+void SoundView::onGetFormants()
+{
+	if (!m_model->hasSelection())
+	{
+		QMessageBox::warning(this, tr("Cannot measure formants"),
+			tr("First select a point or a portion of the signal."));
+		return;
+	}
+
+	double t;
+	if (m_model->hasSpanSelection())
+		t = (m_model->selectionStart() + m_model->selectionEnd()) / 2.0;
+	else
+		t = m_model->selectionStart();
+
+	try
+	{
+		String category("formants");
+		int nformant = (int) Settings::get_number(category, "number_of_formants");
+		double nyquist = Settings::get_number(category, "max_frequency");
+		double win_size = Settings::get_number(category, "window_size");
+		int lpc_order = (int) Settings::get_number(category, "lpc_order");
+
+		QString result = tr("Formants at time %1 s:\n").arg(t, 0, 'f', 4);
+
+		for (int ch : m_visible_channels)
+		{
+			auto formants = m_sound->get_formants(ch, t, nformant, nyquist, win_size, lpc_order);
+
+			if (m_sound->is_mono())
+				result += "\n";
+			else
+				result += tr("\nChannel %1:\n").arg(ch);
+
+			for (int i = 1; i <= nformant; i++)
+			{
+				double freq = formants(i, 1);
+				double bw = formants(i, 2);
+				if (freq > 0)
+					result += tr("  F%1 = %2 Hz  (bandwidth = %3 Hz)\n").arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+				else
+					result += tr("  F%1 = undefined\n").arg(i);
+			}
+		}
+
+		QMessageBox::information(this, tr("Formants"), result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void SoundView::onGetMeanFormants()
+{
+	double t1, t2;
+	if (m_model->hasSpanSelection())
+	{
+		t1 = m_model->selectionStart();
+		t2 = m_model->selectionEnd();
+	}
+	else
+	{
+		t1 = m_model->windowStart();
+		t2 = m_model->windowEnd();
+	}
+
+	try
+	{
+		String category("formants");
+		int nformant = (int) Settings::get_number(category, "number_of_formants");
+		double nyquist = Settings::get_number(category, "max_frequency");
+		double win_size = Settings::get_number(category, "window_size");
+		int lpc_order = (int) Settings::get_number(category, "lpc_order");
+		double time_step = Settings::get_number(category, "time_step");
+
+		// Build a set of time points across the interval.
+		Array<double> times;
+		for (double t = t1; t <= t2; t += time_step)
+			times.append(t);
+		if (times.empty())
+			times.append((t1 + t2) / 2.0);
+
+		QString result = tr("Mean formants from %1 to %2 s:\n").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4);
+
+		for (int ch : m_visible_channels)
+		{
+			auto formants = m_sound->get_formants(ch, times, nformant, nyquist, win_size, lpc_order);
+
+			if (m_sound->is_mono())
+				result += "\n";
+			else
+				result += tr("\nChannel %1:\n").arg(ch);
+
+			for (int i = 1; i <= nformant; i++)
+			{
+				double freq = formants(i, 1);
+				double bw = formants(i, 2);
+				if (freq > 0)
+					result += tr("  F%1 = %2 Hz  (bandwidth = %3 Hz)\n").arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+				else
+					result += tr("  F%1 = undefined\n").arg(i);
+			}
+		}
+
+		QMessageBox::information(this, tr("Mean formants"), result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+	}
+}
+
+
+// ─────────────────────────────────────────────────
+//  Measurements: Pitch
+// ─────────────────────────────────────────────────
+
+void SoundView::onGetPitch()
+{
+	if (!m_model->hasSelection())
+	{
+		QMessageBox::warning(this, tr("Cannot measure pitch"),
+			tr("First select a point or a portion of the signal."));
+		return;
+	}
+
+	double t;
+	if (m_model->hasSpanSelection())
+		t = (m_model->selectionStart() + m_model->selectionEnd()) / 2.0;
+	else
+		t = m_model->selectionStart();
+
+	try
+	{
+		String category("pitch_tracking");
+		auto method_str = Settings::get_string(category, "method");
+		auto method = Sound::get_pitch_tracker(method_str);
+		double min_pitch = Settings::get_number(category, "minimum_pitch");
+		double max_pitch = Settings::get_number(category, "maximum_pitch");
+		double threshold = Settings::get_number(category, "voicing_threshold");
+
+		QString result;
+
+		for (int ch : m_visible_channels)
+		{
+			double f0 = m_sound->get_pitch(ch, method, t, min_pitch, max_pitch, threshold);
+			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
+
+			if (m_sound->is_mono())
+				result = tr("Pitch at %1 s: %2").arg(t, 0, 'f', 4).arg(value);
+			else
+				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+		}
+
+		if (!m_sound->is_mono())
+			result = tr("Pitch at %1 s:  ").arg(t, 0, 'f', 4) + result;
+
+		showMeasurement(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void SoundView::onGetMeanPitch()
+{
+	double t1, t2;
+	if (m_model->hasSpanSelection())
+	{
+		t1 = m_model->selectionStart();
+		t2 = m_model->selectionEnd();
+	}
+	else
+	{
+		t1 = m_model->windowStart();
+		t2 = m_model->windowEnd();
+	}
+
+	try
+	{
+		String category("pitch_tracking");
+		auto method_str = Settings::get_string(category, "method");
+		auto method = Sound::get_pitch_tracker(method_str);
+		double min_pitch = Settings::get_number(category, "minimum_pitch");
+		double max_pitch = Settings::get_number(category, "maximum_pitch");
+		double threshold = Settings::get_number(category, "voicing_threshold");
+
+		QString result;
+
+		for (int ch : m_visible_channels)
+		{
+			double f0 = m_sound->get_mean_pitch(ch, method, t1, t2, min_pitch, max_pitch, threshold);
+			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
+
+			if (m_sound->is_mono())
+				result = tr("Mean pitch (%1–%2 s): %3").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4).arg(value);
+			else
+				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+		}
+
+		if (!m_sound->is_mono())
+			result = tr("Mean pitch (%1–%2 s):  ").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4) + result;
+
+		showMeasurement(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+	}
+}
+
+
+// ─────────────────────────────────────────────────
+//  Measurements: Intensity
+// ─────────────────────────────────────────────────
+
+void SoundView::onGetIntensity()
+{
+	if (!m_model->hasSelection())
+	{
+		QMessageBox::warning(this, tr("Cannot measure intensity"),
+			tr("First select a point or a portion of the signal."));
+		return;
+	}
+
+	double t;
+	if (m_model->hasSpanSelection())
+		t = (m_model->selectionStart() + m_model->selectionEnd()) / 2.0;
+	else
+		t = m_model->selectionStart();
+
+	try
+	{
+		QString result;
+
+		for (int ch : m_visible_channels)
+		{
+			double dB = m_sound->get_intensity(ch, t);
+			QString value = tr("%1 dB").arg(dB, 0, 'f', 1);
+
+			if (m_sound->is_mono())
+				result = tr("Intensity at %1 s: %2").arg(t, 0, 'f', 4).arg(value);
+			else
+				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+		}
+
+		if (!m_sound->is_mono())
+			result = tr("Intensity at %1 s:  ").arg(t, 0, 'f', 4) + result;
+
+		showMeasurement(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void SoundView::onGetMeanIntensity()
+{
+	double t1, t2;
+	if (m_model->hasSpanSelection())
+	{
+		t1 = m_model->selectionStart();
+		t2 = m_model->selectionEnd();
+	}
+	else
+	{
+		t1 = m_model->windowStart();
+		t2 = m_model->windowEnd();
+	}
+
+	try
+	{
+		QString result;
+
+		for (int ch : m_visible_channels)
+		{
+			double dB = m_sound->get_mean_intensity(ch, t1, t2);
+			QString value = tr("%1 dB").arg(dB, 0, 'f', 1);
+
+			if (m_sound->is_mono())
+				result = tr("Mean intensity (%1–%2 s): %3").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4).arg(value);
+			else
+				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+		}
+
+		if (!m_sound->is_mono())
+			result = tr("Mean intensity (%1–%2 s):  ").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4) + result;
+
+		showMeasurement(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
 	}
 }
 

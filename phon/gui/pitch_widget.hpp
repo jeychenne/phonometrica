@@ -90,6 +90,8 @@ private:
 	double m_time_step = 0.01;
 	double m_voicing_threshold = 0.9;
 	speech::PitchTracker m_algorithm = speech::PitchTracker::Reaper;
+	double m_octave_jump_cost = 0.35;
+	double m_voicing_cost = 0.45;
 
 	// Dragging state for selection.
 	bool m_dragging = false;

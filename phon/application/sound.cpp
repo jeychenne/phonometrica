@@ -861,6 +861,9 @@ speech::PitchTracker Sound::get_pitch_tracker(const String &name)
 	else if (name == "swipe") {
 		return speech::PitchTracker::Swipe;
 	}
+	else if (name == "praat") {
+		return speech::PitchTracker::Praat;
+	}
 
 	throw error("Invalid pitch tracking method : %", name);
 }
