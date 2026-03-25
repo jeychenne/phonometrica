@@ -92,6 +92,8 @@ private:
 	speech::PitchTracker m_algorithm = speech::PitchTracker::Reaper;
 	double m_octave_jump_cost = 0.35;
 	double m_voicing_cost = 0.45;
+	double m_silence_threshold = 0.03;
+	double m_octave_cost = 0.01;
 
 	// Dragging state for selection.
 	bool m_dragging = false;

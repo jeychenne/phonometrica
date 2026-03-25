@@ -21,7 +21,7 @@
 
 namespace phonometrica {
 
-// Voicing threshold ranges per method (from SPTK documentation):
+// Voicing threshold ranges per method (from SPTK / Praat documentation):
 //   RAPT:    -0.6 <= T <= 0.7   (default: 0.0)
 //   SWIPE:    0.2 <= T <= 0.5   (default: 0.3)
 //   REAPER:  -0.5 <= T <= 1.6   (default: 0.9)
@@ -83,12 +83,22 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	main_layout->addWidget(m_voicing_slider);
 
 	// Praat-specific fields (hidden unless Praat is selected).
-	m_octave_label = new QLabel(tr("Octave jump cost:"));
-	main_layout->addWidget(m_octave_label);
-	m_octave_edit = new QLineEdit;
-	main_layout->addWidget(m_octave_edit);
+	m_silence_label = new QLabel(tr("Silence threshold:"));
+	main_layout->addWidget(m_silence_label);
+	m_silence_edit = new QLineEdit;
+	main_layout->addWidget(m_silence_edit);
 
-	m_voicing_cost_label = new QLabel(tr("Voicing cost:"));
+	m_octave_cost_label = new QLabel(tr("Octave cost:"));
+	main_layout->addWidget(m_octave_cost_label);
+	m_octave_cost_edit = new QLineEdit;
+	main_layout->addWidget(m_octave_cost_edit);
+
+	m_octave_jump_label = new QLabel(tr("Octave-jump cost:"));
+	main_layout->addWidget(m_octave_jump_label);
+	m_octave_jump_edit = new QLineEdit;
+	main_layout->addWidget(m_octave_jump_edit);
+
+	m_voicing_cost_label = new QLabel(tr("Voiced/unvoiced cost:"));
 	main_layout->addWidget(m_voicing_cost_label);
 	m_voicing_cost_edit = new QLineEdit;
 	main_layout->addWidget(m_voicing_cost_edit);
@@ -163,11 +173,27 @@ void PitchSettingsDialog::onOk()
 	// Save Praat-specific parameters.
 	if (method == "praat")
 	{
-		String text_octave(m_octave_edit->text().toUtf8().constData());
-		auto octave_cost = text_octave.to_float(&ok);
-		if (!ok || octave_cost < 0.0)
+		String text_silence(m_silence_edit->text().toUtf8().constData());
+		auto silence = text_silence.to_float(&ok);
+		if (!ok || silence < 0.0)
 		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave jump cost"));
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid silence threshold"));
+			return;
+		}
+
+		String text_oc(m_octave_cost_edit->text().toUtf8().constData());
+		auto oc = text_oc.to_float(&ok);
+		if (!ok || oc < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave cost"));
+			return;
+		}
+
+		String text_ojc(m_octave_jump_edit->text().toUtf8().constData());
+		auto ojc = text_ojc.to_float(&ok);
+		if (!ok || ojc < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave-jump cost"));
 			return;
 		}
 
@@ -175,11 +201,13 @@ void PitchSettingsDialog::onOk()
 		auto vcost = text_vcost.to_float(&ok);
 		if (!ok || vcost < 0.0)
 		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voicing cost"));
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voiced/unvoiced cost"));
 			return;
 		}
 
-		Settings::set_value(category, "octave_jump_cost", octave_cost);
+		Settings::set_value(category, "silence_threshold", silence);
+		Settings::set_value(category, "octave_cost", oc);
+		Settings::set_value(category, "octave_jump_cost", ojc);
 		Settings::set_value(category, "voicing_cost", vcost);
 	}
 
@@ -220,18 +248,15 @@ void PitchSettingsDialog::displayValues()
 	m_voicing_slider->setValue(thresholdToSlider(voicing));
 
 	// Praat-specific fields.
-	try {
-		auto octave = Settings::get_number(category, "octave_jump_cost");
-		m_octave_edit->setText(QString::number(octave, 'g'));
-	} catch (...) {
-		m_octave_edit->setText("0.35");
-	}
-	try {
-		auto vcost = Settings::get_number(category, "voicing_cost");
-		m_voicing_cost_edit->setText(QString::number(vcost, 'g'));
-	} catch (...) {
-		m_voicing_cost_edit->setText("0.45");
-	}
+	auto readPraatParam = [&](const char *key, double fallback) -> double {
+		try { return Settings::get_number(category, key); }
+		catch (...) { return fallback; }
+	};
+
+	m_silence_edit->setText(QString::number(readPraatParam("silence_threshold", 0.03), 'g'));
+	m_octave_cost_edit->setText(QString::number(readPraatParam("octave_cost", 0.01), 'g'));
+	m_octave_jump_edit->setText(QString::number(readPraatParam("octave_jump_cost", 0.35), 'g'));
+	m_voicing_cost_edit->setText(QString::number(readPraatParam("voicing_cost", 0.45), 'g'));
 
 	updatePraatFieldsVisibility(qmethod);
 
@@ -269,8 +294,12 @@ void PitchSettingsDialog::setVoicingDefault(const QString &method)
 void PitchSettingsDialog::updatePraatFieldsVisibility(const QString &method)
 {
 	bool is_praat = (method == "praat");
-	m_octave_label->setVisible(is_praat);
-	m_octave_edit->setVisible(is_praat);
+	m_silence_label->setVisible(is_praat);
+	m_silence_edit->setVisible(is_praat);
+	m_octave_cost_label->setVisible(is_praat);
+	m_octave_cost_edit->setVisible(is_praat);
+	m_octave_jump_label->setVisible(is_praat);
+	m_octave_jump_edit->setVisible(is_praat);
 	m_voicing_cost_label->setVisible(is_praat);
 	m_voicing_cost_edit->setVisible(is_praat);
 }

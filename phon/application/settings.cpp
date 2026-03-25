@@ -528,6 +528,8 @@ void Settings::reset_pitch_tracking()
 	map["voicing_threshold"] = 0.9;
 	map["octave_jump_cost"] = 0.35;
 	map["voicing_cost"] = 0.45;
+	map["silence_threshold"] = 0.03;
+	map["octave_cost"] = 0.01;
 
 	Settings::set_value("pitch_tracking", std::move(table));
 }
