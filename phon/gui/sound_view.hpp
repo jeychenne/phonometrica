@@ -115,7 +115,6 @@ private:
 	void updateStatusText();
 	void startPlayback(QAction *source, double from, double to);
 	void stopPlayback();
-	void showMeasurement(const QString &text);
 
 	Handle<Sound> m_sound;
 	TimeModel *m_model;

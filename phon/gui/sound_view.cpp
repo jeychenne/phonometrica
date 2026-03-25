@@ -30,6 +30,7 @@
 #include <phon/gui/pitch_widget.hpp>
 #include <phon/gui/pitch_settings_dialog.hpp>
 #include <phon/gui/formant_settings_dialog.hpp>
+#include <phon/gui/output_panel.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
 #include <phon/application/audio_player.hpp>
@@ -811,9 +812,23 @@ void SoundView::onSelectWindow()
 	}
 }
 
-void SoundView::showMeasurement(const QString &text)
+
+// ─────────────────────────────────────────────────
+//  Measurements: helpers
+// ─────────────────────────────────────────────────
+
+static void writeToOutput(const QString &heading, QString body)
 {
-	m_status_label->setText(text);
+	while (body.endsWith('\n'))
+		body.chop(1);
+	auto *output = OutputPanel::instance();
+	if (output)
+		output->appendResult(heading, body);
+}
+
+static void writeError(QWidget *parent, const QString &msg)
+{
+	QMessageBox::critical(parent, QObject::tr("Measurement error"), msg);
 }
 
 
@@ -844,33 +859,33 @@ void SoundView::onGetFormants()
 		double win_size = Settings::get_number(category, "window_size");
 		int lpc_order = (int) Settings::get_number(category, "lpc_order");
 
-		QString result = tr("Formants at time %1 s:\n").arg(t, 0, 'f', 4);
+		QString heading = tr("Formants at %1 s").arg(t, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
 			auto formants = m_sound->get_formants(ch, t, nformant, nyquist, win_size, lpc_order);
 
-			if (m_sound->is_mono())
-				result += "\n";
-			else
-				result += tr("\nChannel %1:\n").arg(ch);
+			if (!m_sound->is_mono())
+				body += tr("  Channel %1:\n").arg(ch);
 
 			for (int i = 1; i <= nformant; i++)
 			{
 				double freq = formants(i, 1);
 				double bw = formants(i, 2);
+				QString indent = m_sound->is_mono() ? "" :  "  ";
 				if (freq > 0)
-					result += tr("  F%1 = %2 Hz  (bandwidth = %3 Hz)\n").arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
 				else
-					result += tr("  F%1 = undefined\n").arg(i);
+					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
 			}
 		}
 
-		QMessageBox::information(this, tr("Formants"), result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 
@@ -904,33 +919,33 @@ void SoundView::onGetMeanFormants()
 		if (times.empty())
 			times.append((t1 + t2) / 2.0);
 
-		QString result = tr("Mean formants from %1 to %2 s:\n").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4);
+		QString heading = tr("Mean formants (%1–%2 s)").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
 			auto formants = m_sound->get_formants(ch, times, nformant, nyquist, win_size, lpc_order);
 
-			if (m_sound->is_mono())
-				result += "\n";
-			else
-				result += tr("\nChannel %1:\n").arg(ch);
+			if (!m_sound->is_mono())
+				body += tr("  Channel %1:\n").arg(ch);
 
 			for (int i = 1; i <= nformant; i++)
 			{
 				double freq = formants(i, 1);
 				double bw = formants(i, 2);
+				QString indent = m_sound->is_mono() ? "  " : "    ";
 				if (freq > 0)
-					result += tr("  F%1 = %2 Hz  (bandwidth = %3 Hz)\n").arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
 				else
-					result += tr("  F%1 = undefined\n").arg(i);
+					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
 			}
 		}
 
-		QMessageBox::information(this, tr("Mean formants"), result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 
@@ -963,7 +978,8 @@ void SoundView::onGetPitch()
 		double max_pitch = Settings::get_number(category, "maximum_pitch");
 		double threshold = Settings::get_number(category, "voicing_threshold");
 
-		QString result;
+		QString heading = tr("Pitch at %1 s").arg(t, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
@@ -971,19 +987,16 @@ void SoundView::onGetPitch()
 			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
 
 			if (m_sound->is_mono())
-				result = tr("Pitch at %1 s: %2").arg(t, 0, 'f', 4).arg(value);
+				body += tr("%1").arg(value);
 			else
-				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+				body += tr("  Channel %1: %2\n").arg(ch).arg(value);
 		}
 
-		if (!m_sound->is_mono())
-			result = tr("Pitch at %1 s:  ").arg(t, 0, 'f', 4) + result;
-
-		showMeasurement(result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 
@@ -1010,7 +1023,8 @@ void SoundView::onGetMeanPitch()
 		double max_pitch = Settings::get_number(category, "maximum_pitch");
 		double threshold = Settings::get_number(category, "voicing_threshold");
 
-		QString result;
+		QString heading = tr("Mean pitch (%1–%2 s)").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
@@ -1018,19 +1032,16 @@ void SoundView::onGetMeanPitch()
 			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
 
 			if (m_sound->is_mono())
-				result = tr("Mean pitch (%1–%2 s): %3").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4).arg(value);
+				body += tr("%1").arg(value);
 			else
-				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+				body += tr("  Channel %1: %2\n").arg(ch).arg(value);
 		}
 
-		if (!m_sound->is_mono())
-			result = tr("Mean pitch (%1–%2 s):  ").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4) + result;
-
-		showMeasurement(result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 
@@ -1056,7 +1067,8 @@ void SoundView::onGetIntensity()
 
 	try
 	{
-		QString result;
+		QString heading = tr("Intensity at %1 s").arg(t, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
@@ -1064,19 +1076,16 @@ void SoundView::onGetIntensity()
 			QString value = tr("%1 dB").arg(dB, 0, 'f', 1);
 
 			if (m_sound->is_mono())
-				result = tr("Intensity at %1 s: %2").arg(t, 0, 'f', 4).arg(value);
+				body += tr("%1").arg(value);
 			else
-				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+				body += tr("  Channel %1: %2\n").arg(ch).arg(value);
 		}
 
-		if (!m_sound->is_mono())
-			result = tr("Intensity at %1 s:  ").arg(t, 0, 'f', 4) + result;
-
-		showMeasurement(result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 
@@ -1096,7 +1105,8 @@ void SoundView::onGetMeanIntensity()
 
 	try
 	{
-		QString result;
+		QString heading = tr("Mean intensity (%1–%2 s)").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4);
+		QString body;
 
 		for (int ch : m_visible_channels)
 		{
@@ -1104,19 +1114,16 @@ void SoundView::onGetMeanIntensity()
 			QString value = tr("%1 dB").arg(dB, 0, 'f', 1);
 
 			if (m_sound->is_mono())
-				result = tr("Mean intensity (%1–%2 s): %3").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4).arg(value);
+				body += tr("%1").arg(value);
 			else
-				result += tr("Channel %1: %2  ").arg(ch).arg(value);
+				body += tr("  Channel %1: %2\n").arg(ch).arg(value);
 		}
 
-		if (!m_sound->is_mono())
-			result = tr("Mean intensity (%1–%2 s):  ").arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4) + result;
-
-		showMeasurement(result);
+		writeToOutput(heading, body);
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		writeError(this, QString::fromUtf8(e.what()));
 	}
 }
 

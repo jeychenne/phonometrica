@@ -336,6 +336,8 @@ if(WITH_GUI)
         icons/pitch.svg
         icons/waveform.svg
         icons/select-window.svg
+        icons/clipboard-copy.svg
+        icons/eraser.svg
         icons/phonometrica.svg
     )
 

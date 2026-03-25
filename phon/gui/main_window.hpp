@@ -16,6 +16,7 @@
 
 #include <phon/string.hpp>
 #include <phon/gui/console.hpp>
+#include <phon/gui/output_panel.hpp>
 #include <phon/application/script.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
@@ -130,6 +131,9 @@ private:
 
 	// Interactive scripting console
 	class Console *m_console = nullptr;
+
+	// Output panel for measurement results
+	OutputPanel *m_output = nullptr;
 
 	// Edit actions (need references for enable/disable)
 	QAction *m_undo_action = nullptr;
