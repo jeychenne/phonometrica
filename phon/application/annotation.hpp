@@ -130,6 +130,8 @@ public:
 
 	void set_graph_modified(bool value) { m_modified = value; }
 
+	bool needs_metadata_node() const override;
+
 protected:
 
 	void read_from_native();
@@ -139,10 +141,6 @@ protected:
 	void load() override;
 
 	void write() override;
-
-	void save_metadata() override;
-
-	bool uses_external_metadata() const override;
 
 	void metadata_to_xml(xml_node meta_node) override;
 

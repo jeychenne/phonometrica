@@ -25,6 +25,7 @@
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/annotation_view.hpp>
+#include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
@@ -175,6 +176,11 @@ QMenu *MainWindow::createWindowMenu()
 	console_action->setChecked(true);
 	connect(console_action, &QAction::toggled, this, &MainWindow::onToggleConsolePanel);
 
+	auto *info_action = menu->addAction(tr("Information panel"));
+	info_action->setCheckable(true);
+	info_action->setChecked(true);
+	connect(info_action, &QAction::toggled, this, &MainWindow::onToggleInfoPanel);
+
 	return menu;
 }
 
@@ -270,6 +276,17 @@ void MainWindow::createDockWidgets()
 
 	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);
+
+	// Information panel dock (right)
+	m_info_dock = new QDockWidget(tr("Information"), this);
+	m_info_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+	m_info_panel = new InfoPanel(Project::get(), m_info_dock);
+	m_info_dock->setWidget(m_info_panel);
+	addDockWidget(Qt::RightDockWidgetArea, m_info_dock);
+
+	// Wire file manager selection to info panel.
+	connect(m_file_manager, &FileManager::selectionChanged, m_info_panel, &InfoPanel::onSelectionChanged);
 }
 
 void MainWindow::createStatusBar()
@@ -687,6 +704,11 @@ void MainWindow::onToggleConsolePanel(bool visible)
 	m_console_dock->setVisible(visible);
 }
 
+void MainWindow::onToggleInfoPanel(bool visible)
+{
+	m_info_dock->setVisible(visible);
+}
+
 void MainWindow::onDocumentRequested(Document *doc)
 {
 	if (!doc)
@@ -734,7 +756,6 @@ void MainWindow::onDocumentRequested(Document *doc)
 			return;
 		}
 
-		// Connect to the Sound loading signals for progress feedback.
 		statusBar()->showMessage(tr("Loading %1...").arg(qlabel));
 		m_progress_bar->setValue(0);
 		m_progress_bar->setVisible(true);

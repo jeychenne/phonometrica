@@ -343,6 +343,8 @@ if(WITH_GUI)
         icons/link.svg
         icons/phonometrica.svg
         icons/circle-help.svg
+        icons/circle-minus.svg
+        icons/circle-plus.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
