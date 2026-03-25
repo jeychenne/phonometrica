@@ -119,6 +119,13 @@ public:
 
 	void remove_events(intptr_t index);
 
+	// Anchor operations (delegate to Layer).
+	void add_anchor(intptr_t layer_index, double time);
+	bool remove_anchor(intptr_t layer_index, double time);
+
+	// Non-const layer access for direct mutation (anchor move).
+	Layer &mutable_layer(intptr_t index) { return m_layers[index]; }
+
 	bool graph_modified() const { return m_modified; }
 
 	void set_graph_modified(bool value) { m_modified = value; }

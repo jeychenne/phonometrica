@@ -24,6 +24,7 @@
 #include <phon/gui/view_panel.hpp>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/sound_view.hpp>
+#include <phon/gui/annotation_view.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
@@ -717,6 +718,46 @@ void MainWindow::onDocumentRequested(Document *doc)
 	{
 		auto *script = static_cast<Script *>(doc);
 		openScript(Handle<Script>(script));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
+	// Handle annotation files
+	if (doc->is<Annotation>())
+	{
+		auto *annot = static_cast<Annotation *>(doc);
+
+		if (!annot->has_sound())
+		{
+			QMessageBox::warning(this, tr("Cannot open annotation"),
+				tr("You must first bind this annotation to a sound file."));
+			return;
+		}
+
+		// Connect to the Sound loading signals for progress feedback.
+		statusBar()->showMessage(tr("Loading %1...").arg(qlabel));
+		m_progress_bar->setValue(0);
+		m_progress_bar->setVisible(true);
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		QApplication::processEvents();
+
+		auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
+			m_progress_bar->setMaximum(max);
+			QApplication::processEvents();
+		});
+
+		auto conn2 = Sound::update_loading.connect([this](int value) {
+			m_progress_bar->setValue(value);
+			QApplication::processEvents();
+		});
+
+		auto *view = new AnnotationView(Handle<Annotation>(annot));
+		addViewTab(view);
+
+		conn1.disconnect();
+		conn2.disconnect();
+		QApplication::restoreOverrideCursor();
+		m_progress_bar->setVisible(false);
 		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
 		return;
 	}

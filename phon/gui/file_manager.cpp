@@ -21,6 +21,7 @@
 #include <phon/gui/project_model.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/bookmark.hpp>
+#include <phon/application/annotation.hpp>
 
 namespace phonometrica {
 
@@ -380,6 +381,52 @@ void FileManager::onContextMenu(const QPoint &pos)
 	else if (dynamic_cast<Document *>(elem))
 	{
 		buildDocumentContextMenu(menu, sourceIndex);
+
+		// ── Multi-selection: Bind annotation to sound ──
+		auto proxyIndexes = m_tree->selectionModel()->selectedIndexes();
+		if (proxyIndexes.size() == 2)
+		{
+			Annotation *annot = nullptr;
+			Sound *sound = nullptr;
+
+			for (auto &pi : proxyIndexes)
+			{
+				auto si = toSource(pi);
+				auto *e = m_model->elementFromIndex(si);
+				if (auto *a = dynamic_cast<Annotation *>(e))
+					annot = a;
+				else if (auto *s = dynamic_cast<Sound *>(e))
+					sound = s;
+			}
+
+			if (annot && sound)
+			{
+				menu.addSeparator();
+				menu.addAction(tr("Bind annotation to sound file"), [this, annot, sound]() {
+					annot->set_sound(Handle<Sound>(sound));
+					QMessageBox::information(this, tr("Binding"),
+						tr("Annotation is now bound to the selected sound file."));
+				});
+			}
+		}
+
+		// ── Single selection: Create annotation from sound ──
+		if (proxyIndexes.size() == 1)
+		{
+			auto *sound = dynamic_cast<Sound *>(elem);
+			if (sound)
+			{
+				menu.addSeparator();
+				menu.addAction(tr("Create annotation"), [this, sound]() {
+					auto annot = make_handle<Annotation>(sound->parent(), String());
+					annot->set_sound(Handle<Sound>(sound));
+					auto *raw = annot.get();
+					m_project->corpus()->append(std::move(annot), true);
+					refresh();
+					emit documentRequested(raw);
+				});
+			}
+		}
 	}
 	else
 	{

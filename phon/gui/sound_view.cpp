@@ -44,18 +44,35 @@ static constexpr const char *PAUSE_SEL_ICON = ":/icons/pause-selection.svg";
 
 namespace phonometrica {
 
+// Private helper: shared initialization code for both constructors.
+static void initSoundViewCore(SoundView *self, const Handle<Sound> &sound, TimeModel *&model,
+	std::unique_ptr<AudioPlayer> &player, QTimer *&timer)
+{
+	sound->open();
+	model = new TimeModel(sound->duration(), self);
+	player = std::make_unique<AudioPlayer>(sound);
+	timer = new QTimer(self);
+	timer->setInterval(33); // ~30 FPS
+}
+
 SoundView::SoundView(const Handle<Sound> &sound, QWidget *parent) :
 	View(parent), m_sound(sound)
 {
-	m_sound->open();
-	m_model = new TimeModel(m_sound->duration(), this);
-	m_player = std::make_unique<AudioPlayer>(m_sound);
-
-	// Playback tick timer: polls the audio player at ~30fps.
-	m_playback_timer = new QTimer(this);
-	m_playback_timer->setInterval(33); // ~30 FPS
+	initSoundViewCore(this, m_sound, m_model, m_player, m_playback_timer);
 	connect(m_playback_timer, &QTimer::timeout, this, &SoundView::onPlaybackTick);
+	initialize();
+}
 
+SoundView::SoundView(const Handle<Sound> &sound, DeferInit, QWidget *parent) :
+	View(parent), m_sound(sound)
+{
+	initSoundViewCore(this, m_sound, m_model, m_player, m_playback_timer);
+	connect(m_playback_timer, &QTimer::timeout, this, &SoundView::onPlaybackTick);
+	// initialize() will be called by the subclass.
+}
+
+void SoundView::initialize()
+{
 	setupUi();
 
 	// Read visibility preferences from settings.
@@ -462,6 +479,9 @@ void SoundView::createToolBar()
 	mouse_action->setCheckable(true);
 	mouse_action->setChecked(false);
 	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
+
+	// ── Annotation toolbar actions (subclass hook) ───
+	addAnnotationToolbar(m_toolbar);
 
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);

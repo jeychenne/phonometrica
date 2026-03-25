@@ -339,6 +339,8 @@ if(WITH_GUI)
         icons/select-window.svg
         icons/clipboard-copy.svg
         icons/eraser.svg
+        icons/anchor.svg
+        icons/link.svg
         icons/phonometrica.svg
         icons/circle-help.svg
     )
