@@ -243,11 +243,17 @@ void MainWindow::createDockWidgets()
 	m_project_dock->setWidget(m_file_manager);
 	addDockWidget(Qt::LeftDockWidgetArea, m_project_dock);
 
-	// Console dock (bottom)
+	// Console & Output dock (bottom)
 	m_console_dock = new QDockWidget(tr("Console"), this);
 	m_console_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
-	m_console = new Console(m_runtime, m_console_dock);
-	m_console_dock->setWidget(m_console);
+
+	auto *bottom_tabs = new QTabWidget(m_console_dock);
+	m_console = new Console(m_runtime, bottom_tabs);
+	m_output = new OutputPanel(bottom_tabs);
+	bottom_tabs->addTab(m_console, tr("Console"));
+	bottom_tabs->addTab(m_output, tr("Output"));
+
+	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);
 }
 
