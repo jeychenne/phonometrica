@@ -33,6 +33,7 @@
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/wave_bar.hpp>
 #include <phon/gui/sound_zoom.hpp>
+#include <phon/gui/help_browser.hpp>
 #include <phon/application/audio_player.hpp>
 #include <phon/application/settings.hpp>
 
@@ -461,6 +462,17 @@ void SoundView::createToolBar()
 	mouse_action->setCheckable(true);
 	mouse_action->setChecked(false);
 	connect(mouse_action, &QAction::toggled, this, &SoundView::onToggleMouseTracking);
+
+	// ── Right-aligned help button ─────────────────────
+	auto *spacer = new QWidget(this);
+	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	m_toolbar->addWidget(spacer);
+
+	auto *help_action = m_toolbar->addAction(QIcon(":/icons/circle-help.svg"),
+		tr("Help"));
+	connect(help_action, &QAction::triggered, this, [this]() {
+		HelpBrowser::showPage(helpAnchor(), this);
+	});
 }
 
 void SoundView::createWaveforms(QVBoxLayout *layout)
@@ -470,6 +482,7 @@ void SoundView::createWaveforms(QVBoxLayout *layout)
 
 	// Channel 0 = average of all channels.
 	auto *avg = new WaveformWidget(m_model, m_sound, 0, this);
+	connect(avg, &WaveformWidget::yValueDescription, this, &SoundView::onYValueDescription);
 	m_waveforms.push_back(avg);
 	layout->addWidget(avg, large_stretch);
 	auto *avg_line = createSeparator();
@@ -480,6 +493,7 @@ void SoundView::createWaveforms(QVBoxLayout *layout)
 	for (int c = 1; c <= m_sound->nchannel(); c++)
 	{
 		auto *wf = new WaveformWidget(m_model, m_sound, c, this);
+		connect(wf, &WaveformWidget::yValueDescription, this, &SoundView::onYValueDescription);
 		m_waveforms.push_back(wf);
 		layout->addWidget(wf, large_stretch);
 		auto *line = createSeparator();
@@ -494,6 +508,7 @@ void SoundView::createSpectrograms(QVBoxLayout *layout)
 
 	auto *avg = new SpectrogramWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
+	connect(avg, &SpectrogramWidget::yValueDescription, this, &SoundView::onYValueDescription);
 	m_spectrograms.push_back(avg);
 	layout->addWidget(avg, large_stretch);
 	auto *avg_line = createSeparator();
@@ -504,6 +519,7 @@ void SoundView::createSpectrograms(QVBoxLayout *layout)
 	{
 		auto *sg = new SpectrogramWidget(m_model, m_sound, c, this);
 		sg->setVisible(false);
+		connect(sg, &SpectrogramWidget::yValueDescription, this, &SoundView::onYValueDescription);
 		m_spectrograms.push_back(sg);
 		layout->addWidget(sg, large_stretch);
 		auto *line = createSeparator();
@@ -518,6 +534,7 @@ void SoundView::createPitchTracks(QVBoxLayout *layout)
 
 	auto *avg = new PitchWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
+	connect(avg, &PitchWidget::yValueDescription, this, &SoundView::onYValueDescription);
 	m_pitches.push_back(avg);
 	layout->addWidget(avg, small_stretch);
 	auto *avg_line = createSeparator();
@@ -528,6 +545,7 @@ void SoundView::createPitchTracks(QVBoxLayout *layout)
 	{
 		auto *pw = new PitchWidget(m_model, m_sound, c, this);
 		pw->setVisible(false);
+		connect(pw, &PitchWidget::yValueDescription, this, &SoundView::onYValueDescription);
 		m_pitches.push_back(pw);
 		layout->addWidget(pw, small_stretch);
 		auto *line = createSeparator();
@@ -542,6 +560,7 @@ void SoundView::createIntensityTracks(QVBoxLayout *layout)
 
 	auto *avg = new IntensityWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
+	connect(avg, &IntensityWidget::yValueDescription, this, &SoundView::onYValueDescription);
 	m_intensities.push_back(avg);
 	layout->addWidget(avg, small_stretch);
 	auto *avg_line = createSeparator();
@@ -552,6 +571,7 @@ void SoundView::createIntensityTracks(QVBoxLayout *layout)
 	{
 		auto *iw = new IntensityWidget(m_model, m_sound, c, this);
 		iw->setVisible(false);
+		connect(iw, &IntensityWidget::yValueDescription, this, &SoundView::onYValueDescription);
 		m_intensities.push_back(iw);
 		layout->addWidget(iw, small_stretch);
 		auto *line = createSeparator();
@@ -615,7 +635,18 @@ void SoundView::updateStatusText()
 			.arg(m_model->selectionStart(), 0, 'f', 4);
 	}
 
+	if (!m_y_value_text.isEmpty())
+	{
+		text += QStringLiteral("  |  ") + m_y_value_text;
+	}
+
 	m_status_label->setText(text);
+}
+
+void SoundView::onYValueDescription(const QString &text)
+{
+	m_y_value_text = text;
+	updateStatusText();
 }
 
 

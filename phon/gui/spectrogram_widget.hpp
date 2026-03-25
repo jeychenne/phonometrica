@@ -59,6 +59,10 @@ protected:
 	void wheelEvent(QWheelEvent *event) override;
 	void leaveEvent(QEvent *event) override;
 
+signals:
+
+	void yValueDescription(const QString &text);
+
 private slots:
 
 	void onViewportChanged(double start, double end);

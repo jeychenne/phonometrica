@@ -57,6 +57,12 @@ public:
 	// Show the find & replace bar.
 	virtual void replace() {}
 
+	// Help anchor for context-sensitive help.
+	// Returns a Sphinx page name relative to the doc root, without extension.
+	// Examples: "sound", "scripting/index", "intro/install".
+	// An empty string means the view has no dedicated help page.
+	virtual QString helpAnchor() const { return {}; }
+
 signals:
 
 	// Emitted when the display label changes (e.g. after save or modification).

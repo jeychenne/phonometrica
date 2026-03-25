@@ -399,6 +399,9 @@ void PitchWidget::mouseMoveEvent(QMouseEvent *event)
 	{
 		m_model->setCursor(t);
 	}
+
+	double hz = yToPitch(int(event->position().y()));
+	emit yValueDescription(tr("Pitch \u2248 %1 Hz").arg(hz, 0, 'f', 1));
 }
 
 void PitchWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -430,6 +433,7 @@ void PitchWidget::leaveEvent(QEvent *)
 {
 	if (m_mouse_tracking_enabled)
 		m_model->clearCursor();
+	emit yValueDescription({});
 }
 
 

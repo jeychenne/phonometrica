@@ -353,6 +353,9 @@ void IntensityWidget::mouseMoveEvent(QMouseEvent *event)
 	{
 		m_model->setCursor(t);
 	}
+
+	double dB = yToIntensity(int(event->position().y()));
+	emit yValueDescription(tr("Intensity \u2248 %1 dB").arg(dB, 0, 'f', 1));
 }
 
 void IntensityWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -384,6 +387,7 @@ void IntensityWidget::leaveEvent(QEvent *)
 {
 	if (m_mouse_tracking_enabled)
 		m_model->clearCursor();
+	emit yValueDescription({});
 }
 
 
