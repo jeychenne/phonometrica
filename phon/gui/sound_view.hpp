@@ -53,6 +53,7 @@ public:
 
 	QString label() const override;
 	String path() const override;
+	QString helpAnchor() const override { return QStringLiteral("sound"); }
 
 	Handle<Sound> sound() const { return m_sound; }
 	TimeModel *timeModel() const { return m_model; }
@@ -100,6 +101,9 @@ private slots:
 	void onPlaySelection();
 	void onStop();
 	void onPlaybackTick();
+
+	// Y-axis readout from child widgets
+	void onYValueDescription(const QString &text);
 
 private:
 
@@ -178,6 +182,9 @@ private:
 	QTimer *m_playback_timer = nullptr;
 	bool m_was_playing = false;
 	QAction *m_active_play_action = nullptr;
+
+	// Y-axis readout text from the widget under the cursor.
+	QString m_y_value_text;
 };
 
 } // namespace phonometrica

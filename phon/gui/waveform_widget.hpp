@@ -60,6 +60,12 @@ protected:
 	void wheelEvent(QWheelEvent *event) override;
 	void leaveEvent(QEvent *event) override;
 
+signals:
+
+	// Emitted when the mouse moves over the widget; text describes the Y value
+	// (e.g. "Amplitude ≈ 0.42"). Empty string when the mouse leaves.
+	void yValueDescription(const QString &text);
+
 private slots:
 
 	void onViewportChanged(double start, double end);
@@ -75,6 +81,7 @@ private:
 	void rebuildCache();
 	std::vector<double> computeWaveform();
 	double sampleToY(double sample) const;
+	double yToAmplitude(int y) const;
 	double timeToX(double t) const;
 	double xToTime(double x) const;
 	void drawWaveformToPixmap();

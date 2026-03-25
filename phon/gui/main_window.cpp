@@ -24,6 +24,7 @@
 #include <phon/gui/view_panel.hpp>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/sound_view.hpp>
+#include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -179,6 +180,19 @@ QMenu *MainWindow::createWindowMenu()
 QMenu *MainWindow::createHelpMenu()
 {
 	auto *menu = new QMenu(tr("&Help"), this);
+
+	auto *manual_action = menu->addAction(tr("User Manual"), [this]() {
+		HelpBrowser::showPage({}, this);
+	});
+	manual_action->setShortcut(QKeySequence::HelpContents);
+
+	menu->addAction(tr("Context Help"), [this]() {
+		auto *view = currentView();
+		auto anchor = view ? view->helpAnchor() : QString();
+		HelpBrowser::showPage(anchor, this);
+	}, QKeySequence(Qt::SHIFT | Qt::Key_F1));
+
+	menu->addSeparator();
 
 	menu->addAction(tr("About Phonometrica"), [this]() {
 		QMessageBox::about(this, tr("About Phonometrica"),

@@ -598,6 +598,9 @@ void SpectrogramWidget::mouseMoveEvent(QMouseEvent *event)
 	{
 		m_model->setCursor(t);
 	}
+
+	double hz = yPosToHertz(int(event->position().y()));
+	emit yValueDescription(tr("Frequency \u2248 %1 Hz").arg(int(hz)));
 }
 
 void SpectrogramWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -629,6 +632,7 @@ void SpectrogramWidget::leaveEvent(QEvent *)
 {
 	if (m_mouse_tracking_enabled)
 		m_model->clearCursor();
+	emit yValueDescription({});
 }
 
 

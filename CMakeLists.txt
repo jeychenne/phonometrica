@@ -19,6 +19,7 @@ option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
 option(WITH_APPLICATION   "Build the application layer"         ON)
 option(WITH_GUI           "Build the user interface"            ON)
 option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
+option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 
 
 ###########################
@@ -339,6 +340,7 @@ if(WITH_GUI)
         icons/clipboard-copy.svg
         icons/eraser.svg
         icons/phonometrica.svg
+        icons/circle-help.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
@@ -348,6 +350,70 @@ if(WITH_GUI)
         std/read_settings.phon
         std/write_settings.phon
     )
+
+
+    ###################################
+    ##  EMBEDDED DOCUMENTATION       ##
+    ###################################
+
+    # If PHON_BUILD_DOCS is ON and sphinx-build is available, the Sphinx
+    # qthelp builder is run at build time.  Its output is packed into a Qt
+    # resource (.qrc) and compiled into the binary, so the help browser can
+    # load pages from qrc:/docs/ without any external files.
+
+    if(PHON_BUILD_DOCS)
+        find_program(SPHINX_BUILD sphinx-build)
+        if(SPHINX_BUILD)
+            set(DOC_HTML_DIR "${CMAKE_BINARY_DIR}/docs_html")
+            set(DOC_STAMP   "${DOC_HTML_DIR}/.stamp")
+            set(DOC_QRC     "${CMAKE_BINARY_DIR}/docs.qrc")
+            set(DOC_RCC_CPP "${CMAKE_BINARY_DIR}/qrc_docs.cpp")
+
+            file(GLOB_RECURSE DOC_SOURCES
+                "${CMAKE_SOURCE_DIR}/docs/*.rst"
+                "${CMAKE_SOURCE_DIR}/docs/conf.py"
+                "${CMAKE_SOURCE_DIR}/docs/phon_lexer/phon/lexer.py"
+            )
+
+            # Step 1 — run Sphinx (qthelp builder produces simple HTML).
+            add_custom_command(
+                OUTPUT  "${DOC_STAMP}"
+                COMMAND "${SPHINX_BUILD}" -q -b qthelp
+                        "${CMAKE_SOURCE_DIR}/docs" "${DOC_HTML_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E touch "${DOC_STAMP}"
+                DEPENDS ${DOC_SOURCES}
+                COMMENT "Building documentation with Sphinx..."
+            )
+
+            # Step 2 — generate a .qrc listing every HTML/CSS/image file.
+            add_custom_command(
+                OUTPUT  "${DOC_QRC}"
+                COMMAND ${CMAKE_COMMAND}
+                        "-DDOC_DIR=${DOC_HTML_DIR}"
+                        "-DQRC_FILE=${DOC_QRC}"
+                        -P "${CMAKE_SOURCE_DIR}/cmake/GenerateDocQrc.cmake"
+                DEPENDS "${DOC_STAMP}"
+                COMMENT "Generating documentation resource file..."
+            )
+
+            # Step 3 — compile the .qrc into a C++ source with rcc.
+            add_custom_command(
+                OUTPUT  "${DOC_RCC_CPP}"
+                COMMAND Qt6::rcc --name docs
+                        --output "${DOC_RCC_CPP}" "${DOC_QRC}"
+                DEPENDS "${DOC_QRC}"
+                COMMENT "Compiling documentation resources..."
+            )
+
+            target_sources(${PROJECT_NAME} PRIVATE "${DOC_RCC_CPP}")
+            target_compile_definitions(phon-gui PUBLIC PHON_EMBEDDED_DOCS=1)
+
+            message(STATUS "Documentation will be built and embedded (sphinx-build found at ${SPHINX_BUILD})")
+        else()
+            message(STATUS "sphinx-build not found -- documentation will not be embedded. "
+                           "Install Sphinx (pip install sphinx) or set PHON_BUILD_DOCS=OFF to silence this.")
+        endif()
+    endif()
 
 endif()
 

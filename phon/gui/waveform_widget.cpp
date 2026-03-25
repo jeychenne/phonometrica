@@ -112,6 +112,12 @@ double WaveformWidget::sampleToY(double sample) const
 	return H - sample * H / m_magnitude;
 }
 
+double WaveformWidget::yToAmplitude(int y) const
+{
+	double H = height() / 2.0;
+	return (H - y) * m_magnitude / H;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Cache management
@@ -454,6 +460,9 @@ void WaveformWidget::mouseMoveEvent(QMouseEvent *event)
 	{
 		m_model->setCursor(t);
 	}
+
+	double amp = yToAmplitude(int(event->position().y()));
+	emit yValueDescription(tr("Amplitude \u2248 %1").arg(amp, 0, 'f', 3));
 }
 
 void WaveformWidget::mouseReleaseEvent(QMouseEvent *event)
@@ -486,6 +495,7 @@ void WaveformWidget::leaveEvent(QEvent *)
 {
 	if (m_mouse_tracking_enabled)
 		m_model->clearCursor();
+	emit yValueDescription({});
 }
 
 
