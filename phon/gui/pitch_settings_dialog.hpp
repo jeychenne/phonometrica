@@ -9,7 +9,7 @@
  *                                                                                                                     *
  * Purpose: Dialog to edit pitch tracking settings (method, min/max pitch, time step, voicing threshold).              *
  *          The voicing threshold has both a text entry and a slider whose range depends on the selected method.        *
- *          Praat-specific parameters (octave jump cost, voicing cost) are shown only when Praat is selected.           *
+ *          Praat-specific parameters are shown only when Praat is selected.                                           *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -59,8 +59,12 @@ private:
 	QSlider *m_voicing_slider;
 
 	// Praat-specific fields.
-	QLabel *m_octave_label;
-	QLineEdit *m_octave_edit;
+	QLabel *m_silence_label;
+	QLineEdit *m_silence_edit;
+	QLabel *m_octave_cost_label;
+	QLineEdit *m_octave_cost_edit;
+	QLabel *m_octave_jump_label;
+	QLineEdit *m_octave_jump_edit;
 	QLabel *m_voicing_cost_label;
 	QLineEdit *m_voicing_cost_edit;
 

@@ -94,6 +94,16 @@ void PitchWidget::readSettings()
 	} catch (...) {
 		m_voicing_cost = 0.45;
 	}
+	try {
+		m_silence_threshold = Settings::get_number(category, "silence_threshold");
+	} catch (...) {
+		m_silence_threshold = 0.03;
+	}
+	try {
+		m_octave_cost = Settings::get_number(category, "octave_cost");
+	} catch (...) {
+		m_octave_cost = 0.01;
+	}
 
 	m_cache_valid = false;
 }
@@ -171,7 +181,8 @@ std::vector<double> PitchWidget::computePitch()
 	auto sample_rate = m_sound->sample_rate();
 
 	return speech::get_pitch(m_algorithm, input, sample_rate, m_min_pitch, m_max_pitch,
-	                         m_time_step, m_voicing_threshold, m_octave_jump_cost, m_voicing_cost);
+	                         m_time_step, m_voicing_threshold, m_octave_jump_cost, m_voicing_cost,
+	                         m_silence_threshold, m_octave_cost);
 }
 
 

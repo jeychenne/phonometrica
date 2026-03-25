@@ -68,7 +68,7 @@ Eigen::VectorXd calculate_ac(const Eigen::VectorXd& data) {
     return Eigen::Map<Eigen::VectorXd>(ac_result.data(), n);
 }
 
-std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost, double voicing_cost)
+std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost)
 {
     std::span<const double> input{idat.data(), size_t(idat.size())};
     const int win_len = static_cast<int>(std::floor(3.0 * sample_rate / min_pitch));
@@ -76,6 +76,14 @@ std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rat
     
     if (win_len < 2 || step_samples < 1 || input.size() < (size_t)win_len)
         return {};
+
+    // Compute global maximum absolute amplitude for the silence threshold.
+    double global_max = 0.0;
+    for (size_t i = 0; i < input.size(); i++) {
+        double a = std::abs(input[i]);
+        if (a > global_max) global_max = a;
+    }
+    double silence_level = silence_threshold * global_max;
 
     // 1. Pre-calculate window autocorrelation
     Eigen::VectorXd window(win_len);
@@ -96,12 +104,21 @@ std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rat
     std::vector<std::vector<PitchCandidate>> frame_candidates;
     for (size_t start = 0; start + win_len <= input.size(); start += step_samples) {
         Eigen::Map<const Eigen::VectorXd> frame_raw(&input[start], win_len);
-        Eigen::VectorXd frame = (frame_raw.array() - frame_raw.mean()) * window.array();
-        Eigen::VectorXd r_frame = calculate_ac(frame);
 
         std::vector<PitchCandidate> candidates;
-        // Always add an unvoiced candidate (frequency 0)
+        // Always add an unvoiced candidate (frequency 0).
         candidates.push_back({0.0, voicing_threshold});
+
+        // Silence threshold: if the frame's peak amplitude is below the
+        // threshold, treat the frame as silent (only the unvoiced candidate).
+        double frame_peak = frame_raw.cwiseAbs().maxCoeff();
+        if (frame_peak < silence_level) {
+            frame_candidates.push_back(std::move(candidates));
+            continue;
+        }
+
+        Eigen::VectorXd frame = (frame_raw.array() - frame_raw.mean()) * window.array();
+        Eigen::VectorXd r_frame = calculate_ac(frame);
 
         // Normalization factor: the corrected energy at lag 0.
         // Dividing all r_frame/r_window values by this turns them into
@@ -150,9 +167,16 @@ std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rat
     std::vector<std::vector<int>> phi(num_frames);   // backpointers
 
     // Initialization (frame 0): no backpointer needed.
+    // The local cost for each candidate includes:
+    //   - (1 - strength) as the base observation cost
+    //   - octave_cost * log2(F0/min_pitch) for voiced candidates (favors lower F0)
     d[0].resize(frame_candidates[0].size());
     for (size_t i = 0; i < frame_candidates[0].size(); ++i) {
-        d[0][i] = 1.0 - frame_candidates[0][i].strength; 
+        double f = frame_candidates[0][i].frequency;
+        double local_cost = 1.0 - frame_candidates[0][i].strength;
+        if (f > 0 && min_pitch > 0)
+            local_cost += octave_cost * std::log2(f / min_pitch);
+        d[0][i] = local_cost;
     }
 
     // Recursion (frames 1 .. N-1)
@@ -163,7 +187,12 @@ std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rat
 
         for (size_t j = 0; j < ncand; ++j) {
             double f2 = frame_candidates[t][j].frequency;
-            
+
+            // Local cost for candidate j.
+            double local_cost = 1.0 - frame_candidates[t][j].strength;
+            if (f2 > 0 && min_pitch > 0)
+                local_cost += octave_cost * std::log2(f2 / min_pitch);
+
             for (size_t i = 0; i < frame_candidates[t-1].size(); ++i) {
                 double f1 = frame_candidates[t-1][i].frequency;
                 double transition_cost = 0.0;
@@ -175,7 +204,7 @@ std::vector<double> get_pitch_praat(const Array<double> &idat, double sample_rat
                 else
                     transition_cost = octave_jump_cost * std::abs(std::log2(f1 / f2));
 
-                double cost = d[t-1][i] + transition_cost + (1.0 - frame_candidates[t][j].strength);
+                double cost = d[t-1][i] + transition_cost + local_cost;
                 
                 if (cost < d[t][j]) {
                     d[t][j] = cost;
