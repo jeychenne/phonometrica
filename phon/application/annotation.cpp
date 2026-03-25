@@ -671,4 +671,17 @@ void Annotation::remove_events(intptr_t index)
 	m_modified = true;
 }
 
+void Annotation::add_anchor(intptr_t layer_index, double time)
+{
+	m_layers[layer_index].add_anchor(time);
+	m_modified = true;
+}
+
+bool Annotation::remove_anchor(intptr_t layer_index, double time)
+{
+	bool ok = m_layers[layer_index].remove_anchor(time);
+	if (ok) m_modified = true;
+	return ok;
+}
+
 } // namespace phonometrica

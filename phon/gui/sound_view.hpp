@@ -60,8 +60,21 @@ public:
 
 protected:
 
+	// Subclasses that override addAnnotationLayers/addAnnotationToolbar must pass
+	// DeferInit to the SoundView constructor, then call initialize() at the end of
+	// their own constructor (after the vtable is fully constructed).
+	enum DeferInit { Deferred };
+	SoundView(const Handle<Sound> &sound, DeferInit, QWidget *parent = nullptr);
+
+	// Completes the UI setup. Called automatically by the public constructor, or
+	// manually by subclasses that used the deferred constructor.
+	void initialize();
+
 	// Subclass hook: AnnotationView will add annotation layers here.
 	virtual void addAnnotationLayers(QLayout *layout) {}
+
+	// Subclass hook: AnnotationView will add annotation-specific toolbar actions here.
+	virtual void addAnnotationToolbar(QToolBar *toolbar) {}
 
 	void keyPressEvent(QKeyEvent *event) override;
 
