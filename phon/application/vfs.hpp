@@ -233,6 +233,16 @@ public:
 	// Send this signal to notify the current view that the file has been modified
 	static Signal<> file_modified;
 
+	// Metadata serialization — public so that Project can call metadata_from_xml
+	// when loading inline metadata from the project file.
+	virtual void metadata_to_xml(xml_node meta_node);
+	virtual void metadata_from_xml(xml_node meta_node);
+
+	// Whether to_xml should emit a <Metadata> child node. The default checks for
+	// properties or description; subclasses like Annotation override this to also
+	// return true when a sound file is bound.
+	virtual bool needs_metadata_node() const;
+
 protected:
 
 	virtual void load() = 0;
@@ -244,10 +254,6 @@ protected:
 	virtual bool uses_external_metadata() const;
 
 	virtual bool content_modified() const;
-
-	virtual void metadata_to_xml(xml_node meta_node);
-
-	virtual void metadata_from_xml(xml_node meta_node);
 
 	Property parse_property(xml_node prop_node, const std::type_info &type);
 

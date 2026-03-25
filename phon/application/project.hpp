@@ -20,7 +20,6 @@
 #include <phon/application/bookmark.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/metadata.hpp>
-#include <phon/application/database.hpp>
 #include <phon/application/conc/query.hpp>
 #include <phon/utils/signal.hpp>
 #include <phon/error.hpp>
@@ -104,8 +103,6 @@ public:
 
 	static std::set<Property> get_shared_properties(const DocList &files);
 
-	MetaDatabase & database() const;
-
 	void remove_empty_script();
 
 	DocList get_corpus_files() const;
@@ -119,6 +116,12 @@ public:
 	Handle<Document> get(const String &path);
 
     void register_file(const String &path, Handle<Document> file);
+
+	// Access the file registry (for looking up files by path during loading).
+	const Dictionary<Handle<Document>> &files() const { return m_files; }
+
+	// Defer annotation-to-sound binding until the entire corpus is loaded.
+	void defer_annotation_binding(Annotation *annot, const String &sound_path);
 
     static void updated();
 
@@ -199,11 +202,7 @@ private:
 
 	void bind_annotations();
 
-	void open_database();
-
 	void create_uuid();
-
-	void discard_database();
 
 	void reinitialize();
 
@@ -283,19 +282,14 @@ private:
 
 	Handle<Directory> m_queries;
 
-	// UUID for the project, so that it can be uniquely identified in the metadata database.
+	// UUID for the project.
 	String m_uuid;
 
 	// Project metadata.
 	Changelog m_changelog;
 
-	std::unique_ptr<MetaDatabase> m_database;
-
 	// Optional user-defined label for the project
 	String m_label;
-
-	// Flag which checks if the database already existed when it was opened. If the project is not saved, then we discard the database.
-	bool m_database_temp = true;
 
 	// Register modifications.
 	bool m_modified = false;

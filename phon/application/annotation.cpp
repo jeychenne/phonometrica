@@ -133,22 +133,10 @@ const Array<Event> &Annotation::get_layer_events(intptr_t i) const
 	return m_layers[i].events;
 }
 
-void Annotation::save_metadata()
-{
-	if (m_type != Native) {
-		Document::save_metadata();
-	}
-}
-
 void Annotation::set_path(String path, bool mutate)
 {
 	Document::set_path(std::move(path), mutate);
 	m_type = guess_type();
-}
-
-bool Annotation::uses_external_metadata() const
-{
-	return m_type != Native;
 }
 
 void Annotation::initialize(Runtime &rt)
@@ -456,6 +444,13 @@ void Annotation::metadata_to_xml(xml_node meta_node)
 	add_data_node(meta_node, "Sound", snd);
 }
 
+bool Annotation::needs_metadata_node() const
+{
+	// Annotations always need a metadata node if they have a bound sound,
+	// so that the binding is persisted in the project file.
+	return Document::needs_metadata_node() || has_sound();
+}
+
 void Annotation::write_as_native(const String &path)
 {
 	open();
@@ -518,10 +513,26 @@ void Annotation::metadata_from_xml(xml_node meta_node)
 	{
 		if (node.name() == sound_tag)
 		{
+			// Don't import the sound file here — it's already in the corpus (or will be
+			// once loading finishes). Instead, record the binding so that bind_annotations()
+			// can resolve it after the entire corpus is loaded.
 			auto project = Project::get();
-			auto path = project->import_file(node.text().get());
-			auto sound = recast<Sound>(project->get(path));
-			set_sound(sound, false);
+			String sound_path = node.text().get();
+			Project::interpolate(sound_path, project->directory());
+
+			// Try to bind immediately if the sound is already registered.
+			auto it = project->files().find(sound_path);
+			if (it != project->files().end())
+			{
+				auto snd = recast<Sound>(it->second);
+				if (snd)
+					set_sound(snd, false);
+			}
+			else
+			{
+				// Defer: the sound might not be registered yet (depends on parse order).
+				project->defer_annotation_binding(this, sound_path);
+			}
 			return;
 		}
 	}

@@ -423,18 +423,33 @@ void Document::set_description(String value, bool mutate)
 void Document::to_xml(xml_node root)
 {
 	auto node = root.append_child("Document");
-	auto attr = node.append_attribute("class");
-	attr.set_value(class_name().data());
-	auto data = node.append_child(node_pcdata);
+	auto cls_attr = node.append_attribute("class");
+	cls_attr.set_value(class_name().data());
+
+	// Always store the path as a child <Path> node for consistency.
 	String path = m_path;
 	auto project = Project::get();
 	Project::compress(path, project->directory());
-	data.set_value(path.data());
+	add_data_node(node, "Path", path);
+
+	// Embed metadata (description + properties) directly in the project file.
+	// Subclasses like Annotation may always need a Metadata node (e.g. for the
+	// bound sound path), so we ask them via needs_metadata_node().
+	if (needs_metadata_node())
+	{
+		auto meta_node = node.append_child("Metadata");
+		metadata_to_xml(meta_node);
+	}
 }
 
 bool Document::has_path() const
 {
 	return !m_path.empty();
+}
+
+bool Document::needs_metadata_node() const
+{
+	return has_properties() || !m_description.empty();
 }
 
 const std::set<Property> &Document::properties() const
@@ -475,12 +490,9 @@ bool Document::has_properties() const
 
 void Document::save_metadata()
 {
-	if (uses_external_metadata())
-	{
-		auto project = Project::get();
-		auto &db = project->database();
-		db.save_file_metadata(*this);
-	}
+	// Metadata for all files is now embedded in the project file via to_xml().
+	// Native formats (e.g. .phon-annot) additionally write metadata in their own files
+	// via their write() override, but the base implementation is a no-op.
 }
 
 bool Document::loaded() const
@@ -495,7 +507,8 @@ bool Document::modified() const
 
 bool Document::uses_external_metadata() const
 {
-	return true;
+	// All metadata is now embedded in the project file.
+	return false;
 }
 
 Array<String> Document::property_list() const

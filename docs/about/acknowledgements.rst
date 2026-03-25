@@ -11,10 +11,11 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * LBFGS++, by Yixuan Qiu, based on work by Naoaki Okazaki (MIT), see `lbfgspp.statr.me <https://lbfgspp.statr.me/>`_
 * librosa, by the librosa development team (ISC license), see `librosa.org <https://librosa.org/>`_
 * libsndfile, by Erik de Castro Lopo and the libsndfile team (LGPL), see `www.mega-nerd.com <http://www.mega-nerd.com>`_
+* Lucide icons, by Lucide icons and contributors (ISC License), see `lucide.dev <https://lucide.dev/>`_
 * MuJS, by Artifex Software (ISC), see `mujs.com <https://mujs.com/>`_
 * PCRE, by Philip Hazel (BSD), see `www.pcre.org <https://www.pcre.org/>`_
-* Praat, by Paul Boersma and David Weenink (GPL), see `www.praat.org <http://www.praat.org>`_
 * pugixml, by Arseny Kapoulkine (MIT), see `pugixml.org <https://pugixml.org>`_
+* Qt, by The Qt Company (LGPL), see `www.qt.io <https://www.qt.io/>`_
 * r8brain-free-src, by Aleksey Vaneev (MIT), see `github.com/avaneev/r8brain-free-src <https://github.com/avaneev/r8brain-free-src>`_
 * RTAudio, by Gary P. Scavone (MIT), see `www.music.mcgill.ca/~gary/rtaudio <http://www.music.mcgill.ca/~gary/rtaudio/>`_
 * Snack, by Jonas Beskow and Kåre Sjölander (BSD), see `www.speech.kth.se/snack/ <http://www.speech.kth.se/snack/>`_
@@ -30,12 +31,11 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * zip, by Kuba Podgórski, based on miniz, by Rich Geldreich (public domain), see `github.com/kuba--/zip <https://github.com/kuba--/zip>`_
 
 
-Phonometrica uses `GitHub <https://github.com>`_ to host its source code. The source code is available `here <https://github.com/phonometrica/phonometrica>`_.
+Phonometrica uses `GitHub <https://github.com>`_ to host its source code. The source code is available `here <https://github.com/jeychenne/phonometrica>`_.
 
 The implementation of Phonometrica's scripting engine was partly inspired by Robert Nystrom's excellent book `Crafting Interpreters <https://craftinginterpreters.com/>`_.
 
-We are also grateful to JetBrains for providing us with an academic (now non-commercial) license of their `C++ editor <https://www.jetbrains.com/clion/>`_.
+We are also grateful to JetBrains for providing us with a non-commercial license of their `C++ editor <https://www.jetbrains.com/clion/>`_.
 
 The development of coding protocols was originally developed as part of the following research project: *A corpus-based longitudinal study of the interphonological features of Japanese learners of French*. PI: Sylvain DETEY (Waseda University). This project was supported by the Japanese Society for the Promotion of Science (JSPS), Grant-in-Aid for Scientific Research (B) n°23320121 (2011-2014).
 
-Icons are freely provided by Icons8 under the Universal Multimedia License Agreement for Icons8, see `icons8.com <https://icons8.com>`_. 

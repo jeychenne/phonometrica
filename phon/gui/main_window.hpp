@@ -33,6 +33,7 @@ class FileManager;
 class Document;
 class View;
 class ViewPanel;
+class InfoPanel;
 
 class MainWindow : public QMainWindow
 {
@@ -74,6 +75,7 @@ private slots:
 	// Window menu
 	void onToggleProjectPanel(bool visible);
 	void onToggleConsolePanel(bool visible);
+	void onToggleInfoPanel(bool visible);
 
 	// File manager
 	void onDocumentRequested(Document *doc);
@@ -125,9 +127,13 @@ private:
 	// Dock widgets
 	QDockWidget *m_project_dock = nullptr;
 	QDockWidget *m_console_dock = nullptr;
+	QDockWidget *m_info_dock = nullptr;
 
 	// Project file manager
 	FileManager *m_file_manager = nullptr;
+
+	// Information panel (right dock)
+	InfoPanel *m_info_panel = nullptr;
 
 	// Interactive scripting console
 	class Console *m_console = nullptr;

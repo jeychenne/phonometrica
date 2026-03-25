@@ -59,7 +59,6 @@ Project::Project(Runtime &rt, String path) :
 	if (path.empty())
 	{
 		create_uuid();
-		open_database();
 	}
 	else
 	{
@@ -72,7 +71,6 @@ Project::Project(Runtime &rt, String path) :
 
 Project::~Project()
 {
-	discard_database();
 }
 
 Project *Project::get()
@@ -83,22 +81,6 @@ Project *Project::get()
 bool Project::modified() const
 {
 	return m_modified || m_corpus->modified() || m_scripts->modified() || m_bookmarks->modified() || m_data->modified() || m_queries->modified();
-}
-
-void Project::discard_database()
-{
-	if (m_database_temp && m_database)
-	{
-		auto path = m_database->path();
-        if (filesystem::exists(path))
-        {
-			m_database->close();
-            filesystem::remove_file(path);
-		}
-	}
-
-    m_database = nullptr;
-	m_database_temp = true;
 }
 
 const String &Project::path() const
@@ -136,8 +118,6 @@ void Project::save()
 	write();
 
 	m_modified = false;
-	// Once the project has been written to disk, its database must not be discarded.
-	m_database_temp = false;
 
 	notify_update();
 	stop_activity();
@@ -206,7 +186,6 @@ void Project::load()
 			}
 		}
 
-		m_database_temp = false;
 		bind_annotations();
 		notify_update();
 		stop_activity();
@@ -252,13 +231,20 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 
 			parse_corpus(node, sub);
 		}
-		else if (node.name() == str("Document") || node.name() == str("VFile"))
+		else if (node.name() == str("Document"))
 		{
 			auto attr = node.attribute("class");
-			if (!attr) throw error("Invalid VFile node");
+			if (!attr) throw error("Invalid Document node: missing class attribute");
 			std::string_view cls(attr.value());
 			Handle<Document> vfile;
-			String path(node.text().get());
+
+			// Read the file path from the <Path> child node.
+			auto path_node = node.child("Path");
+			if (!path_node) {
+				throw error("This project was created with an older version of Phonometrica "
+					"and cannot be opened. Please contact the developers for assistance.");
+			}
+			String path(path_node.text().get());
 			interpolate(path, m_directory);
 
 			if (cls == "Annotation")
@@ -275,11 +261,22 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 			}
 			else
 			{
-				throw error("Invalid VFile type: %", cls);
+				throw error("Invalid Document type: %", cls);
+			}
+
+			// Read inline metadata from the project file.
+			auto meta_child = node.child("Metadata");
+			if (meta_child) {
+				vfile->metadata_from_xml(meta_child);
 			}
 
 			register_file(vfile->path(), vfile);
 			folder->append(vfile, false);
+		}
+		else if (node.name() == str("VFile"))
+		{
+			throw error("This project was created with an older version of Phonometrica (before 0.9) "
+				"and cannot be opened. Please contact the developers for assistance.");
 		}
 		else
 		{
@@ -290,8 +287,6 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 
 void Project::register_file(const String &path, Handle<Document> file)
 {
-	m_database->add_metadata_to_file(file);
-
 	if (m_files.find(path) == m_files.end())
 	{
 		m_files.insert({path, std::move(file)});
@@ -322,11 +317,7 @@ void Project::parse_metadata(xml_node root)
 
 			if (!id.empty())
 			{
-				discard_database();
 				m_uuid = std::move(id);
-				open_database();
-				// Force the database to be persistent, even if it doesn't exist (for instance, if the user deleted it).
-				m_database_temp = false;
 			}
 		}
 
@@ -879,16 +870,6 @@ std::set<Property> Project::get_shared_properties(const DocList &files)
 	return properties;
 }
 
-void Project::open_database()
-{
-	String name(m_uuid);
-	name.append(".db");
-	auto path = filesystem::join(Settings::metadata_directory(), name);
-	m_database_temp = !filesystem::exists(path);
-	m_database = std::make_unique<MetaDatabase>(path, m_database_temp);
-	m_database->notify_annotation_needs_sound.connect(&Project::bind_annotation, this);
-}
-
 void Project::remove(DocList &files)
 {
 	for (auto &file : files)
@@ -930,15 +911,18 @@ void Project::create_uuid()
 	}
 }
 
-MetaDatabase & Project::database() const
-{
-	return *m_database;
-}
+// MetaDatabase is no longer used.
+// MetaDatabase & Project::database() const { ... }
 
 void Project::bind_annotation(const Handle<Annotation> &annot, const String &sound_file)
 {
 	// The actual binding will occur in bind_annotations(), which is called once the project is loaded.
 	m_accumulator.emplace_back(annot.get(), sound_file);
+}
+
+void Project::defer_annotation_binding(Annotation *annot, const String &sound_path)
+{
+	m_accumulator.emplace_back(annot, sound_path);
 }
 
 void Project::bind_annotations()
@@ -972,7 +956,6 @@ void Project::close()
 	instance->about_to_close();
 	instance->clear();
 	instance->create_uuid();
-	instance->open_database();
 	instance->notify_closed();
 }
 
@@ -1150,7 +1133,6 @@ void Project::clear()
     m_scripts->clear(false);
     m_bookmarks->clear(false);
     m_queries->clear(false);
-    discard_database();
 	m_uuid.clear();
     m_path = String();
     m_directory = String();
@@ -1450,7 +1432,6 @@ void Project::set_default_bindings()
 void Project::reinitialize()
 {
 	create_uuid();
-	open_database();
 	initialized();
 }
 
