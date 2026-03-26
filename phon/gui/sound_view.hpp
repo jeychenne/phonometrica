@@ -76,7 +76,21 @@ protected:
 	// Subclass hook: AnnotationView will add annotation-specific toolbar actions here.
 	virtual void addAnnotationToolbar(QToolBar *toolbar) {}
 
+	// Subclass hook: AnnotationView adds layer visibility entries to the Display menu.
+	virtual void addDisplayMenuEntries(QMenu *menu) { Q_UNUSED(menu); }
+
 	void keyPressEvent(QKeyEvent *event) override;
+
+	// Accessor for subclasses (AnnotationView registers layer widgets here).
+	YAxisWidget *yAxis() const { return m_y_axis; }
+
+	// Annotation status text shown at the end of the status bar (e.g. "Layer 2 / Event 5").
+	void setAnnotationStatus(const QString &text);
+	void clearAnnotationStatus();
+
+	// Subclass hook: AnnotationView creates an anchor on the focused layer.
+	// Called when the user Ctrl+Clicks on a sound widget.
+	virtual void onAnchorRequested(double /*time*/) {}
 
 private slots:
 
@@ -198,6 +212,9 @@ private:
 
 	// Y-axis readout text from the widget under the cursor.
 	QString m_y_value_text;
+
+	// Annotation event info text (e.g. "Layer 2 / Event 5").
+	QString m_annot_status_text;
 };
 
 } // namespace phonometrica

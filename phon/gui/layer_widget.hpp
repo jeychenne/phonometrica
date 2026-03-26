@@ -120,6 +120,8 @@ protected:
 	void mouseDoubleClickEvent(QMouseEvent *event) override;
 	void keyPressEvent(QKeyEvent *event) override;
 	void leaveEvent(QEvent *event) override;
+	void resizeEvent(QResizeEvent *event) override;
+	bool eventFilter(QObject *obj, QEvent *event) override;
 
 private:
 
@@ -152,6 +154,13 @@ private:
 	// Find the event containing or closest to the given time.
 	const Event *findEvent(double time) const;
 
+	// ── Candidate anchor (from point selection on a sound widget) ──
+
+	// Returns the candidate time if there is a valid candidate anchor
+	// (point selection, not in add/remove mode, no existing anchor there).
+	// Returns -1 otherwise.
+	double candidateAnchorTime() const;
+
 	// ── Anchor tracking ──────────────────────────────
 
 	void trackAnchor(double time);
@@ -164,6 +173,13 @@ private:
 	void editEvent(int event_index);
 	void focusPreviousEvent();
 	void focusNextEvent();
+
+	// ── Inline event editor ──────────────────────────
+
+	void beginEditing(int event_index);
+	void commitEdit();
+	void cancelEdit();
+	void advanceEdit(); // Commit current, open next event.
 
 	// ── Helpers ───────────────────────────────────────
 
@@ -208,14 +224,19 @@ private:
 	// Which edge of the selected event was clicked?
 	bool m_event_start_selected = false;
 
+	// Anchor explicitly selected by clicking on it (for Delete to remove).
+	double m_selected_anchor_time = -1;
+
 	bool m_dragging_anchor = false;
 	bool m_focused = false;
 	bool m_adding_anchor = false;
 	bool m_removing_anchor = false;
 	bool m_sharing_anchors = true;
 
-	// Vertical shift for the popup event editor, remembered per layer.
-	int m_edit_y_shift = 0;
+	// ── Inline editor ────────────────────────────────
+
+	class QTextEdit *m_inline_edit = nullptr;
+	int m_editing_event = -1;  // index into m_event_cache, or -1
 };
 
 } // namespace phonometrica

@@ -213,16 +213,19 @@ bool FileManager::eventFilter(QObject *obj, QEvent *event)
 
 void FileManager::setupKeyboardShortcuts()
 {
-	// Delete — remove selected elements
+	// Delete — remove selected elements (only when the tree has focus).
 	auto *deleteShortcut = new QShortcut(QKeySequence::Delete, m_tree);
+	deleteShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(deleteShortcut, &QShortcut::activated, this, &FileManager::removeSelectedElements);
 
-	// Backspace — also remove (common on macOS)
+	// Backspace — also remove (common on macOS).
 	auto *backspaceShortcut = new QShortcut(QKeySequence(Qt::Key_Backspace), m_tree);
+	backspaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(backspaceShortcut, &QShortcut::activated, this, &FileManager::removeSelectedElements);
 
 	// F2 — rename selected directory
 	auto *renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), m_tree);
+	renameShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(renameShortcut, &QShortcut::activated, [this]() {
 		auto proxyIndex = m_tree->currentIndex();
 		if (proxyIndex.isValid())
@@ -231,6 +234,7 @@ void FileManager::setupKeyboardShortcuts()
 
 	// Enter/Return — open selected document
 	auto *openShortcut = new QShortcut(QKeySequence(Qt::Key_Return), m_tree);
+	openShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(openShortcut, &QShortcut::activated, [this]() {
 		auto proxyIndex = m_tree->currentIndex();
 		if (proxyIndex.isValid())
@@ -690,8 +694,8 @@ void FileManager::removeSelectedElements()
 		return;
 
 	QString msg = (elements.size() == 1)
-		? tr("Remove the selected item from the project?")
-		: tr("Remove the %1 selected items from the project?").arg(elements.size());
+		? tr("Remove the selected item from the project?\n(Files on disk are not affected.)")
+		: tr("Remove the %1 selected items from the project?\n(Files on disk are not affected.)").arg(elements.size());
 
 	auto answer = QMessageBox::question(this, tr("Remove"), msg);
 	if (answer != QMessageBox::Yes)

@@ -103,12 +103,9 @@ void SpectrogramWidget::readFormantSettings()
 
 void SpectrogramWidget::setShowFormants(bool show)
 {
-	if (m_show_formants != show)
-	{
-		m_show_formants = show;
-		m_formants_valid = false;
-		update();
-	}
+	m_show_formants = show;
+	m_formants_valid = false;
+	update();
 }
 
 void SpectrogramWidget::setMouseTracking(bool enabled)
@@ -382,27 +379,40 @@ void SpectrogramWidget::rebuildFormantCache()
 {
 	m_formant_times.clear();
 	m_formant_freqs.clear();
-	m_formants_valid = true;
 
 	auto window_duration = m_model->windowDuration();
+	int w = width();
+	if (w <= 0)
+		return;
+
+	// Use the configured time step, but if the window is large relative to the
+	// widget width, increase the step so we compute at most 1 estimate per pixel.
+	// Formant computation is expensive; this keeps wide views responsive while
+	// preserving full resolution when zoomed in.
+	double step = m_formant_time_step;
+	double max_step = window_duration / w; // 1 estimate per pixel
+	if (step < max_step)
+		step = max_step;
 
 	// At least 2 measurements per window.
-	if (window_duration <= 2 * m_formant_time_step)
-		return;
-	// At most 2 measurements per pixel.
-	if (window_duration / m_formant_time_step > width() * 2)
+	if (window_duration <= 2 * step)
 		return;
 
 	try
 	{
-		auto npoint = int(ceil((window_duration - m_formant_time_step) / m_formant_time_step));
+		auto npoint = int(ceil((window_duration - step) / step));
 		if (npoint <= 0) return;
+
+		// Mark valid only once we're committed to computing. If we returned
+		// early above (e.g. widget too narrow), the cache stays invalid so
+		// that a future resize will trigger a fresh attempt.
+		m_formants_valid = true;
 
 		double t = m_model->windowStart();
 
 		for (int i = 0; i < npoint; i++)
 		{
-			t += m_formant_time_step;
+			t += step;
 			m_formant_times.push_back(t);
 
 			std::vector<double> point_freqs(m_nformant, std::nan(""));
@@ -575,6 +585,14 @@ void SpectrogramWidget::mousePressEvent(QMouseEvent *event)
 {
 	if (event->button() == Qt::LeftButton)
 	{
+		if (event->modifiers() & Qt::ControlModifier)
+		{
+			double t = xToTime(event->position().x());
+			t = std::clamp(t, 0.0, m_model->duration());
+			m_model->setSelection(t, t);
+			emit anchorRequested(t);
+			return;
+		}
 		m_dragging = true;
 		m_drag_start_time = xToTime(event->position().x());
 		m_model->setSelection(m_drag_start_time, m_drag_start_time);
@@ -582,6 +600,10 @@ void SpectrogramWidget::mousePressEvent(QMouseEvent *event)
 	else if (event->button() == Qt::MiddleButton)
 	{
 		m_model->zoomToSelection();
+	}
+	else if (event->button() == Qt::RightButton)
+	{
+		m_model->clearSelection();
 	}
 }
 
@@ -593,6 +615,10 @@ void SpectrogramWidget::mouseMoveEvent(QMouseEvent *event)
 	if (m_dragging)
 	{
 		m_model->setSelection(m_drag_start_time, t);
+	}
+	else if (event->modifiers() & Qt::ControlModifier)
+	{
+		m_model->setSelection(t, t);
 	}
 	else if (m_mouse_tracking_enabled)
 	{

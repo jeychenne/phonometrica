@@ -376,6 +376,14 @@ void PitchWidget::mousePressEvent(QMouseEvent *event)
 {
 	if (event->button() == Qt::LeftButton)
 	{
+		if (event->modifiers() & Qt::ControlModifier)
+		{
+			double t = xToTime(event->position().x());
+			t = std::clamp(t, 0.0, m_model->duration());
+			m_model->setSelection(t, t);
+			emit anchorRequested(t);
+			return;
+		}
 		m_dragging = true;
 		m_drag_start_time = xToTime(event->position().x());
 		m_model->setSelection(m_drag_start_time, m_drag_start_time);
@@ -383,6 +391,10 @@ void PitchWidget::mousePressEvent(QMouseEvent *event)
 	else if (event->button() == Qt::MiddleButton)
 	{
 		m_model->zoomToSelection();
+	}
+	else if (event->button() == Qt::RightButton)
+	{
+		m_model->clearSelection();
 	}
 }
 
@@ -394,6 +406,10 @@ void PitchWidget::mouseMoveEvent(QMouseEvent *event)
 	if (m_dragging)
 	{
 		m_model->setSelection(m_drag_start_time, t);
+	}
+	else if (event->modifiers() & Qt::ControlModifier)
+	{
+		m_model->setSelection(t, t);
 	}
 	else if (m_mouse_tracking_enabled)
 	{

@@ -17,6 +17,7 @@
 
 #include <QWidget>
 #include <phon/string.hpp>
+#include <phon/gui/command.hpp>
 
 namespace phonometrica {
 
@@ -57,6 +58,17 @@ public:
 	// Show the find & replace bar.
 	virtual void replace() {}
 
+	// Undo/redo support. The default implementation uses the command processor.
+	// ScriptView overrides these to delegate to QPlainTextEdit's built-in undo.
+	virtual void undo();
+	virtual void redo();
+
+	// Submit a command: execute it and push onto the undo stack.
+	bool submit(AutoCommand cmd);
+
+	bool canUndo() const { return m_commands.can_undo(); }
+	bool canRedo() const { return m_commands.can_redo(); }
+
 	// Help anchor for context-sensitive help.
 	// Returns a Sphinx page name relative to the doc root, without extension.
 	// Examples: "sound", "scripting/index", "intro/install".
@@ -73,6 +85,13 @@ signals:
 
 	// Emitted when this view registers a new file with the project.
 	void addedToProject();
+
+	// Emitted when undo/redo availability changes.
+	void undoRedoChanged(bool canUndo, bool canRedo);
+
+protected:
+
+	CommandProcessor m_commands;
 };
 
 } // namespace phonometrica

@@ -347,6 +347,16 @@ void ScriptView::escape()
 	m_editor->setFocus();
 }
 
+void ScriptView::undo()
+{
+	m_editor->undo();
+}
+
+void ScriptView::redo()
+{
+	m_editor->redo();
+}
+
 void ScriptView::onFind()
 {
 	auto needle = m_searchbar->searchText();
