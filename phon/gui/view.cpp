@@ -16,8 +16,23 @@
 
 namespace phonometrica {
 
-// Nothing here — the class is defined entirely in the header.
-// This .cpp file exists solely so that Qt's MOC has a translation unit
-// in which to emit the generated meta-object code for View.
+void View::undo()
+{
+	m_commands.undo();
+	emit undoRedoChanged(canUndo(), canRedo());
+}
+
+void View::redo()
+{
+	m_commands.redo();
+	emit undoRedoChanged(canUndo(), canRedo());
+}
+
+bool View::submit(AutoCommand cmd)
+{
+	bool ok = m_commands.submit(std::move(cmd));
+	emit undoRedoChanged(canUndo(), canRedo());
+	return ok;
+}
 
 } // namespace phonometrica

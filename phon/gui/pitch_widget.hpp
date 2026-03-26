@@ -57,6 +57,8 @@ signals:
 
 	void yValueDescription(const QString &text);
 
+	void anchorRequested(double time);
+
 private slots:
 
 	void onViewportChanged(double start, double end);

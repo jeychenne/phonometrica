@@ -222,6 +222,9 @@ void SoundView::setupUi()
 	// Status label.
 	m_status_label = new QLabel(this);
 	m_status_label->setContentsMargins(6, 2, 6, 2);
+	// Use Ignored horizontal policy so text changes don't trigger layout recalculations
+	// (which cause the dock widget divider to move when the cursor hovers over sound plots).
+	m_status_label->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 	layout->addWidget(m_status_label);
 
 	// Connect model signals for UI updates.
@@ -318,8 +321,7 @@ void SoundView::createToolBar()
 	connect(scaling_group, &QActionGroup::triggered, this, &SoundView::onScalingChanged);
 
 	auto *wave_button = new QToolButton(this);
-	wave_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(wave_button, &QToolButton::clicked, wave_button, &QToolButton::showMenu);
+	wave_button->setPopupMode(QToolButton::InstantPopup);
 	wave_button->setIcon(QIcon(":/icons/waveform.svg"));
 	wave_button->setToolTip(tr("Waveform settings"));
 	wave_button->setMenu(wave_menu);
@@ -339,8 +341,7 @@ void SoundView::createToolBar()
 	connect(spectrogram_settings_action, &QAction::triggered, this, &SoundView::onSpectrogramSettings);
 
 	auto *spectrum_button = new QToolButton(this);
-	spectrum_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(spectrum_button, &QToolButton::clicked, spectrum_button, &QToolButton::showMenu);
+	spectrum_button->setPopupMode(QToolButton::InstantPopup);
 	spectrum_button->setIcon(QIcon(":/icons/spectrum.svg"));
 	spectrum_button->setToolTip(tr("Spectrogram settings"));
 	spectrum_button->setMenu(spectrum_menu);
@@ -368,8 +369,7 @@ void SoundView::createToolBar()
 	connect(formant_settings_action, &QAction::triggered, this, &SoundView::onFormantSettings);
 
 	auto *formant_button = new QToolButton(this);
-	formant_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(formant_button, &QToolButton::clicked, formant_button, &QToolButton::showMenu);
+	formant_button->setPopupMode(QToolButton::InstantPopup);
 	formant_button->setIcon(QIcon(":/icons/waves.svg"));
 	formant_button->setToolTip(tr("Formant settings"));
 	formant_button->setMenu(formant_menu);
@@ -397,8 +397,7 @@ void SoundView::createToolBar()
 	connect(pitch_settings_action, &QAction::triggered, this, &SoundView::onPitchSettings);
 
 	auto *pitch_button = new QToolButton(this);
-	pitch_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(pitch_button, &QToolButton::clicked, pitch_button, &QToolButton::showMenu);
+	pitch_button->setPopupMode(QToolButton::InstantPopup);
 	pitch_button->setIcon(QIcon(":/icons/pitch.svg"));
 	pitch_button->setToolTip(tr("Pitch settings"));
 	pitch_button->setMenu(pitch_menu);
@@ -426,8 +425,7 @@ void SoundView::createToolBar()
 	connect(intensity_settings_action, &QAction::triggered, this, &SoundView::onIntensitySettings);
 
 	auto *intensity_button = new QToolButton(this);
-	intensity_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(intensity_button, &QToolButton::clicked, intensity_button, &QToolButton::showMenu);
+	intensity_button->setPopupMode(QToolButton::InstantPopup);
 	intensity_button->setIcon(QIcon(":/icons/ear.svg"));
 	intensity_button->setToolTip(tr("Intensity settings"));
 	intensity_button->setMenu(intensity_menu);
@@ -435,13 +433,13 @@ void SoundView::createToolBar()
 
 	m_toolbar->addSeparator();
 
-	// ── Layout menu button (always present) ───────────
-	auto *layout_menu = new QMenu(this);
+	// ── Display menu button (channels + subclass entries) ──
+	auto *display_menu = new QMenu(this);
 
 	auto *channel_group = new QActionGroup(this);
 	channel_group->setExclusive(false);
 
-	auto *avg_action = layout_menu->addAction(tr("Average channels"));
+	auto *avg_action = display_menu->addAction(tr("Average channels"));
 	avg_action->setCheckable(true);
 	avg_action->setChecked(false);
 	avg_action->setData(0);
@@ -451,11 +449,11 @@ void SoundView::createToolBar()
 	if (m_sound->is_mono())
 		avg_action->setEnabled(false);
 
-	layout_menu->addSeparator();
+	display_menu->addSeparator();
 
 	for (int c = 1; c <= m_sound->nchannel(); c++)
 	{
-		auto *ch_action = layout_menu->addAction(tr("Channel %1").arg(c));
+		auto *ch_action = display_menu->addAction(tr("Channel %1").arg(c));
 		ch_action->setCheckable(true);
 		ch_action->setChecked(true);
 		ch_action->setData(c);
@@ -464,13 +462,15 @@ void SoundView::createToolBar()
 
 	connect(channel_group, &QActionGroup::triggered, this, &SoundView::onChannelAction);
 
-	auto *layout_button = new QToolButton(this);
-	layout_button->setPopupMode(QToolButton::MenuButtonPopup);
-	connect(layout_button, &QToolButton::clicked, layout_button, &QToolButton::showMenu);
-	layout_button->setIcon(QIcon(":/icons/layers.svg"));
-	layout_button->setToolTip(tr("Select visible channels"));
-	layout_button->setMenu(layout_menu);
-	m_toolbar->addWidget(layout_button);
+	// Let subclasses (AnnotationView) add their entries.
+	addDisplayMenuEntries(display_menu);
+
+	auto *display_button = new QToolButton(this);
+	display_button->setPopupMode(QToolButton::InstantPopup);
+	display_button->setIcon(QIcon(":/icons/display.svg"));
+	display_button->setToolTip(tr("Display settings"));
+	display_button->setMenu(display_menu);
+	m_toolbar->addWidget(display_button);
 	m_toolbar->addSeparator();
 
 	// ── Mouse tracking toggle ─────────────────────────
@@ -503,6 +503,7 @@ void SoundView::createWaveforms(QVBoxLayout *layout)
 	// Channel 0 = average of all channels.
 	auto *avg = new WaveformWidget(m_model, m_sound, 0, this);
 	connect(avg, &WaveformWidget::yValueDescription, this, &SoundView::onYValueDescription);
+	connect(avg, &WaveformWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 	m_waveforms.push_back(avg);
 	layout->addWidget(avg, large_stretch);
 	auto *avg_line = createSeparator();
@@ -514,6 +515,7 @@ void SoundView::createWaveforms(QVBoxLayout *layout)
 	{
 		auto *wf = new WaveformWidget(m_model, m_sound, c, this);
 		connect(wf, &WaveformWidget::yValueDescription, this, &SoundView::onYValueDescription);
+		connect(wf, &WaveformWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 		m_waveforms.push_back(wf);
 		layout->addWidget(wf, large_stretch);
 		auto *line = createSeparator();
@@ -529,6 +531,7 @@ void SoundView::createSpectrograms(QVBoxLayout *layout)
 	auto *avg = new SpectrogramWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
 	connect(avg, &SpectrogramWidget::yValueDescription, this, &SoundView::onYValueDescription);
+	connect(avg, &SpectrogramWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 	m_spectrograms.push_back(avg);
 	layout->addWidget(avg, large_stretch);
 	auto *avg_line = createSeparator();
@@ -540,6 +543,7 @@ void SoundView::createSpectrograms(QVBoxLayout *layout)
 		auto *sg = new SpectrogramWidget(m_model, m_sound, c, this);
 		sg->setVisible(false);
 		connect(sg, &SpectrogramWidget::yValueDescription, this, &SoundView::onYValueDescription);
+		connect(sg, &SpectrogramWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 		m_spectrograms.push_back(sg);
 		layout->addWidget(sg, large_stretch);
 		auto *line = createSeparator();
@@ -555,6 +559,7 @@ void SoundView::createPitchTracks(QVBoxLayout *layout)
 	auto *avg = new PitchWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
 	connect(avg, &PitchWidget::yValueDescription, this, &SoundView::onYValueDescription);
+	connect(avg, &PitchWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 	m_pitches.push_back(avg);
 	layout->addWidget(avg, small_stretch);
 	auto *avg_line = createSeparator();
@@ -566,6 +571,7 @@ void SoundView::createPitchTracks(QVBoxLayout *layout)
 		auto *pw = new PitchWidget(m_model, m_sound, c, this);
 		pw->setVisible(false);
 		connect(pw, &PitchWidget::yValueDescription, this, &SoundView::onYValueDescription);
+		connect(pw, &PitchWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 		m_pitches.push_back(pw);
 		layout->addWidget(pw, small_stretch);
 		auto *line = createSeparator();
@@ -581,6 +587,7 @@ void SoundView::createIntensityTracks(QVBoxLayout *layout)
 	auto *avg = new IntensityWidget(m_model, m_sound, 0, this);
 	avg->setVisible(false);
 	connect(avg, &IntensityWidget::yValueDescription, this, &SoundView::onYValueDescription);
+	connect(avg, &IntensityWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 	m_intensities.push_back(avg);
 	layout->addWidget(avg, small_stretch);
 	auto *avg_line = createSeparator();
@@ -592,6 +599,7 @@ void SoundView::createIntensityTracks(QVBoxLayout *layout)
 		auto *iw = new IntensityWidget(m_model, m_sound, c, this);
 		iw->setVisible(false);
 		connect(iw, &IntensityWidget::yValueDescription, this, &SoundView::onYValueDescription);
+		connect(iw, &IntensityWidget::anchorRequested, this, &SoundView::onAnchorRequested);
 		m_intensities.push_back(iw);
 		layout->addWidget(iw, small_stretch);
 		auto *line = createSeparator();
@@ -660,12 +668,29 @@ void SoundView::updateStatusText()
 		text += QStringLiteral("  |  ") + m_y_value_text;
 	}
 
+	if (!m_annot_status_text.isEmpty())
+	{
+		text += QStringLiteral("  |  ") + m_annot_status_text;
+	}
+
 	m_status_label->setText(text);
 }
 
 void SoundView::onYValueDescription(const QString &text)
 {
 	m_y_value_text = text;
+	updateStatusText();
+}
+
+void SoundView::setAnnotationStatus(const QString &text)
+{
+	m_annot_status_text = text;
+	updateStatusText();
+}
+
+void SoundView::clearAnnotationStatus()
+{
+	m_annot_status_text.clear();
 	updateStatusText();
 }
 
@@ -1276,6 +1301,9 @@ void SoundView::onSelectionChanged(double, double)
 	bool hasSpan = m_model->hasSpanSelection();
 	m_zoom_sel_action->setEnabled(hasSpan);
 	m_play_sel_action->setEnabled(hasSpan);
+	// Clear annotation event info — it will be re-set by AnnotationView::onEventSelected
+	// if the selection originated from an event click.
+	m_annot_status_text.clear();
 	updateStatusText();
 }
 
@@ -1283,6 +1311,7 @@ void SoundView::onSelectionCleared()
 {
 	m_zoom_sel_action->setEnabled(false);
 	m_play_sel_action->setEnabled(false);
+	m_annot_status_text.clear();
 	updateStatusText();
 }
 

@@ -16,9 +16,10 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QTextEdit>
+#include <QPixmap>
 #include <QMessageBox>
 #include <phon/gui/layer_widget.hpp>
-#include <phon/gui/event_editor.hpp>
 
 namespace phonometrica {
 
@@ -32,7 +33,31 @@ static const QColor FOCUSED_BG(255, 255, 0, 20);             // very light yello
 static const QColor MOVING_ANCHOR_COLOR(Qt::green);
 static const QColor GHOST_ANCHOR_COLOR("orange");
 static const QColor TEMP_ANCHOR_COLOR(Qt::red);
+static const QColor CANDIDATE_ANCHOR_COLOR(0, 0, 204, 140);  // translucent blue
+static const QColor SELECTED_ANCHOR_COLOR(255, 0, 0);        // red highlight for anchor to be deleted
 static const QColor SEPARATOR_COLOR(192, 192, 192);
+
+// Lazily-built eraser cursor for remove-anchor mode.
+static const QCursor &eraserCursor()
+{
+	static QCursor cursor;
+	static bool built = false;
+	if (!built)
+	{
+		QPixmap pix(":/icons/eraser.svg");
+		if (!pix.isNull())
+		{
+			pix = pix.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+			cursor = QCursor(pix, 4, 20); // hot spot near bottom-left
+		}
+		else
+		{
+			cursor = QCursor(Qt::ForbiddenCursor);
+		}
+		built = true;
+	}
+	return cursor;
+}
 
 
 // ─────────────────────────────────────────────────
@@ -49,6 +74,7 @@ LayerWidget::LayerWidget(TimeModel *model, const Handle<Annotation> &annot, intp
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
 	connect(m_model, &TimeModel::viewportChanged, this, [this](double, double) {
+		if (m_editing_event >= 0) cancelEdit();
 		update();
 	});
 	connect(m_model, &TimeModel::selectionChanged, this, [this](double, double) {
@@ -81,7 +107,10 @@ void LayerWidget::setFocused(bool focused)
 	{
 		m_focused = focused;
 		if (!focused)
+		{
 			clearSelectedEvent();
+			m_selected_anchor_time = -1;
+		}
 		update();
 	}
 }
@@ -115,8 +144,13 @@ void LayerWidget::setAddingAnchor(bool value)
 void LayerWidget::setRemovingAnchor(bool value)
 {
 	m_removing_anchor = value;
-	if (!value)
+	if (value)
+		setCursor(eraserCursor());
+	else
+	{
+		setCursor(Qt::ArrowCursor);
 		clearEditAnchor();
+	}
 	update();
 }
 
@@ -393,6 +427,25 @@ const Event *LayerWidget::findEvent(double time) const
 	return nullptr;
 }
 
+double LayerWidget::candidateAnchorTime() const
+{
+	if (!m_model->hasPointSelection() || m_adding_anchor || m_removing_anchor)
+		return -1;
+
+	double t = m_model->selectionStart();
+	if (t <= 0 || t >= m_duration)
+		return -1;
+
+	// No candidate if an anchor already exists there.
+	for (auto *ev : m_event_cache)
+	{
+		if (anchorHasCursor(ev->start, t) || anchorHasCursor(ev->end, t))
+			return -1;
+	}
+
+	return t;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Anchor tracking (cursor changes near anchors)
@@ -451,38 +504,215 @@ void LayerWidget::clearSelectedEvent()
 
 void LayerWidget::editEvent(int event_index)
 {
+	beginEditing(event_index);
+}
+
+
+// ─────────────────────────────────────────────────
+//  Inline event editor
+// ─────────────────────────────────────────────────
+
+void LayerWidget::beginEditing(int event_index)
+{
 	if (event_index < 0 || event_index >= (int)m_event_cache.size())
 		return;
 
+	// Commit any ongoing edit first.
+	if (m_editing_event >= 0)
+		commitEdit();
+
+	m_editing_event = event_index;
 	auto *ev = m_event_cache[event_index];
 
-	// Position the editor at the center of the event.
-	double x1 = timeToX(ev->start);
-	double x2 = timeToX(ev->end);
-	int cx = int(x1 + (x2 - x1) / 2);
-	QPoint pos(cx, 0);
-	pos = mapToGlobal(pos);
-	pos.setY(pos.y() + m_edit_y_shift);
-
-	QString text = ev->text;
-	EventEditor editor(text, pos, this);
-
-	if (editor.exec() == QDialog::Accepted)
+	// Create the editor on first use.
+	if (!m_inline_edit)
 	{
-		auto new_text = editor.text();
-		if (new_text != text)
+		m_inline_edit = new QTextEdit(this);
+		m_inline_edit->setAcceptRichText(false);
+		m_inline_edit->setTabChangesFocus(false);
+		m_inline_edit->installEventFilter(this);
+		m_inline_edit->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+		m_inline_edit->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+		m_inline_edit->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+
+		// Use a slightly larger font for comfortable editing.
+		QFont f = font();
+		f.setPointSizeF(f.pointSizeF() * 1.1);
+		m_inline_edit->setFont(f);
+
+		m_inline_edit->setStyleSheet(
+			QStringLiteral("QTextEdit { background: rgba(255,255,255,240); "
+			               "border: 2px solid #4488cc; border-radius: 3px; "
+			               "padding: 4px; }"));
+	}
+
+	// Compute geometry: overlay the event area, extending upward if needed.
+	// For intervals, match the event width; for instants, use a reasonable width.
+	int ww = width();
+	int x1, ew;
+
+	if (ev->is_interval())
+	{
+		x1 = qMax(0, (int)timeToX(ev->start));
+		int x2 = qMin(ww, (int)timeToX(ev->end));
+		ew = qMax(120, x2 - x1);
+		// Don't overflow the widget boundary.
+		if (x1 + ew > ww) x1 = qMax(0, ww - ew);
+	}
+	else
+	{
+		int cx = (int)timeToX(ev->start);
+		ew = 160;
+		x1 = qMax(0, cx - ew / 2);
+		if (x1 + ew > ww) x1 = qMax(0, ww - ew);
+	}
+
+	// Height: use the full layer height plus extra space above.
+	// The editor sits over the layer, growing upward if the text is long.
+	int layer_h = height();
+	int editor_h = qMax(layer_h, 60);
+
+	// Position: bottom-aligned to the layer widget so it overlaps the event.
+	int y = layer_h - editor_h;
+
+	m_inline_edit->setGeometry(x1, y, ew, editor_h);
+	m_inline_edit->setPlainText(QString(ev->text));
+	m_inline_edit->selectAll();
+	m_inline_edit->show();
+	m_inline_edit->raise();
+	m_inline_edit->setFocus();
+}
+
+void LayerWidget::commitEdit()
+{
+	if (m_editing_event < 0 || !m_inline_edit)
+		return;
+
+	QString new_text = m_inline_edit->toPlainText();
+	m_inline_edit->hide();
+
+	// Check bounds — the event cache may have been invalidated.
+	if (m_editing_event < (int)m_event_cache.size())
+	{
+		auto *ev = m_event_cache[m_editing_event];
+		if (new_text != QString(ev->text))
 		{
-			m_annot->set_event_text(m_layer_index, event_index + 1, new_text);
-			// The event pointer may be invalidated; refresh cache.
+			// event_index in cache is 0-based; annotation API is 1-based.
+			m_annot->set_event_text(m_layer_index, m_editing_event + 1, new_text);
 			m_event_cache.clear();
 			emit modified();
 		}
 	}
-	int shift = editor.yShift();
-	if (shift != 0)
-		m_edit_y_shift = shift;
 
+	m_editing_event = -1;
+	setFocus();
 	update();
+}
+
+void LayerWidget::cancelEdit()
+{
+	if (m_inline_edit)
+		m_inline_edit->hide();
+	m_editing_event = -1;
+	setFocus();
+	update();
+}
+
+void LayerWidget::advanceEdit()
+{
+	int next = m_editing_event + 1;
+	commitEdit();
+
+	// Refresh cache in case commitEdit invalidated it.
+	if (needsCacheRefresh())
+		updateEventCache();
+
+	if (next < (int)m_event_cache.size())
+	{
+		setSelectedEvent(next);
+		beginEditing(next);
+	}
+	else
+	{
+		// At the last event — scroll forward and try again.
+		focusNextEvent();
+		if (m_selected_event >= 0)
+			beginEditing(m_selected_event);
+	}
+}
+
+bool LayerWidget::eventFilter(QObject *obj, QEvent *event)
+{
+	if (obj == m_inline_edit && event->type() == QEvent::KeyPress)
+	{
+		auto *ke = static_cast<QKeyEvent *>(event);
+
+		if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+		{
+			if (ke->modifiers() & Qt::ShiftModifier)
+			{
+				// Shift+Enter: insert a newline in the text.
+				return false; // let QTextEdit handle it
+			}
+			// Plain Enter: commit the edit.
+			commitEdit();
+			return true;
+		}
+		if (ke->key() == Qt::Key_Escape)
+		{
+			cancelEdit();
+			return true;
+		}
+		if (ke->key() == Qt::Key_Tab)
+		{
+			advanceEdit();
+			return true;
+		}
+	}
+	return QWidget::eventFilter(obj, event);
+}
+
+void LayerWidget::resizeEvent(QResizeEvent *event)
+{
+	QWidget::resizeEvent(event);
+
+	// Reposition the inline editor if it's visible.
+	if (m_inline_edit && m_inline_edit->isVisible() && m_editing_event >= 0)
+	{
+		if (needsCacheRefresh())
+			updateEventCache();
+
+		if (m_editing_event < (int)m_event_cache.size())
+		{
+			auto *ev = m_event_cache[m_editing_event];
+			int ww = width();
+			int x1, ew;
+
+			if (ev->is_interval())
+			{
+				x1 = qMax(0, (int)timeToX(ev->start));
+				int x2 = qMin(ww, (int)timeToX(ev->end));
+				ew = qMax(120, x2 - x1);
+				if (x1 + ew > ww) x1 = qMax(0, ww - ew);
+			}
+			else
+			{
+				int cx = (int)timeToX(ev->start);
+				ew = 160;
+				x1 = qMax(0, cx - ew / 2);
+				if (x1 + ew > ww) x1 = qMax(0, ww - ew);
+			}
+
+			int layer_h = height();
+			int editor_h = qMax(layer_h, 60);
+			int y = layer_h - editor_h;
+			m_inline_edit->setGeometry(x1, y, ew, editor_h);
+		}
+		else
+		{
+			cancelEdit();
+		}
+	}
 }
 
 void LayerWidget::focusPreviousEvent()
@@ -640,6 +870,16 @@ void LayerWidget::paintEvent(QPaintEvent *)
 		}
 	}
 
+	// ── Draw selected anchor highlight ──────────
+
+	if (m_focused && m_selected_anchor_time >= 0)
+	{
+		QPen selAnchorPen(SELECTED_ANCHOR_COLOR, 3);
+		painter.setPen(selAnchorPen);
+		double x = timeToX(m_selected_anchor_time);
+		painter.drawLine(QPointF(x, 0), QPointF(x, h));
+	}
+
 	// ── Draw moving anchor (from another layer) ──
 
 	if (m_moving_anchor_time >= 0)
@@ -677,6 +917,19 @@ void LayerWidget::paintEvent(QPaintEvent *)
 			painter.setPen(tempPen);
 			drawAnchor(painter, m_edit_anchor_time, hasInstants());
 		}
+	}
+
+	// ── Draw anchor candidate from point selection ──
+	// When the user clicks a time point in a sound widget, show a dashed
+	// candidate line on all layers unless an anchor already exists there.
+
+	double candidate = candidateAnchorTime();
+	if (candidate >= 0)
+	{
+		QPen candidatePen(CANDIDATE_ANCHOR_COLOR, 1, Qt::DashLine);
+		painter.setPen(candidatePen);
+		double x = timeToX(candidate);
+		painter.drawLine(QPointF(x, 0), QPointF(x, h));
 	}
 
 	// ── Draw playback tick ───────────────────────
@@ -740,6 +993,10 @@ void LayerWidget::drawAnchor(QPainter &painter, double time, bool is_instant)
 
 void LayerWidget::mousePressEvent(QMouseEvent *e)
 {
+	// Commit any active inline editor before handling the click.
+	if (m_editing_event >= 0)
+		commitEdit();
+
 	auto t = timeAtCursor(e);
 
 	if (m_adding_anchor)
@@ -775,6 +1032,14 @@ void LayerWidget::mousePressEvent(QMouseEvent *e)
 	}
 	else
 	{
+		// Check if clicking on a candidate anchor (dashed line from point selection).
+		double candidate = candidateAnchorTime();
+		if (candidate >= 0 && anchorHasCursor(candidate, t))
+		{
+			createAnchor(candidate, false);
+			return;
+		}
+
 		if (m_sharing_anchors)
 		{
 			double closest = findClosestAnchorTime(t);
@@ -844,20 +1109,36 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 			QMessageBox::critical(this, tr("Error"), tr("Cannot move anchor"));
 		}
 
+		m_selected_anchor_time = -1;
 		m_resizing_event = nullptr;
 		m_dragged_anchor_time = -1;
 		m_dropped_anchor_time = -1;
 		emit anchorHasMoved(m_layer_index);
 		update();
 	}
-
-	// Give focus to this layer.
-	if (e->modifiers() == Qt::NoModifier)
+	else if (m_dragged_anchor_time >= 0 && m_dropped_anchor_time < 0)
 	{
-		m_focused = true;
-		emit gotFocus(m_layer_index);
+		// Click on an anchor without dragging → select the anchor.
+		m_selected_anchor_time = m_dragged_anchor_time;
+		m_dragged_anchor_time = -1;
+		update();
 	}
-	setFocus();
+	else
+	{
+		// Click elsewhere → clear selected anchor.
+		m_selected_anchor_time = -1;
+	}
+
+	// Give focus to this layer (unless the inline editor is active).
+	if (m_editing_event < 0)
+	{
+		if (e->modifiers() == Qt::NoModifier)
+		{
+			m_focused = true;
+			emit gotFocus(m_layer_index);
+		}
+		setFocus();
+	}
 
 	// Select the event under the cursor.
 	auto t = xToTime(e->position().x());
@@ -894,12 +1175,27 @@ void LayerWidget::mouseMoveEvent(QMouseEvent *e)
 		setEditAnchorTime(t);
 		update();
 	}
+	else if (m_removing_anchor)
+	{
+		// Keep eraser cursor; highlight nearest anchor if close.
+		if (needsCacheRefresh())
+			updateEventCache();
+		double closest = findClosestAnchorTime(t);
+		setCursor(closest >= 0 ? eraserCursor() : Qt::ArrowCursor);
+	}
 	else
 	{
-		setCursor(Qt::ArrowCursor);
 		if (needsCacheRefresh())
 			updateEventCache();
 		trackAnchor(t);
+
+		// Show pointing hand when hovering over a candidate anchor.
+		if (m_dragged_anchor_time < 0)
+		{
+			double candidate = candidateAnchorTime();
+			if (candidate >= 0 && anchorHasCursor(candidate, t))
+				setCursor(Qt::PointingHandCursor);
+		}
 	}
 
 	// Update cursor on other layers if sharing.
@@ -922,7 +1218,7 @@ void LayerWidget::mouseDoubleClickEvent(QMouseEvent *e)
 		if ((ev->is_interval() && ev->contains_time(t)) ||
 			(ev->is_instant() && anchorHasCursor(ev->start, t)))
 		{
-			editEvent(i);
+			beginEditing(i);
 			return;
 		}
 	}
@@ -955,7 +1251,46 @@ void LayerWidget::keyPressEvent(QKeyEvent *e)
 	case Qt::Key_Return:
 	case Qt::Key_Enter:
 		if (m_selected_event >= 0)
-			editEvent(m_selected_event);
+		{
+			// Open inline editor on the selected event.
+			beginEditing(m_selected_event);
+		}
+		else
+		{
+			// Create anchor from candidate if available.
+			double candidate = candidateAnchorTime();
+			if (candidate >= 0)
+				createAnchor(candidate, false);
+		}
+		break;
+	case Qt::Key_Delete:
+		if (m_selected_anchor_time >= 0)
+		{
+			// Remove the selected anchor.
+			double t = m_selected_anchor_time;
+			m_selected_anchor_time = -1;
+			removeAnchor(t, false);
+		}
+		else if (m_selected_event >= 0 && m_selected_event < (int)m_event_cache.size())
+		{
+			// Clear the selected event's label.
+			auto *ev = m_event_cache[m_selected_event];
+			if (!ev->text.empty())
+			{
+				m_annot->set_event_text(m_layer_index, m_selected_event + 1, String());
+				m_event_cache.clear();
+				emit modified();
+				update();
+			}
+		}
+		break;
+	case Qt::Key_Backspace:
+		if (m_selected_anchor_time >= 0)
+		{
+			double t = m_selected_anchor_time;
+			m_selected_anchor_time = -1;
+			removeAnchor(t, false);
+		}
 		break;
 	default:
 		QWidget::keyPressEvent(e);

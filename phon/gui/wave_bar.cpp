@@ -212,6 +212,8 @@ void WaveBar::paintEvent(QPaintEvent *)
 void WaveBar::resizeEvent(QResizeEvent *)
 {
 	m_cached_width = -1; // Force recompute.
+	// Re-emit pixel coordinates so the SoundZoom widget updates its trapezoid.
+	emit viewportPixelsChanged(timeToX(m_model->windowStart()), timeToX(m_model->windowEnd()));
 }
 
 

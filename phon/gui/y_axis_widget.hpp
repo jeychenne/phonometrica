@@ -7,9 +7,8 @@
  *                                                                                                                     *
  * Created: 22/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Widget to display amplitude labels to the left of the waveforms in sound and annotation views.             *
- *          Draws +magnitude / 0 / -magnitude for each registered waveform, positioned to match the waveform's         *
- *          vertical extent. Clicking the widget clears the current selection.                                         *
+ * Purpose: Widget to display labels to the left of waveforms, spectrograms, pitch, intensity, and annotation         *
+ *          layers in sound and annotation views.                                                                     *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -26,6 +25,7 @@ class WaveformWidget;
 class SpectrogramWidget;
 class PitchWidget;
 class IntensityWidget;
+class LayerWidget;
 
 class YAxisWidget final : public QWidget
 {
@@ -39,6 +39,7 @@ public:
 	void addSpectrogram(SpectrogramWidget *sg);
 	void addPitch(PitchWidget *pw);
 	void addIntensity(IntensityWidget *iw);
+	void addLayer(LayerWidget *lw);
 
 protected:
 
@@ -52,6 +53,7 @@ private:
 	std::vector<SpectrogramWidget *> m_spectrograms;
 	std::vector<PitchWidget *> m_pitches;
 	std::vector<IntensityWidget *> m_intensities;
+	std::vector<LayerWidget *> m_layers;
 };
 
 } // namespace phonometrica

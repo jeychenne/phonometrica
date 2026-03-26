@@ -43,7 +43,7 @@ void DataTable::from_xml(xml_node root, const String &project_dir)
 
 void DataTable::save_metadata()
 {
-	// Native files store their metadata directly, other files need to write them to the database.
+	// Metadata is now embedded in the project file for all file types.
 	if (uses_external_metadata()) {
 		Document::save_metadata();
 	}

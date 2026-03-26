@@ -17,7 +17,9 @@
 #include <QFileDialog>
 #include <QVBoxLayout>
 #include <phon/gui/annotation_view.hpp>
+#include <phon/gui/annotation_commands.hpp>
 #include <phon/gui/new_layer_dialog.hpp>
+#include <phon/gui/layer_visibility_dialog.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
@@ -26,6 +28,9 @@ AnnotationView::AnnotationView(const Handle<Annotation> &annot, QWidget *parent)
 	SoundView(annot->sound(), Deferred, parent), m_annot(annot)
 {
 	m_annot->open();
+	// Initialize layer visibility: all layers visible by default.
+	m_layer_visibility.assign(m_annot->size() + 1, true);
+	m_layer_visibility[0] = false; // index 0 is unused
 	// Now that the AnnotationView vtable is fully constructed, the virtual
 	// hooks addAnnotationLayers() and addAnnotationToolbar() will resolve
 	// to our overrides.
@@ -72,6 +77,11 @@ bool AnnotationView::save()
 	return true;
 }
 
+void AnnotationView::discardChanges()
+{
+	m_annot->discard_changes();
+}
+
 
 // ─────────────────────────────────────────────────
 //  SoundView hooks
@@ -92,8 +102,6 @@ void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 	layer_menu->addAction(tr("Duplicate selected layer"), this, &AnnotationView::onDuplicateLayer);
 	layer_menu->addAction(tr("Rename selected layer"), this, &AnnotationView::onRenameLayer);
 	layer_menu->addAction(tr("Clear selected layer"), this, &AnnotationView::onClearLayer);
-	layer_menu->addSeparator();
-	layer_menu->addAction(tr("Select visible layers"), this, &AnnotationView::onShowHideLayers);
 
 	auto *layer_button = new QToolButton(this);
 	layer_button->setIcon(QIcon(":/icons/layers.svg"));
@@ -141,6 +149,44 @@ void AnnotationView::addAnnotationLayers(QLayout *layout)
 	}
 }
 
+void AnnotationView::addDisplayMenuEntries(QMenu *menu)
+{
+	menu->addSeparator();
+	menu->addAction(tr("Select visible layers..."), this, &AnnotationView::onShowHideLayers);
+}
+
+void AnnotationView::onAnchorRequested(double time)
+{
+	if (time <= 0 || time >= m_annot->sound()->duration())
+		return;
+
+	// Find the focused layer; if none, use the first visible one.
+	int layer = focusedLayerIndex();
+	if (layer < 0)
+	{
+		for (auto *w : m_layers)
+		{
+			if (w->isVisible())
+			{
+				layer = (int)w->layerIndex();
+				break;
+			}
+		}
+	}
+
+	if (layer > 0)
+	{
+		for (auto *w : m_layers)
+		{
+			if ((int)w->layerIndex() == layer)
+			{
+				w->createAnchor(time, false);
+				break;
+			}
+		}
+	}
+}
+
 
 // ─────────────────────────────────────────────────
 //  Layer widget creation and signal wiring
@@ -168,6 +214,9 @@ LayerWidget *AnnotationView::createLayerWidget(intptr_t layer_index)
 	connect(layer, &LayerWidget::anchorSelected, this, &AnnotationView::onAnchorSelected);
 	connect(layer, &LayerWidget::editingSharedAnchor, this, &AnnotationView::onEditingSharedAnchor);
 	connect(layer, &LayerWidget::temporaryAnchor, this, &AnnotationView::onTemporaryAnchor);
+
+	// Show the layer number in the Y-axis.
+	yAxis()->addLayer(layer);
 
 	return layer;
 }
@@ -218,39 +267,38 @@ void AnnotationView::onFocusEvent(intptr_t target_layer, double time, bool forwa
 
 
 // ─────────────────────────────────────────────────
-//  Layer management
+//  Layer management — public methods (used by commands)
 // ─────────────────────────────────────────────────
 
-void AnnotationView::onCreateLayer()
+bool AnnotationView::addLayer(intptr_t index, const String &name, bool has_instants)
 {
-	NewLayerDialog dlg(this, m_annot->size());
-
-	if (dlg.exec() == QDialog::Accepted)
+	try
 	{
-		String name = dlg.layerName();
-		intptr_t index = dlg.layerIndex();
-		bool has_instants = dlg.hasInstants();
-
 		m_annot->create_layer(index, name, has_instants);
-		auto *widget = createLayerWidget(index);
-		// Find the position of the first existing layer in the layout,
-		// then insert relative to that.
-		int insert_pos = layerLayoutOffset() + (int)(index - 1);
-		m_layer_layout->insertWidget(insert_pos, widget);
-		widget->show();
-		onLayerModified();
 	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Cannot add layer"), e.what());
+		return false;
+	}
+
+	auto *widget = createLayerWidget(index);
+	int insert_pos = layerLayoutOffset() + (int)(index - 1);
+	m_layer_layout->insertWidget(insert_pos, widget);
+
+	// Grow the visibility vector to accommodate the new layer.
+	if (index >= (intptr_t)m_layer_visibility.size())
+		m_layer_visibility.resize(index + 1, true);
+	else
+		m_layer_visibility.insert(m_layer_visibility.begin() + index, true);
+
+	widget->show();
+	onLayerModified();
+	return true;
 }
 
-void AnnotationView::onRemoveLayer()
+void AnnotationView::removeLayer(intptr_t index)
 {
-	int index = focusedLayerIndex();
-	if (index < 0)
-	{
-		QMessageBox::warning(this, tr("Cannot remove layer"), tr("No selected layer!"));
-		return;
-	}
-
 	m_annot->remove_layer(index);
 
 	// Find and remove the widget.
@@ -265,7 +313,46 @@ void AnnotationView::onRemoveLayer()
 		}
 	}
 
+	// Shrink the visibility vector.
+	if (index < (intptr_t)m_layer_visibility.size())
+		m_layer_visibility.erase(m_layer_visibility.begin() + index);
+
 	onLayerModified();
+}
+
+
+// ─────────────────────────────────────────────────
+//  Layer management — slot handlers
+// ─────────────────────────────────────────────────
+
+void AnnotationView::onCreateLayer()
+{
+	NewLayerDialog dlg(this, m_annot->size());
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		String name = dlg.layerName();
+		intptr_t index = dlg.layerIndex();
+		bool has_instants = dlg.hasInstants();
+
+		auto cmd = std::make_unique<AddLayerCommand>(this, index, name, has_instants);
+		if (!submit(std::move(cmd)))
+			QMessageBox::warning(this, tr("Error"), tr("Could not create layer"));
+	}
+}
+
+void AnnotationView::onRemoveLayer()
+{
+	int index = focusedLayerIndex();
+	if (index < 0)
+	{
+		QMessageBox::warning(this, tr("Cannot remove layer"), tr("No selected layer!"));
+		return;
+	}
+
+	auto cmd = std::make_unique<RemoveLayerCommand>(this, index);
+	if (!submit(std::move(cmd)))
+		QMessageBox::warning(this, tr("Error"), tr("Could not remove layer"));
 }
 
 void AnnotationView::onDuplicateLayer()
@@ -288,6 +375,13 @@ void AnnotationView::onDuplicateLayer()
 		auto *widget = createLayerWidget(new_index);
 		int insert_pos = layerLayoutOffset() + new_index - 1;
 		m_layer_layout->insertWidget(insert_pos, widget);
+
+		// Grow visibility.
+		if (new_index >= (intptr_t)m_layer_visibility.size())
+			m_layer_visibility.resize(new_index + 1, true);
+		else
+			m_layer_visibility.insert(m_layer_visibility.begin() + new_index, true);
+
 		widget->show();
 		onLayerModified();
 	}
@@ -338,8 +432,23 @@ void AnnotationView::onClearLayer()
 
 void AnnotationView::onShowHideLayers()
 {
-	// TODO: implement a dialog to show/hide individual layers.
-	// For now, all layers are visible.
+	LayerVisibilityDialog dlg(this, m_annot, m_layer_visibility);
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		m_layer_visibility = dlg.visibility();
+		applyLayerVisibility();
+	}
+}
+
+void AnnotationView::applyLayerVisibility()
+{
+	for (auto *w : m_layers)
+	{
+		intptr_t idx = w->layerIndex();
+		bool visible = (idx < (intptr_t)m_layer_visibility.size()) ? m_layer_visibility[idx] : true;
+		w->setVisible(visible);
+	}
 }
 
 int AnnotationView::focusedLayerIndex() const
@@ -498,6 +607,9 @@ void AnnotationView::onAnchorSelected(intptr_t layer_index, double time)
 		if (w->layerIndex() != layer_index)
 			w->setGhostAnchorTime(time);
 	}
+
+	// Show a visual reference on all sound plots by setting a point selection.
+	timeModel()->setSelection(time, time);
 }
 
 void AnnotationView::onEditingSharedAnchor(intptr_t layer_index, double time)
@@ -532,6 +644,13 @@ void AnnotationView::onTemporaryAnchor(intptr_t layer_index, double time)
 		if (w->layerIndex() != layer_index && w->hasInstants() == source_instants)
 			w->setEditAnchorTime(time);
 	}
+
+	// Show a tracking cursor on all sound widgets so the user can see
+	// exactly where the anchor would land relative to the waveform/spectrogram.
+	if (time >= 0)
+		timeModel()->setCursor(time);
+	else
+		timeModel()->clearCursor();
 }
 
 void AnnotationView::clearGhostAnchors()
@@ -541,6 +660,9 @@ void AnnotationView::clearGhostAnchors()
 		w->clearGhostAnchor();
 		w->update();
 	}
+
+	// Clear the visual reference on sound plots.
+	timeModel()->clearSelection();
 }
 
 
@@ -551,6 +673,19 @@ void AnnotationView::clearGhostAnchors()
 void AnnotationView::onEventSelected(double start, double end)
 {
 	timeModel()->setSelection(start, end);
+
+	// Show layer/event info in the status bar.
+	for (auto *w : m_layers)
+	{
+		if (w->isFocused())
+		{
+			double mid = (start + end) / 2;
+			intptr_t ev_idx = m_annot->get_event_at_time(w->layerIndex(), mid);
+			if (ev_idx > 0)
+				setAnnotationStatus(tr("Layer %1 / Event %2").arg(w->layerIndex()).arg(ev_idx));
+			break;
+		}
+	}
 }
 
 void AnnotationView::openSelection(intptr_t layer, double from, double to)

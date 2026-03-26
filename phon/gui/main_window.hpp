@@ -77,6 +77,10 @@ private slots:
 	void onToggleConsolePanel(bool visible);
 	void onToggleInfoPanel(bool visible);
 
+	// Tab management
+	void onActiveTabChanged(int index);
+	void updateUndoRedoState();
+
 	// File manager
 	void onDocumentRequested(Document *doc);
 

@@ -66,6 +66,9 @@ signals:
 	// (e.g. "Amplitude ≈ 0.42"). Empty string when the mouse leaves.
 	void yValueDescription(const QString &text);
 
+	// Emitted on Ctrl+Click to request anchor creation at the given time.
+	void anchorRequested(double time);
+
 private slots:
 
 	void onViewportChanged(double start, double end);

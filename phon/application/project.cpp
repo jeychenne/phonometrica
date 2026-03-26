@@ -312,7 +312,7 @@ void Project::parse_metadata(xml_node root)
 		}
 		else if (node.name() == uuid_tag)
 		{
-			// If we have a valid id, we use it for the the database.
+			// Restore the project's UUID.
 			String id = node.text().get();
 
 			if (!id.empty())
@@ -910,9 +910,6 @@ void Project::create_uuid()
 		m_uuid = utils::new_uuid();
 	}
 }
-
-// MetaDatabase is no longer used.
-// MetaDatabase & Project::database() const { ... }
 
 void Project::bind_annotation(const Handle<Annotation> &annot, const String &sound_file)
 {

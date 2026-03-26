@@ -5,49 +5,40 @@
  * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
  * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
  *                                                                                                                     *
- * Created: 25/03/2026                                                                                                 *
+ * Created: 26/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Modal dialog for editing the text of an annotation event. Features a resizable text field with a larger    *
- *          font, a title bar with close button, and the ability to be moved vertically. The vertical shift is          *
- *          remembered so that subsequent edits on the same layer open at the same position.                            *
+ * Purpose: Dialog to select which annotation layers are visible. Presents a checkbox per layer with its name and      *
+ *          type (interval/instant).                                                                                   *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_EVENT_EDITOR_HPP
-#define PHONOMETRICA_EVENT_EDITOR_HPP
+#ifndef PHONOMETRICA_LAYER_VISIBILITY_DIALOG_HPP
+#define PHONOMETRICA_LAYER_VISIBILITY_DIALOG_HPP
 
+#include <vector>
 #include <QDialog>
-#include <QTextEdit>
-#include <QPoint>
+#include <QCheckBox>
+#include <phon/application/annotation.hpp>
 
 namespace phonometrica {
 
-class EventEditor : public QDialog
+class LayerVisibilityDialog : public QDialog
 {
 	Q_OBJECT
 
 public:
 
-	// Creates the editor with the given text, positioned globally at globalPos.
-	EventEditor(const QString &text, const QPoint &globalPos, QWidget *parent = nullptr);
+	LayerVisibilityDialog(QWidget *parent, const Handle<Annotation> &annot,
+	                      const std::vector<bool> &current_visibility);
 
-	// Returns the (possibly modified) text.
-	QString text() const;
-
-	// Returns the vertical displacement applied by the user moving the dialog.
-	// 0 if the dialog was not moved.
-	int yShift() const;
-
-protected:
-
-	bool eventFilter(QObject *obj, QEvent *event) override;
+	// Returns one bool per layer (1-based: index 0 is unused).
+	std::vector<bool> visibility() const;
 
 private:
 
-	QTextEdit *m_edit;
-	QPoint m_initial_pos;
+	std::vector<QCheckBox *> m_checks; // index 0 = layer 1
 };
 
 } // namespace phonometrica
 
-#endif // PHONOMETRICA_EVENT_EDITOR_HPP
+#endif // PHONOMETRICA_LAYER_VISIBILITY_DIALOG_HPP

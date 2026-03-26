@@ -248,7 +248,11 @@ void MainWindow::createCentralWidget()
 		}
 
 		m_viewer->removeTab(index);
+		updateWindowTitle();
+		m_file_manager->refresh();
 	});
+
+	connect(m_viewer, &QTabWidget::currentChanged, this, &MainWindow::onActiveTabChanged);
 
 	auto *welcome = new QLabel(tr("<h2>Welcome to Phonometrica</h2>"
 	                              "<p>Open a project or add files to get started.</p>"));
@@ -714,12 +718,28 @@ bool MainWindow::promptSaveProject()
 
 void MainWindow::onUndo()
 {
-	// TODO: wire to command processor
+	if (auto *view = currentView())
+		view->undo();
 }
 
 void MainWindow::onRedo()
 {
-	// TODO: wire to command processor
+	if (auto *view = currentView())
+		view->redo();
+}
+
+void MainWindow::onActiveTabChanged(int /*index*/)
+{
+	updateUndoRedoState();
+}
+
+void MainWindow::updateUndoRedoState()
+{
+	if (!m_undo_action || !m_redo_action)
+		return;
+	auto *view = currentView();
+	m_undo_action->setEnabled(view && view->canUndo());
+	m_redo_action->setEnabled(view && view->canRedo());
 }
 
 void MainWindow::onToggleProjectPanel(bool visible)
@@ -874,6 +894,9 @@ ViewPanel *MainWindow::addViewTab(View *view)
 		updateWindowTitle();
 		m_file_manager->refresh();
 	});
+
+	// Keep undo/redo actions in sync with the view's command processor.
+	connect(view, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
 
 	int tabIndex = m_viewer->addTab(panel, panel->label());
 	m_viewer->setCurrentIndex(tabIndex);

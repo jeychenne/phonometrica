@@ -18,6 +18,7 @@
 #include <phon/gui/spectrogram_widget.hpp>
 #include <phon/gui/pitch_widget.hpp>
 #include <phon/gui/intensity_widget.hpp>
+#include <phon/gui/layer_widget.hpp>
 
 namespace phonometrica {
 
@@ -51,6 +52,11 @@ void YAxisWidget::addIntensity(IntensityWidget *iw)
 void YAxisWidget::addPitch(PitchWidget *pw)
 {
 	m_pitches.push_back(pw);
+}
+
+void YAxisWidget::addLayer(LayerWidget *lw)
+{
+	m_layers.push_back(lw);
 }
 
 void YAxisWidget::paintEvent(QPaintEvent *)
@@ -175,30 +181,24 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 		painter.drawText(x, y_bot + fm.ascent(), bottom);
 	}
 
-	for (auto *pw : m_pitches)
+	for (auto *lw : m_layers)
 	{
-		if (!pw->isVisible())
+		if (!lw->isVisible())
 			continue;
 
-		QPoint top_left = mapFromGlobal(pw->mapToGlobal(QPoint(0, 0)));
+		QPoint top_left = mapFromGlobal(lw->mapToGlobal(QPoint(0, 0)));
 		int y_offset = top_left.y();
-		int pw_height = pw->height();
+		int lw_height = lw->height();
 
-		if (pw_height < fm.height() * 2)
+		if (lw_height < fm.height())
 			continue;
 
-		// Top label: max pitch.
-		QString top = QString("%1 Hz").arg(int(pw->maxPitch()));
-		int tw = fm.horizontalAdvance(top);
+		// Draw the layer label, centered vertically, right-aligned.
+		auto label = QString::number(lw->layerIndex());
+		int tw = fm.horizontalAdvance(label);
 		int x = w - tw - LABEL_PADDING;
-		painter.drawText(x, y_offset + fm.ascent(), top);
-
-		// Bottom label: min pitch.
-		QString bottom = QString("%1 Hz").arg(int(pw->minPitch()));
-		tw = fm.horizontalAdvance(bottom);
-		x = w - tw - LABEL_PADDING;
-		int y_bot = y_offset + pw_height - fm.height();
-		painter.drawText(x, y_bot + fm.ascent(), bottom);
+		int y_mid = y_offset + (lw_height - fm.height()) / 2;
+		painter.drawText(x, y_mid + fm.ascent(), label);
 	}
 }
 

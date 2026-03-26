@@ -45,6 +45,8 @@ public:
 	void find() override;
 	void replace() override;
 	void escape() override;
+	void undo() override;
+	void redo() override;
 
 	// ── Script-specific ────────────────────────────────
 

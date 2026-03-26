@@ -345,6 +345,7 @@ if(WITH_GUI)
         icons/circle-help.svg
         icons/circle-minus.svg
         icons/circle-plus.svg
+        icons/display.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

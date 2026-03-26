@@ -38,17 +38,25 @@ public:
 
 	bool isModified() const override;
 	bool save() override;
+	void discardChanges() override;
 
 	Handle<Annotation> annotation() const { return m_annot; }
 
 	// Open the view focused on a specific event.
 	void openSelection(intptr_t layer, double from, double to);
 
+	// Public layer management methods used by undo/redo commands.
+	// These do the actual widget creation/destruction and annotation mutation.
+	bool addLayer(intptr_t index, const String &name, bool has_instants);
+	void removeLayer(intptr_t index);
+
 protected:
 
 	// SoundView hooks.
 	void addAnnotationLayers(QLayout *layout) override;
 	void addAnnotationToolbar(QToolBar *toolbar) override;
+	void addDisplayMenuEntries(QMenu *menu) override;
+	void onAnchorRequested(double time) override;
 
 private slots:
 
@@ -94,11 +102,15 @@ private:
 	int layerLayoutOffset() const;
 	LayerWidget *createLayerWidget(intptr_t layer_index);
 	void clearGhostAnchors();
+	void applyLayerVisibility();
 
 	Handle<Annotation> m_annot;
 
 	// Layer widgets in display order (1-based indexing matches annotation layers).
 	std::vector<LayerWidget *> m_layers;
+
+	// Layer visibility (1-based: index 0 is unused). True = visible.
+	std::vector<bool> m_layer_visibility;
 
 	// Layout that contains the layer widgets (stored so we can insert/remove dynamically).
 	QVBoxLayout *m_layer_layout = nullptr;
