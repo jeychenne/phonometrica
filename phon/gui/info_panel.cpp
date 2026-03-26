@@ -19,6 +19,7 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <phon/gui/info_panel.hpp>
+#include <phon/gui/csv_dialog.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/annotation.hpp>
 #include <phon/application/sound.hpp>
@@ -68,20 +69,15 @@ QWidget *InfoPanel::createSingleFilePage()
 	scroll_layout->setContentsMargins(8, 8, 8, 8);
 	scroll_layout->setSpacing(6);
 
-	// ── File info ────────────────────────────────
+	// ── Dynamic file info area ───────────────────
+	// Cleared and rebuilt each time a file is selected, matching the wx version's
+	// "bold heading + value below" pattern.
 
-	m_file_name_label = new QLabel;
-	m_file_name_label->setWordWrap(true);
-	QFont bold_font = m_file_name_label->font();
-	bold_font.setBold(true);
-	m_file_name_label->setFont(bold_font);
-	scroll_layout->addWidget(m_file_name_label);
+	m_info_layout = new QVBoxLayout;
+	m_info_layout->setSpacing(2);
+	scroll_layout->addLayout(m_info_layout);
 
-	m_file_info_label = new QLabel;
-	m_file_info_label->setWordWrap(true);
-	scroll_layout->addWidget(m_file_info_label);
-
-	// Sound binding (for annotations).
+	// Sound binding row (for annotations, hidden otherwise).
 	auto *sound_row = new QHBoxLayout;
 	m_sound_label = new QLabel;
 	m_sound_label->setWordWrap(true);
@@ -93,8 +89,11 @@ QWidget *InfoPanel::createSingleFilePage()
 	connect(m_bind_button, &QPushButton::clicked, this, &InfoPanel::onBindSound);
 
 	// ── Properties table ─────────────────────────
-
-	scroll_layout->addWidget(new QLabel(tr("Properties:")));
+	auto prop_label = new QLabel(tr("Properties:"));
+	QFont font = prop_label->font();
+	font.setBold(true);
+	prop_label->setFont(font);
+	scroll_layout->addWidget(prop_label);
 
 	m_prop_table = new QTableWidget(0, 3, page);
 	m_prop_table->setHorizontalHeaderLabels({tr("Type"), tr("Category"), tr("Value")});
@@ -161,8 +160,9 @@ QWidget *InfoPanel::createSingleFilePage()
 	enablePropertyEditing(false);
 
 	// ── Description ──────────────────────────────
-
-	scroll_layout->addWidget(new QLabel(tr("Description:")));
+	auto desc_label = new QLabel(tr("Description:"));
+	desc_label->setFont(font);
+	scroll_layout->addWidget(desc_label);
 	m_description_edit = new QTextEdit;
 	m_description_edit->setMaximumHeight(100);
 	scroll_layout->addWidget(m_description_edit);
@@ -219,40 +219,34 @@ void InfoPanel::showSingleFilePage(Document *doc)
 	m_remove_prop_btn->setEnabled(false);
 	enablePropertyEditing(false);
 
-	// File name.
-	m_file_name_label->setText(doc->label());
+	// Rebuild the dynamic info area.
+	clearInfoArea();
 
-	// Type-specific info.
-	QString info;
+	addHeading(tr("File name:"));
+	addValue(doc->label(), doc->path());
+
 	bool show_sound_row = false;
 
 	if (auto *snd = dynamic_cast<Sound *>(doc))
 	{
 		snd->open();
-		info = tr("Sound: %1 channel(s), %2 Hz, %3 s")
-			.arg(snd->nchannel())
-			.arg(snd->sample_rate())
-			.arg(snd->duration(), 0, 'f', 2);
+		addHeading(tr("Duration:"));
+		addValue(tr("%1 seconds").arg(snd->duration(), 0, 'f', 4));
+		addHeading(tr("Sample rate:"));
+		addValue(tr("%1 Hz").arg(snd->sample_rate()));
+		addHeading(tr("Number of channels:"));
+		addValue(QString::number(snd->nchannel()));
 	}
 	else if (auto *annot = dynamic_cast<Annotation *>(doc))
 	{
 		show_sound_row = true;
 		if (annot->has_sound())
-		{
-			m_sound_label->setText(tr("Sound: %1").arg(annot->sound()->label()));
-		}
+			m_sound_label->setText(annot->sound()->label());
 		else
-		{
-			m_sound_label->setText(tr("Sound: (none)"));
-		}
-		info = tr("Annotation: %1 layer(s)").arg(annot->size());
-	}
-	else
-	{
-		info = doc->class_name();
+			m_sound_label->setText(tr("None"));
+		addHeading(tr("Sound file:"));
 	}
 
-	m_file_info_label->setText(info);
 	m_sound_label->setVisible(show_sound_row);
 	m_bind_button->setVisible(show_sound_row);
 
@@ -266,6 +260,43 @@ void InfoPanel::showSingleFilePage(Document *doc)
 	m_save_desc_btn->setEnabled(false);
 
 	m_stack->setCurrentIndex(m_single_page_index);
+}
+
+
+// ─────────────────────────────────────────────────
+//  Dynamic info area helpers
+// ─────────────────────────────────────────────────
+
+void InfoPanel::clearInfoArea()
+{
+	// Remove all widgets from the info layout.
+	QLayoutItem *item;
+	while ((item = m_info_layout->takeAt(0)) != nullptr)
+	{
+		if (item->widget())
+			delete item->widget();
+		delete item;
+	}
+}
+
+void InfoPanel::addHeading(const QString &text)
+{
+	auto *label = new QLabel(text);
+	QFont font = label->font();
+	font.setBold(true);
+	label->setFont(font);
+	m_info_layout->addSpacing(6);
+	m_info_layout->addWidget(label);
+}
+
+void InfoPanel::addValue(const QString &text, const QString &tooltip)
+{
+	auto *label = new QLabel(text);
+	label->setWordWrap(true);
+	label->setContentsMargins(2, 0, 0, 0);
+	if (!tooltip.isEmpty())
+		label->setToolTip(tooltip);
+	m_info_layout->addWidget(label);
 }
 
 
@@ -539,12 +570,57 @@ void InfoPanel::onBindSound()
 
 void InfoPanel::onImportMetadata()
 {
-	QMessageBox::information(this, tr("Not implemented"), tr("Import metadata from CSV is not yet implemented."));
+	CsvDialog dlg(tr("Import metadata..."), true, this);
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		auto path = dlg.filePath();
+		auto sep = dlg.separator();
+
+		if (path.empty())
+		{
+			QMessageBox::warning(this, tr("Import metadata"), tr("No file selected."));
+			return;
+		}
+
+		try
+		{
+			m_project->import_metadata(path, sep);
+			if (m_current_doc)
+				showSingleFilePage(m_current_doc);
+			QMessageBox::information(this, tr("Success"), tr("Metadata successfully imported!"));
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::critical(this, tr("Import error"), e.what());
+		}
+	}
 }
 
 void InfoPanel::onExportMetadata()
 {
-	QMessageBox::information(this, tr("Not implemented"), tr("Export metadata to CSV is not yet implemented."));
+	CsvDialog dlg(tr("Export metadata..."), false, this);
+
+	if (dlg.exec() == QDialog::Accepted)
+	{
+		auto path = dlg.filePath();
+
+		if (path.empty())
+		{
+			QMessageBox::warning(this, tr("Export metadata"), tr("No file selected."));
+			return;
+		}
+
+		try
+		{
+			m_project->export_metadata(path);
+			QMessageBox::information(this, tr("Success"), tr("Metadata successfully exported!"));
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::critical(this, tr("Export error"), e.what());
+		}
+	}
 }
 
 } // namespace phonometrica

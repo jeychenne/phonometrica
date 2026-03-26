@@ -70,6 +70,11 @@ private:
 	void updateValueCombo();
 	void enablePropertyEditing(bool enabled);
 
+	// Helpers for the dynamic info area.
+	void clearInfoArea();
+	void addHeading(const QString &text);
+	void addValue(const QString &text, const QString &tooltip = QString());
+
 	Project *m_project;
 
 	QStackedWidget *m_stack = nullptr;
@@ -80,8 +85,9 @@ private:
 
 	// ── Single file page widgets ─────────────────
 
-	QLabel *m_file_name_label = nullptr;
-	QLabel *m_file_info_label = nullptr;
+	// Dynamic info area: cleared and rebuilt for each file.
+	QVBoxLayout *m_info_layout = nullptr;
+
 	QLabel *m_sound_label = nullptr;
 	QPushButton *m_bind_button = nullptr;
 
