@@ -49,14 +49,10 @@ EventEditor::EventEditor(const QString &text, const QPoint &globalPos, QWidget *
 
 	m_edit->setFocus();
 
-	// Enter/Return accepts the dialog (Shift+Enter inserts a newline).
-	// We use a shortcut rather than overriding keyPressEvent on the QTextEdit
-	// because QTextEdit consumes Enter for newline insertion.
-	auto *acceptShortcut = new QShortcut(Qt::Key_Return, this);
-	connect(acceptShortcut, &QShortcut::activated, this, &QDialog::accept);
-
-	auto *acceptShortcut2 = new QShortcut(Qt::Key_Enter, this);
-	connect(acceptShortcut2, &QShortcut::activated, this, &QDialog::accept);
+	// Intercept Enter/Return to accept the dialog.
+	// We use an event filter because QTextEdit consumes Enter for newline
+	// insertion before QShortcut gets a chance to fire.
+	m_edit->installEventFilter(this);
 
 	// Escape rejects.
 	auto *rejectShortcut = new QShortcut(Qt::Key_Escape, this);
@@ -71,6 +67,21 @@ QString EventEditor::text() const
 int EventEditor::yShift() const
 {
 	return pos().y() - m_initial_pos.y();
+}
+
+bool EventEditor::eventFilter(QObject *obj, QEvent *event)
+{
+	if (obj == m_edit && event->type() == QEvent::KeyPress)
+	{
+		auto *ke = static_cast<QKeyEvent *>(event);
+		if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+			&& !(ke->modifiers() & Qt::ShiftModifier))
+		{
+			accept();
+			return true;
+		}
+	}
+	return QDialog::eventFilter(obj, event);
 }
 
 } // namespace phonometrica

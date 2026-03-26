@@ -108,7 +108,11 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
 	case Qt::EditRole:
 	{
 		auto label = elem->label();
-		return QString::fromUtf8(label.data(), (int) label.size());
+		auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
+		auto *doc = dynamic_cast<Document *>(elem);
+		if (doc && doc->modified())
+			qlabel += QStringLiteral(" *");
+		return qlabel;
 	}
 	case Qt::DecorationRole:
 		return iconForElement(elem);
