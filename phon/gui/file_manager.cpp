@@ -185,6 +185,7 @@ void FileManager::setupUi()
     m_search = new QLineEdit(this);
     m_search->setPlaceholderText(tr("Filter..."));
     m_search->setClearButtonEnabled(true);
+	m_search->addAction(QIcon(":/icons/search.svg"), QLineEdit::LeadingPosition);
     connect(m_search, &QLineEdit::textChanged, this, &FileManager::onFilterTextChanged);
     layout->addWidget(m_search);
 
@@ -418,10 +419,16 @@ void FileManager::onContextMenu(const QPoint &pos)
 			{
 				menu.addSeparator();
 				menu.addAction(tr("Create annotation"), [this, sound]() {
-					auto annot = make_handle<Annotation>(sound->parent(), String());
+					// Use default constructor which sets m_type = Native.
+					auto annot = make_handle<Annotation>();
 					annot->set_sound(Handle<Sound>(sound));
+					// Mark as modified so the save dialog will appear.
+					annot->set_graph_modified(true);
 					auto *raw = annot.get();
-					m_project->corpus()->append(std::move(annot), true);
+					// Place in the same folder as the sound file.
+					auto *parent = sound->parent();
+					if (!parent) parent = m_project->corpus().get();
+					parent->append(std::move(annot), true);
 					refresh();
 					emit documentRequested(raw);
 				});

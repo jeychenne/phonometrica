@@ -58,10 +58,12 @@ void Annotation::preload()
 
 void Annotation::load()
 {
-	if (m_path.empty() && is_native()) return;
-
-	if (m_type == Undefined) {
-		m_type = guess_type();
+	// Newly created annotations don't have a path yet.
+	if (m_path.empty()) {
+		if (m_type == Undefined) {
+			m_type = Native;
+		}
+		return;
 	}
 
 	switch (m_type)
@@ -465,6 +467,9 @@ void Annotation::write_as_native(const String &path)
 	layers_to_xml(graph_node, m_layers);
 
 	auto &p = path.empty() ? m_path : path;
+	if (p.empty()) {
+		throw error("Cannot write annotation: no file path specified");
+	}
 	write_xml(doc, p);
 	m_modified = false;
 }

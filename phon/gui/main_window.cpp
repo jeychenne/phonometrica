@@ -574,8 +574,17 @@ void MainWindow::onSaveProject()
 
 	try
 	{
+		// Save all modified views (annotations, scripts, etc.) first.
+		for (int i = 0; i < m_viewer->count(); i++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+			if (panel)
+				panel->saveAll();
+		}
+
 		project->save();
 		updateWindowTitle();
+		m_file_manager->refresh();
 		statusBar()->showMessage(tr("Project saved"), 2000);
 	}
 	catch (std::exception &e)
@@ -597,9 +606,18 @@ void MainWindow::onSaveProjectAs()
 
 	try
 	{
+		// Save all modified views first.
+		for (int i = 0; i < m_viewer->count(); i++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+			if (panel)
+				panel->saveAll();
+		}
+
 		Project::get()->save(String(path.toUtf8().constData()));
 		updateRecentProjects(String(path.toUtf8().constData()));
 		updateWindowTitle();
+		m_file_manager->refresh();
 		statusBar()->showMessage(tr("Project saved as: %1").arg(path), 3000);
 	}
 	catch (std::exception &e)
@@ -851,6 +869,10 @@ ViewPanel *MainWindow::addViewTab(View *view)
 		int index = m_viewer->indexOf(panel);
 		if (index >= 0)
 			m_viewer->setTabText(index, title);
+		// Update the project dock title (shows * when project is modified)
+		// and refresh the file manager (shows * on modified files).
+		updateWindowTitle();
+		m_file_manager->refresh();
 	});
 
 	int tabIndex = m_viewer->addTab(panel, panel->label());
