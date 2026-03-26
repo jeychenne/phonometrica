@@ -40,6 +40,12 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 {
 	resize(1200, 800);
 
+	// Make the left and right docks span the full height of the window.
+	// The bottom dock (console/output) will only occupy the space between them,
+	// underneath the central widget — matching the wx version's layout.
+	setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
+	setCorner(Qt::BottomRightCorner, Qt::RightDockWidgetArea);
+
 	createCentralWidget();
 	createDockWidgets();
 	createMenus();
@@ -273,6 +279,10 @@ void MainWindow::createDockWidgets()
 	m_output = new OutputPanel(bottom_tabs);
 	bottom_tabs->addTab(m_console, tr("Console"));
 	bottom_tabs->addTab(m_output, tr("Output"));
+	bottom_tabs->setStyleSheet(R"(
+    QTabWidget::pane {
+        border: none;
+    })");
 
 	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);

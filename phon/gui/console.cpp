@@ -24,6 +24,7 @@ namespace phonometrica {
 Console::Console(Runtime &rt, QWidget *parent) :
 	QPlainTextEdit(parent), m_runtime(rt), m_prompt(">> ")
 {
+	setFrameShape(QFrame::NoFrame);
 	setUndoRedoEnabled(false);
 
 	// Monospace font.
