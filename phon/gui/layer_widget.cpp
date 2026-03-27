@@ -1121,6 +1121,8 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 		// Click on an anchor without dragging → select the anchor.
 		m_selected_anchor_time = m_dragged_anchor_time;
 		m_dragged_anchor_time = -1;
+		// Notify other layers so they show candidate anchors at the same time.
+		emit anchorSelected(m_layer_index, m_selected_anchor_time);
 		update();
 	}
 	else
