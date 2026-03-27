@@ -705,8 +705,32 @@ void AnnotationView::onEventSelected(double start, double end)
 
 void AnnotationView::openSelection(intptr_t layer, double from, double to)
 {
-	timeModel()->setViewport(from, to);
-	double mid = from + (to - from) / 2;
+	auto *model = timeModel();
+	double dur = model->duration();
+	double match_dur = to - from;
+	double mid = from + match_dur / 2;
+
+	// Ensure the window is at least 1 second (or the whole file if shorter).
+	static constexpr double MIN_WINDOW = 1.0;
+	double win = std::max(match_dur * 1.5, MIN_WINDOW);
+	if (win > dur) win = dur;
+
+	double win_start = mid - win / 2;
+	double win_end = mid + win / 2;
+
+	// Clamp to file boundaries.
+	if (win_start < 0) {
+		win_end -= win_start; // shift right
+		win_start = 0;
+	}
+	if (win_end > dur) {
+		win_start -= (win_end - dur); // shift left
+		win_end = dur;
+	}
+	if (win_start < 0) win_start = 0;
+
+	model->setViewport(win_start, win_end);
+	model->setSelection(from, to);
 	onFocusEvent(layer, mid, false);
 }
 

@@ -354,9 +354,7 @@ void FileManager::onDoubleClicked(const QModelIndex &proxyIndex)
 	auto *ts = dynamic_cast<TimeStamp *>(elem);
 	if (ts)
 	{
-		auto annot = ts->annotation();
-		if (annot)
-			emit documentRequested(annot.get());
+		emit bookmarkRequested(ts);
 	}
 }
 

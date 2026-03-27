@@ -19,6 +19,7 @@
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/ipa_panel.hpp>
 #include <phon/application/script.hpp>
+#include <phon/application/conc/query.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
@@ -35,6 +36,7 @@ class Document;
 class View;
 class ViewPanel;
 class InfoPanel;
+class ConcordanceView;
 
 class MainWindow : public QMainWindow
 {
@@ -67,6 +69,10 @@ private slots:
 	void onRedo();
 	void onFind();
 	void onReplace();
+
+	// Analysis menu
+	void onFindInAnnotations();
+	void onEditLastQuery();
 
 	// View actions (forwarded to active view in the current panel)
 	void onSaveCurrentView();
@@ -109,6 +115,9 @@ private:
 	ViewPanel *addViewTab(View *view);
 
 	void openScript(const Handle<Script> &script);
+
+	// Open a concordance in a new tab and wire its signals.
+	void openConcordance(Handle<Concordance> conc);
 
 	// Returns the ViewPanel in the current tab (or nullptr).
 	ViewPanel *currentPanel() const;
@@ -157,6 +166,9 @@ private:
 
 	// Progress bar in the status bar (for loading sounds, etc.)
 	QProgressBar *m_progress_bar = nullptr;
+
+	// Last executed query (for "Edit last query" action).
+	Handle<Query> m_last_query;
 };
 
 } // namespace phonometrica

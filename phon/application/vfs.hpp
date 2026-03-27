@@ -71,6 +71,8 @@ public:
 
 	virtual void discard_changes();
 
+	void set_content_modified(bool value) { m_content_modified = value; }
+
 	virtual bool contains(const Element *node) const { return false; }
 
 	virtual bool quick_search(const String &text) const { return true; }
