@@ -163,6 +163,17 @@ void LayerWidget::createAnchor(double time, bool silent)
 {
 	try
 	{
+		// If an anchor already exists at this exact time, nothing to do.
+		// This can happen when anchor sharing propagates back to a layer that
+		// already owns the anchor (e.g. clicking a ghost anchor on a peer layer
+		// causes onAnchorAdded → createAnchor(time, true) on the source layer).
+		auto &layer = m_annot->layers()[m_layer_index];
+		for (intptr_t i = 1; i <= layer.count(); i++)
+		{
+			if (layer.events[i].start == time || layer.events[i].end == time)
+				return;
+		}
+
 		m_annot->add_anchor(m_layer_index, time);
 
 		clearEditAnchor();
@@ -892,10 +903,13 @@ void LayerWidget::paintEvent(QPaintEvent *)
 	}
 
 	// ── Draw ghost anchor ────────────────────────
+	// In add-anchor mode: orange dashed line (you can click to place an anchor here in sync).
+	// In normal mode: blue dashed line (shows where another layer has an anchor; you could add one here).
 
-	if (m_adding_anchor && m_ghost_anchor_time >= 0)
+	if (m_ghost_anchor_time >= 0)
 	{
-		QPen ghostPen(GHOST_ANCHOR_COLOR, 1, Qt::DotLine);
+		QColor ghostColor = m_adding_anchor ? GHOST_ANCHOR_COLOR : CANDIDATE_ANCHOR_COLOR;
+		QPen ghostPen(ghostColor, 1, Qt::DotLine);
 		painter.setPen(ghostPen);
 		drawAnchor(painter, m_ghost_anchor_time, hasInstants());
 	}
@@ -1040,6 +1054,13 @@ void LayerWidget::mousePressEvent(QMouseEvent *e)
 			return;
 		}
 
+		// Check if clicking on a ghost anchor (shown when another layer's anchor is selected).
+		if (m_ghost_anchor_time >= 0 && anchorHasCursor(m_ghost_anchor_time, t))
+		{
+			createAnchor(m_ghost_anchor_time, false);
+			return;
+		}
+
 		if (m_sharing_anchors)
 		{
 			double closest = findClosestAnchorTime(t);
@@ -1127,8 +1148,9 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 	}
 	else
 	{
-		// Click elsewhere → clear selected anchor.
+		// Click elsewhere → clear selected anchor, and tell other layers to drop their ghosts.
 		m_selected_anchor_time = -1;
+		emit anchorSelected(m_layer_index, -1);
 	}
 
 	// Give focus to this layer (unless the inline editor is active).
@@ -1196,6 +1218,8 @@ void LayerWidget::mouseMoveEvent(QMouseEvent *e)
 		{
 			double candidate = candidateAnchorTime();
 			if (candidate >= 0 && anchorHasCursor(candidate, t))
+				setCursor(Qt::PointingHandCursor);
+			else if (m_ghost_anchor_time >= 0 && anchorHasCursor(m_ghost_anchor_time, t))
 				setCursor(Qt::PointingHandCursor);
 		}
 	}
