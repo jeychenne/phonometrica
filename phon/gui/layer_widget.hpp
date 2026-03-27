@@ -78,6 +78,11 @@ public:
 	// painting it in the old position while the user drags.
 	void hideAnchor(double time);
 
+	// ── Inline event editing ────────────────────────
+
+	bool isEditing() const { return m_editing_event >= 0; }
+	void cancelEdit();
+
 signals:
 
 	// Emitted when this layer gains focus (so the view can unfocus others).
@@ -178,7 +183,6 @@ private:
 
 	void beginEditing(int event_index);
 	void commitEdit();
-	void cancelEdit();
 	void advanceEdit(); // Commit current, open next event.
 
 	// ── Helpers ───────────────────────────────────────

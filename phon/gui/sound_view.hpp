@@ -154,6 +154,7 @@ private:
 	TimeAxisWidget *m_time_axis = nullptr;
 	YAxisWidget *m_y_axis = nullptr;
 	QLabel *m_status_label = nullptr;
+	class QScrollArea *m_scroll_area = nullptr;
 
 	WaveBar *m_wavebar = nullptr;
 	SoundZoom *m_zoom = nullptr;

@@ -320,8 +320,8 @@ if(WITH_GUI)
         icons/arrow-right.svg
         icons/zoom-in.svg
         icons/zoom-out.svg
-        icons/minimize-2.svg
-        icons/maximize-2.svg
+        icons/minimize.svg
+        icons/maximize.svg
         icons/mouse.svg
         icons/play-selection.svg
         icons/pause-selection.svg

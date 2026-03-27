@@ -82,6 +82,19 @@ void AnnotationView::discardChanges()
 	m_annot->discard_changes();
 }
 
+void AnnotationView::escape()
+{
+	// If an inline event editor is open, cancel it.
+	for (auto *layer : m_layers)
+	{
+		if (layer->isEditing())
+		{
+			layer->cancelEdit();
+			return;
+		}
+	}
+}
+
 
 // ─────────────────────────────────────────────────
 //  SoundView hooks

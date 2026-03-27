@@ -39,6 +39,7 @@ public:
 	bool isModified() const override;
 	bool save() override;
 	void discardChanges() override;
+	void escape() override;
 
 	Handle<Annotation> annotation() const { return m_annot; }
 

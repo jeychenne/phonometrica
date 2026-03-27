@@ -17,6 +17,7 @@
 #include <phon/string.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/gui/output_panel.hpp>
+#include <phon/gui/ipa_panel.hpp>
 #include <phon/application/script.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
@@ -144,6 +145,9 @@ private:
 
 	// Output panel for measurement results
 	OutputPanel *m_output = nullptr;
+
+	// IPA symbol panel
+	IpaPanel *m_ipa_panel = nullptr;
 
 	// Edit actions (need references for enable/disable)
 	QAction *m_undo_action = nullptr;

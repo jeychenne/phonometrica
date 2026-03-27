@@ -281,8 +281,10 @@ void MainWindow::createDockWidgets()
 	auto *bottom_tabs = new QTabWidget(m_console_dock);
 	m_console = new Console(m_runtime, bottom_tabs);
 	m_output = new OutputPanel(bottom_tabs);
+	m_ipa_panel = new IpaPanel(bottom_tabs);
 	bottom_tabs->addTab(m_console, tr("Console"));
 	bottom_tabs->addTab(m_output, tr("Output"));
+	bottom_tabs->addTab(m_ipa_panel, tr("IPA"));
 	bottom_tabs->setStyleSheet(R"(
     QTabWidget::pane {
         border: none;
