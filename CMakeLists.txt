@@ -275,6 +275,7 @@ if(WITH_GUI)
 
     file(GLOB_RECURSE GUI_SOURCES
         phon/gui/*.cpp
+        phon/gui/conc/*.cpp
     )
 
     add_library(phon-gui STATIC ${GUI_SOURCES})
@@ -310,7 +311,7 @@ if(WITH_GUI)
         icons/file-spreadsheet.svg
         icons/file-terminal.svg
         icons/file-volume.svg
-        icons/file-heart.svg
+        icons/file-bookmarked.svg
         icons/layers.svg
         icons/waves.svg
         icons/play.svg
@@ -347,6 +348,12 @@ if(WITH_GUI)
         icons/circle-plus.svg
         icons/display.svg
         icons/unlink.svg
+        icons/tag.svg
+        icons/trash-2.svg
+        icons/pencil-line.svg
+        icons/set-complement.svg
+        icons/set-intersection.svg
+        icons/set-union.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

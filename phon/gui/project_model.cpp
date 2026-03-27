@@ -454,7 +454,7 @@ QIcon ProjectModel::iconForElement(Element *elem) const
         return QIcon(":/icons/file-terminal.svg");
 
     if (dynamic_cast<Bookmark *>(elem))
-        return QIcon(":/icons/file-heart.svg");
+        return QIcon(":/icons/file-bookmarked.svg");
 
     if (dynamic_cast<Dataset *>(elem))
         return QIcon(":/icons/file-spreadsheet.svg");

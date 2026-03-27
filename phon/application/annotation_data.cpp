@@ -136,9 +136,11 @@ std::span<const Event> Layer::get_slice(double start_time, double end_time) cons
 	// Find the first event that overlaps with the range.
 	auto first = lower(start_time);
 
-	// Find the first event that starts after the range.
+	// Find the first event that starts at or after the range end.
+	// This ensures partially visible events at the right edge are included:
+	// an event whose start is within the window but whose end extends past it.
 	auto last = first;
-	while (last != events.end() && last->end <= end_time) {
+	while (last != events.end() && last->start < end_time) {
 		++last;
 	}
 

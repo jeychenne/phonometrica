@@ -29,6 +29,7 @@ class Project;
 class ProjectModel;
 class Element;
 class Document;
+class TimeStamp;
 
 
 // A proxy model that filters the project tree using the VFS's quick_search mechanism.
@@ -81,6 +82,9 @@ signals:
 
 	// Emitted when the user requests to open a document (double-click or context menu).
 	void documentRequested(Document *doc);
+
+	// Emitted when the user double-clicks a bookmark.
+	void bookmarkRequested(TimeStamp *bookmark);
 
 	// Emitted when the selection changes.
 	void selectionChanged(Element *elem);

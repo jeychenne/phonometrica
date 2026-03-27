@@ -236,7 +236,6 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 			auto attr = node.attribute("class");
 			if (!attr) throw error("Invalid Document node: missing class attribute");
 			std::string_view cls(attr.value());
-			Handle<Document> vfile;
 
 			// Read the file path from the <Path> child node.
 			auto path_node = node.child("Path");
@@ -247,31 +246,41 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 			String path(path_node.text().get());
 			interpolate(path, m_directory);
 
-			if (cls == "Annotation")
+			try
 			{
-				auto annot = make_handle<Annotation>(folder, std::move(path));
-				vfile = recast<Document>(annot);
-                emit_signal(annotation_loaded, std::move(annot));
-			}
-			else if (cls == "Sound")
-			{
-				auto sound = make_handle<Sound>(folder, std::move(path));
-				vfile = recast<Document>(sound);
-                emit_signal(sound_loaded, std::move(sound));
-			}
-			else
-			{
-				throw error("Invalid Document type: %", cls);
-			}
+				Handle<Document> vfile;
 
-			// Read inline metadata from the project file.
-			auto meta_child = node.child("Metadata");
-			if (meta_child) {
-				vfile->metadata_from_xml(meta_child);
-			}
+				if (cls == "Annotation")
+				{
+					auto annot = make_handle<Annotation>(folder, std::move(path));
+					vfile = recast<Document>(annot);
+	                emit_signal(annotation_loaded, std::move(annot));
+				}
+				else if (cls == "Sound")
+				{
+					auto sound = make_handle<Sound>(folder, std::move(path));
+					vfile = recast<Document>(sound);
+	                emit_signal(sound_loaded, std::move(sound));
+				}
+				else
+				{
+					throw error("Invalid Document type: %", cls);
+				}
 
-			register_file(vfile->path(), vfile);
-			folder->append(vfile, false);
+				// Read inline metadata from the project file.
+				auto meta_child = node.child("Metadata");
+				if (meta_child) {
+					vfile->metadata_from_xml(meta_child);
+				}
+
+				register_file(vfile->path(), vfile);
+				folder->append(vfile, false);
+			}
+			catch (std::exception &e)
+			{
+				auto msg = String::format("Skipping missing or unreadable file: %s", e.what());
+				notify_error(msg);
+			}
 		}
 		else if (node.name() == str("VFile"))
 		{
@@ -349,19 +358,36 @@ void Project::parse_scripts(xml_node root, Directory *folder)
 			auto attr = node.attribute("class");
 			if (!attr) throw error("Invalid VFile node");
 			std::string_view cls(attr.value());
-			String path(node.text().get());
+
+			// Read the file path from the <Path> child node (same format as parse_corpus).
+			// Fall back to node.text() for backward compatibility with older project files.
+			String path;
+			auto path_node = node.child("Path");
+			if (path_node) {
+				path = path_node.text().get();
+			}
+			else {
+				path = node.text().get();
+			}
 			interpolate(path, m_directory);
 
-			if (cls == script_tag)
+			try
 			{
-				auto script = make_handle<Script>(folder, std::move(path));
-				folder->append(script, false);
-				register_file(script->path(), script);
-//				emit_signal(script_loaded, make_handle<Script>(script));
+				if (cls == script_tag)
+				{
+					auto script = make_handle<Script>(folder, std::move(path));
+					folder->append(script, false);
+					register_file(script->path(), script);
+				}
+				else
+				{
+					throw error("Invalid class \"%\" in VFile XML entry", node.name());
+				}
 			}
-			else
+			catch (std::exception &e)
 			{
-				throw error("Invalid class \"%\" in VFile XML entry", node.name());
+				auto msg = String::format("Skipping missing or unreadable file: %s", e.what());
+				notify_error(msg);
 			}
 		}
 	}
@@ -390,18 +416,43 @@ void Project::parse_queries(xml_node root, Directory *folder)
 			auto attr = node.attribute("class");
 			if (!attr) throw error("Invalid VFile node");
 			std::string_view cls(attr.value());
-			String path(node.text().get());
+
+			// Read the file path from the <Path> child node (same format as parse_corpus).
+			// Fall back to node.text() for backward compatibility with older project files.
+			String path;
+			auto path_node = node.child("Path");
+			if (path_node) {
+				path = path_node.text().get();
+			}
+			else {
+				path = node.text().get();
+			}
 			interpolate(path, m_directory);
 
-			if (cls == text_query_tag)
+			try
 			{
-				auto query = make_handle<Query>(folder, std::move(path));
-				folder->append(query, false);
-				register_file(query->path(), query);
+				if (cls == text_query_tag)
+				{
+					auto query = make_handle<Query>(folder, std::move(path));
+
+					// Read inline metadata from the project file.
+					auto meta_child = node.child("Metadata");
+					if (meta_child) {
+						query->metadata_from_xml(meta_child);
+					}
+
+					folder->append(query, false);
+					register_file(query->path(), query);
+				}
+				else
+				{
+					throw error("Invalid query type \"%\" in VFile XML entry", cls);
+				}
 			}
-			else
+			catch (std::exception &e)
 			{
-				throw error("Invalid query type \"%\" in VFile XML entry", cls);
+				auto msg = String::format("Skipping missing or unreadable file: %s", e.what());
+				notify_error(msg);
 			}
 		}
 	}
@@ -423,33 +474,50 @@ void Project::parse_data(xml_node root, Directory *folder)
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
-			parse_scripts(node, sub);
+			parse_data(node, sub);
 		}
 		else if (node.name() == str("Document") || node.name() == str("VFile"))
 		{
 			auto attr = node.attribute("class");
 			if (!attr) throw error("Invalid VFile node");
 			std::string_view cls(attr.value());
-			String path(node.text().get());
+
+			// Read the file path from the <Path> child node (same format as parse_corpus).
+			// Fall back to node.text() for backward compatibility with older project files.
+			String path;
+			auto path_node = node.child("Path");
+			if (path_node) {
+				path = path_node.text().get();
+			}
+			else {
+				path = node.text().get();
+			}
 			interpolate(path, m_directory);
 
-			if (cls == str("Dataset"))
+			try
 			{
-				auto dataset = make_handle<Dataset>(folder, std::move(path));
-				dataset->from_xml(node, m_directory);
-				folder->append(dataset, false);
-				register_file(dataset->path(), dataset);
-//				emit_signal(dataset_loaded, make_handle<AutoDataset>(std::move(dataset)));
+				if (cls == str("Dataset"))
+				{
+					auto dataset = make_handle<Dataset>(folder, std::move(path));
+					dataset->from_xml(node, m_directory);
+					folder->append(dataset, false);
+					register_file(dataset->path(), dataset);
+				}
+				else if (cls == std::string_view("Concordance"))
+				{
+					auto conc = make_handle<Concordance>(folder, std::move(path));
+					folder->append(conc, false);
+					register_file(conc->path(), conc);
+				}
+				else
+				{
+					throw error("Invalid class \"%\" in Document XML entry", cls);
+				}
 			}
-			else if (cls == std::string_view("Concordance"))
+			catch (std::exception &e)
 			{
-				auto conc = make_handle<Concordance>(folder, std::move(path));
-				folder->append(conc, false);
-				register_file(conc->path(), conc);
-			}
-			else
-			{
-				throw error("Invalid class \"%\" in Document XML entry", cls);
+				auto msg = String::format("Skipping missing or unreadable file: %s", e.what());
+				notify_error(msg);
 			}
 		}
 	}

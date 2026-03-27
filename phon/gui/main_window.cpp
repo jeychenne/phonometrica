@@ -27,6 +27,9 @@
 #include <phon/gui/annotation_view.hpp>
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
+#include <phon/gui/conc/query_editor.hpp>
+#include <phon/gui/conc/concordance_view.hpp>
+#include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -59,6 +62,10 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 			m_file_manager->refresh();
 		});
 		project->notify_closed.connect([this]() { updateWindowTitle(); });
+		project->notify_error.connect([this](const String &msg) {
+			auto qmsg = QString::fromUtf8(msg.data(), (int) msg.size());
+			QMessageBox::warning(this, tr("Warning"), qmsg);
+		});
 	}
 
 	updateWindowTitle();
@@ -157,7 +164,25 @@ QMenu *MainWindow::createEditMenu()
 QMenu *MainWindow::createAnalysisMenu()
 {
 	auto *menu = new QMenu(tr("&Analysis"), this);
-	menu->addAction(tr("(coming soon)"))->setEnabled(false);
+
+	menu->addAction(tr("Find in annotations..."), QKeySequence(tr("Ctrl+G")),
+		this, &MainWindow::onFindInAnnotations);
+
+	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+Shift+G")),
+		this, &MainWindow::onEditLastQuery);
+
+	menu->addSeparator();
+
+	// Acoustic query types (Phase 2 — placeholder for now)
+	auto *formant_action = menu->addAction(tr("Measure formants..."));
+	formant_action->setEnabled(false);
+
+	auto *pitch_action = menu->addAction(tr("Measure pitch..."));
+	pitch_action->setEnabled(false);
+
+	auto *intensity_action = menu->addAction(tr("Measure intensity..."));
+	intensity_action->setEnabled(false);
+
 	return menu;
 }
 
@@ -270,6 +295,22 @@ void MainWindow::createDockWidgets()
 
 	m_file_manager = new FileManager(Project::get(), m_project_dock);
 	connect(m_file_manager, &FileManager::documentRequested, this, &MainWindow::onDocumentRequested);
+	connect(m_file_manager, &FileManager::bookmarkRequested, this, [this](TimeStamp *ts) {
+		if (!ts || !ts->annotation()) return;
+		onDocumentRequested(ts->annotation().get());
+		// Navigate to the bookmarked location in the annotation view.
+		if (auto *panel = currentPanel())
+		{
+			for (auto *v : panel->views())
+			{
+				if (auto *av = qobject_cast<AnnotationView *>(v))
+				{
+					av->openSelection(ts->layer(), ts->start(), ts->end());
+					break;
+				}
+			}
+		}
+	});
 
 	m_project_dock->setWidget(m_file_manager);
 	addDockWidget(Qt::LeftDockWidgetArea, m_project_dock);
@@ -292,6 +333,8 @@ void MainWindow::createDockWidgets()
 
 	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);
+	// Constrain the tools panel to a reasonable initial height.
+	resizeDocks({m_console_dock}, {150}, Qt::Vertical);
 
 	// Information panel dock (right)
 	m_info_dock = new QDockWidget(tr("Information"), this);
@@ -759,6 +802,68 @@ void MainWindow::onToggleInfoPanel(bool visible)
 	m_info_dock->setVisible(visible);
 }
 
+
+// ---------------------------------------------------------
+//  Analysis menu slots
+// ---------------------------------------------------------
+
+void MainWindow::onFindInAnnotations()
+{
+	QueryEditor editor(this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		if (conc && !conc->empty())
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
+void MainWindow::onEditLastQuery()
+{
+	if (!m_last_query)
+	{
+		QMessageBox::information(this, tr("No query"),
+			tr("You must first run a query."));
+		return;
+	}
+
+	auto copy = m_last_query->copy();
+	QueryEditor editor(copy, this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		if (conc && !conc->empty())
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
+
+// ---------------------------------------------------------
+//  Opening documents
+// ---------------------------------------------------------
+
 void MainWindow::onDocumentRequested(Document *doc)
 {
 	if (!doc)
@@ -866,6 +971,40 @@ void MainWindow::onDocumentRequested(Document *doc)
 		return;
 	}
 
+	// Handle query files: open in the query editor dialog, not as a tab.
+	if (doc->is<Query>())
+	{
+		auto *query_doc = static_cast<Query *>(doc);
+		QueryEditor editor(Handle<Query>(query_doc), this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && !conc->empty())
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+		return;
+	}
+
+	// Handle concordance files
+	if (doc->is<Concordance>())
+	{
+		auto *conc_doc = static_cast<Concordance *>(doc);
+		openConcordance(Handle<Concordance>(conc_doc));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
 	// Fallback placeholder for other document types
 	auto &path = doc->path();
 	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
@@ -909,6 +1048,33 @@ ViewPanel *MainWindow::addViewTab(View *view)
 void MainWindow::openScript(const Handle<Script> &script)
 {
 	auto *view = new ScriptView(m_runtime, m_console, script);
+	addViewTab(view);
+}
+
+void MainWindow::openConcordance(Handle<Concordance> conc)
+{
+	auto *view = new ConcordanceView(conc);
+
+	connect(view, &ConcordanceView::openAnnotation,
+		this, [this](const Handle<Annotation> &annot, intptr_t layer, double start, double end)
+	{
+		// Open the annotation in a tab (or bring it to front if already open).
+		onDocumentRequested(annot.get());
+
+		// Find the AnnotationView in the current tab and navigate to the match.
+		if (auto *panel = currentPanel())
+		{
+			for (auto *v : panel->views())
+			{
+				if (auto *av = qobject_cast<AnnotationView *>(v))
+				{
+					av->openSelection(layer, start, end);
+					break;
+				}
+			}
+		}
+	});
+
 	addViewTab(view);
 }
 

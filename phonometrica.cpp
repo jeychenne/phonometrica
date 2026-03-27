@@ -12,6 +12,7 @@
  ***********************************************************************************************************************/
 
 #ifdef PHON_GUI
+#include <clocale>
 #include <QFile>
 #include <QApplication>
 #include <phon/gui/main_window.hpp>
@@ -140,6 +141,11 @@ int main(int argc, char **argv)
 	// No arguments: launch the GUI.
 #ifdef PHON_GUI
 	QApplication app(argc, argv);
+	// QApplication sets LC_ALL to the system locale, which breaks strtod/sscanf
+	// parsing of numbers with '.' as decimal separator (e.g. French locale uses ',').
+	// Force LC_NUMERIC back to "C" so that pugixml's as_double(), strtod(), sscanf("%lf")
+	// and all other C-level numeric parsing use '.' consistently.
+	std::setlocale(LC_NUMERIC, "C");
 	QApplication::setApplicationName("Phonometrica");
 	QApplication::setOrganizationName("Phonometrica");
 	QGuiApplication::setDesktopFileName("Phonometrica");
