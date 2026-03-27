@@ -103,21 +103,17 @@ void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 	layer_menu->addAction(tr("Rename selected layer"), this, &AnnotationView::onRenameLayer);
 	layer_menu->addAction(tr("Clear selected layer"), this, &AnnotationView::onClearLayer);
 
-	auto *layer_button = new QToolButton(this);
-	layer_button->setIcon(QIcon(":/icons/layers.svg"));
-	layer_button->setToolTip(tr("Manage layers"));
-	layer_button->setMenu(layer_menu);
-	layer_button->setPopupMode(QToolButton::InstantPopup);
-	toolbar->addWidget(layer_button);
+	auto *layer_action = new QAction(QIcon(":/icons/layers.svg"), tr("Manage layers"), this);
+	layer_action->setMenu(layer_menu);
+	toolbar->addAction(layer_action);
+	if (auto *lb = qobject_cast<QToolButton *>(toolbar->widgetForAction(layer_action)))
+		lb->setPopupMode(QToolButton::InstantPopup);
 
 	// Anchor sharing toggle.
-	m_link_button = new QToolButton(this);
-	m_link_button->setIcon(QIcon(":/icons/link.svg"));
-	m_link_button->setCheckable(true);
-	m_link_button->setChecked(false);
-	m_link_button->setToolTip(tr("Share/unshare anchors"));
-	toolbar->addWidget(m_link_button);
-	connect(m_link_button, &QToolButton::toggled, this, &AnnotationView::onToggleAnchorSharing);
+	m_link_action = toolbar->addAction(QIcon(":/icons/link.svg"), tr("Share/unshare anchors"));
+	m_link_action->setCheckable(true);
+	m_link_action->setChecked(false);
+	connect(m_link_action, &QAction::toggled, this, &AnnotationView::onToggleAnchorSharing);
 
 	// Add anchor.
 	m_add_anchor_action = toolbar->addAction(QIcon(":/icons/anchor.svg"), tr("Add anchors"));
@@ -512,9 +508,9 @@ void AnnotationView::onToggleAnchorSharing(bool checked)
 {
 	// checked == true means "unshared" (broken link icon).
 	if (checked)
-		m_link_button->setIcon(QIcon(":/icons/unlink.svg"));
+		m_link_action->setIcon(QIcon(":/icons/unlink.svg"));
 	else
-		m_link_button->setIcon(QIcon(":/icons/link.svg"));
+		m_link_action->setIcon(QIcon(":/icons/link.svg"));
 
 	for (auto *layer : m_layers)
 		layer->setAnchorSharing(!checked);
