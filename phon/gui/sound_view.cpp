@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QScrollArea>
 #include <QKeyEvent>
 #include <QMessageBox>
 #include <QLabel>
@@ -200,7 +201,22 @@ void SoundView::setupUi()
 	addAnnotationLayers(plot_layout);
 
 	mid_layout->addLayout(plot_layout, 1);
-	layout->addLayout(mid_layout, 1);
+
+	// Wrap the mid section (Y axis + plots + layers) in a scroll area so that the
+	// view can shrink when the user resizes the bottom dock panel. Without this,
+	// the accumulated minimum heights of all fixed-size sub-widgets (toolbar, time axis,
+	// waveforms, annotation layers, zoom, wavebar) prevent the central widget from
+	// shrinking and the dock divider gets stuck.
+	auto *mid_container = new QWidget(this);
+	mid_container->setLayout(mid_layout);
+
+	m_scroll_area = new QScrollArea(this);
+	m_scroll_area->setWidget(mid_container);
+	m_scroll_area->setWidgetResizable(true);
+	m_scroll_area->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	m_scroll_area->setFrameShape(QFrame::NoFrame);
+
+	layout->addWidget(m_scroll_area, 1);
 
 	// SoundZoom: visual connector between waveforms and wavebar.
 	m_zoom = new SoundZoom(this);
@@ -272,12 +288,12 @@ void SoundView::createToolBar()
 		tr("Zoom in"));
 	connect(zoom_in_action, &QAction::triggered, this, &SoundView::onZoomIn);
 
-	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/minimize-2.svg"),
+	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/minimize.svg"),
 		tr("Zoom to selection"));
 	m_zoom_sel_action->setEnabled(false);
 	connect(m_zoom_sel_action, &QAction::triggered, this, &SoundView::onZoomToSelection);
 
-	auto *view_all_action = m_toolbar->addAction(QIcon(":/icons/maximize-2.svg"),
+	auto *view_all_action = m_toolbar->addAction(QIcon(":/icons/maximize.svg"),
 		tr("View whole file"));
 	connect(view_all_action, &QAction::triggered, this, &SoundView::onViewAll);
 

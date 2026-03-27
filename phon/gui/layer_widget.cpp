@@ -654,30 +654,48 @@ void LayerWidget::advanceEdit()
 
 bool LayerWidget::eventFilter(QObject *obj, QEvent *event)
 {
-	if (obj == m_inline_edit && event->type() == QEvent::KeyPress)
+	if (obj == m_inline_edit)
 	{
-		auto *ke = static_cast<QKeyEvent *>(event);
-
-		if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+		// Claim keys we handle so that QAction shortcuts on the MainWindow
+		// (e.g. Escape, Ctrl+Return) don't steal them from the inline editor.
+		if (event->type() == QEvent::ShortcutOverride)
 		{
-			if (ke->modifiers() & Qt::ShiftModifier)
+			auto *ke = static_cast<QKeyEvent *>(event);
+			if (ke->key() == Qt::Key_Escape
+				|| ke->key() == Qt::Key_Return
+				|| ke->key() == Qt::Key_Enter
+				|| ke->key() == Qt::Key_Tab)
 			{
-				// Shift+Enter: insert a newline in the text.
-				return false; // let QTextEdit handle it
+				ke->accept();
+				return true;
 			}
-			// Plain Enter: commit the edit.
-			commitEdit();
-			return true;
 		}
-		if (ke->key() == Qt::Key_Escape)
+
+		if (event->type() == QEvent::KeyPress)
 		{
-			cancelEdit();
-			return true;
-		}
-		if (ke->key() == Qt::Key_Tab)
-		{
-			advanceEdit();
-			return true;
+			auto *ke = static_cast<QKeyEvent *>(event);
+
+			if (ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter)
+			{
+				if (ke->modifiers() & Qt::ShiftModifier)
+				{
+					// Shift+Enter: insert a newline in the text.
+					return false; // let QTextEdit handle it
+				}
+				// Plain Enter: commit the edit.
+				commitEdit();
+				return true;
+			}
+			if (ke->key() == Qt::Key_Escape)
+			{
+				cancelEdit();
+				return true;
+			}
+			if (ke->key() == Qt::Key_Tab)
+			{
+				advanceEdit();
+				return true;
+			}
 		}
 	}
 	return QWidget::eventFilter(obj, event);
