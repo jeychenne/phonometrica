@@ -320,12 +320,11 @@ void SoundView::createToolBar()
 
 	connect(scaling_group, &QActionGroup::triggered, this, &SoundView::onScalingChanged);
 
-	auto *wave_button = new QToolButton(this);
-	wave_button->setPopupMode(QToolButton::InstantPopup);
-	wave_button->setIcon(QIcon(":/icons/waveform.svg"));
-	wave_button->setToolTip(tr("Waveform settings"));
-	wave_button->setMenu(wave_menu);
-	m_toolbar->addWidget(wave_button);
+	auto *wave_action = new QAction(QIcon(":/icons/waveform.svg"), tr("Waveform settings"), this);
+	wave_action->setMenu(wave_menu);
+	m_toolbar->addAction(wave_action);
+	if (auto *wb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(wave_action)))
+		wb->setPopupMode(QToolButton::InstantPopup);
 
 	// ── Spectrogram menu button ───────────────────────
 	auto *spectrum_menu = new QMenu(this);
@@ -340,12 +339,11 @@ void SoundView::createToolBar()
 	auto *spectrogram_settings_action = spectrum_menu->addAction(tr("Spectrogram settings..."));
 	connect(spectrogram_settings_action, &QAction::triggered, this, &SoundView::onSpectrogramSettings);
 
-	auto *spectrum_button = new QToolButton(this);
-	spectrum_button->setPopupMode(QToolButton::InstantPopup);
-	spectrum_button->setIcon(QIcon(":/icons/spectrum.svg"));
-	spectrum_button->setToolTip(tr("Spectrogram settings"));
-	spectrum_button->setMenu(spectrum_menu);
-	m_toolbar->addWidget(spectrum_button);
+	auto *spectrum_action = new QAction(QIcon(":/icons/spectrum.svg"), tr("Spectrogram settings"), this);
+	spectrum_action->setMenu(spectrum_menu);
+	m_toolbar->addAction(spectrum_action);
+	if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(spectrum_action)))
+		sb->setPopupMode(QToolButton::InstantPopup);
 
 	// ── Formant menu button ──────────────────────────
 	auto *formant_menu = new QMenu(this);
@@ -368,12 +366,11 @@ void SoundView::createToolBar()
 	auto *formant_settings_action = formant_menu->addAction(tr("Formant settings..."));
 	connect(formant_settings_action, &QAction::triggered, this, &SoundView::onFormantSettings);
 
-	auto *formant_button = new QToolButton(this);
-	formant_button->setPopupMode(QToolButton::InstantPopup);
-	formant_button->setIcon(QIcon(":/icons/waves.svg"));
-	formant_button->setToolTip(tr("Formant settings"));
-	formant_button->setMenu(formant_menu);
-	m_toolbar->addWidget(formant_button);
+	auto *formant_action = new QAction(QIcon(":/icons/waves.svg"), tr("Formant settings"), this);
+	formant_action->setMenu(formant_menu);
+	m_toolbar->addAction(formant_action);
+	if (auto *fb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(formant_action)))
+		fb->setPopupMode(QToolButton::InstantPopup);
 
 	// ── Pitch menu button ─────────────────────────────
 	auto *pitch_menu = new QMenu(this);
@@ -396,12 +393,11 @@ void SoundView::createToolBar()
 	auto *pitch_settings_action = pitch_menu->addAction(tr("Pitch settings..."));
 	connect(pitch_settings_action, &QAction::triggered, this, &SoundView::onPitchSettings);
 
-	auto *pitch_button = new QToolButton(this);
-	pitch_button->setPopupMode(QToolButton::InstantPopup);
-	pitch_button->setIcon(QIcon(":/icons/pitch.svg"));
-	pitch_button->setToolTip(tr("Pitch settings"));
-	pitch_button->setMenu(pitch_menu);
-	m_toolbar->addWidget(pitch_button);
+	auto *pitch_action = new QAction(QIcon(":/icons/pitch.svg"), tr("Pitch settings"), this);
+	pitch_action->setMenu(pitch_menu);
+	m_toolbar->addAction(pitch_action);
+	if (auto *pb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(pitch_action)))
+		pb->setPopupMode(QToolButton::InstantPopup);
 
 	// ── Intensity menu button ─────────────────────────
 	auto *intensity_menu = new QMenu(this);
@@ -424,12 +420,11 @@ void SoundView::createToolBar()
 	auto *intensity_settings_action = intensity_menu->addAction(tr("Intensity settings..."));
 	connect(intensity_settings_action, &QAction::triggered, this, &SoundView::onIntensitySettings);
 
-	auto *intensity_button = new QToolButton(this);
-	intensity_button->setPopupMode(QToolButton::InstantPopup);
-	intensity_button->setIcon(QIcon(":/icons/ear.svg"));
-	intensity_button->setToolTip(tr("Intensity settings"));
-	intensity_button->setMenu(intensity_menu);
-	m_toolbar->addWidget(intensity_button);
+	auto *intensity_action = new QAction(QIcon(":/icons/ear.svg"), tr("Intensity settings"), this);
+	intensity_action->setMenu(intensity_menu);
+	m_toolbar->addAction(intensity_action);
+	if (auto *ib = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(intensity_action)))
+		ib->setPopupMode(QToolButton::InstantPopup);
 
 	m_toolbar->addSeparator();
 
@@ -465,12 +460,11 @@ void SoundView::createToolBar()
 	// Let subclasses (AnnotationView) add their entries.
 	addDisplayMenuEntries(display_menu);
 
-	auto *display_button = new QToolButton(this);
-	display_button->setPopupMode(QToolButton::InstantPopup);
-	display_button->setIcon(QIcon(":/icons/display.svg"));
-	display_button->setToolTip(tr("Display settings"));
-	display_button->setMenu(display_menu);
-	m_toolbar->addWidget(display_button);
+	auto *display_action = new QAction(QIcon(":/icons/display.svg"), tr("Display settings"), this);
+	display_action->setMenu(display_menu);
+	m_toolbar->addAction(display_action);
+	if (auto *db = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(display_action)))
+		db->setPopupMode(QToolButton::InstantPopup);
 	m_toolbar->addSeparator();
 
 	// ── Mouse tracking toggle ─────────────────────────

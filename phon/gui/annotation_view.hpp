@@ -116,7 +116,7 @@ private:
 	QVBoxLayout *m_layer_layout = nullptr;
 
 	// Toolbar actions.
-	QToolButton *m_link_button = nullptr;
+	QAction *m_link_action = nullptr;
 	QAction *m_add_anchor_action = nullptr;
 	QAction *m_remove_anchor_action = nullptr;
 };
