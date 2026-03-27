@@ -602,6 +602,12 @@ void AnnotationView::onAnchorHasMoved(intptr_t layer_index)
 
 void AnnotationView::onAnchorSelected(intptr_t layer_index, double time)
 {
+	if (time < 0)
+	{
+		clearGhostAnchors();
+		return;
+	}
+
 	for (auto *w : m_layers)
 	{
 		if (w->layerIndex() != layer_index)
