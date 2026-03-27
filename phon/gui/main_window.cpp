@@ -165,10 +165,10 @@ QMenu *MainWindow::createAnalysisMenu()
 {
 	auto *menu = new QMenu(tr("&Analysis"), this);
 
-	menu->addAction(tr("Find in annotations..."), QKeySequence(tr("Ctrl+G")),
+	menu->addAction(tr("Find in annotations..."), QKeySequence(tr("Ctrl+Shift+F")),
 		this, &MainWindow::onFindInAnnotations);
 
-	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+Shift+G")),
+	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+L")),
 		this, &MainWindow::onEditLastQuery);
 
 	menu->addSeparator();
