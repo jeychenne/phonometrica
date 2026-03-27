@@ -120,12 +120,12 @@ void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 	connect(m_link_button, &QToolButton::toggled, this, &AnnotationView::onToggleAnchorSharing);
 
 	// Add anchor.
-	m_add_anchor_action = toolbar->addAction(QIcon(":/icons/anchor.svg"), tr("Add anchor"));
+	m_add_anchor_action = toolbar->addAction(QIcon(":/icons/anchor.svg"), tr("Add anchors"));
 	m_add_anchor_action->setCheckable(true);
 	connect(m_add_anchor_action, &QAction::toggled, this, &AnnotationView::onToggleAddAnchor);
 
 	// Remove anchor.
-	m_remove_anchor_action = toolbar->addAction(QIcon(":/icons/eraser.svg"), tr("Remove anchor"));
+	m_remove_anchor_action = toolbar->addAction(QIcon(":/icons/eraser.svg"), tr("Remove anchors"));
 	m_remove_anchor_action->setCheckable(true);
 	connect(m_remove_anchor_action, &QAction::toggled, this, &AnnotationView::onToggleRemoveAnchor);
 
@@ -512,7 +512,7 @@ void AnnotationView::onToggleAnchorSharing(bool checked)
 {
 	// checked == true means "unshared" (broken link icon).
 	if (checked)
-		m_link_button->setIcon(QIcon(":/icons/toggle-right.svg"));
+		m_link_button->setIcon(QIcon(":/icons/unlink.svg"));
 	else
 		m_link_button->setIcon(QIcon(":/icons/link.svg"));
 

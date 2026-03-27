@@ -47,9 +47,9 @@ on **annotation graphs** [BIR2001]_, so annotations are represented as a single 
 between these nodes. This means that an event always "knows" whether it shares an anchor with another event on an another layer: this makes it easy to represent hierarchical 
 structures (e.g. words that contain syllables that contain segments) and alignment (e.g. words that are aligned with their part of speech).
 
-To create one or more anchor(s), click on the ``Add anchor`` button |anchor|. You can then move your cursor anywhere in the layer you want to annotate and a moving anchor will follow
+To create one or more anchor(s), click on the ``Add anchors`` button |anchor|. You can then move your cursor anywhere in the layer you want to annotate and a moving anchor will follow
 the mouse cursor: every time you click on the left button, a new anchor will be added where you click. Once you have added all the anchors you wanted to add, click again on the ``Add
-anchor`` button. To remove one or more anchor(s), click on the ``Remove anchor`` button |remove|, click on the anchors you want to delete to remove them, and click again on the ``Remove 
+anchor`` button. To remove one or more anchor(s), click on the ``Remove anchors`` button |remove|, click on the anchors you want to delete to remove them, and click again on the ``Remove
 anchor`` button to let Phonometrica that you have finished editing anchors.
 
 By default, if you have more than one layer of the same type (i.e. two or more instant layers or two or more interval layers), Phonometrica will add (or remove) an anchor on all the 
