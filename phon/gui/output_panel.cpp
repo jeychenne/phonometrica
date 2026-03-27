@@ -15,6 +15,10 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QTabWidget>
+#include <QFileDialog>
+#include <QFile>
+#include <QTextStream>
+#include <QMessageBox>
 #include <phon/gui/output_panel.hpp>
 
 namespace phonometrica {
@@ -37,6 +41,9 @@ OutputPanel::OutputPanel(QWidget *parent) :
 
 	auto *copy_action = m_toolbar->addAction(QIcon(":/icons/clipboard-copy.svg"), tr("Copy all"));
 	connect(copy_action, &QAction::triggered, this, &OutputPanel::onCopyAll);
+
+	auto *save_action = m_toolbar->addAction(QIcon(":/icons/save.svg"), tr("Save to file..."));
+	connect(save_action, &QAction::triggered, this, &OutputPanel::onSaveToFile);
 
 	auto *clear_action = m_toolbar->addAction(QIcon(":/icons/eraser.svg"), tr("Clear"));
 	connect(clear_action, &QAction::triggered, this, &OutputPanel::clear);
@@ -95,6 +102,19 @@ void OutputPanel::appendText(const QString &text)
 	cursor.movePosition(QTextCursor::End);
 	m_text->setTextCursor(cursor);
 	m_text->ensureCursorVisible();
+
+	// Auto-switch to the Output tab.
+	QWidget *ancestor = parentWidget();
+	while (ancestor)
+	{
+		auto *tabs = qobject_cast<QTabWidget *>(ancestor);
+		if (tabs)
+		{
+			tabs->setCurrentWidget(this);
+			break;
+		}
+		ancestor = ancestor->parentWidget();
+	}
 }
 
 void OutputPanel::clear()
@@ -106,6 +126,27 @@ void OutputPanel::onCopyAll()
 {
 	auto *clipboard = QApplication::clipboard();
 	clipboard->setText(m_text->toPlainText());
+}
+
+void OutputPanel::onSaveToFile()
+{
+	auto path = QFileDialog::getSaveFileName(this, tr("Save output to file"),
+		QStringLiteral("output.txt"),
+		tr("Text files (*.txt);;All files (*)"));
+
+	if (path.isEmpty())
+		return;
+
+	QFile file(path);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+	{
+		QMessageBox::warning(this, tr("Error"),
+			tr("Could not write to file: %1").arg(file.errorString()));
+		return;
+	}
+
+	QTextStream out(&file);
+	out << m_text->toPlainText();
 }
 
 } // namespace phonometrica

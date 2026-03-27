@@ -231,7 +231,7 @@ private:
 	bool m_focused = false;
 	bool m_adding_anchor = false;
 	bool m_removing_anchor = false;
-	bool m_sharing_anchors = true;
+	bool m_sharing_anchors = false;
 
 	// ── Inline editor ────────────────────────────────
 

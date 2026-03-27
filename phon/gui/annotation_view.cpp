@@ -109,10 +109,10 @@ void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 	if (auto *lb = qobject_cast<QToolButton *>(toolbar->widgetForAction(layer_action)))
 		lb->setPopupMode(QToolButton::InstantPopup);
 
-	// Anchor sharing toggle.
-	m_link_action = toolbar->addAction(QIcon(":/icons/link.svg"), tr("Share/unshare anchors"));
+	// Anchor sharing toggle (off by default to avoid surprising new users).
+	m_link_action = toolbar->addAction(QIcon(":/icons/unlink.svg"), tr("Share/unshare anchors"));
 	m_link_action->setCheckable(true);
-	m_link_action->setChecked(false);
+	m_link_action->setChecked(true);
 	connect(m_link_action, &QAction::toggled, this, &AnnotationView::onToggleAnchorSharing);
 
 	// Add anchor.

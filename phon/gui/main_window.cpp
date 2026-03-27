@@ -163,7 +163,7 @@ QMenu *MainWindow::createAnalysisMenu()
 
 QMenu *MainWindow::createToolsMenu()
 {
-	auto *menu = new QMenu(tr("&Tools"), this);
+	auto *menu = new QMenu(tr("&Plugins"), this);
 	menu->addAction(tr("(coming soon)"))->setEnabled(false);
 	return menu;
 }
@@ -177,7 +177,7 @@ QMenu *MainWindow::createWindowMenu()
 	project_action->setChecked(true);
 	connect(project_action, &QAction::toggled, this, &MainWindow::onToggleProjectPanel);
 
-	auto *console_action = menu->addAction(tr("Console"));
+	auto *console_action = menu->addAction(tr("Tools panel"));
 	console_action->setCheckable(true);
 	console_action->setChecked(true);
 	connect(console_action, &QAction::toggled, this, &MainWindow::onToggleConsolePanel);
@@ -275,7 +275,7 @@ void MainWindow::createDockWidgets()
 	addDockWidget(Qt::LeftDockWidgetArea, m_project_dock);
 
 	// Console & Output dock (bottom)
-	m_console_dock = new QDockWidget(tr("Console"), this);
+	m_console_dock = new QDockWidget(tr("Tools"), this);
 	m_console_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
 	auto *bottom_tabs = new QTabWidget(m_console_dock);

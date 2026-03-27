@@ -14,6 +14,7 @@
 #include <QKeyEvent>
 #include <QTextBlock>
 #include <QScrollBar>
+#include <QTabWidget>
 #include <phon/string.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/runtime.hpp>
@@ -204,6 +205,19 @@ void Console::showError(const QString &msg)
 
 	setTextCursor(cursor);
 	goToEnd();
+
+	// Auto-switch to the Console tab so the user doesn't miss the error.
+	QWidget *ancestor = parentWidget();
+	while (ancestor)
+	{
+		auto *tabs = qobject_cast<QTabWidget *>(ancestor);
+		if (tabs)
+		{
+			tabs->setCurrentWidget(this);
+			break;
+		}
+		ancestor = ancestor->parentWidget();
+	}
 }
 
 void Console::addPrompt()

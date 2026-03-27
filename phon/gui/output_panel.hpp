@@ -46,6 +46,7 @@ public:
 private:
 
 	void onCopyAll();
+	void onSaveToFile();
 
 	QPlainTextEdit *m_text;
 	QToolBar *m_toolbar;

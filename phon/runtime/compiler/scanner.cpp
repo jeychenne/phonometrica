@@ -133,6 +133,7 @@ void Scanner::scan_digits()
 
 void Scanner::scan_string(char32_t end)
 {
+    intptr_t start_line = m_line_no;
     skip();
 
     while (m_char != end && m_char != Token::ETX)
@@ -191,9 +192,18 @@ void Scanner::scan_string(char32_t end)
         accept();
     }
 
-    // If we haven't reached the end of the text, ignore string terminating character
+    // If we haven't reached the end of the text, ignore string terminating character.
+    // Otherwise the string is unterminated (we hit ETX before the closing delimiter).
     if (m_char == end)
-    { skip(); }
+    {
+        skip();
+    }
+    else
+    {
+        auto message = utils::format("[Syntax error] File \"%\" at line %\nUnterminated string literal",
+                                     m_source->filename(), start_line);
+        throw RuntimeError(start_line, message);
+    }
 }
 
 

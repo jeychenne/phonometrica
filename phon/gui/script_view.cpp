@@ -21,6 +21,7 @@
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
 #include <phon/gui/console.hpp>
+#include <phon/gui/output_panel.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/macros.hpp>
@@ -180,8 +181,17 @@ void ScriptView::execute()
 	else
 		code = m_editor->text();
 
-	if (m_console)
-		m_console->appendNewLine();
+	// Redirect print output to the Output panel while running a script.
+	// Console output (typed interactively) is unaffected because it goes through Console::runCode.
+	auto oldPrint = m_runtime.print;
+	auto *output = OutputPanel::instance();
+	if (output)
+	{
+		m_runtime.print = [output](const String &s) {
+			auto qs = QString::fromUtf8(s.data(), (int) s.size());
+			output->appendText(qs);
+		};
+	}
 
 	auto bytes = code.toUtf8();
 
@@ -194,23 +204,24 @@ void ScriptView::execute()
 		m_editor->showError(e.line_no());
 		if (m_console)
 		{
+			m_console->appendNewLine();
 			m_console->showError(QString("Error at line %1").arg(e.line_no()));
 			m_console->showError(e.what());
+			m_console->addPrompt();
 		}
 	}
 	catch (std::exception &e)
 	{
 		if (m_console)
 		{
+			m_console->appendNewLine();
 			m_console->showError(e.what());
+			m_console->addPrompt();
 		}
 	}
 
-	if (m_console)
-	{
-		m_console->addPrompt();
-		m_console->scrollToEnd();
-	}
+	// Restore the original print callback.
+	m_runtime.print = oldPrint;
 }
 
 
