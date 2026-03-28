@@ -71,6 +71,14 @@ public:
 
 	bool is_metadata_column(intptr_t col) const;
 
+	bool is_measurement_column(intptr_t col) const;
+
+	bool has_extra_columns() const { return !m_extra_headers.empty(); }
+
+	intptr_t extra_column_count() const { return m_extra_headers.size(); }
+
+	void set_extra_headers(Array<String> headers) { m_extra_headers = std::move(headers); }
+
 	String label() const override;
 
 	void set_label(String value, bool mutate);
@@ -125,6 +133,9 @@ protected:
 
 	// Left and right context
 	Array<std::pair<String,String>> m_context;
+
+	// Extra column headers for acoustic measurements (F1, F2, B1, etc.)
+	Array<String> m_extra_headers;
 
 	String m_label;
 

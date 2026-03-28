@@ -72,6 +72,7 @@ private slots:
 
 	// Analysis menu
 	void onFindInAnnotations();
+	void onMeasureFormants();
 	void onEditLastQuery();
 
 	// View actions (forwarded to active view in the current panel)

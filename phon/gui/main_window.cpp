@@ -28,6 +28,7 @@
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/conc/query_editor.hpp>
+#include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
@@ -173,9 +174,8 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addSeparator();
 
-	// Acoustic query types (Phase 2 — placeholder for now)
-	auto *formant_action = menu->addAction(tr("Measure formants..."));
-	formant_action->setEnabled(false);
+	// Acoustic query types
+	menu->addAction(tr("Measure formants..."), this, &MainWindow::onMeasureFormants);
 
 	auto *pitch_action = menu->addAction(tr("Measure pitch..."));
 	pitch_action->setEnabled(false);
@@ -829,17 +829,9 @@ void MainWindow::onFindInAnnotations()
 	}
 }
 
-void MainWindow::onEditLastQuery()
+void MainWindow::onMeasureFormants()
 {
-	if (!m_last_query)
-	{
-		QMessageBox::information(this, tr("No query"),
-			tr("You must first run a query."));
-		return;
-	}
-
-	auto copy = m_last_query->copy();
-	QueryEditor editor(copy, this);
+	FormantQueryEditor editor(this);
 
 	if (editor.exec() == QDialog::Accepted)
 	{
@@ -855,6 +847,62 @@ void MainWindow::onEditLastQuery()
 		else
 		{
 			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
+void MainWindow::onEditLastQuery()
+{
+	if (!m_last_query)
+	{
+		QMessageBox::information(this, tr("No query"),
+			tr("You must first run a query."));
+		return;
+	}
+
+	auto copy = m_last_query->copy();
+
+	if (m_last_query->is_formant_query())
+	{
+		auto fq = recast<FormantQuery>(copy);
+		FormantQueryEditor editor(fq, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && !conc->empty())
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+	}
+	else
+	{
+		QueryEditor editor(copy, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && !conc->empty())
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
 		}
 	}
 }
@@ -975,22 +1023,48 @@ void MainWindow::onDocumentRequested(Document *doc)
 	if (doc->is<Query>())
 	{
 		auto *query_doc = static_cast<Query *>(doc);
-		QueryEditor editor(Handle<Query>(query_doc), this);
 
-		if (editor.exec() == QDialog::Accepted)
+		if (query_doc->is_formant_query())
 		{
-			m_last_query = editor.query();
-			auto conc = editor.concordance();
+			auto fq = recast<FormantQuery>(Handle<Query>(query_doc));
+			FormantQueryEditor editor(fq, this);
 
-			if (conc && !conc->empty())
+			if (editor.exec() == QDialog::Accepted)
 			{
-				openConcordance(conc);
-				statusBar()->showMessage(
-					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (conc && !conc->empty())
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
 			}
-			else
+		}
+		else
+		{
+			QueryEditor editor(Handle<Query>(query_doc), this);
+
+			if (editor.exec() == QDialog::Accepted)
 			{
-				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (conc && !conc->empty())
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
 			}
 		}
 		return;

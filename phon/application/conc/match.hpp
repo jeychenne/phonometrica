@@ -16,6 +16,7 @@
 #ifndef PHONOMETRICA_MATCH_HPP
 #define PHONOMETRICA_MATCH_HPP
 
+#include <vector>
 #include <phon/application/annotation.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/utils/xml.hpp>
@@ -91,6 +92,10 @@ public:
 	Handle<Bookmark> to_bookmark(intptr_t target, const String &title, const String &notes, std::pair<String, String> context) const;
 
 	Target *get(intptr_t i) const;
+
+	// Optional acoustic measurement data (empty for text-only queries).
+	// Filled by FormantQuery::measure_match() and read by Concordance::get_cell().
+	std::vector<double> measurements;
 
 protected:
 
