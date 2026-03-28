@@ -21,7 +21,9 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -129,6 +131,17 @@ void ConcordanceView::setupUi()
 	if (auto *db = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(display_action)))
 		db->setPopupMode(QToolButton::InstantPopup);
 
+	// ── Right-aligned help button ─────────────────────
+	auto *spacer = new QWidget(this);
+	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	m_toolbar->addWidget(spacer);
+
+	auto *help_action = m_toolbar->addAction(QIcon(":/icons/circle-help.svg"),
+		tr("Help"));
+	connect(help_action, &QAction::triggered, this, [this]() {
+		HelpBrowser::showPage(helpAnchor(), this);
+	});
+
 	layout->addWidget(m_toolbar);
 
 	// ── Count label + active target spinner ────────────
@@ -197,7 +210,7 @@ void ConcordanceView::setupUi()
 QString ConcordanceView::label() const
 {
 	auto lbl = m_conc->label();
-	auto qlabel = QString::fromUtf8(lbl.data(), (int) lbl.size());
+	auto qlabel = tabLabel(QString::fromUtf8(lbl.data(), (int) lbl.size()));
 	if (m_conc->modified())
 		qlabel += QStringLiteral(" *");
 	return qlabel;
@@ -219,9 +232,20 @@ bool ConcordanceView::save()
 
 	if (is_new)
 	{
+		// Offer the current label as candidate filename.
+		auto current_label = QString::fromUtf8(m_conc->label().data(), (int) m_conc->label().size());
+		auto suggested = current_label + QStringLiteral(".phon-conc");
+
 		auto path = QFileDialog::getSaveFileName(this, tr("Save concordance..."),
-			QString(), tr("Concordance (*.phon-conc)"));
+			suggested, tr("Concordance (*.phon-conc)"));
 		if (path.isEmpty()) return false;
+
+		// If the user kept the suggested base name, clear the explicit label
+		// so that the concordance derives it from the filename.
+		auto chosen_base = QFileInfo(path).completeBaseName();
+		if (chosen_base == current_label)
+			m_conc->set_label(String(), false);
+
 		m_conc->set_path(String(path.toUtf8().constData()), true);
 	}
 	// Force the modified flag so Document::save() doesn't skip write().
