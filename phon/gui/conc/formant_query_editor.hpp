@@ -125,7 +125,6 @@ private:
 	// N-point output format
 	QRadioButton *m_wide_radio = nullptr;
 	QRadioButton *m_long_radio = nullptr;
-	QCheckBox *m_series_check = nullptr;
 	QCheckBox *m_average_check = nullptr;
 
 	// Output options
@@ -142,7 +141,6 @@ private:
 	// Buttons
 	QPushButton *m_save_btn = nullptr;
 	QPushButton *m_save_as_btn = nullptr;
-
 
 	static int s_query_id;
 };

@@ -68,6 +68,7 @@ private slots:
 	void onToggleMatchInfo(bool visible);
 	void onToggleContext(bool visible);
 	void onToggleMetadata(bool visible);
+	void onToggleLayout(bool long_format);
 
 private:
 

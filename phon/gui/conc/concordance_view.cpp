@@ -117,13 +117,25 @@ void ConcordanceView::setupUi()
 
 	auto *ctx_action = display_menu->addAction(tr("Context"));
 	ctx_action->setCheckable(true);
-	ctx_action->setChecked(m_show_context);
+	ctx_action->setChecked(m_show_context && m_conc->has_context());
+	ctx_action->setEnabled(m_conc->has_context());
 	ctx_action->setToolTip(tr("Show left and right context"));
 
 	auto *meta_action = display_menu->addAction(tr("Metadata"));
 	meta_action->setCheckable(true);
 	meta_action->setChecked(m_show_metadata);
 	meta_action->setToolTip(tr("Show file description and properties"));
+
+	// Wide/Long toggle — only shown for concordances with n-point measurement data
+	QAction *long_action = nullptr;
+	if (m_conc->has_measurement_data())
+	{
+		display_menu->addSeparator();
+		long_action = display_menu->addAction(tr("Long format (one row per time point)"));
+		long_action->setCheckable(true);
+		long_action->setChecked(m_conc->layout() == Concordance::Layout::Long);
+		long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
+	}
 
 	auto *display_action = new QAction(QIcon(":/icons/display.svg"), tr("Display settings"), this);
 	display_action->setMenu(display_menu);
@@ -203,6 +215,11 @@ void ConcordanceView::setupUi()
 	connect(info_action, &QAction::toggled, this, &ConcordanceView::onToggleMatchInfo);
 	connect(ctx_action, &QAction::toggled, this, &ConcordanceView::onToggleContext);
 	connect(meta_action, &QAction::toggled, this, &ConcordanceView::onToggleMetadata);
+
+	if (long_action)
+	{
+		connect(long_action, &QAction::toggled, this, &ConcordanceView::onToggleLayout);
+	}
 }
 
 // ── View interface ──────────────────────────────────────
@@ -492,6 +509,15 @@ void ConcordanceView::onToggleMetadata(bool visible)
 	updateColumnVisibility();
 }
 
+void ConcordanceView::onToggleLayout(bool long_format)
+{
+	m_conc->set_layout(long_format ? Concordance::Layout::Long : Concordance::Layout::Wide);
+	m_model->refreshAll();
+	updateCountLabel();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+}
+
 void ConcordanceView::updateColumnVisibility()
 {
 	int ncol = m_model->columnCount();
@@ -551,8 +577,20 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 void ConcordanceView::updateCountLabel()
 {
-	auto count = m_conc->row_count();
-	m_count_label->setText(tr("%1 match(es)").arg((int) count));
+	if (m_conc->layout() == Concordance::Layout::Long && m_conc->has_measurement_data())
+	{
+		auto nmatches = m_conc->row_count() / m_conc->measurement_points().size();
+		auto nrows = m_conc->row_count();
+		m_count_label->setText(tr("%1 match(es) \u00d7 %2 point(s) = %3 row(s)")
+			.arg((int) nmatches)
+			.arg((int) m_conc->measurement_points().size())
+			.arg((int) nrows));
+	}
+	else
+	{
+		auto count = m_conc->row_count();
+		m_count_label->setText(tr("%1 match(es)").arg((int) count));
+	}
 }
 
 void ConcordanceView::stopPlayer()

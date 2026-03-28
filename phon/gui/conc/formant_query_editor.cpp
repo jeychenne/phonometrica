@@ -270,26 +270,42 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_npoint_edit->setEnabled(false);
 	m_npoint_edit->setFixedWidth(120);
 	loc_row->addWidget(m_npoint_edit);
-	m_series_check = new QCheckBox(tr("Time series"));
-	m_series_check->setChecked(true);
-	m_series_check->setEnabled(false);
-	m_average_check = new QCheckBox(tr("Average"));
-	m_average_check->setEnabled(false);
-	loc_row->addWidget(m_series_check);
-	loc_row->addWidget(m_average_check);
 	loc_row->addStretch();
 	outer->addLayout(loc_row);
 
-	// Explicit button group so these two don't interfere with parameter selection radios
+	// Explicit button group so these don't interfere with parameter selection radios
 	auto *location_group = new QButtonGroup(this);
 	location_group->addButton(m_midpoint_radio);
 	location_group->addButton(m_npoint_radio);
+
+	// ── Row: output format (only enabled when N-point is selected) ───────
+	auto *fmt_row = new QHBoxLayout;
+	fmt_row->addWidget(new QLabel(tr("Format:")));
+	m_wide_radio = new QRadioButton(tr("Wide (one row per match)"));
+	m_long_radio = new QRadioButton(tr("Long (one row per time point)"));
+	m_wide_radio->setChecked(true);
+	m_wide_radio->setEnabled(false);
+	m_long_radio->setEnabled(false);
+	m_average_check = new QCheckBox(tr("Add average"));
+	m_average_check->setEnabled(false);
+	fmt_row->addWidget(m_wide_radio);
+	fmt_row->addWidget(m_average_check);
+	fmt_row->addSpacing(15);
+	fmt_row->addWidget(m_long_radio);
+	fmt_row->addStretch();
+	outer->addLayout(fmt_row);
+
+	// Explicit button group for Wide/Long (separate from Midpoint/N-point)
+	auto *format_group = new QButtonGroup(this);
+	format_group->addButton(m_wide_radio);
+	format_group->addButton(m_long_radio);
 
 	connect(m_midpoint_radio, &QRadioButton::toggled, this, [this](bool on) {
 		if (on) {
 			m_npoint_edit->clear();
 			m_npoint_edit->setEnabled(false);
-			m_series_check->setEnabled(false);
+			m_wide_radio->setEnabled(false);
+			m_long_radio->setEnabled(false);
 			m_average_check->setEnabled(false);
 		}
 	});
@@ -297,9 +313,13 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 		if (on) {
 			m_npoint_edit->setText("25 50 75");
 			m_npoint_edit->setEnabled(true);
-			m_series_check->setEnabled(true);
-			m_average_check->setEnabled(true);
+			m_wide_radio->setEnabled(true);
+			m_long_radio->setEnabled(true);
+			m_average_check->setEnabled(m_wide_radio->isChecked());
 		}
+	});
+	connect(m_wide_radio, &QRadioButton::toggled, this, [this](bool on) {
+		m_average_check->setEnabled(on && m_npoint_radio->isChecked());
 	});
 
 	// ── Row: output options ──────────────────────────────────────────────
@@ -608,11 +628,20 @@ void FormantQueryEditor::parseQuery()
 	else
 	{
 		m_query->set_method(FormantQuery::Method::NPoint);
-		m_query->set_output_series(m_series_check->isChecked());
-		m_query->set_output_average(m_average_check->isChecked());
 
-		if (!m_series_check->isChecked() && !m_average_check->isChecked()) {
-			throw std::runtime_error("N-point measurement requires at least \"Time series\" or \"Average\"");
+		if (m_long_radio->isChecked())
+		{
+			// Long format: per-point data stored (series), no average columns, long layout
+			m_query->set_output_series(true);
+			m_query->set_output_average(false);
+			m_query->set_initial_layout(Concordance::Layout::Long);
+		}
+		else
+		{
+			// Wide format: per-point columns + optional average
+			m_query->set_output_series(true);
+			m_query->set_output_average(m_average_check->isChecked());
+			m_query->set_initial_layout(Concordance::Layout::Wide);
 		}
 
 		Array<double> points;
@@ -898,8 +927,16 @@ void FormantQueryEditor::loadQuery()
 			pts += QString::number(m_query->measurement_points()[i]);
 		}
 		m_npoint_edit->setText(pts);
-		m_series_check->setChecked(m_query->output_series());
-		m_average_check->setChecked(m_query->output_average());
+
+		if (m_query->initial_layout() == Concordance::Layout::Long)
+		{
+			m_long_radio->setChecked(true);
+		}
+		else
+		{
+			m_wide_radio->setChecked(true);
+			m_average_check->setChecked(m_query->output_average());
+		}
 	}
 	else
 	{
