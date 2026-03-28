@@ -45,7 +45,7 @@ public:
 
 signals:
 
-	void openAnnotation(const Handle<Annotation> &annot, intptr_t layer, double start, double end);
+	void openAnnotation(const Handle<Annotation> &annot, intptr_t layer, double start, double end, bool split);
 
 private slots:
 
@@ -94,6 +94,7 @@ private:
 	bool m_show_match_info = true;
 	bool m_show_context = true;
 	bool m_show_metadata = false;
+	bool m_open_in_split = true;
 };
 
 } // namespace phonometrica

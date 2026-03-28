@@ -39,7 +39,7 @@ ViewHeader::ViewHeader(View *view, QWidget *parent) :
 	layout->addWidget(m_detach_btn);
 
 	m_close_btn = new QToolButton;
-	m_close_btn->setIcon(QIcon(QStringLiteral(":/icons/circle-minus.svg")));
+	m_close_btn->setIcon(QIcon(QStringLiteral(":/icons/circle-x.svg")));
 	m_close_btn->setIconSize(QSize(14, 14));
 	m_close_btn->setAutoRaise(true);
 	m_close_btn->setFixedSize(20, 20);

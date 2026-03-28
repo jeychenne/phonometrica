@@ -1,0 +1,409 @@
+/***********************************************************************************************************************
+ *                                                                                                                     *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
+ *                                                                                                                     *
+ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
+ * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
+ *                                                                                                                     *
+ * Created: 28/03/2026                                                                                                 *
+ *                                                                                                                     *
+ * Purpose: see header.                                                                                                *
+ *                                                                                                                     *
+ ***********************************************************************************************************************/
+
+#include <cmath>
+#include <algorithm>
+#include <complex>
+#include <phon/file.hpp>
+#include <phon/application/spectrum.hpp>
+#include <phon/utils/file_system.hpp>
+#include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
+
+namespace phonometrica {
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Constructors
+// ─────────────────────────────────────────────────────────────────────────────
+
+Spectrum::Spectrum(Directory *parent, String path) :
+	Document(meta::get_class<Spectrum>(), parent, std::move(path))
+{
+}
+
+Spectrum::Spectrum(Directory *parent, const Handle<Sound> &sound, int channel,
+                   double t1, double t2, speech::WindowType window_type,
+                   int zero_padding, double preemph, double max_frequency,
+                   double dynamic_range) :
+	Document(meta::get_class<Spectrum>(), parent, String()),
+	m_sound_path(sound->path()),
+	m_channel(channel),
+	m_window_type(window_type),
+	m_t1(t1), m_t2(t2),
+	m_sample_rate(sound->sample_rate()),
+	m_nyquist(sound->sample_rate() / 2.0),
+	m_peak_dB(-std::numeric_limits<double>::infinity())
+{
+	if (t1 >= t2) {
+		throw error("Spectrum: start time must be less than end time (t1 = %, t2 = %)", t1, t2);
+	}
+	if (t1 < 0) {
+		throw error("Spectrum: start time must be non-negative (t1 = %)", t1);
+	}
+	if (t2 > sound->duration()) {
+		throw error("Spectrum: end time exceeds sound duration (t2 = %, duration = %)", t2, sound->duration());
+	}
+	if (zero_padding < 1) {
+		zero_padding = 1;
+	}
+
+	compute(sound, zero_padding, preemph, max_frequency, dynamic_range);
+	m_loaded = true;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Computation
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double preemph,
+                       double max_frequency, double dynamic_range)
+{
+	// ── Extract audio segment ──────────────────────
+	intptr_t first_sample = sound->time_to_frame(m_t1);
+	intptr_t last_sample = sound->time_to_frame(m_t2);
+
+	// Clamp to valid range (1-based indexing).
+	first_sample = std::max<intptr_t>(first_sample, 1);
+	last_sample = std::min<intptr_t>(last_sample, sound->nframes());
+
+	if (last_sample <= first_sample) {
+		throw error("Spectrum: analysis window is too short");
+	}
+
+	// get_channel returns a 1-based Array<double>.
+	auto segment = sound->get_channel(m_channel, first_sample, last_sample);
+	intptr_t N = segment.size(); // number of samples in the segment
+
+	// ── Pre-emphasis ───────────────────────────────
+	if (preemph > 0.0) {
+		speech::pre_emphasis(segment, m_sample_rate, preemph);
+	}
+
+	// ── Apply window function ──────────────────────
+	auto window = speech::create_window(N, N, m_window_type);
+
+	for (intptr_t i = 1; i <= N; i++) {
+		segment[i] *= window[i];
+	}
+
+	// ── Compute effective bandwidth ────────────────
+	double T = static_cast<double>(N) / m_sample_rate;
+	switch (m_window_type)
+	{
+		case speech::WindowType::Gaussian:
+			m_bandwidth = std::sqrt(2.0 * 12.0 * std::log(2.0)) / (M_PI * T);
+			break;
+		case speech::WindowType::Hann:
+			m_bandwidth = 2.0 / T;
+			break;
+		case speech::WindowType::Hamming:
+			m_bandwidth = 1.81 / T;
+			break;
+		case speech::WindowType::Blackman:
+			m_bandwidth = 2.52 / T;
+			break;
+		case speech::WindowType::Kaiser:
+			m_bandwidth = 2.0 / T;
+			break;
+		default:
+			m_bandwidth = 1.0 / T; // rectangular
+			break;
+	}
+
+	// ── FFT ────────────────────────────────────────
+	m_nfft = next_power_of_two(N) * zero_padding;
+	intptr_t n_bins = m_nfft / 2 + 1;
+	m_freq_resolution = static_cast<double>(m_sample_rate) / m_nfft;
+
+	// Prepare zero-padded input buffer (0-based, for pocketfft).
+	std::vector<double> input(m_nfft, 0.0);
+	for (intptr_t i = 0; i < N; i++) {
+		input[i] = segment[i + 1]; // copy from 1-based Array
+	}
+
+	std::vector<std::complex<double>> output(n_bins, std::complex<double>(0, 0));
+
+	pocketfft::shape_t shape{static_cast<size_t>(m_nfft)};
+	pocketfft::stride_t stride_in{sizeof(double)};
+	pocketfft::stride_t stride_out{sizeof(std::complex<double>)};
+	pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
+	               input.data(), output.data(), 1.0);
+
+	// ── Power spectrum (dB) ────────────────────────
+	double norm = static_cast<double>(m_sample_rate) * N;
+	constexpr double epsilon = 1e-300;
+
+	if (max_frequency <= 0 || max_frequency > m_nyquist) {
+		max_frequency = m_nyquist;
+	}
+	m_max_freq = max_frequency;
+
+	intptr_t max_bin = static_cast<intptr_t>(std::ceil(max_frequency / m_freq_resolution));
+	max_bin = std::min(max_bin, n_bins - 1);
+
+	m_power_dB.resize(max_bin + 1);
+
+	for (intptr_t k = 0; k <= max_bin; k++)
+	{
+		double re = output[k].real();
+		double im = output[k].imag();
+		double power = (re * re + im * im) / norm;
+
+		// DC and Nyquist bins are not doubled; all others are (one-sided spectrum).
+		if (k > 0 && k < n_bins - 1) {
+			power *= 2.0;
+		}
+
+		double dB = 10.0 * std::log10(std::max(power, epsilon));
+		m_power_dB[k] = dB;
+
+		if (dB > m_peak_dB) {
+			m_peak_dB = dB;
+		}
+	}
+
+	// ── Dynamic range clamping ─────────────────────
+	if (dynamic_range > 0 && std::isfinite(m_peak_dB))
+	{
+		m_floor_dB = m_peak_dB - dynamic_range;
+		for (auto &dB : m_power_dB) {
+			if (dB < m_floor_dB) {
+				dB = m_floor_dB;
+			}
+		}
+	}
+	else
+	{
+		m_floor_dB = m_peak_dB;
+		for (auto dB : m_power_dB) {
+			if (dB < m_floor_dB) {
+				m_floor_dB = dB;
+			}
+		}
+	}
+}
+
+
+intptr_t Spectrum::next_power_of_two(intptr_t n)
+{
+	if (n <= 0) return 1;
+
+	intptr_t p = 1;
+	while (p < n) {
+		p <<= 1;
+	}
+	return p;
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Serialization
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// File format (.phon-spectrum) — plain text, UTF-8:
+//
+//   [header]
+//   sound_path = /path/to/sound.wav
+//   channel = 1
+//   t1 = 0.5000
+//   t2 = 0.5300
+//   sample_rate = 44100
+//   nfft = 2048
+//   max_frequency = 22050.0
+//   bandwidth = 43.27
+//   window_type = Gaussian
+//   peak_dB = -12.34
+//   floor_dB = -82.34
+//   bin_count = 1025
+//
+//   [data]
+//   -82.34
+//   -78.12
+//   ...
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Spectrum::write()
+{
+	File file(m_path, File::Write, Encoding::Utf8);
+
+	file.write_line("[header]");
+	file.write_line(String::format("sound_path = %s", m_sound_path.data()));
+	file.write_line(String::format("channel = %d", m_channel));
+	file.write_line(String::format("t1 = %.10f", m_t1));
+	file.write_line(String::format("t2 = %.10f", m_t2));
+	file.write_line(String::format("sample_rate = %d", m_sample_rate));
+	file.write_line(String::format("nfft = %td", m_nfft));
+	file.write_line(String::format("max_frequency = %.6f", m_max_freq));
+	file.write_line(String::format("freq_resolution = %.10f", m_freq_resolution));
+	file.write_line(String::format("bandwidth = %.6f", m_bandwidth));
+	file.write_line(String::format("nyquist = %.6f", m_nyquist));
+	file.write_line(String::format("window_type = %s", window_type_to_string(m_window_type).data()));
+	file.write_line(String::format("peak_dB = %.10f", m_peak_dB));
+	file.write_line(String::format("floor_dB = %.10f", m_floor_dB));
+	file.write_line(String::format("bin_count = %td", static_cast<intptr_t>(m_power_dB.size())));
+	file.write_line("");
+	file.write_line("[data]");
+
+	for (auto dB : m_power_dB) {
+		file.write_line(String::format("%.10f", dB));
+	}
+
+	file.close();
+}
+
+void Spectrum::load()
+{
+	File file(m_path, File::Read, Encoding::Utf8);
+	bool in_header = false;
+	bool in_data = false;
+	intptr_t expected_bins = 0;
+
+	auto lines = file.read_lines();
+
+	for (intptr_t i = 1; i <= lines.size(); i++)
+	{
+		auto line = lines[i].trimmed();
+
+		if (line.empty()) continue;
+
+		if (line == "[header]") {
+			in_header = true;
+			in_data = false;
+			continue;
+		}
+		if (line == "[data]") {
+			in_header = false;
+			in_data = true;
+			m_power_dB.clear();
+			if (expected_bins > 0) {
+				m_power_dB.reserve(expected_bins);
+			}
+			continue;
+		}
+
+		if (in_header)
+		{
+			auto eq = line.find('=');
+			if (eq < 0) continue;
+
+			auto key = line.left(eq).trimmed();
+			auto val = line.right(line.size() - eq - 1).trimmed();
+
+			if (key == "sound_path")           m_sound_path = val;
+			else if (key == "channel")         m_channel = std::stoi(std::string(val.data(), val.size()));
+			else if (key == "t1")              m_t1 = std::stod(std::string(val.data(), val.size()));
+			else if (key == "t2")              m_t2 = std::stod(std::string(val.data(), val.size()));
+			else if (key == "sample_rate")     m_sample_rate = std::stoi(std::string(val.data(), val.size()));
+			else if (key == "nfft")            m_nfft = std::stoll(std::string(val.data(), val.size()));
+			else if (key == "max_frequency")   m_max_freq = std::stod(std::string(val.data(), val.size()));
+			else if (key == "freq_resolution") m_freq_resolution = std::stod(std::string(val.data(), val.size()));
+			else if (key == "bandwidth")       m_bandwidth = std::stod(std::string(val.data(), val.size()));
+			else if (key == "nyquist")         m_nyquist = std::stod(std::string(val.data(), val.size()));
+			else if (key == "window_type")     m_window_type = string_to_window_type(val);
+			else if (key == "peak_dB")         m_peak_dB = std::stod(std::string(val.data(), val.size()));
+			else if (key == "floor_dB")        m_floor_dB = std::stod(std::string(val.data(), val.size()));
+			else if (key == "bin_count")        expected_bins = std::stoll(std::string(val.data(), val.size()));
+		}
+		else if (in_data)
+		{
+			double dB = std::stod(std::string(line.data(), line.size()));
+			m_power_dB.push_back(dB);
+		}
+	}
+
+	if (m_power_dB.empty()) {
+		throw error("Spectrum file '%' contains no data", m_path);
+	}
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Window type string conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+String Spectrum::window_type_to_string(speech::WindowType wt)
+{
+	switch (wt)
+	{
+		case speech::WindowType::Bartlett:    return "Bartlett";
+		case speech::WindowType::Blackman:    return "Blackman";
+		case speech::WindowType::Gaussian:    return "Gaussian";
+		case speech::WindowType::Hamming:     return "Hamming";
+		case speech::WindowType::Hann:        return "Hann";
+		case speech::WindowType::Kaiser:      return "Kaiser";
+		case speech::WindowType::Rectangular: return "Rectangular";
+	}
+	return "Gaussian";
+}
+
+speech::WindowType Spectrum::string_to_window_type(const String &s)
+{
+	if (s == "Bartlett")    return speech::WindowType::Bartlett;
+	if (s == "Blackman")    return speech::WindowType::Blackman;
+	if (s == "Gaussian")    return speech::WindowType::Gaussian;
+	if (s == "Hamming")     return speech::WindowType::Hamming;
+	if (s == "Hann")        return speech::WindowType::Hann;
+	if (s == "Kaiser")      return speech::WindowType::Kaiser;
+	if (s == "Rectangular") return speech::WindowType::Rectangular;
+
+	return speech::WindowType::Gaussian; // safe default
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Scripting runtime registration
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Spectrum::initialize(Runtime &rt)
+{
+	auto spectrum_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &spec = cast<Spectrum>(args[0]);
+		auto &key = cast<String>(args[1]);
+		if (key == "path") {
+			return spec.path();
+		}
+		else if (key == "bin_count") {
+			return spec.bin_count();
+		}
+		else if (key == "sample_rate") {
+			return intptr_t(spec.sample_rate());
+		}
+		else if (key == "bandwidth") {
+			return spec.bandwidth();
+		}
+		else if (key == "max_frequency") {
+			return spec.max_frequency();
+		}
+		else if (key == "start_time") {
+			return spec.start_time();
+		}
+		else if (key == "end_time") {
+			return spec.end_time();
+		}
+		else if (key == "peak_dB") {
+			return spec.peak_dB();
+		}
+		else if (key == "floor_dB") {
+			return spec.floor_dB();
+		}
+		throw error("[Index error] Spectrum type has no member named \"%\"", key);
+	};
+
+#define CLS(T) phonometrica::get_class<T>()
+	auto cls = CLS(Spectrum);
+	cls->add_method(rt.get_field_string, spectrum_get_field, { CLS(Spectrum), CLS(String) });
+#undef CLS
+}
+
+} // namespace phonometrica
