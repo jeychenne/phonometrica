@@ -33,10 +33,12 @@ class Runtime;
 class Project;
 class FileManager;
 class Document;
+class Annotation;
 class View;
 class ViewPanel;
 class InfoPanel;
 class ConcordanceView;
+class AnnotationView;
 
 class MainWindow : public QMainWindow
 {
@@ -119,6 +121,12 @@ private:
 
 	// Open a concordance in a new tab and wire its signals.
 	void openConcordance(Handle<Concordance> conc);
+
+	// Create an AnnotationView with progress feedback. Returns nullptr on failure.
+	AnnotationView *createAnnotationView(const Handle<Annotation> &annot);
+
+	// Find the ViewPanel that contains a given View, or nullptr.
+	ViewPanel *findPanelForView(View *view) const;
 
 	// Returns the ViewPanel in the current tab (or nullptr).
 	ViewPanel *currentPanel() const;

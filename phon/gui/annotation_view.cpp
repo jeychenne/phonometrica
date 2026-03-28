@@ -40,7 +40,7 @@ AnnotationView::AnnotationView(const Handle<Annotation> &annot, QWidget *parent)
 QString AnnotationView::label() const
 {
 	auto lbl = m_annot->label();
-	auto qlbl = QString::fromUtf8(lbl.data(), (int) lbl.size());
+	auto qlbl = tabLabel(QString::fromUtf8(lbl.data(), (int) lbl.size()));
 	if (m_annot->content_modified())
 		qlbl += QStringLiteral(" *");
 	return qlbl;

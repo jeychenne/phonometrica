@@ -21,6 +21,7 @@
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
 #include <phon/gui/console.hpp>
+#include <phon/gui/help_browser.hpp>
 #include <phon/gui/output_panel.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/project.hpp>
@@ -105,6 +106,17 @@ void ScriptView::setupUi()
 	auto *uncomment_action = m_toolbar->addAction(QIcon(":/icons/toggle-right.svg"),
 		tr("Uncomment line or selection"));
 	connect(uncomment_action, &QAction::triggered, this, &ScriptView::onUncommentSelection);
+
+	// ── Right-aligned help button ─────────────────────
+	auto *spacer = new QWidget(this);
+	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	m_toolbar->addWidget(spacer);
+
+	auto *help_action = m_toolbar->addAction(QIcon(":/icons/circle-help.svg"),
+		tr("Help"));
+	connect(help_action, &QAction::triggered, this, [this]() {
+		HelpBrowser::showPage(helpAnchor(), this);
+	});
 
 	layout->addWidget(m_toolbar);
 
@@ -253,7 +265,7 @@ void ScriptView::discardChanges()
 QString ScriptView::label() const
 {
 	auto lbl = m_script->label();
-	auto qlbl = QString::fromUtf8(lbl.data(), (int) lbl.size());
+	auto qlbl = tabLabel(QString::fromUtf8(lbl.data(), (int) lbl.size()));
 	if (m_script->modified())
 		qlbl += QStringLiteral(" *");
 	return qlbl;

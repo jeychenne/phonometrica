@@ -48,6 +48,8 @@ public:
 	void undo() override;
 	void redo() override;
 
+	QString helpAnchor() const override { return QStringLiteral("scripting/index"); }
+
 	// ── Script-specific ────────────────────────────────
 
 	Handle<Script> script() const { return m_script; }

@@ -68,6 +68,7 @@ Topics
    sound
    annotation
    query
+   concordance
    scripting/index
    scripting/plugins
    License <about/license>

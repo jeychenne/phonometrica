@@ -635,7 +635,7 @@ QFrame *SoundView::createSeparator()
 QString SoundView::label() const
 {
 	auto lbl = m_sound->label();
-	return QString::fromUtf8(lbl.data(), (int) lbl.size());
+	return tabLabel(QString::fromUtf8(lbl.data(), (int) lbl.size()));
 }
 
 String SoundView::path() const
