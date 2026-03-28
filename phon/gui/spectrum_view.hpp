@@ -18,6 +18,7 @@
 #include <QDialog>
 #include <QLabel>
 #include <QPixmap>
+#include <QToolBar>
 #include <phon/application/spectrum.hpp>
 
 namespace phonometrica {
@@ -43,9 +44,19 @@ protected:
 	void mouseMoveEvent(QMouseEvent *event) override;
 	void leaveEvent(QEvent *event) override;
 
+private slots:
+
+	void onSavePNG();
+	void onSavePDF();
+	void onSaveSVG();
+
 private:
 
 	void rebuildCache();
+
+	/// Render the full plot (background, axes, curve — no crosshair) into
+	/// the given painter at the specified logical dimensions.
+	void renderPlot(QPainter &p, int w, int h);
 
 	// ── Coordinate mapping ───────────────────────
 	double frequencyToX(double hz) const;
@@ -63,10 +74,10 @@ private:
 	int plotWidth() const;
 	int plotHeight() const;
 
-	// Draw axis ticks and labels.
-	void drawAxes(QPainter &p);
-
 	Handle<Spectrum> m_spectrum;
+
+	// Toolbar with export actions.
+	QToolBar *m_toolbar = nullptr;
 
 	// Cached rendering of the spectrum curve.
 	QPixmap m_cache;

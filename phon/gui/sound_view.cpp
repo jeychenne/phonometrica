@@ -21,6 +21,7 @@
 #include <QLineEdit>
 #include <QDialogButtonBox>
 #include <phon/gui/sound_view.hpp>
+#include <phon/gui/spectrum_view.hpp>
 #include <phon/gui/time_axis_widget.hpp>
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
@@ -349,11 +350,15 @@ void SoundView::createToolBar()
 	m_show_spectrogram_action->setCheckable(true);
 	m_show_spectrogram_action->setChecked(false);
 	connect(m_show_spectrogram_action, &QAction::toggled, this, &SoundView::onToggleSpectrogram);
+	spectrum_menu->addSeparator();
 
+	auto *view_spectrum_action = spectrum_menu->addAction(tr("View FFT spectrum"));
+	connect(view_spectrum_action, &QAction::triggered, this, &SoundView::onViewSpectralSlice);
 	spectrum_menu->addSeparator();
 
 	auto *spectrogram_settings_action = spectrum_menu->addAction(tr("Spectrogram settings..."));
 	connect(spectrogram_settings_action, &QAction::triggered, this, &SoundView::onSpectrogramSettings);
+	spectrum_menu->addSeparator();
 
 	auto *spectrum_action = new QAction(QIcon(":/icons/spectrum.svg"), tr("Spectrogram settings"), this);
 	spectrum_action->setMenu(spectrum_menu);
@@ -776,6 +781,114 @@ void SoundView::onSpectrogramSettings()
 			sg->readSettings();
 			sg->update();
 		}
+	}
+}
+
+void SoundView::onViewSpectralSlice()
+{
+	using namespace speech;
+
+	double t1, t2;
+
+	if (m_model->hasSpanSelection())
+	{
+		t1 = m_model->selectionStart();
+		t2 = m_model->selectionEnd();
+	}
+	else if (m_model->hasPointSelection())
+	{
+		// Cursor at a single time point: ask the user for an analysis window duration.
+		double cursor = m_model->selectionStart();
+
+		// Default to the spectrogram window length.
+		double default_dur = 0.005;
+		try { default_dur = Settings::get_number("spectrogram", "window_size"); }
+		catch (...) {}
+
+		QDialog dlg(this);
+		dlg.setWindowTitle(tr("FFT window duration"));
+		dlg.setMinimumWidth(280);
+
+		auto *layout = new QVBoxLayout(&dlg);
+		layout->addWidget(new QLabel(
+			tr("Window duration (seconds), centered at %1 s:").arg(cursor, 0, 'f', 4)));
+		auto *edit = new QLineEdit(QString::number(default_dur, 'f', 4), &dlg);
+		layout->addWidget(edit);
+		layout->addStretch();
+		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+		layout->addWidget(buttons);
+		connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+		connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+		connect(edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+		if (dlg.exec() != QDialog::Accepted)
+			return;
+
+		bool ok;
+		double dur = edit->text().toDouble(&ok);
+		if (!ok || dur <= 0)
+		{
+			QMessageBox::critical(this, tr("FFT spectrum"),
+				tr("Invalid window duration."));
+			return;
+		}
+
+		double half = dur / 2.0;
+		t1 = cursor - half;
+		t2 = cursor + half;
+
+		// Clamp to the sound boundaries.
+		if (t1 < 0) { t2 -= t1; t1 = 0; }
+		if (t2 > m_sound->duration()) { t1 -= (t2 - m_sound->duration()); t2 = m_sound->duration(); }
+		if (t1 < 0) t1 = 0;
+	}
+	else
+	{
+		QMessageBox::warning(this, tr("FFT spectrum"),
+			tr("Please select a portion of the signal or place the cursor first."));
+		return;
+	}
+
+	// Read analysis parameters from spectrogram settings.
+	WindowType window_type = WindowType::Gaussian;
+	double preemph = 50.0;
+	double max_freq = 0.0;
+	double dynamic_range = 70.0;
+
+	try
+	{
+		String category("spectrogram");
+		preemph = Settings::get_number(category, "preemphasis_threshold");
+		dynamic_range = Settings::get_number(category, "dynamic_range");
+		max_freq = Settings::get_number(category, "frequency_range");
+
+		String win = Settings::get_string(category, "window_type");
+		if (win == "Bartlett")        window_type = WindowType::Bartlett;
+		else if (win == "Blackman")   window_type = WindowType::Blackman;
+		else if (win == "Gaussian")   window_type = WindowType::Gaussian;
+		else if (win == "Hamming")    window_type = WindowType::Hamming;
+		else if (win == "Hann")       window_type = WindowType::Hann;
+		else if (win == "Rectangular") window_type = WindowType::Rectangular;
+	}
+	catch (...) {}
+
+	// Use the first visible channel (or 0 = average if showing the average).
+	int channel = 0;
+	if (!m_show_average && !m_visible_channels.empty())
+		channel = m_visible_channels.front();
+
+	try
+	{
+		auto spec = make_handle<Spectrum>(nullptr, m_sound, channel, t1, t2,
+			window_type, 2, preemph, max_freq, dynamic_range);
+		auto *view = new SpectrumView(spec, this);
+		view->setAttribute(Qt::WA_DeleteOnClose);
+		view->show();
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("FFT spectrum"),
+			QString::fromUtf8(e.what()));
 	}
 }
 

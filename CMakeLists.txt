@@ -250,7 +250,7 @@ if(WITH_GUI)
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTORCC ON)
 
-    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets Svg PrintSupport)
 
     # QScintilla (Qt wrapper for the Scintilla editor component).
     # Try pkg-config first, then fall back to a manual search.
@@ -282,7 +282,7 @@ if(WITH_GUI)
 
     set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets ${QSCINTILLA_LIBRARIES})
+    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets Qt6::Svg Qt6::PrintSupport ${QSCINTILLA_LIBRARIES})
 endif()
 
 
