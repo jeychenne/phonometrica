@@ -91,6 +91,14 @@ signals:
 
 protected:
 
+	// Strip the file extension from a document label for tab display.
+	// E.g. "my_query.phon-conc" → "my_query".
+	static QString tabLabel(const QString &name)
+	{
+		int dot = name.lastIndexOf(QLatin1Char('.'));
+		return (dot > 0) ? name.left(dot) : name;
+	}
+
 	CommandProcessor m_commands;
 };
 

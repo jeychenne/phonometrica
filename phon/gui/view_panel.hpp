@@ -9,6 +9,7 @@
  *                                                                                                                     *
  * Purpose: Container widget that sits in the QTabWidget and manages one or more Views.                                *
  *          Supports splitting (via QSplitter) to show multiple views side by side.                                    *
+ *          Each view is wrapped in a "slot" widget containing an optional ViewHeader.                                 *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -20,6 +21,8 @@
 #include <phon/gui/view.hpp>
 
 namespace phonometrica {
+
+class ViewHeader;
 
 class ViewPanel : public QWidget
 {
@@ -34,7 +37,7 @@ public:
 
 	// ── View access ────────────────────────────────────
 
-	// The first view added to the panel.
+	// The first view added to the panel (defines the tab label).
 	View *primaryView() const;
 
 	// The view that currently has keyboard focus (or primary if none focused).
@@ -48,9 +51,8 @@ public:
 
 	// ── Splitting ──────────────────────────────────────
 
-	// Add a view to the panel, splitting along the given orientation.
-	// The new view is placed below (Vertical) or to the right (Horizontal).
-	void addView(View *view, Qt::Orientation orientation = Qt::Vertical);
+	// Add a view to the panel (placed to the right of existing views).
+	void addView(View *view, Qt::Orientation orientation = Qt::Horizontal);
 
 	// Remove a view from the panel and delete it.
 	// If this was the last view, the panel emits lastViewClosed().
@@ -89,6 +91,21 @@ protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+
+	// Create a slot widget (QWidget with VBoxLayout: ViewHeader + View).
+	QWidget *createSlot(View *view, bool isPrimary);
+
+	// Extract the View from a slot widget.
+	static View *viewFromSlot(QWidget *slot);
+
+	// Extract the ViewHeader from a slot widget.
+	static ViewHeader *headerFromSlot(QWidget *slot);
+
+	// Find the slot widget that contains a given view.
+	QWidget *slotForView(View *view) const;
+
+	// Show or hide all headers based on whether the panel is split.
+	void updateHeaders();
 
 	void trackView(View *view);
 	void untrackView(View *view);

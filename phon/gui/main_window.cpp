@@ -959,30 +959,9 @@ void MainWindow::onDocumentRequested(Document *doc)
 			return;
 		}
 
-		statusBar()->showMessage(tr("Loading %1...").arg(qlabel));
-		m_progress_bar->setValue(0);
-		m_progress_bar->setVisible(true);
-		QApplication::setOverrideCursor(Qt::WaitCursor);
-		QApplication::processEvents();
-
-		auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
-			m_progress_bar->setMaximum(max);
-			QApplication::processEvents();
-		});
-
-		auto conn2 = Sound::update_loading.connect([this](int value) {
-			m_progress_bar->setValue(value);
-			QApplication::processEvents();
-		});
-
-		auto *view = new AnnotationView(Handle<Annotation>(annot));
-		addViewTab(view);
-
-		conn1.disconnect();
-		conn2.disconnect();
-		QApplication::restoreOverrideCursor();
-		m_progress_bar->setVisible(false);
-		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		auto *view = createAnnotationView(Handle<Annotation>(annot));
+		if (view)
+			addViewTab(view);
 		return;
 	}
 
@@ -1110,6 +1089,19 @@ ViewPanel *MainWindow::addViewTab(View *view)
 		m_file_manager->refresh();
 	});
 
+	// When a view is detached from a split, wrap it in its own tab.
+	connect(panel, &ViewPanel::viewDetached, this, [this](View *detached) {
+		addViewTab(detached);
+	});
+
+	// If the last view is removed from a split, close the (now empty) tab.
+	connect(panel, &ViewPanel::lastViewClosed, this, [this, panel]() {
+		int index = m_viewer->indexOf(panel);
+		if (index >= 0)
+			m_viewer->removeTab(index);
+		panel->deleteLater();
+	});
+
 	// Keep undo/redo actions in sync with the view's command processor.
 	connect(view, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
 
@@ -1130,26 +1122,118 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 	auto *view = new ConcordanceView(conc);
 
 	connect(view, &ConcordanceView::openAnnotation,
-		this, [this](const Handle<Annotation> &annot, intptr_t layer, double start, double end)
+		this, [this, view](const Handle<Annotation> &annot, intptr_t layer, double start, double end)
 	{
-		// Open the annotation in a tab (or bring it to front if already open).
-		onDocumentRequested(annot.get());
+		// Find the panel that contains this concordance view.
+		auto *panel = findPanelForView(view);
+		if (!panel)
+			return;
 
-		// Find the AnnotationView in the current tab and navigate to the match.
-		if (auto *panel = currentPanel())
+		// Check if this annotation is already in the same panel.
+		AnnotationView *av = nullptr;
+		for (auto *v : panel->views())
 		{
-			for (auto *v : panel->views())
+			auto *candidate = qobject_cast<AnnotationView *>(v);
+			if (candidate && candidate->path() == annot->path())
 			{
-				if (auto *av = qobject_cast<AnnotationView *>(v))
-				{
-					av->openSelection(layer, start, end);
-					break;
-				}
+				av = candidate;
+				break;
 			}
+		}
+
+		if (!av)
+		{
+			// Check if this annotation is open in another tab.
+			for (int i = 0; i < m_viewer->count(); i++)
+			{
+				auto *other = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+				if (!other || other == panel)
+					continue;
+
+				for (auto *v : other->views())
+				{
+					auto *candidate = qobject_cast<AnnotationView *>(v);
+					if (candidate && candidate->path() == annot->path())
+					{
+						// Detach from the other panel and move here.
+						other->detachView(candidate);
+						panel->addView(candidate, Qt::Horizontal);
+						av = candidate;
+						break;
+					}
+				}
+				if (av) break;
+			}
+		}
+
+		if (!av)
+		{
+			// Create a new AnnotationView and add it to the concordance's panel.
+			av = createAnnotationView(annot);
+			if (av)
+			{
+				connect(av, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
+				panel->addView(av, Qt::Horizontal);
+			}
+		}
+
+		if (av)
+		{
+			av->openSelection(layer, start, end);
+			m_viewer->setCurrentWidget(panel);
 		}
 	});
 
 	addViewTab(view);
+}
+
+AnnotationView *MainWindow::createAnnotationView(const Handle<Annotation> &annot)
+{
+	auto label = annot->label();
+	auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
+
+	statusBar()->showMessage(tr("Loading %1...").arg(qlabel));
+	m_progress_bar->setValue(0);
+	m_progress_bar->setVisible(true);
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	QApplication::processEvents();
+
+	auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
+		m_progress_bar->setMaximum(max);
+		QApplication::processEvents();
+	});
+
+	auto conn2 = Sound::update_loading.connect([this](int value) {
+		m_progress_bar->setValue(value);
+		QApplication::processEvents();
+	});
+
+	auto *view = new AnnotationView(annot);
+
+	conn1.disconnect();
+	conn2.disconnect();
+	QApplication::restoreOverrideCursor();
+	m_progress_bar->setVisible(false);
+	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+
+	return view;
+}
+
+ViewPanel *MainWindow::findPanelForView(View *view) const
+{
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel)
+			continue;
+
+		for (auto *v : panel->views())
+		{
+			if (v == view)
+				return panel;
+		}
+	}
+	return nullptr;
 }
 
 ViewPanel *MainWindow::currentPanel() const
