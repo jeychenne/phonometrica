@@ -366,6 +366,7 @@ void SoundView::createToolBar()
 	if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(spectrum_action)))
 		sb->setPopupMode(QToolButton::InstantPopup);
 
+
 	// ── Formant menu button ──────────────────────────
 	auto *formant_menu = new QMenu(this);
 

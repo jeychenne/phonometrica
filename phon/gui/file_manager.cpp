@@ -176,7 +176,7 @@ void FileManager::setupUi()
 	connect(m_tree, &QTreeView::doubleClicked, this, &FileManager::onDoubleClicked);
 
 	// Selection changes
-	connect(m_tree->selectionModel(), &QItemSelectionModel::currentChanged,
+	connect(m_tree->selectionModel(), &QItemSelectionModel::selectionChanged,
 	        this, [this]() { onSelectionChanged(); });
 
 	layout->addWidget(m_tree);
@@ -407,8 +407,8 @@ void FileManager::onContextMenu(const QPoint &pos)
 				menu.addSeparator();
 				menu.addAction(tr("Bind annotation to sound file"), [this, annot, sound]() {
 					annot->set_sound(Handle<Sound>(sound));
-					QMessageBox::information(this, tr("Binding"),
-						tr("Annotation is now bound to the selected sound file."));
+					// Refresh the info panel by re-emitting the selection.
+					onSelectionChanged();
 				});
 			}
 		}
@@ -448,11 +448,18 @@ void FileManager::onContextMenu(const QPoint &pos)
 
 void FileManager::onSelectionChanged()
 {
-	auto proxyIndex = m_tree->currentIndex();
-	Element *elem = nullptr;
-	if (proxyIndex.isValid())
-		elem = m_model->elementFromIndex(toSource(proxyIndex));
-	emit selectionChanged(elem);
+	QList<Document*> docs;
+	auto proxyIndexes = m_tree->selectionModel()->selectedIndexes();
+
+	for (auto &pi : proxyIndexes)
+	{
+		auto si = toSource(pi);
+		auto *elem = m_model->elementFromIndex(si);
+		if (auto *doc = dynamic_cast<Document *>(elem))
+			docs.append(doc);
+	}
+
+	emit selectionChanged(docs);
 }
 
 void FileManager::onFilterTextChanged(const QString &text)

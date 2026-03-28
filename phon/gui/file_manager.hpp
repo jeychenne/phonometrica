@@ -87,7 +87,7 @@ signals:
 	void bookmarkRequested(TimeStamp *bookmark);
 
 	// Emitted when the selection changes.
-	void selectionChanged(Element *elem);
+	void selectionChanged(QList<Document*> docs);
 
 protected:
 

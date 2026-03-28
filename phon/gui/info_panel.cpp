@@ -48,6 +48,7 @@ void InfoPanel::setupUi()
 
 	m_empty_page_index = m_stack->addWidget(createEmptyPage());
 	m_single_page_index = m_stack->addWidget(createSingleFilePage());
+	m_multi_page_index = m_stack->addWidget(createMultiFilePage());
 }
 
 QWidget *InfoPanel::createEmptyPage()
@@ -191,30 +192,152 @@ QWidget *InfoPanel::createSingleFilePage()
 	return page;
 }
 
+QWidget *InfoPanel::createMultiFilePage()
+{
+	auto *page = new QWidget;
+	auto *layout = new QVBoxLayout(page);
+	layout->setContentsMargins(8, 8, 8, 8);
+	layout->setSpacing(6);
+
+	QFont bold;
+	bold.setBold(true);
+
+	// ── Header ───────────────────────────────────
+	m_multi_header = new QLabel;
+	m_multi_header->setFont(bold);
+	m_multi_header->setWordWrap(true);
+	layout->addWidget(m_multi_header);
+
+	// ── Properties table ─────────────────────────
+	auto *prop_label = new QLabel(tr("Properties:"));
+	prop_label->setFont(bold);
+	layout->addWidget(prop_label);
+
+	m_multi_prop_table = new QTableWidget(0, 4, page);
+	m_multi_prop_table->setHorizontalHeaderLabels({tr("Type"), tr("Category"), tr("Value"), tr("Coverage")});
+	m_multi_prop_table->horizontalHeader()->setStretchLastSection(true);
+	m_multi_prop_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	m_multi_prop_table->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_multi_prop_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_multi_prop_table->setMinimumHeight(120);
+	m_multi_prop_table->verticalHeader()->hide();
+	layout->addWidget(m_multi_prop_table);
+
+	auto *btn_row = new QHBoxLayout;
+	m_multi_add_prop_btn = new QPushButton(QIcon(":/icons/circle-plus.svg"), QString());
+	m_multi_add_prop_btn->setFixedWidth(32);
+	m_multi_add_prop_btn->setToolTip(tr("Add property to all selected files"));
+	m_multi_remove_prop_btn = new QPushButton(QIcon(":/icons/circle-minus.svg"), QString());
+	m_multi_remove_prop_btn->setFixedWidth(32);
+	m_multi_remove_prop_btn->setToolTip(tr("Remove property from all selected files"));
+	m_multi_remove_prop_btn->setEnabled(false);
+	btn_row->addWidget(m_multi_add_prop_btn);
+	btn_row->addWidget(m_multi_remove_prop_btn);
+	btn_row->addStretch();
+	layout->addLayout(btn_row);
+	connect(m_multi_add_prop_btn, &QPushButton::clicked, this, &InfoPanel::onAddProperty);
+	connect(m_multi_remove_prop_btn, &QPushButton::clicked, this, &InfoPanel::onRemoveProperty);
+	connect(m_multi_prop_table, &QTableWidget::itemSelectionChanged, this, [this]() {
+		m_multi_remove_prop_btn->setEnabled(m_multi_prop_table->currentRow() >= 0);
+	});
+
+	// ── Property editor ──────────────────────────
+	auto *editor_group = new QGroupBox(tr("Edit property"), page);
+	auto *editor_layout = new QFormLayout(editor_group);
+
+	m_multi_type_combo = new QComboBox;
+	m_multi_type_combo->addItems({tr("Text"), tr("Number"), tr("Boolean")});
+	m_multi_type_combo->setCurrentIndex(-1);
+	m_multi_type_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	editor_layout->addRow(tr("Type:"), m_multi_type_combo);
+	connect(m_multi_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &InfoPanel::onTypeChanged);
+
+	m_multi_category_combo = new QComboBox;
+	m_multi_category_combo->setEditable(true);
+	m_multi_category_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	editor_layout->addRow(tr("Category:"), m_multi_category_combo);
+	connect(m_multi_category_combo, &QComboBox::currentTextChanged, this, &InfoPanel::onCategoryChanged);
+
+	m_multi_value_combo = new QComboBox;
+	m_multi_value_combo->setEditable(true);
+	m_multi_value_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	editor_layout->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+	editor_layout->addRow(tr("Value:"), m_multi_value_combo);
+
+	auto *val_btn_row = new QHBoxLayout;
+	m_multi_validate_btn = new QPushButton(tr("Validate"));
+	m_multi_clear_btn = new QPushButton(tr("Clear"));
+	val_btn_row->addWidget(m_multi_validate_btn);
+	val_btn_row->addWidget(m_multi_clear_btn);
+	val_btn_row->addStretch();
+	editor_layout->addRow(val_btn_row);
+	connect(m_multi_validate_btn, &QPushButton::clicked, this, &InfoPanel::onValidateProperty);
+	connect(m_multi_clear_btn, &QPushButton::clicked, this, &InfoPanel::onClearPropertyEditor);
+
+	layout->addWidget(editor_group);
+
+	// ── Description ──────────────────────────────
+	auto *desc_label = new QLabel(tr("Description:"));
+	desc_label->setFont(bold);
+	layout->addWidget(desc_label);
+
+	m_overwrite_desc_check = new QCheckBox(tr("Overwrite all descriptions"));
+	m_overwrite_desc_check->setVisible(false);
+	layout->addWidget(m_overwrite_desc_check);
+	connect(m_overwrite_desc_check, &QCheckBox::toggled, this, &InfoPanel::onOverwriteDescriptionToggled);
+
+	m_multi_description_edit = new QTextEdit;
+	m_multi_description_edit->setMaximumHeight(100);
+	layout->addWidget(m_multi_description_edit);
+
+	m_multi_save_desc_btn = new QPushButton(tr("Save description"));
+	m_multi_save_desc_btn->setEnabled(false);
+	layout->addWidget(m_multi_save_desc_btn);
+	connect(m_multi_save_desc_btn, &QPushButton::clicked, this, &InfoPanel::onSaveDescription);
+	connect(m_multi_description_edit, &QTextEdit::textChanged, [this]() {
+		m_multi_save_desc_btn->setEnabled(true);
+	});
+
+	// ── Import/Export ────────────────────────────
+	auto *meta_btn_row = new QHBoxLayout;
+	m_multi_import_btn = new QPushButton(tr("Import metadata..."));
+	m_multi_export_btn = new QPushButton(tr("Export metadata..."));
+	meta_btn_row->addWidget(m_multi_import_btn);
+	meta_btn_row->addWidget(m_multi_export_btn);
+	layout->addLayout(meta_btn_row);
+	connect(m_multi_import_btn, &QPushButton::clicked, this, &InfoPanel::onImportMetadata);
+	connect(m_multi_export_btn, &QPushButton::clicked, this, &InfoPanel::onExportMetadata);
+
+	layout->addStretch();
+
+	return page;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Page switching
 // ─────────────────────────────────────────────────
 
-void InfoPanel::onSelectionChanged(Element *elem)
+void InfoPanel::onSelectionChanged(QList<Document*> docs)
 {
-	auto *doc = dynamic_cast<Document *>(elem);
+	m_selected_docs = docs;
 
-	if (doc)
-		showSingleFilePage(doc);
+	if (docs.size() == 1)
+		showSingleFilePage(docs.first());
+	else if (docs.size() > 1)
+		showMultiFilePage();
 	else
 		showEmptyPage();
 }
 
 void InfoPanel::showEmptyPage()
 {
-	m_current_doc = nullptr;
+	m_selected_docs.clear();
 	m_stack->setCurrentIndex(m_empty_page_index);
 }
 
 void InfoPanel::showSingleFilePage(Document *doc)
 {
-	m_current_doc = doc;
 	m_has_unsaved_property = false;
 	m_remove_prop_btn->setEnabled(false);
 	enablePropertyEditing(false);
@@ -262,14 +385,71 @@ void InfoPanel::showSingleFilePage(Document *doc)
 	m_stack->setCurrentIndex(m_single_page_index);
 }
 
+void InfoPanel::showMultiFilePage()
+{
+	m_has_unsaved_property = false;
+	m_multi_remove_prop_btn->setEnabled(false);
+
+	m_multi_header->setText(tr("%1 files selected").arg(m_selected_docs.size()));
+
+	// Properties.
+	refreshMultiProperties();
+
+	// Reset the multi editor.
+	m_multi_type_combo->setCurrentIndex(-1);
+	m_multi_category_combo->clear();
+	m_multi_value_combo->clear();
+
+	// Description: check if all files have the same description.
+	bool uniform = true;
+	QString first_desc;
+	if (!m_selected_docs.isEmpty())
+	{
+		first_desc = m_selected_docs.first()->description();
+		for (int i = 1; i < m_selected_docs.size(); i++)
+		{
+			if (QString(m_selected_docs[i]->description()) != first_desc)
+			{
+				uniform = false;
+				break;
+			}
+		}
+	}
+
+	m_multi_description_edit->blockSignals(true);
+	m_overwrite_desc_check->blockSignals(true);
+
+	if (uniform)
+	{
+		// All descriptions are the same (including all empty): enable editing directly.
+		m_overwrite_desc_check->setVisible(false);
+		m_overwrite_desc_check->setChecked(false);
+		m_multi_description_edit->setEnabled(true);
+		m_multi_description_edit->setPlainText(first_desc);
+	}
+	else
+	{
+		// Descriptions differ: disable editing, show the overwrite checkbox.
+		m_overwrite_desc_check->setVisible(true);
+		m_overwrite_desc_check->setChecked(false);
+		m_multi_description_edit->setEnabled(false);
+		m_multi_description_edit->setPlainText(QString());
+	}
+
+	m_overwrite_desc_check->blockSignals(false);
+	m_multi_description_edit->blockSignals(false);
+	m_multi_save_desc_btn->setEnabled(false);
+
+	m_stack->setCurrentIndex(m_multi_page_index);
+}
+
 
 // ─────────────────────────────────────────────────
-//  Dynamic info area helpers
+//  Dynamic info area helpers (single-file page)
 // ─────────────────────────────────────────────────
 
 void InfoPanel::clearInfoArea()
 {
-	// Remove all widgets from the info layout.
 	QLayoutItem *item;
 	while ((item = m_info_layout->takeAt(0)) != nullptr)
 	{
@@ -301,17 +481,18 @@ void InfoPanel::addValue(const QString &text, const QString &tooltip)
 
 
 // ─────────────────────────────────────────────────
-//  Properties
+//  Properties — single file
 // ─────────────────────────────────────────────────
 
 void InfoPanel::refreshProperties()
 {
 	m_prop_table->setRowCount(0);
 
-	if (!m_current_doc)
+	if (m_selected_docs.size() != 1)
 		return;
 
-	for (auto &prop : m_current_doc->properties())
+	auto *doc = m_selected_docs.first();
+	for (auto &prop : doc->properties())
 	{
 		int row = m_prop_table->rowCount();
 		m_prop_table->insertRow(row);
@@ -320,6 +501,82 @@ void InfoPanel::refreshProperties()
 		m_prop_table->setItem(row, 2, new QTableWidgetItem(prop.value()));
 	}
 }
+
+
+// ─────────────────────────────────────────────────
+//  Properties — multi file
+// ─────────────────────────────────────────────────
+
+void InfoPanel::refreshMultiProperties()
+{
+	m_multi_prop_table->setRowCount(0);
+
+	if (m_selected_docs.isEmpty())
+		return;
+
+	int total = m_selected_docs.size();
+
+	// Collect the union of all categories across all selected files.
+	// For each category: track count, type name, and whether the value is uniform.
+	struct CategoryInfo {
+		QString type_name;
+		QString value;
+		int count = 0;
+		bool uniform = true;
+	};
+	// Use an ordered map so rows appear in a stable order.
+	std::map<QString, CategoryInfo> categories;
+
+	for (auto *doc : m_selected_docs)
+	{
+		for (auto &prop : doc->properties())
+		{
+			QString cat = prop.category();
+			auto it = categories.find(cat);
+			if (it == categories.end())
+			{
+				CategoryInfo ci;
+				ci.type_name = prop.type_name();
+				ci.value = prop.value();
+				ci.count = 1;
+				categories[cat] = ci;
+			}
+			else
+			{
+				it->second.count++;
+				if (it->second.value != QString(prop.value()))
+					it->second.uniform = false;
+			}
+		}
+	}
+
+	for (auto &[cat, ci] : categories)
+	{
+		int row = m_multi_prop_table->rowCount();
+		m_multi_prop_table->insertRow(row);
+		m_multi_prop_table->setItem(row, 0, new QTableWidgetItem(ci.type_name));
+		m_multi_prop_table->setItem(row, 1, new QTableWidgetItem(cat));
+
+		QString val_text = ci.uniform ? ci.value : tr("(mixed)");
+		auto *val_item = new QTableWidgetItem(val_text);
+		if (!ci.uniform)
+		{
+			QFont italic = val_item->font();
+			italic.setItalic(true);
+			val_item->setFont(italic);
+			val_item->setForeground(Qt::darkGray);
+		}
+		m_multi_prop_table->setItem(row, 2, val_item);
+
+		m_multi_prop_table->setItem(row, 3,
+			new QTableWidgetItem(QStringLiteral("%1/%2").arg(ci.count).arg(total)));
+	}
+}
+
+
+// ─────────────────────────────────────────────────
+//  Property selection and add/remove
+// ─────────────────────────────────────────────────
 
 void InfoPanel::onPropertySelected()
 {
@@ -338,56 +595,91 @@ void InfoPanel::onPropertySelected()
 
 void InfoPanel::onAddProperty()
 {
-	enablePropertyEditing(true);
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
 
-	int row = m_prop_table->rowCount();
-	m_prop_table->insertRow(row);
-	auto *type_item = new QTableWidgetItem(tr("undefined"));
-	auto *cat_item = new QTableWidgetItem(tr("undefined"));
-	auto *val_item = new QTableWidgetItem(tr("undefined"));
-	QFont italic = type_item->font();
-	italic.setItalic(true);
-	type_item->setFont(italic);
-	type_item->setForeground(Qt::red);
-	cat_item->setFont(italic);
-	cat_item->setForeground(Qt::red);
-	val_item->setFont(italic);
-	val_item->setForeground(Qt::red);
-	m_prop_table->setItem(row, 0, type_item);
-	m_prop_table->setItem(row, 1, cat_item);
-	m_prop_table->setItem(row, 2, val_item);
-	m_prop_table->selectRow(row);
-	m_has_unsaved_property = true;
-	m_remove_prop_btn->setEnabled(true);
+	if (multi)
+	{
+		// In multi mode, just enable the editor — no placeholder row needed.
+		m_multi_type_combo->setEnabled(true);
+		m_multi_category_combo->setEnabled(true);
+		m_multi_value_combo->setEnabled(true);
+		m_multi_validate_btn->setEnabled(true);
+		m_multi_clear_btn->setEnabled(true);
+		m_multi_type_combo->setFocus();
+	}
+	else
+	{
+		enablePropertyEditing(true);
+
+		int row = m_prop_table->rowCount();
+		m_prop_table->insertRow(row);
+		auto *type_item = new QTableWidgetItem(tr("undefined"));
+		auto *cat_item = new QTableWidgetItem(tr("undefined"));
+		auto *val_item = new QTableWidgetItem(tr("undefined"));
+		QFont italic = type_item->font();
+		italic.setItalic(true);
+		type_item->setFont(italic);
+		type_item->setForeground(Qt::red);
+		cat_item->setFont(italic);
+		cat_item->setForeground(Qt::red);
+		val_item->setFont(italic);
+		val_item->setForeground(Qt::red);
+		m_prop_table->setItem(row, 0, type_item);
+		m_prop_table->setItem(row, 1, cat_item);
+		m_prop_table->setItem(row, 2, val_item);
+		m_prop_table->selectRow(row);
+		m_has_unsaved_property = true;
+		m_remove_prop_btn->setEnabled(true);
+	}
 }
 
 void InfoPanel::onRemoveProperty()
 {
-	int row = m_prop_table->currentRow();
-	if (row < 0)
-		return;
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
 
-	// If it's the unsaved row, just remove it.
-	if (m_has_unsaved_property && row == m_prop_table->rowCount() - 1)
+	if (multi)
 	{
-		m_prop_table->removeRow(row);
-		m_has_unsaved_property = false;
-		enablePropertyEditing(false);
-		m_remove_prop_btn->setEnabled(false);
-		return;
-	}
+		int row = m_multi_prop_table->currentRow();
+		if (row < 0) return;
 
-	// Remove from the document.
-	auto *cat_item = m_prop_table->item(row, 1);
-	if (cat_item && m_current_doc)
-	{
+		auto *cat_item = m_multi_prop_table->item(row, 1);
+		if (!cat_item) return;
 		String category(cat_item->text().toUtf8().constData());
-		m_current_doc->remove_property(category);
+
+		// Remove from all selected files.
+		for (auto *doc : m_selected_docs)
+			doc->remove_property(category);
+
+		refreshMultiProperties();
+		m_multi_remove_prop_btn->setEnabled(false);
 	}
-	m_prop_table->removeRow(row);
-	m_remove_prop_btn->setEnabled(false);
-	enablePropertyEditing(false);
-	m_has_unsaved_property = false;
+	else
+	{
+		int row = m_prop_table->currentRow();
+		if (row < 0) return;
+
+		// If it's the unsaved row, just remove it.
+		if (m_has_unsaved_property && row == m_prop_table->rowCount() - 1)
+		{
+			m_prop_table->removeRow(row);
+			m_has_unsaved_property = false;
+			enablePropertyEditing(false);
+			m_remove_prop_btn->setEnabled(false);
+			return;
+		}
+
+		// Remove from the document.
+		auto *cat_item = m_prop_table->item(row, 1);
+		if (cat_item && m_selected_docs.size() == 1)
+		{
+			String category(cat_item->text().toUtf8().constData());
+			m_selected_docs.first()->remove_property(category);
+		}
+		m_prop_table->removeRow(row);
+		m_remove_prop_btn->setEnabled(false);
+		enablePropertyEditing(false);
+		m_has_unsaved_property = false;
+	}
 }
 
 void InfoPanel::enablePropertyEditing(bool enabled)
@@ -408,30 +700,34 @@ void InfoPanel::enablePropertyEditing(bool enabled)
 
 
 // ─────────────────────────────────────────────────
-//  Property editor
+//  Property editor — type/category/value combos
 // ─────────────────────────────────────────────────
 
 void InfoPanel::onTypeChanged(int index)
 {
-	m_category_combo->clear();
-	m_value_combo->clear();
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
+	auto *cat_combo = multi ? m_multi_category_combo : m_category_combo;
+	auto *val_combo = multi ? m_multi_value_combo : m_value_combo;
+
+	cat_combo->clear();
+	val_combo->clear();
 
 	if (index == 0) // Text
 	{
 		for (auto &cat : Property::get_categories_by_type(typeid(String)))
-			m_category_combo->addItem(cat);
+			cat_combo->addItem(cat);
 	}
 	else if (index == 1) // Number
 	{
 		for (auto &cat : Property::get_categories_by_type(typeid(double)))
-			m_category_combo->addItem(cat);
+			cat_combo->addItem(cat);
 	}
 	else if (index == 2) // Boolean
 	{
 		for (auto &cat : Property::get_categories_by_type(typeid(bool)))
-			m_category_combo->addItem(cat);
-		m_value_combo->addItem("true");
-		m_value_combo->addItem("false");
+			cat_combo->addItem(cat);
+		val_combo->addItem("true");
+		val_combo->addItem("false");
 	}
 }
 
@@ -442,27 +738,34 @@ void InfoPanel::onCategoryChanged()
 
 void InfoPanel::updateValueCombo()
 {
-	m_value_combo->clear();
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
+	auto *type_combo = multi ? m_multi_type_combo : m_type_combo;
+	auto *cat_combo = multi ? m_multi_category_combo : m_category_combo;
+	auto *val_combo = multi ? m_multi_value_combo : m_value_combo;
 
-	if (m_type_combo->currentIndex() == 0) // Text
+	val_combo->clear();
+
+	if (type_combo->currentIndex() == 0) // Text
 	{
-		String category(m_category_combo->currentText().toUtf8().constData());
+		String category(cat_combo->currentText().toUtf8().constData());
 		for (auto &val : Property::get_values(category))
-			m_value_combo->addItem(val);
+			val_combo->addItem(val);
 	}
-	else if (m_type_combo->currentIndex() == 2) // Boolean
+	else if (type_combo->currentIndex() == 2) // Boolean
 	{
-		m_value_combo->addItem("true");
-		m_value_combo->addItem("false");
+		val_combo->addItem("true");
+		val_combo->addItem("false");
 	}
 }
 
 void InfoPanel::onValidateProperty()
 {
-	if (!m_current_doc)
-		return;
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
+	auto *type_combo = multi ? m_multi_type_combo : m_type_combo;
+	auto *cat_combo = multi ? m_multi_category_combo : m_category_combo;
+	auto *val_combo = multi ? m_multi_value_combo : m_value_combo;
 
-	int type_index = m_type_combo->currentIndex();
+	int type_index = type_combo->currentIndex();
 	if (type_index < 0)
 	{
 		QMessageBox::warning(this, tr("Invalid property"), tr("You must first select a type."));
@@ -474,8 +777,8 @@ void InfoPanel::onValidateProperty()
 	else if (type_index == 1) type_str = "Number";
 	else type_str = "Boolean";
 
-	String category(m_category_combo->currentText().toUtf8().constData());
-	String value(m_value_combo->currentText().toUtf8().constData());
+	String category(cat_combo->currentText().toUtf8().constData());
+	String value(val_combo->currentText().toUtf8().constData());
 
 	if (category.empty())
 	{
@@ -486,23 +789,37 @@ void InfoPanel::onValidateProperty()
 	try
 	{
 		auto prop = Property::parse(type_str, category, value);
-		m_current_doc->add_property(prop);
+
+		if (multi)
+		{
+			// Apply to all selected files.
+			for (auto *doc : m_selected_docs)
+				doc->add_property(prop);
+			refreshMultiProperties();
+		}
+		else
+		{
+			if (m_selected_docs.size() == 1)
+				m_selected_docs.first()->add_property(prop);
+			m_has_unsaved_property = false;
+			enablePropertyEditing(false);
+			refreshProperties();
+		}
 	}
 	catch (std::exception &e)
 	{
 		QMessageBox::warning(this, tr("Invalid property"), e.what());
-		return;
 	}
-
-	m_has_unsaved_property = false;
-	enablePropertyEditing(false);
-	refreshProperties();
 }
 
 void InfoPanel::onClearPropertyEditor()
 {
-	m_category_combo->setCurrentText(QString());
-	m_value_combo->setCurrentText(QString());
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
+	auto *cat_combo = multi ? m_multi_category_combo : m_category_combo;
+	auto *val_combo = multi ? m_multi_value_combo : m_value_combo;
+
+	cat_combo->setCurrentText(QString());
+	val_combo->setCurrentText(QString());
 }
 
 
@@ -512,25 +829,48 @@ void InfoPanel::onClearPropertyEditor()
 
 void InfoPanel::onSaveDescription()
 {
-	if (!m_current_doc)
-		return;
+	bool multi = (m_stack->currentIndex() == m_multi_page_index);
 
-	String desc(m_description_edit->toPlainText().toUtf8().constData());
-	m_current_doc->set_description(std::move(desc));
-	m_save_desc_btn->setEnabled(false);
+	if (multi)
+	{
+		String desc(m_multi_description_edit->toPlainText().toUtf8().constData());
+		for (auto *doc : m_selected_docs)
+			doc->set_description(desc);
+		m_multi_save_desc_btn->setEnabled(false);
+	}
+	else
+	{
+		if (m_selected_docs.size() != 1)
+			return;
+		String desc(m_description_edit->toPlainText().toUtf8().constData());
+		m_selected_docs.first()->set_description(std::move(desc));
+		m_save_desc_btn->setEnabled(false);
+	}
+}
+
+void InfoPanel::onOverwriteDescriptionToggled(bool checked)
+{
+	m_multi_description_edit->setEnabled(checked);
+	if (checked)
+	{
+		m_multi_description_edit->blockSignals(true);
+		m_multi_description_edit->clear();
+		m_multi_description_edit->blockSignals(false);
+		m_multi_description_edit->setFocus();
+	}
 }
 
 
 // ─────────────────────────────────────────────────
-//  Bind sound
+//  Bind sound (single-file page only)
 // ─────────────────────────────────────────────────
 
 void InfoPanel::onBindSound()
 {
-	if (!m_current_doc)
+	if (m_selected_docs.size() != 1)
 		return;
 
-	auto *annot = dynamic_cast<Annotation *>(m_current_doc);
+	auto *annot = dynamic_cast<Annotation *>(m_selected_docs.first());
 	if (!annot)
 		return;
 
@@ -550,7 +890,7 @@ void InfoPanel::onBindSound()
 		if (sound)
 		{
 			annot->set_sound(sound);
-			m_sound_label->setText(tr("Sound: %1").arg(sound->label()));
+			m_sound_label->setText(sound->label());
 		}
 		else
 		{
@@ -565,7 +905,7 @@ void InfoPanel::onBindSound()
 
 
 // ─────────────────────────────────────────────────
-//  Import/Export (stubs)
+//  Import/Export
 // ─────────────────────────────────────────────────
 
 void InfoPanel::onImportMetadata()
@@ -586,9 +926,12 @@ void InfoPanel::onImportMetadata()
 		try
 		{
 			m_project->import_metadata(path, sep);
-			if (m_current_doc)
-				showSingleFilePage(m_current_doc);
-			QMessageBox::information(this, tr("Success"), tr("Metadata successfully imported!"));
+
+			// Refresh whichever page is active.
+			if (m_selected_docs.size() == 1)
+				showSingleFilePage(m_selected_docs.first());
+			else if (m_selected_docs.size() > 1)
+				showMultiFilePage();
 		}
 		catch (std::exception &e)
 		{
@@ -614,7 +957,6 @@ void InfoPanel::onExportMetadata()
 		try
 		{
 			m_project->export_metadata(path);
-			QMessageBox::information(this, tr("Success"), tr("Metadata successfully exported!"));
 		}
 		catch (std::exception &e)
 		{
