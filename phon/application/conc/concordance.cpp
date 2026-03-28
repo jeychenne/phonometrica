@@ -11,6 +11,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
 #include <phon/utils/xml.hpp>
@@ -101,6 +102,15 @@ String Concordance::get_header(intptr_t j) const
 		j--;
 	}
 
+	// Extra columns (formant measurements, etc.)
+	if (has_extra_columns())
+	{
+		if (j <= extra_column_count()) {
+			return m_extra_headers[j]; // 1-based
+		}
+		j -= extra_column_count();
+	}
+
 	// We are now ready to consume the properties. Switch to base 0 because
 	// we'll use an iterator.
 	j--;
@@ -154,6 +164,24 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 		j--;
 	}
 
+	// Extra columns (formant measurements, etc.)
+	if (has_extra_columns())
+	{
+		if (j <= extra_column_count())
+		{
+			auto &meas = m_matches[i]->measurements;
+			intptr_t idx = j - 1; // 0-based index into measurements vector
+			if (idx < (intptr_t)meas.size())
+			{
+				double val = meas[idx];
+				if (std::isnan(val)) return "N/A";
+				return String::format("%.1f", val);
+			}
+			return "N/A";
+		}
+		j -= extra_column_count();
+	}
+
 	// We are now ready to consume the properties. Switch to base 0 because
 	// we'll use an iterator.
 	j--;
@@ -200,7 +228,7 @@ intptr_t Concordance::row_count() const
 intptr_t Concordance::column_count() const
 {
 	// Add 1 for description.
-	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + Property::category_count() + 1;
+	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + extra_column_count() + Property::category_count() + 1;
 }
 
 
@@ -273,6 +301,19 @@ void Concordance::load()
 		if (node.name() == str("Options"))
 		{
 			parse_options_from_xml(node);
+		}
+		else if (node.name() == str("ExtraHeaders"))
+		{
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("Header")) {
+					m_extra_headers.append(child.text().get());
+				}
+			}
+		}
+		else if (node.name() == str("Metadata"))
+		{
+			metadata_from_xml(node);
 		}
 		else if (node.name() == str("Matches"))
 		{
@@ -358,6 +399,7 @@ void Concordance::parse_matches_from_xml(xml_node root)
 		std::unique_ptr<Match::Target> first_target;
 		Match::Target *last_target = nullptr;
 		String path;
+		std::vector<double> measurements;
 
 		for (auto subnode = node.first_child(); subnode; subnode = subnode.next_sibling())
 		{
@@ -417,14 +459,32 @@ void Concordance::parse_matches_from_xml(xml_node root)
 					}
 				}
 			}
+			else if (subnode.name() == str("Measurements"))
+			{
+				auto text = String(subnode.text().get());
+				auto parts = text.split(" ");
+				for (auto &s : parts)
+				{
+					if (s == "NaN") {
+						measurements.push_back(std::nan(""));
+					}
+					else {
+						bool ok;
+						measurements.push_back(s.to_float(&ok));
+						if (!ok) measurements.back() = std::nan("");
+					}
+				}
+			}
 			else
 			{
-				throw error("Invalid node in Match", subnode.name());
+				throw error("Invalid node in Match: %", subnode.name());
 			}
 		}
 
 		assert(first_target);
-		m_matches.append(std::make_unique<Match>(annot, std::move(first_target)));
+		auto match = std::make_unique<Match>(annot, std::move(first_target));
+		match->measurements = std::move(measurements);
+		m_matches.append(std::move(match));
 	}
 
 #ifdef PHON_TIMING
@@ -468,6 +528,16 @@ void Concordance::write()
 	auto matches_node = root.append_child("Matches");
 	matches_node.append_attribute("count").set_value(m_matches.size());
 	matches_node.append_attribute("length").set_value(m_target_count);
+
+	// Serialize extra column headers (formant measurements, etc.)
+	if (has_extra_columns())
+	{
+		auto extra_node = root.append_child("ExtraHeaders");
+		for (intptr_t i = 1; i <= m_extra_headers.size(); i++) {
+			add_data_node(extra_node, "Header", m_extra_headers[i]);
+		}
+	}
+
 	auto msg = String("Writing concordance %1").arg(label());
 	request_progress(msg, "Writing matches...", (int)m_matches.size());
 	int count = 1;
@@ -524,8 +594,16 @@ bool Concordance::is_file_info_column(intptr_t col) const
 
 bool Concordance::is_metadata_column(intptr_t col) const
 {
-	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count();
+	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + extra_column_count();
 	return col > bound;
+}
+
+bool Concordance::is_measurement_column(intptr_t col) const
+{
+	if (!has_extra_columns()) return false;
+	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count();
+	intptr_t upper = lower + extra_column_count();
+	return col > lower && col <= upper;
 }
 
 void Concordance::find_labels_context()

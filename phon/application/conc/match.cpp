@@ -11,6 +11,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <phon/application/conc/match.hpp>
 
 namespace phonometrica {
@@ -58,7 +59,7 @@ Match::Match(const Handle<Annotation> &annot, std::unique_ptr<Target> t) :
 
 }
 
-Match::Match(const Match &other) : m_annot(other.annotation())
+Match::Match(const Match &other) : m_annot(other.annotation()), measurements(other.measurements)
 {
 	auto target = other.m_target.get();
 	m_target = std::make_unique<Target>(target->start_time, target->end_time, target->value,
@@ -154,6 +155,23 @@ void Match::to_xml(xml_node root) const
 		subnode.append_attribute("ref").set_value(target->is_reference ? "true" : "false");
 		subnode.append_child(node_pcdata).set_value(target->value.data());
 		target = target->next.get();
+	}
+
+	// Serialize acoustic measurements if present
+	if (!measurements.empty())
+	{
+		String meas_str;
+		for (size_t k = 0; k < measurements.size(); k++)
+		{
+			if (k > 0) meas_str.append(' ');
+			if (std::isnan(measurements[k])) {
+				meas_str.append("NaN");
+			}
+			else {
+				meas_str.append(String::format("%.6f", measurements[k]));
+			}
+		}
+		add_data_node(node, "Measurements", meas_str);
 	}
 }
 

@@ -27,6 +27,14 @@ Query::Query(Directory *parent, String path) :
 	}
 }
 
+Query::Query(Class *klass, Directory *parent, String path) :
+		Document(klass, parent, std::move(path))
+{
+	if (!m_path.empty()) {
+		load();
+	}
+}
+
 void Query::add_metaconstraint(AutoMetaConstraint m, bool mutate)
 {
 	m_metaconstraints.append(std::move(m));
