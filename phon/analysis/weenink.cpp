@@ -173,7 +173,7 @@ double WeeninkModel::score(double t) const
 	unsigned int d = 0;
 
 	for (auto n : observations) {
-		d += n - 1;
+		d += n - p;
 	}
 
 	return pow(s2, t) * (x2 / d);
