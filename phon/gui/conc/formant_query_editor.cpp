@@ -20,7 +20,9 @@
 #include <QFileDialog>
 #include <QSplitter>
 #include <QProgressDialog>
+#include <QToolButton>
 #include <phon/gui/conc/formant_query_editor.hpp>
+#include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -55,6 +57,16 @@ void FormantQueryEditor::setupUi()
 	m_name_edit = new QLineEdit;
 	m_name_edit->setPlaceholderText(tr("Query %1").arg(++s_query_id));
 	header->addWidget(m_name_edit, 1);
+
+	auto *help_btn = new QToolButton;
+	help_btn->setIcon(QIcon(":/icons/circle-help.svg"));
+	help_btn->setToolTip(tr("Help"));
+	help_btn->setAutoRaise(true);
+	connect(help_btn, &QToolButton::clicked, this, [this]() {
+		HelpBrowser::showPage(QStringLiteral("concordance"), this);
+	});
+	header->addWidget(help_btn);
+
 	main_layout->addLayout(header);
 
 	// Central area: splitter with search+formant on the left, files+properties on the right

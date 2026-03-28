@@ -99,6 +99,10 @@ public:
 	bool output_average() const { return m_average; }
 	void set_output_average(bool b) { m_average = b; }
 
+	// Initial layout for the resulting concordance (wide or long).
+	Concordance::Layout initial_layout() const { return m_initial_layout; }
+	void set_initial_layout(Concordance::Layout l) { m_initial_layout = l; }
+
 	// ── Output options ───────────────────────────────────────────────────
 
 	bool output_bandwidth() const { return m_bandwidth; }
@@ -117,6 +121,12 @@ public:
 
 	// Build the column header strings (F1, F2, ..., B1, ..., E1, ..., z1, ..., Max freq, LPC order)
 	Array<String> build_headers() const;
+
+	// Build un-suffixed column names for one measurement point (F1, F2, F3, B1, ...) — used by long layout.
+	Array<String> build_base_headers() const;
+
+	// Number of columns per measurement point (Fn + optional Bn + En + zn).
+	int fields_per_point() const;
 
 	// Channel used for measurement (always 1 for now)
 	int channel() const { return 1; }
@@ -139,25 +149,28 @@ private:
 	Array<double> m_points;
 
 	// Shared LPC settings
-	intptr_t m_nformant = 3;
+	int m_nformant = 3;
 	double m_win_size = 0.025;     // seconds
 	double m_max_bandwidth = 400;  // Hz
 
 	// Manual mode
 	double m_max_freq = 5500;      // Hz (Nyquist)
-	intptr_t m_lpc_order = 11;
+	int m_lpc_order = 11;
 
 	// Automatic mode (Weenink)
 	bool m_automatic = false;
 	double m_max_freq1 = 4000;     // search range lower bound
 	double m_max_freq2 = 6000;     // search range upper bound
 	double m_freq_step = 500;      // step
-	intptr_t m_lpc_order1 = 10;         // LPC order search range
-	intptr_t m_lpc_order2 = 12;
+	int m_lpc_order1 = 10;         // LPC order search range
+	int m_lpc_order2 = 12;
 
 	// N-point output mode (both can be true simultaneously)
 	bool m_series = true;          // output per-point columns
 	bool m_average = false;        // output averaged columns
+
+	// Initial layout for the concordance view
+	Concordance::Layout m_initial_layout = Concordance::Layout::Wide;
 
 	// Output options
 	bool m_bandwidth = false;

@@ -32,26 +32,30 @@ FormantQuery::FormantQuery(Directory *parent, String path) :
 	}
 }
 
+int FormantQuery::fields_per_point() const
+{
+	int n = m_nformant;
+	if (m_bandwidth) n += m_nformant;
+	if (m_erb) n += m_nformant;
+	if (m_bark) n += m_nformant;
+	return n;
+}
+
 int FormantQuery::field_count() const
 {
-	// Fields per measurement point: Fn + optional Bn + optional En + optional zn
-	int fields_per_point = m_nformant;
-	if (m_bandwidth) fields_per_point += m_nformant;
-	if (m_erb) fields_per_point += m_nformant;
-	if (m_bark) fields_per_point += m_nformant;
-
+	int fpp = fields_per_point();
 	int n = 0;
 
 	if (m_method == Method::Midpoint)
 	{
-		n = fields_per_point;
+		n = fpp;
 	}
 	else
 	{
 		int npoints = (int)m_points.size();
 		if (npoints < 1) npoints = 1;
-		if (m_series)  n += npoints * fields_per_point;
-		if (m_average) n += fields_per_point;
+		if (m_series)  n += npoints * fpp;
+		if (m_average) n += fpp;
 	}
 
 	if (m_automatic) n += 2; // max_freq, lpc_order per match
@@ -65,22 +69,22 @@ Array<String> FormantQuery::build_headers() const
 	// Helper: emit one group of columns (F1..Fn [B1..Bn] [E1..En] [z1..zn]) with a suffix
 	auto emit_group = [&](const char *suffix)
 	{
-		for (int i = 1; i <= m_nformant; i++) {
-			headers.append(String::format("F%d%s", i, suffix));
+		for (intptr_t i = 1; i <= m_nformant; i++) {
+			headers.append(String::format("F%d%s", (int)i, suffix));
 		}
 		if (m_bandwidth) {
-			for (int i = 1; i <= m_nformant; i++) {
-				headers.append(String::format("B%d%s", i, suffix));
+			for (intptr_t i = 1; i <= m_nformant; i++) {
+				headers.append(String::format("B%d%s", (int)i, suffix));
 			}
 		}
 		if (m_erb) {
-			for (int i = 1; i <= m_nformant; i++) {
-				headers.append(String::format("E%d%s", i, suffix));
+			for (intptr_t i = 1; i <= m_nformant; i++) {
+				headers.append(String::format("E%d%s", (int)i, suffix));
 			}
 		}
 		if (m_bark) {
-			for (int i = 1; i <= m_nformant; i++) {
-				headers.append(String::format("z%d%s", i, suffix));
+			for (intptr_t i = 1; i <= m_nformant; i++) {
+				headers.append(String::format("z%d%s", (int)i, suffix));
 			}
 		}
 	};
@@ -118,6 +122,33 @@ Array<String> FormantQuery::build_headers() const
 	return headers;
 }
 
+Array<String> FormantQuery::build_base_headers() const
+{
+	// Un-suffixed column names for a single measurement point: F1, F2, ..., [B1, ...], [E1, ...], [z1, ...]
+	Array<String> headers;
+
+	for (intptr_t i = 1; i <= m_nformant; i++) {
+		headers.append(String::format("F%d", (int)i));
+	}
+	if (m_bandwidth) {
+		for (intptr_t i = 1; i <= m_nformant; i++) {
+			headers.append(String::format("B%d", (int)i));
+		}
+	}
+	if (m_erb) {
+		for (intptr_t i = 1; i <= m_nformant; i++) {
+			headers.append(String::format("E%d", (int)i));
+		}
+	}
+	if (m_bark) {
+		for (intptr_t i = 1; i <= m_nformant; i++) {
+			headers.append(String::format("z%d", (int)i));
+		}
+	}
+
+	return headers;
+}
+
 void FormantQuery::clear()
 {
 	Query::clear();
@@ -136,6 +167,7 @@ void FormantQuery::clear()
 	m_lpc_order2 = 12;
 	m_series = true;
 	m_average = false;
+	m_initial_layout = Concordance::Layout::Wide;
 	m_bandwidth = false;
 	m_erb = false;
 	m_bark = false;
@@ -170,6 +202,13 @@ Handle<Concordance> FormantQuery::execute()
 	// Build concordance with extra formant columns
 	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 	conc->set_extra_headers(build_headers());
+
+	// Provide measurement metadata so the concordance can toggle between wide and long layout.
+	if (m_method == Method::NPoint)
+	{
+		conc->set_measurement_info(m_points, build_base_headers(), fields_per_point(), m_average);
+		conc->set_layout(m_initial_layout);
+	}
 
 	auto lbl = this->label();
 	if (lbl.starts_with("Query ")) {
@@ -343,6 +382,7 @@ Handle<Query> FormantQuery::copy() const
 	c->m_lpc_order2 = m_lpc_order2;
 	c->m_series = m_series;
 	c->m_average = m_average;
+	c->m_initial_layout = m_initial_layout;
 	c->m_bandwidth = m_bandwidth;
 	c->m_erb = m_erb;
 	c->m_bark = m_bark;
@@ -470,6 +510,11 @@ void FormantQuery::load()
 				{
 					m_average = child.text().as_bool(false);
 				}
+				else if (child.name() == str("Layout"))
+				{
+					auto val = str(child.text().get());
+					m_initial_layout = (val == "long") ? Concordance::Layout::Long : Concordance::Layout::Wide;
+				}
 				else if (child.name() == str("Bandwidth"))
 				{
 					m_bandwidth = child.text().as_bool(false);
@@ -552,9 +597,10 @@ void FormantQuery::write()
 		add_data_node(fs_node, "Points", pts);
 		add_data_node(fs_node, "Series", String::convert(m_series));
 		add_data_node(fs_node, "NPointAverage", String::convert(m_average));
+		add_data_node(fs_node, "Layout", m_initial_layout == Concordance::Layout::Long ? "long" : "wide");
 	}
 
-	add_data_node(fs_node, "Nformant", String::convert(m_nformant));
+	add_data_node(fs_node, "Nformant", String::convert((intptr_t)m_nformant));
 	add_data_node(fs_node, "WindowSize", String::format("%.4f", m_win_size));
 	add_data_node(fs_node, "MaxBandwidth", String::format("%.1f", m_max_bandwidth));
 	add_data_node(fs_node, "Automatic", String::convert(m_automatic));
@@ -564,13 +610,13 @@ void FormantQuery::write()
 		add_data_node(fs_node, "MaxFreqLow", String::format("%.1f", m_max_freq1));
 		add_data_node(fs_node, "MaxFreqHigh", String::format("%.1f", m_max_freq2));
 		add_data_node(fs_node, "FreqStep", String::format("%.1f", m_freq_step));
-		add_data_node(fs_node, "LpcOrderLow", String::convert(m_lpc_order1));
-		add_data_node(fs_node, "LpcOrderHigh", String::convert(m_lpc_order2));
+		add_data_node(fs_node, "LpcOrderLow", String::convert((intptr_t)m_lpc_order1));
+		add_data_node(fs_node, "LpcOrderHigh", String::convert((intptr_t)m_lpc_order2));
 	}
 	else
 	{
 		add_data_node(fs_node, "MaxFrequency", String::format("%.1f", m_max_freq));
-		add_data_node(fs_node, "LpcOrder", String::convert(m_lpc_order));
+		add_data_node(fs_node, "LpcOrder", String::convert((intptr_t)m_lpc_order));
 	}
 
 	add_data_node(fs_node, "Bandwidth", String::convert(m_bandwidth));
