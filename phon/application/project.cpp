@@ -54,7 +54,7 @@ Project::Project(Runtime &rt, String path) :
 		m_corpus(make_handle<Directory>(nullptr, "Corpus")),
 		m_bookmarks(make_handle<Directory>(nullptr, "Bookmarks")),
 		m_scripts(make_handle<Directory>(nullptr, "Scripts")),
-        m_data(make_handle<Directory>(nullptr, "Data tables")),
+        m_data(make_handle<Directory>(nullptr, "Datasets")),
 		m_queries(make_handle<Directory>(nullptr, "Queries"))
 {
 	if (path.empty())
