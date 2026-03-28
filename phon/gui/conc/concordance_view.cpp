@@ -67,7 +67,7 @@ void ConcordanceView::setupUi()
 	stop_action->setToolTip(tr("Stop playback"));
 
 	// -- Navigation --
-	auto *view_action = m_toolbar->addAction(QIcon(":/icons/file-search-corner.svg"), tr("View"));
+	auto *view_action = m_toolbar->addAction(QIcon(":/icons/scan-eye.svg"), tr("View"));
 	view_action->setToolTip(tr("Open match in annotation"));
 
 	m_toolbar->addSeparator();
@@ -136,6 +136,12 @@ void ConcordanceView::setupUi()
 		long_action->setChecked(m_conc->layout() == Concordance::Layout::Long);
 		long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
 	}
+
+	display_menu->addSeparator();
+	auto *split_action = display_menu->addAction(tr("Open matches in split view"));
+	split_action->setCheckable(true);
+	split_action->setChecked(m_open_in_split);
+	split_action->setToolTip(tr("When checked, open the annotation beside the concordance; otherwise open it in a new tab"));
 
 	auto *display_action = new QAction(QIcon(":/icons/display.svg"), tr("Display settings"), this);
 	display_action->setMenu(display_menu);
@@ -220,6 +226,10 @@ void ConcordanceView::setupUi()
 	{
 		connect(long_action, &QAction::toggled, this, &ConcordanceView::onToggleLayout);
 	}
+
+	connect(split_action, &QAction::toggled, this, [this](bool checked) {
+		m_open_in_split = checked;
+	});
 }
 
 // ── View interface ──────────────────────────────────────
@@ -547,7 +557,7 @@ void ConcordanceView::updateColumnVisibility()
 void ConcordanceView::onDoubleClick(const QModelIndex &index)
 {
 	if (!index.isValid()) return;
-	playMatch(index.row());
+	viewMatch(index.row());
 }
 
 void ConcordanceView::onContextMenu(const QPoint &pos)
@@ -560,10 +570,11 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	QMenu menu(this);
 
+	menu.addAction(QIcon(":/icons/file-search-corner.svg"), tr("View in annotation"), this, &ConcordanceView::onViewMatch);
+
 	if (match.annotation()->has_sound())
 		menu.addAction(QIcon(":/icons/play-selection.svg"), tr("Play match"), this, &ConcordanceView::onPlay);
 
-	menu.addAction(QIcon(":/icons/file-search-corner.svg"), tr("View in annotation"), this, &ConcordanceView::onViewMatch);
 	menu.addSeparator();
 	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit event"), this, &ConcordanceView::onEditEvent);
 	menu.addAction(QIcon(":/icons/trash-2.svg"), tr("Remove match"), this, &ConcordanceView::onDeleteRows);
@@ -636,7 +647,7 @@ void ConcordanceView::viewMatch(int row)
 	auto start = match.get_start_time(target);
 	auto end = match.get_end_time(target);
 
-	emit openAnnotation(match.annotation(), layer, start, end);
+	emit openAnnotation(match.annotation(), layer, start, end, m_open_in_split);
 }
 
 int ConcordanceView::selectedRow() const

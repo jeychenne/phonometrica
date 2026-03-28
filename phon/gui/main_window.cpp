@@ -1122,65 +1122,86 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 	auto *view = new ConcordanceView(conc);
 
 	connect(view, &ConcordanceView::openAnnotation,
-		this, [this, view](const Handle<Annotation> &annot, intptr_t layer, double start, double end)
+		this, [this, view](const Handle<Annotation> &annot, intptr_t layer, double start, double end, bool split)
 	{
-		// Find the panel that contains this concordance view.
-		auto *panel = findPanelForView(view);
-		if (!panel)
-			return;
-
-		// Check if this annotation is already in the same panel.
-		AnnotationView *av = nullptr;
-		for (auto *v : panel->views())
+		if (split)
 		{
-			auto *candidate = qobject_cast<AnnotationView *>(v);
-			if (candidate && candidate->path() == annot->path())
+			// ── Split view: open annotation beside the concordance ──
+			auto *panel = findPanelForView(view);
+			if (!panel)
+				return;
+
+			// Check if this annotation is already in the same panel.
+			AnnotationView *av = nullptr;
+			for (auto *v : panel->views())
 			{
-				av = candidate;
-				break;
+				auto *candidate = qobject_cast<AnnotationView *>(v);
+				if (candidate && candidate->path() == annot->path())
+				{
+					av = candidate;
+					break;
+				}
+			}
+
+			if (!av)
+			{
+				// Check if this annotation is open in another tab.
+				for (int i = 0; i < m_viewer->count(); i++)
+				{
+					auto *other = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+					if (!other || other == panel)
+						continue;
+
+					for (auto *v : other->views())
+					{
+						auto *candidate = qobject_cast<AnnotationView *>(v);
+						if (candidate && candidate->path() == annot->path())
+						{
+							// Detach from the other panel and move here.
+							other->detachView(candidate);
+							panel->addView(candidate, Qt::Horizontal);
+							av = candidate;
+							break;
+						}
+					}
+					if (av) break;
+				}
+			}
+
+			if (!av)
+			{
+				// Create a new AnnotationView and add it to the concordance's panel.
+				av = createAnnotationView(annot);
+				if (av)
+				{
+					connect(av, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
+					panel->addView(av, Qt::Horizontal);
+				}
+			}
+
+			if (av)
+			{
+				av->openSelection(layer, start, end);
+				m_viewer->setCurrentWidget(panel);
 			}
 		}
-
-		if (!av)
+		else
 		{
-			// Check if this annotation is open in another tab.
-			for (int i = 0; i < m_viewer->count(); i++)
-			{
-				auto *other = qobject_cast<ViewPanel *>(m_viewer->widget(i));
-				if (!other || other == panel)
-					continue;
+			// ── New tab: open annotation in its own tab ──
+			onDocumentRequested(annot.get());
 
-				for (auto *v : other->views())
+			// Find the AnnotationView in the current tab and navigate to the match.
+			if (auto *panel = currentPanel())
+			{
+				for (auto *v : panel->views())
 				{
-					auto *candidate = qobject_cast<AnnotationView *>(v);
-					if (candidate && candidate->path() == annot->path())
+					if (auto *av = qobject_cast<AnnotationView *>(v))
 					{
-						// Detach from the other panel and move here.
-						other->detachView(candidate);
-						panel->addView(candidate, Qt::Horizontal);
-						av = candidate;
+						av->openSelection(layer, start, end);
 						break;
 					}
 				}
-				if (av) break;
 			}
-		}
-
-		if (!av)
-		{
-			// Create a new AnnotationView and add it to the concordance's panel.
-			av = createAnnotationView(annot);
-			if (av)
-			{
-				connect(av, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
-				panel->addView(av, Qt::Horizontal);
-			}
-		}
-
-		if (av)
-		{
-			av->openSelection(layer, start, end);
-			m_viewer->setCurrentWidget(panel);
 		}
 	});
 
