@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <complex>
 #include <phon/file.hpp>
+#include <phon/runtime.hpp>
 #include <phon/application/spectrum.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
@@ -273,7 +274,8 @@ void Spectrum::load()
 
 	for (intptr_t i = 1; i <= lines.size(); i++)
 	{
-		auto line = lines[i].trimmed();
+		auto line = lines[i];
+		line.trim();
 
 		if (line.empty()) continue;
 
@@ -297,8 +299,10 @@ void Spectrum::load()
 			auto eq = line.find('=');
 			if (eq < 0) continue;
 
-			auto key = line.left(eq).trimmed();
-			auto val = line.right(line.size() - eq - 1).trimmed();
+			auto key = line.left(eq);
+			auto val = line.right(line.size() - eq - 1);
+			key.trim();
+			val.trim();
 
 			if (key == "sound_path")           m_sound_path = val;
 			else if (key == "channel")         m_channel = std::stoi(std::string(val.data(), val.size()));

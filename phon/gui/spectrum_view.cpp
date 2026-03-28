@@ -18,6 +18,12 @@
 #include <QMouseEvent>
 #include <QVBoxLayout>
 #include <QFontMetrics>
+#include <QMenu>
+#include <QToolButton>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QSvgGenerator>
+#include <QPrinter>
 #include <phon/gui/spectrum_view.hpp>
 
 namespace phonometrica {
@@ -48,12 +54,30 @@ SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, QWidget *parent) :
 	// Enable mouse tracking for crosshair readout.
 	setMouseTracking(true);
 
-	// Status bar at the bottom.
 	auto *layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
-	// A spacer widget pushes the status label to the bottom.
+	// ── Toolbar ────────────────────────────────
+	m_toolbar = new QToolBar(this);
+	m_toolbar->setIconSize(QSize(20, 20));
+	m_toolbar->setMovable(false);
+
+	auto *save_menu = new QMenu(this);
+	save_menu->addAction(tr("Save as PNG..."), this, &SpectrumView::onSavePNG);
+	save_menu->addAction(tr("Save as PDF..."), this, &SpectrumView::onSavePDF);
+	save_menu->addAction(tr("Save as SVG..."), this, &SpectrumView::onSaveSVG);
+
+	auto *save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), this);
+	save_action->setMenu(save_menu);
+	m_toolbar->addAction(save_action);
+	if (auto *btn = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(save_action)))
+		btn->setPopupMode(QToolButton::InstantPopup);
+
+	layout->addWidget(m_toolbar);
+
+	// A spacer pushes the status label to the bottom; the plot area in between
+	// is painted directly in paintEvent().
 	layout->addStretch(1);
 
 	m_status = new QLabel(this);
@@ -72,12 +96,12 @@ SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, QWidget *parent) :
 
 
 // ─────────────────────────────────────────────────
-//  Margins and plot area
+//  Margins and plot area (interactive view — includes toolbar offset)
 // ─────────────────────────────────────────────────
 
 int SpectrumView::marginLeft()   const { return MARGIN_LEFT; }
 int SpectrumView::marginRight()  const { return MARGIN_RIGHT; }
-int SpectrumView::marginTop()    const { return MARGIN_TOP; }
+int SpectrumView::marginTop()    const { return MARGIN_TOP + m_toolbar->height(); }
 int SpectrumView::marginBottom() const { return MARGIN_BOTTOM; }
 
 int SpectrumView::plotWidth()  const { return width() - marginLeft() - marginRight(); }
@@ -85,7 +109,7 @@ int SpectrumView::plotHeight() const { return height() - marginTop() - marginBot
 
 
 // ─────────────────────────────────────────────────
-//  Coordinate mapping
+//  Coordinate mapping (interactive — uses widget dimensions)
 // ─────────────────────────────────────────────────
 
 double SpectrumView::frequencyToX(double hz) const
@@ -120,45 +144,75 @@ double SpectrumView::yToDB(double y) const
 
 
 // ─────────────────────────────────────────────────
-//  Axis drawing
+//  Self-contained plot renderer (for cache and export)
+//
+//  Draws the full plot (background, axes, curve) into the given painter
+//  at the specified logical dimensions. The crosshair is NOT included.
 // ─────────────────────────────────────────────────
 
-void SpectrumView::drawAxes(QPainter &p)
+void SpectrumView::renderPlot(QPainter &p, int w, int h)
 {
-	int left   = marginLeft();
-	int right  = left + plotWidth();
-	int top    = marginTop();
-	int bottom = top + plotHeight();
+	// ── Local geometry ───────────────────────────
+	int pw = w - MARGIN_LEFT - MARGIN_RIGHT;
+	int ph = h - MARGIN_TOP - MARGIN_BOTTOM;
+	if (pw <= 0 || ph <= 0) return;
 
+	double maxF = m_spectrum->max_frequency();
+	double peak = m_spectrum->peak_dB();
+	double floorDB = m_spectrum->floor_dB();
+	double dB_range = peak - floorDB;
+
+	int left   = MARGIN_LEFT;
+	int right  = MARGIN_LEFT + pw;
+	int top    = MARGIN_TOP;
+	int bottom = MARGIN_TOP + ph;
+
+	// ── Local coordinate lambdas ────────────────
+	auto freqToX = [&](double hz) -> double {
+		if (maxF <= 0) return left;
+		return left + (hz / maxF) * pw;
+	};
+
+	auto dBtoY = [&](double dB) -> double {
+		if (dB_range <= 0) return top + ph / 2.0;
+		return top + (1.0 - (dB - floorDB) / dB_range) * ph;
+	};
+
+	p.setRenderHint(QPainter::Antialiasing);
+
+	// ── Background ──────────────────────────────
+	p.fillRect(0, 0, w, h, BG_COLOR);
+
+	// ── Frame ───────────────────────────────────
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.drawRect(left, top, pw, ph);
 
-	// Frame around the plot area.
-	p.drawRect(left, top, plotWidth(), plotHeight());
-
-	QFont font = p.font();
-	font.setPointSizeF(font.pointSizeF() * 0.85);
+	// ── Axes ────────────────────────────────────
+	QFont font;
+	font.setPixelSize(11);
 	p.setFont(font);
 	QFontMetrics fm(font);
 
-	// ── X-axis (frequency) ─────────────────────
-	double maxF = m_spectrum->max_frequency();
+	// X-axis (frequency): tick spacing.
 	double tickF = 1000;
 	if (maxF <= 1000)       tickF = 100;
 	else if (maxF <= 5000)  tickF = 500;
 	else if (maxF <= 12000) tickF = 1000;
 	else                    tickF = 2000;
 
+	// X-axis grid lines.
 	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
 	for (double f = tickF; f < maxF; f += tickF)
 	{
-		double x = frequencyToX(f);
+		double x = freqToX(f);
 		p.drawLine(QPointF(x, top), QPointF(x, bottom));
 	}
 
+	// X-axis tick marks and labels.
 	p.setPen(QPen(AXIS_COLOR, 1));
 	for (double f = 0; f <= maxF; f += tickF)
 	{
-		double x = frequencyToX(f);
+		double x = freqToX(f);
 		p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
 
 		QString label;
@@ -175,34 +229,32 @@ void SpectrumView::drawAxes(QPainter &p)
 	{
 		QString title = tr("Frequency (Hz)");
 		int tw = fm.horizontalAdvance(title);
-		p.drawText(left + (plotWidth() - tw) / 2, bottom + MARGIN_BOTTOM - 4, title);
+		p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, title);
 	}
 
-	// ── Y-axis (power dB) ──────────────────────
-	double peak  = m_spectrum->peak_dB();
-	double floor = m_spectrum->floor_dB();
-	double range = peak - floor;
-
+	// Y-axis (power dB): tick spacing.
 	double tickDB = 10;
-	if (range <= 20)      tickDB = 5;
-	else if (range <= 50) tickDB = 10;
-	else                  tickDB = 20;
+	if (dB_range <= 20)      tickDB = 5;
+	else if (dB_range <= 50) tickDB = 10;
+	else                     tickDB = 20;
 
-	double dB_start = std::floor(floor / tickDB) * tickDB;
+	double dB_start = std::floor(floorDB / tickDB) * tickDB;
 	double dB_end   = std::ceil(peak / tickDB) * tickDB;
 
+	// Y-axis grid lines.
 	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
 	for (double dB = dB_start; dB <= dB_end; dB += tickDB)
 	{
-		if (dB <= floor || dB >= peak) continue;
-		double y = dBToY(dB);
+		if (dB <= floorDB || dB >= peak) continue;
+		double y = dBtoY(dB);
 		p.drawLine(QPointF(left, y), QPointF(right, y));
 	}
 
+	// Y-axis tick marks and labels.
 	p.setPen(QPen(AXIS_COLOR, 1));
 	for (double dB = dB_start; dB <= dB_end; dB += tickDB)
 	{
-		double y = dBToY(dB);
+		double y = dBtoY(dB);
 		if (y < top - 2 || y > bottom + 2) continue;
 		p.drawLine(QPointF(left - 4, y), QPointF(left, y));
 
@@ -215,48 +267,19 @@ void SpectrumView::drawAxes(QPainter &p)
 	{
 		QString title = tr("Power (dB)");
 		p.save();
-		p.translate(14, top + plotHeight() / 2);
+		p.translate(14, top + ph / 2);
 		p.rotate(-90);
 		int tw = fm.horizontalAdvance(title);
 		p.drawText(-tw / 2, 0, title);
 		p.restore();
 	}
-}
 
-
-// ─────────────────────────────────────────────────
-//  Cache building
-// ─────────────────────────────────────────────────
-
-void SpectrumView::rebuildCache()
-{
-	int w = width();
-	int h = height() - m_status->height();
-
-	m_cache = QPixmap(QSize(w, h) * devicePixelRatioF());
-	m_cache.setDevicePixelRatio(devicePixelRatioF());
-	m_cache.fill(BG_COLOR);
-
-	if (plotWidth() <= 0 || plotHeight() <= 0) {
-		m_cache_valid = true;
-		return;
-	}
-
-	QPainter painter(&m_cache);
-	painter.setRenderHint(QPainter::Antialiasing);
-
-	// Axes first (behind the curve).
-	drawAxes(painter);
-
-	// ── Draw the spectrum curve ────────────────
+	// ── Spectrum curve ──────────────────────────
 	const auto &power = m_spectrum->power_dB();
-	if (power.empty()) {
-		m_cache_valid = true;
-		return;
-	}
+	if (power.empty()) return;
 
-	painter.setPen(QPen(CURVE_COLOR, 1.5));
-	painter.setClipRect(marginLeft(), marginTop(), plotWidth(), plotHeight());
+	p.setPen(QPen(CURVE_COLOR, 1.5));
+	p.setClipRect(left, top, pw, ph);
 
 	QPainterPath path;
 	bool first = true;
@@ -264,10 +287,10 @@ void SpectrumView::rebuildCache()
 	for (intptr_t k = 0; k < m_spectrum->bin_count(); k++)
 	{
 		double freq = m_spectrum->bin_frequency(k);
-		if (freq > m_spectrum->max_frequency()) break;
+		if (freq > maxF) break;
 
-		double x = frequencyToX(freq);
-		double y = dBToY(power[k]);
+		double x = freqToX(freq);
+		double y = dBtoY(power[k]);
 
 		if (first) {
 			path.moveTo(x, y);
@@ -278,8 +301,25 @@ void SpectrumView::rebuildCache()
 		}
 	}
 
-	painter.drawPath(path);
-	painter.setClipping(false);
+	p.drawPath(path);
+	p.setClipping(false);
+}
+
+
+// ─────────────────────────────────────────────────
+//  Cache building
+// ─────────────────────────────────────────────────
+
+void SpectrumView::rebuildCache()
+{
+	int w = width();
+	int h = height() - m_toolbar->height() - m_status->height();
+
+	m_cache = QPixmap(QSize(w, h) * devicePixelRatioF());
+	m_cache.setDevicePixelRatio(devicePixelRatioF());
+
+	QPainter painter(&m_cache);
+	renderPlot(painter, w, h);
 
 	m_cache_valid = true;
 }
@@ -296,24 +336,24 @@ void SpectrumView::paintEvent(QPaintEvent *)
 
 	QPainter p(this);
 
-	// Draw the cached plot.
+	// Draw the cached plot below the toolbar.
 	if (!m_cache.isNull())
-		p.drawPixmap(0, 0, m_cache);
+		p.drawPixmap(0, m_toolbar->height(), m_cache);
 
 	// ── Crosshair at mouse position ────────────
 	if (m_mouse_x >= marginLeft() && m_mouse_x <= marginLeft() + plotWidth() &&
 	    m_mouse_y >= marginTop()  && m_mouse_y <= marginTop() + plotHeight())
 	{
 		p.setPen(QPen(CROSSHAIR_COLOR, 1, Qt::DashLine));
-		int left   = marginLeft();
-		int right  = left + plotWidth();
-		int top    = marginTop();
-		int bottom = top + plotHeight();
+		int cl = marginLeft();
+		int cr = cl + plotWidth();
+		int ct = marginTop();
+		int cb = ct + plotHeight();
 
 		// Vertical line.
-		p.drawLine(QPointF(m_mouse_x, top), QPointF(m_mouse_x, bottom));
+		p.drawLine(QPointF(m_mouse_x, ct), QPointF(m_mouse_x, cb));
 		// Horizontal line.
-		p.drawLine(QPointF(left, m_mouse_y), QPointF(right, m_mouse_y));
+		p.drawLine(QPointF(cl, m_mouse_y), QPointF(cr, m_mouse_y));
 	}
 }
 
@@ -364,6 +404,88 @@ void SpectrumView::leaveEvent(QEvent *)
 		.arg(m_spectrum->bin_count()));
 
 	update();
+}
+
+
+// ─────────────────────────────────────────────────
+//  Export
+// ─────────────────────────────────────────────────
+
+void SpectrumView::onSavePNG()
+{
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Save spectrum as PNG"), QString(), tr("PNG image (*.png)"));
+	if (path.isEmpty()) return;
+
+	// Export at 2× resolution using the device-pixel-ratio pattern:
+	// the pixmap has twice as many physical pixels, but the painter
+	// operates in logical coordinates so text and margins scale correctly.
+	const int scale = 2;
+	int w = width();
+	int h = height() - m_toolbar->height() - m_status->height();
+
+	QPixmap pixmap(QSize(w, h) * scale);
+	pixmap.setDevicePixelRatio(scale);
+	pixmap.fill(BG_COLOR);
+	QPainter painter(&pixmap);
+	renderPlot(painter, w, h);
+	painter.end();
+
+	if (!pixmap.save(path, "PNG"))
+		QMessageBox::critical(this, tr("Export error"), tr("Could not save PNG file."));
+}
+
+void SpectrumView::onSavePDF()
+{
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Save spectrum as PDF"), QString(), tr("PDF document (*.pdf)"));
+	if (path.isEmpty()) return;
+
+	int w = width();
+	int h = height() - m_toolbar->height() - m_status->height();
+
+	QPrinter printer(QPrinter::HighResolution);
+	printer.setOutputFormat(QPrinter::PdfFormat);
+	printer.setOutputFileName(path);
+
+	// Set page size to match the plot aspect ratio.
+	QPageSize pageSize(QSizeF(w, h), QPageSize::Point);
+	printer.setPageSize(pageSize);
+	printer.setPageMargins(QMarginsF(0, 0, 0, 0));
+
+	QPainter painter(&printer);
+
+	// Scale from printer resolution to our logical coordinates.
+	double sx = printer.width() / double(w);
+	double sy = printer.height() / double(h);
+	double scale = std::min(sx, sy);
+	painter.scale(scale, scale);
+
+	renderPlot(painter, w, h);
+	painter.end();
+}
+
+void SpectrumView::onSaveSVG()
+{
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Save spectrum as SVG"), QString(), tr("SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+
+	int w = width();
+	int h = height() - m_toolbar->height() - m_status->height();
+
+	QSvgGenerator svg;
+	svg.setFileName(path);
+	svg.setSize(QSize(w, h));
+	svg.setViewBox(QRect(0, 0, w, h));
+	svg.setTitle(tr("Spectral slice"));
+	svg.setDescription(tr("FFT spectrum (%1 – %2 s)")
+		.arg(m_spectrum->start_time(), 0, 'f', 4)
+		.arg(m_spectrum->end_time(), 0, 'f', 4));
+
+	QPainter painter(&svg);
+	renderPlot(painter, w, h);
+	painter.end();
 }
 
 } // namespace phonometrica

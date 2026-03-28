@@ -104,6 +104,7 @@ private slots:
 	void onToggleWaveform(bool checked);
 	void onToggleSpectrogram(bool checked);
 	void onSpectrogramSettings();
+	void onViewSpectralSlice();
 	void onToggleIntensity(bool checked);
 	void onIntensitySettings();
 	void onToggleFormants(bool checked);
