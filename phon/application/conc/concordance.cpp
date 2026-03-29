@@ -14,6 +14,7 @@
 #include <cmath>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/settings.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/utils/xml.hpp>
 
@@ -65,7 +66,6 @@ Concordance::Concordance(const Concordance &other) :
 	m_has_bark = other.m_has_bark;
 	m_has_auto_params = other.m_has_auto_params;
 	m_header_aliases = other.m_header_aliases;
-	m_round_hz = other.m_round_hz;
 
 	m_matches.reserve(other.m_matches.size());
 
@@ -353,16 +353,24 @@ String Concordance::format_measurement(double val, int within_group) const
 {
 	if (std::isnan(val)) return "N/A";
 
-	int nf = m_nformant;
 	int sfpp = stored_fields_per_point();
+
+	// Read the global precision setting (0 = round to nearest Hz).
+	int hz_dec = 0;
+	try { hz_dec = Settings::get_int("display", "hz_decimals"); }
+	catch (...) {}
 
 	if (within_group < sfpp)
 	{
 		// Formant or bandwidth in Hz
-		return m_round_hz ? String::format("%.0f", val) : String::format("%.3f", val);
+		char fmt[16];
+		std::snprintf(fmt, sizeof(fmt), "%%.%df", hz_dec);
+		return String::format(fmt, val);
 	}
-	// ERB or Bark — always 2 decimal places
-	return String::format("%.2f", val);
+	// ERB or Bark — hz_dec + 2 extra decimal places
+	char fmt[16];
+	std::snprintf(fmt, sizeof(fmt), "%%.%df", hz_dec + 2);
+	return String::format(fmt, val);
 }
 
 String Concordance::get_cell(intptr_t i, intptr_t j) const
@@ -785,8 +793,6 @@ void Concordance::load()
 					m_has_auto_params = child.text().as_bool(false);
 				else if (child.name() == str("HasSeries"))
 					m_has_series = child.text().as_bool(true);
-				else if (child.name() == str("RoundHz"))
-					m_round_hz = child.text().as_bool(true);
 			}
 		}
 		else if (node.name() == str("ColumnAliases"))
@@ -1142,8 +1148,6 @@ void Concordance::write()
 			.set_value(m_has_auto_params ? "true" : "false");
 		fm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
-		fm.append_child("RoundHz").append_child(node_pcdata)
-			.set_value(m_round_hz ? "true" : "false");
 	}
 
 	// ── Measurement metadata for wide/long toggle ─────────────────────────
@@ -1355,7 +1359,6 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 
 	// Copy formant metadata
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);
@@ -1397,7 +1400,6 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	conc->set_label(label, false);
 
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);
@@ -1439,7 +1441,6 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	conc->set_label(label, false);
 
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);

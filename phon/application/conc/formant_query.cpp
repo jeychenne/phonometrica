@@ -151,7 +151,6 @@ void FormantQuery::clear()
 	m_bandwidth = false;
 	m_erb = false;
 	m_bark = false;
-	m_round_hz = true;
 }
 
 Handle<Concordance> FormantQuery::execute()
@@ -185,7 +184,6 @@ Handle<Concordance> FormantQuery::execute()
 
 	// Set formant metadata — ERB/Bark are computed on the fly by the concordance
 	conc->set_formant_meta(m_nformant, m_bandwidth, m_erb, m_bark, m_automatic);
-	conc->set_round_hz(m_round_hz);
 
 	// Provide measurement metadata so the concordance can toggle between wide and long layout.
 	if (m_method == Method::NPoint)
@@ -364,7 +362,6 @@ Handle<Query> FormantQuery::copy() const
 	c->m_bandwidth = m_bandwidth;
 	c->m_erb = m_erb;
 	c->m_bark = m_bark;
-	c->m_round_hz = m_round_hz;
 	c->m_content_modified = true;
 
 	return c;
@@ -506,10 +503,6 @@ void FormantQuery::load()
 				{
 					m_bark = child.text().as_bool(false);
 				}
-				else if (child.name() == str("RoundHz"))
-				{
-					m_round_hz = child.text().as_bool(true);
-				}
 			}
 		}
 	}
@@ -605,7 +598,6 @@ void FormantQuery::write()
 	add_data_node(fs_node, "Bandwidth", String::convert(m_bandwidth));
 	add_data_node(fs_node, "ERB", String::convert(m_erb));
 	add_data_node(fs_node, "Bark", String::convert(m_bark));
-	add_data_node(fs_node, "RoundHz", String::convert(m_round_hz));
 
 	write_xml(doc, m_path);
 }

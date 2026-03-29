@@ -108,10 +108,6 @@ public:
 	/// Toggle Bark display columns (recomputed on the fly).
 	void set_has_bark(bool b);
 
-	/// Whether to round Hz values to the nearest integer (default true).
-	bool round_hz() const { return m_round_hz; }
-	void set_round_hz(bool b) { m_round_hz = b; }
-
 	/// Number of raw fields stored per measurement point: nformant + (has_bandwidth ? nformant : 0).
 	int stored_fields_per_point() const;
 
@@ -222,8 +218,8 @@ protected:
 	double resolve_group_value(const std::vector<double> &meas, int stored_base, int within_group) const;
 
 	/// Format a measurement value for display based on its column type within a group.
-	/// Formants/bandwidths: rounded to integer or 3dp depending on m_round_hz.
-	/// ERB/Bark: always 2 decimal places.
+	/// Formants/bandwidths use the global "formant_display/hz_decimals" setting.
+	/// ERB/Bark use 2 additional decimal places.
 	String format_measurement(double val, int within_group) const;
 
 	/// Return the stored measurement index for an editable column, or -1 if not editable.
@@ -256,7 +252,6 @@ protected:
 	bool m_has_auto_params = false;   // whether auto LPC params are stored (2 values at end)
 	bool m_has_series = true;         // NPoint: per-point series data present
 	bool m_has_average = false;       // NPoint: average group present
-	bool m_round_hz = true;           // round Hz values to nearest integer
 
 	// ── Column aliases ───────────────────────────────────────────────────
 

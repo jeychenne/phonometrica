@@ -108,6 +108,8 @@ public:
 
     static void reset_sound_plots();
 
+    static void reset_display();
+
     static void reset_last_directory();
 
     static void reset_recent_projects();

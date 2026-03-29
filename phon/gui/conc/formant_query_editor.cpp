@@ -331,14 +331,9 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_bw_check = new QCheckBox(tr("Add bandwidth"));
 	m_erb_check = new QCheckBox(tr("Add ERB"));
 	m_bark_check = new QCheckBox(tr("Add Bark"));
-	m_round_check = new QCheckBox(tr("Round to nearest Hz"));
-	m_round_check->setChecked(true);
-	m_round_check->setToolTip(tr("When checked, formant and bandwidth values are rounded to the nearest Hz.\n"
-	                              "When unchecked, values are displayed with 3 decimal places."));
 	opt_row->addWidget(m_bw_check);
 	opt_row->addWidget(m_erb_check);
 	opt_row->addWidget(m_bark_check);
-	opt_row->addWidget(m_round_check);
 	opt_row->addStretch();
 	outer->addLayout(opt_row);
 
@@ -673,7 +668,6 @@ void FormantQueryEditor::parseQuery()
 	m_query->set_output_bandwidth(m_bw_check->isChecked());
 	m_query->set_output_erb(m_erb_check->isChecked());
 	m_query->set_output_bark(m_bark_check->isChecked());
-	m_query->set_round_hz(m_round_check->isChecked());
 }
 
 bool FormantQueryEditor::validateQuery()
@@ -957,7 +951,6 @@ void FormantQueryEditor::loadQuery()
 	m_bw_check->setChecked(m_query->output_bandwidth());
 	m_erb_check->setChecked(m_query->output_erb());
 	m_bark_check->setChecked(m_query->output_bark());
-	m_round_check->setChecked(m_query->round_hz());
 
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);
