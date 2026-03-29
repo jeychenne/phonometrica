@@ -88,15 +88,19 @@ private slots:
 	void onExportMetadata();
 	void onExportAnnotations();
 
+	// File menu (other)
+	void onEditPreferences();
+	void onCloseCurrentView();
+	void onCloseAllViews();
+
 	// View actions (forwarded to active view in the current panel)
 	void onSaveCurrentView();
 	void onExecuteCurrentView();
 	void onEscapeCurrentView();
 
 	// Window menu
-	void onToggleProjectPanel(bool visible);
-	void onToggleConsolePanel(bool visible);
-	void onToggleInfoPanel(bool visible);
+	void onMaximizeViewer();
+	void onRestoreDefaultLayout();
 
 	// Tab management
 	void onActiveTabChanged(int index);
@@ -153,8 +157,15 @@ private:
 	// Prompt to save all modified tabs. Returns false if user cancelled.
 	bool promptSaveUnsavedTabs();
 
+	// Close one tab by index, prompting to save if modified. Returns false if cancelled.
+	bool closeTab(int index);
+
 	// Prompt to save the project if modified. Returns false if user cancelled.
 	bool promptSaveProject();
+
+	// Window geometry persistence (uses QSettings).
+	void saveWindowState();
+	void restoreWindowState();
 
 	// Plugin support
 	void loadPluginsAndScripts(const String &root);
@@ -213,6 +224,9 @@ private:
 	Array<AutoPlugin> m_plugins;
 	// Parallel tracking: maps Plugin* to the QAction* that owns its submenu in m_plugins_menu.
 	std::unordered_map<Plugin *, QAction *> m_plugin_actions;
+
+	// Default dock layout state, captured at construction before restoreWindowState().
+	QByteArray m_default_state;
 };
 
 } // namespace phonometrica

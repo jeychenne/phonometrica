@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QCloseEvent>
 #include <QLabel>
+#include <QSettings>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/view.hpp>
@@ -36,6 +37,7 @@
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/user_dialog.hpp>
+#include <phon/gui/preferences_dialog.hpp>
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
@@ -84,6 +86,10 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 	}
 
 	updateWindowTitle();
+
+	// Capture the default dock layout before any user customization is applied.
+	m_default_state = QMainWindow::saveState();
+	restoreWindowState();
 }
 
 void MainWindow::createMenus()
@@ -135,6 +141,9 @@ QMenu *MainWindow::createFileMenu()
 	menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
 	menu->addSeparator();
 
+	menu->addAction(tr("Preferences..."), this, &MainWindow::onEditPreferences);
+	menu->addSeparator();
+
 	auto *import_menu = menu->addMenu(tr("Import"));
 	import_menu->addAction(tr("Import metadata from CSV file..."), this, &MainWindow::onImportMetadata);
 
@@ -142,6 +151,9 @@ QMenu *MainWindow::createFileMenu()
 	export_menu->addAction(tr("Export annotation(s) to plain text..."), this, &MainWindow::onExportAnnotations);
 	export_menu->addAction(tr("Export project metadata to CSV file..."), this, &MainWindow::onExportMetadata);
 
+	menu->addSeparator();
+	menu->addAction(tr("Close current view"), QKeySequence(tr("Ctrl+W")), this, &MainWindow::onCloseCurrentView);
+	menu->addAction(tr("Close all views"), QKeySequence(tr("Ctrl+Shift+W")), this, &MainWindow::onCloseAllViews);
 	menu->addSeparator();
 	menu->addAction(tr("Close project"), this, &MainWindow::onCloseProject);
 	menu->addSeparator();
@@ -233,20 +245,17 @@ QMenu *MainWindow::createWindowMenu()
 {
 	auto *menu = new QMenu(tr("&Window"), this);
 
-	auto *project_action = menu->addAction(tr("Project manager"));
-	project_action->setCheckable(true);
-	project_action->setChecked(true);
-	connect(project_action, &QAction::toggled, this, &MainWindow::onToggleProjectPanel);
+	// Use the dock widgets' built-in toggle actions — they auto-sync
+	// their checked state when the dock is shown/hidden programmatically
+	// (e.g. by restoreState() or Maximize viewer).
+	menu->addAction(m_project_dock->toggleViewAction());
+	menu->addAction(m_console_dock->toggleViewAction());
+	menu->addAction(m_info_dock->toggleViewAction());
 
-	auto *console_action = menu->addAction(tr("Tools panel"));
-	console_action->setCheckable(true);
-	console_action->setChecked(true);
-	connect(console_action, &QAction::toggled, this, &MainWindow::onToggleConsolePanel);
-
-	auto *info_action = menu->addAction(tr("Information panel"));
-	info_action->setCheckable(true);
-	info_action->setChecked(true);
-	connect(info_action, &QAction::toggled, this, &MainWindow::onToggleInfoPanel);
+	menu->addSeparator();
+	menu->addAction(tr("Maximize viewer"), QKeySequence(tr("Ctrl+Up")), this, &MainWindow::onMaximizeViewer);
+	menu->addSeparator();
+	menu->addAction(tr("Restore default layout"), QKeySequence(tr("Ctrl+Shift+Up")), this, &MainWindow::onRestoreDefaultLayout);
 
 	return menu;
 }
@@ -255,16 +264,38 @@ QMenu *MainWindow::createHelpMenu()
 {
 	auto *menu = new QMenu(tr("&Help"), this);
 
-	auto *manual_action = menu->addAction(tr("User Manual"), [this]() {
+	auto *manual_action = menu->addAction(tr("Documentation"), [this]() {
 		HelpBrowser::showPage({}, this);
 	});
 	manual_action->setShortcut(QKeySequence::HelpContents);
 
-	menu->addAction(tr("Context Help"), [this]() {
-		auto *view = currentView();
-		auto anchor = view ? view->helpAnchor() : QString();
-		HelpBrowser::showPage(anchor, this);
-	}, QKeySequence(Qt::SHIFT | Qt::Key_F1));
+	menu->addAction(tr("Scripting"), [this]() {
+		HelpBrowser::showPage(QStringLiteral("scripting"), this);
+	});
+
+	menu->addSeparator();
+
+	menu->addAction(tr("Go to website"), []() {
+		QDesktopServices::openUrl(QUrl(QStringLiteral("https://www.phonometrica-ling.org")));
+	});
+
+	menu->addAction(tr("Acknowledgements"), [this]() {
+		HelpBrowser::showPage(QStringLiteral("about/acknowledgements"), this);
+	});
+
+	menu->addSeparator();
+
+	menu->addAction(tr("Sound information"), [this]() {
+		auto formats = Sound::supported_sound_format_names();
+		auto joined = String::join(formats, ", ");
+		auto msg = tr("Supported sound formats on this platform:\n%1\n\n"
+		              "libsndfile: version %2\n\n"
+		              "RTAudio: version %3")
+			.arg(QString::fromUtf8(joined.data(), (int) joined.size()))
+			.arg(QString::fromUtf8(Sound::libsndfile_version().data()))
+			.arg(QString::fromUtf8(Sound::rtaudio_version().data()));
+		QMessageBox::information(this, tr("Sound information"), msg);
+	});
 
 	menu->addSeparator();
 
@@ -288,29 +319,7 @@ void MainWindow::createCentralWidget()
 	m_viewer->setDocumentMode(true);
 
 	connect(m_viewer, &QTabWidget::tabCloseRequested, [this](int index) {
-		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(index));
-
-		if (panel && panel->isModified())
-		{
-			auto answer = QMessageBox::question(this, tr("Unsaved changes"),
-				tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
-				QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-
-			if (answer == QMessageBox::Cancel)
-				return;
-			if (answer == QMessageBox::Save)
-				panel->saveAll();
-			else
-			{
-				// Discard changes in all views.
-				for (auto *v : panel->views())
-					v->discardChanges();
-			}
-		}
-
-		m_viewer->removeTab(index);
-		updateWindowTitle();
-		m_file_manager->refresh();
+		closeTab(index);
 	});
 
 	connect(m_viewer, &QTabWidget::currentChanged, this, &MainWindow::onActiveTabChanged);
@@ -327,6 +336,7 @@ void MainWindow::createDockWidgets()
 {
 	// Project manager dock (left)
 	m_project_dock = new QDockWidget(tr("Project"), this);
+	m_project_dock->setObjectName(QStringLiteral("ProjectDock"));
 	m_project_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
 	m_file_manager = new FileManager(Project::get(), m_project_dock);
@@ -353,6 +363,7 @@ void MainWindow::createDockWidgets()
 
 	// Console & Output dock (bottom)
 	m_console_dock = new QDockWidget(tr("Tools"), this);
+	m_console_dock->setObjectName(QStringLiteral("ToolsDock"));
 	m_console_dock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
 
 	auto *bottom_tabs = new QTabWidget(m_console_dock);
@@ -374,6 +385,7 @@ void MainWindow::createDockWidgets()
 
 	// Information panel dock (right)
 	m_info_dock = new QDockWidget(tr("Information"), this);
+	m_info_dock->setObjectName(QStringLiteral("InfoDock"));
 	m_info_dock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
 	m_info_panel = new InfoPanel(Project::get(), m_info_dock);
@@ -734,6 +746,75 @@ void MainWindow::onExportAnnotations()
 	}
 }
 
+void MainWindow::onEditPreferences()
+{
+	PreferencesDialog dlg(this);
+	dlg.exec();
+}
+
+void MainWindow::onCloseCurrentView()
+{
+	int idx = m_viewer->currentIndex();
+	if (idx >= 0)
+		closeTab(idx);
+}
+
+void MainWindow::onCloseAllViews()
+{
+	// Close from last to first; stop if user cancels.
+	while (m_viewer->count() > 0)
+	{
+		if (!closeTab(m_viewer->count() - 1))
+			break;
+	}
+}
+
+bool MainWindow::closeTab(int index)
+{
+	auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(index));
+
+	if (panel && panel->isModified())
+	{
+		// Bring the tab into view so the user knows which one we're asking about.
+		m_viewer->setCurrentIndex(index);
+
+		auto answer = QMessageBox::question(this, tr("Unsaved changes"),
+			tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+		if (answer == QMessageBox::Cancel)
+			return false;
+		if (answer == QMessageBox::Save)
+			panel->saveAll();
+		else
+		{
+			for (auto *v : panel->views())
+				v->discardChanges();
+		}
+	}
+
+	m_viewer->removeTab(index);
+	updateWindowTitle();
+	m_file_manager->refresh();
+	return true;
+}
+
+void MainWindow::onMaximizeViewer()
+{
+	m_project_dock->hide();
+	m_console_dock->hide();
+	m_info_dock->hide();
+}
+
+void MainWindow::onRestoreDefaultLayout()
+{
+	// Show all docks and restore to the layout captured at construction.
+	m_project_dock->show();
+	m_console_dock->show();
+	m_info_dock->show();
+	QMainWindow::restoreState(m_default_state);
+}
+
 void MainWindow::onQuit()
 {
 	close(); // This triggers closeEvent().
@@ -741,18 +822,78 @@ void MainWindow::onQuit()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-	if (!promptSaveUnsavedTabs())
+	bool autosave = Settings::get_boolean("autosave");
+
+	// ── Save open view paths for "Restore views" ──
+	if (Settings::get_boolean("restore_views"))
 	{
-		event->ignore();
-		return;
+		Array<Variant> views;
+		for (int i = 0; i < m_viewer->count(); i++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+			if (!panel) continue;
+			for (auto *v : panel->views())
+			{
+				auto p = v->path();
+				if (!p.empty())
+					views.append(p);
+			}
+		}
+		Settings::set_value("selected_view", intptr_t(m_viewer->currentIndex()));
+		Settings::set_value("recent_views", std::move(views));
 	}
 
-	if (!promptSaveProject())
+	// ── Handle unsaved tabs ──
+	if (autosave)
 	{
-		event->ignore();
-		return;
+		// Silently save all modified tabs.
+		for (int i = 0; i < m_viewer->count(); i++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+			if (panel && panel->isModified())
+				panel->saveAll();
+		}
+	}
+	else
+	{
+		if (!promptSaveUnsavedTabs())
+		{
+			event->ignore();
+			return;
+		}
 	}
 
+	// ── Handle unsaved project ──
+	auto *project = Project::get();
+	if (project && project->modified())
+	{
+		if (autosave)
+		{
+			if (project->has_path())
+			{
+				project->save();
+			}
+			else
+			{
+				// Can't silently save a project that has never been saved — need Save As.
+				if (!promptSaveProject())
+				{
+					event->ignore();
+					return;
+				}
+			}
+		}
+		else
+		{
+			if (!promptSaveProject())
+			{
+				event->ignore();
+				return;
+			}
+		}
+	}
+
+	saveWindowState();
 	event->accept();
 }
 
@@ -845,21 +986,6 @@ void MainWindow::updateUndoRedoState()
 	m_redo_action->setEnabled(view && view->canRedo());
 }
 
-void MainWindow::onToggleProjectPanel(bool visible)
-{
-	m_project_dock->setVisible(visible);
-}
-
-void MainWindow::onToggleConsolePanel(bool visible)
-{
-	m_console_dock->setVisible(visible);
-}
-
-void MainWindow::onToggleInfoPanel(bool visible)
-{
-	m_info_dock->setVisible(visible);
-}
-
 
 // ---------------------------------------------------------
 //  Analysis menu slots
@@ -874,7 +1000,7 @@ void MainWindow::onFindInAnnotations()
 		m_last_query = editor.query();
 		auto conc = editor.concordance();
 
-		if (conc && !conc->empty())
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 		{
 			openConcordance(conc);
 			statusBar()->showMessage(
@@ -896,7 +1022,7 @@ void MainWindow::onMeasureFormants()
 		m_last_query = editor.query();
 		auto conc = editor.concordance();
 
-		if (conc && !conc->empty())
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 		{
 			openConcordance(conc);
 			statusBar()->showMessage(
@@ -930,7 +1056,7 @@ void MainWindow::onEditLastQuery()
 			m_last_query = editor.query();
 			auto conc = editor.concordance();
 
-			if (conc && !conc->empty())
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 			{
 				openConcordance(conc);
 				statusBar()->showMessage(
@@ -951,7 +1077,7 @@ void MainWindow::onEditLastQuery()
 			m_last_query = editor.query();
 			auto conc = editor.concordance();
 
-			if (conc && !conc->empty())
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 			{
 				openConcordance(conc);
 				statusBar()->showMessage(
@@ -1071,7 +1197,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 				m_last_query = editor.query();
 				auto conc = editor.concordance();
 
-				if (conc && !conc->empty())
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 				{
 					openConcordance(conc);
 					statusBar()->showMessage(
@@ -1092,7 +1218,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 				m_last_query = editor.query();
 				auto conc = editor.concordance();
 
-				if (conc && !conc->empty())
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 				{
 					openConcordance(conc);
 					statusBar()->showMessage(
@@ -1359,6 +1485,30 @@ void MainWindow::onReplace()
 {
 	if (auto *v = currentView())
 		v->replace();
+}
+
+
+// ---------------------------------------------------------
+//  Window geometry persistence
+// ---------------------------------------------------------
+
+void MainWindow::saveWindowState()
+{
+	QSettings settings;
+	settings.setValue("mainwindow/geometry", QMainWindow::saveGeometry());
+	settings.setValue("mainwindow/state", QMainWindow::saveState());
+}
+
+void MainWindow::restoreWindowState()
+{
+	QSettings settings;
+	auto geometry = settings.value("mainwindow/geometry").toByteArray();
+	auto state = settings.value("mainwindow/state").toByteArray();
+
+	if (!geometry.isEmpty())
+		QMainWindow::restoreGeometry(geometry);
+	if (!state.isEmpty())
+		QMainWindow::restoreState(state);
 }
 
 
@@ -1728,6 +1878,52 @@ void MainWindow::postInitialize()
 	auto user_dir = Settings::settings_directory();
 	loadPluginsAndScripts(resources_dir);
 	loadPluginsAndScripts(user_dir);
+
+	// Autoload the most recent project if the preference is enabled.
+	if (Settings::get_boolean("autoload"))
+	{
+		try
+		{
+			auto &lst = Settings::get_list("recent_projects");
+			if (!lst.empty())
+			{
+				auto path = cast<String>(lst[1]);
+				Project::get()->open(path);
+				m_file_manager->refresh();
+				updateRecentProjects(path);
+				updateWindowTitle();
+				statusBar()->showMessage(tr("Loaded recent project"), 3000);
+			}
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Error"),
+				tr("Could not open most recent project: %1").arg(e.what()));
+		}
+
+		// Restore views that were open in the previous session.
+		if (Settings::get_boolean("restore_views"))
+		{
+			try
+			{
+				auto &views = Settings::get_list("recent_views");
+				for (auto &view : views)
+				{
+					auto path = cast<String>(view);
+					auto vfile = Project::get()->get(path);
+					if (vfile)
+						onDocumentRequested(vfile.get());
+				}
+				auto sel = Settings::get_int("selected_view");
+				if (sel >= 0 && sel < m_viewer->count())
+					m_viewer->setCurrentIndex(sel);
+			}
+			catch (...)
+			{
+				// No saved views or stale paths — silently ignore.
+			}
+		}
+	}
 }
 
 void MainWindow::loadPluginsAndScripts(const String &root)
@@ -1836,7 +2032,7 @@ void MainWindow::loadPlugin(const String &path)
 				{
 					m_last_query = editor.query();
 					auto conc = editor.concordance();
-					if (conc && !conc->empty())
+					if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 					{
 						openConcordance(conc);
 						statusBar()->showMessage(
