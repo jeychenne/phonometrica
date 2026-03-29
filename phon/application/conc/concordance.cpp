@@ -72,6 +72,8 @@ Concordance::Concordance(const Concordance &other) :
 	m_semitone_ref = other.m_semitone_ref;
 	m_has_pitch_erb = other.m_has_pitch_erb;
 
+	m_is_intensity = other.m_is_intensity;
+
 	m_matches.reserve(other.m_matches.size());
 
 	for (auto &m : other.m_matches) {
@@ -136,9 +138,14 @@ void Concordance::set_has_pitch_erb(bool b)
 	m_content_modified = true;
 }
 
+void Concordance::set_intensity_meta()
+{
+	m_is_intensity = true;
+}
+
 int Concordance::stored_fields_per_point() const
 {
-	if (m_is_pitch) return 1;
+	if (m_is_pitch || m_is_intensity) return 1;
 	return m_nformant + (m_has_bandwidth ? m_nformant : 0);
 }
 
@@ -163,6 +170,39 @@ void Concordance::rebuild_extra_headers()
 {
 	m_extra_headers.clear();
 	m_base_headers.clear();
+
+	if (m_is_intensity)
+	{
+		// ── Intensity headers ─────────────────────────────────────────────
+		auto emit_intensity_group = [&](Array<String> &headers, const char *suffix)
+		{
+			headers.append(String::format("Intensity(dB)%s", suffix));
+		};
+
+		emit_intensity_group(m_base_headers, "");
+
+		if (!has_measurement_data())
+		{
+			emit_intensity_group(m_extra_headers, "");
+		}
+		else
+		{
+			if (m_has_series)
+			{
+				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				{
+					char suffix[16];
+					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					emit_intensity_group(m_extra_headers, suffix);
+				}
+			}
+			if (m_has_average)
+			{
+				emit_intensity_group(m_extra_headers, "(avg)");
+			}
+		}
+		return;
+	}
 
 	if (m_is_pitch)
 	{
@@ -382,6 +422,14 @@ String Concordance::get_header(intptr_t j) const
 /// within_group: 0-based index within the display fields for one point.
 double Concordance::resolve_group_value(const std::vector<double> &meas, int stored_base, int within_group) const
 {
+	if (m_is_intensity)
+	{
+		// Intensity: 1 stored value (dB), no computed columns.
+		intptr_t idx = stored_base + within_group;
+		if (idx < (intptr_t)meas.size()) return meas[idx];
+		return std::nan("");
+	}
+
 	if (m_is_pitch)
 	{
 		// Pitch: 1 stored value (F0 in Hz), then optional semitones and ERB computed on the fly.
@@ -464,6 +512,12 @@ String Concordance::format_measurement(double val, int within_group) const
 	int hz_dec = 0;
 	try { hz_dec = Settings::get_int("display", "hz_decimals"); }
 	catch (...) {}
+
+	if (m_is_intensity)
+	{
+		// Intensity in dB — 1 decimal place
+		return String::format("%.1f", val);
+	}
 
 	if (m_is_pitch)
 	{
@@ -565,7 +619,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				// Wide mode (or midpoint): direct mapping
 				int d0 = (int)(j - 1); // 0-based within extra columns
 
-				if (m_is_pitch)
+				if (m_is_pitch || m_is_intensity)
 				{
 					int dfpp = display_fields_per_point();
 					int sfpp = stored_fields_per_point();
@@ -655,7 +709,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) const
 {
-	if (m_nformant == 0 && !m_is_pitch) return -1;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity) return -1;
 
 	int sfpp = stored_fields_per_point();
 	int dfpp = display_fields_per_point();
@@ -723,7 +777,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 bool Concordance::is_editable_measurement(intptr_t col) const
 {
-	if (m_nformant == 0 && !m_is_pitch) return false;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity) return false;
 	if (!is_measurement_column(col)) return false;
 
 	// Compute extra column index
@@ -943,6 +997,15 @@ void Concordance::load()
 					m_has_series = child.text().as_bool(true);
 			}
 		}
+		else if (node.name() == str("IntensityMeta"))
+		{
+			m_is_intensity = true;
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("HasSeries"))
+					m_has_series = child.text().as_bool(true);
+			}
+		}
 		else if (node.name() == str("ColumnAliases"))
 		{
 			for (auto child = node.first_child(); child; child = child.next_sibling())
@@ -987,6 +1050,13 @@ void Concordance::normalize_after_load()
 	if (m_is_pitch)
 	{
 		// Pitch metadata was loaded from XML. Just rebuild display headers.
+		rebuild_extra_headers();
+		return;
+	}
+
+	if (m_is_intensity)
+	{
+		// Intensity metadata was loaded from XML. Just rebuild display headers.
 		rebuild_extra_headers();
 		return;
 	}
@@ -1319,6 +1389,14 @@ void Concordance::write()
 			.set_value(m_has_series ? "true" : "false");
 	}
 
+	// ── Intensity metadata ──────────────────────────────────────────────
+	if (m_is_intensity)
+	{
+		auto im = root.append_child("IntensityMeta");
+		im.append_child("HasSeries").append_child(node_pcdata)
+			.set_value(m_has_series ? "true" : "false");
+	}
+
 	// ── Measurement metadata for wide/long toggle ─────────────────────────
 	if (has_measurement_data())
 	{
@@ -1530,6 +1608,9 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
 	if (m_is_pitch) {
 		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	if (m_is_intensity) {
+		conc->set_intensity_meta();
+	}
 	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
@@ -1574,6 +1655,9 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
 	if (m_is_pitch) {
 		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	if (m_is_intensity) {
+		conc->set_intensity_meta();
+	}
 	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
@@ -1618,6 +1702,9 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
 	if (m_is_pitch) {
 		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	if (m_is_intensity) {
+		conc->set_intensity_meta();
+	}
 	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);

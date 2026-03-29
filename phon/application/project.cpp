@@ -24,6 +24,7 @@
 #include <phon/runtime/object.hpp>
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/conc/pitch_query.hpp>
+#include <phon/application/conc/intensity_query.hpp>
 
 namespace phonometrica {
 
@@ -401,6 +402,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 	static const std::string_view text_query_tag("Query");
 	static const std::string_view formant_query_tag("FormantQuery");
 	static const std::string_view pitch_query_tag("PitchQuery");
+	static const std::string_view intensity_query_tag("IntensityQuery");
 
 	for (auto node = root.first_child(); node; node = node.next_sibling())
 	{
@@ -463,6 +465,18 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				else if (cls == pitch_query_tag)
 				{
 					auto query = make_handle<PitchQuery>(folder, std::move(path));
+
+					auto meta_child = node.child("Metadata");
+					if (meta_child) {
+						query->metadata_from_xml(meta_child);
+					}
+
+					folder->append(query, false);
+					register_file(query->path(), query);
+				}
+				else if (cls == intensity_query_tag)
+				{
+					auto query = make_handle<IntensityQuery>(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -813,6 +827,10 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		else if (query_type == Query::Type::Pitch)
 		{
 			query = make_handle<PitchQuery>(p, std::move(path));
+		}
+		else if (query_type == Query::Type::Intensity)
+		{
+			query = make_handle<IntensityQuery>(p, std::move(path));
 		}
 		else
 		{
@@ -1599,6 +1617,7 @@ void Project::preinitialize(Runtime &rt)
 	rt.add_standard_type<Query>("Query", doc_type.get());
 	rt.add_standard_type<FormantQuery>("FormantQuery", doc_type.get());
 	rt.add_standard_type<PitchQuery>("PitchQuery", doc_type.get());
+	rt.add_standard_type<IntensityQuery>("IntensityQuery", doc_type.get());
 	auto bookmark_type = rt.add_standard_type<Bookmark>("Bookmark", elem_type.get());
 	rt.add_standard_type<TimeStamp>("TimeStamp", bookmark_type.get());
 }
