@@ -35,7 +35,13 @@ public:
 
 	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
 
+	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
+
 	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
+
+	bool setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role = Qt::EditRole) override;
+
+	Qt::ItemFlags flags(const QModelIndex &index) const override;
 
 	// Remove a match and notify the view. Returns the removed match for undo support.
 	AutoMatch removeMatch(int row);
@@ -46,7 +52,7 @@ public:
 	// Refresh a single row (e.g. after editing an event).
 	void refreshRow(int row);
 
-	// Refresh all data (e.g. after a set operation).
+	// Refresh all data (e.g. after a set operation or column structure change).
 	void refreshAll();
 
 	Handle<Concordance> concordance() const { return m_conc; }

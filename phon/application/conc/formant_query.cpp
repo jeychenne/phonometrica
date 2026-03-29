@@ -32,13 +32,11 @@ FormantQuery::FormantQuery(Directory *parent, String path) :
 	}
 }
 
+// Only raw formant + bandwidth fields are stored per measurement point.
+// ERB and Bark are computed on the fly by the concordance.
 int FormantQuery::fields_per_point() const
 {
-	int n = m_nformant;
-	if (m_bandwidth) n += m_nformant;
-	if (m_erb) n += m_nformant;
-	if (m_bark) n += m_nformant;
-	return n;
+	return m_nformant + (m_bandwidth ? m_nformant : 0);
 }
 
 int FormantQuery::field_count() const
@@ -62,11 +60,12 @@ int FormantQuery::field_count() const
 	return n;
 }
 
+// Build wide-mode column headers for one measurement point, with suffix.
+// Only emits F and B headers (ERB/Bark are handled by the concordance).
 Array<String> FormantQuery::build_headers() const
 {
 	Array<String> headers;
 
-	// Helper: emit one group of columns (F1..Fn [B1..Bn] [E1..En] [z1..zn]) with a suffix
 	auto emit_group = [&](const char *suffix)
 	{
 		for (intptr_t i = 1; i <= m_nformant; i++) {
@@ -75,16 +74,6 @@ Array<String> FormantQuery::build_headers() const
 		if (m_bandwidth) {
 			for (intptr_t i = 1; i <= m_nformant; i++) {
 				headers.append(String::format("B%d%s", (int)i, suffix));
-			}
-		}
-		if (m_erb) {
-			for (intptr_t i = 1; i <= m_nformant; i++) {
-				headers.append(String::format("E%d%s", (int)i, suffix));
-			}
-		}
-		if (m_bark) {
-			for (intptr_t i = 1; i <= m_nformant; i++) {
-				headers.append(String::format("z%d%s", (int)i, suffix));
 			}
 		}
 	};
@@ -122,9 +111,10 @@ Array<String> FormantQuery::build_headers() const
 	return headers;
 }
 
+// Un-suffixed column names for a single measurement point: F1, F2, ..., [B1, ...].
+// Only raw stored columns (no ERB/Bark).
 Array<String> FormantQuery::build_base_headers() const
 {
-	// Un-suffixed column names for a single measurement point: F1, F2, ..., [B1, ...], [E1, ...], [z1, ...]
 	Array<String> headers;
 
 	for (intptr_t i = 1; i <= m_nformant; i++) {
@@ -133,16 +123,6 @@ Array<String> FormantQuery::build_base_headers() const
 	if (m_bandwidth) {
 		for (intptr_t i = 1; i <= m_nformant; i++) {
 			headers.append(String::format("B%d", (int)i));
-		}
-	}
-	if (m_erb) {
-		for (intptr_t i = 1; i <= m_nformant; i++) {
-			headers.append(String::format("E%d", (int)i));
-		}
-	}
-	if (m_bark) {
-		for (intptr_t i = 1; i <= m_nformant; i++) {
-			headers.append(String::format("z%d", (int)i));
 		}
 	}
 
@@ -171,6 +151,7 @@ void FormantQuery::clear()
 	m_bandwidth = false;
 	m_erb = false;
 	m_bark = false;
+	m_round_hz = true;
 }
 
 Handle<Concordance> FormantQuery::execute()
@@ -199,20 +180,27 @@ Handle<Concordance> FormantQuery::execute()
 		}
 	}
 
-	// Build concordance with extra formant columns
+	// Build concordance with formant metadata
 	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
-	conc->set_extra_headers(build_headers());
+
+	// Set formant metadata — ERB/Bark are computed on the fly by the concordance
+	conc->set_formant_meta(m_nformant, m_bandwidth, m_erb, m_bark, m_automatic);
+	conc->set_round_hz(m_round_hz);
 
 	// Provide measurement metadata so the concordance can toggle between wide and long layout.
 	if (m_method == Method::NPoint)
 	{
-		conc->set_measurement_info(m_points, build_base_headers(), fields_per_point(), m_average);
+		conc->set_measurement_info(m_points, m_average);
+		conc->set_has_series(m_series);
 		conc->set_layout(m_initial_layout);
 	}
 
+	// Build all display headers from the metadata
+	conc->rebuild_extra_headers();
+
 	auto lbl = this->label();
 	if (lbl.starts_with("Query ")) {
-		lbl.replace_first("Query ", "Concordance ");
+		lbl = String::format("Concordance %d", Concordance::next_id());
 	}
 	conc->set_label(lbl, false);
 	Project::get()->add_temp_concordance(conc);
@@ -220,6 +208,8 @@ Handle<Concordance> FormantQuery::execute()
 	return conc;
 }
 
+// Fill match.measurements with raw formant and bandwidth values only.
+// ERB and Bark are computed on the fly by Concordance::get_cell().
 void FormantQuery::measure_match(Match &match) const
 {
 	using namespace speech;
@@ -270,7 +260,7 @@ void FormantQuery::measure_match(Match &match) const
 	int idx = 0;
 
 	// Helper: fill one measurement point's worth of columns from an nformant×2 data matrix.
-	// Layout per point: F1..Fn, [B1..Bn], [E1..En], [z1..zn]
+	// Layout per point: F1..Fn, [B1..Bn]. No ERB/Bark — they are computed on the fly.
 	auto fill_point = [&](const Array<double> &data)
 	{
 		for (int i = 1; i <= nf; i++) {
@@ -279,18 +269,6 @@ void FormantQuery::measure_match(Match &match) const
 		if (m_bandwidth) {
 			for (int i = 1; i <= nf; i++) {
 				match.measurements[idx++] = data(i, 2);
-			}
-		}
-		if (m_erb) {
-			for (int i = 1; i <= nf; i++) {
-				double f = data(i, 1);
-				match.measurements[idx++] = std::isfinite(f) ? hertz_to_erb(f) : f;
-			}
-		}
-		if (m_bark) {
-			for (int i = 1; i <= nf; i++) {
-				double f = data(i, 1);
-				match.measurements[idx++] = std::isfinite(f) ? hertz_to_bark(f) : f;
 			}
 		}
 	};
@@ -386,6 +364,7 @@ Handle<Query> FormantQuery::copy() const
 	c->m_bandwidth = m_bandwidth;
 	c->m_erb = m_erb;
 	c->m_bark = m_bark;
+	c->m_round_hz = m_round_hz;
 	c->m_content_modified = true;
 
 	return c;
@@ -527,6 +506,10 @@ void FormantQuery::load()
 				{
 					m_bark = child.text().as_bool(false);
 				}
+				else if (child.name() == str("RoundHz"))
+				{
+					m_round_hz = child.text().as_bool(true);
+				}
 			}
 		}
 	}
@@ -622,6 +605,7 @@ void FormantQuery::write()
 	add_data_node(fs_node, "Bandwidth", String::convert(m_bandwidth));
 	add_data_node(fs_node, "ERB", String::convert(m_erb));
 	add_data_node(fs_node, "Bark", String::convert(m_bark));
+	add_data_node(fs_node, "RoundHz", String::convert(m_round_hz));
 
 	write_xml(doc, m_path);
 }

@@ -14,6 +14,7 @@
 #include <cmath>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
+#include <phon/analysis/speech_utils.hpp>
 #include <phon/utils/xml.hpp>
 
 namespace phonometrica {
@@ -21,6 +22,10 @@ namespace phonometrica {
 static constexpr const char *EVENT_SEPARATOR = " ";
 // file, layer, start time, end time
 static const int FILE_INFO_COLUMN_COUNT = 4;
+// Global counter for unique default concordance names.
+static int s_concordance_id = 0;
+
+int Concordance::next_id() { return ++s_concordance_id; }
 
 
 Concordance::Concordance(Directory *parent, const String &path) :
@@ -50,9 +55,17 @@ Concordance::Concordance(const Concordance &other) :
 	m_extra_headers = other.m_extra_headers;
 	m_measurement_points = other.m_measurement_points;
 	m_base_headers = other.m_base_headers;
-	m_fields_per_point = other.m_fields_per_point;
 	m_has_average = other.m_has_average;
+	m_has_series = other.m_has_series;
 	m_layout = other.m_layout;
+
+	m_nformant = other.m_nformant;
+	m_has_bandwidth = other.m_has_bandwidth;
+	m_has_erb = other.m_has_erb;
+	m_has_bark = other.m_has_bark;
+	m_has_auto_params = other.m_has_auto_params;
+	m_header_aliases = other.m_header_aliases;
+	m_round_hz = other.m_round_hz;
 
 	m_matches.reserve(other.m_matches.size());
 
@@ -67,7 +80,134 @@ bool Concordance::empty() const
 	return m_matches.empty();
 }
 
-String Concordance::get_header(intptr_t j) const
+// ── Formant metadata ─────────────────────────────────────────────────────────
+
+void Concordance::set_formant_meta(int nformant, bool bandwidth, bool erb, bool bark, bool auto_params)
+{
+	m_nformant = nformant;
+	m_has_bandwidth = bandwidth;
+	m_has_erb = erb;
+	m_has_bark = bark;
+	m_has_auto_params = auto_params;
+}
+
+void Concordance::set_has_erb(bool b)
+{
+	if (m_has_erb == b) return;
+	m_has_erb = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
+void Concordance::set_has_bark(bool b)
+{
+	if (m_has_bark == b) return;
+	m_has_bark = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
+int Concordance::stored_fields_per_point() const
+{
+	return m_nformant + (m_has_bandwidth ? m_nformant : 0);
+}
+
+int Concordance::display_fields_per_point() const
+{
+	int sfpp = stored_fields_per_point();
+	int n = sfpp;
+	if (m_has_erb) n += sfpp;  // ERB of all stored columns (F + B)
+	if (m_has_bark) n += sfpp; // Bark of all stored columns (F + B)
+	return n;
+}
+
+void Concordance::rebuild_extra_headers()
+{
+	m_extra_headers.clear();
+	m_base_headers.clear();
+
+	if (m_nformant == 0) return;
+
+	auto emit_group = [&](Array<String> &headers, const char *suffix)
+	{
+		for (int i = 1; i <= m_nformant; i++)
+			headers.append(String::format("F%d%s", i, suffix));
+		if (m_has_bandwidth)
+			for (int i = 1; i <= m_nformant; i++)
+				headers.append(String::format("B%d%s", i, suffix));
+		if (m_has_erb)
+		{
+			for (int i = 1; i <= m_nformant; i++)
+				headers.append(String::format("E%d%s", i, suffix));
+			if (m_has_bandwidth)
+				for (int i = 1; i <= m_nformant; i++)
+					headers.append(String::format("E(B%d)%s", i, suffix));
+		}
+		if (m_has_bark)
+		{
+			for (int i = 1; i <= m_nformant; i++)
+				headers.append(String::format("z%d%s", i, suffix));
+			if (m_has_bandwidth)
+				for (int i = 1; i <= m_nformant; i++)
+					headers.append(String::format("z(B%d)%s", i, suffix));
+		}
+	};
+
+	// Base headers (for long mode): un-suffixed
+	emit_group(m_base_headers, "");
+
+	if (!has_measurement_data())
+	{
+		// Midpoint: flat extra headers (same as base, plus auto params)
+		emit_group(m_extra_headers, "");
+	}
+	else
+	{
+		// NPoint wide headers
+		if (m_has_series)
+		{
+			for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+			{
+				char suffix[16];
+				std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+				emit_group(m_extra_headers, suffix);
+			}
+		}
+		if (m_has_average)
+		{
+			emit_group(m_extra_headers, "(avg)");
+		}
+	}
+
+	if (m_has_auto_params) {
+		m_extra_headers.append("Max freq");
+		m_extra_headers.append("LPC order");
+	}
+}
+
+void Concordance::set_measurement_info(Array<double> points, bool has_average)
+{
+	m_measurement_points = std::move(points);
+	m_has_average = has_average;
+}
+
+// ── Column aliases ───────────────────────────────────────────────────────────
+
+void Concordance::set_header_alias(const String &default_header, const String &alias)
+{
+	m_header_aliases[default_header] = alias;
+	m_content_modified = true;
+}
+
+void Concordance::clear_header_alias(const String &default_header)
+{
+	m_header_aliases.erase(default_header);
+	m_content_modified = true;
+}
+
+// ── Headers ──────────────────────────────────────────────────────────────────
+
+String Concordance::get_default_header(intptr_t j) const
 {
 	// The logic of this function is the same as that of get_cell(). See comments there.
 	if (j == 1) {
@@ -144,6 +284,87 @@ String Concordance::get_header(intptr_t j) const
 	return "Description";
 }
 
+String Concordance::get_header(intptr_t j) const
+{
+	String default_hdr = get_default_header(j);
+
+	auto it = m_header_aliases.find(default_hdr);
+	if (it != m_header_aliases.end()) {
+		return it->second;
+	}
+
+	return default_hdr;
+}
+
+// ── Cell access ──────────────────────────────────────────────────────────────
+
+/// Resolve a display column within a measurement group to a double value.
+/// stored_base: offset into match.measurements for the start of this group.
+/// within_group: 0-based index within the display fields for one point.
+double Concordance::resolve_group_value(const std::vector<double> &meas, int stored_base, int within_group) const
+{
+	int nf = m_nformant;
+	int bw = m_has_bandwidth ? nf : 0;
+	int sfpp = nf + bw;
+
+	if (within_group < nf)
+	{
+		// Formant value — directly stored
+		intptr_t idx = stored_base + within_group;
+		if (idx < (intptr_t)meas.size()) return meas[idx];
+		return std::nan("");
+	}
+	else if (within_group < nf + bw)
+	{
+		// Bandwidth value — directly stored
+		intptr_t idx = stored_base + within_group;
+		if (idx < (intptr_t)meas.size()) return meas[idx];
+		return std::nan("");
+	}
+	else
+	{
+		// Derived value: ERB or Bark of any stored column (formant or bandwidth)
+		int erb_count = m_has_erb ? sfpp : 0;
+		int derived_offset = within_group - sfpp;
+
+		int source_index; // 0-based index into stored columns (F1..Fn, B1..Bn)
+		bool is_erb;
+
+		if (derived_offset < erb_count) {
+			// ERB
+			source_index = derived_offset;
+			is_erb = true;
+		}
+		else {
+			// Bark
+			source_index = derived_offset - erb_count;
+			is_erb = false;
+		}
+
+		intptr_t f_idx = stored_base + source_index;
+		if (f_idx >= (intptr_t)meas.size()) return std::nan("");
+		double f = meas[f_idx];
+		if (!std::isfinite(f)) return f;
+		return is_erb ? speech::hertz_to_erb(f) : speech::hertz_to_bark(f);
+	}
+}
+
+String Concordance::format_measurement(double val, int within_group) const
+{
+	if (std::isnan(val)) return "N/A";
+
+	int nf = m_nformant;
+	int sfpp = stored_fields_per_point();
+
+	if (within_group < sfpp)
+	{
+		// Formant or bandwidth in Hz
+		return m_round_hz ? String::format("%.0f", val) : String::format("%.3f", val);
+	}
+	// ERB or Bark — always 2 decimal places
+	return String::format("%.2f", val);
+}
+
 String Concordance::get_cell(intptr_t i, intptr_t j) const
 {
 	// In long mode, map display row to match index and point index.
@@ -191,33 +412,73 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	{
 		if (j <= eff)
 		{
+			auto &meas = m_matches[mi]->measurements;
+
 			if (m_layout == Layout::Long && has_measurement_data())
 			{
+				// Long mode: Step, Time, then measurement group for this point
 				intptr_t pi = point_for_row(i); // 0-based point index
 
 				if (j == 1) {
-					// Step (1-based)
 					return String::convert(intptr_t(pi + 1));
 				}
 				if (j == 2) {
-					// Normalized time (0..1)
 					return String::format("%.4f", m_measurement_points[pi + 1] / 100.0);
 				}
-				// Formant value at this point
-				auto &meas = m_matches[mi]->measurements;
-				intptr_t idx = pi * m_fields_per_point + (j - 3); // 0-based into measurements
-				if (idx >= 0 && idx < (intptr_t)meas.size())
-				{
-					double val = meas[idx];
-					if (std::isnan(val)) return "N/A";
-					return String::format("%.1f", val);
-				}
-				return "N/A";
+				// j >= 3: measurement within the point
+				int within = (int)(j - 3); // 0-based
+				int stored_base = (int)(pi * stored_fields_per_point());
+
+				double val = resolve_group_value(meas, stored_base, within);
+				return format_measurement(val, within);
 			}
 			else
 			{
-				// Wide mode: direct index into measurements vector
-				auto &meas = m_matches[mi]->measurements;
+				// Wide mode (or midpoint): direct mapping
+				int d0 = (int)(j - 1); // 0-based within extra columns
+
+				if (m_nformant > 0)
+				{
+					int dfpp = display_fields_per_point();
+					int sfpp = stored_fields_per_point();
+
+					// Check for auto params at the end
+					int auto_count = m_has_auto_params ? 2 : 0;
+					int total_display = (int)m_extra_headers.size();
+
+					if (auto_count > 0 && d0 >= total_display - auto_count)
+					{
+						// Auto param: stored at the end of the measurement vector
+						int series_points = (has_measurement_data() && m_has_series)
+							? (int)m_measurement_points.size() : 0;
+						int ngroups = series_points + (m_has_average ? 1 : 0);
+						if (!has_measurement_data()) ngroups = 1; // midpoint
+						int auto_base = ngroups * sfpp;
+						int auto_idx = d0 - (total_display - auto_count);
+						intptr_t idx = auto_base + auto_idx;
+						if (idx < (intptr_t)meas.size()) {
+							double val = meas[idx];
+							if (std::isnan(val)) return "N/A";
+							// Max freq is Hz (%.1f), LPC order is integer
+							if (auto_idx == 1)
+								return String::convert(intptr_t(val));
+							return String::format("%.1f", val);
+						}
+						return "N/A";
+					}
+
+					// Measurement group
+					if (dfpp > 0) {
+						int group_index = d0 / dfpp;
+						int within_group = d0 % dfpp;
+						int stored_base = group_index * sfpp;
+
+						double val = resolve_group_value(meas, stored_base, within_group);
+						return format_measurement(val, within_group);
+					}
+				}
+
+				// Fallback for non-formant extra columns (shouldn't happen with current architecture)
 				intptr_t idx = j - 1; // 0-based
 				if (idx < (intptr_t)meas.size())
 				{
@@ -248,9 +509,106 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	return m_matches[mi]->annotation()->description();
 }
 
+// ── Cell editing ─────────────────────────────────────────────────────────────
+
+intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) const
+{
+	if (m_nformant == 0) return -1;
+
+	int nf = m_nformant;
+	int sfpp = stored_fields_per_point();
+	int dfpp = display_fields_per_point();
+	if (dfpp == 0) return -1;
+
+	if (m_layout == Layout::Long && has_measurement_data())
+	{
+		// Long mode: extra_j 1=Step, 2=Time, 3+=measurement
+		if (extra_j <= 2) return -1;
+		int within = (int)(extra_j - 3); // 0-based
+		if (within >= sfpp) return -1; // derived or out of range
+		intptr_t pi = point_for_row(row); // 0-based
+		return pi * sfpp + within;
+	}
+
+	// Wide mode (or midpoint)
+	int d0 = (int)(extra_j - 1); // 0-based
+
+	// Check auto params at end
+	int auto_count = m_has_auto_params ? 2 : 0;
+	int total = (int)m_extra_headers.size();
+	if (auto_count > 0 && d0 >= total - auto_count)
+		return -1; // auto params are not editable
+
+	int within_group = d0 % dfpp;
+	if (within_group >= sfpp)
+		return -1; // derived column (ERB/Bark)
+
+	int group_index = d0 / dfpp;
+	return group_index * sfpp + within_group;
+}
+
 void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 {
-	throw error("Cannot write cell value in concordance");
+	if (!is_editable_measurement(j)) {
+		throw error("Cannot edit column %", j);
+	}
+
+	bool ok;
+	double val = value.to_float(&ok);
+	if (!ok) {
+		throw error("Invalid numeric value: %", value);
+	}
+
+	// Map display row to match index
+	intptr_t mi = (m_layout == Layout::Long && has_measurement_data()) ? match_for_row(i) : i;
+
+	// Compute extra column index: strip file info, context, targets, context
+	intptr_t extra_j = j - FILE_INFO_COLUMN_COUNT;
+	if (has_context()) extra_j--;
+	extra_j -= m_target_count;
+	if (has_context()) extra_j--;
+
+	intptr_t stored_idx = stored_index_for_column(extra_j, i);
+	if (stored_idx < 0) {
+		throw error("Cannot edit this cell");
+	}
+
+	auto &meas = m_matches[mi]->measurements;
+	if (stored_idx < (intptr_t)meas.size()) {
+		meas[stored_idx] = val;
+		modify();
+	}
+}
+
+bool Concordance::is_editable_measurement(intptr_t col) const
+{
+	if (m_nformant == 0) return false;
+	if (!is_measurement_column(col)) return false;
+
+	// Compute extra column index
+	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count());
+
+	// Use row 1 — the stored_index_for_column logic for within_group doesn't depend on row in wide mode,
+	// and in long mode it only matters for determining the point (which doesn't affect editability).
+	// We just check whether within_group < sfpp.
+
+	int dfpp = display_fields_per_point();
+	if (dfpp == 0) return false;
+
+	if (m_layout == Layout::Long && has_measurement_data())
+	{
+		if (extra_j <= 2) return false; // Step, Time
+		int within = (int)(extra_j - 3);
+		return within < stored_fields_per_point();
+	}
+
+	int d0 = (int)(extra_j - 1);
+	int auto_count = m_has_auto_params ? 2 : 0;
+	int total = (int)m_extra_headers.size();
+	if (auto_count > 0 && d0 >= total - auto_count) return false;
+
+	int within_group = d0 % dfpp;
+	return within_group < stored_fields_per_point();
 }
 
 bool Concordance::is_left_context(intptr_t col) const
@@ -349,6 +707,9 @@ void Concordance::load()
 		throw error("Expected a concordance, got a % file instead", attr.as_string());
 	}
 
+	// Temporary storage for old-format fields_per_point (used during migration)
+	int loaded_fpp = 0;
+
 	for (auto node = root.first_child(); node; node = node.next_sibling())
 	{
 		if (node.name() == str("Options"))
@@ -390,7 +751,7 @@ void Concordance::load()
 				}
 				else if (child.name() == str("FieldsPerPoint"))
 				{
-					m_fields_per_point = child.text().as_int(0);
+					loaded_fpp = child.text().as_int(0);
 				}
 				else if (child.name() == str("HasAverage"))
 				{
@@ -400,6 +761,44 @@ void Concordance::load()
 				{
 					auto val = str(child.text().get());
 					m_layout = (val == "long") ? Layout::Long : Layout::Wide;
+				}
+				else if (child.name() == str("HasSeries"))
+				{
+					m_has_series = child.text().as_bool(true);
+				}
+			}
+		}
+		else if (node.name() == str("FormantMeta"))
+		{
+			// New format: explicit formant metadata
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("NFormant"))
+					m_nformant = child.text().as_int(0);
+				else if (child.name() == str("HasBandwidth"))
+					m_has_bandwidth = child.text().as_bool(false);
+				else if (child.name() == str("HasERB"))
+					m_has_erb = child.text().as_bool(false);
+				else if (child.name() == str("HasBark"))
+					m_has_bark = child.text().as_bool(false);
+				else if (child.name() == str("HasAutoParams"))
+					m_has_auto_params = child.text().as_bool(false);
+				else if (child.name() == str("HasSeries"))
+					m_has_series = child.text().as_bool(true);
+				else if (child.name() == str("RoundHz"))
+					m_round_hz = child.text().as_bool(true);
+			}
+		}
+		else if (node.name() == str("ColumnAliases"))
+		{
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("Alias"))
+				{
+					auto key_attr = child.attribute("key");
+					if (key_attr) {
+						m_header_aliases[String(key_attr.value())] = String(child.text().get());
+					}
 				}
 			}
 		}
@@ -414,7 +813,110 @@ void Concordance::load()
 	}
 
 	find_context();
+
+	// After loading all data, normalize the measurement format.
+	normalize_after_load();
 }
+
+
+// ── Backward compatibility: detect and migrate old measurement format ─────────
+
+void Concordance::normalize_after_load()
+{
+	if (m_nformant > 0)
+	{
+		// New format: formant metadata was loaded from XML. Just rebuild display headers.
+		rebuild_extra_headers();
+		return;
+	}
+
+	// ── Old format detection ──────────────────────────────────────────────
+	// Detect formant metadata from the headers that were loaded.
+
+	// Try base_headers first (NPoint mode), then extra_headers (midpoint).
+	const Array<String> &headers = m_base_headers.empty() ? m_extra_headers : m_base_headers;
+	if (headers.empty()) return; // No formant data at all (pure text concordance).
+
+	int nf = 0;
+	bool has_bw = false, has_erb = false, has_bark = false, has_auto = false;
+
+	for (intptr_t i = 1; i <= headers.size(); i++)
+	{
+		const String &h = headers[i];
+		if (h.empty()) continue;
+
+		// For extra_headers in wide mode, strip the suffix: "F1(25%)" → 'F'
+		if (h.starts_with('F')) nf++;
+		else if (h.starts_with('B')) has_bw = true;
+		else if (h.starts_with('E')) has_erb = true;
+		else if (h.starts_with('z')) has_bark = true;
+		else if (h == "Max freq") { has_auto = true; break; }
+	}
+
+	// For NPoint base_headers, nf is the number of F-prefixed headers.
+	// For midpoint extra_headers with suffixes, nf is also the count of F-prefixed headers.
+	if (nf == 0) return;
+
+	m_nformant = nf;
+	m_has_bandwidth = has_bw;
+	m_has_erb = has_erb;
+	m_has_bark = has_bark;
+	m_has_auto_params = has_auto;
+
+	// ── Migrate measurement vectors if ERB/Bark are baked in ──────────────
+	// Strip derived (E, z) values from each match's measurement vector,
+	// keeping only raw F and B values (plus auto params at the end).
+
+	int old_fpp = nf + (has_bw ? nf : 0) + (has_erb ? nf : 0) + (has_bark ? nf : 0);
+	int new_fpp = nf + (has_bw ? nf : 0);
+
+	if (old_fpp != new_fpp)
+	{
+		// Determine how many groups (points) are stored
+		int ngroups;
+		if (has_measurement_data()) {
+			ngroups = (m_has_series ? (int)m_measurement_points.size() : 0)
+					+ (m_has_average ? 1 : 0);
+		}
+		else {
+			ngroups = 1; // midpoint
+		}
+
+		for (auto &match : m_matches)
+		{
+			std::vector<double> new_meas;
+			auto &old = match->measurements;
+			new_meas.reserve(ngroups * new_fpp + (has_auto ? 2 : 0));
+
+			for (int g = 0; g < ngroups; g++)
+			{
+				int base = g * old_fpp;
+				for (int k = 0; k < new_fpp; k++)
+				{
+					intptr_t idx = base + k;
+					new_meas.push_back(idx < (intptr_t)old.size() ? old[idx] : std::nan(""));
+				}
+			}
+
+			// Copy auto params (at the end of the old vector)
+			if (has_auto)
+			{
+				int auto_base = ngroups * old_fpp;
+				for (int k = 0; k < 2; k++)
+				{
+					intptr_t idx = auto_base + k;
+					new_meas.push_back(idx < (intptr_t)old.size() ? old[idx] : std::nan(""));
+				}
+			}
+
+			match->measurements = std::move(new_meas);
+		}
+	}
+
+	// Rebuild display headers from the new metadata.
+	rebuild_extra_headers();
+}
+
 
 void Concordance::parse_options_from_xml(xml_node root)
 {
@@ -624,16 +1126,27 @@ void Concordance::write()
 	matches_node.append_attribute("count").set_value(m_matches.size());
 	matches_node.append_attribute("length").set_value(m_target_count);
 
-	// Serialize extra column headers (formant measurements, etc.)
-	if (has_extra_columns())
+	// ── Formant metadata (new format) ─────────────────────────────────────
+	if (m_nformant > 0)
 	{
-		auto extra_node = root.append_child("ExtraHeaders");
-		for (intptr_t i = 1; i <= m_extra_headers.size(); i++) {
-			add_data_node(extra_node, "Header", m_extra_headers[i]);
-		}
+		auto fm = root.append_child("FormantMeta");
+		fm.append_child("NFormant").append_child(node_pcdata)
+			.set_value(String::convert(intptr_t(m_nformant)).data());
+		fm.append_child("HasBandwidth").append_child(node_pcdata)
+			.set_value(m_has_bandwidth ? "true" : "false");
+		fm.append_child("HasERB").append_child(node_pcdata)
+			.set_value(m_has_erb ? "true" : "false");
+		fm.append_child("HasBark").append_child(node_pcdata)
+			.set_value(m_has_bark ? "true" : "false");
+		fm.append_child("HasAutoParams").append_child(node_pcdata)
+			.set_value(m_has_auto_params ? "true" : "false");
+		fm.append_child("HasSeries").append_child(node_pcdata)
+			.set_value(m_has_series ? "true" : "false");
+		fm.append_child("RoundHz").append_child(node_pcdata)
+			.set_value(m_round_hz ? "true" : "false");
 	}
 
-	// Serialize measurement metadata for wide/long toggle
+	// ── Measurement metadata for wide/long toggle ─────────────────────────
 	if (has_measurement_data())
 	{
 		auto minfo = root.append_child("MeasurementInfo");
@@ -647,20 +1160,27 @@ void Concordance::write()
 		}
 		add_data_node(minfo, "Points", pts);
 
-		// Base headers (un-suffixed)
-		auto bh_node = minfo.append_child("BaseHeaders");
-		for (intptr_t i = 1; i <= m_base_headers.size(); i++) {
-			add_data_node(bh_node, "Header", m_base_headers[i]);
-		}
-
-		minfo.append_child("FieldsPerPoint").append_child(node_pcdata)
-			.set_value(String::convert(intptr_t(m_fields_per_point)).data());
 		minfo.append_child("HasAverage").append_child(node_pcdata)
 			.set_value(m_has_average ? "true" : "false");
+		minfo.append_child("HasSeries").append_child(node_pcdata)
+			.set_value(m_has_series ? "true" : "false");
 		minfo.append_child("Layout").append_child(node_pcdata)
 			.set_value(m_layout == Layout::Long ? "long" : "wide");
 	}
 
+	// ── Column aliases ────────────────────────────────────────────────────
+	if (!m_header_aliases.empty())
+	{
+		auto aliases_node = root.append_child("ColumnAliases");
+		for (auto &[key, val] : m_header_aliases)
+		{
+			auto alias_node = aliases_node.append_child("Alias");
+			alias_node.append_attribute("key").set_value(key.data());
+			alias_node.append_child(node_pcdata).set_value(val.data());
+		}
+	}
+
+	// ── Matches ───────────────────────────────────────────────────────────
 	auto msg = String("Writing concordance %1").arg(label());
 	request_progress(msg, "Writing matches...", (int)m_matches.size());
 	int count = 1;
@@ -698,14 +1218,9 @@ void Concordance::find_context()
 void Concordance::find_kwic_context()
 {
 	String sep(EVENT_SEPARATOR);
-	// FIXME: the progress dialog slows things down absurdly on macOS.
-	//auto msg = String("Extracting KWIC context for concordance %1").arg(label());
-	//request_progress(msg, "Loading matches", (int)m_matches.size());
-	//int count = 1;
 
 	for (auto &match : m_matches)
 	{
-		//update_progress(count++);
 		m_context.append(get_kwic_context(*match, sep));
 	}
 }
@@ -732,13 +1247,8 @@ bool Concordance::is_measurement_column(intptr_t col) const
 
 void Concordance::find_labels_context()
 {
-//	auto msg = String("Extracting surrounding labels for concordance %1").arg(label());
-	//request_progress(msg, "Loading matches", (int)m_matches.size());
-//	int count = 1;
-
 	for (auto &match : m_matches)
 	{
-		//update_progress(count++);
 		m_context.append(get_labels_context(*match));
 	}
 }
@@ -842,11 +1352,17 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 	}
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-	conc->set_extra_headers(m_extra_headers);
+
+	// Copy formant metadata
+	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_base_headers, m_fields_per_point, m_has_average);
+		conc->set_measurement_info(m_measurement_points, m_has_average);
+		conc->set_has_series(m_has_series);
 		conc->set_layout(m_layout);
 	}
+	conc->rebuild_extra_headers();
+
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
 
@@ -879,11 +1395,16 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-	conc->set_extra_headers(m_extra_headers);
+
+	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_base_headers, m_fields_per_point, m_has_average);
+		conc->set_measurement_info(m_measurement_points, m_has_average);
+		conc->set_has_series(m_has_series);
 		conc->set_layout(m_layout);
 	}
+	conc->rebuild_extra_headers();
+
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
 
@@ -916,11 +1437,16 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-	conc->set_extra_headers(m_extra_headers);
+
+	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	conc->set_round_hz(m_round_hz);
 	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_base_headers, m_fields_per_point, m_has_average);
+		conc->set_measurement_info(m_measurement_points, m_has_average);
+		conc->set_has_series(m_has_series);
 		conc->set_layout(m_layout);
 	}
+	conc->rebuild_extra_headers();
+
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
 
@@ -1002,14 +1528,6 @@ std::pair<String, String> Concordance::get_context(intptr_t i) const
 	}
 
 	return std::pair<String, String>();
-}
-
-void Concordance::set_measurement_info(Array<double> points, Array<String> base_headers, int fields_per_point, bool has_average)
-{
-	m_measurement_points = std::move(points);
-	m_base_headers = std::move(base_headers);
-	m_fields_per_point = fields_per_point;
-	m_has_average = has_average;
 }
 
 intptr_t Concordance::effective_extra_count() const

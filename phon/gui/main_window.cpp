@@ -41,6 +41,7 @@
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
@@ -204,9 +205,6 @@ QMenu *MainWindow::createAnalysisMenu()
 	menu->addAction(tr("Find in annotations..."), QKeySequence(tr("Ctrl+Shift+F")),
 		this, &MainWindow::onFindInAnnotations);
 
-	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+L")),
-		this, &MainWindow::onEditLastQuery);
-
 	menu->addSeparator();
 
 	// Acoustic query types
@@ -217,6 +215,11 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	auto *intensity_action = menu->addAction(tr("Measure intensity..."));
 	intensity_action->setEnabled(false);
+
+	menu->addSeparator();
+
+	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+L")),
+	this, &MainWindow::onEditLastQuery);
 
 	return menu;
 }
@@ -245,10 +248,16 @@ QMenu *MainWindow::createWindowMenu()
 {
 	auto *menu = new QMenu(tr("&Window"), this);
 
-	// Use the dock widgets' built-in toggle actions — they auto-sync
-	// their checked state when the dock is shown/hidden programmatically
-	// (e.g. by restoreState() or Maximize viewer).
-	menu->addAction(m_project_dock->toggleViewAction());
+	// Use a custom action for the project dock so the menu always says
+	// "File manager" instead of inheriting the dock title (which shows
+	// the project name).
+	auto *fm_action = new QAction(tr("File manager"), menu);
+	fm_action->setCheckable(true);
+	fm_action->setChecked(!m_project_dock->isHidden());
+	connect(fm_action, &QAction::toggled, m_project_dock, &QDockWidget::setVisible);
+	connect(m_project_dock, &QDockWidget::visibilityChanged, fm_action, &QAction::setChecked);
+	menu->addAction(fm_action);
+
 	menu->addAction(m_console_dock->toggleViewAction());
 	menu->addAction(m_info_dock->toggleViewAction());
 
@@ -761,11 +770,70 @@ void MainWindow::onCloseCurrentView()
 
 void MainWindow::onCloseAllViews()
 {
-	// Close from last to first; stop if user cancels.
+	// ── Collect unsaved concordances vs other unsaved tabs ──
+	struct TabInfo { QWidget *widget; QString label; bool preCheck; };
+	QList<TabInfo> conc_tabs;
+
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel || !panel->isModified()) continue;
+
+		auto *conc_view = qobject_cast<ConcordanceView *>(panel->primaryView());
+		if (conc_view) {
+			bool pre = !conc_view->path().empty();
+			conc_tabs.append({m_viewer->widget(i), panel->label(), pre});
+		}
+	}
+
+	// ── Batch dialog for 2+ unsaved concordances ──
+	QSet<QWidget *> handled;
+	if (conc_tabs.size() >= 2)
+	{
+		QStringList labels;
+		QList<bool> preChecked;
+		for (auto &t : conc_tabs) {
+			labels << t.label;
+			preChecked << t.preCheck;
+		}
+
+		BatchSaveDialog dlg(labels, preChecked, this);
+		if (dlg.exec() == QDialog::Rejected) return;
+
+		auto checked = dlg.checkedItems();
+		for (int k = 0; k < conc_tabs.size(); k++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(conc_tabs[k].widget);
+			if (!panel) continue;
+
+			if (dlg.action() == BatchSaveDialog::SaveSelected && checked[k]) {
+				panel->saveAll();
+			}
+			else {
+				for (auto *v : panel->views())
+					v->discardChanges();
+			}
+			handled.insert(conc_tabs[k].widget);
+		}
+	}
+
+	// ── Close from last to first ──
+	// Concordances handled above are closed without prompting.
 	while (m_viewer->count() > 0)
 	{
-		if (!closeTab(m_viewer->count() - 1))
-			break;
+		int idx = m_viewer->count() - 1;
+		auto *w = m_viewer->widget(idx);
+		if (handled.contains(w))
+		{
+			m_viewer->removeTab(idx);
+			updateWindowTitle();
+			m_file_manager->refresh();
+		}
+		else
+		{
+			if (!closeTab(idx))
+				break;
+		}
 	}
 }
 
@@ -899,8 +967,66 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 bool MainWindow::promptSaveUnsavedTabs()
 {
+	// ── Collect unsaved concordances vs other unsaved tabs ──
+	struct TabInfo { int index; QString label; bool preCheck; };
+	QList<TabInfo> conc_tabs;
+	QList<int> other_modified;
+
 	for (int i = 0; i < m_viewer->count(); i++)
 	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel || !panel->isModified())
+			continue;
+
+		auto *conc_view = qobject_cast<ConcordanceView *>(panel->primaryView());
+		if (conc_view) {
+			// Pre-check concordances that were previously saved (user invested effort).
+			bool pre = !conc_view->path().empty();
+			conc_tabs.append({i, panel->label(), pre});
+		}
+		else {
+			other_modified.append(i);
+		}
+	}
+
+	// ── Batch dialog for 2+ unsaved concordances ──
+	QSet<int> handled;
+	if (conc_tabs.size() >= 2)
+	{
+		QStringList labels;
+		QList<bool> preChecked;
+		for (auto &t : conc_tabs) {
+			labels << t.label;
+			preChecked << t.preCheck;
+		}
+
+		BatchSaveDialog dlg(labels, preChecked, this);
+		if (dlg.exec() == QDialog::Rejected) return false;
+
+		auto checked = dlg.checkedItems();
+		for (int k = 0; k < conc_tabs.size(); k++)
+		{
+			int idx = conc_tabs[k].index;
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(idx));
+			if (!panel) continue;
+
+			if (dlg.action() == BatchSaveDialog::SaveSelected && checked[k]) {
+				if (!panel->saveAll())
+					return false; // Save was cancelled (e.g. user dismissed the file dialog).
+			}
+			else {
+				for (auto *v : panel->views())
+					v->discardChanges();
+			}
+			handled.insert(idx);
+		}
+	}
+
+	// ── Prompt individually for non-concordances (and any single concordance) ──
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		if (handled.contains(i)) continue;
+
 		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
 		if (!panel || !panel->isModified())
 			continue;

@@ -43,6 +43,7 @@ QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 	switch (role)
 	{
 		case Qt::DisplayRole:
+		case Qt::EditRole:
 		{
 			auto text = m_conc->get_cell(row, col);
 			return QString::fromUtf8(text.data(), (int) text.size());
@@ -72,18 +73,87 @@ QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 	}
 }
 
+bool ConcordanceModel::setData(const QModelIndex &index, const QVariant &value, int role)
+{
+	if (!index.isValid() || role != Qt::EditRole) return false;
+
+	intptr_t row = index.row() + 1;
+	intptr_t col = index.column() + 1;
+
+	if (!m_conc->is_editable_measurement(col)) return false;
+
+	try
+	{
+		auto text = String(value.toString().toUtf8().constData());
+		m_conc->set_cell(row, col, text);
+
+		// Emit dataChanged for the whole row so that derived columns (ERB/Bark) update too.
+		emit dataChanged(this->index(index.row(), 0),
+		                 this->index(index.row(), columnCount() - 1));
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
 QVariant ConcordanceModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-	if (role != Qt::DisplayRole) return {};
-
 	if (orientation == Qt::Horizontal)
 	{
-		auto text = m_conc->get_header(section + 1);
-		return QString::fromUtf8(text.data(), (int) text.size());
+		if (role == Qt::DisplayRole)
+		{
+			auto text = m_conc->get_header(section + 1);
+			return QString::fromUtf8(text.data(), (int) text.size());
+		}
+		if (role == Qt::EditRole)
+		{
+			// Return the default (non-aliased) header for editing
+			auto text = m_conc->get_default_header(section + 1);
+			return QString::fromUtf8(text.data(), (int) text.size());
+		}
 	}
 
-	// Row numbers (1-based)
-	return section + 1;
+	if (orientation == Qt::Vertical && role == Qt::DisplayRole)
+	{
+		return section + 1;
+	}
+
+	return {};
+}
+
+bool ConcordanceModel::setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role)
+{
+	if (orientation != Qt::Horizontal || role != Qt::EditRole) return false;
+
+	auto default_hdr = m_conc->get_default_header(section + 1);
+	auto new_name = String(value.toString().toUtf8().constData());
+
+	if (new_name.empty() || new_name == default_hdr) {
+		// Revert to default
+		m_conc->clear_header_alias(default_hdr);
+	}
+	else {
+		m_conc->set_header_alias(default_hdr, new_name);
+	}
+
+	emit headerDataChanged(Qt::Horizontal, section, section);
+	return true;
+}
+
+Qt::ItemFlags ConcordanceModel::flags(const QModelIndex &index) const
+{
+	auto base = QAbstractTableModel::flags(index);
+	if (!index.isValid()) return base;
+
+	intptr_t col = index.column() + 1;
+
+	if (m_conc->is_editable_measurement(col)) {
+		return base | Qt::ItemIsEditable;
+	}
+
+	return base;
 }
 
 AutoMatch ConcordanceModel::removeMatch(int row)

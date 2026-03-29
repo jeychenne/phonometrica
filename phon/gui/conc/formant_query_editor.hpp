@@ -131,6 +131,7 @@ private:
 	QCheckBox *m_bw_check = nullptr;
 	QCheckBox *m_erb_check = nullptr;
 	QCheckBox *m_bark_check = nullptr;
+	QCheckBox *m_round_check = nullptr;
 
 	// File selection
 	QListWidget *m_file_list = nullptr;
