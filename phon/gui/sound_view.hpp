@@ -57,6 +57,7 @@ public:
 
 	Handle<Sound> sound() const { return m_sound; }
 	TimeModel *timeModel() const { return m_model; }
+	const std::vector<int> &visibleChannels() const { return m_visible_channels; }
 
 protected:
 

@@ -364,6 +364,7 @@ if(WITH_GUI)
         std/speech_analysis.phon
         std/read_settings.phon
         std/write_settings.phon
+        std/transphon.phon
     )
 
 
