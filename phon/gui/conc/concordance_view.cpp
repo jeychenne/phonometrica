@@ -122,9 +122,9 @@ void ConcordanceView::setupUi()
 	meta_action->setChecked(m_show_metadata);
 	meta_action->setToolTip(tr("Show file description and properties"));
 
-	// Wide/Long toggle — shown for all formant concordances; enabled only for n-point data
+	// Wide/Long toggle — shown for formant and pitch concordances; enabled only for n-point data
 	QAction *long_action = nullptr;
-	if (m_conc->nformant() > 0)
+	if (m_conc->nformant() > 0 || m_conc->is_pitch())
 	{
 		display_menu->addSeparator();
 		long_action = display_menu->addAction(tr("Long format (one row per time point)"));
@@ -172,6 +172,31 @@ void ConcordanceView::setupUi()
 
 		connect(m_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleErb);
 		connect(m_bark_action, &QAction::toggled, this, &ConcordanceView::onToggleBark);
+	}
+
+	// -- Scales menu for pitch concordances --
+	if (m_conc->is_pitch())
+	{
+		auto *scales_menu = new QMenu(this);
+
+		m_pitch_st_action = scales_menu->addAction(tr("Semitones"));
+		m_pitch_st_action->setCheckable(true);
+		m_pitch_st_action->setChecked(m_conc->has_semitones());
+		m_pitch_st_action->setToolTip(tr("Show pitch values converted to semitones"));
+
+		m_pitch_erb_action = scales_menu->addAction(tr("ERB rate"));
+		m_pitch_erb_action->setCheckable(true);
+		m_pitch_erb_action->setChecked(m_conc->has_pitch_erb());
+		m_pitch_erb_action->setToolTip(tr("Show pitch values converted to the ERB scale"));
+
+		auto *scales_action = new QAction(QIcon(":/icons/ruler.svg"), tr("Scales"), this);
+		scales_action->setMenu(scales_menu);
+		m_toolbar->addAction(scales_action);
+		if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(scales_action)))
+			sb->setPopupMode(QToolButton::InstantPopup);
+
+		connect(m_pitch_st_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchSemitones);
+		connect(m_pitch_erb_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchErb);
 	}
 
 	// ── Right-aligned help button ─────────────────────
@@ -573,6 +598,26 @@ void ConcordanceView::onToggleErb(bool checked)
 void ConcordanceView::onToggleBark(bool checked)
 {
 	m_conc->set_has_bark(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+// ── Pitch scales (Semitones / ERB) ────────────────────────
+
+void ConcordanceView::onTogglePitchSemitones(bool checked)
+{
+	m_conc->set_has_semitones(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onTogglePitchErb(bool checked)
+{
+	m_conc->set_has_pitch_erb(checked);
 	m_model->refreshAll();
 	updateColumnVisibility();
 	m_table->resizeColumnsToContents();

@@ -376,7 +376,8 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 	return result;
 }
 
-double Sound::get_pitch(int channel, speech::PitchTracker method, double time, double min_pitch, double max_pitch, double threshold)
+double Sound::get_pitch(int channel, speech::PitchTracker method, double time, double min_pitch, double max_pitch, double threshold,
+                        double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost)
 {
 	open();
 	double half_window = 0.025; // We use a 50 ms window
@@ -387,7 +388,8 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 	auto last_sample = time_to_frame(end_time);
 	auto input = get_channel(channel, first_sample, last_sample);
 	//TODO: use time step from settings?
-	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, 0.01, threshold);
+	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, 0.01, threshold,
+	                             octave_jump_cost, voicing_cost, silence_threshold, octave_cost);
 
 	if (f0.size() > 1)
 	{

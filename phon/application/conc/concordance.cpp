@@ -67,6 +67,11 @@ Concordance::Concordance(const Concordance &other) :
 	m_has_auto_params = other.m_has_auto_params;
 	m_header_aliases = other.m_header_aliases;
 
+	m_is_pitch = other.m_is_pitch;
+	m_has_semitones = other.m_has_semitones;
+	m_semitone_ref = other.m_semitone_ref;
+	m_has_pitch_erb = other.m_has_pitch_erb;
+
 	m_matches.reserve(other.m_matches.size());
 
 	for (auto &m : other.m_matches) {
@@ -107,8 +112,33 @@ void Concordance::set_has_bark(bool b)
 	m_content_modified = true;
 }
 
+void Concordance::set_pitch_meta(bool semitones, double st_ref, bool erb)
+{
+	m_is_pitch = true;
+	m_has_semitones = semitones;
+	m_semitone_ref = st_ref;
+	m_has_pitch_erb = erb;
+}
+
+void Concordance::set_has_semitones(bool b)
+{
+	if (m_has_semitones == b) return;
+	m_has_semitones = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
+void Concordance::set_has_pitch_erb(bool b)
+{
+	if (m_has_pitch_erb == b) return;
+	m_has_pitch_erb = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
 int Concordance::stored_fields_per_point() const
 {
+	if (m_is_pitch) return 1;
 	return m_nformant + (m_has_bandwidth ? m_nformant : 0);
 }
 
@@ -116,8 +146,16 @@ int Concordance::display_fields_per_point() const
 {
 	int sfpp = stored_fields_per_point();
 	int n = sfpp;
-	if (m_has_erb) n += sfpp;  // ERB of all stored columns (F + B)
-	if (m_has_bark) n += sfpp; // Bark of all stored columns (F + B)
+	if (m_is_pitch)
+	{
+		if (m_has_semitones) n++;
+		if (m_has_pitch_erb) n++;
+	}
+	else
+	{
+		if (m_has_erb) n += sfpp;  // ERB of all stored columns (F + B)
+		if (m_has_bark) n += sfpp; // Bark of all stored columns (F + B)
+	}
 	return n;
 }
 
@@ -125,6 +163,47 @@ void Concordance::rebuild_extra_headers()
 {
 	m_extra_headers.clear();
 	m_base_headers.clear();
+
+	if (m_is_pitch)
+	{
+		// ── Pitch headers ────────────────────────────────────────────────
+		auto emit_pitch_group = [&](Array<String> &headers, const char *suffix)
+		{
+			headers.append(String::format("F0%s", suffix));
+			if (m_has_semitones)
+				headers.append(String::format("F0(st)%s", suffix));
+			if (m_has_pitch_erb)
+				headers.append(String::format("F0(ERB)%s", suffix));
+		};
+
+		// Base headers (for long mode): un-suffixed
+		emit_pitch_group(m_base_headers, "");
+
+		if (!has_measurement_data())
+		{
+			// Midpoint: flat extra headers
+			emit_pitch_group(m_extra_headers, "");
+		}
+		else
+		{
+			if (m_has_series)
+			{
+				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				{
+					char suffix[16];
+					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					emit_pitch_group(m_extra_headers, suffix);
+				}
+			}
+			if (m_has_average)
+			{
+				emit_pitch_group(m_extra_headers, "(avg)");
+			}
+		}
+		return;
+	}
+
+	// ── Formant headers ──────────────────────────────────────────────────
 
 	if (m_nformant == 0) return;
 
@@ -303,6 +382,32 @@ String Concordance::get_header(intptr_t j) const
 /// within_group: 0-based index within the display fields for one point.
 double Concordance::resolve_group_value(const std::vector<double> &meas, int stored_base, int within_group) const
 {
+	if (m_is_pitch)
+	{
+		// Pitch: 1 stored value (F0 in Hz), then optional semitones and ERB computed on the fly.
+		if (within_group == 0)
+		{
+			// F0 in Hz — directly stored
+			intptr_t idx = stored_base;
+			if (idx < (intptr_t)meas.size()) return meas[idx];
+			return std::nan("");
+		}
+
+		// Derived value: semitones or ERB
+		intptr_t idx = stored_base;
+		if (idx >= (intptr_t)meas.size()) return std::nan("");
+		double f0 = meas[idx];
+		if (!std::isfinite(f0) || f0 <= 0) return std::nan("");
+
+		int derived = within_group - 1; // 0-based within derived columns
+		if (m_has_semitones && derived == 0) {
+			return speech::hertz_to_semitones(f0, m_semitone_ref);
+		}
+		// ERB is next (whether or not semitones is present)
+		return speech::hertz_to_erb(f0);
+	}
+
+	// ── Formant path ─────────────────────────────────────────────────────
 	int nf = m_nformant;
 	int bw = m_has_bandwidth ? nf : 0;
 	int sfpp = nf + bw;
@@ -351,7 +456,7 @@ double Concordance::resolve_group_value(const std::vector<double> &meas, int sto
 
 String Concordance::format_measurement(double val, int within_group) const
 {
-	if (std::isnan(val)) return "N/A";
+	if (std::isnan(val)) return "nan";
 
 	int sfpp = stored_fields_per_point();
 
@@ -359,6 +464,21 @@ String Concordance::format_measurement(double val, int within_group) const
 	int hz_dec = 0;
 	try { hz_dec = Settings::get_int("display", "hz_decimals"); }
 	catch (...) {}
+
+	if (m_is_pitch)
+	{
+		if (within_group == 0)
+		{
+			// F0 in Hz
+			char fmt[16];
+			std::snprintf(fmt, sizeof(fmt), "%%.%df", hz_dec);
+			return String::format(fmt, val);
+		}
+		// Semitones or ERB — hz_dec + 2 extra decimal places
+		char fmt[16];
+		std::snprintf(fmt, sizeof(fmt), "%%.%df", hz_dec + 2);
+		return String::format(fmt, val);
+	}
 
 	if (within_group < sfpp)
 	{
@@ -445,7 +565,21 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				// Wide mode (or midpoint): direct mapping
 				int d0 = (int)(j - 1); // 0-based within extra columns
 
-				if (m_nformant > 0)
+				if (m_is_pitch)
+				{
+					int dfpp = display_fields_per_point();
+					int sfpp = stored_fields_per_point();
+
+					if (dfpp > 0) {
+						int group_index = d0 / dfpp;
+						int within_group = d0 % dfpp;
+						int stored_base = group_index * sfpp;
+
+						double val = resolve_group_value(meas, stored_base, within_group);
+						return format_measurement(val, within_group);
+					}
+				}
+				else if (m_nformant > 0)
 				{
 					int dfpp = display_fields_per_point();
 					int sfpp = stored_fields_per_point();
@@ -466,13 +600,13 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 						intptr_t idx = auto_base + auto_idx;
 						if (idx < (intptr_t)meas.size()) {
 							double val = meas[idx];
-							if (std::isnan(val)) return "N/A";
+							if (std::isnan(val)) return "nan";
 							// Max freq is Hz (%.1f), LPC order is integer
 							if (auto_idx == 1)
 								return String::convert(intptr_t(val));
 							return String::format("%.1f", val);
 						}
-						return "N/A";
+						return "nan";
 					}
 
 					// Measurement group
@@ -491,10 +625,10 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				if (idx < (intptr_t)meas.size())
 				{
 					double val = meas[idx];
-					if (std::isnan(val)) return "N/A";
+					if (std::isnan(val)) return "nan";
 					return String::format("%.1f", val);
 				}
-				return "N/A";
+				return "nan";
 			}
 		}
 		j -= eff;
@@ -521,9 +655,8 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) const
 {
-	if (m_nformant == 0) return -1;
+	if (m_nformant == 0 && !m_is_pitch) return -1;
 
-	int nf = m_nformant;
 	int sfpp = stored_fields_per_point();
 	int dfpp = display_fields_per_point();
 	if (dfpp == 0) return -1;
@@ -590,7 +723,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 bool Concordance::is_editable_measurement(intptr_t col) const
 {
-	if (m_nformant == 0) return false;
+	if (m_nformant == 0 && !m_is_pitch) return false;
 	if (!is_measurement_column(col)) return false;
 
 	// Compute extra column index
@@ -795,6 +928,21 @@ void Concordance::load()
 					m_has_series = child.text().as_bool(true);
 			}
 		}
+		else if (node.name() == str("PitchMeta"))
+		{
+			m_is_pitch = true;
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("HasSemitones"))
+					m_has_semitones = child.text().as_bool(false);
+				else if (child.name() == str("SemitoneReference"))
+					m_semitone_ref = child.text().as_double(100);
+				else if (child.name() == str("HasERB"))
+					m_has_pitch_erb = child.text().as_bool(false);
+				else if (child.name() == str("HasSeries"))
+					m_has_series = child.text().as_bool(true);
+			}
+		}
 		else if (node.name() == str("ColumnAliases"))
 		{
 			for (auto child = node.first_child(); child; child = child.next_sibling())
@@ -832,6 +980,13 @@ void Concordance::normalize_after_load()
 	if (m_nformant > 0)
 	{
 		// New format: formant metadata was loaded from XML. Just rebuild display headers.
+		rebuild_extra_headers();
+		return;
+	}
+
+	if (m_is_pitch)
+	{
+		// Pitch metadata was loaded from XML. Just rebuild display headers.
 		rebuild_extra_headers();
 		return;
 	}
@@ -1150,6 +1305,20 @@ void Concordance::write()
 			.set_value(m_has_series ? "true" : "false");
 	}
 
+	// ── Pitch metadata ───────────────────────────────────────────────────
+	if (m_is_pitch)
+	{
+		auto pm = root.append_child("PitchMeta");
+		pm.append_child("HasSemitones").append_child(node_pcdata)
+			.set_value(m_has_semitones ? "true" : "false");
+		pm.append_child("SemitoneReference").append_child(node_pcdata)
+			.set_value(String::format("%.1f", m_semitone_ref).data());
+		pm.append_child("HasERB").append_child(node_pcdata)
+			.set_value(m_has_pitch_erb ? "true" : "false");
+		pm.append_child("HasSeries").append_child(node_pcdata)
+			.set_value(m_has_series ? "true" : "false");
+	}
+
 	// ── Measurement metadata for wide/long toggle ─────────────────────────
 	if (has_measurement_data())
 	{
@@ -1359,6 +1528,9 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 
 	// Copy formant metadata
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	if (m_is_pitch) {
+		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);
@@ -1400,6 +1572,9 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	conc->set_label(label, false);
 
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	if (m_is_pitch) {
+		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);
@@ -1441,6 +1616,9 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	conc->set_label(label, false);
 
 	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	if (m_is_pitch) {
+		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	}
 	if (has_measurement_data()) {
 		conc->set_measurement_info(m_measurement_points, m_has_average);
 		conc->set_has_series(m_has_series);
