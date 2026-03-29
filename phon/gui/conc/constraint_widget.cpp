@@ -183,4 +183,9 @@ void ConstraintWidget::setRelationVisible(bool visible)
 	m_relation_combo->setVisible(visible);
 }
 
+void ConstraintWidget::focusSearch()
+{
+	m_search_edit->setFocus();
+}
+
 } // namespace phonometrica

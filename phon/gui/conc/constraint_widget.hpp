@@ -42,6 +42,9 @@ public:
 	// Show/hide the relation combo at the left edge.
 	void setRelationVisible(bool visible);
 
+	// Move keyboard focus to the search field.
+	void focusSearch();
+
 	// Index label (e.g. "#1").
 	int index() const { return m_index; }
 

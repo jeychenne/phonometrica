@@ -45,6 +45,10 @@ FormantQueryEditor::FormantQueryEditor(Handle<FormantQuery> query, QWidget *pare
 	if (!m_query->empty()) {
 		loadQuery();
 	}
+
+	// Default cursor to the search field, not the query name.
+	if (!m_constraints.empty())
+		m_constraints[1]->focusSearch();
 }
 
 void FormantQueryEditor::setupUi()
