@@ -41,6 +41,7 @@
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/pitch_query_editor.hpp>
+#include <phon/gui/conc/intensity_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
@@ -213,8 +214,7 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addAction(tr("Measure pitch..."), this, &MainWindow::onMeasurePitch);
 
-	auto *intensity_action = menu->addAction(tr("Measure intensity..."));
-	intensity_action->setEnabled(false);
+	menu->addAction(tr("Measure intensity..."), this, &MainWindow::onMeasureIntensity);
 
 	menu->addSeparator();
 
@@ -1183,6 +1183,28 @@ void MainWindow::onMeasurePitch()
 	}
 }
 
+void MainWindow::onMeasureIntensity()
+{
+	IntensityQueryEditor editor(this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
 void MainWindow::onEditLastQuery()
 {
 	if (!m_last_query)
@@ -1220,6 +1242,28 @@ void MainWindow::onEditLastQuery()
 	{
 		auto pq = recast<PitchQuery>(copy);
 		PitchQueryEditor editor(pq, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+	}
+	else if (m_last_query->is_intensity_query())
+	{
+		auto iq = recast<IntensityQuery>(copy);
+		IntensityQueryEditor editor(iq, this);
 
 		if (editor.exec() == QDialog::Accepted)
 		{
@@ -1383,6 +1427,28 @@ void MainWindow::onDocumentRequested(Document *doc)
 		{
 			auto pq = recast<PitchQuery>(Handle<Query>(query_doc));
 			PitchQueryEditor editor(pq, this);
+
+			if (editor.exec() == QDialog::Accepted)
+			{
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
+			}
+		}
+		else if (query_doc->is_intensity_query())
+		{
+			auto iq = recast<IntensityQuery>(Handle<Query>(query_doc));
+			IntensityQueryEditor editor(iq, this);
 
 			if (editor.exec() == QDialog::Accepted)
 			{

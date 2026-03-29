@@ -124,7 +124,7 @@ void ConcordanceView::setupUi()
 
 	// Wide/Long toggle — shown for formant and pitch concordances; enabled only for n-point data
 	QAction *long_action = nullptr;
-	if (m_conc->nformant() > 0 || m_conc->is_pitch())
+	if (m_conc->nformant() > 0 || m_conc->is_pitch() || m_conc->is_intensity())
 	{
 		display_menu->addSeparator();
 		long_action = display_menu->addAction(tr("Long format (one row per time point)"));

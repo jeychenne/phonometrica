@@ -137,6 +137,14 @@ public:
 	/// Toggle pitch ERB display columns (recomputed on the fly).
 	void set_has_pitch_erb(bool b);
 
+	// ── Intensity metadata ──────────────────────────────────────────────
+	// Only raw intensity in dB is stored per match. No computed columns.
+
+	bool is_intensity() const { return m_is_intensity; }
+
+	/// Set intensity metadata. Called by IntensityQuery::execute().
+	void set_intensity_meta();
+
 	// ── Layout toggle (wide/long) ────────────────────────────────────────
 
 	Layout layout() const { return m_layout; }
@@ -279,6 +287,10 @@ protected:
 	bool m_has_semitones = false;     // whether semitone display columns are active
 	double m_semitone_ref = 100;      // Hz (reference for semitone conversion)
 	bool m_has_pitch_erb = false;     // whether ERB-rate display columns are active
+
+	// ── Intensity metadata ──────────────────────────────────────────────
+
+	bool m_is_intensity = false;      // true if this concordance holds intensity data
 
 	// ── Column aliases ───────────────────────────────────────────────────
 
