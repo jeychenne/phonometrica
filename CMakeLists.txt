@@ -120,6 +120,7 @@ file(GLOB_RECURSE RUNTIME_SOURCES
 
 set(THIRDPARTY_SOURCES
         phon/third_party/utf8proc/utf8proc.c
+        phon/third_party/zip/zip.cpp
 )
 
 add_library(phon-runtime STATIC ${RUNTIME_SOURCES} ${THIRDPARTY_SOURCES})
@@ -205,7 +206,6 @@ if(WITH_APPLICATION)
         phon/third_party/swipe/*.cpp
         phon/third_party/FIR-filter-class/filt.cpp
         phon/third_party/world/*.cc
-        phon/third_party/zip/zip.cpp
     )
 
     add_library(phon-app STATIC ${APP_SOURCES} ${VENDOR_APP_SOURCES})

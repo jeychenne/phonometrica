@@ -14,12 +14,14 @@
 #ifndef PHONOMETRICA_MAIN_WINDOW_HPP
 #define PHONOMETRICA_MAIN_WINDOW_HPP
 
+#include <unordered_map>
 #include <phon/string.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/ipa_panel.hpp>
 #include <phon/application/script.hpp>
 #include <phon/application/conc/query.hpp>
+#include <phon/application/plugin.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
@@ -49,6 +51,9 @@ public:
 	explicit MainWindow(Runtime &rt, QWidget *parent = nullptr);
 
 	~MainWindow() override = default;
+
+	// Called after show() — loads plugins and startup scripts.
+	void postInitialize();
 
 protected:
 
@@ -90,6 +95,11 @@ private slots:
 	// Tab management
 	void onActiveTabChanged(int index);
 	void updateUndoRedoState();
+
+	// Plugins
+	void onRunScript();
+	void onInstallPlugin();
+	void onUninstallPlugin();
 
 	// File manager
 	void onDocumentRequested(Document *doc);
@@ -140,6 +150,12 @@ private:
 	// Prompt to save the project if modified. Returns false if user cancelled.
 	bool promptSaveProject();
 
+	// Plugin support
+	void loadPluginsAndScripts(const String &root);
+	void loadPlugin(const String &path);
+	void uninstallPlugin(int index);
+	Plugin *findPlugin(const String &name);
+
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;
@@ -178,6 +194,13 @@ private:
 
 	// Last executed query (for "Edit last query" action).
 	Handle<Query> m_last_query;
+
+	// Plugin system
+	QMenu *m_plugins_menu = nullptr;
+	QAction *m_plugin_separator = nullptr;   // separates plugin submenus from built-in actions
+	Array<AutoPlugin> m_plugins;
+	// Parallel tracking: maps Plugin* to the QAction* that owns its submenu in m_plugins_menu.
+	std::unordered_map<Plugin *, QAction *> m_plugin_actions;
 };
 
 } // namespace phonometrica

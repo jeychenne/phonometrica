@@ -62,10 +62,6 @@ public:
 
 	String version() const { return m_version; }
 
-	int menu_id() const { return m_menu_id; }
-
-	void set_menu_id(int value) { m_menu_id = value; }
-
 private:
 
 	void parse_description(Callback &callback);
@@ -83,8 +79,6 @@ private:
 	String m_description;
 
 	Array<AutoProtocol> m_protocols;
-
-	int m_menu_id = -1;
 
 	bool has_scripts = false;
 };
