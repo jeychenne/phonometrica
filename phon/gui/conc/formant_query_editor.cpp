@@ -211,7 +211,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	manual_layout->addWidget(new QLabel(tr("LPC order:")));
 	m_lpc_order_spin = new QSpinBox;
 	m_lpc_order_spin->setRange(4, 30);
-	m_lpc_order_spin->setValue(11);
+	m_lpc_order_spin->setValue(10);
 	manual_layout->addWidget(m_lpc_order_spin);
 	manual_layout->addStretch();
 	m_method_stack->addWidget(manual_page);
