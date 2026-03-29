@@ -149,8 +149,8 @@ protected:
 	// Type of context for the reference constraint
 	Context m_context = Context::None;
 
-	// Reference constraint
-	int m_ref_constraint;
+	// Reference constraint (1-based; defaults to first constraint)
+	int m_ref_constraint = 1;
 
 	// Context length, for KWIC mode
 	int m_context_length = 0;

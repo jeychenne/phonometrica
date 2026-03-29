@@ -121,16 +121,27 @@ QWidget *PitchQueryEditor::createSearchPanel()
 	outer->addLayout(m_constraint_layout);
 	auto *btn_layout = new QHBoxLayout;
 	btn_layout->addStretch();
-	m_add_btn = new QPushButton(tr("+"));
-	m_add_btn->setFixedWidth(32);
+	m_add_btn = new QPushButton(QIcon(":/icons/circle-plus.svg"), QString());
+	m_add_btn->setFixedSize(28, 28);
 	m_add_btn->setToolTip(tr("Add constraint"));
-	m_remove_btn = new QPushButton(tr("\u2212"));
-	m_remove_btn->setFixedWidth(32);
+	m_remove_btn = new QPushButton(QIcon(":/icons/circle-minus.svg"), QString());
+	m_remove_btn->setFixedSize(28, 28);
 	m_remove_btn->setToolTip(tr("Remove last constraint"));
 	m_remove_btn->setEnabled(false);
 	btn_layout->addWidget(m_add_btn);
 	btn_layout->addWidget(m_remove_btn);
 	outer->addLayout(btn_layout);
+
+	// Reference constraint (used for context extraction and acoustic measurements)
+	auto *ref_layout = new QHBoxLayout;
+	ref_layout->addWidget(new QLabel(tr("Reference constraint:")));
+	m_ref_constraint = new QSpinBox;
+	m_ref_constraint->setRange(1, 1);
+	m_ref_constraint->setToolTip(tr("Constraint used for context extraction and acoustic measurements"));
+	ref_layout->addWidget(m_ref_constraint);
+	ref_layout->addStretch();
+	outer->addLayout(ref_layout);
+
 	connect(m_add_btn, &QPushButton::clicked, this, &PitchQueryEditor::onAddConstraint);
 	connect(m_remove_btn, &QPushButton::clicked, this, &PitchQueryEditor::onRemoveConstraint);
 	return group;
@@ -301,9 +312,6 @@ QWidget *PitchQueryEditor::createContextPanel()
 {
 	auto *group = new QGroupBox(tr("Context"));
 	auto *layout = new QHBoxLayout(group);
-	m_ref_constraint = new QSpinBox;
-	m_ref_constraint->setRange(1, 1);
-	m_ref_constraint->setToolTip(tr("Constraint for which context is extracted"));
 	m_ctx_none = new QRadioButton(tr("No context"));
 	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
 	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
@@ -311,22 +319,19 @@ QWidget *PitchQueryEditor::createContextPanel()
 	m_ctx_length = new QSpinBox;
 	m_ctx_length->setRange(1, 1000);
 	m_ctx_length->setValue(Settings::get_int("concordance", "context_length"));
-	layout->addWidget(new QLabel(tr("Reference constraint:")));
-	layout->addWidget(m_ref_constraint);
-	layout->addSpacing(10);
 	layout->addWidget(m_ctx_none);
 	layout->addWidget(m_ctx_labels);
 	layout->addWidget(m_ctx_kwic);
 	layout->addWidget(m_ctx_length);
 	layout->addStretch();
 	connect(m_ctx_none, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(false); m_ref_constraint->setEnabled(false); }
+		if (on) { m_ctx_length->setEnabled(false); }
 	});
 	connect(m_ctx_labels, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(false); m_ref_constraint->setEnabled(true); }
+		if (on) { m_ctx_length->setEnabled(false); }
 	});
 	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(true); m_ref_constraint->setEnabled(true); }
+		if (on) { m_ctx_length->setEnabled(true); }
 	});
 	return group;
 }
@@ -441,14 +446,15 @@ void PitchQueryEditor::parseQuery()
 	}
 	m_query->set_selection(std::move(annotations));
 
+	// Reference constraint (always set, independent of context type)
+	m_query->set_reference_constraint(m_ref_constraint->value());
+
 	if (m_ctx_none->isChecked()) { m_query->set_context(Query::Context::None); }
 	else if (m_ctx_labels->isChecked()) {
 		m_query->set_context(Query::Context::Labels);
-		m_query->set_reference_constraint(m_ref_constraint->value());
 	} else if (m_ctx_kwic->isChecked()) {
 		m_query->set_context(Query::Context::KWIC);
 		m_query->set_context_length(m_ctx_length->value());
-		m_query->set_reference_constraint(m_ref_constraint->value());
 		Settings::set_value("concordance", "context_length", intptr_t(m_ctx_length->value()));
 	}
 	for (auto *cw : m_constraints) m_query->add_constraint(cw->parseConstraint(), false);
@@ -583,6 +589,9 @@ void PitchQueryEditor::onAddConstraint()
 	m_constraints.append(cw);
 	m_remove_btn->setEnabled(true);
 	m_ref_constraint->setRange(1, idx);
+
+	m_constraints[1]->setRelationPlaceholder(true);
+
 	connect(cw, &ConstraintWidget::searchRequested, this, &PitchQueryEditor::onExecute);
 	connect(cw, &ConstraintWidget::modified, this, [this]() {
 		if (m_save_btn) m_save_btn->setEnabled(true);
@@ -598,6 +607,10 @@ void PitchQueryEditor::onRemoveConstraint()
 	delete cw;
 	m_remove_btn->setEnabled(m_constraints.size() > 1);
 	m_ref_constraint->setRange(1, (int)m_constraints.size());
+
+	if (m_constraints.size() == 1) {
+		m_constraints[1]->setRelationPlaceholder(false);
+	}
 }
 
 void PitchQueryEditor::loadQuery()
@@ -626,9 +639,12 @@ void PitchQueryEditor::loadQuery()
 	for (intptr_t i = 2; i <= count; i++) onAddConstraint();
 	for (intptr_t i = 1; i <= count; i++) m_constraints[i]->loadConstraint(m_query->get_constraint(i));
 
+	// Reference constraint (always restore)
+	m_ref_constraint->setValue(m_query->reference_constraint());
+
 	switch (m_query->context()) {
-		case Query::Context::Labels: m_ctx_labels->setChecked(true); m_ref_constraint->setValue(m_query->reference_constraint()); break;
-		case Query::Context::KWIC: m_ctx_kwic->setChecked(true); m_ref_constraint->setValue(m_query->reference_constraint()); m_ctx_length->setValue(m_query->context_length()); break;
+		case Query::Context::Labels: m_ctx_labels->setChecked(true); break;
+		case Query::Context::KWIC: m_ctx_kwic->setChecked(true); m_ctx_length->setValue(m_query->context_length()); break;
 		default: m_ctx_none->setChecked(true); break;
 	}
 

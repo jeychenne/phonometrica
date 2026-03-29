@@ -132,16 +132,26 @@ QWidget *FormantQueryEditor::createSearchPanel()
 
 	auto *btn_layout = new QHBoxLayout;
 	btn_layout->addStretch();
-	m_add_btn = new QPushButton(tr("+"));
-	m_add_btn->setFixedWidth(32);
+	m_add_btn = new QPushButton(QIcon(":/icons/circle-plus.svg"), QString());
+	m_add_btn->setFixedSize(28, 28);
 	m_add_btn->setToolTip(tr("Add constraint"));
-	m_remove_btn = new QPushButton(tr("\u2212"));
-	m_remove_btn->setFixedWidth(32);
+	m_remove_btn = new QPushButton(QIcon(":/icons/circle-minus.svg"), QString());
+	m_remove_btn->setFixedSize(28, 28);
 	m_remove_btn->setToolTip(tr("Remove last constraint"));
 	m_remove_btn->setEnabled(false);
 	btn_layout->addWidget(m_add_btn);
 	btn_layout->addWidget(m_remove_btn);
 	outer->addLayout(btn_layout);
+
+	// Reference constraint (used for context extraction and acoustic measurements)
+	auto *ref_layout = new QHBoxLayout;
+	ref_layout->addWidget(new QLabel(tr("Reference constraint:")));
+	m_ref_constraint = new QSpinBox;
+	m_ref_constraint->setRange(1, 1);
+	m_ref_constraint->setToolTip(tr("Constraint used for context extraction and acoustic measurements"));
+	ref_layout->addWidget(m_ref_constraint);
+	ref_layout->addStretch();
+	outer->addLayout(ref_layout);
 
 	connect(m_add_btn, &QPushButton::clicked, this, &FormantQueryEditor::onAddConstraint);
 	connect(m_remove_btn, &QPushButton::clicked, this, &FormantQueryEditor::onRemoveConstraint);
@@ -182,8 +192,8 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 
 	// ── Row 2: manual / automatic radio buttons ──────────────────────────
 	auto *method_row = new QHBoxLayout;
-	m_manual_radio = new QRadioButton(tr("Manual"));
-	m_auto_radio = new QRadioButton(tr("Automatic (Weenink's method)"));
+	m_manual_radio = new QRadioButton(tr("Parametric"));
+	m_auto_radio = new QRadioButton(tr("Semi-parametric (Weenink's method)"));
 	m_manual_radio->setChecked(true);
 	method_row->addWidget(new QLabel(tr("Parameter selection:")));
 	method_row->addWidget(m_manual_radio);
@@ -211,7 +221,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	manual_layout->addWidget(new QLabel(tr("LPC order:")));
 	m_lpc_order_spin = new QSpinBox;
 	m_lpc_order_spin->setRange(4, 30);
-	m_lpc_order_spin->setValue(10);
+	m_lpc_order_spin->setValue(11);
 	manual_layout->addWidget(m_lpc_order_spin);
 	manual_layout->addStretch();
 	m_method_stack->addWidget(manual_page);
@@ -347,11 +357,6 @@ QWidget *FormantQueryEditor::createContextPanel()
 	auto *group = new QGroupBox(tr("Context"));
 	auto *layout = new QHBoxLayout(group);
 
-	auto *ref_label = new QLabel(tr("Reference constraint:"));
-	m_ref_constraint = new QSpinBox;
-	m_ref_constraint->setRange(1, 1);
-	m_ref_constraint->setToolTip(tr("Constraint for which context is extracted"));
-
 	m_ctx_none = new QRadioButton(tr("No context"));
 	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
 	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
@@ -374,9 +379,6 @@ QWidget *FormantQueryEditor::createContextPanel()
 	m_ctx_length->setValue(Settings::get_int("concordance", "context_length"));
 	m_ctx_length->setToolTip(tr("Number of characters in left/right context"));
 
-	layout->addWidget(ref_label);
-	layout->addWidget(m_ref_constraint);
-	layout->addSpacing(10);
 	layout->addWidget(m_ctx_none);
 	layout->addWidget(m_ctx_labels);
 	layout->addWidget(m_ctx_kwic);
@@ -384,18 +386,17 @@ QWidget *FormantQueryEditor::createContextPanel()
 	layout->addStretch();
 
 	connect(m_ctx_none, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(false); m_ref_constraint->setEnabled(false); }
+		if (on) { m_ctx_length->setEnabled(false); }
 	});
 	connect(m_ctx_labels, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(false); m_ref_constraint->setEnabled(true); }
+		if (on) { m_ctx_length->setEnabled(false); }
 	});
 	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) { m_ctx_length->setEnabled(true); m_ref_constraint->setEnabled(true); }
+		if (on) { m_ctx_length->setEnabled(true); }
 	});
 
-	// Set initial enable state (connections above don't fire for the initial check)
+	// Set initial enable state
 	m_ctx_length->setEnabled(m_ctx_kwic->isChecked());
-	m_ref_constraint->setEnabled(!m_ctx_none->isChecked());
 
 	return group;
 }
@@ -572,6 +573,9 @@ void FormantQueryEditor::parseQuery()
 	}
 	m_query->set_selection(std::move(annotations));
 
+	// Reference constraint (always set, independent of context type)
+	m_query->set_reference_constraint(m_ref_constraint->value());
+
 	// Context
 	if (m_ctx_none->isChecked())
 	{
@@ -580,13 +584,11 @@ void FormantQueryEditor::parseQuery()
 	else if (m_ctx_labels->isChecked())
 	{
 		m_query->set_context(Query::Context::Labels);
-		m_query->set_reference_constraint(m_ref_constraint->value());
 	}
 	else if (m_ctx_kwic->isChecked())
 	{
 		m_query->set_context(Query::Context::KWIC);
 		m_query->set_context_length(m_ctx_length->value());
-		m_query->set_reference_constraint(m_ref_constraint->value());
 		Settings::set_value("concordance", "context_length", intptr_t(m_ctx_length->value()));
 	}
 
@@ -805,6 +807,8 @@ void FormantQueryEditor::onAddConstraint()
 	m_remove_btn->setEnabled(true);
 	m_ref_constraint->setRange(1, idx);
 
+	m_constraints[1]->setRelationPlaceholder(true);
+
 	connect(cw, &ConstraintWidget::searchRequested, this, &FormantQueryEditor::onExecute);
 	connect(cw, &ConstraintWidget::modified, this, [this]() {
 		if (m_save_btn) m_save_btn->setEnabled(true);
@@ -822,6 +826,10 @@ void FormantQueryEditor::onRemoveConstraint()
 
 	m_remove_btn->setEnabled(m_constraints.size() > 1);
 	m_ref_constraint->setRange(1, (int) m_constraints.size());
+
+	if (m_constraints.size() == 1) {
+		m_constraints[1]->setRelationPlaceholder(false);
+	}
 }
 
 // ── Load query into the UI (for re-editing) ──────────────────────────────────
@@ -897,16 +905,17 @@ void FormantQueryEditor::loadQuery()
 		m_constraints[i]->loadConstraint(m_query->get_constraint(i));
 	}
 
+	// Reference constraint (always restore, independent of context type)
+	m_ref_constraint->setValue(m_query->reference_constraint());
+
 	// Context
 	switch (m_query->context())
 	{
 		case Query::Context::Labels:
 			m_ctx_labels->setChecked(true);
-			m_ref_constraint->setValue(m_query->reference_constraint());
 			break;
 		case Query::Context::KWIC:
 			m_ctx_kwic->setChecked(true);
-			m_ref_constraint->setValue(m_query->reference_constraint());
 			m_ctx_length->setValue(m_query->context_length());
 			break;
 		default:

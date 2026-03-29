@@ -27,6 +27,12 @@ void ConstraintWidget::setupUi()
 	auto *layout = new QHBoxLayout(this);
 	layout->setContentsMargins(0, 2, 0, 2);
 
+	// Invisible spacer: same width as the relation combo, shown only on the first
+	// constraint when there are 2+ constraints, so that fields align across rows.
+	m_spacer = new QWidget;
+	m_spacer->setFixedWidth(130);
+	m_spacer->setVisible(false);
+
 	// Relation combo (hidden for the first constraint).
 	m_relation_combo = new QComboBox;
 	m_relation_combo->addItem(tr("dominance"), static_cast<int>(Constraint::Relation::Dominance));
@@ -67,6 +73,7 @@ void ConstraintWidget::setupUi()
 	m_case_checkbox = new QCheckBox(tr("Aa"));
 	m_case_checkbox->setToolTip(tr("Case sensitive"));
 
+	layout->addWidget(m_spacer);
 	layout->addWidget(m_relation_combo);
 	layout->addWidget(m_index_label);
 	layout->addWidget(m_layer_edit);
@@ -181,6 +188,11 @@ void ConstraintWidget::loadConstraint(const Constraint &c)
 void ConstraintWidget::setRelationVisible(bool visible)
 {
 	m_relation_combo->setVisible(visible);
+}
+
+void ConstraintWidget::setRelationPlaceholder(bool visible)
+{
+	m_spacer->setVisible(visible);
 }
 
 void ConstraintWidget::focusSearch()

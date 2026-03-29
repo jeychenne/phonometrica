@@ -808,13 +808,12 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 
 bool Concordance::is_left_context(intptr_t col) const
 {
-	// TODO: adjust context position for complex queries
-	return has_context() && col == 5;
+	return has_context() && col == FILE_INFO_COLUMN_COUNT + 1;
 }
 
 bool Concordance::is_right_context(intptr_t col) const
 {
-	return has_context() && col == 7;
+	return has_context() && col == FILE_INFO_COLUMN_COUNT + 2 + m_target_count;
 }
 
 bool Concordance::is_time(intptr_t col) const
