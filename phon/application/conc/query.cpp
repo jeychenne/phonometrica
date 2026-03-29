@@ -512,7 +512,7 @@ Handle<Concordance> Query::execute()
 	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, search(), nullptr);
 	auto label = this->label();
 	if (label.starts_with("Query ")) {
-		label.replace_first("Query ", "Concordance ");
+		label = String::format("Concordance %d", Concordance::next_id());
 	}
 	conc->set_label(label, false);
 	Project::get()->add_temp_concordance(conc);

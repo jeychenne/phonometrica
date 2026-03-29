@@ -78,8 +78,6 @@ void ConcordanceView::setupUi()
 
 	m_toolbar->addSeparator();
 
-	// Placeholder icons: trash-2.svg and pencil-line.svg are not yet in the project.
-	// Add them from Lucide (https://lucide.dev) and register in CMakeLists.txt.
 	auto *del_action = m_toolbar->addAction(QIcon(":/icons/trash-2.svg"), tr("Delete"));
 	del_action->setToolTip(tr("Delete selected row(s)"));
 
@@ -92,7 +90,6 @@ void ConcordanceView::setupUi()
 	auto *union_action = m_toolbar->addAction(QIcon(":/icons/set-union.svg"), tr("Union"));
 	union_action->setToolTip(tr("Unite with another concordance (A \u222a B)"));
 
-	// Placeholder icon: circle-dot.svg is not yet in the project.
 	auto *intersect_action = m_toolbar->addAction(QIcon(":/icons/set-intersection.svg"), tr("Intersect"));
 	intersect_action->setToolTip(tr("Intersect with another concordance (A \u2229 B)"));
 
@@ -101,7 +98,6 @@ void ConcordanceView::setupUi()
 
 	m_toolbar->addSeparator();
 
-	// Placeholder icon: tag.svg is not yet in the project.
 	auto *rename_action = m_toolbar->addAction(QIcon(":/icons/tag.svg"), tr("Rename"));
 	rename_action->setToolTip(tr("Rename concordance..."));
 
@@ -126,15 +122,19 @@ void ConcordanceView::setupUi()
 	meta_action->setChecked(m_show_metadata);
 	meta_action->setToolTip(tr("Show file description and properties"));
 
-	// Wide/Long toggle — only shown for concordances with n-point measurement data
+	// Wide/Long toggle — shown for all formant concordances; enabled only for n-point data
 	QAction *long_action = nullptr;
-	if (m_conc->has_measurement_data())
+	if (m_conc->nformant() > 0)
 	{
 		display_menu->addSeparator();
 		long_action = display_menu->addAction(tr("Long format (one row per time point)"));
 		long_action->setCheckable(true);
 		long_action->setChecked(m_conc->layout() == Concordance::Layout::Long);
-		long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
+		long_action->setEnabled(m_conc->has_measurement_data());
+		if (m_conc->has_measurement_data())
+			long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
+		else
+			long_action->setToolTip(tr("Long format is only available for n-point measurements (not midpoint)"));
 	}
 
 	display_menu->addSeparator();
@@ -148,6 +148,31 @@ void ConcordanceView::setupUi()
 	m_toolbar->addAction(display_action);
 	if (auto *db = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(display_action)))
 		db->setPopupMode(QToolButton::InstantPopup);
+
+	// -- Scales menu (Add/Remove ERB, Bark) — only for formant concordances --
+	if (m_conc->nformant() > 0)
+	{
+		auto *scales_menu = new QMenu(this);
+
+		m_erb_action = scales_menu->addAction(tr("ERB values"));
+		m_erb_action->setCheckable(true);
+		m_erb_action->setChecked(m_conc->has_erb());
+		m_erb_action->setToolTip(tr("Show formant values converted to the ERB scale"));
+
+		m_bark_action = scales_menu->addAction(tr("Bark values"));
+		m_bark_action->setCheckable(true);
+		m_bark_action->setChecked(m_conc->has_bark());
+		m_bark_action->setToolTip(tr("Show formant values converted to the Bark scale"));
+
+		auto *scales_action = new QAction(QIcon(":/icons/ruler.svg"), tr("Scales"), this);
+		scales_action->setMenu(scales_menu);
+		m_toolbar->addAction(scales_action);
+		if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(scales_action)))
+			sb->setPopupMode(QToolButton::InstantPopup);
+
+		connect(m_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleErb);
+		connect(m_bark_action, &QAction::toggled, this, &ConcordanceView::onToggleBark);
+	}
 
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);
@@ -183,7 +208,9 @@ void ConcordanceView::setupUi()
 	m_table->setModel(m_model);
 	m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
 	m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
-	m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	// Allow double-click editing on editable cells (measurement columns).
+	// The model's flags() method controls which cells are actually editable.
+	m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
 	m_table->setAlternatingRowColors(true);
 	m_table->verticalHeader()->setDefaultSectionSize(28);
 	m_table->horizontalHeader()->setStretchLastSection(false);
@@ -230,6 +257,10 @@ void ConcordanceView::setupUi()
 	connect(split_action, &QAction::toggled, this, [this](bool checked) {
 		m_open_in_split = checked;
 	});
+
+	// Header double-click for column renaming
+	connect(m_table->horizontalHeader(), &QHeaderView::sectionDoubleClicked,
+	        this, &ConcordanceView::onHeaderDoubleClick);
 }
 
 // ── View interface ──────────────────────────────────────
@@ -528,10 +559,56 @@ void ConcordanceView::onToggleLayout(bool long_format)
 	m_table->resizeColumnsToContents();
 }
 
+// ── Scales (ERB / Bark) ─────────────────────────────────
+
+void ConcordanceView::onToggleErb(bool checked)
+{
+	m_conc->set_has_erb(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onToggleBark(bool checked)
+{
+	m_conc->set_has_bark(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+// ── Column renaming ─────────────────────────────────────
+
+void ConcordanceView::onHeaderDoubleClick(int section)
+{
+	// Get the current display name and the default name
+	auto current_display = m_model->headerData(section, Qt::Horizontal, Qt::DisplayRole).toString();
+	auto default_name = m_model->headerData(section, Qt::Horizontal, Qt::EditRole).toString();
+
+	bool ok;
+	auto new_name = QInputDialog::getText(this,
+		tr("Rename column"),
+		tr("Column name (leave empty or use \"%1\" to revert to default):").arg(default_name),
+		QLineEdit::Normal, current_display, &ok);
+
+	if (!ok) return;
+
+	m_model->setHeaderData(section, Qt::Horizontal, new_name, Qt::EditRole);
+	emit titleChanged(label());
+}
+
 void ConcordanceView::updateColumnVisibility()
 {
 	int ncol = m_model->columnCount();
 
+	// First, show all columns to clear stale hidden states from before
+	// a model reset (column indices may have shifted after adding/removing ERB/Bark).
+	for (int j = 0; j < ncol; j++)
+		m_table->setColumnHidden(j, false);
+
+	// Then apply the hide rules.
 	for (int j = 0; j < ncol; j++)
 	{
 		intptr_t col = j + 1; // 1-based for Concordance
@@ -548,7 +625,7 @@ void ConcordanceView::updateColumnVisibility()
 		{
 			m_table->setColumnHidden(j, !m_show_metadata);
 		}
-		// Target columns are always visible.
+		// Target and measurement columns are always visible.
 	}
 }
 
@@ -557,6 +634,15 @@ void ConcordanceView::updateColumnVisibility()
 void ConcordanceView::onDoubleClick(const QModelIndex &index)
 {
 	if (!index.isValid()) return;
+
+	intptr_t col = index.column() + 1;
+
+	// If the cell is editable (measurement column), let the default editor handle it.
+	// The model's flags() returns Qt::ItemIsEditable for these cells.
+	if (m_conc->is_editable_measurement(col))
+		return;
+
+	// Otherwise, navigate to the match in the annotation.
 	viewMatch(index.row());
 }
 
@@ -576,6 +662,16 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 		menu.addAction(QIcon(":/icons/play-selection.svg"), tr("Play match"), this, &ConcordanceView::onPlay);
 
 	menu.addSeparator();
+
+	// Edit cell — only for editable measurement columns
+	intptr_t col = index.column() + 1;
+	if (m_conc->is_editable_measurement(col))
+	{
+		menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit cell"), this, [this, index]() {
+			m_table->edit(index);
+		});
+	}
+
 	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit event"), this, &ConcordanceView::onEditEvent);
 	menu.addAction(QIcon(":/icons/trash-2.svg"), tr("Remove match"), this, &ConcordanceView::onDeleteRows);
 	menu.addSeparator();

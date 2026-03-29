@@ -114,6 +114,9 @@ public:
 	bool output_bark() const { return m_bark; }
 	void set_output_bark(bool b) { m_bark = b; }
 
+	bool round_hz() const { return m_round_hz; }
+	void set_round_hz(bool b) { m_round_hz = b; }
+
 	// ── Column helpers ───────────────────────────────────────────────────
 
 	// Number of numeric fields per match (F1..Fn + optional B1..Bn + E1..En + z1..zn + auto params)
@@ -176,6 +179,7 @@ private:
 	bool m_bandwidth = false;
 	bool m_erb = false;
 	bool m_bark = false;
+	bool m_round_hz = true;
 };
 
 namespace traits {

@@ -8,8 +8,8 @@
  * Created: 27/03/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: View for displaying and interacting with query results (concordances). Provides a toolbar with play,       *
- *          stop, view-in-annotation, bookmark, edit, delete, set operations, CSV export, and rename. Results are      *
- *          displayed in a QTableView backed by ConcordanceModel.                                                      *
+ *          stop, view-in-annotation, bookmark, edit, delete, set operations, CSV export, rename, and scale toggle.   *
+ *          Results are displayed in a QTableView backed by ConcordanceModel.                                          *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -70,6 +70,11 @@ private slots:
 	void onToggleMetadata(bool visible);
 	void onToggleLayout(bool long_format);
 
+	void onToggleErb(bool checked);
+	void onToggleBark(bool checked);
+
+	void onHeaderDoubleClick(int section);
+
 private:
 
 	void setupUi();
@@ -87,6 +92,10 @@ private:
 	QToolBar *m_toolbar = nullptr;
 	QLabel *m_count_label = nullptr;
 	QSpinBox *m_target_spin = nullptr;
+
+	// Scales menu actions (stored so we can update checked state)
+	QAction *m_erb_action = nullptr;
+	QAction *m_bark_action = nullptr;
 
 	std::unique_ptr<AudioPlayer> m_player;
 	Handle<Concordance> m_conc;

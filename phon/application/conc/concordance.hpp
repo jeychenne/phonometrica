@@ -14,6 +14,7 @@
 #ifndef PHONOMETRICA_CONCORDANCE_HPP
 #define PHONOMETRICA_CONCORDANCE_HPP
 
+#include <map>
 #include <phon/application/data_table.hpp>
 #include <phon/application/conc/match.hpp>
 
@@ -79,13 +80,47 @@ public:
 
 	bool is_measurement_column(intptr_t col) const;
 
+	/// True if column `col` (1-based) is a stored formant or bandwidth value that can be edited.
+	bool is_editable_measurement(intptr_t col) const;
+
 	// ── Wide-mode extra columns (formant measurements) ───────────────────
 
 	bool has_extra_columns() const { return !m_extra_headers.empty(); }
 
 	intptr_t extra_column_count() const { return m_extra_headers.size(); }
 
-	void set_extra_headers(Array<String> headers) { m_extra_headers = std::move(headers); }
+	// ── Formant metadata ─────────────────────────────────────────────────
+	// ERB and Bark values are computed on the fly from stored formant values.
+	// Only raw formants (F) and bandwidths (B) are stored in match.measurements.
+
+	int nformant() const { return m_nformant; }
+	bool has_bandwidth() const { return m_has_bandwidth; }
+	bool has_erb() const { return m_has_erb; }
+	bool has_bark() const { return m_has_bark; }
+	bool has_auto_params() const { return m_has_auto_params; }
+
+	/// Set formant metadata. Called by FormantQuery::execute() when creating a new concordance.
+	void set_formant_meta(int nformant, bool bandwidth, bool erb, bool bark, bool auto_params);
+
+	/// Toggle ERB display columns (recomputed on the fly).
+	void set_has_erb(bool b);
+
+	/// Toggle Bark display columns (recomputed on the fly).
+	void set_has_bark(bool b);
+
+	/// Whether to round Hz values to the nearest integer (default true).
+	bool round_hz() const { return m_round_hz; }
+	void set_round_hz(bool b) { m_round_hz = b; }
+
+	/// Number of raw fields stored per measurement point: nformant + (has_bandwidth ? nformant : 0).
+	int stored_fields_per_point() const;
+
+	/// Number of display fields per measurement point: stored + ERB + Bark.
+	int display_fields_per_point() const;
+
+	/// Rebuild m_extra_headers and m_base_headers from formant metadata.
+	/// Must be called after changing ERB/Bark flags or formant metadata.
+	void rebuild_extra_headers();
 
 	// ── Layout toggle (wide/long) ────────────────────────────────────────
 
@@ -96,14 +131,25 @@ public:
 	// True if this concordance has n-point measurement data (can toggle wide/long).
 	bool has_measurement_data() const { return !m_measurement_points.empty(); }
 
-	// Set measurement metadata (called by FormantQuery::execute()).
-	// points: measurement percentages (e.g. 25, 50, 75)
-	// base_headers: un-suffixed column names for one point (e.g. F1, F2, F3, B1, B2, B3)
-	// fields_per_point: number of columns per measurement point
-	// has_average: whether the wide extra headers include an average group at the end
-	void set_measurement_info(Array<double> points, Array<String> base_headers, int fields_per_point, bool has_average);
+	/// Set measurement points and average flag (called by FormantQuery::execute()).
+	void set_measurement_info(Array<double> points, bool has_average);
+
+	void set_has_series(bool b) { m_has_series = b; }
 
 	const Array<double> &measurement_points() const { return m_measurement_points; }
+
+	// ── Column aliases ───────────────────────────────────────────────────
+	// Users can rename any column header. The system remembers the default header
+	// name internally and uses it for identification.
+
+	/// Set a display alias for the column whose default header is `default_header`.
+	void set_header_alias(const String &default_header, const String &alias);
+
+	/// Remove the alias for the given default header, reverting to the default name.
+	void clear_header_alias(const String &default_header);
+
+	/// Get the alias map (for serialization / UI).
+	const std::map<String, String> &header_aliases() const { return m_header_aliases; }
 
 	// ── Other ────────────────────────────────────────────────────────────
 
@@ -128,6 +174,12 @@ public:
 	void update_context(intptr_t i);
 
 	std::pair<String, String> get_context(intptr_t i) const;
+
+	/// Compute the default (non-aliased) header for column j (1-based).
+	String get_default_header(intptr_t j) const;
+
+	/// Returns a unique concordance number (1, 2, 3...) for default naming.
+	static int next_id();
 
 protected:
 
@@ -164,19 +216,51 @@ protected:
 	intptr_t match_for_row(intptr_t i) const;  // 1-based match index
 	intptr_t point_for_row(intptr_t i) const;  // 0-based point index
 
+	/// Resolve a display column within a measurement group to a double value.
+	/// `meas` is the match's measurement vector; `stored_base` is the offset for this group;
+	/// `within_group` is the 0-based index within the display group.
+	double resolve_group_value(const std::vector<double> &meas, int stored_base, int within_group) const;
+
+	/// Format a measurement value for display based on its column type within a group.
+	/// Formants/bandwidths: rounded to integer or 3dp depending on m_round_hz.
+	/// ERB/Bark: always 2 decimal places.
+	String format_measurement(double val, int within_group) const;
+
+	/// Return the stored measurement index for an editable column, or -1 if not editable.
+	/// `extra_j` is 1-based index within extra columns; `row` is 1-based display row.
+	intptr_t stored_index_for_column(intptr_t extra_j, intptr_t row) const;
+
+	/// Detect formant metadata from old-format headers and migrate measurement vectors.
+	void normalize_after_load();
+
 	Array<AutoMatch> m_matches;
 
 	// Left and right context
 	Array<std::pair<String,String>> m_context;
 
-	// Extra column headers for acoustic measurements — wide mode (F1(25%), F2(25%), ..., F1(avg), ...)
+	// Extra column headers for acoustic measurements — wide mode
+	// (rebuilt dynamically from formant metadata by rebuild_extra_headers())
 	Array<String> m_extra_headers;
 
 	// Measurement metadata for wide/long toggle
 	Array<double> m_measurement_points;    // percentages (e.g. 25, 50, 75)
-	Array<String> m_base_headers;          // un-suffixed names for one point (F1, F2, F3, ...)
-	int m_fields_per_point = 0;            // columns per measurement point
-	bool m_has_average = false;            // extra_headers end with an average group
+	Array<String> m_base_headers;          // un-suffixed names for one point (rebuilt dynamically)
+
+	// ── Formant metadata ─────────────────────────────────────────────────
+	// ERB/Bark are computed on the fly. Only F and B values are stored per match.
+
+	int m_nformant = 0;               // number of formants (e.g. 3 for F1, F2, F3)
+	bool m_has_bandwidth = false;     // whether bandwidth (B) columns are stored
+	bool m_has_erb = false;           // whether ERB display columns are active
+	bool m_has_bark = false;          // whether Bark display columns are active
+	bool m_has_auto_params = false;   // whether auto LPC params are stored (2 values at end)
+	bool m_has_series = true;         // NPoint: per-point series data present
+	bool m_has_average = false;       // NPoint: average group present
+	bool m_round_hz = true;           // round Hz values to nearest integer
+
+	// ── Column aliases ───────────────────────────────────────────────────
+
+	std::map<String, String> m_header_aliases;   // default_header → user display name
 
 	String m_label;
 
