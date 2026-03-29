@@ -17,6 +17,7 @@
 #include <QDialog>
 #include <QCheckBox>
 #include <QFontComboBox>
+#include <QRadioButton>
 #include <QSpinBox>
 
 namespace phonometrica {
@@ -32,6 +33,7 @@ public:
 private:
 
 	QWidget *createGeneralPage();
+	QWidget *createMeasurementPage();
 	QWidget *createAppearancePage();
 
 	void accept() override;
@@ -44,8 +46,14 @@ private:
 	QCheckBox *m_autohints = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
 
-	// Formant display
+	// Measurement — display
 	QSpinBox *m_hz_decimals = nullptr;
+
+	// Measurement — default query context
+	QRadioButton *m_ctx_none = nullptr;
+	QRadioButton *m_ctx_labels = nullptr;
+	QRadioButton *m_ctx_kwic = nullptr;
+	QSpinBox *m_ctx_length = nullptr;
 
 	// Appearance
 	QFontComboBox *m_font_combo = nullptr;
