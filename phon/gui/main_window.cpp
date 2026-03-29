@@ -40,6 +40,7 @@
 #include <phon/gui/preferences_dialog.hpp>
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
+#include <phon/gui/conc/pitch_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
@@ -210,8 +211,7 @@ QMenu *MainWindow::createAnalysisMenu()
 	// Acoustic query types
 	menu->addAction(tr("Measure formants..."), this, &MainWindow::onMeasureFormants);
 
-	auto *pitch_action = menu->addAction(tr("Measure pitch..."));
-	pitch_action->setEnabled(false);
+	menu->addAction(tr("Measure pitch..."), this, &MainWindow::onMeasurePitch);
 
 	auto *intensity_action = menu->addAction(tr("Measure intensity..."));
 	intensity_action->setEnabled(false);
@@ -1161,6 +1161,28 @@ void MainWindow::onMeasureFormants()
 	}
 }
 
+void MainWindow::onMeasurePitch()
+{
+	PitchQueryEditor editor(this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
 void MainWindow::onEditLastQuery()
 {
 	if (!m_last_query)
@@ -1176,6 +1198,28 @@ void MainWindow::onEditLastQuery()
 	{
 		auto fq = recast<FormantQuery>(copy);
 		FormantQueryEditor editor(fq, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+	}
+	else if (m_last_query->is_pitch_query())
+	{
+		auto pq = recast<PitchQuery>(copy);
+		PitchQueryEditor editor(pq, this);
 
 		if (editor.exec() == QDialog::Accepted)
 		{
@@ -1317,6 +1361,28 @@ void MainWindow::onDocumentRequested(Document *doc)
 		{
 			auto fq = recast<FormantQuery>(Handle<Query>(query_doc));
 			FormantQueryEditor editor(fq, this);
+
+			if (editor.exec() == QDialog::Accepted)
+			{
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
+			}
+		}
+		else if (query_doc->is_pitch_query())
+		{
+			auto pq = recast<PitchQuery>(Handle<Query>(query_doc));
+			PitchQueryEditor editor(pq, this);
 
 			if (editor.exec() == QDialog::Accepted)
 			{

@@ -73,6 +73,9 @@ private slots:
 	void onToggleErb(bool checked);
 	void onToggleBark(bool checked);
 
+	void onTogglePitchSemitones(bool checked);
+	void onTogglePitchErb(bool checked);
+
 	void onHeaderDoubleClick(int section);
 
 private:
@@ -96,6 +99,10 @@ private:
 	// Scales menu actions (stored so we can update checked state)
 	QAction *m_erb_action = nullptr;
 	QAction *m_bark_action = nullptr;
+
+	// Pitch scales menu actions
+	QAction *m_pitch_st_action = nullptr;
+	QAction *m_pitch_erb_action = nullptr;
 
 	std::unique_ptr<AudioPlayer> m_player;
 	Handle<Concordance> m_conc;

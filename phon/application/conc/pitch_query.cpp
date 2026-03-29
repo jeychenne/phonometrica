@@ -1,0 +1,524 @@
+/***********************************************************************************************************************
+ *                                                                                                                     *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
+ *                                                                                                                     *
+ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
+ * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
+ *                                                                                                                     *
+ * Created: 29/03/2026                                                                                                 *
+ *                                                                                                                     *
+ * Purpose: see header.                                                                                                *
+ *                                                                                                                     *
+ ***********************************************************************************************************************/
+
+#include <phon/runtime.hpp>
+#include <phon/application/conc/pitch_query.hpp>
+#include <phon/application/project.hpp>
+#include <phon/application/sound.hpp>
+#include <phon/utils/file_system.hpp>
+
+namespace phonometrica {
+
+PitchQuery::PitchQuery(Directory *parent, String path) :
+		Query(meta::get_class<PitchQuery>(), parent, String()) // Pass empty path to avoid vtable issue
+{
+	// Set the path ourselves and call our own load(), since during base-class construction
+	// the vtable still points to Query, not PitchQuery.
+	m_path = std::move(path);
+	if (!m_path.empty()) {
+		load();
+	}
+}
+
+int PitchQuery::field_count() const
+{
+	int fpp = 1; // always 1 stored field per point (F0 in Hz)
+	int n = 0;
+
+	if (m_method == Method::Midpoint)
+	{
+		n = fpp;
+	}
+	else
+	{
+		int npoints = (int)m_points.size();
+		if (npoints < 1) npoints = 1;
+		if (m_series)  n += npoints * fpp;
+		if (m_average) n += fpp;
+	}
+
+	return n;
+}
+
+Array<String> PitchQuery::build_headers() const
+{
+	Array<String> headers;
+
+	auto emit_group = [&](const char *suffix)
+	{
+		headers.append(String::format("F0%s", suffix));
+	};
+
+	if (m_method == Method::Midpoint)
+	{
+		emit_group("");
+	}
+	else
+	{
+		// Time series: one group per measurement point with percentage suffix
+		if (m_series)
+		{
+			for (intptr_t p = 1; p <= m_points.size(); p++)
+			{
+				auto pct = (int)m_points[p];
+				char suffix[16];
+				snprintf(suffix, sizeof(suffix), "(%d%%)", pct);
+				emit_group(suffix);
+			}
+		}
+
+		// Average: one group with "(avg)" suffix
+		if (m_average)
+		{
+			emit_group("(avg)");
+		}
+	}
+
+	return headers;
+}
+
+Array<String> PitchQuery::build_base_headers() const
+{
+	Array<String> headers;
+	headers.append("F0");
+	return headers;
+}
+
+void PitchQuery::clear()
+{
+	Query::clear();
+	m_points.clear();
+	m_method = Method::Midpoint;
+	m_algorithm = speech::PitchTracker::Reaper;
+	m_min_pitch = 75;
+	m_max_pitch = 600;
+	m_voicing_threshold = 0.5;
+	m_time_step = 0.01;
+	m_octave_jump_cost = 0.35;
+	m_voicing_cost = 0.45;
+	m_silence_threshold = 0.03;
+	m_octave_cost = 0.01;
+	m_series = true;
+	m_average = false;
+	m_initial_layout = Concordance::Layout::Wide;
+	m_semitones = false;
+	m_semitone_ref = 100;
+	m_erb = false;
+}
+
+Handle<Concordance> PitchQuery::execute()
+{
+	// Phase 1: text search (reuse the base class search engine)
+	auto matches = search();
+
+	// Phase 2: pitch measurement on each match
+	int count = (int)matches.size();
+
+	for (int i = 0; i < count; i++)
+	{
+		query_progress(i, count);
+		if (m_cancel_requested) break;
+
+		try
+		{
+			measure_match(*matches[i+1]); // 1-based indexing
+		}
+		catch (std::exception &e)
+		{
+			// If measurement fails for a single match (e.g. sound file not bound),
+			// fill with NaN and continue rather than aborting the whole query.
+			auto &m = *matches[i+1];
+			m.measurements.assign(field_count(), std::nan(""));
+		}
+	}
+
+	// Build concordance with pitch metadata
+	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
+
+	// Set pitch metadata — semitones and ERB are computed on the fly by the concordance
+	conc->set_pitch_meta(m_semitones, m_semitone_ref, m_erb);
+
+	// Provide measurement metadata so the concordance can toggle between wide and long layout.
+	if (m_method == Method::NPoint)
+	{
+		conc->set_measurement_info(m_points, m_average);
+		conc->set_has_series(m_series);
+		conc->set_layout(m_initial_layout);
+	}
+
+	// Build all display headers from the metadata
+	conc->rebuild_extra_headers();
+
+	auto lbl = this->label();
+	if (lbl.starts_with("Query ")) {
+		lbl = String::format("Concordance %d", Concordance::next_id());
+	}
+	conc->set_label(lbl, false);
+	Project::get()->add_temp_concordance(conc);
+
+	return conc;
+}
+
+void PitchQuery::measure_match(Match &match) const
+{
+	auto annot = match.annotation();
+	auto sound = annot->sound();
+	if (!sound)
+	{
+		throw error("Cannot measure pitch in annotation \"%\" because it is not bound to any sound file", annot->path());
+	}
+
+	// Get the reference target's time boundaries
+	auto *target = match.reference_target();
+	if (!target) {
+		target = match.get(1);
+	}
+	double t1 = target->start_time;
+	double t2 = target->end_time;
+
+	int total = field_count();
+	match.measurements.resize(total, std::nan(""));
+
+	int idx = 0;
+
+	if (m_method == Method::Midpoint)
+	{
+		double t = (t1 + t2) / 2.0;
+		double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
+		                             m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost);
+		match.measurements[idx++] = (f0 > 0) ? f0 : std::nan("");
+	}
+	else
+	{
+		// Measure at each point individually
+		double duration = t2 - t1;
+		int npoints = (int)m_points.size();
+
+		// Collect all per-point F0 values
+		Array<double> point_data;
+		for (auto p : m_points)
+		{
+			double t = t1 + (p / 100.0) * duration;
+			double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
+			                              m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost);
+			point_data.append((f0 > 0) ? f0 : std::nan(""));
+		}
+
+		// Time series: output each point's data
+		if (m_series)
+		{
+			for (intptr_t k = 1; k <= npoints; k++) {
+				match.measurements[idx++] = point_data[k];
+			}
+		}
+
+		// Average: compute mean across voiced points
+		if (m_average)
+		{
+			double sum = 0;
+			int n = 0;
+			for (intptr_t k = 1; k <= npoints; k++)
+			{
+				double v = point_data[k];
+				if (std::isfinite(v)) {
+					sum += v;
+					n++;
+				}
+			}
+			match.measurements[idx++] = (n > 0) ? (sum / n) : std::nan("");
+		}
+	}
+}
+
+Handle<Query> PitchQuery::copy() const
+{
+	auto c = make_handle<PitchQuery>(this->parent(), String());
+
+	// Copy base class fields
+	c->m_constraints = m_constraints;
+	c->m_metaconstraints = m_metaconstraints;
+	c->selected_annotations = selected_annotations;
+	c->m_label = m_label;
+	c->m_context = m_context;
+	c->m_context_length = m_context_length;
+	c->m_ref_constraint = m_ref_constraint;
+
+	// Copy pitch-specific fields
+	c->m_method = m_method;
+	c->m_points = m_points;
+	c->m_algorithm = m_algorithm;
+	c->m_min_pitch = m_min_pitch;
+	c->m_max_pitch = m_max_pitch;
+	c->m_voicing_threshold = m_voicing_threshold;
+	c->m_time_step = m_time_step;
+	c->m_octave_jump_cost = m_octave_jump_cost;
+	c->m_voicing_cost = m_voicing_cost;
+	c->m_silence_threshold = m_silence_threshold;
+	c->m_octave_cost = m_octave_cost;
+	c->m_series = m_series;
+	c->m_average = m_average;
+	c->m_initial_layout = m_initial_layout;
+	c->m_semitones = m_semitones;
+	c->m_semitone_ref = m_semitone_ref;
+	c->m_erb = m_erb;
+	c->m_content_modified = true;
+
+	return c;
+}
+
+// ── XML serialization ────────────────────────────────────────────────────────
+
+static const char *algorithm_to_string(speech::PitchTracker algo)
+{
+	switch (algo) {
+		case speech::PitchTracker::Harvest: return "harvest";
+		case speech::PitchTracker::Rapt:    return "rapt";
+		case speech::PitchTracker::Reaper:  return "reaper";
+		case speech::PitchTracker::Swipe:   return "swipe";
+		case speech::PitchTracker::Praat:   return "praat";
+		default:                            return "reaper";
+	}
+}
+
+static speech::PitchTracker string_to_algorithm(std::string_view s)
+{
+	if (s == "harvest") return speech::PitchTracker::Harvest;
+	if (s == "rapt")    return speech::PitchTracker::Rapt;
+	if (s == "reaper")  return speech::PitchTracker::Reaper;
+	if (s == "swipe")   return speech::PitchTracker::Swipe;
+	if (s == "praat")   return speech::PitchTracker::Praat;
+	return speech::PitchTracker::Reaper;
+}
+
+void PitchQuery::load()
+{
+	xml_document doc;
+	xml_node root;
+	using str = std::string_view;
+
+	try {
+		root = read_xml(doc, m_path);
+	}
+	catch (...) {
+		throw error("Cannot open pitch query \"%\"", m_path);
+	}
+
+	if (root.name() != str("Phonometrica")) {
+		throw error("Invalid XML root in %", m_path);
+	}
+
+	auto attr = root.attribute("label");
+	if (attr) {
+		set_label(attr.value(), false);
+	}
+	else {
+		set_label(filesystem::base_name(m_path), false);
+	}
+
+	for (auto node = root.first_child(); node; node = node.next_sibling())
+	{
+		if (node.name() == str("Metadata"))
+		{
+			metadata_from_xml(node);
+		}
+		else if (node.name() == str("MetaConstraints"))
+		{
+			parse_metaconstraints_from_xml(node);
+		}
+		else if (node.name() == str("Constraints"))
+		{
+			parse_constraints_from_xml(node);
+		}
+		else if (node.name() == str("Options"))
+		{
+			parse_options_from_xml(node);
+		}
+		else if (node.name() == str("PitchSettings"))
+		{
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("Method"))
+				{
+					auto val = str(child.text().get());
+					m_method = (val == "npoint") ? Method::NPoint : Method::Midpoint;
+				}
+				else if (child.name() == str("Points"))
+				{
+					m_points.clear();
+					auto text = String(child.text().get());
+					auto parts = text.split(" ");
+					for (auto &p : parts)
+					{
+						bool ok;
+						double v = p.to_float(&ok);
+						if (ok) m_points.append(v);
+					}
+				}
+				else if (child.name() == str("Algorithm"))
+				{
+					m_algorithm = string_to_algorithm(child.text().get());
+				}
+				else if (child.name() == str("MinPitch"))
+				{
+					m_min_pitch = child.text().as_double(75);
+				}
+				else if (child.name() == str("MaxPitch"))
+				{
+					m_max_pitch = child.text().as_double(600);
+				}
+				else if (child.name() == str("VoicingThreshold"))
+				{
+					m_voicing_threshold = child.text().as_double(0.5);
+				}
+				else if (child.name() == str("TimeStep"))
+				{
+					m_time_step = child.text().as_double(0.01);
+				}
+				else if (child.name() == str("OctaveJumpCost"))
+				{
+					m_octave_jump_cost = child.text().as_double(0.35);
+				}
+				else if (child.name() == str("VoicingCost"))
+				{
+					m_voicing_cost = child.text().as_double(0.45);
+				}
+				else if (child.name() == str("SilenceThreshold"))
+				{
+					m_silence_threshold = child.text().as_double(0.03);
+				}
+				else if (child.name() == str("OctaveCost"))
+				{
+					m_octave_cost = child.text().as_double(0.01);
+				}
+				else if (child.name() == str("Series"))
+				{
+					m_series = child.text().as_bool(true);
+				}
+				else if (child.name() == str("NPointAverage"))
+				{
+					m_average = child.text().as_bool(false);
+				}
+				else if (child.name() == str("Layout"))
+				{
+					auto val = str(child.text().get());
+					m_initial_layout = (val == "long") ? Concordance::Layout::Long : Concordance::Layout::Wide;
+				}
+				else if (child.name() == str("Semitones"))
+				{
+					m_semitones = child.text().as_bool(false);
+				}
+				else if (child.name() == str("SemitoneReference"))
+				{
+					m_semitone_ref = child.text().as_double(100);
+				}
+				else if (child.name() == str("ERB"))
+				{
+					m_erb = child.text().as_bool(false);
+				}
+			}
+		}
+	}
+
+	m_loaded = true;
+}
+
+void PitchQuery::write()
+{
+	xml_document doc;
+
+	auto root = doc.append_child("Phonometrica");
+	root.append_attribute("class").set_value("PitchQuery");
+	root.append_attribute("label").set_value(m_label.data());
+
+	auto metadata_node = root.append_child("Metadata");
+	metadata_to_xml(metadata_node);
+
+	// MetaConstraints (reuse base class pattern)
+	auto meta_node = root.append_child("MetaConstraints");
+	auto file_sel_node = meta_node.append_child("FileSelection");
+	for (auto &file : selected_annotations) {
+		add_data_node(file_sel_node, "File", file->path());
+	}
+	for (auto &mc : m_metaconstraints) {
+		mc->to_xml(meta_node);
+	}
+
+	// Options (context)
+	auto option_node = root.append_child("Options");
+	auto ctx_node = option_node.append_child("Context");
+	auto type_attr = ctx_node.append_attribute("type");
+	switch (m_context)
+	{
+		case Context::Labels:
+		{
+			type_attr.set_value("labels");
+			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
+		} break;
+		case Context::KWIC:
+		{
+			type_attr.set_value("kwic");
+			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
+			ctx_node.append_attribute("length").set_value(m_context_length);
+		} break;
+		default:
+			type_attr.set_value("none");
+	}
+
+	// Constraints
+	auto data_node = root.append_child("Constraints");
+	for (auto &constraint : m_constraints) {
+		constraint.to_xml(data_node);
+	}
+
+	// Pitch settings
+	auto ps_node = root.append_child("PitchSettings");
+	add_data_node(ps_node, "Method", m_method == Method::NPoint ? "npoint" : "midpoint");
+
+	if (m_method == Method::NPoint && !m_points.empty())
+	{
+		String pts;
+		for (intptr_t i = 1; i <= m_points.size(); i++)
+		{
+			if (i > 1) pts.append(' ');
+			pts.append(String::format("%.1f", m_points[i]));
+		}
+		add_data_node(ps_node, "Points", pts);
+		add_data_node(ps_node, "Series", String::convert(m_series));
+		add_data_node(ps_node, "NPointAverage", String::convert(m_average));
+		add_data_node(ps_node, "Layout", m_initial_layout == Concordance::Layout::Long ? "long" : "wide");
+	}
+
+	add_data_node(ps_node, "Algorithm", algorithm_to_string(m_algorithm));
+	add_data_node(ps_node, "MinPitch", String::format("%.1f", m_min_pitch));
+	add_data_node(ps_node, "MaxPitch", String::format("%.1f", m_max_pitch));
+	add_data_node(ps_node, "VoicingThreshold", String::format("%.2f", m_voicing_threshold));
+	add_data_node(ps_node, "TimeStep", String::format("%.4f", m_time_step));
+
+	if (m_algorithm == speech::PitchTracker::Praat)
+	{
+		add_data_node(ps_node, "OctaveJumpCost", String::format("%.2f", m_octave_jump_cost));
+		add_data_node(ps_node, "VoicingCost", String::format("%.2f", m_voicing_cost));
+		add_data_node(ps_node, "SilenceThreshold", String::format("%.2f", m_silence_threshold));
+		add_data_node(ps_node, "OctaveCost", String::format("%.2f", m_octave_cost));
+	}
+
+	add_data_node(ps_node, "Semitones", String::convert(m_semitones));
+	if (m_semitones) {
+		add_data_node(ps_node, "SemitoneReference", String::format("%.1f", m_semitone_ref));
+	}
+	add_data_node(ps_node, "ERB", String::convert(m_erb));
+
+	write_xml(doc, m_path);
+}
+
+} // namespace phonometrica

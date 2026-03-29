@@ -81,6 +81,7 @@ private slots:
 	// Analysis menu
 	void onFindInAnnotations();
 	void onMeasureFormants();
+	void onMeasurePitch();
 	void onEditLastQuery();
 
 	// File menu (import/export)

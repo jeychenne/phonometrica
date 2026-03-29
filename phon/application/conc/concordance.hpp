@@ -108,15 +108,34 @@ public:
 	/// Toggle Bark display columns (recomputed on the fly).
 	void set_has_bark(bool b);
 
-	/// Number of raw fields stored per measurement point: nformant + (has_bandwidth ? nformant : 0).
+	/// Number of raw fields stored per measurement point.
+	/// Formant: nformant + (has_bandwidth ? nformant : 0). Pitch: 1.
 	int stored_fields_per_point() const;
 
-	/// Number of display fields per measurement point: stored + ERB + Bark.
+	/// Number of display fields per measurement point: stored + computed (ERB, Bark, semitones).
 	int display_fields_per_point() const;
 
-	/// Rebuild m_extra_headers and m_base_headers from formant metadata.
-	/// Must be called after changing ERB/Bark flags or formant metadata.
+	/// Rebuild m_extra_headers and m_base_headers from measurement metadata.
+	/// Must be called after changing display flags or measurement metadata.
 	void rebuild_extra_headers();
+
+	// ── Pitch metadata ──────────────────────────────────────────────────
+	// Semitones and ERB-rate are computed on the fly from stored F0 values.
+	// Only raw F0 in Hz is stored in match.measurements.
+
+	bool is_pitch() const { return m_is_pitch; }
+	bool has_semitones() const { return m_has_semitones; }
+	bool has_pitch_erb() const { return m_has_pitch_erb; }
+	double semitone_reference() const { return m_semitone_ref; }
+
+	/// Set pitch metadata. Called by PitchQuery::execute() when creating a new concordance.
+	void set_pitch_meta(bool semitones, double st_ref, bool erb);
+
+	/// Toggle semitone display columns (recomputed on the fly).
+	void set_has_semitones(bool b);
+
+	/// Toggle pitch ERB display columns (recomputed on the fly).
+	void set_has_pitch_erb(bool b);
 
 	// ── Layout toggle (wide/long) ────────────────────────────────────────
 
@@ -252,6 +271,14 @@ protected:
 	bool m_has_auto_params = false;   // whether auto LPC params are stored (2 values at end)
 	bool m_has_series = true;         // NPoint: per-point series data present
 	bool m_has_average = false;       // NPoint: average group present
+
+	// ── Pitch metadata ──────────────────────────────────────────────────
+	// Semitones and ERB-rate are computed on the fly. Only F0 in Hz is stored per match.
+
+	bool m_is_pitch = false;          // true if this concordance holds pitch data
+	bool m_has_semitones = false;     // whether semitone display columns are active
+	double m_semitone_ref = 100;      // Hz (reference for semitone conversion)
+	bool m_has_pitch_erb = false;     // whether ERB-rate display columns are active
 
 	// ── Column aliases ───────────────────────────────────────────────────
 
