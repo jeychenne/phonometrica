@@ -80,6 +80,27 @@ QWidget *PreferencesDialog::createGeneralPage()
 	layout->addWidget(m_autosave);
 	layout->addWidget(m_autohints);
 	layout->addWidget(m_discard_empty);
+
+	// Formant display precision
+	layout->addSpacing(12);
+	layout->addWidget(new QLabel(tr("<b>Acoustic measurements</b>")));
+
+	auto *prec_row = new QHBoxLayout;
+	prec_row->addWidget(new QLabel(tr("Decimal places for Hz values:")));
+	m_hz_decimals = new QSpinBox;
+	m_hz_decimals->setRange(0, 6);
+	m_hz_decimals->setToolTip(tr("Number of decimal places for frequency values (formants, pitch, bandwidth).\n"
+	                              "0 = round to nearest Hz.\n"
+	                              "ERB and Bark values automatically use 2 additional decimal places."));
+	try {
+		m_hz_decimals->setValue(Settings::get_int("display", "hz_decimals"));
+	} catch (...) {
+		m_hz_decimals->setValue(0);
+	}
+	prec_row->addWidget(m_hz_decimals);
+	prec_row->addStretch();
+	layout->addLayout(prec_row);
+
 	layout->addStretch();
 
 	return page;
@@ -134,6 +155,9 @@ void PreferencesDialog::accept()
 	Settings::set_value("restore_views", m_restore_views->isChecked());
 	Settings::set_value("concordance", "discard_empty", m_discard_empty->isChecked());
 
+	// Formant display
+	Settings::set_value("display", "hz_decimals", intptr_t(m_hz_decimals->value()));
+
 	// Appearance — update the font table
 	auto font_name = m_font_combo->currentFont().family();
 	auto font_size = m_font_size->value();
@@ -159,6 +183,9 @@ void PreferencesDialog::reset()
 	m_autosave->setChecked(false);
 	m_autohints->setChecked(true);
 	m_discard_empty->setChecked(true);
+
+	// Formant display
+	m_hz_decimals->setValue(0);
 
 	// Appearance — platform defaults
 #if defined(Q_OS_MACOS)

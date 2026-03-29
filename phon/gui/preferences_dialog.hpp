@@ -44,6 +44,9 @@ private:
 	QCheckBox *m_autohints = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
 
+	// Formant display
+	QSpinBox *m_hz_decimals = nullptr;
+
 	// Appearance
 	QFontComboBox *m_font_combo = nullptr;
 	QSpinBox *m_font_size = nullptr;

@@ -394,6 +394,10 @@ void Settings::post_initialize()
 	catch (...) {
 		reset_formants();
 	}
+	if (!settings.contains("display"))
+	{
+		reset_display();
+	}
 }
 
 void Settings::reset()
@@ -413,6 +417,7 @@ void Settings::reset()
 	reset_intensity();
 	reset_mouse_tracking();
 	reset_concordance();
+	reset_display();
 }
 
 void Settings::reset_waveform()
@@ -491,6 +496,14 @@ void Settings::reset_concordance()
 	map["context_length"] = intptr_t(40);
 	map["discard_empty"] = true;
 	Settings::set_value("concordance", std::move(table));
+}
+
+void Settings::reset_display()
+{
+	auto table = make_handle<Table>(runtime);
+	auto &map = table->data();
+	map["hz_decimals"] = intptr_t(0); // 0 = round to nearest Hz
+	Settings::set_value("display", std::move(table));
 }
 
 void Settings::reset_mouse_tracking()

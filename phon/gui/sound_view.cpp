@@ -1031,6 +1031,13 @@ static void writeError(QWidget *parent, const QString &msg)
 	QMessageBox::critical(parent, QObject::tr("Measurement error"), msg);
 }
 
+// Read the global Hz decimal-places setting (0 = round to nearest Hz).
+static int hzDecimals()
+{
+	try { return Settings::get_int("display", "hz_decimals"); }
+	catch (...) { return 0; }
+}
+
 
 // ─────────────────────────────────────────────────
 //  Measurements: Formants
@@ -1075,7 +1082,7 @@ void SoundView::onGetFormants()
 				double bw = formants(i, 2);
 				QString indent = m_sound->is_mono() ? "" :  "  ";
 				if (freq > 0)
-					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
 				else
 					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
 			}
@@ -1135,7 +1142,7 @@ void SoundView::onGetMeanFormants()
 				double bw = formants(i, 2);
 				QString indent = m_sound->is_mono() ? "  " : "    ";
 				if (freq > 0)
-					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', 1).arg(bw, 0, 'f', 1);
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
 				else
 					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
 			}
@@ -1184,7 +1191,7 @@ void SoundView::onGetPitch()
 		for (int ch : m_visible_channels)
 		{
 			double f0 = m_sound->get_pitch(ch, method, t, min_pitch, max_pitch, threshold);
-			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
+			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', hzDecimals()) : tr("undefined");
 
 			if (m_sound->is_mono())
 				body += tr("%1").arg(value);
@@ -1229,7 +1236,7 @@ void SoundView::onGetMeanPitch()
 		for (int ch : m_visible_channels)
 		{
 			double f0 = m_sound->get_mean_pitch(ch, method, t1, t2, min_pitch, max_pitch, threshold);
-			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', 1) : tr("undefined");
+			QString value = (f0 > 0) ? tr("%1 Hz").arg(f0, 0, 'f', hzDecimals()) : tr("undefined");
 
 			if (m_sound->is_mono())
 				body += tr("%1").arg(value);
