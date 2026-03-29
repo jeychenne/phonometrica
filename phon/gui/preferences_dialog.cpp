@@ -32,6 +32,7 @@ PreferencesDialog::PreferencesDialog(QWidget *parent) :
 
 	auto *tabs = new QTabWidget;
 	tabs->addTab(createGeneralPage(), tr("General"));
+	tabs->addTab(createMeasurementPage(), tr("Measurement"));
 	tabs->addTab(createAppearancePage(), tr("Appearance"));
 	layout->addWidget(tabs);
 
@@ -81,9 +82,66 @@ QWidget *PreferencesDialog::createGeneralPage()
 	layout->addWidget(m_autohints);
 	layout->addWidget(m_discard_empty);
 
-	// Formant display precision
+	layout->addStretch();
+
+	return page;
+}
+
+QWidget *PreferencesDialog::createMeasurementPage()
+{
+	auto *page = new QWidget;
+	auto *layout = new QVBoxLayout(page);
+
+	// ── Default query context ────────────────────────────────────────────
+	layout->addWidget(new QLabel(tr("<b>Default query context</b>")));
+
+	m_ctx_none = new QRadioButton(tr("No context"));
+	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
+	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
+
+	m_ctx_length = new QSpinBox;
+	m_ctx_length->setRange(1, 1000);
+	m_ctx_length->setValue(Settings::get_int("concordance", "context_length"));
+	m_ctx_length->setToolTip(tr("Number of characters in left/right context"));
+
+	// Read current default
+	try {
+		auto ctx = Settings::get_string("concordance", "default_context");
+		if (ctx == "none") {
+			m_ctx_none->setChecked(true);
+			m_ctx_length->setEnabled(false);
+		} else if (ctx == "labels") {
+			m_ctx_labels->setChecked(true);
+			m_ctx_length->setEnabled(false);
+		} else {
+			m_ctx_kwic->setChecked(true);
+		}
+	} catch (...) {
+		m_ctx_kwic->setChecked(true);
+	}
+
+	connect(m_ctx_none, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) m_ctx_length->setEnabled(false);
+	});
+	connect(m_ctx_labels, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) m_ctx_length->setEnabled(false);
+	});
+	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) m_ctx_length->setEnabled(true);
+	});
+
+	layout->addWidget(m_ctx_none);
+	layout->addWidget(m_ctx_labels);
+
+	auto *kwic_row = new QHBoxLayout;
+	kwic_row->addWidget(m_ctx_kwic);
+	kwic_row->addWidget(m_ctx_length);
+	kwic_row->addStretch();
+	layout->addLayout(kwic_row);
+
+	// ── Display ──────────────────────────────────────────────────────────
 	layout->addSpacing(12);
-	layout->addWidget(new QLabel(tr("<b>Acoustic measurements</b>")));
+	layout->addWidget(new QLabel(tr("<b>Display</b>")));
 
 	auto *prec_row = new QHBoxLayout;
 	prec_row->addWidget(new QLabel(tr("Decimal places for Hz values:")));
@@ -155,7 +213,16 @@ void PreferencesDialog::accept()
 	Settings::set_value("restore_views", m_restore_views->isChecked());
 	Settings::set_value("concordance", "discard_empty", m_discard_empty->isChecked());
 
-	// Formant display
+	// Measurement — default query context
+	if (m_ctx_none->isChecked())
+		Settings::set_value("concordance", "default_context", String("none"));
+	else if (m_ctx_labels->isChecked())
+		Settings::set_value("concordance", "default_context", String("labels"));
+	else
+		Settings::set_value("concordance", "default_context", String("kwic"));
+	Settings::set_value("concordance", "context_length", intptr_t(m_ctx_length->value()));
+
+	// Measurement — display
 	Settings::set_value("display", "hz_decimals", intptr_t(m_hz_decimals->value()));
 
 	// Appearance — update the font table
@@ -184,7 +251,9 @@ void PreferencesDialog::reset()
 	m_autohints->setChecked(true);
 	m_discard_empty->setChecked(true);
 
-	// Formant display
+	// Measurement
+	m_ctx_kwic->setChecked(true);
+	m_ctx_length->setValue(40);
 	m_hz_decimals->setValue(0);
 
 	// Appearance — platform defaults

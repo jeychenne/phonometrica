@@ -398,6 +398,14 @@ void Settings::post_initialize()
 	{
 		reset_display();
 	}
+
+	// Added in 0.9: default query context
+	try {
+		Settings::get_string("concordance", "default_context");
+	}
+	catch (...) {
+		Settings::set_value("concordance", "default_context", String("kwic"));
+	}
 }
 
 void Settings::reset()
@@ -494,6 +502,7 @@ void Settings::reset_concordance()
 	auto table = make_handle<Table>(runtime);
 	auto &map = table->data();
 	map["context_length"] = intptr_t(40);
+	map["default_context"] = String("kwic");
 	map["discard_empty"] = true;
 	Settings::set_value("concordance", std::move(table));
 }

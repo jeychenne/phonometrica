@@ -158,7 +158,19 @@ QWidget *QueryEditor::createContextPanel()
 	m_ctx_none = new QRadioButton(tr("No context"));
 	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
 	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
-	m_ctx_kwic->setChecked(true);
+
+	// Apply default context from preferences
+	try {
+		auto ctx = Settings::get_string("concordance", "default_context");
+		if (ctx == "none")
+			m_ctx_none->setChecked(true);
+		else if (ctx == "labels")
+			m_ctx_labels->setChecked(true);
+		else
+			m_ctx_kwic->setChecked(true);
+	} catch (...) {
+		m_ctx_kwic->setChecked(true);
+	}
 
 	m_ctx_length = new QSpinBox;
 	m_ctx_length->setRange(1, 1000);
@@ -183,6 +195,10 @@ QWidget *QueryEditor::createContextPanel()
 	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
 		if (on) { m_ctx_length->setEnabled(true); m_ref_constraint->setEnabled(true); }
 	});
+
+	// Set initial enable state (connections above don't fire for the initial check)
+	m_ctx_length->setEnabled(m_ctx_kwic->isChecked());
+	m_ref_constraint->setEnabled(!m_ctx_none->isChecked());
 
 	return group;
 }
