@@ -42,6 +42,10 @@ public:
 	// Show/hide the relation combo at the left edge.
 	void setRelationVisible(bool visible);
 
+	// Show/hide an empty spacer matching the relation combo width (for alignment
+	// of the first constraint when there are 2+ constraints).
+	void setRelationPlaceholder(bool visible);
+
 	// Move keyboard focus to the search field.
 	void focusSearch();
 
@@ -68,6 +72,7 @@ private:
 	QLineEdit *m_search_edit;     // target text
 	QCheckBox *m_case_checkbox;
 	QComboBox *m_relation_combo;  // relation to next constraint
+	QWidget *m_spacer;            // alignment placeholder for first constraint
 };
 
 } // namespace phonometrica

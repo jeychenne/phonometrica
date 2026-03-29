@@ -535,17 +535,16 @@ void FormantQuery::write()
 	auto option_node = root.append_child("Options");
 	auto ctx_node = option_node.append_child("Context");
 	auto type_attr = ctx_node.append_attribute("type");
+	ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 	switch (m_context)
 	{
 		case Context::Labels:
 		{
 			type_attr.set_value("labels");
-			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 		} break;
 		case Context::KWIC:
 		{
 			type_attr.set_value("kwic");
-			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 			ctx_node.append_attribute("length").set_value(m_context_length);
 		} break;
 		default:

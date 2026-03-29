@@ -371,17 +371,16 @@ void Query::write()
 	auto option_node = root.append_child("Options");
 	auto ctx_node = option_node.append_child("Context");
 	auto type_attr = ctx_node.append_attribute("type");
+	ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 	switch (m_context)
 	{
 		case Context::Labels:
 		{
 			type_attr.set_value("labels");
-			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 		} break;
 		case Context::KWIC:
 		{
 			type_attr.set_value("kwic");
-			ctx_node.append_attribute("ref").set_value(m_ref_constraint);
 			ctx_node.append_attribute("length").set_value(m_context_length);
 		} break;
 		default:
@@ -442,45 +441,44 @@ void Query::parse_options_from_xml(xml_node root)
 			}
 			auto type = str(type_attr.value());
 
-			if (type == str("none"))
+			// Reference constraint: always read if present (new format writes it
+			// for all context types; old format only wrote it for labels/kwic).
+			auto ref_attr = node.attribute("ref");
+			if (ref_attr)
 			{
-				m_context = Context::None;
-			}
-			else
-			{
-				auto ref_attr = node.attribute("ref");
-				if (!ref_attr) {
-					throw error("Missing ref attribute in Context node");
-				}
-
 				String text = ref_attr.value();
 				bool ok;
 				m_ref_constraint = (int) text.to_int(&ok);
 				if (!ok || m_ref_constraint < 0) {
 					throw error("Invalid index for reference constraint in Context node: %", text);
 				}
+			}
 
-				if (type == str("kwic"))
-				{
-					auto len_attr = node.attribute("length");
-					if (!len_attr) {
-						throw error("Missing length attribute in Context node");
-					}
-					text = len_attr.value();
-					m_context_length = (int) text.to_int(&ok);
-					if (!ok || m_context_length < 0) {
-						throw error("Invalid length in Context node: %", text);
-					}
-					m_context = Context::KWIC;
+			if (type == str("none"))
+			{
+				m_context = Context::None;
+			}
+			else if (type == str("kwic"))
+			{
+				auto len_attr = node.attribute("length");
+				if (!len_attr) {
+					throw error("Missing length attribute in Context node");
 				}
-				else if (type == str("labels"))
-				{
-					m_context = Context::Labels;
+				String text = len_attr.value();
+				bool ok;
+				m_context_length = (int) text.to_int(&ok);
+				if (!ok || m_context_length < 0) {
+					throw error("Invalid length in Context node: %", text);
 				}
-				else
-				{
-					throw error("Invalid type in Context node: %", type);
-				}
+				m_context = Context::KWIC;
+			}
+			else if (type == str("labels"))
+			{
+				m_context = Context::Labels;
+			}
+			else
+			{
+				throw error("Invalid type in Context node: %", type);
 			}
 		}
 		else
@@ -580,7 +578,7 @@ Array<AutoMatch> Query::search_annotation(const Handle<Annotation> &annot)
 		if (matches.empty()) {
 			return matches;
 		}
-		matches = find_matches(annot, m_constraints[i], std::move(matches), seen, m_constraints[i - 1].relation, m_ref_constraint == i);
+		matches = find_matches(annot, m_constraints[i], std::move(matches), seen, m_constraints[i].relation, m_ref_constraint == i);
 	}
 
 	return matches;
@@ -680,14 +678,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto start = previous_target.start_time;
-                    auto end = previous_target.end_time;
+					auto start = match->last_target().start_time;
+					auto end = match->last_target().end_time;
 					auto events = annot->get_slice(layer_index, start, end);
 
+					// Collect all matching targets from the dominated slice.
+					std::vector<std::unique_ptr<Match::Target>> hit_targets;
 					for (auto &event : events)
 					{
-                        if (op == Op::StrictDominance && (event.start <= start || event.end >= end))
+						if (op == Op::StrictDominance && (event.start <= start || event.end >= end))
 						{
 							continue;
 						}
@@ -695,26 +694,39 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 						auto target = find_target(event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
-							new_matches.append(std::move(match));
+							hit_targets.push_back(std::move(target));
 						}
 					}
+
+					if (hit_targets.empty()) continue;
+
+					// Additional hits: copy the original match (before it is modified),
+					// then append a different target to each copy.
+					for (size_t k = 1; k < hit_targets.size(); k++)
+					{
+						auto copy = std::make_unique<Match>(*match);
+						copy->append(std::move(hit_targets[k]));
+						new_matches.append(std::move(copy));
+					}
+					// First hit: append to the original match, then move it.
+					match->append(std::move(hit_targets[0]));
+					new_matches.append(std::move(match));
 				}
 			} break;
 			case Op::Alignment:
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto time = previous_target.start_time;
-					auto event = annot->find_event_starting_at(layer_index, time);
-                    if (event && event->end == previous_target.end_time)
+					auto start = match->last_target().start_time;
+					auto end = match->last_target().end_time;
+					auto event = annot->find_event_starting_at(layer_index, start);
+					if (event && event->end == end)
 					{
 						intptr_t pos = 0;
-                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
+							match->append(std::move(target));
 							new_matches.append(std::move(match));
 						}
 					}
@@ -724,16 +736,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto time = previous_target.start_time;
+					auto time = match->last_target().start_time;
 					auto event = annot->find_event_starting_at(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
+							match->append(std::move(target));
 							new_matches.append(std::move(match));
 						}
 					}
@@ -743,16 +754,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto time = previous_target.end_time;
+					auto time = match->last_target().end_time;
 					auto event = annot->find_event_ending_at(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
+							match->append(std::move(target));
 							new_matches.append(std::move(match));
 						}
 					}
@@ -762,16 +772,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto time = previous_target.start_time;
+					auto time = match->last_target().start_time;
 					auto event = annot->find_previous_event(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
+							match->append(std::move(target));
 							new_matches.append(std::move(match));
 						}
 					}
@@ -781,16 +790,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto &previous_target = match->last_target();
-                    auto time = previous_target.end_time;
+					auto time = match->last_target().end_time;
 					auto event = annot->find_next_event(layer_index, time);
 					if (event)
 					{
 						intptr_t pos = 0;
-                        auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
 						if (target)
 						{
-							previous_target.next = std::move(target);
+							match->append(std::move(target));
 							new_matches.append(std::move(match));
 						}
 					}
