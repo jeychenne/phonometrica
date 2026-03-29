@@ -42,6 +42,8 @@ public slots:
 
 	// Called when the file manager selection changes.
 	void onSelectionChanged(QList<Document*> docs);
+	void onImportMetadata();
+	void onExportMetadata();
 
 private slots:
 
@@ -54,8 +56,6 @@ private slots:
 	void onSaveDescription();
 	void onBindSound();
 	void onPropertySelected();
-	void onImportMetadata();
-	void onExportMetadata();
 	void onOverwriteDescriptionToggled(bool checked);
 
 private:

@@ -26,6 +26,7 @@
 #include <QTabWidget>
 #include <QDockWidget>
 #include <QProgressBar>
+#include <QProgressDialog>
 #include <QAction>
 #include <QMenu>
 
@@ -81,6 +82,11 @@ private slots:
 	void onFindInAnnotations();
 	void onMeasureFormants();
 	void onEditLastQuery();
+
+	// File menu (import/export)
+	void onImportMetadata();
+	void onExportMetadata();
+	void onExportAnnotations();
 
 	// View actions (forwarded to active view in the current panel)
 	void onSaveCurrentView();
@@ -156,6 +162,9 @@ private:
 	void uninstallPlugin(int index);
 	Plugin *findPlugin(const String &name);
 
+	// Scripting shell functions (expose GUI dialogs to the scripting engine).
+	void setShellFunctions();
+
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;
@@ -191,6 +200,9 @@ private:
 
 	// Progress bar in the status bar (for loading sounds, etc.)
 	QProgressBar *m_progress_bar = nullptr;
+
+	// Progress dialog created by scripting functions (create_progress_dialog).
+	std::unique_ptr<QProgressDialog> m_script_progress;
 
 	// Last executed query (for "Edit last query" action).
 	Handle<Query> m_last_query;

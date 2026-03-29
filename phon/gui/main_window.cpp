@@ -19,6 +19,11 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QLineEdit>
+#include <QDesktopServices>
+#include <QUrl>
+#include <QPlainTextEdit>
+#include <QPushButton>
 #include <QCloseEvent>
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
@@ -30,6 +35,7 @@
 #include <phon/gui/annotation_view.hpp>
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
+#include <phon/gui/user_dialog.hpp>
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
@@ -39,6 +45,8 @@
 #include <phon/application/settings.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/zip.hpp>
+#include <phon/utils/helpers.hpp>
+#include <phon/runtime/file.hpp>
 
 namespace phonometrica {
 
@@ -125,6 +133,15 @@ QMenu *MainWindow::createFileMenu()
 
 	menu->addAction(tr("Save project"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::onSaveProject);
 	menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
+	menu->addSeparator();
+
+	auto *import_menu = menu->addMenu(tr("Import"));
+	import_menu->addAction(tr("Import metadata from CSV file..."), this, &MainWindow::onImportMetadata);
+
+	auto *export_menu = menu->addMenu(tr("Export"));
+	export_menu->addAction(tr("Export annotation(s) to plain text..."), this, &MainWindow::onExportAnnotations);
+	export_menu->addAction(tr("Export project metadata to CSV file..."), this, &MainWindow::onExportMetadata);
+
 	menu->addSeparator();
 	menu->addAction(tr("Close project"), this, &MainWindow::onCloseProject);
 	menu->addSeparator();
@@ -692,6 +709,28 @@ void MainWindow::onSaveProjectAs()
 	{
 		QMessageBox::warning(this, tr("Error"),
 			tr("Could not save project: %1").arg(e.what()));
+	}
+}
+
+void MainWindow::onImportMetadata()
+{
+	m_info_panel->onImportMetadata();
+}
+
+void MainWindow::onExportMetadata()
+{
+	m_info_panel->onExportMetadata();
+}
+
+void MainWindow::onExportAnnotations()
+{
+	try
+	{
+		run_script(m_runtime, transphon);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Export error"), QString::fromUtf8(e.what()));
 	}
 }
 
@@ -1324,11 +1363,366 @@ void MainWindow::onReplace()
 
 
 // ---------------------------------------------------------
+//  Scripting shell functions
+// ---------------------------------------------------------
+
+void MainWindow::setShellFunctions()
+{
+	// ── Message dialogs ──
+
+	auto warning1 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		QMessageBox::warning(this, tr("Warning"),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto warning2 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		QMessageBox::warning(this,
+			QString::fromUtf8(title.data(), (int) title.size()),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto alert1 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		QMessageBox::critical(this, tr("Error"),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto alert2 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		QMessageBox::critical(this,
+			QString::fromUtf8(title.data(), (int) title.size()),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto info1 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		QMessageBox::information(this, tr("Information"),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto info2 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		QMessageBox::information(this,
+			QString::fromUtf8(title.data(), (int) title.size()),
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		return Variant();
+	};
+
+	auto ask1 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto answer = QMessageBox::question(this, tr("Question"),
+			QString::fromUtf8(msg.data(), (int) msg.size()),
+			QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+		return (answer == QMessageBox::Yes);
+	};
+
+	auto ask2 = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		auto answer = QMessageBox::question(this,
+			QString::fromUtf8(title.data(), (int) title.size()),
+			QString::fromUtf8(msg.data(), (int) msg.size()),
+			QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+		return (answer == QMessageBox::Yes);
+	};
+
+	// ── File dialogs ──
+
+	auto open_file_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto path = QFileDialog::getOpenFileName(this,
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		if (path.isEmpty()) return Variant();
+		return String(path.toUtf8().constData());
+	};
+
+	auto open_files_dialog = [this](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto paths = QFileDialog::getOpenFileNames(this,
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		if (paths.isEmpty()) return Variant();
+		Array<Variant> result;
+		for (auto &p : paths) {
+			result.append(String(p.toUtf8().constData()));
+		}
+		std::sort(result.begin(), result.end());
+		return make_handle<List>(&rt, std::move(result));
+	};
+
+	auto open_directory_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto path = QFileDialog::getExistingDirectory(this,
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		if (path.isEmpty()) return Variant();
+		return String(path.toUtf8().constData());
+	};
+
+	auto save_file_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto path = QFileDialog::getSaveFileName(this,
+			QString::fromUtf8(msg.data(), (int) msg.size()));
+		if (path.isEmpty()) return Variant();
+		return String(path.toUtf8().constData());
+	};
+
+	auto input = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &label = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		auto &value = cast<String>(args[2]);
+		bool ok;
+		auto result = QInputDialog::getText(this,
+			QString::fromUtf8(title.data(), (int) title.size()),
+			QString::fromUtf8(label.data(), (int) label.size()),
+			QLineEdit::Normal,
+			QString::fromUtf8(value.data(), (int) value.size()),
+			&ok);
+		if (!ok) return Variant();
+		return String(result.toUtf8().constData());
+	};
+
+	// ── Progress dialog ──
+
+	auto create_progress_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &msg = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		auto count = (int) cast<intptr_t>(args[2]);
+		if (count <= 0) {
+			QMessageBox::warning(this, tr("Invalid value"),
+				tr("Count value must be positive in progress dialog"));
+		}
+		else
+		{
+			m_script_progress = std::make_unique<QProgressDialog>(
+				QString::fromUtf8(msg.data(), (int) msg.size()),
+				tr("Cancel"), 0, count, this);
+			m_script_progress->setWindowTitle(
+				QString::fromUtf8(title.data(), (int) title.size()));
+			m_script_progress->setWindowModality(Qt::ApplicationModal);
+		}
+		return Variant();
+	};
+
+	auto update_progress_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto value = (int) cast<intptr_t>(args[0]);
+		if (!m_script_progress) return Variant();
+		if (value <= 0 || value > m_script_progress->maximum())
+		{
+			QMessageBox::warning(this, tr("Invalid value"),
+				tr("Value out of range in progress dialog"));
+			m_script_progress.reset();
+			return Variant();
+		}
+		m_script_progress->setValue(value);
+		if (m_script_progress->wasCanceled() || value >= m_script_progress->maximum()) {
+			m_script_progress.reset();
+			return false;
+		}
+		return true;
+	};
+
+	// ── View text ──
+
+	auto view_text = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &path = cast<String>(args[0]);
+		auto &title = cast<String>(args[1]);
+		auto content = File::read_all(path);
+
+		auto *dlg = new QDialog(this);
+		dlg->setWindowTitle(QString::fromUtf8(title.data(), (int) title.size()));
+		dlg->resize(600, 400);
+		auto *layout = new QVBoxLayout(dlg);
+		auto *text_edit = new QPlainTextEdit(dlg);
+		text_edit->setReadOnly(true);
+		text_edit->setPlainText(QString::fromUtf8(content.data(), (int) content.size()));
+		layout->addWidget(text_edit);
+		auto *close_btn = new QPushButton(tr("Close"), dlg);
+		layout->addWidget(close_btn, 0, Qt::AlignRight);
+		connect(close_btn, &QPushButton::clicked, dlg, &QDialog::accept);
+		dlg->exec();
+		delete dlg;
+		return Variant();
+	};
+
+	// ── Browser ──
+
+	auto launch_browser = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &url = cast<String>(args[0]);
+		QDesktopServices::openUrl(QUrl(QString::fromUtf8(url.data(), (int) url.size())));
+		return Variant();
+	};
+
+	// ── Plugin queries ──
+
+	auto get_plugin_version = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &name = cast<String>(args[0]);
+		auto *plugin = findPlugin(name);
+		if (plugin) return plugin->version();
+		return Variant();
+	};
+
+	auto get_plugin_resource = [this](Runtime &, std::span<Variant> args) -> Variant {
+		auto &plugin_name = cast<String>(args[0]);
+		auto &name = cast<String>(args[1]);
+		auto resource = filesystem::join(Settings::plugin_directory(), plugin_name, "Resources", name);
+		return std::move(resource);
+	};
+
+	// ── View-level queries ──
+
+	auto get_current_sound = [this](Runtime &, std::span<Variant>) -> Variant {
+		auto *view = currentView();
+		if (auto *sv = qobject_cast<SoundView *>(view)) {
+			return sv->sound();
+		}
+		return Variant();
+	};
+
+	auto get_current_annot = [this](Runtime &, std::span<Variant>) -> Variant {
+		auto *view = currentView();
+		if (auto *av = qobject_cast<AnnotationView *>(view)) {
+			return av->annotation();
+		}
+		return Variant();
+	};
+
+	auto get_visible_channels = [this](Runtime &rt, std::span<Variant>) -> Variant {
+		Array<Variant> result;
+		auto *view = currentView();
+		if (auto *sv = qobject_cast<SoundView *>(view)) {
+			for (int ch : sv->visibleChannels()) {
+				result.append((intptr_t) ch);
+			}
+		}
+		return make_handle<List>(&rt, std::move(result));
+	};
+
+	auto get_window_duration = [this](Runtime &, std::span<Variant>) -> Variant {
+		auto *view = currentView();
+		if (auto *sv = qobject_cast<SoundView *>(view)) {
+			return sv->timeModel()->windowDuration();
+		}
+		return 0.0;
+	};
+
+	auto get_selection_duration = [this](Runtime &, std::span<Variant>) -> Variant {
+		auto *view = currentView();
+		if (auto *sv = qobject_cast<SoundView *>(view)) {
+			auto *model = sv->timeModel();
+			if (model->hasSpanSelection()) {
+				return model->selectionEnd() - model->selectionStart();
+			}
+		}
+		return 0.0;
+	};
+
+	// ── Close current view ──
+
+	auto close_current_view = [this](Runtime &, std::span<Variant>) -> Variant {
+		int idx = m_viewer->currentIndex();
+		if (idx >= 0) {
+			m_viewer->removeTab(idx);
+		}
+		return Variant();
+	};
+
+	// ── User dialog ──
+
+	auto create_dialog1 = [this](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &s = cast<String>(args[0]);
+		UserDialog dlg(this, rt, s);
+		if (dlg.exec() == QDialog::Accepted) {
+			return dlg.getResult();
+		}
+		return Variant();
+	};
+
+	auto create_dialog2 = [this](Runtime &rt, std::span<Variant> args) -> Variant {
+		Json js(args[0].resolve());
+		UserDialog dlg(this, rt, js);
+		if (dlg.exec() == QDialog::Accepted) {
+			return dlg.getResult();
+		}
+		return Variant();
+	};
+
+	// ── phon module functions ──
+
+	auto get_version = [](Runtime &, std::span<Variant>) -> Variant {
+		return String(utils::get_version());
+	};
+
+	auto get_date = [](Runtime &, std::span<Variant>) -> Variant {
+		return String(utils::get_date());
+	};
+
+	auto get_supported_sound_formats = [](Runtime &rt, std::span<Variant>) -> Variant {
+		Array<Variant> sounds;
+		for (auto &s : Sound::supported_sound_format_names()) {
+			sounds.append(s);
+		}
+		return make_handle<List>(&rt, std::move(sounds));
+	};
+
+	// ── Register everything ──
+
+#define CLS(T) get_class<T>()
+	m_runtime.add_global("view_text", view_text, { CLS(String), CLS(String) });
+	m_runtime.add_global("warning", warning1, { CLS(String) });
+	m_runtime.add_global("warning", warning2, { CLS(String), CLS(String) });
+	m_runtime.add_global("alert", alert1, { CLS(String) });
+	m_runtime.add_global("alert", alert2, { CLS(String), CLS(String) });
+	m_runtime.add_global("info", info1, { CLS(String) });
+	m_runtime.add_global("info", info2, { CLS(String), CLS(String) });
+	m_runtime.add_global("ask", ask1, { CLS(String) });
+	m_runtime.add_global("ask", ask2, { CLS(String), CLS(String) });
+	m_runtime.add_global("open_file_dialog", open_file_dialog, { CLS(String) });
+	m_runtime.add_global("open_files_dialog", open_files_dialog, { CLS(String) });
+	m_runtime.add_global("open_directory_dialog", open_directory_dialog, { CLS(String) });
+	m_runtime.add_global("save_file_dialog", save_file_dialog, { CLS(String) });
+	m_runtime.add_global("get_input", input, { CLS(String), CLS(String), CLS(String) });
+	m_runtime.add_global("get_plugin_version", get_plugin_version, { CLS(String) });
+	m_runtime.add_global("get_plugin_resource", get_plugin_resource, { CLS(String), CLS(String) });
+	m_runtime.add_global("create_dialog", create_dialog1, { CLS(String) });
+	m_runtime.add_global("create_dialog", create_dialog2, { CLS(Table) });
+	m_runtime.add_global("create_progress_dialog", create_progress_dialog, { CLS(String), CLS(String), CLS(intptr_t) });
+	m_runtime.add_global("update_progress_dialog", update_progress_dialog, { CLS(intptr_t) });
+	m_runtime.add_global("launch_browser", launch_browser, { CLS(String) });
+	m_runtime.add_global("get_current_sound", get_current_sound, { });
+	m_runtime.add_global("get_visible_channels", get_visible_channels, { });
+	m_runtime.add_global("get_current_annotation", get_current_annot, { });
+	m_runtime.add_global("get_window_duration", get_window_duration, { });
+	m_runtime.add_global("get_selection_duration", get_selection_duration, { });
+
+	auto *rt = &m_runtime;
+	auto &phon = cast<Module>(m_runtime["phon"]);
+	phon.define(rt, "get_version", get_version, { });
+	phon.define(rt, "get_date", get_date, { });
+	phon.define(rt, "get_supported_sound_formats", get_supported_sound_formats, { });
+	phon.define(rt, "close_current_view", close_current_view, { });
+#undef CLS
+}
+
+
+// ---------------------------------------------------------
 //  Plugin support
 // ---------------------------------------------------------
 
 void MainWindow::postInitialize()
 {
+	// Register scripting functions before loading plugins, so plugin
+	// scripts can call GUI functions like info(), warning(), etc.
+	setShellFunctions();
+
 	// Load system plugins/scripts first, then user plugins/scripts.
 	auto resources_dir = Settings::resources_directory();
 	auto user_dir = Settings::settings_directory();
