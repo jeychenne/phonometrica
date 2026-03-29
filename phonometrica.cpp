@@ -159,6 +159,7 @@ int main(int argc, char **argv)
 	window.show();
 
 	Settings::post_initialize();
+	window.postInitialize();
 
 	int result = app.exec();
 	finalize(runtime);

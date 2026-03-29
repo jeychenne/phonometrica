@@ -11,11 +11,14 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
+#include <vector>
 #include <QApplication>
 #include <QMenuBar>
 #include <QStatusBar>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QCloseEvent>
 #include <QLabel>
 #include <phon/gui/main_window.hpp>
@@ -30,9 +33,12 @@
 #include <phon/gui/conc/query_editor.hpp>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/conc/protocol_query_editor.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/utils/file_system.hpp>
+#include <phon/utils/zip.hpp>
 
 namespace phonometrica {
 
@@ -189,7 +195,20 @@ QMenu *MainWindow::createAnalysisMenu()
 QMenu *MainWindow::createToolsMenu()
 {
 	auto *menu = new QMenu(tr("&Plugins"), this);
-	menu->addAction(tr("(coming soon)"))->setEnabled(false);
+	m_plugins_menu = menu;
+
+	// Plugin submenus will be inserted before this separator.
+	m_plugin_separator = menu->addSeparator();
+
+	menu->addAction(tr("Run script..."), this, &MainWindow::onRunScript);
+	menu->addSeparator();
+	menu->addAction(tr("Install plugin..."), this, &MainWindow::onInstallPlugin);
+	menu->addAction(tr("Uninstall plugin..."), this, &MainWindow::onUninstallPlugin);
+	menu->addSeparator();
+	menu->addAction(tr("How to extend this menu"), [this]() {
+		HelpBrowser::showPage("scripting/plugins.html", this);
+	});
+
 	return menu;
 }
 
@@ -1301,6 +1320,340 @@ void MainWindow::onReplace()
 {
 	if (auto *v = currentView())
 		v->replace();
+}
+
+
+// ---------------------------------------------------------
+//  Plugin support
+// ---------------------------------------------------------
+
+void MainWindow::postInitialize()
+{
+	// Load system plugins/scripts first, then user plugins/scripts.
+	auto resources_dir = Settings::resources_directory();
+	auto user_dir = Settings::settings_directory();
+	loadPluginsAndScripts(resources_dir);
+	loadPluginsAndScripts(user_dir);
+}
+
+void MainWindow::loadPluginsAndScripts(const String &root)
+{
+	String plugin_dir = filesystem::join(root, "Plugins");
+
+	if (filesystem::exists(plugin_dir))
+	{
+		auto files = filesystem::list_directory(plugin_dir);
+		std::sort(files.begin(), files.end());
+
+		for (auto &name : files)
+		{
+			String path = filesystem::join(plugin_dir, name);
+			if (filesystem::is_directory(path))
+			{
+				try
+				{
+					loadPlugin(path);
+				}
+				catch (std::exception &e)
+				{
+					QMessageBox::critical(this, tr("Plugin initialization failed"),
+						QString::fromUtf8(e.what()));
+				}
+			}
+		}
+	}
+
+	String scripts_dir = filesystem::join(root, "Scripts");
+
+	if (filesystem::exists(scripts_dir))
+	{
+		auto files = filesystem::list_directory(scripts_dir);
+		std::sort(files.begin(), files.end());
+
+		for (auto &name : files)
+		{
+			String path = filesystem::join(scripts_dir, name);
+			if (filesystem::is_file(path))
+			{
+				try
+				{
+					m_runtime.do_file(path);
+				}
+				catch (std::exception &e)
+				{
+					auto msg = utils::format("Error in script %: %", path, e.what());
+					QMessageBox::critical(this, tr("Startup script error"),
+						QString::fromUtf8(msg.data(), (int) msg.size()));
+				}
+			}
+		}
+	}
+}
+
+void MainWindow::loadPlugin(const String &path)
+{
+	// Skip plugins with an ignore.txt marker.
+	auto ignore_path = filesystem::join(path, "ignore.txt");
+	if (filesystem::exists(ignore_path))
+		return;
+
+	statusBar()->showMessage(tr("Loading plugin %1...").arg(
+		QString::fromUtf8(path.data(), (int) path.size())));
+
+	auto *menu = new QMenu;
+
+	// Build the callback that the Plugin constructor uses to populate its menu.
+	auto script_callback = [this, menu](String name, Plugin::MenuEntry target) {
+		if (name.empty())
+		{
+			menu->addSeparator();
+			return;
+		}
+
+		auto *action = new QAction(QString::fromUtf8(name.data(), (int) name.size()), menu);
+		menu->addAction(action);
+
+		if (target.type() == typeid(String))
+		{
+			auto script = std::any_cast<String>(target);
+
+			if (script.ends_with(".html"))
+			{
+				// Open a documentation page in the help browser.
+				connect(action, &QAction::triggered, [this, script](bool) {
+					auto qpath = QString::fromUtf8(script.data(), (int) script.size());
+					HelpBrowser::showPage(qpath, this);
+				});
+			}
+			else
+			{
+				// Run a script.
+				connect(action, &QAction::triggered, [this, script](bool) {
+					m_console->runScript(QString::fromUtf8(script.data(), (int) script.size()));
+				});
+			}
+		}
+		else
+		{
+			auto protocol = std::any_cast<AutoProtocol>(target);
+			connect(action, &QAction::triggered, [protocol, this](bool) {
+				ProtocolQueryEditor editor(protocol, this);
+				if (editor.exec() == QDialog::Accepted)
+				{
+					m_last_query = editor.query();
+					auto conc = editor.concordance();
+					if (conc && !conc->empty())
+					{
+						openConcordance(conc);
+						statusBar()->showMessage(
+							tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+					}
+					else
+					{
+						QMessageBox::information(this, tr("Search"), tr("No matches found."));
+					}
+				}
+			});
+		}
+	};
+
+	auto import_dir = filesystem::join(path, "Scripts");
+
+	try
+	{
+		m_runtime.add_import_path(import_dir);
+		auto plugin = std::make_shared<Plugin>(m_runtime, path, script_callback);
+
+		if (plugin->has_entries())
+		{
+			auto label = plugin->label();
+			auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
+			menu->setTitle(qlabel);
+
+			auto desc = plugin->description();
+			if (!desc.empty())
+			{
+				menu->addSeparator();
+				auto title = tr("About %1").arg(qlabel);
+				auto qdesc = QString::fromUtf8(desc.data(), (int) desc.size());
+				auto *about_action = new QAction(title, menu);
+				menu->addAction(about_action);
+
+				connect(about_action, &QAction::triggered, [this, title, qdesc](bool) {
+					QMessageBox::about(this, title, qdesc);
+				});
+			}
+
+			// Insert the plugin submenu before the separator that divides
+			// plugins from the built-in actions (Run script, Install, etc.).
+			auto *menu_action = m_plugins_menu->insertMenu(m_plugin_separator, menu);
+			m_plugin_actions[plugin.get()] = menu_action;
+		}
+		else
+		{
+			delete menu;
+		}
+
+		m_plugins.append(std::move(plugin));
+	}
+	catch (...)
+	{
+		m_runtime.remove_import_path(import_dir);
+		delete menu;
+		throw;
+	}
+
+	statusBar()->showMessage(tr("Ready"), 2000);
+}
+
+void MainWindow::onRunScript()
+{
+	auto path = QFileDialog::getOpenFileName(this, tr("Run script..."),
+		lastDirectory(), tr("Phonometrica scripts (*.phon)"));
+
+	if (path.isEmpty())
+		return;
+
+	setLastDirectory(path);
+	m_console->runScript(path);
+}
+
+void MainWindow::onInstallPlugin()
+{
+	auto path = QFileDialog::getOpenFileName(this, tr("Select plugin..."),
+		lastDirectory(), tr("ZIP files (*.zip)"));
+
+	if (path.isEmpty())
+		return;
+
+	setLastDirectory(path);
+	String archive(path.toUtf8().constData());
+
+	// Compare the plugin directory before and after extraction to identify the new plugin.
+	auto plugin_dir = Settings::plugin_directory();
+	if (!filesystem::exists(plugin_dir))
+		filesystem::create_directory(plugin_dir);
+	auto before = filesystem::list_directory(plugin_dir);
+
+	try
+	{
+		utils::unzip(archive, plugin_dir);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Installation failed"),
+			tr("Could not extract plugin archive: %1").arg(e.what()));
+		return;
+	}
+
+	auto after = filesystem::list_directory(plugin_dir);
+	std::sort(before.begin(), before.end());
+	std::sort(after.begin(), after.end());
+
+	std::vector<String> diff;
+	std::set_difference(after.begin(), after.end(),
+		before.begin(), before.end(),
+		std::inserter(diff, diff.begin()));
+
+	if (diff.size() == 1)
+	{
+		String new_path = filesystem::join(plugin_dir, diff.front());
+
+		try
+		{
+			loadPlugin(new_path);
+			auto label = m_plugins.last()->label();
+			auto msg = utils::format("The \"%\" plugin has been installed!", label);
+			QMessageBox::information(this, tr("Success"),
+				QString::fromUtf8(msg.data(), (int) msg.size()));
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::critical(this, tr("Plugin error"),
+				QString::fromUtf8(e.what()));
+		}
+	}
+	else
+	{
+		QMessageBox::critical(this, tr("Error"),
+			tr("Plugin installation failed.\n"
+			   "If you tried to reinstall an existing plugin, "
+			   "you should restart the program."));
+	}
+}
+
+void MainWindow::onUninstallPlugin()
+{
+	if (m_plugins.empty())
+	{
+		QMessageBox::information(this, tr("No plugin found"),
+			tr("You don't have any plugin installed!"));
+		return;
+	}
+
+	QStringList names;
+	for (auto &p : m_plugins)
+	{
+		auto label = p->label();
+		names << QString::fromUtf8(label.data(), (int) label.size());
+	}
+
+	bool ok;
+	auto chosen = QInputDialog::getItem(this, tr("Uninstall plugin"),
+		tr("Choose a plugin to uninstall:"), names, 0, false, &ok);
+
+	if (!ok || chosen.isEmpty())
+		return;
+
+	// Array is 1-based.
+	for (intptr_t i = 1; i <= m_plugins.size(); i++)
+	{
+		auto &p = m_plugins[i];
+		auto label = p->label();
+		auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
+
+		if (qlabel == chosen)
+		{
+			uninstallPlugin((int) i);
+			auto msg = utils::format("The \"%\" plugin has been uninstalled!", label);
+			QMessageBox::information(this, tr("Success"),
+				QString::fromUtf8(msg.data(), (int) msg.size()));
+			return;
+		}
+	}
+}
+
+void MainWindow::uninstallPlugin(int index)
+{
+	auto &p = m_plugins[index];
+	auto import_dir = filesystem::join(p->path(), "Scripts");
+
+	// Remove the submenu from the Plugins menu.
+	auto it = m_plugin_actions.find(p.get());
+	if (it != m_plugin_actions.end())
+	{
+		m_plugins_menu->removeAction(it->second);
+		m_plugin_actions.erase(it);
+	}
+
+	// Remove the plugin directory from disk.
+	filesystem::remove(p->path());
+
+	// Remove the import path for the plugin's scripts.
+	m_runtime.remove_import_path(import_dir);
+
+	// Remove the plugin from the list (this runs ~Plugin which executes finalize.phon).
+	m_plugins.remove_at(index);
+}
+
+Plugin *MainWindow::findPlugin(const String &name)
+{
+	for (auto &plugin : m_plugins)
+	{
+		if (plugin->label() == name)
+			return plugin.get();
+	}
+	return nullptr;
 }
 
 } // namespace phonometrica
