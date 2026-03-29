@@ -223,15 +223,15 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 
 	auto *freq_row = new QHBoxLayout;
 	freq_row->addWidget(new QLabel(tr("Max frequency (Hz) from:")));
-	m_auto_freq_low_edit = new QLineEdit("4000");
+	m_auto_freq_low_edit = new QLineEdit("4500");
 	m_auto_freq_low_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_low_edit);
 	freq_row->addWidget(new QLabel(tr("to:")));
-	m_auto_freq_high_edit = new QLineEdit("6000");
+	m_auto_freq_high_edit = new QLineEdit("6500");
 	m_auto_freq_high_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_high_edit);
 	freq_row->addWidget(new QLabel(tr("step:")));
-	m_auto_freq_step_edit = new QLineEdit("500");
+	m_auto_freq_step_edit = new QLineEdit("100");
 	m_auto_freq_step_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_step_edit);
 	freq_row->addStretch();
@@ -246,7 +246,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	lpc_row->addWidget(new QLabel(tr("to:")));
 	m_auto_lpc_high_spin = new QSpinBox;
 	m_auto_lpc_high_spin->setRange(4, 30);
-	m_auto_lpc_high_spin->setValue(12);
+	m_auto_lpc_high_spin->setValue(10);
 	lpc_row->addWidget(m_auto_lpc_high_spin);
 	lpc_row->addStretch();
 	auto_layout->addLayout(lpc_row);
