@@ -7,60 +7,51 @@
  *                                                                                                                     *
  * Created: 08/11/2019                                                                                                 *
  *                                                                                                                     *
- * Purpose: linear regression.                                                                                         *
+ * Purpose: regression models (linear and generalized linear).                                                         *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #ifndef PHONOMETRICA_REGRESSION_HPP
 #define PHONOMETRICA_REGRESSION_HPP
 
-#include <functional>
-#include <phon/string.hpp>
-#include <phon/array.hpp>
+#include <phon/analysis/model.hpp>
+#include <phon/analysis/family.hpp>
 
 namespace phonometrica::stats {
 
-struct LinearModel
-{
-	Array<double> beta;      // regression coefficients
-	Array<double> se;        // standard errors
-	Array<double> t;         // t-values
-	Array<double> p;         // p-values
-	Array<double> predicted; // predicted values
-	Array<double> residuals; // residual errors
-	double rse;              // residual standard error
-	intptr_t df;             // degrees of freedom
-	double r2;               // R squared
-	double adj_r2;           // Adjusted R squared
-};
-
-// Generalized linear model
-struct GLModel
-{
-	Array<double> beta;      // regression coefficients
-	Array<double> se;        // standard errors
-	Array<double> z;         // z-values
-	Array<double> p;         // p-values for Wald test
-	int niter;               // number of iterations
-	bool converged;          // whether the model converged
-};
-
-
-//! Performs linear regression using the least-squared method.
+//! Fits a linear regression model using ordinary least squares.
 //! \param y a vector of N observations
-//! \param X an N by M matrix, where N is the number of observations and M the number of regression coefficients. The
-// first column contains the intercept (beta_0).
-//! \return a vector of N coefficient (the first coefficient is the intercept).
-
-LinearModel lm(const Array<double> &y, const Array<double> &X);
+//! \param X an N by M design matrix (first column is the intercept).
+//! \return a Model with Gaussian family diagnostics.
+Model lm(const Array<double> &y, const Array<double> &X);
 
 
-// Logistic regression
-GLModel logit(const Array<double> &y, const Array<double> &X, int max_iter = 200);
+//! Fits a logistic regression model via L-BFGS.
+//! \param y a binary response vector (0/1).
+//! \param X an N by M design matrix (first column is the intercept).
+//! \param max_iter maximum number of L-BFGS iterations.
+//! \return a Model with binomial family diagnostics.
+Model logit(const Array<double> &y, const Array<double> &X, int max_iter = 200);
 
 
-// Poisson regression
-GLModel poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter = 200);
+//! Fits a Poisson regression model via L-BFGS.
+//! \param y a count response vector.
+//! \param X an N by M design matrix (first column is the intercept).
+//! \param robust if true, uses sandwich (robust) standard errors.
+//! \param max_iter maximum number of L-BFGS iterations.
+//! \return a Model with Poisson family diagnostics.
+Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter = 200);
+
+
+//! Generic GLM fitting via L-BFGS with a specified family.
+//! This is the unified entry point that logit() and poisson() delegate to.
+//! \param y response vector.
+//! \param X design matrix.
+//! \param fam the GLM family (binomial, poisson, etc.).
+//! \param robust if true, uses sandwich standard errors (Poisson only).
+//! \param max_iter maximum number of iterations.
+//! \return a Model.
+Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust = false, int max_iter = 200);
 
 } // namespace phonometrica::stats
 

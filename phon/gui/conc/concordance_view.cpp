@@ -103,6 +103,11 @@ void ConcordanceView::setupUi()
 
 	m_toolbar->addSeparator();
 
+	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
+	analyze_action->setToolTip(tr("Open analysis view for this concordance"));
+
+	m_toolbar->addSeparator();
+
 	// -- Display menu (show/hide column groups) --
 	auto *display_menu = new QMenu(this);
 
@@ -267,6 +272,9 @@ void ConcordanceView::setupUi()
 	connect(intersect_action, &QAction::triggered, this, &ConcordanceView::onIntersection);
 	connect(compl_action, &QAction::triggered, this, &ConcordanceView::onComplement);
 	connect(rename_action, &QAction::triggered, this, &ConcordanceView::onRename);
+	connect(analyze_action, &QAction::triggered, this, [this]() {
+		emit requestAnalysis(m_conc);
+	});
 	connect(m_table, &QTableView::doubleClicked, this, &ConcordanceView::onDoubleClick);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &ConcordanceView::onContextMenu);
 

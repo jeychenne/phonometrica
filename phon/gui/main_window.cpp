@@ -43,6 +43,7 @@
 #include <phon/gui/conc/pitch_query_editor.hpp>
 #include <phon/gui/conc/intensity_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/analysis_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
 #include <phon/application/bookmark.hpp>
@@ -1500,6 +1501,15 @@ void MainWindow::onDocumentRequested(Document *doc)
 		return;
 	}
 
+	// Handle analysis files
+	if (doc->is<Analysis>())
+	{
+		auto *analysis = static_cast<Analysis *>(doc);
+		openAnalysis(Handle<Analysis>(analysis));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
 	// Fallback placeholder for other document types
 	auto &path = doc->path();
 	auto qpath = QString::fromUtf8(path.data(), (int) path.size());
@@ -1647,6 +1657,22 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 		}
 	});
 
+	connect(view, &ConcordanceView::requestAnalysis,
+		this, static_cast<void (MainWindow::*)(Handle<DataTable>)>(&MainWindow::openAnalysis));
+
+	addViewTab(view);
+}
+
+void MainWindow::openAnalysis(Handle<DataTable> source)
+{
+	auto analysis = make_handle<Analysis>(nullptr, std::move(source));
+	auto *view = new AnalysisView(std::move(analysis));
+	addViewTab(view);
+}
+
+void MainWindow::openAnalysis(Handle<Analysis> analysis)
+{
+	auto *view = new AnalysisView(std::move(analysis));
 	addViewTab(view);
 }
 

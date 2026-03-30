@@ -22,6 +22,7 @@
 #include <phon/application/script.hpp>
 #include <phon/application/conc/query.hpp>
 #include <phon/application/plugin.hpp>
+#include <phon/application/analysis.hpp>
 #include <QMainWindow>
 #include <QTabWidget>
 #include <QDockWidget>
@@ -143,6 +144,9 @@ private:
 
 	// Open a concordance in a new tab and wire its signals.
 	void openConcordance(Handle<Concordance> conc);
+
+	void openAnalysis(Handle<DataTable> source);
+	void openAnalysis(Handle<Analysis> analysis);
 
 	// Create an AnnotationView with progress feedback. Returns nullptr on failure.
 	AnnotationView *createAnnotationView(const Handle<Annotation> &annot);

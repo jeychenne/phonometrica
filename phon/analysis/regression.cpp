@@ -20,12 +20,14 @@
 
 namespace phonometrica::stats {
 
-LinearModel lm(const Array<double> &y, const Array<double> &X)
-{
-	using namespace Eigen;
+// =====================================================================
+// Validation
+// =====================================================================
 
+static void validate_inputs(const Array<double> &y, const Array<double> &X)
+{
 	if (y.ndim() != 1) {
-		throw error("y must a one-dimensional array");
+		throw error("y must be a one-dimensional array");
 	}
 	if (X.ndim() != 2) {
 		throw error("X must be a two-dimensional array");
@@ -33,175 +35,271 @@ LinearModel lm(const Array<double> &y, const Array<double> &X)
 	if (X.nrow() != y.size()) {
 		throw error("Inconsistent number of observations in y and X");
 	}
+	if (X.nrow() <= X.ncol()) {
+		throw error("Not enough data points to perform regression");
+	}
+}
+
+// =====================================================================
+// Store design matrices in model (for diagnostics and predict)
+// =====================================================================
+
+static void store_matrices(Model &model, const Array<double> &y, const Array<double> &X)
+{
+	model.y = y;
+	model.X = X;
+	model.nobs = y.size();
+	model.nfixed = X.ncol();
+}
+
+// =====================================================================
+// Linear model (OLS)
+// =====================================================================
+
+Model lm(const Array<double> &y, const Array<double> &X)
+{
+	using namespace Eigen;
+
+	validate_inputs(y, X);
+
 	intptr_t m = X.ncol();
 	intptr_t n = X.nrow();
 
-	if (n <= m) {
-		throw error("Not enough data points to perform linear regression");
-	}
+	Model model;
+	model.family = "gaussian";
+	model.link = "identity";
+	store_matrices(model, y, X);
 
-	Array<double> beta(m, 0.0), se(m, 0.0), t(m, 0.0), p(m, 0.0);
-	Map<Matrix<double>> X1(const_cast<double*>(X.data()), X.nrow(), X.ncol());
-	Map<Vector<double>> y1(const_cast<double*>(y.data()), y.size());
-	Map<Vector<double>> b1(beta.data(), beta.size());
+	// Solve via SVD
+	model.beta = Array<double>(m, 0.0);
+	Map<Matrix<double>> X1(const_cast<double*>(X.data()), n, m);
+	Map<Vector<double>> y1(const_cast<double*>(y.data()), n);
+	Map<Vector<double>> b1(model.beta.data(), m);
 
-	BDCSVD<Matrix<double>> svd(X1, ComputeThinU|ComputeThinV);
+	BDCSVD<Matrix<double>, ComputeThinU | ComputeThinV> svd(X1);
 	b1 = svd.solve(y1);
 
-	Array<double> yhat(n, 0.0);  // predicted values
-	Array<double> resid(n, 0.0); // residuals
+	// Fitted values and residuals
+	model.fitted = Array<double>(n, 0.0);
+	model.residuals = Array<double>(n, 0.0);
 
 	for (intptr_t i = 1; i <= n; i++)
 	{
 		double val = 0.0;
-
-		for (intptr_t j = 1; j <= m; j++)
-		{
-			val += X(i,j) * beta[j];
+		for (intptr_t j = 1; j <= m; j++) {
+			val += X(i, j) * model.beta[j];
 		}
-		yhat[i] = val;
+		model.fitted[i] = val;
 	}
 
-	// Estimate residual variance
+	// Residual variance
 	intptr_t df = n - m;
-	long double sse = 0.0; // sum of squared errors
+	model.df_residual = df;
+	long double sse = 0.0;
 
 	for (intptr_t i = 1; i <= n; i++)
 	{
-		auto e = y[i] - yhat[i];
-		resid[i] = e;
+		auto e = y[i] - model.fitted[i];
+		model.residuals[i] = e;
 		sse += e * e;
 	}
 	auto rv = sse / df;
+	model.rse = sqrt(static_cast<double>(rv));
 
-	// Get standard errors, t-values and p-values
+	// Standard errors, t-values, p-values
 	auto var = (X1.transpose() * X1).inverse();
+	model.se = Array<double>(m, 0.0);
+	model.stat = Array<double>(m, 0.0);
+	model.p = Array<double>(m, 0.0);
 
 	boost::math::students_t_distribution<double> dist(df);
 
 	for (intptr_t i = 1; i <= m; i++)
 	{
-		// Standard error
-		se[i] = sqrt(rv * var(i-1, i-1));
-		// t-value
-		t[i] = beta[i] / se[i];
-		// p-value
-		p[i] = 2 * (1 - cdf(dist, std::abs(t[i])));
+		model.se[i] = sqrt(rv * var(i - 1, i - 1));
+		model.stat[i] = model.beta[i] / model.se[i];
+		model.p[i] = 2 * (1 - cdf(dist, std::abs(model.stat[i])));
 	}
 
-	// R^2
+	// R²
 	double ybar = mean(y);
-	long double ssr = 0.0; // sum of squared residuals
-	long double sst = 0.0; // total sum of squares
+	long double ssr = 0.0;
+	long double sst = 0.0;
 
 	for (intptr_t i = 1; i <= n; i++)
 	{
-		ssr += resid[i] * resid[i];
+		ssr += model.residuals[i] * model.residuals[i];
 		sst += (y[i] - ybar) * (y[i] - ybar);
 	}
-	auto r2 = 1 - double(ssr / sst);
-	int np = m - 1; // number of predictors
-	double adj_r2 = 1 - (1 - r2) * (double(n - 1) / (n - np - 1));
+	model.r2 = 1 - double(ssr / sst);
+	int np = (int)(m - 1); // number of predictors (excluding intercept)
+	model.adj_r2 = 1 - (1 - model.r2) * (double(n - 1) / (n - np - 1));
 
-	return { beta, se, t, p, yhat, resid, double(sqrt(rv)), df , r2, adj_r2 };
+	// Log-likelihood (Gaussian profile log-likelihood)
+	Map<Vector<double>> y_eig(const_cast<double*>(y.data()), n);
+	Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	model.loglik = detail::gaussian_loglik(y_eig, mu_eig);
+	model.compute_information_criteria();
+
+	// OLS always converges
+	model.niter = 0;
+	model.converged = true;
+
+	return model;
 }
 
-static Vector<double> sigmoid(const Array<double> &predictors, const Vector<double> &b)
+
+// =====================================================================
+// Generalized linear model (L-BFGS)
+// =====================================================================
+
+// Compute cost (negative log-likelihood / n) and gradient for L-BFGS.
+// The gradient X'(μ-y)/n is exact for canonical links (identity, logit, log).
+static double glm_cost(const Array<double> &y, const Array<double> &X,
+                       const Family &fam, const Eigen::VectorXd &beta, Eigen::VectorXd &grad)
 {
-	Eigen::Map<Matrix<double>> X(const_cast<double*>(predictors.data()), predictors.nrow(), predictors.ncol());
-	return  1 / (1 + exp(-(X*b).array()));
+	intptr_t n = X.nrow();
+	intptr_t m = X.ncol();
+
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
+	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+
+	Vector<double> eta = Xm * beta;
+	Vector<double> mu = fam.linkinv(eta);
+
+	grad = (Xm.transpose() * (mu - ym)).array() / n;
+
+	return -fam.loglik(ym, mu) / n;
 }
 
-static void gradient_update(const Array<double> &predictors, const Array<double> &response, const Vector<double> &h, Vector<double> &grad)
+
+// Model-based covariance: (X'WX)^{-1}
+static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
+                                      const Eigen::VectorXd &beta)
 {
-	intptr_t n = response.size();
-	Eigen::Map<Vector<double>> y(const_cast<double*>(response.data()), n);
-	Eigen::Map<Matrix<double>> X(const_cast<double*>(predictors.data()), predictors.nrow(), predictors.ncol());
-	grad = (X.transpose() * (h - y)).array() / n;
+	intptr_t n = X.nrow();
+	intptr_t m = X.ncol();
+
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
+
+	Vector<double> eta = Xm * beta;
+	Vector<double> mu = fam.linkinv(eta);
+	Vector<double> W = fam.variance(mu);
+
+	return (Xm.transpose() * W.asDiagonal() * Xm).inverse();
 }
 
-static double logit_cost(const Array<double> &response, const Vector<double> &h)
+
+// Sandwich (robust) covariance: (X'WX)^{-1} X'diag(e²)X (X'WX)^{-1}
+static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<double> &X,
+                                             const Family &fam, const Eigen::VectorXd &beta)
 {
-	intptr_t n = response.size();
-	Eigen::Map<Vector<double>> y(const_cast<double*>(response.data()), n);
-	auto ya = y.transpose().array();
-	auto ha = h.array();
+	intptr_t n = X.nrow();
+	intptr_t m = X.ncol();
 
-	Matrix<double> result = ((-ya).matrix() * log(ha).matrix() - (1 - ya).matrix() * log (1 - ha).matrix());
-	assert(result.rows() == 1);
-	assert(result.cols() == 1);
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
+	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
 
-	return result(0, 0) / n;
+	Vector<double> eta = Xm * beta;
+	Vector<double> mu = fam.linkinv(eta);
+	Vector<double> W = fam.variance(mu);
+
+	Vector<double> e2(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double e = ym[i] - mu[i];
+		e2[i] = e * e;
+	}
+
+	auto XT = Xm.transpose();
+	auto bread = (XT * W.asDiagonal() * Xm).inverse();
+
+	return bread * (XT * e2.asDiagonal() * Xm) * bread;
 }
 
-static GLModel glm(const Array<double> &y, const Array<double> &X, int max_iter,
-		const std::function<double(const Vector<double> &beta, Vector<double> &grad)> &cost_func,
-		const std::function<Matrix<double>(const Array<double> &X, const Vector<double> &beta)> &cov_func)
+
+Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust, int max_iter)
 {
 	using namespace LBFGSpp;
 
-	if (y.ndim() != 1)
-	{
-		throw error("y must a one-dimensional array");
-	}
-	if (X.ndim() != 2)
-	{
-		throw error("X must be a two-dimensional array");
-	}
-	if (X.nrow() != y.size())
-	{
-		throw error("Inconsistent number of observations in y and X");
-	}
+	validate_inputs(y, X);
+
 	intptr_t m = X.ncol();
 	intptr_t n = X.nrow();
 
-	if (n <= m)
-	{
-		throw error("Not enough data points to perform regression");
-	}
+	Model model;
+	model.family = fam.name;
+	model.link = fam.link_name;
+	store_matrices(model, y, X);
 
+	// L-BFGS optimization
 	Eigen::VectorXd weights = Eigen::VectorXd::Zero(m);
 	LBFGSParam<double> param;
 	param.epsilon = 1e-6;
 	param.max_iterations = max_iter;
 	LBFGSSolver<double> solver(param);
-	double fx;
-	int niter = solver.minimize(cost_func, weights, fx);
-	bool converged = (niter < param.max_iterations);
 
-	Array<double> beta(m, 0.0);
-	std::copy(weights.data(), weights.data() + m, beta.data());
+	auto cost = [&](const Eigen::VectorXd &b, Eigen::VectorXd &grad)
+	{
+		return glm_cost(y, X, fam, b, grad);
+	};
+
+	double fx;
+	int niter = solver.minimize(cost, weights, fx);
+	model.niter = niter;
+	model.converged = (niter < param.max_iterations);
+
+	// Copy coefficients
+	model.beta = Array<double>(m, 0.0);
+	std::copy(weights.data(), weights.data() + m, model.beta.data());
 
 	// Variance-covariance matrix
-	Matrix<double> cov = cov_func(X, weights);
-	assert(cov.rows() == m);
-	Array<double> se(m, 0.0);
+	Matrix<double> cov;
+	if (robust) {
+		cov = glm_robust_covariance(y, X, fam, weights);
+	} else {
+		cov = glm_covariance(X, fam, weights);
+	}
 
+	// Standard errors
+	model.se = Array<double>(m, 0.0);
 	for (intptr_t i = 0; i < m; i++) {
-		se[i+1] = sqrt(cov(i,i));
+		model.se[i + 1] = sqrt(cov(i, i));
 	}
 
-	// z-values
-	Array<double> z(m, 0.0);
-
+	// z-values (Wald statistics)
+	model.stat = Array<double>(m, 0.0);
 	for (intptr_t i = 1; i <= m; i++) {
-		z[i] = beta[i] / se[i];
+		model.stat[i] = model.beta[i] / model.se[i];
 	}
 
-	// p-values for a Wald test
-	boost::math::chi_squared dist(1); // chi-squared distribution with one degree of freedom
-	Array<double> p(m, 0.0);
-
+	// p-values (Wald chi-squared test)
+	boost::math::chi_squared dist(1);
+	model.p = Array<double>(m, 0.0);
 	for (intptr_t i = 1; i <= m; i++)
 	{
-		auto stat = (beta[i] * beta[i]) / cov(i-1, i-1);
-		p[i] = 1 - boost::math::cdf(dist, stat);
+		auto wald = (model.beta[i] * model.beta[i]) / cov(i - 1, i - 1);
+		model.p[i] = 1 - boost::math::cdf(dist, wald);
 	}
 
-	return { beta, se, z, p, niter, converged };
+	// Fitted values and residuals
+	model.compute_fitted(fam.linkinv);
+
+	// Log-likelihood at converged values
+	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	model.loglik = fam.loglik(ym, mu_eig);
+	model.compute_information_criteria();
+
+	return model;
 }
 
-GLModel logit(const Array<double> &y, const Array<double> &X, int max_iter)
+
+// =====================================================================
+// Convenience wrappers
+// =====================================================================
+
+Model logit(const Array<double> &y, const Array<double> &X, int max_iter)
 {
 	for (auto value : y)
 	{
@@ -210,90 +308,13 @@ GLModel logit(const Array<double> &y, const Array<double> &X, int max_iter)
 		}
 	}
 
-	auto cost = [&](const Eigen::VectorXd &b, Eigen::VectorXd &grad)
-	{
-		auto h = sigmoid(X, b);
-		gradient_update(X, y, h, grad);
-
-		return logit_cost(y, h);
-	};
-
-	auto covar = [&](const Array<double> &X, const Vector<double> &beta) -> Matrix<double>
-	{
-		intptr_t n = X.nrow();
-		Vector<double> fitted = sigmoid(X, beta);
-		Vector<double> W = Eigen::VectorXd::Zero(n);
-		Eigen::Map<Matrix<double>> X2(const_cast<double*>(X.data()), X.nrow(), X.ncol());
-		for (intptr_t i = 0; i < n; i++) {
-			W[i] = fitted[i] * (1 - fitted[i]);
-		}
-
-		return (X2.transpose() * W.asDiagonal() * X2).inverse();
-
-	};
-
-	return glm(y, X, max_iter, cost, covar);
+	return glm(y, X, Family::binomial(), false, max_iter);
 }
 
-static Vector<double> poisson_mean(const Array<double> &predictors, const Vector<double> &b)
+
+Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter)
 {
-	Eigen::Map<Matrix<double>> X(const_cast<double*>(predictors.data()), predictors.nrow(), predictors.ncol());
-	return  exp((X*b).array());
-}
-
-static double poisson_cost(const Array<double> &response, const Vector<double> &h)
-{
-	intptr_t n = response.size();
-	Eigen::Map<Vector<double>> y(const_cast<double*>(response.data()), n);
-	// FIXME: check this code, the transpose is not used
-	auto ya = y.transpose().array();
-	auto ha = h.array();
-
-	return (h.array() - (y.array() * log(h.array()))).sum();
-}
-
-GLModel poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter)
-{
-	auto cost = [&](const Eigen::VectorXd &b, Eigen::VectorXd &grad)
-	{
-		auto h = poisson_mean(X, b);
-		gradient_update(X, y, h, grad);
-
-		return poisson_cost(y, h);
-	};
-
-	if (robust)
-	{
-		auto cov = [&](const Array<double> &X, const Vector<double> &beta) -> Matrix<double> {
-			intptr_t n = X.nrow();
-			Eigen::Map<Matrix<double>> X2(const_cast<double*>(X.data()), X.nrow(), X.ncol());
-			Vector<double> W = poisson_mean(X, beta);
-			Vector<double> W2 = Eigen::VectorXd::Zero(n);
-			for (intptr_t i = 0; i < n; i++)
-			{
-				double e = y[i+1] - W[i];
-				W2[i] = e * e;
-			}
-			auto XT = X2.transpose();
-			auto Wdiag = W.asDiagonal();
-			auto exp = (XT * Wdiag * X2).inverse();
-
-			return exp * (XT * W2.asDiagonal() * X2) * exp;
-		};
-
-		return glm(y, X, max_iter, cost, cov);
-	}
-	else
-	{
-		auto cov = [&](const Array<double> &X, const Vector<double> &beta) -> Matrix<double> {
-			Eigen::Map<Matrix<double>> X2(const_cast<double*>(X.data()), X.nrow(), X.ncol());
-			Vector<double> W = poisson_mean(X, beta);
-
-			return (X2.transpose() * W.asDiagonal() * X2).inverse();
-		};
-
-		return glm(y, X, max_iter, cost, cov);
-	}
+	return glm(y, X, Family::poisson(), robust, max_iter);
 }
 
 } // namespace phonometrica::stats
