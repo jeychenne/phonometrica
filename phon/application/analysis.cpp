@@ -239,6 +239,24 @@ void Analysis::write()
 		add_data_node(mn, "AdjR2", String::format("%.17g", m.adj_r2));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
+
+		// Random effects
+		if (m.has_random_effects())
+		{
+			auto re_node = mn.append_child("RandomEffects");
+
+			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			{
+				auto &re = m.random_effects[g];
+				auto gn = re_node.append_child("Group");
+				add_data_node(gn, "Name", re.group_name);
+				add_data_node(gn, "TermNames", strings_to_csv(re.term_names));
+				add_data_node(gn, "Nlevels", String::convert(re.nlevels));
+				add_data_node(gn, "Variance", doubles_to_string(re.variance));
+				add_data_node(gn, "CovChol", doubles_to_string(re.cov_chol));
+				add_data_node(gn, "ConditionalModes", doubles_to_string(re.conditional_modes));
+			}
+		}
 	}
 
 	write_xml(doc, m_path);
@@ -316,6 +334,30 @@ void Analysis::load()
 					else if (name == "AdjR2")    m.adj_r2 = String(text).to_float();
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
+					else if (name == "RandomEffects")
+					{
+						for (auto gn = field.first_child(); gn; gn = gn.next_sibling())
+						{
+							if (gn.name() != str("Group")) continue;
+
+							stats::RandomEffectGroup re;
+
+							for (auto gf = gn.first_child(); gf; gf = gf.next_sibling())
+							{
+								auto gfn = str(gf.name());
+								auto gft = gf.text().get();
+
+								if (gfn == "Name")               re.group_name = gft;
+								else if (gfn == "TermNames")      re.term_names = parse_csv_strings(gft);
+								else if (gfn == "Nlevels")         re.nlevels = String(gft).to_int();
+								else if (gfn == "Variance")        re.variance = parse_doubles(gft);
+								else if (gfn == "CovChol")         re.cov_chol = parse_doubles(gft);
+								else if (gfn == "ConditionalModes") re.conditional_modes = parse_doubles(gft);
+							}
+
+							m.random_effects.append(std::move(re));
+						}
+					}
 				}
 
 				m_models.push_back(std::move(m));

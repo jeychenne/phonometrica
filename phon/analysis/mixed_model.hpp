@@ -9,9 +9,9 @@
  *                                                                                                                     *
  * Purpose: mixed-effects model fitting via Laplace approximation.                                                     *
  *                                                                                                                     *
- * This is a unified engine: the same code path handles Gaussian, binomial, and Poisson families with random            *
- * intercepts. The only family-dependent piece is the conditional log-likelihood and its derivatives, which are         *
- * supplied by the Family struct. Estimation is by maximum likelihood (not REML).                                      *
+ * This is a unified engine: the same code path handles Gaussian, binomial, and Poisson families with one or more      *
+ * random intercepts (crossed or nested). The only family-dependent piece is the conditional log-likelihood and its    *
+ * derivatives, which are supplied by the Family struct. Estimation is by maximum likelihood (not REML).               *
  *                                                                                                                     *
  * Algorithm references (all published mathematical specifications, no GPL code):                                      *
  *   - Breslow & Clayton (1993). Approximate inference in generalized linear mixed models. JASA 88(421).              *
@@ -40,25 +40,23 @@ struct GroupingInfo
 };
 
 
-//! Fit a mixed-effects model with a single random intercept via Laplace approximation.
+//! Fit a mixed-effects model with one or more random intercepts via Laplace approximation.
 //!
-//! Model:   y_i | u ~ Family(mu_i), with  eta_i = x_i' beta + u_{g(i)}
-//!          u_j ~ N(0, sigma^2_u)
+//! Model:   y_i | u ~ Family(mu_i), with  eta_i = x_i' beta + sum_g u_{g, k_g(i)}
+//!          u_{g,j} ~ N(0, sigma^2_{u,g})    for each grouping factor g
 //!
-//! For Gaussian responses, this estimates (beta, sigma, sigma_u) jointly by ML.
-//! For binomial/Poisson, this estimates (beta, sigma_u) by ML.
-//! In both cases the random effects u are integrated out via the Laplace approximation.
-//!
-//! For Gaussian, the Laplace approximation is exact (the random effects integral is Gaussian),
-//! so this gives the same ML estimates as a direct likelihood approach.
+//! The random effects are integrated out via the Laplace approximation.
+//! For random intercepts, the joint Hessian H_uu is diagonal even with multiple crossed
+//! grouping factors, so the inner optimization decomposes into J_1 + J_2 + ... independent
+//! scalar problems.
 //!
 //! \param y         response vector (n observations)
 //! \param X         fixed-effects design matrix (n × p, first column is intercept)
-//! \param group     grouping factor information (indices, levels, name)
+//! \param groups    vector of grouping factor information (one per random intercept term)
 //! \param fam       GLM family (gaussian, binomial, or poisson)
-//! \return a fitted Model with random_effects populated
+//! \return a fitted Model with random_effects populated (one RandomEffectGroup per grouping factor)
 Model mixed_model(const Array<double> &y, const Array<double> &X,
-                  const GroupingInfo &group, const Family &fam);
+                  const std::vector<GroupingInfo> &groups, const Family &fam);
 
 } // namespace phonometrica::stats
 

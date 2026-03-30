@@ -71,6 +71,7 @@ private:
 	QString formatLatex(const stats::Model &m) const;
 	void setResponse(const QString &name);
 	void addPredictor(const QString &name);
+	void addRandomIntercept(const QString &name);
 	void updateDiagnosticPlot();
 	void updateFitEnabled();
 
