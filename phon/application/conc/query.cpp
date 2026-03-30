@@ -661,13 +661,15 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 
 		return matches;
 	}
-	// Case 3. Hierarchical relation across layers: keep the layers that match the new constraint
-	// and append a target to them
-	if (Constraint::is_hierarchical(op))
+	// Case 3. Second or later constraint: filter existing matches against the new constraint.
 	{
-		if (seen.contains(layer_index)) {
-			// The user mistakenly chose a layer_index that was already processed
-			throw error("[Query error] Two constraints in a hierarchical relation refer to the same layer_index (layer_index %)", layer_index);
+		// Hierarchical relations (dominance, alignment) require different layers.
+		// Precedence and subsequence operate on the same layer and skip this check.
+		if (Constraint::is_hierarchical(op))
+		{
+			if (seen.contains(layer_index)) {
+				throw error("[Query error] Two constraints in a hierarchical relation refer to the same layer (layer %)", layer_index);
+			}
 		}
 		Array<AutoMatch> new_matches;
 
@@ -774,15 +776,30 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 				{
 					auto time = match->last_target().start_time;
 					auto event = annot->find_previous_event(layer_index, time);
-					if (event)
+					if (!event) continue;
+
+					// Transitive dominance: the candidate must fall within the
+					// time bounds of all cross-layer ancestors.
+					bool in_scope = true;
+					for (auto *t = match->get(1); t != nullptr; t = t->next.get())
 					{
-						intptr_t pos = 0;
-						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
-						if (target)
+						if (t->layer != (int)layer_index && t->start_time != t->end_time)
 						{
-							match->append(std::move(target));
-							new_matches.append(std::move(match));
+							if (event->start < t->start_time || event->start >= t->end_time)
+							{
+								in_scope = false;
+								break;
+							}
 						}
+					}
+					if (!in_scope) continue;
+
+					intptr_t pos = 0;
+					auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+					if (target)
+					{
+						match->append(std::move(target));
+						new_matches.append(std::move(match));
 					}
 				}
 			} break;
@@ -790,29 +807,57 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 			{
 				for (auto &match : matches)
 				{
-					auto time = match->last_target().end_time;
-					auto event = annot->find_next_event(layer_index, time);
-					if (event)
+					auto &last = match->last_target();
+					// For intervals (start != end), the next event shares the end
+					// boundary: try the exact boundary first.
+					// For points (start == end), skip this to avoid finding the
+					// current event and go straight to find_next_event.
+					const Event *event = nullptr;
+					if (last.start_time != last.end_time) {
+						event = annot->find_event_starting_at(layer_index, last.end_time);
+					}
+					if (!event) {
+						event = annot->find_next_event(layer_index, last.end_time);
+					}
+					if (!event) continue;
+
+					// Transitive dominance: the candidate must fall within the
+					// time bounds of all cross-layer ancestors.
+					bool in_scope = true;
+					for (auto *t = match->get(1); t != nullptr; t = t->next.get())
 					{
-						intptr_t pos = 0;
-						auto target = find_target(*event, constraint, layer_index, pos, is_ref);
-						if (target)
+						if (t->layer != (int)layer_index && t->start_time != t->end_time)
 						{
-							match->append(std::move(target));
-							new_matches.append(std::move(match));
+							if (event->start < t->start_time || event->start >= t->end_time)
+							{
+								in_scope = false;
+								break;
+							}
 						}
+					}
+					if (!in_scope) continue;
+
+					intptr_t pos = 0;
+					auto target = find_target(*event, constraint, layer_index, pos, is_ref);
+					if (target)
+					{
+						match->append(std::move(target));
+						new_matches.append(std::move(match));
 					}
 				}
 			} break;
 			default:
 				break;
 		}
-		seen.append(layer_index);
+		// Only mark the layer as seen for hierarchical relations (dominance,
+		// alignment). Precedence and subsequence legitimately operate on the
+		// same layer as a previous constraint.
+		if (Constraint::is_hierarchical(op)) {
+			seen.append(layer_index);
+		}
 
 		return new_matches;
 	}
-
-	return Array<AutoMatch>();
 }
 
 std::unique_ptr<Match::Target>

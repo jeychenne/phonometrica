@@ -64,9 +64,9 @@ Constraint::Relation Constraint::name_to_relation(std::string_view name)
 		return Relation::LeftAlignment;
 	if (name == "right-alignment")
 		return Relation::RightAlignment;
-	if (name == "precedence")
+	if (name == "precedes" || name == "precedence")
 		return Relation::Precedence;
-	if (name == "subsequence")
+	if (name == "follows" || name == "subsequence")
 		return Relation::Subsequence;
 	if (name == "none")
 		return Relation::None;
@@ -89,9 +89,9 @@ const char *Constraint::relation_to_name(Relation rel)
 		case Relation::RightAlignment:
 			return "right-alignment";
 		case Relation::Precedence:
-			return "precedence";
+			return "precedes";
 		case Relation::Subsequence:
-			return "subsequence";
+			return "follows";
 		case Relation::None:
 			return "none";
 		default:

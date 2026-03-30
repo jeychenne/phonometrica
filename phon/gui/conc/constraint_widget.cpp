@@ -35,13 +35,13 @@ void ConstraintWidget::setupUi()
 
 	// Relation combo (hidden for the first constraint).
 	m_relation_combo = new QComboBox;
-	m_relation_combo->addItem(tr("dominance"), static_cast<int>(Constraint::Relation::Dominance));
-	m_relation_combo->addItem(tr("strict dominance"), static_cast<int>(Constraint::Relation::StrictDominance));
-	m_relation_combo->addItem(tr("alignment"), static_cast<int>(Constraint::Relation::Alignment));
-	m_relation_combo->addItem(tr("left alignment"), static_cast<int>(Constraint::Relation::LeftAlignment));
-	m_relation_combo->addItem(tr("right alignment"), static_cast<int>(Constraint::Relation::RightAlignment));
-	m_relation_combo->addItem(tr("precedence"), static_cast<int>(Constraint::Relation::Precedence));
-	m_relation_combo->addItem(tr("subsequence"), static_cast<int>(Constraint::Relation::Subsequence));
+	m_relation_combo->addItem(tr("dominates"), static_cast<int>(Constraint::Relation::Dominance));
+	m_relation_combo->addItem(tr("strictly dominates"), static_cast<int>(Constraint::Relation::StrictDominance));
+	m_relation_combo->addItem(tr("is aligned with"), static_cast<int>(Constraint::Relation::Alignment));
+	m_relation_combo->addItem(tr("is left aligned with"), static_cast<int>(Constraint::Relation::LeftAlignment));
+	m_relation_combo->addItem(tr("is right aligned with"), static_cast<int>(Constraint::Relation::RightAlignment));
+	m_relation_combo->addItem(tr("precedes"), static_cast<int>(Constraint::Relation::Precedence));
+	m_relation_combo->addItem(tr("follows"), static_cast<int>(Constraint::Relation::Subsequence));
 	m_relation_combo->setToolTip(tr("Relation to the previous constraint"));
 	m_relation_combo->setVisible(false);
 	m_relation_combo->setFixedWidth(130);
