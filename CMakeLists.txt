@@ -169,6 +169,7 @@ if(WITH_APPLICATION)
         ${CMAKE_SOURCE_DIR}/phon/third_party/sptk4/include
         ${CMAKE_SOURCE_DIR}/phon/third_party/world
         ${CMAKE_SOURCE_DIR}/phon/third_party/REAPER
+        ${CMAKE_SOURCE_DIR}/phon/third_party/CppAD
     )
 
     # ---- Platform-specific audio backend ----
