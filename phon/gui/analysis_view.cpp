@@ -521,6 +521,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	auto *pred_action = menu.addAction(tr("Add as predictor"));
 	menu.addSeparator();
 	auto *interaction_action = menu.addAction(tr("Add as interaction (\303\227)"));
+	auto *random_action = menu.addAction(tr("Add as random intercept"));
 
 	auto *chosen = menu.exec(m_column_list->mapToGlobal(pos));
 	if (!chosen) return;
@@ -534,6 +535,8 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		if (!text.isEmpty() && text.contains('~'))
 			m_formula_edit->setText(text + QStringLiteral(" * ") + quoteIfNeeded(name));
 		m_formula_edit->setFocus();
+	} else if (chosen == random_action) {
+		addRandomIntercept(name);
 	}
 }
 
@@ -566,6 +569,33 @@ void AnalysisView::addPredictor(const QString &name)
 		else
 			m_formula_edit->setText(text + QStringLiteral(" + ") + quoted);
 	}
+	m_formula_edit->setFocus();
+	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+void AnalysisView::addRandomIntercept(const QString &name)
+{
+	QString quoted = quoteIfNeeded(name);
+	QString term = QStringLiteral("(1 | ") + quoted + QStringLiteral(")");
+	QString text = m_formula_edit->text().trimmed();
+
+	if (text.isEmpty() || !text.contains('~'))
+	{
+		// Not a valid formula yet — append the term and let the user fill in the rest.
+		if (text.isEmpty())
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+	}
+	else
+	{
+		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+		if (rhs.isEmpty())
+			m_formula_edit->setText(text + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+	}
+
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
 }
@@ -946,6 +976,54 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	tex += QStringLiteral("\\hline\n");
 	tex += QStringLiteral("\\end{tabular}\n\n");
 
+	// Random effects table (if any)
+	if (m.has_random_effects())
+	{
+		tex += QStringLiteral("\\medskip\n");
+		tex += QStringLiteral("\\begin{tabular}{lrrr}\n");
+		tex += QStringLiteral("\\hline\n");
+		tex += QStringLiteral("Group & Variance & Std.~Dev. & Levels \\\\\n");
+		tex += QStringLiteral("\\hline\n");
+
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+			QString gname = QString::fromUtf8(re.group_name.data(), (int)re.group_name.size());
+			gname.replace('_', QStringLiteral("\\_"));
+
+			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			{
+				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double sd = std::sqrt(std::max(var, 0.0));
+
+				if (t == 1) {
+					tex += QStringLiteral("%1 & %2 & %3 & %4 \\\\\n")
+						.arg(gname)
+						.arg(var, 0, 'f', 4)
+						.arg(sd, 0, 'f', 4)
+						.arg(re.nlevels);
+				} else {
+					QString tname = QString::fromUtf8(re.term_names[t].data(),
+					                                   (int)re.term_names[t].size());
+					tname.replace('_', QStringLiteral("\\_"));
+					tex += QStringLiteral("\\quad %1 & %2 & %3 & \\\\\n")
+						.arg(tname)
+						.arg(var, 0, 'f', 4)
+						.arg(sd, 0, 'f', 4);
+				}
+			}
+		}
+
+		if (m.is_gaussian()) {
+			tex += QStringLiteral("Residual & %1 & %2 & \\\\\n")
+				.arg(m.rse * m.rse, 0, 'f', 4)
+				.arg(m.rse, 0, 'f', 4);
+		}
+
+		tex += QStringLiteral("\\hline\n");
+		tex += QStringLiteral("\\end{tabular}\n\n");
+	}
+
 	// Notes below the table
 	tex += QStringLiteral("\\medskip\n");
 	tex += QStringLiteral("\\footnotesize\n");
@@ -954,7 +1032,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		.arg(QString::fromUtf8(m.link.data(), (int)m.link.size()))
 		.arg(m.nobs);
 
-	if (m.is_gaussian()) {
+	if (m.is_gaussian() && !m.has_random_effects()) {
 		tex += QStringLiteral("; $R^2$ = %1; Adj.\\ $R^2$ = %2")
 			.arg(m.r2, 0, 'f', 4)
 			.arg(m.adj_r2, 0, 'f', 4);
@@ -1042,7 +1120,44 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	text += QStringLiteral("---\n");
 	text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 
-	if (m.is_gaussian()) {
+	// Random effects
+	if (m.has_random_effects())
+	{
+		text += QStringLiteral("Random effects:\n");
+		text += QString::asprintf("%-20s %12s %12s %8s\n",
+		                           "Group", "Variance", "Std.Dev.", "Levels");
+
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+			const char *gname = re.group_name.data();
+
+			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			{
+				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double sd = std::sqrt(std::max(var, 0.0));
+
+				// Show group name and level count only on the first row
+				if (t == 1) {
+					text += QString::asprintf("%-20s %12.4f %12.4f %8ld\n",
+					                           gname, var, sd, (long)re.nlevels);
+				} else {
+					const char *tname = re.term_names[t].data();
+					text += QString::asprintf("  %-18s %12.4f %12.4f\n",
+					                           tname, var, sd);
+				}
+			}
+		}
+
+		if (m.is_gaussian()) {
+			text += QString::asprintf("%-20s %12.4f %12.4f\n",
+			                           "Residual", m.rse * m.rse, m.rse);
+		}
+
+		text += QStringLiteral("\n");
+	}
+	else if (m.is_gaussian())
+	{
 		text += QString::asprintf("Residual standard error: %.4f on %ld degrees of freedom\n",
 		                           m.rse, (long)m.df_residual);
 		text += QString::asprintf("R-squared: %.4f, Adjusted R-squared: %.4f\n", m.r2, m.adj_r2);

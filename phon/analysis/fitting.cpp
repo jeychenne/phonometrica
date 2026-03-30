@@ -462,15 +462,15 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 
 	if (formula.has_random_effects())
 	{
-		if (formula.random.size() > 1) {
-			throw error("Multiple random-effects terms are not yet supported");
-		}
-		auto &rt = formula.random[1];
-		if (!rt.slopes.empty()) {
-			throw error("Random slopes are not yet supported (only random intercepts)");
-		}
-		if (!rt.intercept) {
-			throw error("Random-effects term must include an intercept");
+		for (intptr_t i = 1; i <= formula.random.size(); i++)
+		{
+			auto &rt = formula.random[i];
+			if (!rt.slopes.empty()) {
+				throw error("Random slopes are not yet supported (only random intercepts)");
+			}
+			if (!rt.intercept) {
+				throw error("Random-effects term must include an intercept");
+			}
 		}
 	}
 
@@ -565,12 +565,16 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 	if (formula.has_random_effects())
 	{
 		// ── Mixed model path (unified Laplace engine) ────────────────
-		auto &rt = formula.random[1];
-		intptr_t gcol = find_column(data, rt.group);
-		auto group = build_grouping(data, gcol, rows);
+		std::vector<GroupingInfo> groups;
+		for (intptr_t i = 1; i <= formula.random.size(); i++)
+		{
+			auto &rt = formula.random[i];
+			intptr_t gcol = find_column(data, rt.group);
+			groups.push_back(build_grouping(data, gcol, rows));
+		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, group, fam);
+		model = mixed_model(dm.y, dm.X, groups, fam);
 	}
 	else if (family == "gaussian")
 	{
