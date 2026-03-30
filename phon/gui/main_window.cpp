@@ -351,6 +351,9 @@ void MainWindow::createDockWidgets()
 
 	m_file_manager = new FileManager(Project::get(), m_project_dock);
 	connect(m_file_manager, &FileManager::documentRequested, this, &MainWindow::onDocumentRequested);
+	connect(m_file_manager, &FileManager::analysisRequested, this, [this](DataTable *dt) {
+		openAnalysis(Handle<DataTable>(dt));
+	});
 	connect(m_file_manager, &FileManager::bookmarkRequested, this, [this](TimeStamp *ts) {
 		if (!ts || !ts->annotation()) return;
 		onDocumentRequested(ts->annotation().get());

@@ -7,7 +7,7 @@
  *                                                                                                                     *
  * Created: 30/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Reusable scatter plot widget with axis labels, reference lines, and PNG/PDF/SVG export.                    *
+ * Purpose: Reusable plot widget supporting scatter plots, box plots, and histograms.                                  *
  *          Follows the same rendering pattern as SpectrumView.                                                        *
  *                                                                                                                     *
  ***********************************************************************************************************************/
@@ -30,23 +30,35 @@ public:
 	enum class RefLine
 	{
 		None,
-		HorizontalAtZero,   // y = 0 (for residuals vs fitted)
-		Diagonal             // y = x (for Q-Q plot)
+		HorizontalAtZero,
+		Diagonal
 	};
 
 	explicit PlotWidget(QWidget *parent = nullptr);
 
-	/// Set the data and labels. Triggers a repaint.
+	/// Scatter plot.
 	void setData(std::vector<double> x, std::vector<double> y,
 	             const QString &x_label, const QString &y_label,
 	             const QString &title, RefLine ref = RefLine::None);
 
-	/// Clear all data.
+	/// Box plot: groups[i] is the group label for values[i].
+	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
+	                    const QString &x_label, const QString &y_label,
+	                    const QString &title);
+
+	/// Histogram: a single array of numeric values. nbins=0 means auto (Sturges' rule).
+	void setHistogramData(std::vector<double> values,
+	                      const QString &x_label, const QString &y_label,
+	                      const QString &title, int nbins = 0);
+
+	/// Bar chart: category labels and their counts.
+	void setBarChartData(std::vector<QString> labels, std::vector<int> counts,
+	                     const QString &x_label, const QString &y_label,
+	                     const QString &title);
+
 	void clear();
+	bool hasData() const;
 
-	bool hasData() const { return !m_x.empty(); }
-
-	/// Export to file.
 	void savePNG(const QString &path);
 	void savePDF(const QString &path);
 	void saveSVG(const QString &path);
@@ -60,17 +72,61 @@ protected:
 
 private:
 
-	/// Render the full plot into the given painter at the specified logical dimensions.
-	void renderPlot(QPainter &p, int w, int h);
+	enum class Mode { Empty, Scatter, BoxPlot, Histogram, BarChart };
 
+	struct BoxStats
+	{
+		QString label;
+		double median = 0;
+		double q1 = 0;
+		double q3 = 0;
+		double whisker_lo = 0;
+		double whisker_hi = 0;
+		std::vector<double> outliers;
+	};
+
+	struct HistBin
+	{
+		double lo = 0;
+		double hi = 0;
+		int count = 0;
+	};
+
+	void renderPlot(QPainter &p, int w, int h);
+	void renderScatter(QPainter &p, int left, int top, int pw, int ph,
+	                    double xlo, double xhi, double ylo, double yhi);
+	void renderBoxPlot(QPainter &p, int left, int top, int pw, int ph);
+	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
+	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
+	void renderTitle(QPainter &p, int left, int pw, int top);
 	void rebuildCache();
 
+	static std::vector<BoxStats> computeBoxStats(const std::vector<QString> &groups,
+	                                              const std::vector<double> &values);
+	static std::vector<HistBin> computeBins(const std::vector<double> &values, int nbins = 0);
+	static double quantile_sorted(const std::vector<double> &sorted, double p);
+
+	Mode m_mode = Mode::Empty;
+
+	// Scatter data
 	std::vector<double> m_x;
 	std::vector<double> m_y;
+	RefLine m_ref_line = RefLine::None;
+
+	// Box plot data
+	std::vector<BoxStats> m_boxes;
+
+	// Histogram data
+	std::vector<HistBin> m_bins;
+
+	// Bar chart data
+	std::vector<QString> m_bar_labels;
+	std::vector<int> m_bar_counts;
+
+	// Shared
 	QString m_x_label;
 	QString m_y_label;
 	QString m_title;
-	RefLine m_ref_line = RefLine::None;
 
 	QPixmap m_cache;
 	bool m_cache_valid = false;

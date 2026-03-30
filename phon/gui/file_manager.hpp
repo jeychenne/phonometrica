@@ -29,6 +29,7 @@ class Project;
 class ProjectModel;
 class Element;
 class Document;
+class DataTable;
 class TimeStamp;
 
 
@@ -82,6 +83,9 @@ signals:
 
 	// Emitted when the user requests to open a document (double-click or context menu).
 	void documentRequested(Document *doc);
+
+	// Emitted when the user requests to create a new analysis from a data table.
+	void analysisRequested(DataTable *dt);
 
 	// Emitted when the user double-clicks a bookmark.
 	void bookmarkRequested(TimeStamp *bookmark);
