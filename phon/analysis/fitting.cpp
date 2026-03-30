@@ -17,6 +17,7 @@
 #include <map>
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/regression.hpp>
+#include <phon/analysis/mixed_model.hpp>
 
 namespace phonometrica::stats {
 
@@ -404,6 +405,40 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 }
 
 
+// =====================================================================
+// Grouping factor construction
+// =====================================================================
+
+// Build a GroupingInfo from a categorical column in the DataTable.
+// The levels are sorted lexicographically (matching extract_levels ordering).
+// The indices vector maps each complete-case observation to its 0-based group index.
+static GroupingInfo build_grouping(const DataTable &data, intptr_t col,
+                                    const std::vector<intptr_t> &rows)
+{
+	GroupingInfo gi;
+	gi.name = data.get_header(col);
+	gi.levels = extract_levels(data, col, rows);
+	gi.nlevels = gi.levels.size();
+
+	// Build a fast lookup: level string → 0-based index.
+	std::map<std::string, intptr_t> level_map;
+	for (intptr_t k = 1; k <= gi.levels.size(); k++) {
+		std::string key(gi.levels[k].data(), gi.levels[k].size());
+		level_map[key] = k - 1; // 0-based
+	}
+
+	gi.indices.reserve(rows.size());
+	for (intptr_t row : rows)
+	{
+		String cell = data.get_cell(row, col);
+		std::string key(cell.data(), cell.size());
+		gi.indices.push_back(level_map[key]);
+	}
+
+	return gi;
+}
+
+
 } // anonymous namespace
 
 
@@ -421,6 +456,22 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 	}
 	if (data.row_count() == 0) {
 		throw error("Data table is empty");
+	}
+
+	// ── Validate random effects (current limitations) ────────────────
+
+	if (formula.has_random_effects())
+	{
+		if (formula.random.size() > 1) {
+			throw error("Multiple random-effects terms are not yet supported");
+		}
+		auto &rt = formula.random[1];
+		if (!rt.slopes.empty()) {
+			throw error("Random slopes are not yet supported (only random intercepts)");
+		}
+		if (!rt.intercept) {
+			throw error("Random-effects term must include an intercept");
+		}
 	}
 
 	// ── Collect all column indices used by the formula ────────────────
@@ -456,7 +507,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 		}
 	}
 
-	// Random effects variables (for complete-case filtering, even though we don't fit them yet)
+	// Random effects variables
 	for (intptr_t i = 1; i <= formula.random.size(); i++)
 	{
 		auto &rt = formula.random[i];
@@ -511,7 +562,17 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 
 	Model model;
 
-	if (family == "gaussian")
+	if (formula.has_random_effects())
+	{
+		// ── Mixed model path (unified Laplace engine) ────────────────
+		auto &rt = formula.random[1];
+		intptr_t gcol = find_column(data, rt.group);
+		auto group = build_grouping(data, gcol, rows);
+		auto fam = Family::from_name(family);
+
+		model = mixed_model(dm.y, dm.X, group, fam);
+	}
+	else if (family == "gaussian")
 	{
 		model = lm(dm.y, dm.X);
 	}
