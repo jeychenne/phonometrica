@@ -21,6 +21,7 @@
 #include <phon/gui/project_model.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/bookmark.hpp>
+#include <phon/application/data_table.hpp>
 #include <phon/application/annotation.hpp>
 
 namespace phonometrica {
@@ -562,6 +563,15 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 	menu.addAction(tr("Open"), [this, sourceIndex]() {
 		openDocument(sourceIndex);
 	});
+
+	auto *doc = dynamic_cast<Document *>(m_model->elementFromIndex(sourceIndex));
+
+	if (auto *dt = dynamic_cast<DataTable *>(doc))
+	{
+		menu.addAction(tr("Analyze"), [this, dt]() {
+			emit analysisRequested(dt);
+		});
+	}
 
 	menu.addSeparator();
 

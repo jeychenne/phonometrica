@@ -14,6 +14,7 @@
 #include <cmath>
 #include <numeric>
 #include <algorithm>
+#include <map>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -209,7 +210,7 @@ void AnalysisView::setupUi()
 
 	auto *copy_action = summary_toolbar->addAction(QIcon(":/icons/clipboard-copy.svg"), tr("Copy to clipboard"));
 	auto *save_txt_action = summary_toolbar->addAction(QIcon(":/icons/save.svg"), tr("Save as text..."));
-	auto *save_latex_action = summary_toolbar->addAction(QIcon(":/icons/tex.svg"), tr("Save as LaTeX table..."));
+	auto *save_latex_action = summary_toolbar->addAction(QIcon(":/icons/file-spreadsheet.svg"), tr("Save as LaTeX table..."));
 
 	summary_layout->addWidget(summary_toolbar);
 
@@ -223,6 +224,7 @@ void AnalysisView::setupUi()
 	summary_layout->addWidget(m_summary, 1);
 
 	m_right_tabs->addTab(summary_widget, tr("Summary"));
+	m_right_tabs->setTabToolTip(0, tr("Coefficient table and goodness-of-fit statistics for the selected model"));
 
 	auto *diag_widget = new QWidget;
 	auto *diag_layout = new QVBoxLayout(diag_widget);
@@ -243,6 +245,40 @@ void AnalysisView::setupUi()
 	m_plot = new PlotWidget;
 	diag_layout->addWidget(m_plot, 1);
 	m_right_tabs->addTab(diag_widget, tr("Diagnostics"));
+	m_right_tabs->setTabToolTip(1, tr("Residual plots to check model assumptions"));
+
+	// EDA tab
+	auto *eda_widget = new QWidget;
+	auto *eda_layout = new QVBoxLayout(eda_widget);
+	eda_layout->setContentsMargins(4, 4, 4, 4);
+	eda_layout->setSpacing(4);
+
+	auto *eda_top = new QHBoxLayout;
+	eda_top->addWidget(new QLabel(tr("Y:")));
+	m_eda_y_combo = new QComboBox;
+	m_eda_y_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	eda_top->addWidget(m_eda_y_combo);
+	eda_top->addWidget(new QLabel(tr("X:")));
+	m_eda_x_combo = new QComboBox;
+	m_eda_x_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	eda_top->addWidget(m_eda_x_combo);
+	m_bins_label = new QLabel(tr("Bins:"));
+	eda_top->addWidget(m_bins_label);
+	m_bins_spin = new QSpinBox;
+	m_bins_spin->setRange(0, 200);
+	m_bins_spin->setValue(0); // 0 = auto (Sturges' rule)
+	m_bins_spin->setSpecialValueText(tr("Auto"));
+	m_bins_spin->setToolTip(tr("Number of histogram bins (0 = automatic)"));
+	eda_top->addWidget(m_bins_spin);
+	eda_top->addStretch();
+	auto *eda_export_button = new QPushButton(tr("Export..."));
+	eda_top->addWidget(eda_export_button);
+	eda_layout->addLayout(eda_top);
+
+	m_eda_plot = new PlotWidget;
+	eda_layout->addWidget(m_eda_plot, 1);
+	m_right_tabs->addTab(eda_widget, tr("EDA"));
+	m_right_tabs->setTabToolTip(2, tr("Exploratory Data Analysis: visualize variables before fitting a model"));
 
 	splitter->addWidget(m_right_tabs);
 	splitter->setStretchFactor(0, 0);
@@ -263,16 +299,27 @@ void AnalysisView::setupUi()
 	connect(copy_action, &QAction::triggered, this, &AnalysisView::onCopySummary);
 	connect(save_txt_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryText);
 	connect(save_latex_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryLatex);
+	connect(m_eda_y_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_x_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
+	connect(eda_export_button, &QPushButton::clicked, this, &AnalysisView::onExportEdaPlot);
 }
 
 void AnalysisView::populateColumns()
 {
 	m_column_list->clear();
+	m_eda_y_combo->clear();
+	m_eda_x_combo->clear();
+	m_eda_x_combo->addItem(tr("(None)"));
+
 	if (!m_analysis->has_source()) return;
 
 	auto names = m_analysis->column_names();
 	for (intptr_t i = 1; i <= names.size(); i++) {
-		m_column_list->addItem(QString::fromUtf8(names[i].data(), (int)names[i].size()));
+		auto qname = QString::fromUtf8(names[i].data(), (int)names[i].size());
+		m_column_list->addItem(qname);
+		m_eda_y_combo->addItem(qname);
+		m_eda_x_combo->addItem(qname);
 	}
 }
 
@@ -340,6 +387,7 @@ void AnalysisView::onFit()
 		m_delete_button->setEnabled(true);
 		m_compare_button->setEnabled(m_analysis->model_count() >= 2);
 
+		m_right_tabs->setCurrentIndex(0); // switch to Summary tab
 		emit titleChanged(label());
 	}
 	catch (std::exception &e)
@@ -359,6 +407,15 @@ void AnalysisView::onModelSelected(int row)
 	{
 		m_current_model = row;
 		displayModel(row);
+
+		// Update the formula bar to match the selected model.
+		auto &m = m_analysis->model(row);
+		m_formula_edit->setText(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
+
+		// Update the family combo to match.
+		QString family = QString::fromUtf8(m.family.data(), (int)m.family.size());
+		int idx = m_family_combo->findData(family);
+		if (idx >= 0) m_family_combo->setCurrentIndex(idx);
 	}
 }
 
@@ -607,6 +664,195 @@ void AnalysisView::plotQQ(const stats::Model &m)
 	                tr("Theoretical Quantiles"), tr("Sample Quantiles"),
 	                tr("Normal Q-Q"),
 	                PlotWidget::RefLine::Diagonal);
+}
+
+
+// =====================================================================
+// EDA
+// =====================================================================
+
+void AnalysisView::onEdaChanged()
+{
+	updateEdaPlot();
+}
+
+void AnalysisView::onExportEdaPlot()
+{
+	if (!m_eda_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
+	}
+
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Export plot"), QString(),
+		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+
+	if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+		m_eda_plot->savePDF(path);
+	else if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
+		m_eda_plot->saveSVG(path);
+	else {
+		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+			path += QStringLiteral(".png");
+		m_eda_plot->savePNG(path);
+	}
+}
+
+bool AnalysisView::isColumnNumeric(const String &col_name) const
+{
+	if (!m_analysis->has_source()) return false;
+	auto *dt = m_analysis->data();
+	intptr_t nc = dt->column_count();
+	intptr_t col = 0;
+	for (intptr_t j = 1; j <= nc; j++) {
+		if (dt->get_header(j) == col_name) { col = j; break; }
+	}
+	if (col < 1) return false;
+
+	// Check the first few non-empty values.
+	intptr_t nr = dt->row_count();
+	int checked = 0;
+	for (intptr_t r = 1; r <= nr && checked < 20; r++)
+	{
+		auto val = dt->get_cell(r, col);
+		if (val.empty()) continue;
+		bool ok;
+		val.to_float(&ok);
+		if (!ok) return false;
+		checked++;
+	}
+	return checked > 0;
+}
+
+void AnalysisView::updateEdaPlot()
+{
+	if (!m_analysis->has_source() || m_eda_y_combo->currentIndex() < 0) {
+		m_eda_plot->clear();
+		return;
+	}
+
+	auto *dt = m_analysis->data();
+	auto y_name_q = m_eda_y_combo->currentText();
+	auto y_name = String(y_name_q.toUtf8().constData());
+
+	// Find Y column
+	intptr_t nc = dt->column_count();
+	intptr_t y_col = 0;
+	for (intptr_t j = 1; j <= nc; j++) {
+		if (dt->get_header(j) == y_name) { y_col = j; break; }
+	}
+	if (y_col < 1) { m_eda_plot->clear(); return; }
+
+	intptr_t nr = dt->row_count();
+
+	// Check if X is selected (index 0 is "(None)").
+	bool has_x = (m_eda_x_combo->currentIndex() > 0);
+
+	// Show bins control only for numeric histograms.
+	bool y_numeric = isColumnNumeric(y_name);
+	bool is_histogram = !has_x && y_numeric;
+	m_bins_label->setVisible(is_histogram);
+	m_bins_spin->setVisible(is_histogram);
+
+	if (!has_x)
+	{
+		if (y_numeric)
+		{
+			// Histogram of numeric Y values
+			std::vector<double> vals;
+			vals.reserve(nr);
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto v = dt->get_cell(r, y_col);
+				if (v.empty()) continue;
+				bool ok;
+				double d = v.to_float(&ok);
+				if (ok) vals.push_back(d);
+			}
+			if (vals.empty()) { m_eda_plot->clear(); return; }
+			m_eda_plot->setHistogramData(std::move(vals), y_name_q, tr("Count"),
+			                              y_name_q, m_bins_spin->value());
+		}
+		else
+		{
+			// Bar chart of categorical Y counts
+			std::map<QString, int> counts;
+			std::vector<QString> order;
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto v = dt->get_cell(r, y_col);
+				if (v.empty()) continue;
+				auto qs = QString::fromUtf8(v.data(), (int)v.size());
+				if (counts.find(qs) == counts.end()) order.push_back(qs);
+				counts[qs]++;
+			}
+			if (order.empty()) { m_eda_plot->clear(); return; }
+			std::vector<int> vals;
+			for (auto &lbl : order) vals.push_back(counts[lbl]);
+			m_eda_plot->setBarChartData(std::move(order), std::move(vals),
+			                             y_name_q, tr("Count"), y_name_q);
+		}
+		return;
+	}
+
+	auto x_name_q = m_eda_x_combo->currentText();
+	auto x_name = String(x_name_q.toUtf8().constData());
+
+	intptr_t x_col = 0;
+	for (intptr_t j = 1; j <= nc; j++) {
+		if (dt->get_header(j) == x_name) { x_col = j; break; }
+	}
+	if (x_col < 1) { m_eda_plot->clear(); return; }
+
+	bool x_numeric = isColumnNumeric(x_name);
+
+	if (x_numeric)
+	{
+		// Scatter: X continuous, Y continuous
+		std::vector<double> xv, yv;
+		xv.reserve(nr);
+		yv.reserve(nr);
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = dt->get_cell(r, x_col);
+			auto vy = dt->get_cell(r, y_col);
+			if (vx.empty() || vy.empty()) continue;
+			bool okx, oky;
+			double dx = vx.to_float(&okx);
+			double dy = vy.to_float(&oky);
+			if (okx && oky) {
+				xv.push_back(dx);
+				yv.push_back(dy);
+			}
+		}
+		if (xv.empty()) { m_eda_plot->clear(); return; }
+		m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
+		                     y_name_q + QStringLiteral(" ~ ") + x_name_q);
+	}
+	else
+	{
+		// Box plot: X categorical, Y continuous
+		std::vector<QString> groups;
+		std::vector<double> vals;
+		groups.reserve(nr);
+		vals.reserve(nr);
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = dt->get_cell(r, x_col);
+			auto vy = dt->get_cell(r, y_col);
+			if (vx.empty() || vy.empty()) continue;
+			bool ok;
+			double dy = vy.to_float(&ok);
+			if (!ok) continue;
+			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
+			vals.push_back(dy);
+		}
+		if (vals.empty()) { m_eda_plot->clear(); return; }
+		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
+		                            x_name_q, y_name_q,
+		                            y_name_q + QStringLiteral(" ~ ") + x_name_q);
+	}
 }
 
 
