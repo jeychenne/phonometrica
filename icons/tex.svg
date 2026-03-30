@@ -1,0 +1,27 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <!-- Document outline -->
+  <path d="M6 3h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+  <path d="M14 3v5h5"/>
+
+  <!-- TeX text (shifted left + slightly smaller) -->
+  <text
+    x="6.8"
+    y="16"
+    font-size="6.5"
+    font-family="serif"
+    fill="currentColor"
+    stroke="none"
+  >
+    T<tspan dy="1.3">E</tspan><tspan dy="-1.3">X</tspan>
+  </text>
+</svg>

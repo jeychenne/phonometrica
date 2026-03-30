@@ -485,9 +485,10 @@ void FileManager::buildRootContextMenu(QMenu &menu, const QModelIndex &sourceInd
 	bool isCorpus = (dir == m_project->corpus().get());
 	bool isScripts = (dir == m_project->scripts().get());
 	bool isData = (dir == m_project->data().get());
+	bool isAnalyses = (dir == m_project->analyses().get());
 	bool isQueries = (dir == m_project->queries().get());
 
-	if (isCorpus || isScripts || isData || isQueries)
+	if (isCorpus || isScripts || isData || isAnalyses || isQueries)
 	{
 		menu.addAction(tr("Add files..."), [this, sourceIndex]() {
 			addFilesToDirectory(sourceIndex);

@@ -25,6 +25,8 @@
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/conc/intensity_query.hpp>
+#include <phon/analysis/model.hpp>
+#include <phon/application/analysis.hpp>
 
 namespace phonometrica {
 
@@ -56,7 +58,8 @@ Project::Project(Runtime &rt, String path) :
 		m_corpus(make_handle<Directory>(nullptr, "Corpus")),
 		m_bookmarks(make_handle<Directory>(nullptr, "Bookmarks")),
 		m_scripts(make_handle<Directory>(nullptr, "Scripts")),
-        m_data(make_handle<Directory>(nullptr, "Datasets")),
+        m_data(make_handle<Directory>(nullptr, "Data tables")),
+		m_analyses(make_handle<Directory>(nullptr, "Analyses")),
 		m_queries(make_handle<Directory>(nullptr, "Queries"))
 {
 	if (path.empty())
@@ -145,6 +148,7 @@ void Project::load()
 		static const std::string_view scripts_tag("Scripts");
 		static const std::string_view bookmarks_tag("Bookmarks");
 		static const std::string_view data_tag("Data");
+		static const std::string_view analyses_tag("Analyses");
 
 		if (root.name() != project_tag) {
 			throw error("[Input/Output] Invalid XML project root");
@@ -186,6 +190,10 @@ void Project::load()
 			else if (node.name() == data_tag)
 			{
 				parse_data(node, m_data.get());
+			}
+			else if (node.name() == analyses_tag)
+			{
+				parse_data(node, m_analyses.get());
 			}
 		}
 
@@ -551,6 +559,12 @@ void Project::parse_data(xml_node root, Directory *folder)
 					folder->append(conc, false);
 					register_file(conc->path(), conc);
 				}
+				else if (cls == std::string_view("Analysis"))
+				{
+					auto analysis = make_handle<Analysis>(folder, std::move(path));
+					folder->append(analysis, false);
+					register_file(analysis->path(), analysis);
+				}
 				else
 				{
 					throw error("Invalid class \"%\" in Document XML entry", cls);
@@ -723,6 +737,15 @@ void Project::write_data(xml_node root)
 	m_scripts->discard_changes();
 }
 
+void Project::write_analyses(xml_node root)
+{
+	for (auto &file : *m_analyses) {
+		file->to_xml(root);
+	}
+
+	m_analyses->discard_changes();
+}
+
 void Project::write_queries(xml_node root)
 {
 	for (auto &file : *m_queries) {
@@ -757,6 +780,9 @@ void Project::write()
 
 	auto data_node = root.append_child("Data");
 	write_data(data_node);
+
+	auto analyses_node = root.append_child("Analyses");
+	write_analyses(analyses_node);
 
 	auto bookmarks_node = root.append_child("Bookmarks");
 	write_bookmarks(bookmarks_node);
@@ -878,6 +904,13 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		vfile = recast<Document>(dataset);
 		p->append(vfile);
 //		emit_signal(dataset_loaded, std::move(dataset));
+	}
+	else if (ext == PHON_EXT_ANALYSIS)
+	{
+		Directory *p = m_analyses.get();
+		auto analysis = make_handle<Analysis>(p, std::move(path));
+		vfile = recast<Document>(analysis);
+		p->append(vfile);
 	}
 	else if ((ext == PHON_EXT_SCRIPT || ext == ".phon-script"))
 	{
@@ -1018,6 +1051,11 @@ void Project::remove(ElementList &files)
 const Handle<Directory> & Project::data() const
 {
 	return m_data;
+}
+
+const Handle<Directory> & Project::analyses() const
+{
+	return m_analyses;
 }
 
 const Handle<Directory> &Project::queries() const
@@ -1219,6 +1257,54 @@ void Project::initialize(Runtime &rt)
 		}
     };
 
+    auto get_concordances = [](Runtime &rt, std::span<Variant> args) -> Variant {
+    	Array<Variant> result;
+    	for (auto &conc : instance->get_concordances()) {
+		    result.append(std::move(conc));
+	    }
+    	return make_handle<List>(&rt, std::move(result));
+    };
+
+    auto get_concordance = [](Runtime &rt, std::span<Variant> args) -> Variant {
+	    auto &files = Project::get()->m_files;
+	    auto &path = cast<String>(args[0]);
+	    auto file = files.find(path);
+
+	    if (file == files.end()) {
+		    return Variant();
+	    }
+	    else if (file->second->is<Concordance>()) {
+			return recast<Concordance>(file->second);
+	    }
+	    else {
+		    throw error("File \"%\" is not a concordance", path);
+	    }
+    };
+
+    auto get_datasets = [](Runtime &rt, std::span<Variant> args) -> Variant {
+    	Array<Variant> result;
+    	for (auto &ds : instance->get_datasets()) {
+		    result.append(std::move(ds));
+	    }
+    	return make_handle<List>(&rt, std::move(result));
+    };
+
+    auto get_dataset = [](Runtime &rt, std::span<Variant> args) -> Variant {
+	    auto &files = Project::get()->m_files;
+	    auto &path = cast<String>(args[0]);
+	    auto file = files.find(path);
+
+	    if (file == files.end()) {
+		    return Variant();
+	    }
+	    else if (file->second->is<Dataset>()) {
+			return recast<Dataset>(file->second);
+	    }
+	    else {
+		    throw error("File \"%\" is not a dataset", path);
+	    }
+    };
+
     auto is_empty = [](Runtime &rt, std::span<Variant> args) -> Variant {
         return Project::get()->empty();
     };
@@ -1227,6 +1313,10 @@ void Project::initialize(Runtime &rt)
 	rt.add_global("get_annotation", get_annotation, {CLS(String) });
 	rt.add_global("get_sounds", get_sounds, { });
 	rt.add_global("get_sound", get_sound, {CLS(String) });
+	rt.add_global("get_concordances", get_concordances, { });
+	rt.add_global("get_concordance", get_concordance, {CLS(String) });
+	rt.add_global("get_datasets", get_datasets, { });
+	rt.add_global("get_dataset", get_dataset, {CLS(String) });
 
 	// Create submodule for project.
 	// FIXME: DO we put this in phon or global?
@@ -1249,6 +1339,7 @@ void Project::clear()
 {
     m_corpus->clear(false);
     m_data->clear(false);
+    m_analyses->clear(false);
     m_scripts->clear(false);
     m_bookmarks->clear(false);
     m_queries->clear(false);
@@ -1520,6 +1611,11 @@ Array<Handle<Concordance>> Project::get_concordances() const
 	return files;
 }
 
+Array<Handle<Dataset>> Project::get_datasets() const
+{
+	return get_files<Dataset>(*m_data);
+}
+
 void Project::set_default_bindings()
 {
 	for (auto &item : m_files)
@@ -1610,9 +1706,9 @@ void Project::preinitialize(Runtime &rt)
 	auto doc_type = rt.add_standard_type<Document>("Document", elem_type.get());
 	rt.add_standard_type<Annotation>("Annotation", doc_type.get());
 	rt.add_standard_type<Sound>("Sound", doc_type.get());
-	rt.add_standard_type<DataTable>("DataTable", doc_type.get());
-	rt.add_standard_type<Dataset>("Dataset", doc_type.get());
-	rt.add_standard_type<Concordance>("Concordance", doc_type.get());
+	auto dt_type = rt.add_standard_type<DataTable>("DataTable", doc_type.get());
+	rt.add_standard_type<Dataset>("Dataset", dt_type.get());
+	rt.add_standard_type<Concordance>("Concordance", dt_type.get());
 	rt.add_standard_type<Script>("Script", doc_type.get());
 	rt.add_standard_type<Query>("Query", doc_type.get());
 	rt.add_standard_type<FormantQuery>("FormantQuery", doc_type.get());
@@ -1620,6 +1716,8 @@ void Project::preinitialize(Runtime &rt)
 	rt.add_standard_type<IntensityQuery>("IntensityQuery", doc_type.get());
 	auto bookmark_type = rt.add_standard_type<Bookmark>("Bookmark", elem_type.get());
 	rt.add_standard_type<TimeStamp>("TimeStamp", bookmark_type.get());
+	rt.add_standard_type<stats::Model>("Model");
+	rt.add_standard_type<Analysis>("Analysis", doc_type.get());
 }
 
 void Project::add_query(Handle<Query> query)

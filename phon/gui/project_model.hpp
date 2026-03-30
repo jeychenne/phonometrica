@@ -35,7 +35,7 @@ class ProjectModel : public QAbstractItemModel
 
 public:
 
-	static constexpr int ROOT_COUNT = 5;
+	static constexpr int ROOT_COUNT = 6;
 
 	explicit ProjectModel(Project *project, QObject *parent = nullptr);
 

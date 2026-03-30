@@ -77,6 +77,8 @@ public:
 
 	const Handle<Directory> & data() const;
 
+	const Handle<Directory> & analyses() const;
+
 	const Handle<Directory> & queries() const;
 
 	const String &directory() const;
@@ -139,6 +141,8 @@ public:
 
     Array<Handle<Concordance>> get_concordances() const;
 
+    Array<Handle<Dataset>> get_datasets() const;
+
     void add_bookmark(Handle<Bookmark> bookmark);
 
 	static void interpolate(String &path, std::string_view project_dir);
@@ -196,6 +200,7 @@ private:
 	void write_bookmarks(xml_node root);
 	void write_scripts(xml_node root);
 	void write_data(xml_node root);
+	void write_analyses(xml_node root);
 	void write_queries(xml_node root);
 
 	void add_folder(String path, const Handle<Directory> &parent, bool importing);
@@ -279,6 +284,8 @@ private:
 	Handle<Directory> m_scripts;
 
 	Handle<Directory> m_data;
+
+	Handle<Directory> m_analyses;
 
 	Handle<Directory> m_queries;
 

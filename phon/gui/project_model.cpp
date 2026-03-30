@@ -18,6 +18,7 @@
 #include <QFileIconProvider>
 #include <phon/gui/project_model.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/analysis.hpp>
 
 namespace phonometrica {
 
@@ -423,7 +424,8 @@ Directory *ProjectModel::rootAt(int row) const
 	case 1: return m_project->queries().get();
 	case 2: return m_project->scripts().get();
 	case 3: return m_project->data().get();
-	case 4: return m_project->bookmarks().get();
+	case 4: return m_project->analyses().get();
+	case 5: return m_project->bookmarks().get();
 	default: return nullptr;
 	}
 }
@@ -439,7 +441,8 @@ QIcon ProjectModel::iconForElement(Element *elem) const
         if (dir == rootAt(1)) return QIcon(":/icons/search.svg");
         if (dir == rootAt(2)) return QIcon(":/icons/square-terminal.svg");
         if (dir == rootAt(3)) return QIcon(":/icons/sheet.svg");
-        if (dir == rootAt(4)) return QIcon(":/icons/book-marked.svg");
+        if (dir == rootAt(4)) return QIcon(":/icons/statistics.svg");
+        if (dir == rootAt(5)) return QIcon(":/icons/book-marked.svg");
 
         return iconProvider.icon(QFileIconProvider::Folder);
     }
@@ -458,6 +461,9 @@ QIcon ProjectModel::iconForElement(Element *elem) const
 
     if (dynamic_cast<Dataset *>(elem))
         return QIcon(":/icons/file-spreadsheet.svg");
+
+    if (dynamic_cast<Analysis *>(elem))
+        return QIcon(":/icons/statistics.svg");
 
     if (dynamic_cast<Query *>(elem))
         return QIcon(":/icons/file-search-corner.svg");

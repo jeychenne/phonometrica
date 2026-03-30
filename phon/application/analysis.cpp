@@ -1,0 +1,332 @@
+/***********************************************************************************************************************
+ *                                                                                                                     *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
+ *                                                                                                                     *
+ * This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy of the MPL was not   *
+ * distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/.                                     *
+ *                                                                                                                     *
+ * Created: 30/03/2026                                                                                                 *
+ *                                                                                                                     *
+ * Purpose: see header.                                                                                                *
+ *                                                                                                                     *
+ ***********************************************************************************************************************/
+
+#include <sstream>
+#include <iomanip>
+#include <phon/application/analysis.hpp>
+#include <phon/application/project.hpp>
+#include <phon/utils/xml.hpp>
+#include <phon/utils/file_system.hpp>
+
+namespace phonometrica {
+
+// =====================================================================
+// Constructors
+// =====================================================================
+
+Analysis::Analysis(Directory *parent, Handle<DataTable> source) :
+	Document(meta::get_class<Analysis>(), parent, String()),
+	m_source(std::move(source))
+{
+	m_source->open();
+	m_source_path = m_source->path();
+	m_modified = true; // new analysis, needs saving
+	m_content_modified = true;
+	m_loaded = true; // already initialized — don't try to load from disk
+}
+
+Analysis::Analysis(Directory *parent, const String &path) :
+	Document(meta::get_class<Analysis>(), parent, path)
+{
+
+}
+
+
+// =====================================================================
+// Fitting
+// =====================================================================
+
+int Analysis::fit(const String &formula_str, const String &family)
+{
+	if (!m_source) {
+		throw error("Cannot fit model: source data is not available");
+	}
+
+	auto formula = stats::Formula::parse(formula_str);
+	auto model = stats::fit(*m_source, formula, family);
+	model.formula = formula.to_string();
+	m_models.push_back(std::move(model));
+	m_modified = true;
+	m_content_modified = true;
+	return (int)m_models.size() - 1;
+}
+
+void Analysis::remove_model(int index)
+{
+	if (index >= 0 && index < (int)m_models.size())
+	{
+		m_models.erase(m_models.begin() + index);
+		m_modified = true;
+		m_content_modified = true;
+	}
+}
+
+Array<String> Analysis::column_names() const
+{
+	if (!m_source) return {};
+	Array<String> names;
+	intptr_t nc = m_source->column_count();
+	for (intptr_t j = 1; j <= nc; j++) {
+		names.append(m_source->get_header(j));
+	}
+	return names;
+}
+
+bool Analysis::content_modified() const
+{
+	return m_modified || Document::content_modified();
+}
+
+
+// =====================================================================
+// Source resolution
+// =====================================================================
+
+void Analysis::resolve_source()
+{
+	if (m_source) return;
+	if (m_source_path.empty()) return;
+
+	auto project = Project::get();
+
+	// Try exact path match first.
+	try
+	{
+		auto doc = project->get(m_source_path);
+		if (doc)
+		{
+			m_source = recast<DataTable>(doc);
+			if (m_source) {
+				m_source->open();
+				return;
+			}
+		}
+	}
+	catch (...) { }
+
+	// Fallback: search all registered files by matching filename.
+	auto target = filesystem::base_name(m_source_path);
+	for (auto &kv : project->files())
+	{
+		auto &doc = kv.second;
+		if (filesystem::base_name(doc->path()) == target)
+		{
+			m_source = recast<DataTable>(doc);
+			if (m_source) {
+				m_source_path = doc->path(); // update to the resolved path
+				m_source->open();
+				return;
+			}
+		}
+	}
+}
+
+
+// =====================================================================
+// Serialization helpers
+// =====================================================================
+
+namespace {
+
+// Write a vector of doubles as space-separated text with full precision.
+String doubles_to_string(const Array<double> &arr)
+{
+	std::ostringstream oss;
+	oss << std::setprecision(17);
+	for (intptr_t i = 1; i <= arr.size(); i++)
+	{
+		if (i > 1) oss << ' ';
+		oss << arr[i];
+	}
+	return String(oss.str());
+}
+
+// Write a vector of strings as comma-separated text.
+String strings_to_csv(const Array<String> &arr)
+{
+	String result;
+	for (intptr_t i = 1; i <= arr.size(); i++)
+	{
+		if (i > 1) result.append(",");
+		result.append(arr[i]);
+	}
+	return result;
+}
+
+// Parse space-separated doubles.
+Array<double> parse_doubles(const char *text)
+{
+	Array<double> result;
+	std::istringstream iss(text);
+	double v;
+	while (iss >> v) {
+		result.append(v);
+	}
+	return result;
+}
+
+// Parse comma-separated strings.
+Array<String> parse_csv_strings(const char *text)
+{
+	Array<String> result;
+	String s(text);
+	auto parts = s.split(",");
+	for (auto &part : parts) {
+		if (!part.empty()) result.append(part);
+	}
+	return result;
+}
+
+} // anonymous namespace
+
+
+// =====================================================================
+// XML Write
+// =====================================================================
+
+void Analysis::write()
+{
+	xml_document doc;
+
+	auto root = doc.append_child("Phonometrica");
+	root.append_attribute("class").set_value("Analysis");
+
+	// Source reference
+	{
+		String rel_path = m_source_path;
+		Project::compress(rel_path, Project::get()->directory());
+		add_data_node(root, "Source", rel_path);
+	}
+
+	// Models
+	auto models_node = root.append_child("Models");
+
+	for (auto &m : m_models)
+	{
+		auto mn = models_node.append_child("Model");
+
+		add_data_node(mn, "Formula", m.formula);
+		add_data_node(mn, "Family", m.family);
+		add_data_node(mn, "Link", m.link);
+		add_data_node(mn, "Nobs", String::convert(m.nobs));
+		add_data_node(mn, "Nfixed", String::convert(m.nfixed));
+
+		add_data_node(mn, "CoefNames", strings_to_csv(m.coef_names));
+		add_data_node(mn, "Beta", doubles_to_string(m.beta));
+		add_data_node(mn, "Se", doubles_to_string(m.se));
+		add_data_node(mn, "Stat", doubles_to_string(m.stat));
+		add_data_node(mn, "P", doubles_to_string(m.p));
+		add_data_node(mn, "Fitted", doubles_to_string(m.fitted));
+		add_data_node(mn, "Residuals", doubles_to_string(m.residuals));
+
+		add_data_node(mn, "LogLik", String::format("%.17g", m.loglik));
+		add_data_node(mn, "AIC", String::format("%.17g", m.aic));
+		add_data_node(mn, "BIC", String::format("%.17g", m.bic));
+		add_data_node(mn, "Deviance", String::format("%.17g", m.deviance));
+		add_data_node(mn, "RSE", String::format("%.17g", m.rse));
+		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
+		add_data_node(mn, "R2", String::format("%.17g", m.r2));
+		add_data_node(mn, "AdjR2", String::format("%.17g", m.adj_r2));
+		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
+		add_data_node(mn, "Converged", m.converged ? "true" : "false");
+	}
+
+	write_xml(doc, m_path);
+	m_modified = false;
+}
+
+
+// =====================================================================
+// XML Read
+// =====================================================================
+
+void Analysis::load()
+{
+	xml_document doc;
+	xml_node root;
+	using str = std::string_view;
+
+	try {
+		root = read_xml(doc, m_path);
+	}
+	catch (...) {
+		throw error("Cannot open analysis file \"%\"", m_path);
+	}
+
+	if (root.name() != str("Phonometrica")) {
+		throw error("Invalid XML root in %", m_path);
+	}
+
+	auto attr = root.attribute("class");
+	if (!attr || str(attr.as_string()) != str("Analysis")) {
+		throw error("Expected an Analysis file, got %", attr.as_string());
+	}
+
+	m_models.clear();
+
+	for (auto node = root.first_child(); node; node = node.next_sibling())
+	{
+		if (node.name() == str("Source"))
+		{
+			m_source_path = node.text().get();
+			Project::interpolate(m_source_path, Project::get()->directory());
+		}
+		else if (node.name() == str("Models"))
+		{
+			for (auto mn = node.first_child(); mn; mn = mn.next_sibling())
+			{
+				if (mn.name() != str("Model")) continue;
+
+				stats::Model m;
+
+				for (auto field = mn.first_child(); field; field = field.next_sibling())
+				{
+					auto name = str(field.name());
+					auto text = field.text().get();
+
+					if (name == "Formula")      m.formula = text;
+					else if (name == "Family")   m.family = text;
+					else if (name == "Link")     m.link = text;
+					else if (name == "Nobs")     m.nobs = String(text).to_int();
+					else if (name == "Nfixed")   m.nfixed = String(text).to_int();
+					else if (name == "CoefNames") m.coef_names = parse_csv_strings(text);
+					else if (name == "Beta")     m.beta = parse_doubles(text);
+					else if (name == "Se")       m.se = parse_doubles(text);
+					else if (name == "Stat")     m.stat = parse_doubles(text);
+					else if (name == "P")        m.p = parse_doubles(text);
+					else if (name == "Fitted")   m.fitted = parse_doubles(text);
+					else if (name == "Residuals") m.residuals = parse_doubles(text);
+					else if (name == "LogLik")   m.loglik = String(text).to_float();
+					else if (name == "AIC")      m.aic = String(text).to_float();
+					else if (name == "BIC")      m.bic = String(text).to_float();
+					else if (name == "Deviance") m.deviance = String(text).to_float();
+					else if (name == "RSE")      m.rse = String(text).to_float();
+					else if (name == "DfResidual") m.df_residual = String(text).to_int();
+					else if (name == "R2")       m.r2 = String(text).to_float();
+					else if (name == "AdjR2")    m.adj_r2 = String(text).to_float();
+					else if (name == "Niter")    m.niter = (int)String(text).to_int();
+					else if (name == "Converged") m.converged = (str(text) == str("true"));
+				}
+
+				m_models.push_back(std::move(m));
+			}
+		}
+	}
+
+	// Try to resolve the source
+	resolve_source();
+
+	m_modified = false;
+}
+
+} // namespace phonometrica
