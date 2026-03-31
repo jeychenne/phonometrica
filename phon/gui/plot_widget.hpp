@@ -31,6 +31,7 @@ public:
 	{
 		None,
 		HorizontalAtZero,
+		HorizontalAtHalf,  // dashed line at y = 0.5 (for scaled residuals)
 		Diagonal
 	};
 

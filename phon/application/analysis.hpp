@@ -16,6 +16,7 @@
 #define PHONOMETRICA_ANALYSIS_HPP
 
 #include <vector>
+#include <map>
 #include <phon/application/data_table.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/formula.hpp>
@@ -61,6 +62,20 @@ public:
 	// Returns empty array if source is unavailable.
 	Array<String> column_names() const;
 
+	// ── Reference levels for treatment contrasts ────────────────────
+
+	// Set a custom reference level for a categorical variable.
+	void set_reference_level(const String &variable, const String &level);
+
+	// Remove the custom reference level for a variable (revert to default alphabetical).
+	void clear_reference_level(const String &variable);
+
+	// Return the custom reference level for a variable, or empty string if default.
+	String reference_level(const String &variable) const;
+
+	// All user-specified reference levels.
+	const std::map<String, String> &reference_levels() const { return m_reference_levels; }
+
 protected:
 
 	void load() override;
@@ -75,6 +90,7 @@ private:
 	Handle<DataTable> m_source;
 	String m_source_path;
 	std::vector<stats::Model> m_models;
+	std::map<String, String> m_reference_levels;
 	bool m_modified = false;
 };
 
