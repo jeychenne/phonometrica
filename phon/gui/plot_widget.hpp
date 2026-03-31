@@ -56,6 +56,11 @@ public:
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
 
+	/// Set (or clear) an OLS regression line to overlay on scatter plots.
+	/// The line is y = intercept + slope * x, and r2 is displayed as an annotation.
+	void setRegressionLine(double intercept, double slope, double r2);
+	void clearRegressionLine();
+
 	void clear();
 	bool hasData() const;
 
@@ -112,6 +117,12 @@ private:
 	std::vector<double> m_x;
 	std::vector<double> m_y;
 	RefLine m_ref_line = RefLine::None;
+
+	// Regression line overlay (scatter only)
+	bool m_show_regression = false;
+	double m_reg_intercept = 0;
+	double m_reg_slope = 0;
+	double m_reg_r2 = 0;
 
 	// Box plot data
 	std::vector<BoxStats> m_boxes;

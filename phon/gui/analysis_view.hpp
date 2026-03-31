@@ -17,6 +17,7 @@
 
 #include <QLineEdit>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QPushButton>
 #include <QListWidget>
 #include <QPlainTextEdit>
@@ -107,6 +108,7 @@ private:
 	QComboBox *m_eda_x_combo = nullptr;
 	QLabel *m_bins_label = nullptr;
 	QSpinBox *m_bins_spin = nullptr;
+	QCheckBox *m_eda_regline_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
 };
 

@@ -30,6 +30,7 @@ static const QColor BOX_BORDER(0, 80, 180);
 static const QColor BAR_FILL(100, 160, 220, 200);
 static const QColor BAR_BORDER(40, 80, 140);
 static const QColor REFLINE_COLOR(200, 60, 60);
+static const QColor REGLINE_COLOR(220, 80, 40);
 static const QColor GRID_COLOR(220, 220, 220);
 static const QColor AXIS_COLOR(60, 60, 60);
 static const QColor BG_COLOR(255, 255, 255);
@@ -145,6 +146,24 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_y.clear();
 	m_boxes.clear();
 	m_bins.clear();
+	m_show_regression = false;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setRegressionLine(double intercept, double slope, double r2)
+{
+	m_show_regression = true;
+	m_reg_intercept = intercept;
+	m_reg_slope = slope;
+	m_reg_r2 = r2;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::clearRegressionLine()
+{
+	m_show_regression = false;
 	m_cache_valid = false;
 	update();
 }
@@ -159,6 +178,7 @@ void PlotWidget::clear()
 	m_bar_labels.clear();
 	m_bar_counts.clear();
 	m_title.clear();
+	m_show_regression = false;
 	m_cache_valid = false;
 	update();
 }
@@ -407,6 +427,33 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 		double hi = std::min(xhi, yhi);
 		p.setPen(QPen(REFLINE_COLOR, 1.5, Qt::DashLine));
 		p.drawLine(QPointF(dataToX(lo), dataToY(lo)), QPointF(dataToX(hi), dataToY(hi)));
+	}
+
+	// Regression line overlay
+	if (m_show_regression)
+	{
+		// Compute line endpoints at the x-axis limits
+		double y_at_xlo = m_reg_intercept + m_reg_slope * xlo;
+		double y_at_xhi = m_reg_intercept + m_reg_slope * xhi;
+		p.setPen(QPen(REGLINE_COLOR, 1.8));
+		p.drawLine(QPointF(dataToX(xlo), dataToY(y_at_xlo)),
+		           QPointF(dataToX(xhi), dataToY(y_at_xhi)));
+
+		// R² annotation in the top-right corner of the plot area
+		QFont ann_font;
+		ann_font.setPixelSize(11);
+		ann_font.setItalic(true);
+		p.setFont(ann_font);
+		p.setPen(REGLINE_COLOR);
+		QString r2_text = QStringLiteral("R\u00B2 = %1").arg(m_reg_r2, 0, 'f', 4);
+		QFontMetrics afm(ann_font);
+		int tw = afm.horizontalAdvance(r2_text);
+		p.drawText(left + pw - tw - 6, top + afm.ascent() + 4, r2_text);
+
+		// Restore base font
+		QFont base_font;
+		base_font.setPixelSize(11);
+		p.setFont(base_font);
 	}
 
 	// Points
