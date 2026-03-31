@@ -15,6 +15,7 @@
 #ifndef PHONOMETRICA_ANALYSIS_VIEW_HPP
 #define PHONOMETRICA_ANALYSIS_VIEW_HPP
 
+#include <optional>
 #include <QLineEdit>
 #include <QComboBox>
 #include <QCheckBox>
@@ -26,9 +27,11 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QTableWidget>
+#include <QIcon>
 #include <phon/gui/view.hpp>
 #include <phon/gui/plot_widget.hpp>
 #include <phon/application/analysis.hpp>
+#include <phon/analysis/formula.hpp>
 
 namespace phonometrica {
 
@@ -73,11 +76,23 @@ private:
 	void displayModel(int index);
 	QString formatSummary(const stats::Model &m) const;
 	QString formatLatex(const stats::Model &m) const;
+	void updateDiagnosticPlot();
+	void updateFitEnabled();
+
+	// Formula building helpers
 	void setResponse(const QString &name);
 	void addPredictor(const QString &name);
 	void addRandomIntercept(const QString &name);
-	void updateDiagnosticPlot();
-	void updateFitEnabled();
+	void addInteraction(const QString &name, const QString &other, bool withMainEffects);
+	void addRandomSlope(const QString &variable, const QString &group, bool correlated);
+	void removeFromFormula(const QString &name);
+	void updateColumnMarkers();
+
+	// Parse the current formula bar text. Returns nullopt on parse failure.
+	std::optional<stats::Formula> tryParseFormula();
+
+	// Set the formula bar text from a Formula struct.
+	void applyFormula(const stats::Formula &formula);
 
 	void plotResidualsVsFitted(const stats::Model &m);
 	void plotQQ(const stats::Model &m);
@@ -116,6 +131,9 @@ private:
 	QCheckBox *m_eda_density_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
 	QTableWidget *m_eda_summary = nullptr;
+
+	// Column list check mark icon for variables used in the formula.
+	QIcon m_check_icon;
 };
 
 } // namespace phonometrica
