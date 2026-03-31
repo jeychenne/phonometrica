@@ -11,6 +11,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <phon/application/dataset.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/text.hpp>
@@ -187,7 +188,12 @@ String Dataset::get_cell(intptr_t i, intptr_t j) const
 	switch (col->type())
 	{
         case ColumnType::Numeric:
-			return String::convert(cast_num(col)->get(i));
+		{
+			double val = cast_num(col)->get(i);
+			if (std::isfinite(val) && val == std::floor(val))
+				return String::convert(intptr_t(val));
+			return String::convert(val);
+		}
         case ColumnType::Boolean:
 			return String::convert(cast_bool(col)->get(i));
 		default:

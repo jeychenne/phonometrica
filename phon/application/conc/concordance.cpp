@@ -655,10 +655,8 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 						if (idx < (intptr_t)meas.size()) {
 							double val = meas[idx];
 							if (std::isnan(val)) return "nan";
-							// Max freq is Hz (%.1f), LPC order is integer
-							if (auto_idx == 1)
-								return String::convert(intptr_t(val));
-							return String::format("%.1f", val);
+							// Both Max freq and LPC order are integer-valued.
+							return String::convert(intptr_t(val));
 						}
 						return "nan";
 					}
