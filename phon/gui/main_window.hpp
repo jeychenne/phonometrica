@@ -15,7 +15,6 @@
 #define PHONOMETRICA_MAIN_WINDOW_HPP
 
 #include <unordered_map>
-#include <phon/string.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/ipa_panel.hpp>

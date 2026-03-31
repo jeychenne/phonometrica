@@ -13,6 +13,8 @@
 
 #include <boost/math/distributions/students_t.hpp>
 #include <boost/math/distributions/chi_squared.hpp>
+#include <boost/math/special_functions/digamma.hpp>
+#include <boost/math/special_functions/trigamma.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/statistics.hpp>
 #include <phon/utils/matrix.hpp>
@@ -315,6 +317,214 @@ Model logit(const Array<double> &y, const Array<double> &X, int max_iter)
 Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter)
 {
 	return glm(y, X, Family::poisson(), robust, max_iter);
+}
+
+
+// =====================================================================
+// Negative binomial regression (IWLS + alternating θ profile)
+// =====================================================================
+//
+// Algorithm (following MASS::glm.nb):
+//   1. Initialize θ from method-of-moments: Var(y)/mean(y) ≈ 1 + mean(y)/θ
+//   2. Outer loop:
+//      a. Given θ, fit β via IWLS with NB working weights
+//      b. Given μ = exp(Xβ), update θ by Newton on the NB profile log-likelihood
+//   3. Converge when both β and θ stabilise
+//
+// The IWLS uses the correct non-canonical weights for the log link:
+//   w_i = μ_i θ / (θ + μ_i)      (not V(μ) = μ + μ²/θ)
+//   z_i = η_i + (y_i − μ_i) / μ_i
+//
+// Mathematical references:
+//   Lawless (1987). Negative binomial and mixed Poisson regression. Can J Stat 15(3).
+//   Venables & Ripley (2002). Modern Applied Statistics with S. §7.4.
+
+Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
+{
+	validate_inputs(y, X);
+
+	intptr_t n = X.nrow();
+	intptr_t p = X.ncol();
+
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
+	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+
+	// ── Initial θ from method-of-moments ─────────────────────────────
+	//
+	// E[Y] = μ, Var(Y) = μ + μ²/θ  →  θ = μ² / (Var(Y) − μ)
+	// Use sample mean and variance as plug-in estimators.
+
+	double ybar = ym.mean();
+	double yvar = (ym.array() - ybar).square().sum() / (n - 1);
+	double theta;
+	if (yvar > ybar) {
+		theta = ybar * ybar / (yvar - ybar);
+	} else {
+		theta = 10.0; // low overdispersion fallback
+	}
+	theta = std::clamp(theta, 0.01, 1e6);
+
+	// ── Initial β from Poisson GLM (quick starting point) ────────────
+
+	Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
+	{
+		auto pois = glm(y, X, Family::poisson(), false, 50);
+		for (intptr_t j = 0; j < p; j++) {
+			beta[j] = pois.beta[j + 1];
+		}
+	}
+
+	// ── Precompute X'X factorisation for IWLS solve ──────────────────
+
+	// (Recomputed each iteration with weights, but we keep the structure)
+
+	int outer_iter = 0;
+	bool converged = false;
+
+	for (int iter = 0; iter < max_iter; iter++)
+	{
+		Eigen::VectorXd beta_old = beta;
+		double theta_old = theta;
+
+		// ── (a) IWLS for β given θ ───────────────────────────────────
+		//
+		// Iterate IWLS until β converges (typically 3–8 iterations).
+
+		for (int iwls = 0; iwls < 50; iwls++)
+		{
+			Eigen::VectorXd eta = Xm * beta;
+			Eigen::VectorXd mu = eta.array().exp().matrix();
+
+			// Working weights and response for log link + NB variance
+			Eigen::VectorXd w(n), z(n);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mi = std::max(mu[i], 1e-10);
+				// w_i = (dμ/dη)² / V(μ) = μ² / (μ + μ²/θ) = μθ/(θ+μ)
+				w[i] = mi * theta / (theta + mi);
+				// z_i = η_i + (y_i − μ_i) / (dμ/dη) = η_i + (y_i − μ_i) / μ_i
+				z[i] = eta[i] + (ym[i] - mi) / mi;
+			}
+
+			// Solve (X'WX) β = X'Wz
+			Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+			Eigen::VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
+
+			Eigen::LDLT<Eigen::MatrixXd> ldlt(XtWX);
+			Eigen::VectorXd beta_new = ldlt.solve(XtWz);
+
+			double max_change = (beta_new - beta).cwiseAbs().maxCoeff();
+			beta = beta_new;
+
+			if (max_change < 1e-8) break;
+		}
+
+		// ── (b) Update θ given β (1D Newton on profile log-likelihood) ──
+		//
+		// ℓ(θ) = Σ [lgamma(y_i+θ) − lgamma(θ) + θ log(θ/(θ+μ_i))
+		//         + y_i log(μ_i/(θ+μ_i)) − lgamma(y_i+1)]
+		//
+		// Score:     s = Σ [digamma(y_i+θ) − digamma(θ) + log(θ/(θ+μ_i)) + 1 − (y_i+θ)/(θ+μ_i)]
+		// Info (−s'): I = Σ [−trigamma(y_i+θ) + trigamma(θ) − 1/θ + 2/(θ+μ_i) − (y_i+θ)/(θ+μ_i)²]
+
+		Eigen::VectorXd eta = Xm * beta;
+		Eigen::VectorXd mu = eta.array().exp().matrix();
+
+		for (int newton = 0; newton < 20; newton++)
+		{
+			double score = 0, info = 0;
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double yi = ym[i];
+				double mi = std::max(mu[i], 1e-10);
+				double tpm = theta + mi;
+
+				score += boost::math::digamma(yi + theta) - boost::math::digamma(theta)
+				         + std::log(theta / tpm) + 1.0 - (yi + theta) / tpm;
+
+				info += -boost::math::trigamma(yi + theta) + boost::math::trigamma(theta)
+				        - 1.0 / theta + 2.0 / tpm - (yi + theta) / (tpm * tpm);
+			}
+
+			// Newton step: Δθ = score / info (info = observed Fisher information = -d²ℓ/dθ²)
+			// Working on θ directly with clamping for positivity.
+			if (std::abs(info) < 1e-15) break;
+			double step = score / info;
+			// Clamp step to avoid wild jumps
+			step = std::clamp(step, -theta * 0.5, theta * 2.0);
+			double theta_new = theta + step;
+			theta_new = std::max(theta_new, 0.001);
+			theta = theta_new;
+
+			if (std::abs(step) < 1e-6 * theta) break;
+		}
+
+		outer_iter = iter + 1;
+
+		// ── Convergence check ────────────────────────────────────────
+		double beta_change = (beta - beta_old).cwiseAbs().maxCoeff();
+		double theta_change = std::abs(theta - theta_old);
+
+		if (beta_change < 1e-6 && theta_change < 1e-6 * theta)
+		{
+			converged = true;
+			break;
+		}
+	}
+
+	// ── Build the model ──────────────────────────────────────────────
+
+	auto fam = Family::negbin(theta);
+
+	Model model;
+	model.family = "negbin";
+	model.link = "log";
+	model.theta = theta;
+	store_matrices(model, y, X);
+
+	model.beta = Array<double>(p, 0.0);
+	for (intptr_t j = 0; j < p; j++) {
+		model.beta[j + 1] = beta[j];
+	}
+
+	// Fitted values
+	model.compute_fitted(fam.linkinv);
+
+	// Log-likelihood
+	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	model.loglik = fam.loglik(ym, mu_eig);
+	model.compute_information_criteria();
+
+	// Covariance: (X'WX)⁻¹ with NB working weights
+	{
+		Eigen::VectorXd mu_vec = (Xm * beta).array().exp().matrix();
+		Eigen::VectorXd w(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mi = std::max(mu_vec[i], 1e-10);
+			w[i] = mi * theta / (theta + mi);
+		}
+		Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+		Eigen::MatrixXd cov = XtWX.inverse();
+
+		model.se = Array<double>(p, 0.0);
+		model.stat = Array<double>(p, 0.0);
+		model.p = Array<double>(p, 0.0);
+
+		boost::math::chi_squared dist(1);
+		for (intptr_t i = 1; i <= p; i++)
+		{
+			model.se[i] = std::sqrt(std::max(cov(i - 1, i - 1), 0.0));
+			model.stat[i] = (model.se[i] > 0) ? model.beta[i] / model.se[i] : 0.0;
+			double wald = model.stat[i] * model.stat[i];
+			model.p[i] = 1.0 - boost::math::cdf(dist, wald);
+		}
+	}
+
+	model.niter = outer_iter;
+	model.converged = converged;
+
+	return model;
 }
 
 } // namespace phonometrica::stats

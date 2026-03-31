@@ -147,6 +147,7 @@ void AnalysisView::setupUi()
 	m_family_combo->addItem(tr("Gaussian"), QStringLiteral("gaussian"));
 	m_family_combo->addItem(tr("Binomial"), QStringLiteral("binomial"));
 	m_family_combo->addItem(tr("Poisson"), QStringLiteral("poisson"));
+	m_family_combo->addItem(tr("Negative binomial"), QStringLiteral("negbin"));
 	m_family_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_family_combo);
 
@@ -1069,8 +1070,11 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	// Notes below the table
 	tex += QStringLiteral("\\medskip\n");
 	tex += QStringLiteral("\\footnotesize\n");
+	QString family_display_tex = QString::fromUtf8(m.family.data(), (int)m.family.size());
+	if (m.is_negbin()) family_display_tex = QStringLiteral("Negative binomial");
+
 	tex += QStringLiteral("Family: %1 (%2); $N$ = %3")
-		.arg(QString::fromUtf8(m.family.data(), (int)m.family.size()))
+		.arg(family_display_tex)
 		.arg(QString::fromUtf8(m.link.data(), (int)m.link.size()))
 		.arg(m.nobs);
 
@@ -1078,6 +1082,9 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		tex += QStringLiteral("; $R^2$ = %1; Adj.\\ $R^2$ = %2")
 			.arg(m.r2, 0, 'f', 4)
 			.arg(m.adj_r2, 0, 'f', 4);
+	}
+	if (m.is_negbin()) {
+		tex += QStringLiteral("; $\\theta$ = %1").arg(m.theta, 0, 'f', 4);
 	}
 
 	tex += QStringLiteral("\\\\\n");
@@ -1128,9 +1135,15 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 {
 	QString text;
 
+	QString family_display = QString::fromUtf8(m.family.data(), (int)m.family.size());
+	if (m.is_negbin()) family_display = QStringLiteral("Negative binomial");
+
 	text += QStringLiteral("Family: %1 (%2)\n")
-		.arg(QString::fromUtf8(m.family.data(), (int)m.family.size()))
+		.arg(family_display)
 		.arg(QString::fromUtf8(m.link.data(), (int)m.link.size()));
+	if (m.is_negbin()) {
+		text += QString::asprintf("Theta (overdispersion): %.4f\n", m.theta);
+	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
 	text += QStringLiteral("Observations: %1\n\n").arg(m.nobs);
