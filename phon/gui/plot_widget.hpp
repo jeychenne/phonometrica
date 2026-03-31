@@ -61,6 +61,12 @@ public:
 	void setRegressionLine(double intercept, double slope, double r2);
 	void clearRegressionLine();
 
+	/// Set (or clear) a density curve to overlay on histograms.
+	/// curve_x/curve_y define the polyline in data coordinates;
+	/// the Y values are pre-scaled to the histogram count axis.
+	void setDensityCurve(std::vector<double> curve_x, std::vector<double> curve_y);
+	void clearDensityCurve();
+
 	void clear();
 	bool hasData() const;
 
@@ -129,6 +135,11 @@ private:
 
 	// Histogram data
 	std::vector<HistBin> m_bins;
+
+	// Density curve overlay (histogram only)
+	bool m_show_density = false;
+	std::vector<double> m_density_x;
+	std::vector<double> m_density_y;
 
 	// Bar chart data
 	std::vector<QString> m_bar_labels;

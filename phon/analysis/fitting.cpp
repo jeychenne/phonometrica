@@ -182,7 +182,8 @@ static Array<String> extract_levels(const DataTable &data, intptr_t col,
 
 // Expand a single variable into design columns.
 static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
-                                         const std::vector<intptr_t> &rows)
+                                         const std::vector<intptr_t> &rows,
+                                         bool full_rank = false)
 {
 	ExpandedVariable ev;
 	String name = data.get_header(col);
@@ -198,7 +199,11 @@ static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
 	}
 	else
 	{
-		// Categorical: treatment contrasts. First level is reference.
+		// Categorical.
+		// full_rank=false (default): treatment contrasts, k-1 dummies (reference level omitted).
+		// full_rank=true: cell-means coding, k dummies (all levels included).
+		// The full_rank form is used for (0 + factor | group) random effects,
+		// where there is no intercept to absorb the reference level.
 		ev.numeric = false;
 		ev.levels = extract_levels(data, col, rows);
 
@@ -206,8 +211,8 @@ static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
 			throw error("Categorical variable '%' has fewer than 2 levels", name);
 		}
 
-		// Create k-1 dummy columns (skip the first/reference level).
-		for (intptr_t k = 2; k <= ev.levels.size(); k++)
+		intptr_t start_level = full_rank ? 1 : 2;
+		for (intptr_t k = start_level; k <= ev.levels.size(); k++)
 		{
 			DesignColumn dc;
 			dc.name = name;
@@ -442,16 +447,28 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 // Grouping factor construction
 // =====================================================================
 
-// Build a GroupingInfo from a categorical column in the DataTable.
-// The levels are sorted lexicographically (matching extract_levels ordering).
-// The indices vector maps each complete-case observation to its 0-based group index.
-static GroupingInfo build_grouping(const DataTable &data, intptr_t col,
+// Build a GroupingInfo from a RandomTerm and the DataTable.
+// Expands slope variables into treatment-coded design columns (same logic as fixed effects).
+// The Z_design matrix is n_obs × nterms, row-major.
+static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
                                     const std::vector<intptr_t> &rows)
 {
 	GroupingInfo gi;
-	gi.name = data.get_header(col);
-	gi.levels = extract_levels(data, col, rows);
+
+	// ── Grouping factor ──────────────────────────────────────────────
+
+	intptr_t gcol = find_column(data, rt.group);
+	if (gcol == 0) {
+		throw error("Grouping variable '%' not found in data", rt.group);
+	}
+
+	gi.name = data.get_header(gcol);
+	gi.levels = extract_levels(data, gcol, rows);
 	gi.nlevels = gi.levels.size();
+
+	if (gi.nlevels < 2) {
+		throw error("Grouping factor '%' must have at least 2 levels", gi.name);
+	}
 
 	// Build a fast lookup: level string → 0-based index.
 	std::map<std::string, intptr_t> level_map;
@@ -463,9 +480,54 @@ static GroupingInfo build_grouping(const DataTable &data, intptr_t col,
 	gi.indices.reserve(rows.size());
 	for (intptr_t row : rows)
 	{
-		String cell = data.get_cell(row, col);
+		String cell = data.get_cell(row, gcol);
 		std::string key(cell.data(), cell.size());
 		gi.indices.push_back(level_map[key]);
+	}
+
+	// ── Z design matrix ──────────────────────────────────────────────
+	//
+	// Collect design columns: intercept first (if present), then expanded
+	// slope variables. Categorical slopes are expanded into treatment
+	// contrasts (k−1 dummy columns), exactly as for fixed effects.
+
+	size_t n = rows.size();
+	std::vector<std::vector<double>> z_columns;
+
+	if (rt.intercept)
+	{
+		gi.term_names.append("(Intercept)");
+		z_columns.push_back(std::vector<double>(n, 1.0));
+	}
+
+	for (intptr_t s = 1; s <= rt.slopes.size(); s++)
+	{
+		intptr_t scol = find_column(data, rt.slopes[s]);
+		if (scol == 0) {
+			throw error("Slope variable '%' not found in data", rt.slopes[s]);
+		}
+
+		auto ev = expand_variable(data, scol, rows, !rt.intercept);
+		for (auto &dc : ev.columns)
+		{
+			gi.term_names.append(dc.name);
+			z_columns.push_back(std::move(dc.values));
+		}
+	}
+
+	gi.nterms = (intptr_t)z_columns.size();
+
+	if (gi.nterms == 0) {
+		throw error("Random-effects term for '%' has no terms (no intercept and no slopes)", rt.group);
+	}
+
+	// Pack into row-major Z_design: n × nterms
+	gi.Z_design.resize(n * gi.nterms);
+	for (size_t i = 0; i < n; i++)
+	{
+		for (intptr_t t = 0; t < gi.nterms; t++) {
+			gi.Z_design[i * gi.nterms + t] = z_columns[t][i];
+		}
 	}
 
 	return gi;
@@ -498,11 +560,8 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 		for (intptr_t i = 1; i <= formula.random.size(); i++)
 		{
 			auto &rt = formula.random[i];
-			if (!rt.slopes.empty()) {
-				throw error("Random slopes are not yet supported (only random intercepts)");
-			}
-			if (!rt.intercept) {
-				throw error("Random-effects term must include an intercept");
+			if (!rt.intercept && rt.slopes.empty()) {
+				throw error("Random-effects term must include an intercept or at least one slope");
 			}
 		}
 	}
@@ -601,9 +660,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 		std::vector<GroupingInfo> groups;
 		for (intptr_t i = 1; i <= formula.random.size(); i++)
 		{
-			auto &rt = formula.random[i];
-			intptr_t gcol = find_column(data, rt.group);
-			groups.push_back(build_grouping(data, gcol, rows));
+			groups.push_back(build_grouping(data, formula.random[i], rows));
 		}
 		auto fam = Family::from_name(family);
 

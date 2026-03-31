@@ -25,6 +25,7 @@
 #include <QTabWidget>
 #include <QSpinBox>
 #include <QLabel>
+#include <QTableWidget>
 #include <phon/gui/view.hpp>
 #include <phon/gui/plot_widget.hpp>
 #include <phon/application/analysis.hpp>
@@ -60,7 +61,9 @@ private slots:
 	void onSaveSummaryText();
 	void onSaveSummaryLatex();
 	void onEdaChanged();
-	void onExportEdaPlot();
+	void onExportEdaPNG();
+	void onExportEdaPDF();
+	void onExportEdaSVG();
 
 private:
 
@@ -79,6 +82,7 @@ private:
 	void plotResidualsVsFitted(const stats::Model &m);
 	void plotQQ(const stats::Model &m);
 	void updateEdaPlot();
+	void updateEdaSummary();
 	bool isColumnNumeric(const String &col_name) const;
 
 	Handle<Analysis> m_analysis;
@@ -109,7 +113,9 @@ private:
 	QLabel *m_bins_label = nullptr;
 	QSpinBox *m_bins_spin = nullptr;
 	QCheckBox *m_eda_regline_check = nullptr;
+	QCheckBox *m_eda_density_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
+	QTableWidget *m_eda_summary = nullptr;
 };
 
 } // namespace phonometrica
