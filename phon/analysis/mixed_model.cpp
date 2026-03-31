@@ -1008,14 +1008,18 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 		Eigen::VectorXd mu = fam.linkinv(eta);
 
 		// ── Working weights and response ────────────────────────
-		// Canonical link: w_i = V(μ_i),  z_i = η_i + (y_i − μ_i)/V(μ_i)
+		// General GLM: w_i = (dμ/dη)² / V(μ),  z_i = η_i + (y_i − μ_i) / (dμ/dη)
+		// For canonical links this simplifies to w_i = V(μ_i) and z_i = η_i + (y_i − μ_i) / V(μ_i).
+		// For negative binomial (non-canonical log link) the general form is required.
 		Eigen::VectorXd V = fam.variance(mu);
+		Eigen::VectorXd me = fam.mu_eta(mu);
 		Eigen::VectorXd w(n), z(n);
 		for (intptr_t i = 0; i < n; i++)
 		{
 			double v = std::max(V[i], 1e-10);
-			w[i] = v;
-			z[i] = eta[i] + (ym[i] - mu[i]) / v;
+			double d = std::max(me[i], 1e-10);
+			w[i] = d * d / v;  // generalized IWLS weight
+			z[i] = eta[i] + (ym[i] - mu[i]) / d;
 		}
 
 		// ── Henderson system ────────────────────────────────────
@@ -1128,7 +1132,14 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 		             + 0.5 * lay.J[g] * std::log(2.0 * M_PI * sigma2_u[g]);
 	}
 
-	Eigen::VectorXd w_final = fam.variance(res.mu);
+	Eigen::VectorXd V_final = fam.variance(res.mu);
+	Eigen::VectorXd me_final = fam.mu_eta(res.mu);
+	Eigen::VectorXd w_final(n);
+	for (intptr_t i = 0; i < n; i++) {
+		double v = std::max(V_final[i], 1e-10);
+		double d = std::max(me_final[i], 1e-10);
+		w_final[i] = d * d / v;
+	}
 	double log_det_H = full_log_det_H(w_final, inv_sigma2_u, lay, n);
 
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_H
@@ -1161,6 +1172,17 @@ struct PirlsObjective
 		Eigen::VectorXd sigma2_u(lay.G);
 		for (intptr_t g = 0; g < lay.G; g++) {
 			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		}
+
+		// For NB, the last element of theta is log(θ_nb).
+		// Create a new Family with the current θ value so that loglik,
+		// variance, and mu_eta all use the correct overdispersion.
+		if (fam.name == "negbin")
+		{
+			double theta_nb = std::exp(theta[lay.G]);
+			auto fam_nb = Family::negbin(theta_nb);
+			auto res = solve_pirls(sigma2_u, fam_nb, Xm, ym, lay, n, p, beta_init);
+			return res.laplace_nll;
 		}
 
 		auto res = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_init);
@@ -1409,6 +1431,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	Model fe;
 	if (is_gaussian) {
 		fe = lm(y, X);
+	} else if (fam.name == "negbin") {
+		// For NB, use Poisson as starting fit (glm() uses canonical-link
+		// gradient which is incorrect for NB's non-canonical log link).
+		fe = glm(y, X, Family::poisson());
 	} else {
 		fe = glm(y, X, fam);
 	}
@@ -1490,6 +1516,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	double sigma2 = 0;
 	int niter = 0;
 	bool converged = true;
+	Family fam_used = fam;  // mutable copy; updated with fitted θ_nb for negative binomial
 
 	if (is_gaussian)
 	{
@@ -1533,14 +1560,27 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	else
 	{
 		// Non-Gaussian: PIRLS profiling — Newton over θ = (log σ_u_1..G).
+		// For NB, θ also includes log(θ_nb) as an extra element.
 		// β is concentrated out via PIRLS at each θ evaluation, reducing
-		// the outer dimension from p+G to G and eliminating β-vs-σ ridges.
+		// the outer dimension from p+G to G (or G+1 for NB) and eliminating
+		// β-vs-σ ridges.
+		bool is_nb = (fam.name == "negbin");
 		Eigen::VectorXd beta_init = phi.head(p);
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init};
 
-		Eigen::VectorXd theta(G);
+		intptr_t outer_dim_pirls = is_nb ? (G + 1) : G;
+		Eigen::VectorXd theta(outer_dim_pirls);
 		for (intptr_t g = 0; g < G; g++) {
 			theta[g] = phi[p + g];
+		}
+		if (is_nb)
+		{
+			// Initialize θ_nb from method-of-moments: Var(y)/mean(y) ≈ 1 + mean(y)/θ
+			double ybar = ym.mean();
+			double yvar = (ym.array() - ybar).square().sum() / std::max(n - 1, (intptr_t)1);
+			double theta_nb_init = (yvar > ybar) ? ybar * ybar / (yvar - ybar) : 10.0;
+			theta_nb_init = std::clamp(theta_nb_init, 0.01, 1e6);
+			theta[G] = std::log(theta_nb_init);
 		}
 
 		auto newton_res = newton_optimize(pirls_obj, theta);
@@ -1553,7 +1593,13 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			sigma2_u[g] = std::exp(2.0 * theta[g]);
 		}
 
-		auto final_pirls = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_init);
+		// For NB, update the Family with the converged θ_nb before final PIRLS
+		if (is_nb) {
+			double theta_nb = std::exp(theta[G]);
+			fam_used = Family::negbin(theta_nb);
+		}
+
+		auto final_pirls = solve_pirls(sigma2_u, fam_used, Xm, ym, lay, n, p, beta_init);
 		beta_hat = final_pirls.beta;
 
 		// Assemble full φ = (β̂, θ̂) for SE computation
@@ -1578,7 +1624,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		auto pirls_final = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_hat);
+		auto pirls_final = solve_pirls(sigma2_u, fam_used, Xm, ym, lay, n, p, beta_hat);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
@@ -1662,11 +1708,19 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// At the PIRLS convergence point, the Henderson matrix is:
 		//   C = [X'WX     X'WZ       ]
 		//       [Z'WX   Z'WZ + D⁻¹   ]
-		// where W = diag(V(μ̂)) at the converged predictions.
+		// where W = diag(w_i) with w_i = (dμ/dη)²/V(μ) (generalized IWLS weights)
+		// at the converged predictions.
 		// The top-left p×p block of C⁻¹ is the conditional covariance
 		// of β̂.  This is what lme4/glmmTMB report.
 
-		Eigen::VectorXd w_se = fam.variance(final_inner.mu);
+		Eigen::VectorXd V_se = fam_used.variance(final_inner.mu);
+		Eigen::VectorXd me_se = fam_used.mu_eta(final_inner.mu);
+		Eigen::VectorXd w_se(n);
+		for (intptr_t i = 0; i < n; i++) {
+			double v = std::max(V_se[i], 1e-10);
+			double d = std::max(me_se[i], 1e-10);
+			w_se[i] = d * d / v;
+		}
 		intptr_t J = lay.J_total;
 		intptr_t sdim = p + J;
 
@@ -1734,6 +1788,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	Model model;
 	model.family = fam.name;
 	model.link = fam.link_name;
+	model.theta = fam_used.theta;
 	model.nobs = n;
 	model.nfixed = p;
 	model.y = y;

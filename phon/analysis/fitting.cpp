@@ -613,6 +613,10 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 	{
 		model = lm(dm.y, dm.X);
 	}
+	else if (family == "negbin")
+	{
+		model = negbin(dm.y, dm.X);
+	}
 	else
 	{
 		auto fam = Family::from_name(family);

@@ -44,7 +44,7 @@ struct Model
 {
 	// ---- Metadata ----
 	String formula;     // the formula string, e.g. "f1 ~ vowel + (1|speaker)"
-	String family;      // "gaussian", "binomial", "poisson"
+	String family;      // "gaussian", "binomial", "poisson", "negbin"
 	String link;        // "identity", "logit", "log"
 	intptr_t nobs = 0;  // number of observations
 	intptr_t nfixed = 0; // number of fixed-effects parameters (including intercept)
@@ -73,6 +73,9 @@ struct Model
 	double r2 = 0;             // R² (Gaussian only)
 	double adj_r2 = 0;         // adjusted R² (Gaussian only)
 
+	// ---- Negative binomial specific ----
+	double theta = 0;          // NB overdispersion parameter (θ > 0); 0 for other families
+
 	// ---- Convergence (iterative methods) ----
 	int niter = 0;             // number of iterations (0 for OLS)
 	bool converged = true;     // whether the optimizer converged
@@ -94,12 +97,15 @@ struct Model
 
 	bool is_gaussian() const { return family == "gaussian"; }
 
+	bool is_negbin() const { return family == "negbin"; }
+
 	// Number of estimated parameters (for AIC/BIC).
-	// Fixed-effects parameters + dispersion (if Gaussian) + variance components.
+	// Fixed-effects parameters + dispersion (if Gaussian or NB) + variance components.
 	intptr_t nparams() const
 	{
 		intptr_t k = nfixed;
 		if (is_gaussian()) k += 1; // residual variance
+		if (is_negbin()) k += 1;   // overdispersion θ
 		for (intptr_t i = 1; i <= random_effects.size(); i++)
 		{
 			auto &g = random_effects[i];
@@ -123,7 +129,7 @@ struct Model
 	// For Gaussian: fitted = X * beta.
 	// For GLMs: fitted = linkinv(X * beta).
 	// Caller must provide the inverse link function.
-	void compute_fitted(Vector<double> (*linkinv)(const Vector<double> &))
+	void compute_fitted(const std::function<Vector<double>(const Vector<double> &)> &linkinv)
 	{
 		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
 		Eigen::Map<Vector<double>> bm(beta.data(), nfixed);
