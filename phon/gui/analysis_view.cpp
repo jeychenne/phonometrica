@@ -270,6 +270,10 @@ void AnalysisView::setupUi()
 	m_bins_spin->setSpecialValueText(tr("Auto"));
 	m_bins_spin->setToolTip(tr("Number of histogram bins (0 = automatic)"));
 	eda_top->addWidget(m_bins_spin);
+	m_eda_regline_check = new QCheckBox(tr("Regression line"));
+	m_eda_regline_check->setToolTip(tr("Overlay an OLS regression line on the scatter plot"));
+	m_eda_regline_check->setVisible(false);
+	eda_top->addWidget(m_eda_regline_check);
 	eda_top->addStretch();
 	auto *eda_export_button = new QPushButton(tr("Export..."));
 	eda_top->addWidget(eda_export_button);
@@ -302,6 +306,7 @@ void AnalysisView::setupUi()
 	connect(m_eda_y_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_x_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_regline_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(eda_export_button, &QPushButton::clicked, this, &AnalysisView::onExportEdaPlot);
 }
 
@@ -787,6 +792,7 @@ void AnalysisView::updateEdaPlot()
 
 	if (!has_x)
 	{
+		m_eda_regline_check->setVisible(false);
 		if (y_numeric)
 		{
 			// Histogram of numeric Y values
@@ -857,11 +863,47 @@ void AnalysisView::updateEdaPlot()
 			}
 		}
 		if (xv.empty()) { m_eda_plot->clear(); return; }
+
+		// Compute OLS regression before moving the vectors.
+		double reg_intercept = 0, reg_slope = 0, reg_r2 = 0;
+		bool reg_valid = false;
+		if (m_eda_regline_check->isChecked() && xv.size() >= 2)
+		{
+			size_t n = xv.size();
+			double sx = 0, sy = 0;
+			for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
+			double mx = sx / n, my = sy / n;
+
+			double sxy = 0, sxx = 0, syy = 0;
+			for (size_t i = 0; i < n; i++) {
+				double dx = xv[i] - mx;
+				double dy = yv[i] - my;
+				sxy += dx * dy;
+				sxx += dx * dx;
+				syy += dy * dy;
+			}
+			if (sxx > 1e-15)
+			{
+				reg_slope = sxy / sxx;
+				reg_intercept = my - reg_slope * mx;
+				reg_r2 = (syy > 1e-15) ? (sxy * sxy) / (sxx * syy) : 0.0;
+				reg_valid = true;
+			}
+		}
+
 		m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
 		                     y_name_q + QStringLiteral(" ~ ") + x_name_q);
+
+		m_eda_regline_check->setVisible(true);
+		if (reg_valid)
+			m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);
+		else
+			m_eda_plot->clearRegressionLine();
 	}
 	else
 	{
+		m_eda_regline_check->setVisible(false);
+
 		// Box plot: X categorical, Y continuous
 		std::vector<QString> groups;
 		std::vector<double> vals;
