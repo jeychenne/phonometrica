@@ -360,6 +360,7 @@ if(WITH_GUI)
         icons/ruler.svg
         icons/statistics.svg
         icons/tex.svg
+        icons/check.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

@@ -30,17 +30,54 @@
 #include <QAction>
 #include <QToolButton>
 #include <QHeaderView>
+#include <QSet>
+#include <QPainter>
+#include <QStyledItemDelegate>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/application/project.hpp>
 
 namespace phonometrica {
 
+// =====================================================================
+// Delegate that draws a small check mark on the right side of list items.
+// The check mark is shown when Qt::UserRole + 1 data is true.
+// =====================================================================
+
+class ColumnCheckDelegate : public QStyledItemDelegate
+{
+public:
+
+	explicit ColumnCheckDelegate(const QIcon &icon, QObject *parent = nullptr)
+		: QStyledItemDelegate(parent), m_icon(icon) { }
+
+	void paint(QPainter *painter, const QStyleOptionViewItem &option,
+	           const QModelIndex &index) const override
+	{
+		QStyledItemDelegate::paint(painter, option, index);
+
+		if (!index.data(Qt::UserRole + 1).toBool()) return;
+
+		int size = 14;
+		int margin = 4;
+		QRect rect = option.rect;
+		QRect icon_rect(rect.right() - size - margin,
+		                rect.top() + (rect.height() - size) / 2,
+		                size, size);
+		m_icon.paint(painter, icon_rect);
+	}
+
+private:
+
+	QIcon m_icon;
+};
+
 AnalysisView::AnalysisView(Handle<Analysis> analysis, QWidget *parent) :
 	View(parent),
 	m_analysis(std::move(analysis))
 {
 	m_analysis->open();
+	m_check_icon = QIcon(QStringLiteral(":/icons/check.svg"));
 	setupUi();
 	populateColumns();
 	populateModelList();
@@ -175,6 +212,7 @@ void AnalysisView::setupUi()
 	m_column_list = new QListWidget;
 	m_column_list->setToolTip(tr("Double-click to add to formula; right-click for options"));
 	m_column_list->setContextMenuPolicy(Qt::CustomContextMenu);
+	m_column_list->setItemDelegate(new ColumnCheckDelegate(m_check_icon, m_column_list));
 	col_layout->addWidget(m_column_list);
 	left_layout->addWidget(col_group, 1);
 
@@ -315,20 +353,19 @@ void AnalysisView::setupUi()
 	m_eda_summary->setSelectionMode(QAbstractItemView::NoSelection);
 	m_eda_summary->setAlternatingRowColors(true);
 	m_eda_summary->verticalHeader()->setVisible(false);
-	m_eda_summary->horizontalHeader()->setStretchLastSection(true);
-	m_eda_summary->setMaximumHeight(200);
+	m_eda_summary->horizontalHeader()->setStretchLastSection(false);
 
-	// ── Assemble: plot | controls | stats in a splitter ──
-	auto *eda_bottom = new QWidget;
-	auto *eda_bottom_layout = new QVBoxLayout(eda_bottom);
-	eda_bottom_layout->setContentsMargins(0, 0, 0, 0);
-	eda_bottom_layout->setSpacing(4);
-	eda_bottom_layout->addWidget(eda_controls_widget);
-	eda_bottom_layout->addWidget(m_eda_summary, 1);
+	// ── Assemble: splitter between (plot + controls) and stats ──
+	auto *eda_top = new QWidget;
+	auto *eda_top_layout = new QVBoxLayout(eda_top);
+	eda_top_layout->setContentsMargins(0, 0, 0, 0);
+	eda_top_layout->setSpacing(4);
+	eda_top_layout->addWidget(m_eda_plot, 1);
+	eda_top_layout->addWidget(eda_controls_widget);
 
 	auto *eda_splitter = new QSplitter(Qt::Vertical);
-	eda_splitter->addWidget(m_eda_plot);
-	eda_splitter->addWidget(eda_bottom);
+	eda_splitter->addWidget(eda_top);
+	eda_splitter->addWidget(m_eda_summary);
 	eda_splitter->setStretchFactor(0, 3);
 	eda_splitter->setStretchFactor(1, 1);
 	eda_layout->addWidget(eda_splitter, 1);
@@ -360,6 +397,7 @@ void AnalysisView::setupUi()
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_regline_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_density_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
 }
 
 void AnalysisView::populateColumns()
@@ -379,6 +417,8 @@ void AnalysisView::populateColumns()
 		m_eda_x_combo->addItem(qname);
 		m_eda_y_combo->addItem(qname);
 	}
+
+	updateColumnMarkers();
 }
 
 void AnalysisView::populateModelList()
@@ -574,27 +614,123 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 
 	QString name = item->text();
 
+	// Try to parse the current formula for structural operations.
+	auto parsed = tryParseFormula();
+
+	// Check whether this variable is already used in the formula.
+	bool in_formula = false;
+	if (parsed)
+	{
+		auto vars = parsed->all_variables();
+		auto name_s = String(name.toUtf8().constData());
+		for (intptr_t i = 1; i <= vars.size(); i++) {
+			if (vars[i] == name_s) { in_formula = true; break; }
+		}
+	}
+
 	QMenu menu;
-	auto *resp_action = menu.addAction(tr("Set as response"));
-	auto *pred_action = menu.addAction(tr("Add as predictor"));
+
+	// ── Response and remove ──────────────────────────────────────────
+	menu.addAction(tr("Set as response"));
+	auto *remove_action = menu.addAction(tr("Remove from formula"));
+	remove_action->setEnabled(in_formula);
+
 	menu.addSeparator();
-	auto *interaction_action = menu.addAction(tr("Add as interaction (\303\227)"));
-	auto *random_action = menu.addAction(tr("Add as random intercept"));
+
+	// ── Fixed effects ────────────────────────────────────────────────
+	menu.addAction(tr("Add as predictor"));
+
+	// Interaction submenus: list current fixed terms.
+	auto *interaction_menu = menu.addMenu(tr("Add with main effects and interaction"));
+	auto *interaction_only_menu = menu.addMenu(tr("Add interaction only with..."));
+
+	if (parsed && !parsed->fixed.empty())
+	{
+		for (intptr_t i = 1; i <= parsed->fixed.size(); i++)
+		{
+			auto term_s = parsed->fixed[i].to_string();
+			auto term_q = QString::fromUtf8(term_s.data(), (int)term_s.size());
+			interaction_menu->addAction(term_q);
+			interaction_only_menu->addAction(term_q);
+		}
+	}
+	else
+	{
+		auto *placeholder1 = interaction_menu->addAction(tr("(no fixed effects in formula)"));
+		placeholder1->setEnabled(false);
+		auto *placeholder2 = interaction_only_menu->addAction(tr("(no fixed effects in formula)"));
+		placeholder2->setEnabled(false);
+	}
+
+	menu.addSeparator();
+
+	// ── Random effects ───────────────────────────────────────────────
+	menu.addAction(tr("Add as grouping factor"));
+
+	auto *corr_slope_menu = menu.addMenu(tr("Add correlated slope in..."));
+	auto *indep_slope_menu = menu.addMenu(tr("Add independent slope in..."));
+
+	if (parsed && !parsed->random.empty())
+	{
+		auto name_s = String(name.toUtf8().constData());
+
+		for (intptr_t i = 1; i <= parsed->random.size(); i++)
+		{
+			auto &rt = parsed->random[i];
+			auto group_q = QString::fromUtf8(rt.group.data(), (int)rt.group.size());
+
+			// Correlated slope: check if this variable is already a slope in this term.
+			auto *corr_action = corr_slope_menu->addAction(group_q);
+			bool already_slope = false;
+			for (intptr_t s = 1; s <= rt.slopes.size(); s++) {
+				if (rt.slopes[s] == name_s) { already_slope = true; break; }
+			}
+			corr_action->setEnabled(!already_slope);
+			corr_action->setData(group_q);
+
+			// Independent slope: always available.
+			auto *indep_action = indep_slope_menu->addAction(group_q);
+			indep_action->setData(group_q);
+		}
+	}
+	else
+	{
+		auto *placeholder3 = corr_slope_menu->addAction(tr("(no grouping factors in formula)"));
+		placeholder3->setEnabled(false);
+		auto *placeholder4 = indep_slope_menu->addAction(tr("(no grouping factors in formula)"));
+		placeholder4->setEnabled(false);
+	}
+
+	// ── Execute ──────────────────────────────────────────────────────
 
 	auto *chosen = menu.exec(m_column_list->mapToGlobal(pos));
 	if (!chosen) return;
 
-	if (chosen == resp_action) {
+	QString action_text = chosen->text();
+
+	if (action_text == tr("Set as response")) {
 		setResponse(name);
-	} else if (chosen == pred_action) {
+	}
+	else if (chosen == remove_action) {
+		removeFromFormula(name);
+	}
+	else if (action_text == tr("Add as predictor")) {
 		addPredictor(name);
-	} else if (chosen == interaction_action) {
-		QString text = m_formula_edit->text().trimmed();
-		if (!text.isEmpty() && text.contains('~'))
-			m_formula_edit->setText(text + QStringLiteral(" * ") + quoteIfNeeded(name));
-		m_formula_edit->setFocus();
-	} else if (chosen == random_action) {
+	}
+	else if (action_text == tr("Add as grouping factor")) {
 		addRandomIntercept(name);
+	}
+	else if (chosen->parent() == interaction_menu) {
+		addInteraction(name, chosen->text(), true);
+	}
+	else if (chosen->parent() == interaction_only_menu) {
+		addInteraction(name, chosen->text(), false);
+	}
+	else if (chosen->parent() == corr_slope_menu) {
+		addRandomSlope(name, chosen->data().toString(), true);
+	}
+	else if (chosen->parent() == indep_slope_menu) {
+		addRandomSlope(name, chosen->data().toString(), false);
 	}
 }
 
@@ -623,7 +759,7 @@ void AnalysisView::addPredictor(const QString &name)
 	} else {
 		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
 		if (rhs.isEmpty())
-			m_formula_edit->setText(text + quoted);
+			m_formula_edit->setText(text + QStringLiteral(" ") + quoted);
 		else
 			m_formula_edit->setText(text + QStringLiteral(" + ") + quoted);
 	}
@@ -649,13 +785,185 @@ void AnalysisView::addRandomIntercept(const QString &name)
 	{
 		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
 		if (rhs.isEmpty())
-			m_formula_edit->setText(text + term);
+			m_formula_edit->setText(text + QStringLiteral(" ") + term);
 		else
 			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
 	}
 
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+void AnalysisView::addInteraction(const QString &name, const QString &other, bool withMainEffects)
+{
+	QString quoted = quoteIfNeeded(name);
+	// withMainEffects → "name * other" (expands to main effects + interaction)
+	// interaction only → "name:other" (interaction term alone)
+	QString term = withMainEffects
+		? (quoted + QStringLiteral(" * ") + other)
+		: (quoted + QStringLiteral(":") + other);
+	QString text = m_formula_edit->text().trimmed();
+
+	if (text.isEmpty() || !text.contains('~'))
+	{
+		if (text.isEmpty())
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+	}
+	else
+	{
+		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+		if (rhs.isEmpty())
+			m_formula_edit->setText(text + QStringLiteral(" ") + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+	}
+
+	m_formula_edit->setFocus();
+	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+void AnalysisView::addRandomSlope(const QString &variable, const QString &group, bool correlated)
+{
+	auto parsed = tryParseFormula();
+	if (!parsed) return;
+
+	auto var_s = String(variable.toUtf8().constData());
+	auto group_s = String(group.toUtf8().constData());
+
+	// Find the existing RandomTerm with matching group.
+	for (intptr_t i = 1; i <= parsed->random.size(); i++)
+	{
+		if (parsed->random[i].group != group_s) continue;
+
+		auto &rt = parsed->random[i];
+
+		if (correlated)
+		{
+			// Add the slope to the existing term: (1 | group) → (1 + X | group).
+			// This estimates the correlation between intercept and slope.
+			rt.slopes.append(var_s);
+		}
+		else if (rt.slopes.empty())
+		{
+			// Intercept-only: replace intercept with slope in place.
+			// (1 | group) → (0 + X | group).
+			// The user can re-add a random intercept separately if needed.
+			rt.intercept = false;
+			rt.slopes.append(var_s);
+		}
+		else
+		{
+			// Already has slopes: add a separate term so the new slope
+			// is estimated independently.
+			// (1 + Y | group) → (1 + Y | group) + (0 + X | group).
+			stats::RandomTerm new_rt;
+			new_rt.group = group_s;
+			new_rt.slopes.append(var_s);
+			new_rt.intercept = false;
+			parsed->random.append(std::move(new_rt));
+		}
+		break;
+	}
+
+	applyFormula(*parsed);
+}
+
+void AnalysisView::removeFromFormula(const QString &name)
+{
+	auto parsed = tryParseFormula();
+	if (!parsed) return;
+
+	auto name_s = String(name.toUtf8().constData());
+
+	// Remove from response.
+	if (parsed->response == name_s) {
+		parsed->response = String();
+	}
+
+	// Remove from fixed effects: remove any term that contains this variable,
+	// plus remove any interaction terms that reference it.
+	for (intptr_t i = parsed->fixed.size(); i >= 1; i--)
+	{
+		auto &ft = parsed->fixed[i];
+		bool contains = false;
+		for (intptr_t j = 1; j <= ft.variables.size(); j++) {
+			if (ft.variables[j] == name_s) { contains = true; break; }
+		}
+		if (contains) {
+			parsed->fixed.remove_at(i);
+		}
+	}
+
+	// Remove from random effects: remove the variable as a slope.
+	// If it's the grouping factor, remove the entire term.
+	for (intptr_t i = parsed->random.size(); i >= 1; i--)
+	{
+		auto &rt = parsed->random[i];
+
+		if (rt.group == name_s) {
+			parsed->random.remove_at(i);
+			continue;
+		}
+
+		// Remove as slope.
+		for (intptr_t s = rt.slopes.size(); s >= 1; s--) {
+			if (rt.slopes[s] == name_s) {
+				rt.slopes.remove_at(s);
+			}
+		}
+
+		// If the term has no intercept and no slopes, restore the intercept
+		// rather than dropping the random effect entirely.
+		if (!rt.intercept && rt.slopes.empty()) {
+			rt.intercept = true;
+		}
+	}
+
+	applyFormula(*parsed);
+}
+
+std::optional<stats::Formula> AnalysisView::tryParseFormula()
+{
+	auto bytes = m_formula_edit->text().trimmed().toUtf8();
+	if (bytes.isEmpty()) return std::nullopt;
+	try {
+		return stats::Formula::parse(String(bytes.constData(), bytes.size()));
+	}
+	catch (...) {
+		return std::nullopt;
+	}
+}
+
+void AnalysisView::applyFormula(const stats::Formula &formula)
+{
+	auto s = formula.to_string();
+	m_formula_edit->setText(QString::fromUtf8(s.data(), (int)s.size()));
+	m_formula_edit->setFocus();
+	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+void AnalysisView::updateColumnMarkers()
+{
+	QSet<QString> used;
+	auto bytes = m_formula_edit->text().trimmed().toUtf8();
+	if (!bytes.isEmpty())
+	{
+		try {
+			auto formula = stats::Formula::parse(String(bytes.constData(), bytes.size()));
+			auto vars = formula.all_variables();
+			for (intptr_t i = 1; i <= vars.size(); i++) {
+				used.insert(QString::fromUtf8(vars[i].data(), (int)vars[i].size()));
+			}
+		}
+		catch (...) { }
+	}
+
+	for (int i = 0; i < m_column_list->count(); i++) {
+		auto *item = m_column_list->item(i);
+		item->setData(Qt::UserRole + 1, used.contains(item->text()));
+	}
 }
 
 
