@@ -63,6 +63,12 @@ public:
     // Get the unique values in a text column (for factor levels).
     Array<String> get_levels(intptr_t j) const;
 
+	// Remove row i (1-based). Shifts subsequent rows up.
+	void remove_row(intptr_t i);
+
+	// Remove column j (1-based). Shifts subsequent columns left.
+	void remove_column(intptr_t j);
+
 	static void initialize(Runtime &rt);
 
 private:

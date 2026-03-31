@@ -304,4 +304,36 @@ Array<String> Dataset::get_levels(intptr_t j) const
     return levels;
 }
 
+void Dataset::remove_row(intptr_t i)
+{
+    assert(i >= 1 && i <= nrow);
+
+    for (intptr_t j = 1; j <= ncol; j++)
+    {
+        auto col = m_columns[j].get();
+
+        switch (col->type())
+        {
+        case ColumnType::Numeric:
+            cast_num(col)->data.remove_at(i);
+            break;
+        case ColumnType::Boolean:
+            cast_bool(col)->data.remove_at(i);
+            break;
+        default:
+            cast_string(col)->data.remove_at(i);
+            break;
+        }
+    }
+
+    nrow--;
+}
+
+void Dataset::remove_column(intptr_t j)
+{
+    assert(j >= 1 && j <= ncol);
+    m_labels.remove_at(j);
+    m_columns.remove_at(j);
+    ncol--;
+}
 } // namespace phonometrica

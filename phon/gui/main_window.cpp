@@ -34,6 +34,7 @@
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/annotation_view.hpp>
+#include <phon/gui/dataset_view.hpp>
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/user_dialog.hpp>
@@ -1512,6 +1513,14 @@ void MainWindow::onDocumentRequested(Document *doc)
 		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
 		return;
 	}
+	// Handle dataset files
+	if (doc->is<Dataset>())
+	{
+		auto *ds = static_cast<Dataset *>(doc);
+		openDataset(Handle<Dataset>(ds));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
 
 	// Fallback placeholder for other document types
 	auto &path = doc->path();
@@ -1569,6 +1578,16 @@ ViewPanel *MainWindow::addViewTab(View *view)
 void MainWindow::openScript(const Handle<Script> &script)
 {
 	auto *view = new ScriptView(m_runtime, m_console, script);
+	addViewTab(view);
+}
+
+void MainWindow::openDataset(Handle<Dataset> ds)
+{
+	auto *view = new DatasetView(ds);
+
+	connect(view, &DatasetView::requestAnalysis,
+		this, static_cast<void (MainWindow::*)(Handle<DataTable>)>(&MainWindow::openAnalysis));
+
 	addViewTab(view);
 }
 

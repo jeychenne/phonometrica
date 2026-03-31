@@ -48,6 +48,7 @@ struct Model
 	String link;        // "identity", "logit", "log"
 	intptr_t nobs = 0;  // number of observations
 	intptr_t nfixed = 0; // number of fixed-effects parameters (including intercept)
+	Array<String> response_levels; // for binary text response: [reference(0), success(1)] (empty if numeric)
 
 	// ---- Fixed effects ----
 	Array<String> coef_names;  // coefficient names: "(Intercept)", "vowel[i]", etc.
