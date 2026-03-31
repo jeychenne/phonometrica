@@ -14,6 +14,7 @@
 #ifndef PHONOMETRICA_FITTING_HPP
 #define PHONOMETRICA_FITTING_HPP
 
+#include <map>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/formula.hpp>
 #include <phon/application/data_table.hpp>
@@ -26,15 +27,19 @@ namespace phonometrica::stats {
 //! extracts the data from the DataTable, builds design matrices (with treatment contrasts for
 //! categorical variables), and calls the appropriate regression function.
 //!
-//! \param data      a DataTable (Concordance or Dataset) providing column access
-//! \param formula   a parsed Formula object
-//! \param family    family name: "gaussian" (default), "binomial", "poisson"
+//! \param data             a DataTable (Concordance or Dataset) providing column access
+//! \param formula          a parsed Formula object
+//! \param family           family name: "gaussian" (default), "binomial", "poisson"
+//! \param reference_levels maps variable names to their chosen reference level for treatment
+//!                         contrasts; variables not in the map use the default (first
+//!                         alphabetically sorted level)
 //! \return a fitted Model
 //!
 //! Rows containing missing values (NaN or empty) for any variable in the formula are
 //! excluded (complete-case analysis). Throws if a variable name is not found, or if
 //! there are not enough complete observations.
-Model fit(const DataTable &data, const Formula &formula, const String &family = "gaussian");
+Model fit(const DataTable &data, const Formula &formula, const String &family = "gaussian",
+          const std::map<String, String> &reference_levels = {});
 
 } // namespace phonometrica::stats
 

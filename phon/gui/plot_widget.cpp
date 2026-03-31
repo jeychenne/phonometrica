@@ -446,6 +446,12 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 		p.setPen(QPen(REFLINE_COLOR, 1.5, Qt::DashLine));
 		p.drawLine(QPointF(left, y), QPointF(right, y));
 	}
+	else if (m_ref_line == RefLine::HorizontalAtHalf)
+	{
+		double y = dataToY(0.5);
+		p.setPen(QPen(REFLINE_COLOR, 1.5, Qt::DashLine));
+		p.drawLine(QPointF(left, y), QPointF(right, y));
+	}
 	else if (m_ref_line == RefLine::Diagonal)
 	{
 		double lo = std::max(xlo, ylo);

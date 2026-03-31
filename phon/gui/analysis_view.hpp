@@ -27,11 +27,14 @@
 #include <QSpinBox>
 #include <QLabel>
 #include <QTableWidget>
+#include <QGroupBox>
+#include <QTextEdit>
 #include <QIcon>
 #include <phon/gui/view.hpp>
 #include <phon/gui/plot_widget.hpp>
 #include <phon/application/analysis.hpp>
 #include <phon/analysis/formula.hpp>
+#include <phon/analysis/scaled_residuals.hpp>
 
 namespace phonometrica {
 
@@ -96,12 +99,21 @@ private:
 
 	void plotResidualsVsFitted(const stats::Model &m);
 	void plotQQ(const stats::Model &m);
+	void plotScaledResidualsVsFitted(const stats::Model &m);
+	void plotScaledResidualQQ(const stats::Model &m);
+	const stats::ScaledResidualResult *ensureScaledResiduals(const stats::Model &m);
+	void updateTestResults(const stats::ScaledResidualResult &sr);
+	void clearTestResults();
 	void updateEdaPlot();
 	void updateEdaSummary();
 	bool isColumnNumeric(const String &col_name) const;
 
 	Handle<Analysis> m_analysis;
 	int m_current_model = -1;
+
+	// Scaled residual cache (lazy, invalidated on model change).
+	int m_scaled_residuals_model = -1;
+	std::optional<stats::ScaledResidualResult> m_scaled_residuals;
 
 	// Top bar
 	QLineEdit *m_formula_edit = nullptr;
@@ -121,6 +133,8 @@ private:
 	// Diagnostics tab
 	QComboBox *m_plot_type_combo = nullptr;
 	PlotWidget *m_plot = nullptr;
+	QGroupBox *m_test_results_group = nullptr;
+	QTextEdit *m_test_results_text = nullptr;
 
 	// EDA tab
 	QComboBox *m_eda_y_combo = nullptr;

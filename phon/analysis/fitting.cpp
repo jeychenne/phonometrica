@@ -156,8 +156,11 @@ static std::vector<double> extract_numeric(const DataTable &data, intptr_t col,
 
 
 // Collect sorted unique levels for a categorical column.
+// If reference is non-empty and appears among the levels, it is placed first;
+// all remaining levels follow in alphabetical order.
 static Array<String> extract_levels(const DataTable &data, intptr_t col,
-                                      const std::vector<intptr_t> &rows)
+                                      const std::vector<intptr_t> &rows,
+                                      const String &reference = String())
 {
 	// Use a map to collect unique levels in sorted order.
 	std::map<std::string, bool> seen;
@@ -169,10 +172,25 @@ static Array<String> extract_levels(const DataTable &data, intptr_t col,
 	}
 
 	Array<String> levels;
-	for (auto &kv : seen) {
+
+	// Place the reference level first if specified and present.
+	std::string ref_key;
+	if (!reference.empty())
+	{
+		ref_key.assign(reference.data(), reference.size());
+		if (seen.count(ref_key)) {
+			levels.append(reference);
+		}
+	}
+
+	for (auto &kv : seen)
+	{
+		if (!ref_key.empty() && kv.first == ref_key)
+			continue; // already placed first
 		levels.append(String(kv.first));
 	}
-	return levels; // already sorted by std::map ordering
+
+	return levels;
 }
 
 
@@ -180,9 +198,20 @@ static Array<String> extract_levels(const DataTable &data, intptr_t col,
 // Variable expansion
 // =====================================================================
 
+// Look up the reference level for a variable, if any.
+static String lookup_reference(const String &name, const std::map<String, String> &reference_levels)
+{
+	auto it = reference_levels.find(name);
+	if (it != reference_levels.end())
+		return it->second;
+	return String();
+}
+
+
 // Expand a single variable into design columns.
 static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
                                          const std::vector<intptr_t> &rows,
+                                         const std::map<String, String> &reference_levels,
                                          bool full_rank = false)
 {
 	ExpandedVariable ev;
@@ -205,7 +234,7 @@ static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
 		// The full_rank form is used for (0 + factor | group) random effects,
 		// where there is no intercept to absorb the reference level.
 		ev.numeric = false;
-		ev.levels = extract_levels(data, col, rows);
+		ev.levels = extract_levels(data, col, rows, lookup_reference(name, reference_levels));
 
 		if (ev.levels.size() < 2) {
 			throw error("Categorical variable '%' has fewer than 2 levels", name);
@@ -295,7 +324,8 @@ struct DesignMatrix
 
 static DesignMatrix build_design_matrix(const DataTable &data, const Formula &formula,
                                          const std::vector<intptr_t> &rows,
-                                         const String &family = "gaussian")
+                                         const String &family,
+                                         const std::map<String, String> &reference_levels)
 {
 	size_t n = rows.size();
 
@@ -315,7 +345,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 			throw error("Variable '%' not found in data", name);
 		}
 		var_col_map[key] = col;
-		var_exp_map[key] = expand_variable(data, col, rows);
+		var_exp_map[key] = expand_variable(data, col, rows, reference_levels);
 	};
 
 	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
@@ -386,13 +416,15 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 			throw error("Response variable '%' must be numeric for family '%'",
 			            formula.response, family);
 		}
-		resp_levels = extract_levels(data, resp_col, rows);
+		// For the response, also honour user-specified reference level.
+		resp_levels = extract_levels(data, resp_col, rows,
+		                              lookup_reference(formula.response, reference_levels));
 		if (resp_levels.size() != 2)
 		{
 			throw error("Binomial response '%' must have exactly 2 levels (found %)",
 			            formula.response, resp_levels.size());
 		}
-		// R convention: levels are sorted alphabetically; first = 0 (reference), second = 1 (success).
+		// First level = 0 (reference), second = 1 (success).
 	}
 
 	// ── Assemble into Array<double> ──────────────────────────────────
@@ -419,7 +451,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	if (!resp_is_numeric)
 	{
 		// Binary text response: code as 0/1 using the sorted levels.
-		// First level (alphabetically) = 0, second = 1.
+		// First level = 0, second = 1.
 		for (size_t i = 0; i < n; i++)
 		{
 			String cell = data.get_cell(rows[i], resp_col);
@@ -451,7 +483,8 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 // Expands slope variables into treatment-coded design columns (same logic as fixed effects).
 // The Z_design matrix is n_obs × nterms, row-major.
 static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
-                                    const std::vector<intptr_t> &rows)
+                                    const std::vector<intptr_t> &rows,
+                                    const std::map<String, String> &reference_levels)
 {
 	GroupingInfo gi;
 
@@ -507,7 +540,7 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 			throw error("Slope variable '%' not found in data", rt.slopes[s]);
 		}
 
-		auto ev = expand_variable(data, scol, rows, !rt.intercept);
+		auto ev = expand_variable(data, scol, rows, reference_levels, !rt.intercept);
 		for (auto &dc : ev.columns)
 		{
 			gi.term_names.append(dc.name);
@@ -541,7 +574,8 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 // Public fit() entry point
 // =====================================================================
 
-Model fit(const DataTable &data, const Formula &formula, const String &family)
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const std::map<String, String> &reference_levels)
 {
 	if (formula.response.empty()) {
 		throw error("Formula has no response variable");
@@ -644,7 +678,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 
 	// ── Build design matrix ──────────────────────────────────────────
 
-	auto dm = build_design_matrix(data, formula, rows, family);
+	auto dm = build_design_matrix(data, formula, rows, family, reference_levels);
 
 	if (dm.nobs <= dm.ncol) {
 		throw error("Not enough complete observations (% rows, % parameters)", dm.nobs, dm.ncol);
@@ -660,7 +694,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 		std::vector<GroupingInfo> groups;
 		for (intptr_t i = 1; i <= formula.random.size(); i++)
 		{
-			groups.push_back(build_grouping(data, formula.random[i], rows));
+			groups.push_back(build_grouping(data, formula.random[i], rows, reference_levels));
 		}
 		auto fam = Family::from_name(family);
 

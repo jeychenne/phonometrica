@@ -53,7 +53,7 @@ int Analysis::fit(const String &formula_str, const String &family)
 	}
 
 	auto formula = stats::Formula::parse(formula_str);
-	auto model = stats::fit(*m_source, formula, family);
+	auto model = stats::fit(*m_source, formula, family, m_reference_levels);
 	model.formula = formula.to_string();
 	m_models.push_back(std::move(model));
 	m_modified = true;
@@ -85,6 +85,35 @@ Array<String> Analysis::column_names() const
 bool Analysis::content_modified() const
 {
 	return m_modified || Document::content_modified();
+}
+
+
+// =====================================================================
+// Reference levels
+// =====================================================================
+
+void Analysis::set_reference_level(const String &variable, const String &level)
+{
+	m_reference_levels[variable] = level;
+	m_modified = true;
+	m_content_modified = true;
+}
+
+void Analysis::clear_reference_level(const String &variable)
+{
+	auto it = m_reference_levels.find(variable);
+	if (it != m_reference_levels.end())
+	{
+		m_reference_levels.erase(it);
+		m_modified = true;
+		m_content_modified = true;
+	}
+}
+
+String Analysis::reference_level(const String &variable) const
+{
+	auto it = m_reference_levels.find(variable);
+	return (it != m_reference_levels.end()) ? it->second : String();
 }
 
 
@@ -208,6 +237,18 @@ void Analysis::write()
 		add_data_node(root, "Source", rel_path);
 	}
 
+	// Reference levels
+	if (!m_reference_levels.empty())
+	{
+		auto rl_node = root.append_child("ReferenceLevels");
+		for (auto &kv : m_reference_levels)
+		{
+			auto entry = rl_node.append_child("Ref");
+			entry.append_attribute("variable").set_value(kv.first.data());
+			entry.append_attribute("level").set_value(kv.second.data());
+		}
+	}
+
 	// Models
 	auto models_node = root.append_child("Models");
 
@@ -228,6 +269,7 @@ void Analysis::write()
 		add_data_node(mn, "P", doubles_to_string(m.p));
 		add_data_node(mn, "Fitted", doubles_to_string(m.fitted));
 		add_data_node(mn, "Residuals", doubles_to_string(m.residuals));
+		add_data_node(mn, "Y", doubles_to_string(m.y));
 
 		add_data_node(mn, "LogLik", String::format("%.17g", m.loglik));
 		add_data_node(mn, "AIC", String::format("%.17g", m.aic));
@@ -237,8 +279,13 @@ void Analysis::write()
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
 		add_data_node(mn, "R2", String::format("%.17g", m.r2));
 		add_data_node(mn, "AdjR2", String::format("%.17g", m.adj_r2));
+		add_data_node(mn, "Theta", String::format("%.17g", m.theta));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
+
+		if (!m.response_levels.empty()) {
+			add_data_node(mn, "ResponseLevels", strings_to_csv(m.response_levels));
+		}
 
 		// Random effects
 		if (m.has_random_effects())
@@ -291,6 +338,7 @@ void Analysis::load()
 	}
 
 	m_models.clear();
+	m_reference_levels.clear();
 
 	for (auto node = root.first_child(); node; node = node.next_sibling())
 	{
@@ -298,6 +346,18 @@ void Analysis::load()
 		{
 			m_source_path = node.text().get();
 			Project::interpolate(m_source_path, Project::get()->directory());
+		}
+		else if (node.name() == str("ReferenceLevels"))
+		{
+			for (auto entry = node.first_child(); entry; entry = entry.next_sibling())
+			{
+				if (entry.name() != str("Ref")) continue;
+				auto var_attr = entry.attribute("variable");
+				auto lvl_attr = entry.attribute("level");
+				if (var_attr && lvl_attr) {
+					m_reference_levels[String(var_attr.as_string())] = String(lvl_attr.as_string());
+				}
+			}
 		}
 		else if (node.name() == str("Models"))
 		{
@@ -324,6 +384,7 @@ void Analysis::load()
 					else if (name == "P")        m.p = parse_doubles(text);
 					else if (name == "Fitted")   m.fitted = parse_doubles(text);
 					else if (name == "Residuals") m.residuals = parse_doubles(text);
+					else if (name == "Y")        m.y = parse_doubles(text);
 					else if (name == "LogLik")   m.loglik = String(text).to_float();
 					else if (name == "AIC")      m.aic = String(text).to_float();
 					else if (name == "BIC")      m.bic = String(text).to_float();
@@ -332,8 +393,10 @@ void Analysis::load()
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
 					else if (name == "R2")       m.r2 = String(text).to_float();
 					else if (name == "AdjR2")    m.adj_r2 = String(text).to_float();
+					else if (name == "Theta")    m.theta = String(text).to_float();
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
+					else if (name == "ResponseLevels") m.response_levels = parse_csv_strings(text);
 					else if (name == "RandomEffects")
 					{
 						for (auto gn = field.first_child(); gn; gn = gn.next_sibling())

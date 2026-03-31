@@ -33,6 +33,7 @@
 #include <QSet>
 #include <QPainter>
 #include <QStyledItemDelegate>
+#include <QTextEdit>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/application/project.hpp>
@@ -277,6 +278,8 @@ void AnalysisView::setupUi()
 	m_plot_type_combo = new QComboBox;
 	m_plot_type_combo->addItem(tr("Residuals vs Fitted"));
 	m_plot_type_combo->addItem(tr("Normal Q-Q"));
+	m_plot_type_combo->addItem(tr("Scaled Residuals vs Fitted"));
+	m_plot_type_combo->addItem(tr("Scaled Residuals Q-Q"));
 	diag_top->addWidget(m_plot_type_combo);
 	diag_top->addStretch();
 	auto *export_button = new QPushButton(tr("Export..."));
@@ -285,6 +288,20 @@ void AnalysisView::setupUi()
 
 	m_plot = new PlotWidget;
 	diag_layout->addWidget(m_plot, 1);
+
+	// Test results panel (shown only for scaled residual plots)
+	m_test_results_group = new QGroupBox(tr("Residual tests"));
+	auto *test_layout = new QVBoxLayout(m_test_results_group);
+	test_layout->setContentsMargins(6, 6, 6, 6);
+	test_layout->setSpacing(2);
+	m_test_results_text = new QTextEdit;
+	m_test_results_text->setReadOnly(true);
+	m_test_results_text->setFrameShape(QFrame::NoFrame);
+	m_test_results_text->setMaximumHeight(60);
+	test_layout->addWidget(m_test_results_text);
+	m_test_results_group->setVisible(false);
+	diag_layout->addWidget(m_test_results_group);
+
 	m_right_tabs->addTab(diag_widget, tr("Diagnostics"));
 	m_right_tabs->setTabToolTip(1, tr("Residual plots to check model assumptions"));
 
@@ -504,6 +521,8 @@ void AnalysisView::onModelSelected(int row)
 	if (row >= 0 && row < m_analysis->model_count())
 	{
 		m_current_model = row;
+		m_scaled_residuals.reset();
+		m_scaled_residuals_model = -1;
 		displayModel(row);
 
 		// Update the formula bar to match the selected model.
@@ -548,10 +567,13 @@ void AnalysisView::onDeleteModel()
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
 	m_current_model = -1;
+	m_scaled_residuals.reset();
+	m_scaled_residuals_model = -1;
 
 	if (m_model_list->count() == 0) {
 		m_summary->clear();
 		m_plot->clear();
+		clearTestResults();
 	}
 
 	emit titleChanged(label());
@@ -701,6 +723,58 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		placeholder4->setEnabled(false);
 	}
 
+	menu.addSeparator();
+
+	// ── Reference level ──────────────────────────────────────────────
+
+	QMenu *ref_menu = nullptr;
+	if (m_analysis->has_source() && !isColumnNumeric(String(name.toUtf8().constData())))
+	{
+		ref_menu = menu.addMenu(tr("Set reference level..."));
+
+		// Collect unique levels from the source data.
+		auto *dt = m_analysis->data();
+		intptr_t nc = dt->column_count();
+		intptr_t col = 0;
+		auto name_s = String(name.toUtf8().constData());
+		for (intptr_t j = 1; j <= nc; j++) {
+			if (dt->get_header(j) == name_s) { col = j; break; }
+		}
+
+		String current_ref = m_analysis->reference_level(name_s);
+
+		// "Default (alphabetical)" option to clear the override.
+		auto *default_action = ref_menu->addAction(tr("Default (alphabetical)"));
+		default_action->setCheckable(true);
+		default_action->setChecked(current_ref.empty());
+		default_action->setData(QStringLiteral("__default__"));
+		ref_menu->addSeparator();
+
+		if (col > 0)
+		{
+			// Collect sorted unique levels.
+			std::map<std::string, bool> seen;
+			intptr_t nr = dt->row_count();
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto cell = dt->get_cell(r, col);
+				if (!cell.empty()) {
+					seen[std::string(cell.data(), cell.size())] = true;
+				}
+			}
+
+			for (auto &kv : seen)
+			{
+				auto qs = QString::fromUtf8(kv.first.c_str(), (int)kv.first.size());
+				auto *action = ref_menu->addAction(qs);
+				action->setCheckable(true);
+				auto level_s = String(kv.first);
+				action->setChecked(level_s == current_ref);
+				action->setData(qs);
+			}
+		}
+	}
+
 	// ── Execute ──────────────────────────────────────────────────────
 
 	auto *chosen = menu.exec(m_column_list->mapToGlobal(pos));
@@ -731,6 +805,13 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	}
 	else if (chosen->parent() == indep_slope_menu) {
 		addRandomSlope(name, chosen->data().toString(), false);
+	}
+	else if (ref_menu && chosen->parent() == ref_menu) {
+		auto name_s = String(name.toUtf8().constData());
+		if (chosen->data().toString() == QStringLiteral("__default__"))
+			m_analysis->clear_reference_level(name_s);
+		else
+			m_analysis->set_reference_level(name_s, String(chosen->data().toString().toUtf8().constData()));
 	}
 }
 
@@ -947,17 +1028,46 @@ void AnalysisView::applyFormula(const stats::Formula &formula)
 void AnalysisView::updateColumnMarkers()
 {
 	QSet<QString> used;
-	auto bytes = m_formula_edit->text().trimmed().toUtf8();
-	if (!bytes.isEmpty())
+	auto text = m_formula_edit->text();
+
+	if (!text.isEmpty())
 	{
-		try {
-			auto formula = stats::Formula::parse(String(bytes.constData(), bytes.size()));
-			auto vars = formula.all_variables();
-			for (intptr_t i = 1; i <= vars.size(); i++) {
-				used.insert(QString::fromUtf8(vars[i].data(), (int)vars[i].size()));
+		// Robust approach: instead of parsing the formula grammar (which fails on
+		// incomplete input), scan the raw text for occurrences of known column names.
+		// This works regardless of whether the formula is syntactically complete.
+
+		auto is_ident_char = [](QChar c) {
+			return c.isLetterOrNumber() || c == '_' || c == '.';
+		};
+
+		for (int i = 0; i < m_column_list->count(); i++)
+		{
+			QString col = m_column_list->item(i)->text();
+
+			// Check for the column name as a whole word in the formula text.
+			// It may appear bare or in single quotes.
+			QString quoted = QStringLiteral("'") + col + QStringLiteral("'");
+
+			if (text.contains(quoted))
+			{
+				used.insert(col);
+				continue;
+			}
+
+			int pos = text.indexOf(col);
+			while (pos >= 0)
+			{
+				int end = pos + col.length();
+				// Word boundary: the char before and after must not be part of an identifier.
+				bool left_ok  = (pos == 0) || !is_ident_char(text[pos - 1]);
+				bool right_ok = (end >= text.length()) || !is_ident_char(text[end]);
+				if (left_ok && right_ok) {
+					used.insert(col);
+					break;
+				}
+				pos = text.indexOf(col, pos + 1);
 			}
 		}
-		catch (...) { }
 	}
 
 	for (int i = 0; i < m_column_list->count(); i++) {
@@ -981,17 +1091,25 @@ void AnalysisView::updateDiagnosticPlot()
 	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
 	{
 		m_plot->clear();
+		clearTestResults();
 		return;
 	}
 
 	auto &m = m_analysis->model(m_current_model);
+	int plot_type = m_plot_type_combo->currentIndex();
 
-	switch (m_plot_type_combo->currentIndex())
+	switch (plot_type)
 	{
-	case 0:  plotResidualsVsFitted(m); break;
-	case 1:  plotQQ(m);               break;
-	default: m_plot->clear();         break;
+	case 0:  plotResidualsVsFitted(m);       break;
+	case 1:  plotQQ(m);                      break;
+	case 2:  plotScaledResidualsVsFitted(m); break;
+	case 3:  plotScaledResidualQQ(m);        break;
+	default: m_plot->clear();                break;
 	}
+
+	// Show test results only for scaled residual plots.
+	if (plot_type < 2)
+		clearTestResults();
 }
 
 void AnalysisView::plotResidualsVsFitted(const stats::Model &m)
@@ -1060,6 +1178,114 @@ void AnalysisView::plotQQ(const stats::Model &m)
 	                tr("Theoretical Quantiles"), tr("Sample Quantiles"),
 	                tr("Normal Q-Q"),
 	                PlotWidget::RefLine::Diagonal);
+}
+
+const stats::ScaledResidualResult *AnalysisView::ensureScaledResiduals(const stats::Model &m)
+{
+	if (m_scaled_residuals && m_scaled_residuals_model == m_current_model)
+		return &*m_scaled_residuals;
+
+	if (m.nobs == 0 || m.y.empty() || m.fitted.empty())
+		return nullptr;
+
+	try
+	{
+		m_scaled_residuals = stats::compute_scaled_residuals(m);
+		m_scaled_residuals_model = m_current_model;
+		return &*m_scaled_residuals;
+	}
+	catch (std::exception &e)
+	{
+		m_scaled_residuals.reset();
+		m_scaled_residuals_model = -1;
+		QMessageBox::warning(this, tr("Scaled residuals"),
+			tr("Could not compute scaled residuals:\n%1").arg(QString::fromUtf8(e.what())));
+		return nullptr;
+	}
+}
+
+void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
+{
+	auto *sr = ensureScaledResiduals(m);
+	if (!sr) {
+		m_plot->clear();
+		clearTestResults();
+		return;
+	}
+
+	intptr_t n = m.nobs;
+	std::vector<double> x(n), y(n);
+	for (intptr_t i = 0; i < n; i++) {
+		x[i] = m.fitted[i + 1];
+		y[i] = sr->residuals[i + 1];
+	}
+
+	m_plot->setData(std::move(x), std::move(y),
+	                tr("Fitted values"), tr("Scaled residual"),
+	                tr("Scaled Residuals vs Fitted"),
+	                PlotWidget::RefLine::HorizontalAtHalf);
+
+	updateTestResults(*sr);
+}
+
+void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
+{
+	auto *sr = ensureScaledResiduals(m);
+	if (!sr) {
+		m_plot->clear();
+		clearTestResults();
+		return;
+	}
+
+	intptr_t n = m.nobs;
+
+	// Sort residuals for the QQ plot against U(0,1).
+	std::vector<double> sorted(n);
+	for (intptr_t i = 0; i < n; i++)
+		sorted[i] = sr->residuals[i + 1];
+	std::sort(sorted.begin(), sorted.end());
+
+	// Theoretical quantiles: (i + 0.5) / n
+	std::vector<double> theoretical(n);
+	for (intptr_t i = 0; i < n; i++)
+		theoretical[i] = (i + 0.5) / n;
+
+	m_plot->setData(std::move(theoretical), std::move(sorted),
+	                tr("Theoretical (Uniform)"), tr("Sample"),
+	                tr("Scaled Residuals Q-Q"),
+	                PlotWidget::RefLine::Diagonal);
+
+	updateTestResults(*sr);
+}
+
+void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
+{
+	auto format_p = [](double p) -> QString {
+		return (p < 0.001) ? QStringLiteral("< 0.001") : QString::number(p, 'f', 4);
+	};
+
+	QString text;
+	text += QStringLiteral("Kolmogorov\u2013Smirnov test for uniformity (H\u2080: residuals ~ U(0,1)):  D = %1,  p = %2\n")
+		.arg(sr.ks_statistic, 0, 'f', 4)
+		.arg(format_p(sr.ks_pvalue));
+
+	text += QStringLiteral("Dispersion test:  ratio = %1,  p = %2")
+		.arg(sr.dispersion_ratio, 0, 'f', 4)
+		.arg(format_p(sr.dispersion_pvalue));
+
+	if (sr.dispersion_ratio > 1.0)
+		text += QStringLiteral("  (potential overdispersion)");
+	else if (sr.dispersion_ratio < 1.0)
+		text += QStringLiteral("  (potential underdispersion)");
+
+	m_test_results_text->setPlainText(text);
+	m_test_results_group->setVisible(true);
+}
+
+void AnalysisView::clearTestResults()
+{
+	m_test_results_group->setVisible(false);
+	m_test_results_text->clear();
 }
 
 
