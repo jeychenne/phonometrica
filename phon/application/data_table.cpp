@@ -89,7 +89,15 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 {
 	rt.printf("\nFamily: %s (%s)\n", m.family.data(), m.link.data());
 	rt.printf("Formula: %s\n", m.formula.data());
-	rt.printf("Observations: %ld\n\n", (long)m.nobs);
+	rt.printf("Observations: %ld\n", (long)m.nobs);
+
+	if (!m.response_levels.empty())
+	{
+		rt.printf("Response levels: %s = 0, %s = 1\n",
+		          m.response_levels[1].data(), m.response_levels[2].data());
+	}
+
+	rt.printf("\n");
 
 	// Fixed effects table header
 	const char *stat_label = m.is_gaussian() ? "t value" : "z value";

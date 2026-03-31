@@ -20,6 +20,7 @@
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/ipa_panel.hpp>
 #include <phon/application/script.hpp>
+#include <phon/application/dataset.hpp>
 #include <phon/application/conc/query.hpp>
 #include <phon/application/plugin.hpp>
 #include <phon/application/analysis.hpp>
@@ -141,6 +142,8 @@ private:
 	ViewPanel *addViewTab(View *view);
 
 	void openScript(const Handle<Script> &script);
+
+	void openDataset(Handle<Dataset> ds);
 
 	// Open a concordance in a new tab and wire its signals.
 	void openConcordance(Handle<Concordance> conc);

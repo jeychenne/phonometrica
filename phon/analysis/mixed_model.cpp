@@ -31,7 +31,6 @@
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/utils/matrix.hpp>
-#include <phon/third_party/LBFGSpp/LBFGS.h>
 
 namespace phonometrica::stats {
 
@@ -332,8 +331,8 @@ static InnerResult solve_inner(const Eigen::VectorXd &beta,
 		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
 	}
 
-	int max_inner = 25;   // converges in 1 step for single-factor Gaussian;
-	                      // needs multiple steps for crossed random effects
+	int max_inner = 200;  // convergence check exits early for Gaussian (1–5 steps);
+	                      // non-Gaussian with step damping may need more
 	double inner_tol = 1e-8;
 
 	Eigen::VectorXd Xbeta = Xm * beta;
@@ -385,11 +384,58 @@ static InnerResult solve_inner(const Eigen::VectorXd &beta,
 		}
 
 		double max_change = 0;
-		for (intptr_t k = 0; k < lay.J_total; k++)
+
+		if (!is_gaussian && lay.G > 1)
 		{
-			double step = g_u[k] / h_u[k];
-			res.u[k] -= step;
-			max_change = std::max(max_change, std::abs(step));
+			// Full Newton step for crossed non-Gaussian effects.
+			// The diagonal approximation ignores cross-group Hessian entries
+			// and fails to converge for models with multiple grouping factors.
+			// Build the full J × J Hessian and solve exactly.
+			Eigen::MatrixXd H_full = Eigen::MatrixXd::Zero(lay.J_total, lay.J_total);
+
+			for (intptr_t g = 0; g < lay.G; g++)
+			{
+				intptr_t off = lay.offset[g];
+				for (intptr_t j = 0; j < lay.J[g]; j++) {
+					H_full(off + j, off + j) = inv_sigma2_u[g];
+				}
+			}
+			for (intptr_t i = 0; i < n; i++)
+			{
+				for (intptr_t g1 = 0; g1 < lay.G; g1++)
+				{
+					intptr_t k1 = lay.offset[g1] + (*lay.group_indices[g1])[i];
+					H_full(k1, k1) += w[i];
+
+					for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
+					{
+						intptr_t k2 = lay.offset[g2] + (*lay.group_indices[g2])[i];
+						H_full(k1, k2) += w[i];
+						H_full(k2, k1) += w[i];
+					}
+				}
+			}
+
+			Eigen::LDLT<Eigen::MatrixXd> ldlt(H_full);
+			Eigen::VectorXd step_vec = ldlt.solve(g_u);
+
+			for (intptr_t k = 0; k < lay.J_total; k++)
+			{
+				double s = std::clamp(step_vec[k], -5.0, 5.0);
+				res.u[k] -= s;
+				max_change = std::max(max_change, std::abs(s));
+			}
+		}
+		else
+		{
+			// Diagonal Newton: exact for single grouping factor or Gaussian.
+			for (intptr_t k = 0; k < lay.J_total; k++)
+			{
+				double step = g_u[k] / h_u[k];
+				step = std::clamp(step, -5.0, 5.0);
+				res.u[k] -= step;
+				max_change = std::max(max_change, std::abs(step));
+			}
 		}
 
 		if (max_change < inner_tol) break;
@@ -912,15 +958,229 @@ struct ProfiledObjective
 
 
 // =====================================================================
-// Newton optimizer for the profiled Gaussian case
+// PIRLS inner solve for non-Gaussian (β and u concentrated out)
 // =====================================================================
 //
-// With β profiled out, the outer parameter θ has dimension G+1 (typically
-// 2–4).  For such small problems full Newton (exact Hessian via finite
-// differences of the objective, Armijo backtracking) converges in 5–10
-// iterations to machine precision.  This is what nlminb (the default
-// optimizer in glmmTMB/lme4) does — L-BFGS is designed for thousands
-// of parameters and is overkill / unreliable for 3D surfaces.
+// Penalized Iteratively Reweighted Least Squares (Breslow & Clayton 1993,
+// Bates et al. 2015 §3).  For given variance parameters θ, finds the
+// joint mode (β̂, û) by iterating:
+//   1. Compute working response z and weights w from current (β, u)
+//   2. Solve the weighted Henderson equations for (β, u)
+//   3. Repeat until convergence
+//
+// The Henderson system is (p + J_total) × (p + J_total) and is solved
+// directly by Eigen's LDLT.  For random intercepts in typical phonetics
+// models this is at most a few hundred × a few hundred — negligible cost.
+
+static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
+                                   const Family &fam,
+                                   const Eigen::Map<Matrix<double>> &Xm,
+                                   const Eigen::Map<Vector<double>> &ym,
+                                   const GroupLayout &lay,
+                                   intptr_t n, intptr_t p,
+                                   const Eigen::VectorXd &beta_init)
+{
+	ProfiledResult res;
+	intptr_t G = lay.G;
+	intptr_t J = lay.J_total;
+	intptr_t sdim = p + J;   // Henderson system dimension
+
+	res.beta = beta_init;
+	res.u = Eigen::VectorXd::Zero(J);
+
+	Eigen::VectorXd inv_sigma2_u(G);
+	for (intptr_t g = 0; g < G; g++) {
+		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
+	}
+
+	for (int pirls_iter = 0; pirls_iter < 30; pirls_iter++)
+	{
+		// ── η, μ ────────────────────────────────────────────────
+		Eigen::VectorXd eta = Xm * res.beta;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			auto &idx = *lay.group_indices[g];
+			intptr_t off = lay.offset[g];
+			for (intptr_t i = 0; i < n; i++) {
+				eta[i] += res.u[off + idx[i]];
+			}
+		}
+		Eigen::VectorXd mu = fam.linkinv(eta);
+
+		// ── Working weights and response ────────────────────────
+		// Canonical link: w_i = V(μ_i),  z_i = η_i + (y_i − μ_i)/V(μ_i)
+		Eigen::VectorXd V = fam.variance(mu);
+		Eigen::VectorXd w(n), z(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double v = std::max(V[i], 1e-10);
+			w[i] = v;
+			z[i] = eta[i] + (ym[i] - mu[i]) / v;
+		}
+
+		// ── Henderson system ────────────────────────────────────
+		//  [X'WX       X'WZ           ] [β]   [X'Wz ]
+		//  [Z'WX   Z'WZ + D⁻¹        ] [u ] = [Z'Wz ]
+
+		Eigen::MatrixXd H = Eigen::MatrixXd::Zero(sdim, sdim);
+		Eigen::VectorXd rhs = Eigen::VectorXd::Zero(sdim);
+
+		// X'WX (p × p) and X'Wz (p)
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double wz = w[i] * z[i];
+			for (intptr_t j1 = 0; j1 < p; j1++)
+			{
+				rhs[j1] += Xm(i, j1) * wz;
+				double wx = Xm(i, j1) * w[i];
+				for (intptr_t j2 = j1; j2 < p; j2++) {
+					H(j1, j2) += wx * Xm(i, j2);
+				}
+			}
+		}
+		for (intptr_t j1 = 0; j1 < p; j1++) {
+			for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
+				H(j2, j1) = H(j1, j2);
+			}
+		}
+
+		// D⁻¹ on the Z'Z diagonal
+		for (intptr_t g = 0; g < G; g++)
+		{
+			intptr_t off = lay.offset[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++) {
+				H(p + off + j, p + off + j) = inv_sigma2_u[g];
+			}
+		}
+
+		// Data contributions to X'WZ, Z'WZ, Z'Wz
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double wz = w[i] * z[i];
+
+			for (intptr_t g1 = 0; g1 < G; g1++)
+			{
+				intptr_t k1 = p + lay.offset[g1] + (*lay.group_indices[g1])[i];
+
+				// X'WZ and Z'WX
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double val = Xm(i, j) * w[i];
+					H(j, k1) += val;
+					H(k1, j) += val;
+				}
+
+				// Z'WZ diagonal and cross-group
+				H(k1, k1) += w[i];
+				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+				{
+					intptr_t k2 = p + lay.offset[g2] + (*lay.group_indices[g2])[i];
+					H(k1, k2) += w[i];
+					H(k2, k1) += w[i];
+				}
+
+				// Z'Wz
+				rhs[k1] += wz;
+			}
+		}
+
+		// ── Solve ───────────────────────────────────────────────
+		Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
+		Eigen::VectorXd sol = ldlt.solve(rhs);
+
+		Eigen::VectorXd beta_new = sol.head(p);
+		Eigen::VectorXd u_new = sol.tail(J);
+
+		// ── Convergence ─────────────────────────────────────────
+		double max_change = (beta_new - res.beta).cwiseAbs().maxCoeff();
+		max_change = std::max(max_change, (u_new - res.u).cwiseAbs().maxCoeff());
+
+		res.beta = beta_new;
+		res.u = u_new;
+
+		if (max_change < 1e-8) break;
+	}
+
+	// ── Final η, μ ──────────────────────────────────────────────────
+	Eigen::VectorXd eta = Xm * res.beta;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &idx = *lay.group_indices[g];
+		intptr_t off = lay.offset[g];
+		for (intptr_t i = 0; i < n; i++) {
+			eta[i] += res.u[off + idx[i]];
+		}
+	}
+	res.mu = fam.linkinv(eta);
+
+	// ── Laplace nll ─────────────────────────────────────────────────
+	double cond_nll = -fam.loglik(ym, res.mu);
+
+	double prior_nll = 0;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t off = lay.offset[g];
+		double sq = 0;
+		for (intptr_t j = 0; j < lay.J[g]; j++) {
+			sq += res.u[off + j] * res.u[off + j];
+		}
+		prior_nll += sq / (2.0 * sigma2_u[g])
+		             + 0.5 * lay.J[g] * std::log(2.0 * M_PI * sigma2_u[g]);
+	}
+
+	Eigen::VectorXd w_final = fam.variance(res.mu);
+	double log_det_H = full_log_det_H(w_final, inv_sigma2_u, lay, n);
+
+	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_H
+	                  - 0.5 * J * std::log(2.0 * M_PI);
+	return res;
+}
+
+
+// =====================================================================
+// PIRLS outer objective (non-Gaussian)
+// =====================================================================
+//
+// θ = (log σ_u_1, ..., log σ_u_G)    dim = G
+//
+// β is concentrated out via PIRLS: for each θ, the joint mode (β̂, û)
+// is found by solve_pirls.  This reduces the outer dimension from p+G
+// to G, eliminating β-vs-σ ridges that confuse the Newton optimizer.
+
+struct PirlsObjective
+{
+	const Family &fam;
+	const Eigen::Map<Matrix<double>> &Xm;
+	const Eigen::Map<Vector<double>> &ym;
+	const GroupLayout &lay;
+	intptr_t n, p;
+	Eigen::VectorXd beta_init;
+
+	double eval(const Eigen::VectorXd &theta) const
+	{
+		Eigen::VectorXd sigma2_u(lay.G);
+		for (intptr_t g = 0; g < lay.G; g++) {
+			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		}
+
+		auto res = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_init);
+		return res.laplace_nll;
+	}
+};
+
+
+// =====================================================================
+// Newton optimizer
+// =====================================================================
+//
+// For small outer dimensions (typically 2–10 parameters in phonetics
+// models) full Newton (exact Hessian via finite differences of the
+// objective, Armijo backtracking) converges in 5–15 iterations to
+// machine precision.  This is what nlminb (the default optimizer in
+// glmmTMB/lme4) does — L-BFGS is designed for thousands of parameters
+// and is unreliable for these low-dimensional surfaces.
+//
+// The Objective type must provide: double eval(const Eigen::VectorXd &) const
 
 struct NewtonResult
 {
@@ -930,7 +1190,8 @@ struct NewtonResult
 	bool converged;
 };
 
-static NewtonResult newton_profiled(const ProfiledObjective &obj,
+template<typename Objective>
+static NewtonResult newton_optimize(const Objective &obj,
                                      Eigen::VectorXd theta,
                                      int max_iter = 100,
                                      double grad_tol = 1e-8)
@@ -939,6 +1200,7 @@ static NewtonResult newton_profiled(const ProfiledObjective &obj,
 	NewtonResult res;
 	res.converged = false;
 	res.fx = obj.eval(theta);
+	int stall_count = 0;
 
 	for (int iter = 0; iter < max_iter; iter++)
 	{
@@ -990,12 +1252,28 @@ static NewtonResult newton_profiled(const ProfiledObjective &obj,
 		}
 
 		// ── Convergence check ────────────────────────────────────
-		if (grad.norm() < grad_tol)
+		// Parameters below boundary_min are at the edge of the parameter
+		// space (log σ → −∞, i.e. σ → 0); the gradient there doesn't
+		// converge to 0 because the optimum is at −∞ on the log scale.
+		// Convergence is checked only on the free (interior) parameters.
 		{
-			res.converged = true;
-			res.theta = theta;
-			res.niter = iter;
-			return res;
+			double grad_norm_free = 0;
+			for (intptr_t j = 0; j < dim; j++)
+			{
+				bool at_boundary = (theta[j] < -10.0 && grad[j] > 0);
+				if (!at_boundary) {
+					grad_norm_free += grad[j] * grad[j];
+				}
+			}
+			grad_norm_free = std::sqrt(grad_norm_free);
+
+			if (grad_norm_free < grad_tol)
+			{
+				res.converged = true;
+				res.theta = theta;
+				res.niter = iter;
+				return res;
+			}
 		}
 
 		// ── Newton direction: −H⁻¹g ─────────────────────────────
@@ -1038,6 +1316,27 @@ static NewtonResult newton_profiled(const ProfiledObjective &obj,
 				res.fx = obj.eval(theta);
 			}
 		}
+
+		// ── Function-value stall detection ───────────────────────
+		// If the nll hasn't changed meaningfully in 3 consecutive
+		// iterations, declare convergence.  This handles the case
+		// where finite-difference gradient accuracy limits the
+		// gradient norm but the optimum has been found.
+		if (std::abs(res.fx - f0) < 1e-10 * (1.0 + std::abs(f0)))
+		{
+			stall_count++;
+			if (stall_count >= 3)
+			{
+				res.converged = true;
+				res.theta = theta;
+				res.niter = iter;
+				return res;
+			}
+		}
+		else
+		{
+			stall_count = 0;
+		}
 	}
 
 	res.theta = theta;
@@ -1056,7 +1355,6 @@ static NewtonResult newton_profiled(const ProfiledObjective &obj,
 Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const std::vector<GroupingInfo> &groups, const Family &fam)
 {
-	using namespace LBFGSpp;
 
 	if (y.ndim() != 1) {
 		throw error("y must be a one-dimensional array");
@@ -1169,8 +1467,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		{
 			double s2 = anova_variance_component(wr, groups[g].indices,
 			                                      groups[g].nlevels, n);
-			// Clamp to a reasonable range on the link scale: [0.01, 10].
-			s2 = std::clamp(s2, 0.01, 10.0);
+			// Floor at a small positive value; no upper clamp — large random
+			// effects (complete separation within groups) are common in logistic models.
+			s2 = std::max(s2, 0.01);
 			phi[p + g] = 0.5 * std::log(s2);
 		}
 	}
@@ -1208,7 +1507,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		theta[G] = phi[p + G];               // log σ
 
-		auto newton_res = newton_profiled(profiled, theta);
+		auto newton_res = newton_optimize(profiled, theta);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -1233,33 +1532,57 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		// Non-Gaussian: optimise over the full φ = (β, log σ_u_1..G)
-		std::string family_name(fam.name.data(), fam.name.size());
-		OuterObjective objective{fam, Xm, ym, lay, n, p, is_gaussian, family_name};
+		// Non-Gaussian: PIRLS profiling — Newton over θ = (log σ_u_1..G).
+		// β is concentrated out via PIRLS at each θ evaluation, reducing
+		// the outer dimension from p+G to G and eliminating β-vs-σ ridges.
+		Eigen::VectorXd beta_init = phi.head(p);
+		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init};
 
-		LBFGSParam<double> param;
-		param.epsilon = 1e-6;
-		param.max_iterations = 300;
-		param.max_linesearch = 40;
-		LBFGSSolver<double> solver(param);
-
-		double fx;
-		try {
-			niter = solver.minimize(objective, phi, fx);
-		}
-		catch (std::exception &) {
-			converged = false;
-		}
-
-		beta_hat = phi.head(p);
+		Eigen::VectorXd theta(G);
 		for (intptr_t g = 0; g < G; g++) {
-			sigma2_u[g] = std::exp(2.0 * phi[p + g]);
+			theta[g] = phi[p + g];
+		}
+
+		auto newton_res = newton_optimize(pirls_obj, theta);
+		theta = newton_res.theta;
+		niter = newton_res.niter;
+		converged = newton_res.converged;
+
+		// Recover (β̂, û) at the converged θ
+		for (intptr_t g = 0; g < G; g++) {
+			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		}
+
+		auto final_pirls = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_init);
+		beta_hat = final_pirls.beta;
+
+		// Assemble full φ = (β̂, θ̂) for SE computation
+		phi.resize(outer_dim);
+		phi.head(p) = beta_hat;
+		for (intptr_t g = 0; g < G; g++) {
+			phi[p + g] = theta[g];
 		}
 	}
 
-	// ── Final inner solve at converged estimates ─────────────────────
+	// ── Final result at converged estimates ──────────────────────────
+	//
+	// Gaussian: solve_inner (diagonal Newton converges exactly for identity link).
+	// Non-Gaussian: re-run PIRLS (its Henderson system solve is more accurate
+	//               than solve_inner's diagonal Newton for the u mode).
 
-	auto final_inner = solve_inner(beta_hat, sigma2_u, sigma2, fam, Xm, ym, lay, n, p);
+	InnerResult final_inner;
+
+	if (is_gaussian)
+	{
+		final_inner = solve_inner(beta_hat, sigma2_u, sigma2, fam, Xm, ym, lay, n, p);
+	}
+	else
+	{
+		auto pirls_final = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_hat);
+		final_inner.u = std::move(pirls_final.u);
+		final_inner.mu = std::move(pirls_final.mu);
+		final_inner.laplace_nll = pirls_final.laplace_nll;
+	}
 
 	// ── Standard errors ─────────────────────────────────────────────
 	//
@@ -1335,42 +1658,75 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		// Non-Gaussian: β block of the full inverse Hessian.
-		std::string family_name_se(fam.name.data(), fam.name.size());
-		OuterObjective se_objective{fam, Xm, ym, lay, n, p, is_gaussian, family_name_se};
+		// Non-Gaussian: Var(β̂ | θ̂) from the inverse Henderson matrix.
+		// At the PIRLS convergence point, the Henderson matrix is:
+		//   C = [X'WX     X'WZ       ]
+		//       [Z'WX   Z'WZ + D⁻¹   ]
+		// where W = diag(V(μ̂)) at the converged predictions.
+		// The top-left p×p block of C⁻¹ is the conditional covariance
+		// of β̂.  This is what lme4/glmmTMB report.
 
-		Eigen::MatrixXd hess_full(outer_dim, outer_dim);
+		Eigen::VectorXd w_se = fam.variance(final_inner.mu);
+		intptr_t J = lay.J_total;
+		intptr_t sdim = p + J;
 
-		for (intptr_t k = 0; k < outer_dim; k++)
+		Eigen::MatrixXd C = Eigen::MatrixXd::Zero(sdim, sdim);
+
+		// X'WX (p × p)
+		for (intptr_t i = 0; i < n; i++)
 		{
-			double hk = 1e-4 * std::max(std::abs(phi[k]), 1.0);
-
-			Eigen::VectorXd phi_plus = phi, phi_minus = phi;
-			phi_plus[k] += hk;
-			phi_minus[k] -= hk;
-
-			Eigen::VectorXd grad_plus = exact_gradient(phi_plus, se_objective);
-			Eigen::VectorXd grad_minus = exact_gradient(phi_minus, se_objective);
-
-			for (intptr_t j = 0; j < outer_dim; j++) {
-				hess_full(j, k) = (grad_plus[j] - grad_minus[j]) / (2.0 * hk);
+			for (intptr_t j1 = 0; j1 < p; j1++)
+			{
+				double wx = Xm(i, j1) * w_se[i];
+				for (intptr_t j2 = j1; j2 < p; j2++) {
+					C(j1, j2) += wx * Xm(i, j2);
+				}
+			}
+		}
+		for (intptr_t j1 = 0; j1 < p; j1++) {
+			for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
+				C(j2, j1) = C(j1, j2);
 			}
 		}
 
-		hess_full = 0.5 * (hess_full + hess_full.transpose());
-
-		Eigen::MatrixXd vcov_full;
+		// D⁻¹ on Z'Z diagonal
+		for (intptr_t g = 0; g < G; g++)
 		{
-			Eigen::LDLT<Eigen::MatrixXd> ldlt(hess_full);
-			if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
-				vcov_full = ldlt.solve(Eigen::MatrixXd::Identity(outer_dim, outer_dim));
-			} else {
-				Eigen::JacobiSVD<Eigen::MatrixXd> svd(hess_full, Eigen::ComputeThinU | Eigen::ComputeThinV);
-				vcov_full = svd.solve(Eigen::MatrixXd::Identity(outer_dim, outer_dim));
+			intptr_t off = lay.offset[g];
+			double inv_s2u = 1.0 / sigma2_u[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++) {
+				C(p + off + j, p + off + j) = inv_s2u;
 			}
 		}
 
-		vcov = vcov_full.topLeftCorner(p, p);
+		// X'WZ, Z'WX, Z'WZ
+		for (intptr_t i = 0; i < n; i++)
+		{
+			for (intptr_t g1 = 0; g1 < G; g1++)
+			{
+				intptr_t k1 = p + lay.offset[g1] + groups[g1].indices[i];
+
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double val = Xm(i, j) * w_se[i];
+					C(j, k1) += val;
+					C(k1, j) += val;
+				}
+
+				C(k1, k1) += w_se[i];
+				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+				{
+					intptr_t k2 = p + lay.offset[g2] + groups[g2].indices[i];
+					C(k1, k2) += w_se[i];
+					C(k2, k1) += w_se[i];
+				}
+			}
+		}
+
+		// Var(β̂) = top-left p×p block of C⁻¹
+		Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
+		Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
+		vcov = Cinv.topLeftCorner(p, p);
 	}
 
 	// ── Build the Model ─────────────────────────────────────────────

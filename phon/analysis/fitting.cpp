@@ -282,13 +282,15 @@ struct DesignMatrix
 	Array<double> X;          // 2D design matrix (n × p)
 	Array<double> y;          // response vector (n)
 	Array<String> coef_names; // coefficient names (p)
+	Array<String> response_levels; // for binary text response: [reference, success] (empty for numeric)
 	intptr_t nobs = 0;
 	intptr_t ncol = 0;
 };
 
 
 static DesignMatrix build_design_matrix(const DataTable &data, const Formula &formula,
-                                         const std::vector<intptr_t> &rows)
+                                         const std::vector<intptr_t> &rows,
+                                         const String &family = "gaussian")
 {
 	size_t n = rows.size();
 
@@ -368,8 +370,24 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	if (resp_col == 0) {
 		throw error("Response variable '%' not found in data", formula.response);
 	}
-	if (!is_numeric_column(data, resp_col, rows)) {
-		throw error("Response variable '%' must be numeric", formula.response);
+
+	bool resp_is_numeric = is_numeric_column(data, resp_col, rows);
+	Array<String> resp_levels;   // populated only for binary text response
+
+	if (!resp_is_numeric)
+	{
+		// Non-numeric response: allowed only for binomial, and must have exactly 2 levels.
+		if (family != "binomial") {
+			throw error("Response variable '%' must be numeric for family '%'",
+			            formula.response, family);
+		}
+		resp_levels = extract_levels(data, resp_col, rows);
+		if (resp_levels.size() != 2)
+		{
+			throw error("Binomial response '%' must have exactly 2 levels (found %)",
+			            formula.response, resp_levels.size());
+		}
+		// R convention: levels are sorted alphabetically; first = 0 (reference), second = 1 (success).
 	}
 
 	// ── Assemble into Array<double> ──────────────────────────────────
@@ -379,6 +397,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	DesignMatrix dm;
 	dm.nobs = (intptr_t)n;
 	dm.ncol = p;
+	dm.response_levels = std::move(resp_levels);
 
 	// X: n × p matrix
 	dm.X = Array<double>((intptr_t)n, p, 0.0);
@@ -391,9 +410,23 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 
 	// y: response vector
 	dm.y = Array<double>((intptr_t)n, 0.0);
-	auto resp_vals = extract_numeric(data, resp_col, rows);
-	for (intptr_t i = 0; i < (intptr_t)n; i++) {
-		dm.y[i + 1] = resp_vals[i];
+
+	if (!resp_is_numeric)
+	{
+		// Binary text response: code as 0/1 using the sorted levels.
+		// First level (alphabetically) = 0, second = 1.
+		for (size_t i = 0; i < n; i++)
+		{
+			String cell = data.get_cell(rows[i], resp_col);
+			dm.y[(intptr_t)(i + 1)] = (cell == dm.response_levels[2]) ? 1.0 : 0.0;
+		}
+	}
+	else
+	{
+		auto resp_vals = extract_numeric(data, resp_col, rows);
+		for (intptr_t i = 0; i < (intptr_t)n; i++) {
+			dm.y[i + 1] = resp_vals[i];
+		}
 	}
 
 	// Coefficient names
@@ -552,7 +585,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 
 	// ── Build design matrix ──────────────────────────────────────────
 
-	auto dm = build_design_matrix(data, formula, rows);
+	auto dm = build_design_matrix(data, formula, rows, family);
 
 	if (dm.nobs <= dm.ncol) {
 		throw error("Not enough complete observations (% rows, % parameters)", dm.nobs, dm.ncol);
@@ -590,6 +623,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family)
 
 	model.formula = formula.to_string();
 	model.coef_names = std::move(dm.coef_names);
+	model.response_levels = std::move(dm.response_levels);
 
 	return model;
 }
