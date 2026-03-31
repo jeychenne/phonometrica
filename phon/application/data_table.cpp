@@ -87,7 +87,14 @@ void DataTable::to_csv(const String &path, const String &sep)
 
 static void print_model_summary(Runtime &rt, const stats::Model &m)
 {
-	rt.printf("\nFamily: %s (%s)\n", m.family.data(), m.link.data());
+	// Family display name
+	const char *family_display = m.family.data();
+	if (m.is_negbin()) family_display = "Negative binomial";
+
+	rt.printf("\nFamily: %s (%s)\n", family_display, m.link.data());
+	if (m.is_negbin()) {
+		rt.printf("Theta (overdispersion): %.4f\n", m.theta);
+	}
 	rt.printf("Formula: %s\n", m.formula.data());
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
@@ -131,8 +138,38 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	rt.printf("---\n");
 	rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 
-	// Gaussian-specific diagnostics
-	if (m.is_gaussian())
+	// Random effects
+	if (m.has_random_effects())
+	{
+		rt.printf("Random effects:\n");
+		rt.printf("%-20s %12s %12s %8s\n", "Group", "Variance", "Std.Dev.", "Levels");
+
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+
+			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			{
+				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double sd = std::sqrt(std::max(var, 0.0));
+
+				if (t == 1) {
+					rt.printf("%-20s %12.4f %12.4f %8ld\n",
+					          re.group_name.data(), var, sd, (long)re.nlevels);
+				} else {
+					rt.printf("  %-18s %12.4f %12.4f\n",
+					          re.term_names[t].data(), var, sd);
+				}
+			}
+		}
+
+		if (m.is_gaussian()) {
+			rt.printf("%-20s %12.4f %12.4f\n", "Residual", m.rse * m.rse, m.rse);
+		}
+
+		rt.printf("\n");
+	}
+	else if (m.is_gaussian())
 	{
 		rt.printf("Residual standard error: %.4f on %ld degrees of freedom\n",
 		          m.rse, (long)m.df_residual);
@@ -253,6 +290,7 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "adj_r2") return model.adj_r2;
 		if (key == "rse") return model.rse;
 		if (key == "df") return model.df_residual;
+		if (key == "theta") return model.theta;
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
 

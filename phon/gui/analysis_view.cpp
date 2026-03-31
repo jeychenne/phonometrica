@@ -28,6 +28,8 @@
 #include <QFile>
 #include <QToolBar>
 #include <QAction>
+#include <QToolButton>
+#include <QHeaderView>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/application/project.hpp>
@@ -254,34 +256,83 @@ void AnalysisView::setupUi()
 	eda_layout->setContentsMargins(4, 4, 4, 4);
 	eda_layout->setSpacing(4);
 
-	auto *eda_top = new QHBoxLayout;
-	eda_top->addWidget(new QLabel(tr("Y:")));
-	m_eda_y_combo = new QComboBox;
-	m_eda_y_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	eda_top->addWidget(m_eda_y_combo);
-	eda_top->addWidget(new QLabel(tr("X:")));
+	// ── EDA toolbar (export actions, matching SpectrumView) ──
+	auto *eda_toolbar = new QToolBar;
+	eda_toolbar->setIconSize(QSize(20, 20));
+	eda_toolbar->setMovable(false);
+
+	auto *eda_save_menu = new QMenu(this);
+	eda_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
+	eda_save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEdaPDF);
+	eda_save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportEdaSVG);
+
+	auto *eda_save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), this);
+	eda_save_action->setMenu(eda_save_menu);
+	eda_toolbar->addAction(eda_save_action);
+	if (auto *btn = qobject_cast<QToolButton *>(eda_toolbar->widgetForAction(eda_save_action)))
+		btn->setPopupMode(QToolButton::InstantPopup);
+
+	eda_layout->addWidget(eda_toolbar);
+
+	// ── Plot area ──
+	m_eda_plot = new PlotWidget;
+
+	// ── Controls between plot and stats ──
+	auto *eda_controls = new QHBoxLayout;
+	eda_controls->setSpacing(6);
+	eda_controls->addWidget(new QLabel(tr("X:")));
 	m_eda_x_combo = new QComboBox;
 	m_eda_x_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	eda_top->addWidget(m_eda_x_combo);
+	eda_controls->addWidget(m_eda_x_combo);
+	eda_controls->addWidget(new QLabel(tr("Y:")));
+	m_eda_y_combo = new QComboBox;
+	m_eda_y_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	eda_controls->addWidget(m_eda_y_combo);
 	m_bins_label = new QLabel(tr("Bins:"));
-	eda_top->addWidget(m_bins_label);
+	eda_controls->addWidget(m_bins_label);
 	m_bins_spin = new QSpinBox;
 	m_bins_spin->setRange(0, 200);
 	m_bins_spin->setValue(0); // 0 = auto (Sturges' rule)
 	m_bins_spin->setSpecialValueText(tr("Auto"));
 	m_bins_spin->setToolTip(tr("Number of histogram bins (0 = automatic)"));
-	eda_top->addWidget(m_bins_spin);
+	eda_controls->addWidget(m_bins_spin);
 	m_eda_regline_check = new QCheckBox(tr("Regression line"));
 	m_eda_regline_check->setToolTip(tr("Overlay an OLS regression line on the scatter plot"));
 	m_eda_regline_check->setVisible(false);
-	eda_top->addWidget(m_eda_regline_check);
-	eda_top->addStretch();
-	auto *eda_export_button = new QPushButton(tr("Export..."));
-	eda_top->addWidget(eda_export_button);
-	eda_layout->addLayout(eda_top);
+	eda_controls->addWidget(m_eda_regline_check);
+	m_eda_density_check = new QCheckBox(tr("Density curve"));
+	m_eda_density_check->setToolTip(tr("Overlay a kernel density estimate on the histogram"));
+	m_eda_density_check->setVisible(false);
+	eda_controls->addWidget(m_eda_density_check);
+	eda_controls->addStretch();
 
-	m_eda_plot = new PlotWidget;
-	eda_layout->addWidget(m_eda_plot, 1);
+	auto *eda_controls_widget = new QWidget;
+	eda_controls_widget->setLayout(eda_controls);
+
+	// ── Summary table ──
+	m_eda_summary = new QTableWidget;
+	m_eda_summary->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_eda_summary->setSelectionMode(QAbstractItemView::NoSelection);
+	m_eda_summary->setAlternatingRowColors(true);
+	m_eda_summary->verticalHeader()->setVisible(false);
+	m_eda_summary->horizontalHeader()->setStretchLastSection(true);
+	m_eda_summary->setMaximumHeight(200);
+
+	// ── Assemble: plot | controls | stats in a splitter ──
+	auto *eda_bottom = new QWidget;
+	auto *eda_bottom_layout = new QVBoxLayout(eda_bottom);
+	eda_bottom_layout->setContentsMargins(0, 0, 0, 0);
+	eda_bottom_layout->setSpacing(4);
+	eda_bottom_layout->addWidget(eda_controls_widget);
+	eda_bottom_layout->addWidget(m_eda_summary, 1);
+
+	auto *eda_splitter = new QSplitter(Qt::Vertical);
+	eda_splitter->addWidget(m_eda_plot);
+	eda_splitter->addWidget(eda_bottom);
+	eda_splitter->setStretchFactor(0, 3);
+	eda_splitter->setStretchFactor(1, 1);
+	eda_layout->addWidget(eda_splitter, 1);
+
 	m_right_tabs->addTab(eda_widget, tr("EDA"));
 	m_right_tabs->setTabToolTip(2, tr("Exploratory Data Analysis: visualize variables before fitting a model"));
 
@@ -308,15 +359,16 @@ void AnalysisView::setupUi()
 	connect(m_eda_x_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_regline_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
-	connect(eda_export_button, &QPushButton::clicked, this, &AnalysisView::onExportEdaPlot);
+	connect(m_eda_density_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 }
 
 void AnalysisView::populateColumns()
 {
 	m_column_list->clear();
-	m_eda_y_combo->clear();
 	m_eda_x_combo->clear();
+	m_eda_y_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
+	m_eda_y_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
 
@@ -324,8 +376,8 @@ void AnalysisView::populateColumns()
 	for (intptr_t i = 1; i <= names.size(); i++) {
 		auto qname = QString::fromUtf8(names[i].data(), (int)names[i].size());
 		m_column_list->addItem(qname);
-		m_eda_y_combo->addItem(qname);
 		m_eda_x_combo->addItem(qname);
+		m_eda_y_combo->addItem(qname);
 	}
 }
 
@@ -710,29 +762,49 @@ void AnalysisView::plotQQ(const stats::Model &m)
 void AnalysisView::onEdaChanged()
 {
 	updateEdaPlot();
+	updateEdaSummary();
 }
 
-void AnalysisView::onExportEdaPlot()
+void AnalysisView::onExportEdaPNG()
 {
 	if (!m_eda_plot->hasData()) {
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-
 	QString path = QFileDialog::getSaveFileName(this,
-		tr("Export plot"), QString(),
-		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
+		tr("Export plot as PNG"), QString(), tr("PNG image (*.png)"));
 	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+		path += QStringLiteral(".png");
+	m_eda_plot->savePNG(path);
+}
 
-	if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
-		m_eda_plot->savePDF(path);
-	else if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
-		m_eda_plot->saveSVG(path);
-	else {
-		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
-			path += QStringLiteral(".png");
-		m_eda_plot->savePNG(path);
+void AnalysisView::onExportEdaPDF()
+{
+	if (!m_eda_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
 	}
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Export plot as PDF"), QString(), tr("PDF document (*.pdf)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+		path += QStringLiteral(".pdf");
+	m_eda_plot->savePDF(path);
+}
+
+void AnalysisView::onExportEdaSVG()
+{
+	if (!m_eda_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
+	}
+	QString path = QFileDialog::getSaveFileName(this,
+		tr("Export plot as SVG"), QString(), tr("SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
+		path += QStringLiteral(".svg");
+	m_eda_plot->saveSVG(path);
 }
 
 bool AnalysisView::isColumnNumeric(const String &col_name) const
@@ -763,62 +835,139 @@ bool AnalysisView::isColumnNumeric(const String &col_name) const
 
 void AnalysisView::updateEdaPlot()
 {
-	if (!m_analysis->has_source() || m_eda_y_combo->currentIndex() < 0) {
+	// X is the primary variable; Y is the optional secondary variable.
+	// When X = "(None)": nothing to show.
+	if (!m_analysis->has_source() || m_eda_x_combo->currentIndex() <= 0) {
 		m_eda_plot->clear();
+		m_bins_label->setVisible(false);
+		m_bins_spin->setVisible(false);
+		m_eda_regline_check->setVisible(false);
+		m_eda_density_check->setVisible(false);
 		return;
 	}
 
 	auto *dt = m_analysis->data();
-	auto y_name_q = m_eda_y_combo->currentText();
-	auto y_name = String(y_name_q.toUtf8().constData());
+	auto x_name_q = m_eda_x_combo->currentText();
+	auto x_name = String(x_name_q.toUtf8().constData());
 
-	// Find Y column
+	// Find X column
 	intptr_t nc = dt->column_count();
-	intptr_t y_col = 0;
+	intptr_t x_col = 0;
 	for (intptr_t j = 1; j <= nc; j++) {
-		if (dt->get_header(j) == y_name) { y_col = j; break; }
+		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
-	if (y_col < 1) { m_eda_plot->clear(); return; }
+	if (x_col < 1) { m_eda_plot->clear(); return; }
 
 	intptr_t nr = dt->row_count();
 
-	// Check if X is selected (index 0 is "(None)").
-	bool has_x = (m_eda_x_combo->currentIndex() > 0);
+	// Check if Y is selected (index 0 is "(None)").
+	bool has_y = (m_eda_y_combo->currentIndex() > 0);
 
-	// Show bins control only for numeric histograms.
-	bool y_numeric = isColumnNumeric(y_name);
-	bool is_histogram = !has_x && y_numeric;
+	// Show bins control only for numeric histograms (univariate numeric).
+	bool x_numeric = isColumnNumeric(x_name);
+	bool is_histogram = !has_y && x_numeric;
 	m_bins_label->setVisible(is_histogram);
 	m_bins_spin->setVisible(is_histogram);
 
-	if (!has_x)
+	if (!has_y)
 	{
+		// ── Univariate: plot X alone ──
 		m_eda_regline_check->setVisible(false);
-		if (y_numeric)
+		if (x_numeric)
 		{
-			// Histogram of numeric Y values
+			// Histogram of numeric X values
 			std::vector<double> vals;
 			vals.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, y_col);
+				auto v = dt->get_cell(r, x_col);
 				if (v.empty()) continue;
 				bool ok;
 				double d = v.to_float(&ok);
 				if (ok) vals.push_back(d);
 			}
 			if (vals.empty()) { m_eda_plot->clear(); return; }
-			m_eda_plot->setHistogramData(std::move(vals), y_name_q, tr("Count"),
-			                              y_name_q, m_bins_spin->value());
+
+			// Keep a copy for KDE before moving vals into the histogram.
+			std::vector<double> vals_copy;
+			int nbins = m_bins_spin->value();
+			bool want_density = m_eda_density_check->isChecked() && vals.size() >= 2;
+			if (want_density) vals_copy = vals;
+
+			m_eda_plot->setHistogramData(std::move(vals), x_name_q, tr("Count"),
+			                              x_name_q, nbins);
+
+			m_eda_density_check->setVisible(true);
+
+			if (want_density)
+			{
+				size_t n = vals_copy.size();
+
+				// Silverman's rule of thumb for bandwidth.
+				double sum = 0, sum2 = 0;
+				for (double v : vals_copy) { sum += v; sum2 += v * v; }
+				double mean = sum / n;
+				double var  = sum2 / n - mean * mean;
+				double sd   = std::sqrt(std::max(var, 0.0));
+
+				// Also compute IQR for robustness.
+				std::sort(vals_copy.begin(), vals_copy.end());
+				double q1 = vals_copy[n / 4];
+				double q3 = vals_copy[3 * n / 4];
+				double iqr = q3 - q1;
+				double s = std::min(sd, iqr / 1.34);
+				if (s < 1e-15) s = sd;
+				if (s < 1e-15) s = 1.0;
+				double h = 0.9 * s * std::pow((double)n, -0.2);
+
+				double xlo = vals_copy.front() - 3.0 * h;
+				double xhi = vals_copy.back()  + 3.0 * h;
+				constexpr int NPTS = 200;
+				double dx = (xhi - xlo) / (NPTS - 1);
+
+				double data_lo = vals_copy.front();
+				double data_hi = vals_copy.back();
+				double data_range = data_hi - data_lo;
+				if (data_range < 1e-10) data_range = 1.0;
+				int actual_nbins = nbins;
+				if (actual_nbins <= 0)
+					actual_nbins = std::max(5, (int)std::ceil(std::log2((double)n) + 1));
+				double bin_width = data_range / actual_nbins;
+
+				double scale = (double)n * bin_width;
+				double inv_h = 1.0 / h;
+				double norm = 1.0 / (std::sqrt(2.0 * M_PI) * h * (double)n);
+
+				std::vector<double> cx(NPTS), cy(NPTS);
+				for (int i = 0; i < NPTS; i++)
+				{
+					double x = xlo + i * dx;
+					double f = 0;
+					for (size_t j = 0; j < n; j++)
+					{
+						double u = (x - vals_copy[j]) * inv_h;
+						f += std::exp(-0.5 * u * u);
+					}
+					cx[i] = x;
+					cy[i] = f * norm * scale;
+				}
+
+				m_eda_plot->setDensityCurve(std::move(cx), std::move(cy));
+			}
+			else
+			{
+				m_eda_plot->clearDensityCurve();
+			}
 		}
 		else
 		{
-			// Bar chart of categorical Y counts
+			m_eda_density_check->setVisible(false);
+			// Bar chart of categorical X counts
 			std::map<QString, int> counts;
 			std::vector<QString> order;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, y_col);
+				auto v = dt->get_cell(r, x_col);
 				if (v.empty()) continue;
 				auto qs = QString::fromUtf8(v.data(), (int)v.size());
 				if (counts.find(qs) == counts.end()) order.push_back(qs);
@@ -828,23 +977,25 @@ void AnalysisView::updateEdaPlot()
 			std::vector<int> vals;
 			for (auto &lbl : order) vals.push_back(counts[lbl]);
 			m_eda_plot->setBarChartData(std::move(order), std::move(vals),
-			                             y_name_q, tr("Count"), y_name_q);
+			                             x_name_q, tr("Count"), x_name_q);
 		}
 		return;
 	}
 
-	auto x_name_q = m_eda_x_combo->currentText();
-	auto x_name = String(x_name_q.toUtf8().constData());
+	// ── Bivariate: both X and Y selected ──
 
-	intptr_t x_col = 0;
+	auto y_name_q = m_eda_y_combo->currentText();
+	auto y_name = String(y_name_q.toUtf8().constData());
+
+	intptr_t y_col = 0;
 	for (intptr_t j = 1; j <= nc; j++) {
-		if (dt->get_header(j) == x_name) { x_col = j; break; }
+		if (dt->get_header(j) == y_name) { y_col = j; break; }
 	}
-	if (x_col < 1) { m_eda_plot->clear(); return; }
+	if (y_col < 1) { m_eda_plot->clear(); return; }
 
-	bool x_numeric = isColumnNumeric(x_name);
+	bool y_numeric = isColumnNumeric(y_name);
 
-	if (x_numeric)
+	if (x_numeric && y_numeric)
 	{
 		// Scatter: X continuous, Y continuous
 		std::vector<double> xv, yv;
@@ -896,16 +1047,18 @@ void AnalysisView::updateEdaPlot()
 		                     y_name_q + QStringLiteral(" ~ ") + x_name_q);
 
 		m_eda_regline_check->setVisible(true);
+		m_eda_density_check->setVisible(false);
 		if (reg_valid)
 			m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);
 		else
 			m_eda_plot->clearRegressionLine();
 	}
-	else
+	else if (!x_numeric && y_numeric)
 	{
-		m_eda_regline_check->setVisible(false);
-
 		// Box plot: X categorical, Y continuous
+		m_eda_regline_check->setVisible(false);
+		m_eda_density_check->setVisible(false);
+
 		std::vector<QString> groups;
 		std::vector<double> vals;
 		groups.reserve(nr);
@@ -926,6 +1079,292 @@ void AnalysisView::updateEdaPlot()
 		                            x_name_q, y_name_q,
 		                            y_name_q + QStringLiteral(" ~ ") + x_name_q);
 	}
+	else
+	{
+		// Unsupported combination (e.g. both categorical) — clear.
+		m_eda_regline_check->setVisible(false);
+		m_eda_density_check->setVisible(false);
+		m_eda_plot->clear();
+	}
+}
+
+
+// =====================================================================
+// EDA descriptive statistics
+// =====================================================================
+
+// Compute the median of a sorted vector.
+static double sorted_median(const std::vector<double> &v)
+{
+	if (v.empty()) return 0;
+	size_t n = v.size();
+	if (n % 2 == 1) return v[n / 2];
+	return (v[n / 2 - 1] + v[n / 2]) * 0.5;
+}
+
+// Compute Q1 of a sorted vector (lower quartile).
+static double sorted_q1(const std::vector<double> &v)
+{
+	if (v.size() < 2) return v.empty() ? 0 : v[0];
+	size_t n = v.size();
+	double idx = 0.25 * (n - 1);
+	size_t lo = (size_t)std::floor(idx);
+	double frac = idx - lo;
+	if (lo + 1 >= n) return v[lo];
+	return v[lo] * (1.0 - frac) + v[lo + 1] * frac;
+}
+
+// Compute Q3 of a sorted vector (upper quartile).
+static double sorted_q3(const std::vector<double> &v)
+{
+	if (v.size() < 2) return v.empty() ? 0 : v[0];
+	size_t n = v.size();
+	double idx = 0.75 * (n - 1);
+	size_t lo = (size_t)std::floor(idx);
+	double frac = idx - lo;
+	if (lo + 1 >= n) return v[lo];
+	return v[lo] * (1.0 - frac) + v[lo + 1] * frac;
+}
+
+void AnalysisView::updateEdaSummary()
+{
+	m_eda_summary->clear();
+	m_eda_summary->setRowCount(0);
+	m_eda_summary->setColumnCount(0);
+
+	// X is the primary variable; Y is optional.
+	if (!m_analysis->has_source() || m_eda_x_combo->currentIndex() <= 0)
+		return;
+
+	auto *dt = m_analysis->data();
+	auto x_name_q = m_eda_x_combo->currentText();
+	auto x_name = String(x_name_q.toUtf8().constData());
+
+	intptr_t nc = dt->column_count();
+	intptr_t x_col = 0;
+	for (intptr_t j = 1; j <= nc; j++) {
+		if (dt->get_header(j) == x_name) { x_col = j; break; }
+	}
+	if (x_col < 1) return;
+
+	intptr_t nr = dt->row_count();
+	bool has_y = (m_eda_y_combo->currentIndex() > 0);
+	bool x_numeric = isColumnNumeric(x_name);
+
+	if (!has_y)
+	{
+		if (x_numeric)
+		{
+			// ── Univariate numeric: N, Mean, SD, Min, Q1, Median, Q3, Max, Missing ──
+
+			std::vector<double> vals;
+			vals.reserve(nr);
+			intptr_t missing = 0;
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto v = dt->get_cell(r, x_col);
+				if (v.empty()) { missing++; continue; }
+				bool ok;
+				double d = v.to_float(&ok);
+				if (ok) vals.push_back(d);
+				else missing++;
+			}
+			if (vals.empty()) return;
+
+			std::sort(vals.begin(), vals.end());
+			size_t n = vals.size();
+			double sum = 0;
+			for (double v : vals) sum += v;
+			double mean = sum / n;
+			double ss = 0;
+			for (double v : vals) { double d = v - mean; ss += d * d; }
+			double sd = (n > 1) ? std::sqrt(ss / (n - 1)) : 0.0;
+
+			m_eda_summary->setColumnCount(9);
+			m_eda_summary->setHorizontalHeaderLabels(
+				{tr("N"), tr("Mean"), tr("SD"), tr("Min"), tr("Q1"),
+				 tr("Median"), tr("Q3"), tr("Max"), tr("Missing")});
+			m_eda_summary->setRowCount(1);
+
+			auto set = [&](int col, const QString &text) {
+				auto *item = new QTableWidgetItem(text);
+				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(0, col, item);
+			};
+
+			set(0, QString::number(n));
+			set(1, QString::number(mean, 'f', 4));
+			set(2, QString::number(sd, 'f', 4));
+			set(3, QString::number(vals.front(), 'f', 4));
+			set(4, QString::number(sorted_q1(vals), 'f', 4));
+			set(5, QString::number(sorted_median(vals), 'f', 4));
+			set(6, QString::number(sorted_q3(vals), 'f', 4));
+			set(7, QString::number(vals.back(), 'f', 4));
+			set(8, QString::number(missing));
+
+			m_eda_summary->resizeColumnsToContents();
+		}
+		else
+		{
+			// ── Univariate categorical: Level, Count ──
+
+			std::vector<QString> order;
+			std::map<QString, int> counts;
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto v = dt->get_cell(r, x_col);
+				if (v.empty()) continue;
+				auto qs = QString::fromUtf8(v.data(), (int)v.size());
+				if (counts.find(qs) == counts.end()) order.push_back(qs);
+				counts[qs]++;
+			}
+			if (order.empty()) return;
+
+			m_eda_summary->setColumnCount(2);
+			m_eda_summary->setHorizontalHeaderLabels({x_name_q, tr("Count")});
+			m_eda_summary->setRowCount((int)order.size());
+
+			for (int i = 0; i < (int)order.size(); i++)
+			{
+				m_eda_summary->setItem(i, 0, new QTableWidgetItem(order[i]));
+				auto *cnt = new QTableWidgetItem(QString::number(counts[order[i]]));
+				cnt->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(i, 1, cnt);
+			}
+			m_eda_summary->resizeColumnsToContents();
+		}
+		return;
+	}
+
+	// ── Bivariate: both X and Y selected ──
+
+	auto y_name_q = m_eda_y_combo->currentText();
+	auto y_name = String(y_name_q.toUtf8().constData());
+
+	intptr_t y_col = 0;
+	for (intptr_t j = 1; j <= nc; j++) {
+		if (dt->get_header(j) == y_name) { y_col = j; break; }
+	}
+	if (y_col < 1) return;
+
+	bool y_numeric = isColumnNumeric(y_name);
+
+	if (x_numeric && y_numeric)
+	{
+		// ── Scatter (both continuous): N, r, means, SDs ──
+
+		std::vector<double> xv, yv;
+		xv.reserve(nr);
+		yv.reserve(nr);
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = dt->get_cell(r, x_col);
+			auto vy = dt->get_cell(r, y_col);
+			if (vx.empty() || vy.empty()) continue;
+			bool okx, oky;
+			double dx = vx.to_float(&okx);
+			double dy = vy.to_float(&oky);
+			if (okx && oky) { xv.push_back(dx); yv.push_back(dy); }
+		}
+		if (xv.empty()) return;
+
+		size_t n = xv.size();
+		double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+		for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
+		double mx = sx / n, my = sy / n;
+		for (size_t i = 0; i < n; i++) {
+			double dx = xv[i] - mx;
+			double dy = yv[i] - my;
+			sxx += dx * dx;
+			syy += dy * dy;
+			sxy += dx * dy;
+		}
+		double sd_x = (n > 1) ? std::sqrt(sxx / (n - 1)) : 0.0;
+		double sd_y = (n > 1) ? std::sqrt(syy / (n - 1)) : 0.0;
+		double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
+
+		m_eda_summary->setColumnCount(6);
+		m_eda_summary->setHorizontalHeaderLabels(
+			{tr("N"), tr("r"),
+			 QStringLiteral("Mean(%1)").arg(x_name_q),
+			 QStringLiteral("SD(%1)").arg(x_name_q),
+			 QStringLiteral("Mean(%1)").arg(y_name_q),
+			 QStringLiteral("SD(%1)").arg(y_name_q)});
+		m_eda_summary->setRowCount(1);
+
+		auto set = [&](int col, const QString &text) {
+			auto *item = new QTableWidgetItem(text);
+			item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_eda_summary->setItem(0, col, item);
+		};
+
+		set(0, QString::number(n));
+		set(1, QString::number(r, 'f', 4));
+		set(2, QString::number(mx, 'f', 4));
+		set(3, QString::number(sd_x, 'f', 4));
+		set(4, QString::number(my, 'f', 4));
+		set(5, QString::number(sd_y, 'f', 4));
+
+		m_eda_summary->resizeColumnsToContents();
+	}
+	else if (!x_numeric && y_numeric)
+	{
+		// ── Box plot (X categorical, Y continuous): grouped stats ──
+
+		std::vector<QString> group_order;
+		std::map<QString, std::vector<double>> grouped;
+
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = dt->get_cell(r, x_col);
+			auto vy = dt->get_cell(r, y_col);
+			if (vx.empty() || vy.empty()) continue;
+			bool ok;
+			double dy = vy.to_float(&ok);
+			if (!ok) continue;
+			auto qs = QString::fromUtf8(vx.data(), (int)vx.size());
+			if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
+			grouped[qs].push_back(dy);
+		}
+		if (group_order.empty()) return;
+
+		m_eda_summary->setColumnCount(7);
+		m_eda_summary->setHorizontalHeaderLabels(
+			{x_name_q, tr("N"), tr("Mean"), tr("SD"),
+			 tr("Min"), tr("Median"), tr("Max")});
+		m_eda_summary->setRowCount((int)group_order.size());
+
+		for (int g = 0; g < (int)group_order.size(); g++)
+		{
+			auto &vals = grouped[group_order[g]];
+			std::sort(vals.begin(), vals.end());
+			size_t n = vals.size();
+
+			double sum = 0;
+			for (double v : vals) sum += v;
+			double mean = sum / n;
+			double ss = 0;
+			for (double v : vals) { double d = v - mean; ss += d * d; }
+			double sd = (n > 1) ? std::sqrt(ss / (n - 1)) : 0.0;
+
+			m_eda_summary->setItem(g, 0, new QTableWidgetItem(group_order[g]));
+
+			auto set = [&](int col, const QString &text) {
+				auto *item = new QTableWidgetItem(text);
+				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(g, col, item);
+			};
+
+			set(1, QString::number(n));
+			set(2, QString::number(mean, 'f', 4));
+			set(3, QString::number(sd, 'f', 4));
+			set(4, QString::number(vals.front(), 'f', 4));
+			set(5, QString::number(sorted_median(vals), 'f', 4));
+			set(6, QString::number(vals.back(), 'f', 4));
+		}
+		m_eda_summary->resizeColumnsToContents();
+	}
+	// else: unsupported combination — table stays empty.
 }
 
 

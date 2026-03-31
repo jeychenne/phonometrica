@@ -31,6 +31,7 @@ static const QColor BAR_FILL(100, 160, 220, 200);
 static const QColor BAR_BORDER(40, 80, 140);
 static const QColor REFLINE_COLOR(200, 60, 60);
 static const QColor REGLINE_COLOR(220, 80, 40);
+static const QColor DENSITY_COLOR(180, 50, 160);
 static const QColor GRID_COLOR(220, 220, 220);
 static const QColor AXIS_COLOR(60, 60, 60);
 static const QColor BG_COLOR(255, 255, 255);
@@ -128,6 +129,9 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_x.clear();
 	m_y.clear();
 	m_boxes.clear();
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -168,6 +172,24 @@ void PlotWidget::clearRegressionLine()
 	update();
 }
 
+void PlotWidget::setDensityCurve(std::vector<double> curve_x, std::vector<double> curve_y)
+{
+	m_show_density = true;
+	m_density_x = std::move(curve_x);
+	m_density_y = std::move(curve_y);
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::clearDensityCurve()
+{
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
+	m_cache_valid = false;
+	update();
+}
+
 void PlotWidget::clear()
 {
 	m_mode = Mode::Empty;
@@ -179,6 +201,9 @@ void PlotWidget::clear()
 	m_bar_counts.clear();
 	m_title.clear();
 	m_show_regression = false;
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -605,7 +630,15 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 	for (auto &b : m_bins)
 		max_count = std::max(max_count, b.count);
 
-	double yhi = max_count * 1.08;
+	double ymax = (double)max_count;
+
+	// If a density curve is present, ensure the Y range covers its peak.
+	if (m_show_density) {
+		for (double v : m_density_y)
+			ymax = std::max(ymax, v);
+	}
+
+	double yhi = ymax * 1.08;
 	if (yhi < 1) yhi = 1;
 
 	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
@@ -679,6 +712,24 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 		p.setBrush(BAR_FILL);
 		p.drawRect(QRectF(x1, y1, x2 - x1, y2 - y1));
 	}
+
+	// Density curve overlay
+	if (m_show_density && m_density_x.size() >= 2)
+	{
+		QPainterPath path;
+		bool started = false;
+		for (size_t i = 0; i < m_density_x.size(); i++)
+		{
+			double px = dataToX(m_density_x[i]);
+			double py = dataToY(m_density_y[i]);
+			if (!started) { path.moveTo(px, py); started = true; }
+			else          { path.lineTo(px, py); }
+		}
+		p.setPen(QPen(DENSITY_COLOR, 2.0));
+		p.setBrush(Qt::NoBrush);
+		p.drawPath(path);
+	}
+
 	p.setClipping(false);
 }
 

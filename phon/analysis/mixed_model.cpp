@@ -45,10 +45,13 @@ using ADdouble = CppAD::AD<double>;
 struct GroupLayout
 {
 	intptr_t G;
-	intptr_t J_total;
-	std::vector<intptr_t> J;
-	std::vector<intptr_t> offset;
+	intptr_t J_total;       // total random-effect coefficients = Σ J[g] × q[g]
+	std::vector<intptr_t> J;       // nlevels per group
+	std::vector<intptr_t> q;       // nterms per group (1 = intercept only)
+	std::vector<intptr_t> offset;  // u-vector offset: offset[g] = Σ_{g'<g} J[g'] × q[g']
 	std::vector<const std::vector<intptr_t> *> group_indices;
+	std::vector<const double *> Z_data;  // pointer to each group's Z_design data
+	intptr_t n_obs = 0;
 
 	static GroupLayout build(const std::vector<GroupingInfo> &groups)
 	{
@@ -56,19 +59,121 @@ struct GroupLayout
 		lay.G = (intptr_t)groups.size();
 		lay.J_total = 0;
 		lay.J.resize(lay.G);
+		lay.q.resize(lay.G);
 		lay.offset.resize(lay.G);
 		lay.group_indices.resize(lay.G);
+		lay.Z_data.resize(lay.G);
+		lay.n_obs = groups.empty() ? 0 : (intptr_t)groups[0].indices.size();
 
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			lay.offset[g] = lay.J_total;
 			lay.J[g] = groups[g].nlevels;
-			lay.J_total += lay.J[g];
+			lay.q[g] = groups[g].nterms;
+			lay.J_total += lay.J[g] * lay.q[g];
 			lay.group_indices[g] = &groups[g].indices;
+			lay.Z_data[g] = groups[g].Z_design.data();
 		}
 		return lay;
 	}
+
+	// Z design value for observation i, group g, term t.
+	double Z(intptr_t g, intptr_t i, intptr_t t) const
+	{
+		return Z_data[g][i * q[g] + t];
+	}
+
+	// u-vector index for group g, level j, term t.
+	intptr_t u_idx(intptr_t g, intptr_t j, intptr_t t) const
+	{
+		return offset[g] + j * q[g] + t;
+	}
 };
+
+
+// =====================================================================
+// Cholesky parameterization helpers
+// =====================================================================
+//
+// The prior covariance D_g for group g (q × q SPD) is parameterized via
+// its lower Cholesky factor: D_g = L_g L_g'.
+//
+// Packed parameter vector θ_g of length q(q+1)/2:
+//   θ[r(r+1)/2 + c] = L_{r,c}  for r > c  (off-diagonal: unconstrained)
+//   θ[r(r+1)/2 + r] = log L_{r,r}         (diagonal: log-scale for positivity)
+//
+// For q=1 this is θ = (log σ_u), consistent with the scalar parameterization.
+
+// Number of Cholesky parameters for a q × q covariance.
+static intptr_t n_chol_params(intptr_t q)
+{
+	return q * (q + 1) / 2;
+}
+
+// Total Cholesky parameters across all groups.
+static intptr_t total_chol_params(const GroupLayout &lay)
+{
+	intptr_t total = 0;
+	for (intptr_t g = 0; g < lay.G; g++) {
+		total += n_chol_params(lay.q[g]);
+	}
+	return total;
+}
+
+// Offset into the packed outer θ vector for group g's Cholesky parameters.
+static intptr_t chol_offset(const GroupLayout &lay, intptr_t g)
+{
+	intptr_t off = 0;
+	for (intptr_t g2 = 0; g2 < g; g2++) {
+		off += n_chol_params(lay.q[g2]);
+	}
+	return off;
+}
+
+// Unpack a Cholesky parameter slice into a lower-triangular Eigen matrix.
+// theta_g: packed vector of length q(q+1)/2.
+// Returns the q × q lower Cholesky factor L (with exp applied to diagonal).
+static Eigen::MatrixXd unpack_cholesky(const double *theta_g, intptr_t q)
+{
+	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(q, q);
+	for (intptr_t r = 0; r < q; r++)
+	{
+		for (intptr_t c = 0; c <= r; c++)
+		{
+			intptr_t idx = r * (r + 1) / 2 + c;
+			if (r == c) {
+				L(r, c) = std::exp(theta_g[idx]); // diagonal: exponentiate
+			} else {
+				L(r, c) = theta_g[idx];            // off-diagonal: as-is
+			}
+		}
+	}
+	return L;
+}
+
+// Compute D = L L' from the Cholesky factor.
+static Eigen::MatrixXd cholesky_to_cov(const Eigen::MatrixXd &L)
+{
+	return L * L.transpose();
+}
+
+// Compute D⁻¹ from the Cholesky factor: D⁻¹ = L⁻ᵀ L⁻¹.
+static Eigen::MatrixXd cholesky_to_precision(const Eigen::MatrixXd &L)
+{
+	Eigen::MatrixXd Linv = L.triangularView<Eigen::Lower>().solve(
+		Eigen::MatrixXd::Identity(L.rows(), L.cols()));
+	return Linv.transpose() * Linv;
+}
+
+// log|D| = 2 Σ log L_kk = 2 Σ θ_diag (since diag elements are stored as log).
+static double log_det_D(const double *theta_g, intptr_t q)
+{
+	double ld = 0;
+	for (intptr_t r = 0; r < q; r++) {
+		ld += theta_g[r * (r + 1) / 2 + r]; // the log L_rr value
+	}
+	return 2.0 * ld;
+}
 
 
 // =====================================================================
@@ -139,73 +244,136 @@ static double anova_variance_component(const Eigen::VectorXd &resid,
 // Full log-determinant of the random-effects Hessian
 // =====================================================================
 //
-// For crossed random intercepts the Hessian H_uu of the penalized
-// log-likelihood w.r.t. u is NOT diagonal: observation i couples
-// u_{g1,k1} and u_{g2,k2} with entry w_i whenever i belongs to
-// both group k1 of factor g1 and group k2 of factor g2.
+// H_uu = Z'WZ + block-diag(D_1⁻¹, ..., D_G⁻¹)
 //
-// The diagonal approximation log det(diag(H)) ≥ log det(H) by
-// Hadamard's inequality, which biases the Laplace nll upward.
-// For a single grouping factor (G=1) H is truly diagonal, so
-// both give the same answer.
+// For a single grouping factor (G=1), H is block-diagonal with nlevels
+// blocks of size q×q. We exploit this for an O(n q² + J q³) algorithm.
+//
+// For multiple grouping factors (G>1, crossed effects), the full
+// J_total × J_total matrix is built and factorized.
 
 static double full_log_det_H(const Eigen::VectorXd &w,
-                               const Eigen::VectorXd &inv_sigma2_u,
+                               const std::vector<Eigen::MatrixXd> &D_inv,
                                const GroupLayout &lay,
                                intptr_t n)
 {
 	intptr_t J = lay.J_total;
 
-	// For a single grouping factor the Hessian is diagonal — fast path.
+	// Single grouping factor: block-diagonal fast path.
+	// Each level j has a q×q block: D_inv + Σ_{i: idx[i]=j} w[i] z_i z_i'.
 	if (lay.G == 1)
 	{
-		Eigen::VectorXd h(J);
-		intptr_t off = lay.offset[0];
-		for (intptr_t j = 0; j < J; j++) {
-			h[j] = inv_sigma2_u[0];
-		}
+		intptr_t qg = lay.q[0];
 		auto &idx = *lay.group_indices[0];
-		for (intptr_t i = 0; i < n; i++) {
-			h[idx[i]] += w[i];
+
+		// Pre-accumulate Z'_j W Z_j for each level, initialized with D_inv.
+		std::vector<Eigen::MatrixXd> blocks(lay.J[0], D_inv[0]);
+
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t j = idx[i];
+			for (intptr_t t1 = 0; t1 < qg; t1++)
+			{
+				double wz1 = w[i] * lay.Z(0, i, t1);
+				for (intptr_t t2 = t1; t2 < qg; t2++)
+				{
+					double val = wz1 * lay.Z(0, i, t2);
+					blocks[j](t1, t2) += val;
+					if (t1 != t2) blocks[j](t2, t1) += val;
+				}
+			}
 		}
+
 		double ld = 0;
-		for (intptr_t j = 0; j < J; j++) {
-			ld += std::log(h[j]);
+		for (intptr_t j = 0; j < lay.J[0]; j++)
+		{
+			if (qg == 1) {
+				ld += std::log(blocks[j](0, 0));
+			} else {
+				Eigen::LDLT<Eigen::MatrixXd> ldlt(blocks[j]);
+				ld += ldlt.vectorD().array().log().sum();
+			}
 		}
 		return ld;
 	}
 
-	// General case: build the full J × J matrix and factorize.
+	// General case (G > 1): build the full J × J matrix and factorize.
 	Eigen::MatrixXd H = Eigen::MatrixXd::Zero(J, J);
 
-	// Prior precision on the diagonal
+	// Prior precision: D_g⁻¹ block at each level
 	for (intptr_t g = 0; g < lay.G; g++)
 	{
-		intptr_t off = lay.offset[g];
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			H(off + j, off + j) = inv_sigma2_u[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					H(base + t1, base + t2) = D_inv[g](t1, t2);
+				}
+			}
 		}
 	}
 
-	// Data contributions: observation i adds w[i] to every (k1,k2) pair
+	// Data contributions
 	for (intptr_t i = 0; i < n; i++)
 	{
 		for (intptr_t g1 = 0; g1 < lay.G; g1++)
 		{
-			intptr_t k1 = lay.offset[g1] + (*lay.group_indices[g1])[i];
-			H(k1, k1) += w[i];
+			intptr_t j1 = (*lay.group_indices[g1])[i];
+			intptr_t base1 = lay.offset[g1] + j1 * lay.q[g1];
 
+			// Within-group: w[i] * z_g1 ⊗ z_g1
+			for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
+			{
+				double wz1 = w[i] * lay.Z(g1, i, t1);
+				for (intptr_t t2 = t1; t2 < lay.q[g1]; t2++)
+				{
+					double val = wz1 * lay.Z(g1, i, t2);
+					H(base1 + t1, base1 + t2) += val;
+					if (t1 != t2) H(base1 + t2, base1 + t1) += val;
+				}
+			}
+
+			// Cross-group: w[i] * z_g1 ⊗ z_g2
 			for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
 			{
-				intptr_t k2 = lay.offset[g2] + (*lay.group_indices[g2])[i];
-				H(k1, k2) += w[i];
-				H(k2, k1) += w[i];
+				intptr_t j2 = (*lay.group_indices[g2])[i];
+				intptr_t base2 = lay.offset[g2] + j2 * lay.q[g2];
+
+				for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
+				{
+					double wz1 = w[i] * lay.Z(g1, i, t1);
+					for (intptr_t t2 = 0; t2 < lay.q[g2]; t2++)
+					{
+						double val = wz1 * lay.Z(g2, i, t2);
+						H(base1 + t1, base2 + t2) += val;
+						H(base2 + t2, base1 + t1) += val;
+					}
+				}
 			}
 		}
 	}
 
 	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 	return ldlt.vectorD().array().log().sum();
+}
+
+
+// Backward-compatible overload: scalar per-group precisions → diagonal D_inv matrices.
+// Used by the Gaussian path (solve_inner, solve_profiled_gaussian) which still operates
+// with scalar variances for random-intercept-only models.
+static double full_log_det_H(const Eigen::VectorXd &w,
+                               const Eigen::VectorXd &inv_sigma2_u,
+                               const GroupLayout &lay,
+                               intptr_t n)
+{
+	std::vector<Eigen::MatrixXd> D_inv(lay.G);
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		D_inv[g] = Eigen::MatrixXd::Identity(lay.q[g], lay.q[g]) * inv_sigma2_u[g];
+	}
+	return full_log_det_H(w, D_inv, lay, n);
 }
 
 
@@ -958,6 +1126,222 @@ struct ProfiledObjective
 
 
 // =====================================================================
+// Gaussian Henderson solve with Cholesky-parameterized covariance
+// =====================================================================
+//
+// One-shot Henderson system for Gaussian LMM with known σ² and
+// generalized Z design matrix.  Supports random slopes via the
+// Cholesky-parameterized D_g for each grouping factor.
+//
+// The Henderson system for Gaussian is linear, so no PIRLS iteration
+// is needed — a single solve gives the exact (β̂, û) for given θ.
+
+static ProfiledResult solve_gaussian_henderson(
+	const std::vector<Eigen::MatrixXd> &D_inv,
+	const std::vector<double> &log_det_Dg,
+	double sigma2,
+	const Eigen::Map<Matrix<double>> &Xm,
+	const Eigen::Map<Vector<double>> &ym,
+	const GroupLayout &lay,
+	intptr_t n, intptr_t p)
+{
+	ProfiledResult res;
+	intptr_t G = lay.G;
+	intptr_t J = lay.J_total;
+	intptr_t sdim = p + J;
+
+	double inv_sigma2 = 1.0 / sigma2;
+
+	// Build Henderson system:
+	// [(1/σ²)X'X     (1/σ²)X'Z           ] [β]   [(1/σ²)X'y ]
+	// [(1/σ²)Z'X   (1/σ²)Z'Z + D⁻¹       ] [u ] = [(1/σ²)Z'y ]
+
+	Eigen::MatrixXd H = Eigen::MatrixXd::Zero(sdim, sdim);
+	Eigen::VectorXd rhs = Eigen::VectorXd::Zero(sdim);
+
+	// (1/σ²)X'X and (1/σ²)X'y
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double wy = inv_sigma2 * ym[i];
+		for (intptr_t j1 = 0; j1 < p; j1++)
+		{
+			rhs[j1] += Xm(i, j1) * wy;
+			double wx = Xm(i, j1) * inv_sigma2;
+			for (intptr_t j2 = j1; j2 < p; j2++) {
+				H(j1, j2) += wx * Xm(i, j2);
+			}
+		}
+	}
+	for (intptr_t j1 = 0; j1 < p; j1++) {
+		for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
+			H(j2, j1) = H(j1, j2);
+		}
+	}
+
+	// D⁻¹ blocks
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = p + lay.offset[g] + j * qg;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					H(base + t1, base + t2) += D_inv[g](t1, t2);
+				}
+			}
+		}
+	}
+
+	// (1/σ²)X'Z, Z'X, Z'Z, Z'y
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t g1 = 0; g1 < G; g1++)
+		{
+			intptr_t j1 = (*lay.group_indices[g1])[i];
+			intptr_t q1 = lay.q[g1];
+			intptr_t base1 = p + lay.offset[g1] + j1 * q1;
+
+			for (intptr_t t = 0; t < q1; t++)
+			{
+				double z_val = lay.Z(g1, i, t);
+				double wz = inv_sigma2 * z_val;
+
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double val = Xm(i, j) * wz;
+					H(j, base1 + t) += val;
+					H(base1 + t, j) += val;
+				}
+
+				rhs[base1 + t] += inv_sigma2 * ym[i] * z_val;
+			}
+
+			// Z'Z within-group
+			for (intptr_t t1 = 0; t1 < q1; t1++)
+			{
+				double wz1 = inv_sigma2 * lay.Z(g1, i, t1);
+				for (intptr_t t2 = t1; t2 < q1; t2++)
+				{
+					double val = wz1 * lay.Z(g1, i, t2);
+					H(base1 + t1, base1 + t2) += val;
+					if (t1 != t2) H(base1 + t2, base1 + t1) += val;
+				}
+			}
+
+			// Z'Z cross-group
+			for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+			{
+				intptr_t j2 = (*lay.group_indices[g2])[i];
+				intptr_t q2 = lay.q[g2];
+				intptr_t base2 = p + lay.offset[g2] + j2 * q2;
+
+				for (intptr_t t1 = 0; t1 < q1; t1++)
+				{
+					double wz1 = inv_sigma2 * lay.Z(g1, i, t1);
+					for (intptr_t t2 = 0; t2 < q2; t2++)
+					{
+						double val = wz1 * lay.Z(g2, i, t2);
+						H(base1 + t1, base2 + t2) += val;
+						H(base2 + t2, base1 + t1) += val;
+					}
+				}
+			}
+		}
+	}
+
+	// Solve
+	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
+	Eigen::VectorXd sol = ldlt.solve(rhs);
+
+	res.beta = sol.head(p);
+	res.u = sol.tail(J);
+
+	// Final η = Xβ + Zu
+	Eigen::VectorXd eta = Xm * res.beta;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &idx = *lay.group_indices[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++) {
+				eta[i] += lay.Z(g, i, t) * res.u[base + t];
+			}
+		}
+	}
+	res.mu = eta; // identity link
+
+	// Laplace nll
+	double rss = (ym - res.mu).squaredNorm();
+	double cond_nll = rss / (2.0 * sigma2) + 0.5 * n * std::log(2.0 * M_PI * sigma2);
+
+	double prior_nll = 0;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					quad += res.u[base + t1] * D_inv[g](t1, t2) * res.u[base + t2];
+				}
+			}
+			prior_nll += quad / 2.0;
+		}
+		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
+	}
+
+	Eigen::VectorXd w_final = Eigen::VectorXd::Constant(n, inv_sigma2);
+	double log_det_Huu = full_log_det_H(w_final, D_inv, lay, n);
+
+	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
+	                  - 0.5 * J * std::log(2.0 * M_PI);
+	return res;
+}
+
+
+// =====================================================================
+// Gaussian outer objective with Cholesky parameterization
+// =====================================================================
+//
+// θ = (chol_1, ..., chol_G, log σ)
+// dim = Σ q_g(q_g+1)/2 + 1
+
+struct GaussianCholObjective
+{
+	const Eigen::Map<Matrix<double>> &Xm;
+	const Eigen::Map<Vector<double>> &ym;
+	const GroupLayout &lay;
+	intptr_t n, p;
+	intptr_t n_chol;
+
+	double eval(const Eigen::VectorXd &theta) const
+	{
+		std::vector<Eigen::MatrixXd> D_inv(lay.G);
+		std::vector<double> log_det_Dg(lay.G);
+		intptr_t chol_pos = 0;
+
+		for (intptr_t g = 0; g < lay.G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			Eigen::MatrixXd L = unpack_cholesky(theta.data() + chol_pos, qg);
+			D_inv[g] = cholesky_to_precision(L);
+			log_det_Dg[g] = log_det_D(theta.data() + chol_pos, qg);
+			chol_pos += n_chol_params(qg);
+		}
+		double sigma2 = std::exp(2.0 * theta[n_chol]);
+
+		return solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
+		                                 Xm, ym, lay, n, p).laplace_nll;
+	}
+};
+
+
+// =====================================================================
 // PIRLS inner solve for non-Gaussian (β and u concentrated out)
 // =====================================================================
 //
@@ -972,7 +1356,8 @@ struct ProfiledObjective
 // directly by Eigen's LDLT.  For random intercepts in typical phonetics
 // models this is at most a few hundred × a few hundred — negligible cost.
 
-static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
+static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
+                                   const std::vector<double> &log_det_Dg,
                                    const Family &fam,
                                    const Eigen::Map<Matrix<double>> &Xm,
                                    const Eigen::Map<Vector<double>> &ym,
@@ -988,29 +1373,26 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 	res.beta = beta_init;
 	res.u = Eigen::VectorXd::Zero(J);
 
-	Eigen::VectorXd inv_sigma2_u(G);
-	for (intptr_t g = 0; g < G; g++) {
-		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
-	}
-
 	for (int pirls_iter = 0; pirls_iter < 30; pirls_iter++)
 	{
-		// ── η, μ ────────────────────────────────────────────────
+		// ── η = Xβ + Zu ──────────────────────────────────────
 		Eigen::VectorXd eta = Xm * res.beta;
 		for (intptr_t g = 0; g < G; g++)
 		{
 			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++) {
-				eta[i] += res.u[off + idx[i]];
+			intptr_t qg = lay.q[g];
+			for (intptr_t i = 0; i < n; i++)
+			{
+				intptr_t base = lay.offset[g] + idx[i] * qg;
+				for (intptr_t t = 0; t < qg; t++) {
+					eta[i] += lay.Z(g, i, t) * res.u[base + t];
+				}
 			}
 		}
 		Eigen::VectorXd mu = fam.linkinv(eta);
 
 		// ── Working weights and response ────────────────────────
 		// General GLM: w_i = (dμ/dη)² / V(μ),  z_i = η_i + (y_i − μ_i) / (dμ/dη)
-		// For canonical links this simplifies to w_i = V(μ_i) and z_i = η_i + (y_i − μ_i) / V(μ_i).
-		// For negative binomial (non-canonical log link) the general form is required.
 		Eigen::VectorXd V = fam.variance(mu);
 		Eigen::VectorXd me = fam.mu_eta(mu);
 		Eigen::VectorXd w(n), z(n);
@@ -1048,43 +1430,79 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 			}
 		}
 
-		// D⁻¹ on the Z'Z diagonal
+		// D⁻¹: q_g × q_g block at each level
 		for (intptr_t g = 0; g < G; g++)
 		{
-			intptr_t off = lay.offset[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				H(p + off + j, p + off + j) = inv_sigma2_u[g];
+			intptr_t qg = lay.q[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++)
+			{
+				intptr_t base = p + lay.offset[g] + j * qg;
+				for (intptr_t t1 = 0; t1 < qg; t1++) {
+					for (intptr_t t2 = 0; t2 < qg; t2++) {
+						H(base + t1, base + t2) += D_inv[g](t1, t2);
+					}
+				}
 			}
 		}
 
-		// Data contributions to X'WZ, Z'WZ, Z'Wz
+		// Data contributions to X'WZ, Z'WX, Z'WZ, Z'Wz
 		for (intptr_t i = 0; i < n; i++)
 		{
 			double wz = w[i] * z[i];
 
 			for (intptr_t g1 = 0; g1 < G; g1++)
 			{
-				intptr_t k1 = p + lay.offset[g1] + (*lay.group_indices[g1])[i];
+				intptr_t j1 = (*lay.group_indices[g1])[i];
+				intptr_t q1 = lay.q[g1];
+				intptr_t base1 = p + lay.offset[g1] + j1 * q1;
 
-				// X'WZ and Z'WX
-				for (intptr_t j = 0; j < p; j++)
+				// X'WZ and Z'WX: for each random term t
+				for (intptr_t t = 0; t < q1; t++)
 				{
-					double val = Xm(i, j) * w[i];
-					H(j, k1) += val;
-					H(k1, j) += val;
+					double z_val = lay.Z(g1, i, t);
+					double wz_val = w[i] * z_val;
+
+					for (intptr_t j = 0; j < p; j++)
+					{
+						double val = Xm(i, j) * wz_val;
+						H(j, base1 + t) += val;
+						H(base1 + t, j) += val;
+					}
+
+					// Z'Wz
+					rhs[base1 + t] += wz * z_val;
 				}
 
-				// Z'WZ diagonal and cross-group
-				H(k1, k1) += w[i];
+				// Z'WZ within-group: w[i] * z_g1 ⊗ z_g1
+				for (intptr_t t1 = 0; t1 < q1; t1++)
+				{
+					double wz1 = w[i] * lay.Z(g1, i, t1);
+					for (intptr_t t2 = t1; t2 < q1; t2++)
+					{
+						double val = wz1 * lay.Z(g1, i, t2);
+						H(base1 + t1, base1 + t2) += val;
+						if (t1 != t2) H(base1 + t2, base1 + t1) += val;
+					}
+				}
+
+				// Z'WZ cross-group: w[i] * z_g1 ⊗ z_g2
 				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
 				{
-					intptr_t k2 = p + lay.offset[g2] + (*lay.group_indices[g2])[i];
-					H(k1, k2) += w[i];
-					H(k2, k1) += w[i];
-				}
+					intptr_t j2 = (*lay.group_indices[g2])[i];
+					intptr_t q2 = lay.q[g2];
+					intptr_t base2 = p + lay.offset[g2] + j2 * q2;
 
-				// Z'Wz
-				rhs[k1] += wz;
+					for (intptr_t t1 = 0; t1 < q1; t1++)
+					{
+						double wz1 = w[i] * lay.Z(g1, i, t1);
+						for (intptr_t t2 = 0; t2 < q2; t2++)
+						{
+							double val = wz1 * lay.Z(g2, i, t2);
+							H(base1 + t1, base2 + t2) += val;
+							H(base2 + t2, base1 + t1) += val;
+						}
+					}
+				}
 			}
 		}
 
@@ -1110,9 +1528,13 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 	for (intptr_t g = 0; g < G; g++)
 	{
 		auto &idx = *lay.group_indices[g];
-		intptr_t off = lay.offset[g];
-		for (intptr_t i = 0; i < n; i++) {
-			eta[i] += res.u[off + idx[i]];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++) {
+				eta[i] += lay.Z(g, i, t) * res.u[base + t];
+			}
 		}
 	}
 	res.mu = fam.linkinv(eta);
@@ -1120,18 +1542,28 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 	// ── Laplace nll ─────────────────────────────────────────────────
 	double cond_nll = -fam.loglik(ym, res.mu);
 
+	// Prior: Σ_g Σ_j [ u_{gj}' D_g⁻¹ u_{gj} / 2 + q_g/2 log(2π) + 1/2 log|D_g| ]
 	double prior_nll = 0;
 	for (intptr_t g = 0; g < G; g++)
 	{
-		intptr_t off = lay.offset[g];
-		double sq = 0;
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			sq += res.u[off + j] * res.u[off + j];
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			// u_{gj}' D_g⁻¹ u_{gj}
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					quad += res.u[base + t1] * D_inv[g](t1, t2) * res.u[base + t2];
+				}
+			}
+			prior_nll += quad / 2.0;
 		}
-		prior_nll += sq / (2.0 * sigma2_u[g])
-		             + 0.5 * lay.J[g] * std::log(2.0 * M_PI * sigma2_u[g]);
+		// log-normalizing constant: J_g × [q_g/2 log(2π) + 1/2 log|D_g|]
+		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
 	}
 
+	// Laplace correction: 1/2 log|H_uu| - J_total/2 log(2π)
 	Eigen::VectorXd V_final = fam.variance(res.mu);
 	Eigen::VectorXd me_final = fam.mu_eta(res.mu);
 	Eigen::VectorXd w_final(n);
@@ -1140,11 +1572,31 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 		double d = std::max(me_final[i], 1e-10);
 		w_final[i] = d * d / v;
 	}
-	double log_det_H = full_log_det_H(w_final, inv_sigma2_u, lay, n);
+	double log_det_Huu = full_log_det_H(w_final, D_inv, lay, n);
 
-	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_H
+	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
 	return res;
+}
+
+// Backward-compatible overload: scalar variances (for random-intercept-only models).
+static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
+                                   const Family &fam,
+                                   const Eigen::Map<Matrix<double>> &Xm,
+                                   const Eigen::Map<Vector<double>> &ym,
+                                   const GroupLayout &lay,
+                                   intptr_t n, intptr_t p,
+                                   const Eigen::VectorXd &beta_init)
+{
+	std::vector<Eigen::MatrixXd> D_inv(lay.G);
+	std::vector<double> log_det_Dg(lay.G);
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		D_inv[g] = Eigen::MatrixXd::Identity(qg, qg) / sigma2_u[g];
+		log_det_Dg[g] = qg * std::log(sigma2_u[g]);
+	}
+	return solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init);
 }
 
 
@@ -1152,11 +1604,14 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 // PIRLS outer objective (non-Gaussian)
 // =====================================================================
 //
-// θ = (log σ_u_1, ..., log σ_u_G)    dim = G
+// Outer parameters:
+//   θ = (chol_1, ..., chol_G, [log θ_nb])
+// where chol_g is the packed lower Cholesky factor for group g
+// (q_g(q_g+1)/2 elements, diagonal on log scale).
 //
-// β is concentrated out via PIRLS: for each θ, the joint mode (β̂, û)
-// is found by solve_pirls.  This reduces the outer dimension from p+G
-// to G, eliminating β-vs-σ ridges that confuse the Newton optimizer.
+// Total dim = Σ q_g(q_g+1)/2 + (1 if NB).
+//
+// β and u are concentrated out via PIRLS at each θ evaluation.
 
 struct PirlsObjective
 {
@@ -1166,27 +1621,34 @@ struct PirlsObjective
 	const GroupLayout &lay;
 	intptr_t n, p;
 	Eigen::VectorXd beta_init;
+	intptr_t n_chol;  // total Cholesky params = Σ q_g(q_g+1)/2
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
-		Eigen::VectorXd sigma2_u(lay.G);
-		for (intptr_t g = 0; g < lay.G; g++) {
-			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		// Unpack Cholesky parameters → D_inv and log|D| for each group
+		std::vector<Eigen::MatrixXd> D_inv(lay.G);
+		std::vector<double> log_det_Dg(lay.G);
+		intptr_t chol_pos = 0;
+
+		for (intptr_t g = 0; g < lay.G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			intptr_t np = n_chol_params(qg);
+			Eigen::MatrixXd L = unpack_cholesky(theta.data() + chol_pos, qg);
+			D_inv[g] = cholesky_to_precision(L);
+			log_det_Dg[g] = log_det_D(theta.data() + chol_pos, qg);
+			chol_pos += np;
 		}
 
-		// For NB, the last element of theta is log(θ_nb).
-		// Create a new Family with the current θ value so that loglik,
-		// variance, and mu_eta all use the correct overdispersion.
+		// For NB, the element after the Cholesky params is log(θ_nb).
 		if (fam.name == "negbin")
 		{
-			double theta_nb = std::exp(theta[lay.G]);
+			double theta_nb = std::exp(theta[n_chol]);
 			auto fam_nb = Family::negbin(theta_nb);
-			auto res = solve_pirls(sigma2_u, fam_nb, Xm, ym, lay, n, p, beta_init);
-			return res.laplace_nll;
+			return solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init).laplace_nll;
 		}
 
-		auto res = solve_pirls(sigma2_u, fam, Xm, ym, lay, n, p, beta_init);
-		return res.laplace_nll;
+		return solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init).laplace_nll;
 	}
 };
 
@@ -1215,7 +1677,7 @@ struct NewtonResult
 template<typename Objective>
 static NewtonResult newton_optimize(const Objective &obj,
                                      Eigen::VectorXd theta,
-                                     int max_iter = 100,
+                                     int max_iter = 200,
                                      double grad_tol = 1e-8)
 {
 	intptr_t dim = theta.size();
@@ -1223,6 +1685,14 @@ static NewtonResult newton_optimize(const Objective &obj,
 	res.converged = false;
 	res.fx = obj.eval(theta);
 	int stall_count = 0;
+
+	// Finite-difference step scale.  For low-dimensional problems (random
+	// intercepts, dim ≤ 3) the fine step 1e-4 gives accurate Hessians and
+	// fast convergence.  For higher-dimensional problems (random slopes,
+	// dim ≥ 4) the surface often has ridges where 1e-4 is too narrow to
+	// capture the curvature; 1e-3 samples a wider range and produces Newton
+	// directions that track the valley floor.
+	double h_scale = (dim <= 3) ? 1e-4 : 1e-3;
 
 	for (int iter = 0; iter < max_iter; iter++)
 	{
@@ -1237,7 +1707,7 @@ static NewtonResult newton_optimize(const Objective &obj,
 		std::vector<double> h(dim), fp(dim), fm(dim);
 		for (intptr_t j = 0; j < dim; j++)
 		{
-			h[j] = 1e-4 * std::max(std::abs(theta[j]), 1.0);
+			h[j] = h_scale * std::max(std::abs(theta[j]), 1.0);
 			Eigen::VectorXd tp = theta, tm = theta;
 			tp[j] += h[j];
 			tm[j] -= h[j];
@@ -1341,10 +1811,12 @@ static NewtonResult newton_optimize(const Objective &obj,
 
 		// ── Function-value stall detection ───────────────────────
 		// If the nll hasn't changed meaningfully in 3 consecutive
-		// iterations, declare convergence.  This handles the case
-		// where finite-difference gradient accuracy limits the
-		// gradient norm but the optimum has been found.
-		if (std::abs(res.fx - f0) < 1e-10 * (1.0 + std::abs(f0)))
+		// iterations, declare convergence.  The 1e-5 relative tolerance
+		// catches models with near-boundary variance components where
+		// the surface is flat and per-iteration progress is tiny but
+		// nonzero.  For loglik ≈ −1000, this triggers when improvement
+		// drops below ~0.01 per iteration (< 0.02 AIC — negligible).
+		if (std::abs(res.fx - f0) < 1e-5 * (1.0 + std::abs(f0)))
 		{
 			stall_count++;
 			if (stall_count >= 3)
@@ -1513,6 +1985,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	Eigen::VectorXd beta_hat;
 	Eigen::VectorXd sigma2_u(G);
+	std::vector<Eigen::MatrixXd> D_inv_final;  // converged prior precision matrices (for SE computation)
+	std::vector<double> log_det_Dg_final;       // converged log|D_g| values
 	double sigma2 = 0;
 	int niter = 0;
 	bool converged = true;
@@ -1520,86 +1994,193 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	if (is_gaussian)
 	{
-		// Precompute X'X decomposition (reused on every profiled solve)
-		Eigen::MatrixXd Xt = Xm.transpose();
-		Eigen::MatrixXd XtX = Xt * Xm;
-		Eigen::LDLT<Eigen::MatrixXd> XtX_ldlt(XtX);
+		intptr_t n_chol = total_chol_params(lay);
+		intptr_t outer_dim_gauss = n_chol + 1; // Cholesky params + log σ
 
-		ProfiledObjective profiled{Xm, ym, lay, n, p, XtX_ldlt, Xt};
+		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol};
 
-		// θ starting values from the ANOVA init
-		Eigen::VectorXd theta(G + 1);
-		for (intptr_t g = 0; g < G; g++) {
-			theta[g] = phi[p + g];           // log σ_u_g
+		// ── Initialize Cholesky from ANOVA variance estimates ──
+		Eigen::VectorXd theta(outer_dim_gauss);
+		{
+			intptr_t chol_pos = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				intptr_t np = n_chol_params(qg);
+				double s2_init = std::exp(2.0 * phi[p + g]);
+				for (intptr_t r = 0; r < qg; r++)
+				{
+					for (intptr_t c = 0; c <= r; c++)
+					{
+						intptr_t idx = chol_pos + r * (r + 1) / 2 + c;
+						if (r == c) {
+							double var_init = (r == 0) ? s2_init : s2_init * 0.1;
+							theta[idx] = 0.5 * std::log(std::max(var_init, 1e-4));
+						} else {
+							theta[idx] = 0.0;
+						}
+					}
+				}
+				chol_pos += np;
+			}
 		}
-		theta[G] = phi[p + G];               // log σ
+		theta[n_chol] = phi[p + G]; // log σ
 
-		auto newton_res = newton_optimize(profiled, theta);
+		auto newton_res = newton_optimize(gauss_obj, theta);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
 
-		// Recover (β̂, û) at the converged θ
-		for (intptr_t g = 0; g < G; g++) {
-			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		// ── Unpack converged Cholesky → D_inv, sigma2_u, sigma2 ──
+		D_inv_final.resize(G);
+		log_det_Dg_final.resize(G);
+		{
+			intptr_t chol_pos = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				Eigen::MatrixXd L = unpack_cholesky(theta.data() + chol_pos, qg);
+				Eigen::MatrixXd D = cholesky_to_cov(L);
+				D_inv_final[g] = cholesky_to_precision(L);
+				log_det_Dg_final[g] = log_det_D(theta.data() + chol_pos, qg);
+				sigma2_u[g] = D(0, 0);
+				chol_pos += n_chol_params(qg);
+			}
 		}
-		sigma2 = std::exp(2.0 * theta[G]);
+		sigma2 = std::exp(2.0 * theta[n_chol]);
 
-		auto final_prof = solve_profiled_gaussian(sigma2_u, sigma2, Xm, ym, lay,
-		                                           n, p, XtX_ldlt, Xt);
-		beta_hat = final_prof.beta;
-
-		// Assemble full φ = (β̂, θ̂) for Hessian / SE computation
-		phi.resize(outer_dim);
-		phi.head(p) = beta_hat;
-		for (intptr_t g = 0; g < G; g++) {
-			phi[p + g] = theta[g];
-		}
-		phi[p + G] = theta[G];
+		auto final_gauss = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
+		                                             Xm, ym, lay, n, p);
+		beta_hat = final_gauss.beta;
 	}
 	else
 	{
-		// Non-Gaussian: PIRLS profiling — Newton over θ = (log σ_u_1..G).
-		// For NB, θ also includes log(θ_nb) as an extra element.
-		// β is concentrated out via PIRLS at each θ evaluation, reducing
-		// the outer dimension from p+G to G (or G+1 for NB) and eliminating
-		// β-vs-σ ridges.
+		// Non-Gaussian: PIRLS profiling — Newton over θ = (chol_1, ..., chol_G, [log θ_nb]).
+		// β is concentrated out via PIRLS at each θ evaluation.
+		// Outer dimension: Σ q_g(q_g+1)/2 + (1 if NB).
 		bool is_nb = (fam.name == "negbin");
-		Eigen::VectorXd beta_init = phi.head(p);
-		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init};
+		intptr_t n_chol = total_chol_params(lay);
+		intptr_t outer_dim_pirls = is_nb ? (n_chol + 1) : n_chol;
 
-		intptr_t outer_dim_pirls = is_nb ? (G + 1) : G;
+		Eigen::VectorXd beta_init = phi.head(p);
+
+		// ── Initialize Cholesky parameters ────────────────────────────
 		Eigen::VectorXd theta(outer_dim_pirls);
+
+		// For NB with random slopes, the ANOVA-based initialization puts
+		// the slope variances far from the NB optimum (the NB overdispersion
+		// absorbs variance that Poisson attributes to random effects).
+		// A much better starting point: fit a Poisson mixed model with the
+		// same random structure and use its converged Cholesky parameters.
+		bool has_slopes = false;
 		for (intptr_t g = 0; g < G; g++) {
-			theta[g] = phi[p + g];
+			if (lay.q[g] > 1) { has_slopes = true; break; }
 		}
+
+		if (is_nb && has_slopes)
+		{
+			auto pois_model = mixed_model(y, X, groups, Family::poisson());
+
+			// Use Poisson β as starting fixed effects
+			for (intptr_t i = 0; i < p; i++) {
+				beta_init[i] = pois_model.beta[i + 1];
+			}
+
+			// Use Poisson Cholesky as starting outer theta
+			intptr_t chol_pos = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				intptr_t np = n_chol_params(qg);
+				auto &re = pois_model.random_effects[g + 1]; // 1-based Array
+
+				for (intptr_t r = 0; r < qg; r++)
+				{
+					for (intptr_t c = 0; c <= r; c++)
+					{
+						intptr_t pack_idx = r * (r + 1) / 2 + c;
+						double val = re.cov_chol[pack_idx + 1]; // 1-based Array
+						if (r == c) {
+							theta[chol_pos + pack_idx] = std::log(std::max(val, 1e-6));
+						} else {
+							theta[chol_pos + pack_idx] = val;
+						}
+					}
+				}
+				chol_pos += np;
+			}
+		}
+		else
+		{
+			// Standard initialization: ANOVA variance decomposition.
+			intptr_t chol_pos = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				intptr_t np = n_chol_params(qg);
+				double s2_init = std::exp(2.0 * phi[p + g]);
+				for (intptr_t r = 0; r < qg; r++)
+				{
+					for (intptr_t c = 0; c <= r; c++)
+					{
+						intptr_t idx = chol_pos + r * (r + 1) / 2 + c;
+						if (r == c) {
+							double var_init = (r == 0) ? s2_init : s2_init * 0.1;
+							theta[idx] = 0.5 * std::log(std::max(var_init, 1e-4));
+						} else {
+							theta[idx] = 0.0;
+						}
+					}
+				}
+				chol_pos += np;
+			}
+		}
+
 		if (is_nb)
 		{
-			// Initialize θ_nb from method-of-moments: Var(y)/mean(y) ≈ 1 + mean(y)/θ
+			// Initialize θ_nb from method-of-moments
 			double ybar = ym.mean();
 			double yvar = (ym.array() - ybar).square().sum() / std::max(n - 1, (intptr_t)1);
 			double theta_nb_init = (yvar > ybar) ? ybar * ybar / (yvar - ybar) : 10.0;
 			theta_nb_init = std::clamp(theta_nb_init, 0.01, 1e6);
-			theta[G] = std::log(theta_nb_init);
+			theta[n_chol] = std::log(theta_nb_init);
 		}
+
+		// Create PirlsObjective after beta_init is finalized
+		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol};
 
 		auto newton_res = newton_optimize(pirls_obj, theta);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
 
-		// Recover (β̂, û) at the converged θ
-		for (intptr_t g = 0; g < G; g++) {
-			sigma2_u[g] = std::exp(2.0 * theta[g]);
+		// ── Unpack converged Cholesky → D_inv, sigma2_u, log_det_Dg ──
+		D_inv_final.resize(G);
+		log_det_Dg_final.resize(G);
+		{
+			intptr_t chol_pos = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				intptr_t np = n_chol_params(qg);
+				Eigen::MatrixXd L = unpack_cholesky(theta.data() + chol_pos, qg);
+				Eigen::MatrixXd D = cholesky_to_cov(L);
+				D_inv_final[g] = cholesky_to_precision(L);
+				log_det_Dg_final[g] = log_det_D(theta.data() + chol_pos, qg);
+				// For backward compat, store the intercept variance in sigma2_u
+				sigma2_u[g] = D(0, 0);
+				chol_pos += np;
+			}
 		}
 
-		// For NB, update the Family with the converged θ_nb before final PIRLS
+		// For NB, update the Family with the converged θ_nb
 		if (is_nb) {
-			double theta_nb = std::exp(theta[G]);
+			double theta_nb = std::exp(theta[n_chol]);
 			fam_used = Family::negbin(theta_nb);
 		}
 
-		auto final_pirls = solve_pirls(sigma2_u, fam_used, Xm, ym, lay, n, p, beta_init);
+		auto final_pirls = solve_pirls(D_inv_final, log_det_Dg_final, fam_used,
+		                                Xm, ym, lay, n, p, beta_init);
 		beta_hat = final_pirls.beta;
 
 		// Assemble full φ = (β̂, θ̂) for SE computation
@@ -1620,11 +2201,16 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	if (is_gaussian)
 	{
-		final_inner = solve_inner(beta_hat, sigma2_u, sigma2, fam, Xm, ym, lay, n, p);
+		auto gauss_final = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
+		                                            Xm, ym, lay, n, p);
+		final_inner.u = std::move(gauss_final.u);
+		final_inner.mu = std::move(gauss_final.mu);
+		final_inner.laplace_nll = gauss_final.laplace_nll;
 	}
 	else
 	{
-		auto pirls_final = solve_pirls(sigma2_u, fam_used, Xm, ym, lay, n, p, beta_hat);
+		auto pirls_final = solve_pirls(D_inv_final, log_det_Dg_final, fam_used,
+		                                Xm, ym, lay, n, p, beta_hat);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
@@ -1632,95 +2218,33 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	// ── Standard errors ─────────────────────────────────────────────
 	//
-	// Gaussian:     Conditional Var(β̂ | θ̂) = (X'V⁻¹X)⁻¹ where
-	//               V = σ²I + ZDZ'. Using Woodbury on V⁻¹ and noting
-	//               that the Laplace Hessian A = D⁻¹ + (1/σ²)Z'Z:
-	//                  X'V⁻¹X = (1/σ²)(X'X − (1/σ²) B A⁻¹ B')
-	//               with B = X'Z.  This is the standard conditional SE
-	//               that lme4/glmmTMB report.
-	//
-	// Non-Gaussian: β block of the inverse of the full observed
-	//               information matrix over all outer parameters.
+	// Conditional Var(β̂ | θ̂) from the inverse of the Henderson matrix:
+	//   C = [X'WX     X'WZ       ]
+	//       [Z'WX   Z'WZ + D⁻¹   ]
+	// For Gaussian: W = (1/σ²)I.
+	// For non-Gaussian: W = diag(w_i) with w_i = (dμ/dη)²/V(μ).
+	// The top-left p×p block of C⁻¹ is the conditional covariance
+	// of β̂.  This is what lme4/glmmTMB report.
 
 	Eigen::MatrixXd vcov;
 
-	if (is_gaussian)
 	{
-		double inv_s2 = 1.0 / sigma2;
-
-		// Build A = D⁻¹ + (1/σ²)Z'Z  (same structure as the Laplace Hessian)
-		intptr_t J = lay.J_total;
-		Eigen::MatrixXd A = Eigen::MatrixXd::Zero(J, J);
-
-		for (intptr_t g = 0; g < G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			double inv_s2u = 1.0 / sigma2_u[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				A(off + j, off + j) = inv_s2u;
-			}
-		}
-		for (intptr_t i = 0; i < n; i++)
-		{
-			for (intptr_t g1 = 0; g1 < G; g1++)
-			{
-				intptr_t k1 = lay.offset[g1] + groups[g1].indices[i];
-				A(k1, k1) += inv_s2;
-
-				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
-				{
-					intptr_t k2 = lay.offset[g2] + groups[g2].indices[i];
-					A(k1, k2) += inv_s2;
-					A(k2, k1) += inv_s2;
-				}
-			}
-		}
-
-		Eigen::LDLT<Eigen::MatrixXd> A_ldlt(A);
-
-		// B = X'Z  (p × J_total)
-		Eigen::MatrixXd B = Eigen::MatrixXd::Zero(p, J);
-		for (intptr_t g = 0; g < G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			auto &idx = groups[g].indices;
-			for (intptr_t i = 0; i < n; i++)
-			{
-				intptr_t col = off + idx[i];
-				for (intptr_t k = 0; k < p; k++) {
-					B(k, col) += Xm(i, k);
-				}
-			}
-		}
-
-		// X'V⁻¹X = (1/σ²)(X'X − (1/σ²) B A⁻¹ B')
-		Eigen::MatrixXd XtX = Xm.transpose() * Xm;
-		Eigen::MatrixXd AinvBt = A_ldlt.solve(B.transpose());
-		Eigen::MatrixXd XtVinvX = inv_s2 * (XtX - inv_s2 * B * AinvBt);
-
-		// Var(β̂ | θ̂) = (X'V⁻¹X)⁻¹
-		Eigen::LDLT<Eigen::MatrixXd> ldlt(XtVinvX);
-		vcov = ldlt.solve(Eigen::MatrixXd::Identity(p, p));
-	}
-	else
-	{
-		// Non-Gaussian: Var(β̂ | θ̂) from the inverse Henderson matrix.
-		// At the PIRLS convergence point, the Henderson matrix is:
-		//   C = [X'WX     X'WZ       ]
-		//       [Z'WX   Z'WZ + D⁻¹   ]
-		// where W = diag(w_i) with w_i = (dμ/dη)²/V(μ) (generalized IWLS weights)
-		// at the converged predictions.
-		// The top-left p×p block of C⁻¹ is the conditional covariance
-		// of β̂.  This is what lme4/glmmTMB report.
-
-		Eigen::VectorXd V_se = fam_used.variance(final_inner.mu);
-		Eigen::VectorXd me_se = fam_used.mu_eta(final_inner.mu);
 		Eigen::VectorXd w_se(n);
-		for (intptr_t i = 0; i < n; i++) {
-			double v = std::max(V_se[i], 1e-10);
-			double d = std::max(me_se[i], 1e-10);
-			w_se[i] = d * d / v;
+		if (is_gaussian)
+		{
+			w_se.setConstant(1.0 / sigma2);
 		}
+		else
+		{
+			Eigen::VectorXd V_se = fam_used.variance(final_inner.mu);
+			Eigen::VectorXd me_se = fam_used.mu_eta(final_inner.mu);
+			for (intptr_t i = 0; i < n; i++) {
+				double v = std::max(V_se[i], 1e-10);
+				double d = std::max(me_se[i], 1e-10);
+				w_se[i] = d * d / v;
+			}
+		}
+
 		intptr_t J = lay.J_total;
 		intptr_t sdim = p + J;
 
@@ -1743,13 +2267,19 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			}
 		}
 
-		// D⁻¹ on Z'Z diagonal
+		// D⁻¹ blocks
 		for (intptr_t g = 0; g < G; g++)
 		{
-			intptr_t off = lay.offset[g];
-			double inv_s2u = 1.0 / sigma2_u[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				C(p + off + j, p + off + j) = inv_s2u;
+			intptr_t qg = lay.q[g];
+			auto &Dinv_g = D_inv_final[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++)
+			{
+				intptr_t base = p + lay.offset[g] + j * qg;
+				for (intptr_t t1 = 0; t1 < qg; t1++) {
+					for (intptr_t t2 = 0; t2 < qg; t2++) {
+						C(base + t1, base + t2) += Dinv_g(t1, t2);
+					}
+				}
 			}
 		}
 
@@ -1758,21 +2288,52 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		{
 			for (intptr_t g1 = 0; g1 < G; g1++)
 			{
-				intptr_t k1 = p + lay.offset[g1] + groups[g1].indices[i];
+				intptr_t j1 = groups[g1].indices[i];
+				intptr_t q1 = lay.q[g1];
+				intptr_t base1 = p + lay.offset[g1] + j1 * q1;
 
-				for (intptr_t j = 0; j < p; j++)
+				for (intptr_t t = 0; t < q1; t++)
 				{
-					double val = Xm(i, j) * w_se[i];
-					C(j, k1) += val;
-					C(k1, j) += val;
+					double z_val = lay.Z(g1, i, t);
+					double wz_val = w_se[i] * z_val;
+
+					for (intptr_t j = 0; j < p; j++)
+					{
+						double val = Xm(i, j) * wz_val;
+						C(j, base1 + t) += val;
+						C(base1 + t, j) += val;
+					}
 				}
 
-				C(k1, k1) += w_se[i];
+				// Z'WZ within-group
+				for (intptr_t t1 = 0; t1 < q1; t1++)
+				{
+					double wz1 = w_se[i] * lay.Z(g1, i, t1);
+					for (intptr_t t2 = t1; t2 < q1; t2++)
+					{
+						double val = wz1 * lay.Z(g1, i, t2);
+						C(base1 + t1, base1 + t2) += val;
+						if (t1 != t2) C(base1 + t2, base1 + t1) += val;
+					}
+				}
+
+				// Z'WZ cross-group
 				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
 				{
-					intptr_t k2 = p + lay.offset[g2] + groups[g2].indices[i];
-					C(k1, k2) += w_se[i];
-					C(k2, k1) += w_se[i];
+					intptr_t j2 = groups[g2].indices[i];
+					intptr_t q2 = lay.q[g2];
+					intptr_t base2 = p + lay.offset[g2] + j2 * q2;
+
+					for (intptr_t t1 = 0; t1 < q1; t1++)
+					{
+						double wz1 = w_se[i] * lay.Z(g1, i, t1);
+						for (intptr_t t2 = 0; t2 < q2; t2++)
+						{
+							double val = wz1 * lay.Z(g2, i, t2);
+							C(base1 + t1, base2 + t2) += val;
+							C(base2 + t2, base1 + t1) += val;
+						}
+					}
 				}
 			}
 		}
@@ -1828,13 +2389,47 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	{
 		RandomEffectGroup reg;
 		reg.group_name = groups[g].name;
-		reg.term_names.append("(Intercept)");
 		reg.nlevels = groups[g].nlevels;
-		reg.variance.append(sigma2_u[g]);
 
-		intptr_t off = lay.offset[g];
+		intptr_t qg = lay.q[g];
+
+		// Term names from the GroupingInfo (e.g. "(Intercept)", "vowel[i]", "vowel[u]")
+		reg.term_names = groups[g].term_names;
+
+		// Covariance matrix D_g: from D_inv_final (non-Gaussian/Cholesky path)
+		// or from scalar sigma2_u (Gaussian intercept-only path).
+		Eigen::MatrixXd D_g;
+		if (!D_inv_final.empty())
+		{
+			// Invert D_inv to get D (small matrix, at most q × q)
+			D_g = D_inv_final[g].inverse();
+		}
+		else
+		{
+			// Gaussian scalar path: diagonal covariance
+			D_g = Eigen::MatrixXd::Zero(qg, qg);
+			D_g(0, 0) = sigma2_u[g];
+		}
+
+		// Variance for each term (diagonal of D_g)
+		for (intptr_t t = 0; t < qg; t++) {
+			reg.variance.append(D_g(t, t));
+		}
+
+		// Cholesky factor (packed lower triangle) for the covariance display
+		Eigen::LLT<Eigen::MatrixXd> llt(D_g);
+		Eigen::MatrixXd L_out = llt.matrixL();
+		for (intptr_t r = 0; r < qg; r++) {
+			for (intptr_t c = 0; c <= r; c++) {
+				reg.cov_chol.append(L_out(r, c));
+			}
+		}
+
+		// Conditional modes: u[j*q + t] for each level j and term t
 		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			reg.conditional_modes.append(final_inner.u[off + j]);
+			for (intptr_t t = 0; t < qg; t++) {
+				reg.conditional_modes.append(final_inner.u[lay.offset[g] + j * qg + t]);
+			}
 		}
 
 		model.random_effects.append(std::move(reg));
