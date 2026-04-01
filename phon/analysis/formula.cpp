@@ -80,6 +80,11 @@ String SmoothTerm::to_string() const
 {
 	String result("s(");
 	result.append(quote_name(variable));
+	if (!by.empty())
+	{
+		result.append(", by=");
+		result.append(quote_name(by));
+	}
 	if (k != 10)
 	{
 		result.append(", k=");
@@ -189,6 +194,9 @@ Array<String> Formula::all_variables() const
 	for (intptr_t i = 1; i <= smooth.size(); i++)
 	{
 		add_unique(smooth[i].variable);
+		if (!smooth[i].by.empty()) {
+			add_unique(smooth[i].by);
+		}
 	}
 
 	for (intptr_t i = 1; i <= random.size(); i++)
@@ -558,11 +566,13 @@ private:
 	}
 
 	// smooth_term := 's' '(' name [',' option]* ')'
-	// option := 'k' '=' number
+	// option := 'k' '=' number | 'by' '=' name
 	//
 	// Examples:
-	//   s(duration)        → SmoothTerm{"duration", "cr", 10}
-	//   s(duration, k=15)  → SmoothTerm{"duration", "cr", 15}
+	//   s(duration)                → SmoothTerm{"duration", "", "cr", 10}
+	//   s(duration, k=15)          → SmoothTerm{"duration", "", "cr", 15}
+	//   s(duration, by=speaker)    → SmoothTerm{"duration", "speaker", "cr", 10}
+	//   s(duration, by=speaker, k=15)
 	//
 	// Precondition: "s" has been consumed as a Name, current token is LParen.
 	void parse_smooth_term(Formula &f)
@@ -576,12 +586,12 @@ private:
 		st.variable = m_current.text;
 		advance();
 
-		// Optional arguments: , k=N
+		// Optional arguments: , k=N , by=name
 		while (m_current.type == TokenType::Comma)
 		{
 			advance(); // skip comma
 
-			expect(TokenType::Name, "Expected option name (e.g. 'k') inside s()");
+			expect(TokenType::Name, "Expected option name (e.g. 'k', 'by') inside s()");
 			String option = m_current.text;
 			advance();
 
@@ -597,9 +607,15 @@ private:
 				}
 				advance();
 			}
+			else if (option == "by")
+			{
+				expect(TokenType::Name, "Expected variable name for by= inside s()");
+				st.by = m_current.text;
+				advance();
+			}
 			else
 			{
-				throw error("Unknown smooth term option '%' (supported: k)", option);
+				throw error("Unknown smooth term option '%' (supported: k, by)", option);
 			}
 		}
 
@@ -607,10 +623,10 @@ private:
 		expect(TokenType::RParen, "Expected ')' to close s()");
 		advance();
 
-		// Check for duplicate smooth on the same variable.
+		// Check for duplicate smooth on the same variable+by combination.
 		for (intptr_t i = 1; i <= f.smooth.size(); i++)
 		{
-			if (f.smooth[i].variable == st.variable) {
+			if (f.smooth[i].variable == st.variable && f.smooth[i].by == st.by) {
 				throw error("Duplicate smooth term for variable '%'", st.variable);
 			}
 		}

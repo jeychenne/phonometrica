@@ -109,6 +109,7 @@ private slots:
 	void onZoomIn();
 	void onZoomOut();
 	void onZoomToSelection();
+	void onGoToTime();
 	void onMoveForward();
 	void onMoveBackward();
 	void onToggleMouseTracking(bool checked);

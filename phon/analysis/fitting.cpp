@@ -693,6 +693,23 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		if (!found) {
 			all_col_indices.push_back(scol);
 		}
+
+		// Also collect the by-variable if present.
+		if (!formula.smooth[i].by.empty())
+		{
+			intptr_t bcol = find_column(data, formula.smooth[i].by);
+			if (bcol == 0) {
+				throw error("By-variable '%' not found in data", formula.smooth[i].by);
+			}
+			found = false;
+			for (intptr_t c : all_col_indices)
+			{
+				if (c == bcol) { found = true; break; }
+			}
+			if (!found) {
+				all_col_indices.push_back(bcol);
+			}
+		}
 	}
 
 	// ── Complete cases ───────────────────────────────────────────────
@@ -715,11 +732,15 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 
 	intptr_t n_parametric = dm.ncol; // number of purely parametric columns
 
-	// Structures for smooth term management.
+	// A SmoothSlice represents one block of smooth basis columns in the augmented X.
+	// For a plain smooth s(x), there is one slice.
+	// For a by-factor smooth s(x, by=f), there is one slice per level of f.
 	struct SmoothSlice {
-		SmoothBasis basis;
-		intptr_t col_start;  // 0-based starting column in augmented X
-		intptr_t col_count;  // number of columns (k_eff)
+		SmoothBasis basis;       // the shared basis (same knots for all levels)
+		intptr_t col_start;      // 0-based starting column in augmented X
+		intptr_t col_count;      // number of columns (k_eff)
+		intptr_t smooth_index;   // 1-based index into formula.smooth
+		String level;            // empty for plain smooth, level name for by-factor
 	};
 	std::vector<SmoothSlice> smooth_slices;
 
@@ -736,21 +757,68 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 			}
 			auto x_vals = extract_numeric(data, scol, rows);
 
-			// Build the spline basis.
+			// Build the spline basis (shared knots for all levels).
 			auto basis = build_cr_basis(x_vals, st.k);
 
-			SmoothSlice slice;
-			slice.col_start = dm.ncol + (smooth_slices.empty() ? 0 :
-				smooth_slices.back().col_start + smooth_slices.back().col_count - n_parametric);
-			// Recompute: col_start in the augmented matrix
-			intptr_t aug_col = n_parametric;
-			for (auto &prev : smooth_slices) {
-				aug_col += prev.col_count;
+			if (st.has_by())
+			{
+				// Factor by-variable: create one masked slice per level.
+				intptr_t bcol = find_column(data, st.by);
+				if (is_numeric_column(data, bcol, rows)) {
+					throw error("By-variable '%' in s(%,by=%) must be categorical (got numeric)",
+					            st.by, st.variable, st.by);
+				}
+				auto levels = extract_levels(data, bcol, rows,
+				                              lookup_reference(st.by, reference_levels));
+
+				// Extract by-variable values for all complete rows.
+				std::vector<String> by_vals;
+				by_vals.reserve(rows.size());
+				for (intptr_t row : rows) {
+					by_vals.push_back(data.get_cell(row, bcol));
+				}
+
+				for (intptr_t lv = 1; lv <= levels.size(); lv++)
+				{
+					SmoothSlice slice;
+					// Create a zero-masked copy of the basis for this level.
+					slice.basis = basis; // copy (shares knots, F_deriv2, Z_absorb)
+					slice.basis.B = Array<double>(dm.nobs, basis.k_eff, 0.0);
+					for (intptr_t j = 1; j <= basis.k_eff; j++) {
+						for (intptr_t i = 0; i < (intptr_t)rows.size(); i++) {
+							if (by_vals[i] == levels[lv]) {
+								slice.basis.B(i + 1, j) = basis.B(i + 1, j);
+							}
+							// else: already 0
+						}
+					}
+
+					intptr_t aug_col = n_parametric;
+					for (auto &prev : smooth_slices) {
+						aug_col += prev.col_count;
+					}
+					slice.col_start = aug_col;
+					slice.col_count = basis.k_eff;
+					slice.smooth_index = si;
+					slice.level = levels[lv];
+					smooth_slices.push_back(std::move(slice));
+				}
 			}
-			slice.col_start = aug_col;
-			slice.col_count = basis.k_eff;
-			slice.basis = std::move(basis);
-			smooth_slices.push_back(std::move(slice));
+			else
+			{
+				// Plain smooth: one slice.
+				intptr_t aug_col = n_parametric;
+				for (auto &prev : smooth_slices) {
+					aug_col += prev.col_count;
+				}
+
+				SmoothSlice slice;
+				slice.col_start = aug_col;
+				slice.col_count = basis.k_eff;
+				slice.smooth_index = si;
+				slice.basis = std::move(basis);
+				smooth_slices.push_back(std::move(slice));
+			}
 		}
 
 		// Total augmented dimension.
@@ -779,7 +847,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 			}
 		}
 
-		// Build augmented penalty: S_total (p_total × p_total), zero for parametric, smooth S blocks.
+		// Build augmented penalty: S_total (p_total × p_total).
 		Array<double> S_aug(p_total, p_total, 0.0);
 
 		for (auto &sl : smooth_slices)
@@ -796,16 +864,19 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		for (intptr_t j = 1; j <= dm.coef_names.size(); j++) {
 			aug_names.append(dm.coef_names[j]);
 		}
-		intptr_t smooth_idx = 0;
 		for (auto &sl : smooth_slices)
 		{
-			smooth_idx++;
-			String var_name = formula.smooth[smooth_idx].variable;
+			auto &st = formula.smooth[sl.smooth_index];
 			for (intptr_t j = 1; j <= sl.col_count; j++)
 			{
 				String name("s(");
-				name.append(var_name);
-				name.append(").");
+				name.append(st.variable);
+				name.append(")");
+				if (!sl.level.empty()) {
+					name.append(":");
+					name.append(sl.level);
+				}
+				name.append(".");
 				name.append(std::to_string(j));
 				aug_names.append(std::move(name));
 			}
@@ -844,16 +915,20 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 
 		// Build smooth column range descriptors.
 		std::vector<SmoothColumnRange> ranges;
-		intptr_t si = 0;
 		for (auto &sl : smooth_slices)
 		{
-			si++;
+			auto &st = formula.smooth[sl.smooth_index];
 			SmoothColumnRange scr;
 			scr.col_start = sl.col_start;
 			scr.col_count = sl.col_count;
-			scr.variable = formula.smooth[si].variable;
-			scr.basis = formula.smooth[si].basis;
-			scr.k = formula.smooth[si].k;
+			scr.variable = st.variable;
+			if (!sl.level.empty()) {
+				// Label: "F1:speaker_level" for by-factor
+				scr.variable.append(":");
+				scr.variable.append(sl.level);
+			}
+			scr.basis = st.basis;
+			scr.k = st.k;
 			ranges.push_back(std::move(scr));
 		}
 

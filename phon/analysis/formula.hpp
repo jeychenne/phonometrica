@@ -44,20 +44,24 @@ struct FixedTerm
 };
 
 
-// A smooth term: s(variable) or s(variable, k=15)
+// A smooth term: s(variable) or s(variable, k=15) or s(variable, by=factor)
 // Represents a penalized regression spline of a numeric covariate.
+// When 'by' is non-empty, a separate smooth is fitted for each level of the factor.
 struct SmoothTerm
 {
 	String variable;           // covariate name, e.g. "duration"
+	String by;                 // by-variable (factor), e.g. "speaker" (empty if none)
 	String basis = "cr";       // basis type: "cr" (cubic regression spline, default)
 	intptr_t k = 10;           // basis dimension (number of knots, default 10)
 
 	bool operator==(const SmoothTerm &other) const
 	{
-		return variable == other.variable && basis == other.basis && k == other.k;
+		return variable == other.variable && by == other.by && basis == other.basis && k == other.k;
 	}
 
-	// String representation: "s(duration)" or "s(duration, k=15)"
+	bool has_by() const { return !by.empty(); }
+
+	// String representation: "s(duration)" or "s(duration, k=15)" or "s(duration, by=speaker)"
 	String to_string() const;
 };
 
