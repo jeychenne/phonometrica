@@ -102,7 +102,7 @@ void ConcordanceView::setupUi()
 	intersect_action->setToolTip(tr("Intersect with another concordance (A \u2229 B)"));
 
 	auto *compl_action = m_toolbar->addAction(QIcon(":/icons/set-complement.svg"), tr("Complement"));
-	compl_action->setToolTip(tr("Get complement (B \u2216 A)"));
+	compl_action->setToolTip(tr("Get complement (A \u2216 B)"));
 
 	m_toolbar->addSeparator();
 
@@ -519,7 +519,7 @@ void ConcordanceView::onUnion()
 	{
 		auto result = m_conc->unite(*other, String(name.toUtf8().constData()));
 		Project::updated();
-		emit addedToProject();
+		emit concordanceCreated(result);
 	}
 	catch (std::exception &e)
 	{
@@ -541,7 +541,7 @@ void ConcordanceView::onIntersection()
 	{
 		auto result = m_conc->intersect(*other, String(name.toUtf8().constData()));
 		Project::updated();
-		emit addedToProject();
+		emit concordanceCreated(result);
 	}
 	catch (std::exception &e)
 	{
@@ -563,7 +563,7 @@ void ConcordanceView::onComplement()
 	{
 		auto result = m_conc->complement(*other, String(name.toUtf8().constData()));
 		Project::updated();
-		emit addedToProject();
+		emit concordanceCreated(result);
 	}
 	catch (std::exception &e)
 	{

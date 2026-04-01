@@ -50,12 +50,17 @@ public:
 signals:
 
 	void requestAnalysis(Handle<DataTable> source);
+	void datasetCreated(Handle<Dataset> ds);
 
 private slots:
 
 	void onDeleteRows();
 	void onDeleteColumns();
 	void onExportCsv();
+
+	void onUnion();
+	void onIntersection();
+	void onComplement();
 
 	void onContextMenu(const QPoint &pos);
 
@@ -67,6 +72,7 @@ private:
 	int selectedColumn() const;
 	QList<int> selectedRows() const;
 	QList<int> selectedColumns() const;
+	Handle<Dataset> pickDataset(const QString &title);
 
 	DatasetModel *m_model = nullptr;
 	QTableView *m_table = nullptr;

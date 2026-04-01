@@ -20,7 +20,9 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <set>
 #include <phon/application/dataset.hpp>
+#include <phon/application/project.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/text.hpp>
 
@@ -48,6 +50,17 @@ Dataset::Dataset(const Dataset &other) :
 	ncol = other.ncol;
 
 	m_content_modified = true;
+}
+
+String Dataset::label() const
+{
+	return m_label.empty() ? Document::label() : m_label;
+}
+
+void Dataset::set_label(String value, bool mutate)
+{
+	m_label = std::move(value);
+	if (mutate) m_content_modified = true;
 }
 
 
@@ -349,5 +362,162 @@ void Dataset::remove_column(intptr_t j)
     m_labels.remove_at(j);
     m_columns.remove_at(j);
     ncol--;
+}
+
+// ── Set operations ─────────────────────────────────────────
+
+String Dataset::row_key(intptr_t i) const
+{
+	String key;
+	for (intptr_t j = 1; j <= ncol; j++) {
+		if (j > 1) key.append('\t');
+		key.append(get_cell(i, j));
+	}
+	return key;
+}
+
+void Dataset::append_row_from(const Dataset &source, intptr_t i)
+{
+	for (intptr_t j = 1; j <= ncol; j++)
+	{
+		auto *dst = m_columns[j].get();
+		auto *src = source.m_columns[j].get();
+
+		switch (dst->type())
+		{
+		case ColumnType::Numeric:
+			cast_num(dst)->data.append(cast_num(src)->get(i));
+			break;
+		case ColumnType::Boolean:
+			cast_bool(dst)->data.append(cast_bool(src)->get(i));
+			break;
+		default:
+			cast_string(dst)->data.append(cast_string(src)->get(i));
+			break;
+		}
+	}
+	nrow++;
+}
+
+void Dataset::check_columns_compatible(const Dataset &other) const
+{
+	if (ncol != other.ncol) {
+		throw error("Cannot combine datasets: they have different numbers of columns (% vs %)", ncol, other.ncol);
+	}
+	for (intptr_t j = 1; j <= ncol; j++) {
+		if (m_labels[j] != other.m_labels[j]) {
+			throw error("Cannot combine datasets: column % has different names (\"%\" vs \"%\")", j, m_labels[j], other.m_labels[j]);
+		}
+		if (m_columns[j]->type() != other.m_columns[j]->type()) {
+			throw error("Cannot combine datasets: column \"%\" has different types", m_labels[j]);
+		}
+	}
+}
+
+Handle<Dataset> Dataset::unite(const Dataset &other, const String &label) const
+{
+	check_columns_compatible(other);
+
+	// Start with a copy of this dataset.
+	auto result = make_handle<Dataset>(*this);
+	result->m_loaded = true;
+	result->set_label(label, false);
+
+	// Build a set of row keys from this dataset.
+	std::set<String> keys;
+	for (intptr_t i = 1; i <= nrow; i++) {
+		keys.insert(row_key(i));
+	}
+
+	// Add rows from other that are not already present.
+	for (intptr_t i = 1; i <= other.nrow; i++) {
+		auto key = other.row_key(i);
+		if (keys.find(key) == keys.end()) {
+			keys.insert(std::move(key));
+			result->append_row_from(other, i);
+		}
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
+}
+
+Handle<Dataset> Dataset::intersect(const Dataset &other, const String &label) const
+{
+	check_columns_compatible(other);
+
+	// Build a set of row keys from B.
+	std::set<String> other_keys;
+	for (intptr_t i = 1; i <= other.nrow; i++) {
+		other_keys.insert(other.row_key(i));
+	}
+
+	// Create an empty result with the same column structure.
+	auto result = make_handle<Dataset>(nullptr);
+	result->m_labels = m_labels;
+	result->ncol = ncol;
+	result->m_loaded = true;
+	result->m_content_modified = true;
+	result->set_label(label, false);
+
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
+	}
+	// Columns were cloned with all rows — reset them to empty.
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns[j]->resize(0);
+	}
+
+	// Keep rows from A that also appear in B.
+	for (intptr_t i = 1; i <= nrow; i++) {
+		if (other_keys.count(row_key(i))) {
+			result->append_row_from(*this, i);
+		}
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
+}
+
+Handle<Dataset> Dataset::complement(const Dataset &other, const String &label) const
+{
+	check_columns_compatible(other);
+
+	// Build a set of row keys from B.
+	std::set<String> other_keys;
+	for (intptr_t i = 1; i <= other.nrow; i++) {
+		other_keys.insert(other.row_key(i));
+	}
+
+	// Create an empty result with the same column structure.
+	auto result = make_handle<Dataset>(nullptr);
+	result->m_labels = m_labels;
+	result->ncol = ncol;
+	result->m_loaded = true;
+	result->m_content_modified = true;
+	result->set_label(label, false);
+
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
+	}
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns[j]->resize(0);
+	}
+
+	// Keep rows from A that do NOT appear in B.
+	for (intptr_t i = 1; i <= nrow; i++) {
+		if (!other_keys.count(row_key(i))) {
+			result->append_row_from(*this, i);
+		}
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
 }
 } // namespace phonometrica

@@ -214,6 +214,10 @@ public:
 
 	Handle<Concordance> complement(const Concordance &other, const String &label) const;
 
+	/// Check that this concordance has the same columns (count and names) as `other`.
+	/// Throws an error with a descriptive message if the columns are incompatible.
+	void check_columns_compatible(const Concordance &other) const;
+
 	bool update_match(intptr_t i, intptr_t target);
 
 	void update_context(intptr_t i);
@@ -227,6 +231,9 @@ public:
 	static int next_id();
 
 protected:
+
+	/// Copy all measurement/display metadata from this concordance to `target`.
+	void copy_metadata_to(Concordance &target) const;
 
 	void preload();
 

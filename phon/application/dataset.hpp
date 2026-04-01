@@ -41,6 +41,10 @@ public:
 
 	Dataset(const Dataset &other);
 
+	String label() const override;
+
+	void set_label(String value, bool mutate);
+
 	String get_header(intptr_t j) const override;
 
 	String get_cell(intptr_t i, intptr_t j) const override;
@@ -76,6 +80,16 @@ public:
 
 	// Remove column j (1-based). Shifts subsequent columns left.
 	void remove_column(intptr_t j);
+
+	Handle<Dataset> unite(const Dataset &other, const String &label) const;
+
+	Handle<Dataset> intersect(const Dataset &other, const String &label) const;
+
+	Handle<Dataset> complement(const Dataset &other, const String &label) const;
+
+	/// Check that this dataset has the same columns (count and names) as `other`.
+	/// Throws an error with a descriptive message if the columns are incompatible.
+	void check_columns_compatible(const Dataset &other) const;
 
 	static void initialize(Runtime &rt);
 
@@ -137,9 +151,18 @@ private:
 
 	using AutoColumn = std::unique_ptr<Column>;
 
+	/// Build a tab-separated string key for row i (1-based), used for set membership.
+	String row_key(intptr_t i) const;
+
+	/// Append row i (1-based) from source into this dataset.
+	/// Assumes compatible column structure.
+	void append_row_from(const Dataset &source, intptr_t i);
+
 	Array<String> m_labels;
 
 	Array<AutoColumn> m_columns;
+
+	String m_label;
 
 	intptr_t nrow = 0;
 
