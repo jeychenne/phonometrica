@@ -1596,6 +1596,11 @@ ViewPanel *MainWindow::addViewTab(View *view)
 	// Keep undo/redo actions in sync with the view's command processor.
 	connect(view, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
 
+	// Refresh the file manager when a view registers a new file with the project.
+	connect(view, &View::addedToProject, this, [this]() {
+		m_file_manager->refresh();
+	});
+
 	int tabIndex = m_viewer->addTab(panel, panel->label());
 	m_viewer->setCurrentIndex(tabIndex);
 
@@ -1614,6 +1619,9 @@ void MainWindow::openDataset(Handle<Dataset> ds)
 
 	connect(view, &DatasetView::requestAnalysis,
 		this, static_cast<void (MainWindow::*)(Handle<DataTable>)>(&MainWindow::openAnalysis));
+
+	connect(view, &DatasetView::datasetCreated,
+		this, &MainWindow::openDataset);
 
 	addViewTab(view);
 }
@@ -1708,6 +1716,9 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 
 	connect(view, &ConcordanceView::requestAnalysis,
 		this, static_cast<void (MainWindow::*)(Handle<DataTable>)>(&MainWindow::openAnalysis));
+
+	connect(view, &ConcordanceView::concordanceCreated,
+		this, &MainWindow::openConcordance);
 
 	addViewTab(view);
 }

@@ -1633,17 +1633,43 @@ void Concordance::restore_match(intptr_t row, AutoMatch m)
 	file_modified();
 }
 
+void Concordance::check_columns_compatible(const Concordance &other) const
+{
+	auto n = column_count();
+	if (n != other.column_count()) {
+		throw error("Cannot combine concordances: they have different numbers of columns (% vs %)", n, other.column_count());
+	}
+	for (intptr_t j = 1; j <= n; j++) {
+		auto h1 = get_default_header(j);
+		auto h2 = other.get_default_header(j);
+		if (h1 != h2) {
+			throw error("Cannot combine concordances: column % has different names (\"%\" vs \"%\")", j, h1, h2);
+		}
+	}
+}
+
+void Concordance::copy_metadata_to(Concordance &target) const
+{
+	target.set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	if (m_is_pitch) {
+		target.set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+	}
+	if (m_is_intensity) {
+		target.set_intensity_meta();
+	}
+	if (has_measurement_data()) {
+		target.set_measurement_info(m_measurement_points, m_has_average);
+		target.set_has_series(m_has_series);
+		target.set_layout(m_layout);
+	}
+	target.set_has_duration(m_has_duration);
+	target.set_duration_in_ms(m_duration_in_ms);
+	target.rebuild_extra_headers();
+}
+
 Handle<Concordance> Concordance::unite(const Concordance &other, const String &label) const
 {
-	if (m_target_count != other.m_target_count) {
-		throw error("Cannot unite get_concordances with different numbers of targets");
-	}
-	if (m_context_type != other.m_context_type) {
-		throw error("Cannot unite get_concordances with different contexts");
-	}
-	if (m_context_length != other.m_context_length) {
-		throw error("Cannot unite get_concordances with different context lengths");
-	}
+	check_columns_compatible(other);
 
 	std::set<AutoMatch, MatchLess> buffer;
 
@@ -1662,21 +1688,7 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 	}
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-
-	// Copy formant metadata
-	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	if (m_is_pitch) {
-		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
-	if (m_is_intensity) {
-		conc->set_intensity_meta();
-	}
-	}
-	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_has_average);
-		conc->set_has_series(m_has_series);
-		conc->set_layout(m_layout);
-	}
-	conc->rebuild_extra_headers();
+	copy_metadata_to(*conc);
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
@@ -1686,15 +1698,7 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 
 Handle<Concordance> Concordance::intersect(const Concordance &other, const String &label) const
 {
-	if (m_target_count != other.m_target_count) {
-		throw error("Cannot intersect get_concordances with different numbers of targets");
-	}
-	if (m_context_type != other.m_context_type) {
-		throw error("Cannot intersect get_concordances with different contexts");
-	}
-	if (m_context_length != other.m_context_length) {
-		throw error("Cannot intersect get_concordances with different context lengths");
-	}
+	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
 
@@ -1710,20 +1714,7 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-
-	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	if (m_is_pitch) {
-		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
-	if (m_is_intensity) {
-		conc->set_intensity_meta();
-	}
-	}
-	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_has_average);
-		conc->set_has_series(m_has_series);
-		conc->set_layout(m_layout);
-	}
-	conc->rebuild_extra_headers();
+	copy_metadata_to(*conc);
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
@@ -1733,44 +1724,23 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 
 Handle<Concordance> Concordance::complement(const Concordance &other, const String &label) const
 {
-	if (m_target_count != other.m_target_count) {
-		throw error("Cannot compute concordance complement for get_concordances with different numbers of targets");
-	}
-	if (m_context_type != other.m_context_type) {
-		throw error("Cannot compute concordance complement for get_concordances with different contexts");
-	}
-	if (m_context_length != other.m_context_length) {
-		throw error("Cannot compute concordance complement for get_concordances with different context lengths");
-	}
+	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
 
-	for (auto &match : other.m_matches)
+	for (auto &match : m_matches)
 	{
 		// Matches are guaranteed to be sorted
-		auto it = std::lower_bound(m_matches.begin(), m_matches.end(), match, MatchLess());
+		auto it = std::lower_bound(other.m_matches.begin(), other.m_matches.end(), match, MatchLess());
 
-		if (it == m_matches.end() || **it != *match) {
+		if (it == other.m_matches.end() || **it != *match) {
 			result.append(std::make_unique<Match>(*match));
 		}
 	}
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
-
-	conc->set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
-	if (m_is_pitch) {
-		conc->set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
-	if (m_is_intensity) {
-		conc->set_intensity_meta();
-	}
-	}
-	if (has_measurement_data()) {
-		conc->set_measurement_info(m_measurement_points, m_has_average);
-		conc->set_has_series(m_has_series);
-		conc->set_layout(m_layout);
-	}
-	conc->rebuild_extra_headers();
+	copy_metadata_to(*conc);
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);

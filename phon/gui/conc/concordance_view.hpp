@@ -55,6 +55,7 @@ signals:
 
 	void openAnnotation(const Handle<Annotation> &annot, intptr_t layer, double start, double end, bool split);
 	void requestAnalysis(Handle<DataTable> source);
+	void concordanceCreated(Handle<Concordance> conc);
 
 private slots:
 

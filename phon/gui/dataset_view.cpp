@@ -25,6 +25,7 @@
 #include <QMenu>
 #include <QAction>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QFileDialog>
 #include <phon/gui/dataset_view.hpp>
 #include <phon/gui/help_browser.hpp>
@@ -68,6 +69,18 @@ void DatasetView::setupUi()
 
 	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
 	analyze_action->setToolTip(tr("Open analysis view for this dataset"));
+
+	m_toolbar->addSeparator();
+
+	// -- Set operations --
+	auto *union_action = m_toolbar->addAction(QIcon(":/icons/set-union.svg"), tr("Union"));
+	union_action->setToolTip(tr("Unite with another dataset (A \u222a B)"));
+
+	auto *intersect_action = m_toolbar->addAction(QIcon(":/icons/set-intersection.svg"), tr("Intersect"));
+	intersect_action->setToolTip(tr("Intersect with another dataset (A \u2229 B)"));
+
+	auto *compl_action = m_toolbar->addAction(QIcon(":/icons/set-complement.svg"), tr("Complement"));
+	compl_action->setToolTip(tr("Get complement (A \u2216 B)"));
 
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);
@@ -118,6 +131,9 @@ void DatasetView::setupUi()
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_ds);
 	});
+	connect(union_action, &QAction::triggered, this, &DatasetView::onUnion);
+	connect(intersect_action, &QAction::triggered, this, &DatasetView::onIntersection);
+	connect(compl_action, &QAction::triggered, this, &DatasetView::onComplement);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &DatasetView::onContextMenu);
 }
 
@@ -240,6 +256,108 @@ void DatasetView::onExportCsv()
 	catch (std::exception &e)
 	{
 		QMessageBox::critical(this, tr("Export error"), QString::fromUtf8(e.what()));
+	}
+}
+
+// ── Set operations ─────────────────────────────────────────
+
+Handle<Dataset> DatasetView::pickDataset(const QString &title)
+{
+	auto datasets = Project::get()->get_datasets();
+	QStringList names;
+
+	for (auto &ds : datasets)
+	{
+		if (ds.get() != m_ds.get())
+			names << QString::fromUtf8(ds->label().data(), (int) ds->label().size());
+	}
+
+	if (names.isEmpty())
+	{
+		QMessageBox::information(this, title, tr("No other datasets available."));
+		return {};
+	}
+
+	bool ok;
+	auto choice = QInputDialog::getItem(this, title, tr("Select dataset:"), names, 0, false, &ok);
+	if (!ok) return {};
+
+	for (auto &ds : datasets)
+	{
+		auto lbl = QString::fromUtf8(ds->label().data(), (int) ds->label().size());
+		if (lbl == choice && ds.get() != m_ds.get())
+		{
+			ds->open();
+			return ds;
+		}
+	}
+
+	return {};
+}
+
+void DatasetView::onUnion()
+{
+	auto other = pickDataset(tr("Unite datasets"));
+	if (!other) return;
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Union"), tr("Name for the result:"),
+		QLineEdit::Normal, tr("Union"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		auto result = m_ds->unite(*other, String(name.toUtf8().constData()));
+		Project::updated();
+		emit datasetCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onIntersection()
+{
+	auto other = pickDataset(tr("Intersect datasets"));
+	if (!other) return;
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Intersect"), tr("Name for the result:"),
+		QLineEdit::Normal, tr("Intersection"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		auto result = m_ds->intersect(*other, String(name.toUtf8().constData()));
+		Project::updated();
+		emit datasetCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onComplement()
+{
+	auto other = pickDataset(tr("Complement"));
+	if (!other) return;
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Complement"), tr("Name for the result:"),
+		QLineEdit::Normal, tr("Complement"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		auto result = m_ds->complement(*other, String(name.toUtf8().constData()));
+		Project::updated();
+		emit datasetCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
 	}
 }
 
