@@ -26,6 +26,7 @@
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/mixed_model.hpp>
+#include <phon/analysis/smooth.hpp>
 
 namespace phonometrica::stats {
 
@@ -583,7 +584,8 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 // =====================================================================
 
 Model fit(const DataTable &data, const Formula &formula, const String &family,
-          const std::map<String, String> &reference_levels)
+          const std::map<String, String> &reference_levels,
+          FittingCallback progress)
 {
 	if (formula.response.empty()) {
 		throw error("Formula has no response variable");
@@ -676,6 +678,23 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		}
 	}
 
+	// Smooth term variables
+	for (intptr_t i = 1; i <= formula.smooth.size(); i++)
+	{
+		intptr_t scol = find_column(data, formula.smooth[i].variable);
+		if (scol == 0) {
+			throw error("Smooth variable '%' not found in data", formula.smooth[i].variable);
+		}
+		bool found = false;
+		for (intptr_t c : all_col_indices)
+		{
+			if (c == scol) { found = true; break; }
+		}
+		if (!found) {
+			all_col_indices.push_back(scol);
+		}
+	}
+
 	// ── Complete cases ───────────────────────────────────────────────
 
 	auto rows = find_complete_rows(data, all_col_indices);
@@ -692,11 +711,163 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		throw error("Not enough complete observations (% rows, % parameters)", dm.nobs, dm.ncol);
 	}
 
+	// ── Build smooth bases and augment design matrix ──────────────
+
+	intptr_t n_parametric = dm.ncol; // number of purely parametric columns
+
+	// Structures for smooth term management.
+	struct SmoothSlice {
+		SmoothBasis basis;
+		intptr_t col_start;  // 0-based starting column in augmented X
+		intptr_t col_count;  // number of columns (k_eff)
+	};
+	std::vector<SmoothSlice> smooth_slices;
+
+	if (formula.has_smooth_terms())
+	{
+		for (intptr_t si = 1; si <= formula.smooth.size(); si++)
+		{
+			auto &st = formula.smooth[si];
+
+			// Find column and extract numeric values for complete rows.
+			intptr_t scol = find_column(data, st.variable);
+			if (!is_numeric_column(data, scol, rows)) {
+				throw error("Smooth variable '%' must be numeric", st.variable);
+			}
+			auto x_vals = extract_numeric(data, scol, rows);
+
+			// Build the spline basis.
+			auto basis = build_cr_basis(x_vals, st.k);
+
+			SmoothSlice slice;
+			slice.col_start = dm.ncol + (smooth_slices.empty() ? 0 :
+				smooth_slices.back().col_start + smooth_slices.back().col_count - n_parametric);
+			// Recompute: col_start in the augmented matrix
+			intptr_t aug_col = n_parametric;
+			for (auto &prev : smooth_slices) {
+				aug_col += prev.col_count;
+			}
+			slice.col_start = aug_col;
+			slice.col_count = basis.k_eff;
+			slice.basis = std::move(basis);
+			smooth_slices.push_back(std::move(slice));
+		}
+
+		// Total augmented dimension.
+		intptr_t p_total = n_parametric;
+		for (auto &sl : smooth_slices) {
+			p_total += sl.col_count;
+		}
+
+		// Build augmented X: [X_parametric | B_1 | B_2 | ...]
+		Array<double> X_aug(dm.nobs, p_total, 0.0);
+
+		// Copy parametric columns.
+		for (intptr_t j = 1; j <= n_parametric; j++) {
+			for (intptr_t i = 1; i <= dm.nobs; i++) {
+				X_aug(i, j) = dm.X(i, j);
+			}
+		}
+
+		// Copy smooth basis columns.
+		for (auto &sl : smooth_slices)
+		{
+			for (intptr_t j = 0; j < sl.col_count; j++) {
+				for (intptr_t i = 1; i <= dm.nobs; i++) {
+					X_aug(i, sl.col_start + j + 1) = sl.basis.B(i, j + 1);
+				}
+			}
+		}
+
+		// Build augmented penalty: S_total (p_total × p_total), zero for parametric, smooth S blocks.
+		Array<double> S_aug(p_total, p_total, 0.0);
+
+		for (auto &sl : smooth_slices)
+		{
+			for (intptr_t r = 0; r < sl.col_count; r++) {
+				for (intptr_t c = 0; c < sl.col_count; c++) {
+					S_aug(sl.col_start + r + 1, sl.col_start + c + 1) = sl.basis.S(r + 1, c + 1);
+				}
+			}
+		}
+
+		// Update coefficient names.
+		Array<String> aug_names;
+		for (intptr_t j = 1; j <= dm.coef_names.size(); j++) {
+			aug_names.append(dm.coef_names[j]);
+		}
+		intptr_t smooth_idx = 0;
+		for (auto &sl : smooth_slices)
+		{
+			smooth_idx++;
+			String var_name = formula.smooth[smooth_idx].variable;
+			for (intptr_t j = 1; j <= sl.col_count; j++)
+			{
+				String name("s(");
+				name.append(var_name);
+				name.append(").");
+				name.append(std::to_string(j));
+				aug_names.append(std::move(name));
+			}
+		}
+
+		// Replace dm fields with augmented versions.
+		dm.X = std::move(X_aug);
+		dm.ncol = p_total;
+		dm.coef_names = std::move(aug_names);
+	}
+
 	// ── Fit the model ────────────────────────────────────────────────
 
 	Model model;
 
-	if (formula.has_random_effects())
+	if (formula.has_smooth_terms() && formula.has_random_effects())
+	{
+		throw error("Models with both smooth terms and random effects (GAMMs) are not yet supported. "
+		            "Fit the smooth terms without random effects, or use random effects without smooth terms.");
+	}
+
+	if (formula.has_smooth_terms())
+	{
+		// ── GAM path: penalized regression with GCV ──────────────
+		// Build the combined penalty from smooth_slices (already in S_aug above).
+		intptr_t p_total = dm.ncol;
+		Array<double> S_aug(p_total, p_total, 0.0);
+		for (auto &sl : smooth_slices)
+		{
+			for (intptr_t r = 0; r < sl.col_count; r++) {
+				for (intptr_t c = 0; c < sl.col_count; c++) {
+					S_aug(sl.col_start + r + 1, sl.col_start + c + 1) = sl.basis.S(r + 1, c + 1);
+				}
+			}
+		}
+
+		// Build smooth column range descriptors.
+		std::vector<SmoothColumnRange> ranges;
+		intptr_t si = 0;
+		for (auto &sl : smooth_slices)
+		{
+			si++;
+			SmoothColumnRange scr;
+			scr.col_start = sl.col_start;
+			scr.col_count = sl.col_count;
+			scr.variable = formula.smooth[si].variable;
+			scr.basis = formula.smooth[si].basis;
+			scr.k = formula.smooth[si].k;
+			ranges.push_back(std::move(scr));
+		}
+
+		if (family == "gaussian")
+		{
+			model = penalized_lm(dm.y, dm.X, S_aug, n_parametric, ranges, progress);
+		}
+		else
+		{
+			auto fam = Family::from_name(family);
+			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress);
+		}
+	}
+	else if (formula.has_random_effects())
 	{
 		// ── Mixed model path (unified Laplace engine) ────────────────
 		std::vector<GroupingInfo> groups;
@@ -706,7 +877,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, groups, fam);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress);
 	}
 	else if (family == "gaussian")
 	{
@@ -727,6 +898,12 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	model.formula = formula.to_string();
 	model.coef_names = std::move(dm.coef_names);
 	model.response_levels = std::move(dm.response_levels);
+
+	// For GAMs, set nfixed to the number of parametric terms only.
+	// Smooth basis coefficients are reported separately via smooth_terms.
+	if (formula.has_smooth_terms()) {
+		model.nfixed = n_parametric;
+	}
 
 	return model;
 }

@@ -19,6 +19,11 @@
  *          channel, a time window [t1, t2], and analysis parameters, this class extracts the segment, applies a        *
  *          window function, computes the FFT, and stores the resulting power spectral density in dB.                   *
  *                                                                                                                     *
+ *          Optionally, an LPC (Linear Predictive Coding) spectrum can be computed alongside the FFT. The LPC          *
+ *          spectrum provides a smooth spectral envelope that highlights formant structure. When lpc_order > 0,         *
+ *          the LPC coefficients are estimated using Burg's method, and the frequency response of the all-pole         *
+ *          model is evaluated at each FFT bin frequency.                                                              *
+ *                                                                                                                     *
  *          Spectrum is a Document subclass, so it can be saved to disk, added to a project, and manipulated            *
  *          uniformly with other file types (Sound, Annotation, Script, etc.).                                          *
  *                                                                                                                     *
@@ -59,6 +64,9 @@ public:
 	/// @param max_frequency    Maximum frequency to retain (Hz). 0 = Nyquist.
 	/// @param dynamic_range    Dynamic range in dB below the peak. Bins below this floor
 	///                         are clamped. 0 = no clamping.
+	/// @param lpc_order        LPC model order. 0 = no LPC spectrum. When > 0, an LPC
+	///                         spectral envelope is computed alongside the FFT using Burg's
+	///                         method with the given number of poles.
 	Spectrum(Directory *parent,
 	         const Handle<Sound> &sound,
 	         int channel,
@@ -68,7 +76,8 @@ public:
 	         int zero_padding = 2,
 	         double preemph = 50.0,
 	         double max_frequency = 0.0,
-	         double dynamic_range = 70.0);
+	         double dynamic_range = 70.0,
+	         int lpc_order = 0);
 
 	/// Number of frequency bins in the spectrum.
 	intptr_t bin_count() const { return static_cast<intptr_t>(m_power_dB.size()); }
@@ -100,7 +109,7 @@ public:
 	/// FFT size used (including zero-padding).
 	intptr_t fft_size() const { return m_nfft; }
 
-	/// Power spectral density in dB for each frequency bin.
+	/// Power spectral density in dB for each frequency bin (FFT).
 	const std::vector<double> &power_dB() const { return m_power_dB; }
 
 	/// Frequency in Hz for a given bin index (0-based).
@@ -121,6 +130,16 @@ public:
 	/// Window type that was used for the analysis.
 	speech::WindowType window_type() const { return m_window_type; }
 
+	/// Whether an LPC spectrum was computed.
+	bool has_lpc() const { return !m_lpc_dB.empty(); }
+
+	/// LPC spectral envelope in dB for each frequency bin.
+	/// Empty if lpc_order was 0.
+	const std::vector<double> &lpc_dB() const { return m_lpc_dB; }
+
+	/// LPC model order (number of poles). 0 if no LPC was computed.
+	int lpc_order() const { return m_lpc_order; }
+
 	/// Register the Spectrum type with the scripting runtime.
 	static void initialize(Runtime &rt);
 
@@ -133,6 +152,11 @@ private:
 	void compute(const Handle<Sound> &sound,
 	             int zero_padding, double preemph,
 	             double max_frequency, double dynamic_range);
+
+	/// Compute the LPC spectral envelope from the (pre-emphasised) signal segment.
+	/// The result is stored in m_lpc_dB, aligned to the same frequency bins as the FFT.
+	void compute_lpc(const Handle<Sound> &sound,
+	                 int lpc_order, double preemph);
 
 	/// Find the smallest power-of-two >= n.
 	static intptr_t next_power_of_two(intptr_t n);
@@ -160,6 +184,13 @@ private:
 
 	/// Power spectral density in dB, one value per frequency bin (0 .. nfft/2).
 	std::vector<double> m_power_dB;
+
+	// ── LPC data (optional) ────────────────────────
+	int m_lpc_order = 0;
+
+	/// LPC spectral envelope in dB, one value per frequency bin.
+	/// Empty when no LPC was requested.
+	std::vector<double> m_lpc_dB;
 };
 
 

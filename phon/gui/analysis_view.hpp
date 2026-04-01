@@ -93,6 +93,7 @@ private:
 	// Formula building helpers
 	void setResponse(const QString &name);
 	void addPredictor(const QString &name);
+	void addSmoothTerm(const QString &name, int k = 10);
 	void addRandomIntercept(const QString &name);
 	void addInteraction(const QString &name, const QString &other, bool withMainEffects);
 	void addRandomSlope(const QString &variable, const QString &group, bool correlated);

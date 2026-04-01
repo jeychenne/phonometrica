@@ -44,6 +44,24 @@ struct FixedTerm
 };
 
 
+// A smooth term: s(variable) or s(variable, k=15)
+// Represents a penalized regression spline of a numeric covariate.
+struct SmoothTerm
+{
+	String variable;           // covariate name, e.g. "duration"
+	String basis = "cr";       // basis type: "cr" (cubic regression spline, default)
+	intptr_t k = 10;           // basis dimension (number of knots, default 10)
+
+	bool operator==(const SmoothTerm &other) const
+	{
+		return variable == other.variable && basis == other.basis && k == other.k;
+	}
+
+	// String representation: "s(duration)" or "s(duration, k=15)"
+	String to_string() const;
+};
+
+
 // A random-effects term: (1 + slope1 + slope2 | group)
 struct RandomTerm
 {
@@ -56,7 +74,7 @@ struct RandomTerm
 
 
 // A parsed model formula.
-// Example: "F1 ~ vowel * context + speech_rate + (1 + vowel | speaker) + (1 | item)"
+// Example: "F1 ~ vowel * context + s(duration) + (1 + vowel | speaker) + (1 | item)"
 //
 // This is a symbolic description — it knows nothing about data.
 // Binding to actual data (resolving column names, building design matrices)
@@ -65,6 +83,7 @@ struct Formula
 {
 	String response;                // e.g. "F1"
 	Array<FixedTerm> fixed;         // fixed-effects terms
+	Array<SmoothTerm> smooth;       // smooth (GAM) terms
 	Array<RandomTerm> random;       // random-effects terms
 	bool intercept = true;          // whether a fixed intercept is included
 
@@ -74,9 +93,11 @@ struct Formula
 	//   a * b  expands to  a + b + a:b
 	//   a : b  is an interaction
 	//   - 1  or  + 0  removes the intercept
-	//   (1 | group)              random intercept
-	//   (1 + slope | group)      random intercept + slope
-	//   (0 + slope | group)      random slope only (no intercept)
+	//   s(x)                      smooth of x (default k=10, bs="cr")
+	//   s(x, k=15)                smooth of x with 15 knots
+	//   (1 | group)               random intercept
+	//   (1 + slope | group)       random intercept + slope
+	//   (0 + slope | group)       random slope only (no intercept)
 	// Throws on parse error.
 	static Formula parse(const String &text);
 
@@ -85,6 +106,9 @@ struct Formula
 
 	// True if the formula has any random-effects terms.
 	bool has_random_effects() const { return !random.empty(); }
+
+	// True if the formula has any smooth terms.
+	bool has_smooth_terms() const { return !smooth.empty(); }
 
 	// Collect all variable names appearing in the formula (response + all terms).
 	// Useful for validating against available columns.

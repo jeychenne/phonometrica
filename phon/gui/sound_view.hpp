@@ -41,6 +41,8 @@
 
 namespace phonometrica {
 
+enum class SpectrumDisplayMode;
+
 class AudioPlayer;
 class WaveformWidget;
 class SpectrogramWidget;
@@ -113,7 +115,7 @@ private slots:
 	void onToggleWaveform(bool checked);
 	void onToggleSpectrogram(bool checked);
 	void onSpectrogramSettings();
-	void onViewSpectralSlice();
+	void onViewSpectralSlice(SpectrumDisplayMode mode);
 	void onToggleIntensity(bool checked);
 	void onIntensitySettings();
 	void onToggleFormants(bool checked);

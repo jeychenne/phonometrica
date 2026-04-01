@@ -37,9 +37,10 @@
 namespace phonometrica {
 
 // ── Colours ────────────────────────────────────────
-static const QColor CURVE_COLOR(0, 80, 180);          // dark blue
-static const QColor GRID_COLOR(220, 220, 220);        // light grey
-static const QColor CROSSHAIR_COLOR(180, 0, 0, 160);  // semi-transparent red
+static const QColor FFT_CURVE_COLOR(0, 80, 180);          // dark blue
+static const QColor LPC_CURVE_COLOR(200, 30, 30);         // red
+static const QColor GRID_COLOR(220, 220, 220);            // light grey
+static const QColor CROSSHAIR_COLOR(180, 0, 0, 160);      // semi-transparent red
 static const QColor AXIS_COLOR(60, 60, 60);
 static const QColor BG_COLOR(255, 255, 255);
 
@@ -50,10 +51,19 @@ static constexpr int MARGIN_TOP    = 20;
 static constexpr int MARGIN_BOTTOM = 40;
 
 
-SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, QWidget *parent) :
-	QDialog(parent), m_spectrum(spectrum)
+SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, SpectrumDisplayMode mode,
+                           QWidget *parent) :
+	QDialog(parent), m_spectrum(spectrum), m_mode(mode)
 {
-	setWindowTitle(tr("Spectral slice (%1 – %2 s)")
+	// Build a descriptive window title.
+	QString mode_label;
+	switch (m_mode) {
+		case SpectrumDisplayMode::FFT:  mode_label = tr("FFT spectrum"); break;
+		case SpectrumDisplayMode::LPC:  mode_label = tr("LPC spectrum"); break;
+		case SpectrumDisplayMode::Both: mode_label = tr("FFT + LPC spectrum"); break;
+	}
+	setWindowTitle(tr("%1 (%2 – %3 s)")
+		.arg(mode_label)
 		.arg(m_spectrum->start_time(), 0, 'f', 4)
 		.arg(m_spectrum->end_time(), 0, 'f', 4));
 	setMinimumSize(400, 250);
@@ -96,10 +106,16 @@ SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, QWidget *parent) :
 	layout->addWidget(m_status);
 
 	// Show bandwidth information initially.
-	m_status->setText(tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
+	QString status_text = tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
 		.arg(m_spectrum->bandwidth(), 0, 'f', 1)
 		.arg(m_spectrum->fft_size())
-		.arg(m_spectrum->bin_count()));
+		.arg(m_spectrum->bin_count());
+
+	if (m_spectrum->has_lpc()) {
+		status_text += tr("  |  LPC order = %1").arg(m_spectrum->lpc_order());
+	}
+
+	m_status->setText(status_text);
 }
 
 
@@ -154,7 +170,7 @@ double SpectrumView::yToDB(double y) const
 // ─────────────────────────────────────────────────
 //  Self-contained plot renderer (for cache and export)
 //
-//  Draws the full plot (background, axes, curve) into the given painter
+//  Draws the full plot (background, axes, curve(s)) into the given painter
 //  at the specified logical dimensions. The crosshair is NOT included.
 // ─────────────────────────────────────────────────
 
@@ -282,35 +298,88 @@ void SpectrumView::renderPlot(QPainter &p, int w, int h)
 		p.restore();
 	}
 
-	// ── Spectrum curve ──────────────────────────
-	const auto &power = m_spectrum->power_dB();
-	if (power.empty()) return;
-
-	p.setPen(QPen(CURVE_COLOR, 1.5));
-	p.setClipRect(left, top, pw, ph);
-
-	QPainterPath path;
-	bool first = true;
-
-	for (intptr_t k = 0; k < m_spectrum->bin_count(); k++)
+	// ── FFT spectrum curve ──────────────────────
+	if (m_mode != SpectrumDisplayMode::LPC)
 	{
-		double freq = m_spectrum->bin_frequency(k);
-		if (freq > maxF) break;
+		const auto &power = m_spectrum->power_dB();
+		if (!power.empty())
+		{
+			p.setPen(QPen(FFT_CURVE_COLOR, 1.5));
+			p.setClipRect(left, top, pw, ph);
 
-		double x = freqToX(freq);
-		double y = dBtoY(power[k]);
+			QPainterPath path;
+			bool first = true;
 
-		if (first) {
-			path.moveTo(x, y);
-			first = false;
-		}
-		else {
-			path.lineTo(x, y);
+			for (intptr_t k = 0; k < m_spectrum->bin_count(); k++)
+			{
+				double freq = m_spectrum->bin_frequency(k);
+				if (freq > maxF) break;
+
+				double x = freqToX(freq);
+				double y = dBtoY(power[k]);
+
+				if (first) {
+					path.moveTo(x, y);
+					first = false;
+				}
+				else {
+					path.lineTo(x, y);
+				}
+			}
+
+			p.drawPath(path);
+			p.setClipping(false);
 		}
 	}
 
-	p.drawPath(path);
-	p.setClipping(false);
+	// ── LPC spectral envelope ───────────────────
+	if (m_mode != SpectrumDisplayMode::FFT && m_spectrum->has_lpc())
+	{
+		const auto &lpc = m_spectrum->lpc_dB();
+
+		p.setPen(QPen(LPC_CURVE_COLOR, 1.5));
+		p.setClipRect(left, top, pw, ph);
+
+		QPainterPath lpc_path;
+		bool first = true;
+
+		for (intptr_t k = 0; k < m_spectrum->bin_count(); k++)
+		{
+			double freq = m_spectrum->bin_frequency(k);
+			if (freq > maxF) break;
+
+			double x = freqToX(freq);
+			double y = dBtoY(lpc[k]);
+
+			if (first) {
+				lpc_path.moveTo(x, y);
+				first = false;
+			}
+			else {
+				lpc_path.lineTo(x, y);
+			}
+		}
+
+		p.drawPath(lpc_path);
+		p.setClipping(false);
+	}
+
+	// ── Legend (only in "Both" mode) ────────────
+	if (m_mode == SpectrumDisplayMode::Both && m_spectrum->has_lpc())
+	{
+		int legend_x = right - 120;
+		int legend_y = top + 10;
+
+		p.setPen(QPen(FFT_CURVE_COLOR, 2));
+		p.drawLine(legend_x, legend_y + 6, legend_x + 20, legend_y + 6);
+		p.setPen(AXIS_COLOR);
+		p.drawText(legend_x + 25, legend_y + fm.ascent() - 1, tr("FFT"));
+
+		p.setPen(QPen(LPC_CURVE_COLOR, 2));
+		p.drawLine(legend_x, legend_y + 22, legend_x + 20, legend_y + 22);
+		p.setPen(AXIS_COLOR);
+		p.drawText(legend_x + 25, legend_y + 16 + fm.ascent() - 1, tr("LPC"));
+	}
 }
 
 
@@ -392,10 +461,16 @@ void SpectrumView::mouseMoveEvent(QMouseEvent *event)
 	}
 	else
 	{
-		m_status->setText(tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
+		QString status_text = tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
 			.arg(m_spectrum->bandwidth(), 0, 'f', 1)
 			.arg(m_spectrum->fft_size())
-			.arg(m_spectrum->bin_count()));
+			.arg(m_spectrum->bin_count());
+
+		if (m_spectrum->has_lpc()) {
+			status_text += tr("  |  LPC order = %1").arg(m_spectrum->lpc_order());
+		}
+
+		m_status->setText(status_text);
 	}
 
 	update();
@@ -406,10 +481,16 @@ void SpectrumView::leaveEvent(QEvent *)
 	m_mouse_x = -1;
 	m_mouse_y = -1;
 
-	m_status->setText(tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
+	QString status_text = tr("Bandwidth \u2248 %1 Hz  |  FFT size = %2  |  %3 bins")
 		.arg(m_spectrum->bandwidth(), 0, 'f', 1)
 		.arg(m_spectrum->fft_size())
-		.arg(m_spectrum->bin_count()));
+		.arg(m_spectrum->bin_count());
+
+	if (m_spectrum->has_lpc()) {
+		status_text += tr("  |  LPC order = %1").arg(m_spectrum->lpc_order());
+	}
+
+	m_status->setText(status_text);
 
 	update();
 }
@@ -487,7 +568,21 @@ void SpectrumView::onSaveSVG()
 	svg.setSize(QSize(w, h));
 	svg.setViewBox(QRect(0, 0, w, h));
 	svg.setTitle(tr("Spectral slice"));
-	svg.setDescription(tr("FFT spectrum (%1 – %2 s)")
+
+	// Build a description that reflects the display mode.
+	QString desc;
+	switch (m_mode) {
+		case SpectrumDisplayMode::FFT:
+			desc = tr("FFT spectrum (%1 – %2 s)");
+			break;
+		case SpectrumDisplayMode::LPC:
+			desc = tr("LPC spectrum (%1 – %2 s)");
+			break;
+		case SpectrumDisplayMode::Both:
+			desc = tr("FFT + LPC spectrum (%1 – %2 s)");
+			break;
+	}
+	svg.setDescription(desc
 		.arg(m_spectrum->start_time(), 0, 'f', 4)
 		.arg(m_spectrum->end_time(), 0, 'f', 4));
 

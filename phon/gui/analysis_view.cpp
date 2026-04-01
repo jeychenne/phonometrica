@@ -29,7 +29,11 @@
 #include <QFont>
 #include <QMenu>
 #include <QMessageBox>
+#include <QInputDialog>
 #include <QGroupBox>
+#include <QMainWindow>
+#include <QStatusBar>
+#include <QProgressBar>
 #include <QFileDialog>
 #include <QClipboard>
 #include <QApplication>
@@ -493,13 +497,43 @@ void AnalysisView::onFit()
 		return;
 	}
 
+	// ── Set up progress bar ──────────────────────────────────────
+	auto *main_win = qobject_cast<QMainWindow *>(window());
+	QStatusBar *status = main_win ? main_win->statusBar() : nullptr;
+	QProgressBar *progress = main_win ? main_win->findChild<QProgressBar *>() : nullptr;
+
+	if (status) status->showMessage(tr("Fitting model..."));
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	QApplication::processEvents();
+
+	// Build the progress callback — passed directly through the call chain.
+	// The progress bar only becomes visible on the first callback invocation,
+	// so fast models (< 1 frame) never flash it.
+	bool progress_shown = false;
+	stats::FittingCallback cb = [progress, status, &progress_shown](int current, int maximum) {
+		if (progress) {
+			if (!progress_shown) {
+				progress->setMaximum(maximum);
+				progress->setValue(0);
+				progress->setVisible(true);
+				progress_shown = true;
+			}
+			progress->setValue(current);
+		}
+		QApplication::processEvents();
+	};
+
 	try
 	{
 		String formula(formula_text.toUtf8().constData());
 		String family(m_family_combo->currentData().toString().toUtf8().constData());
 
-		int index = m_analysis->fit(formula, family);
+		int index = m_analysis->fit(formula, family, cb);
 		auto &m = m_analysis->model(index);
+
+		QApplication::restoreOverrideCursor();
+		if (progress) progress->setVisible(false);
+		if (status) status->showMessage(tr("Model fitted"), 2000);
 
 		QString item_text = QStringLiteral("Model %1: %2")
 			.arg(index + 1)
@@ -515,6 +549,10 @@ void AnalysisView::onFit()
 	}
 	catch (std::exception &e)
 	{
+		QApplication::restoreOverrideCursor();
+		if (progress) progress->setVisible(false);
+		if (status) status->clearMessage();
+
 		QMessageBox::critical(this, tr("Fit model"), QString::fromUtf8(e.what()));
 	}
 }
@@ -670,6 +708,19 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	// ── Fixed effects ────────────────────────────────────────────────
 	menu.addAction(tr("Add as predictor"));
 
+	// Smooth term: submenu for numeric columns with k choices.
+	QMenu *smooth_menu = nullptr;
+	if (m_analysis->has_source() && isColumnNumeric(String(name.toUtf8().constData())))
+	{
+		smooth_menu = menu.addMenu(tr("Add as smooth"));
+		smooth_menu->addAction(QStringLiteral("s(%1)").arg(name))->setData(10);
+		smooth_menu->addAction(QStringLiteral("s(%1, k=5)").arg(name))->setData(5);
+		smooth_menu->addAction(QStringLiteral("s(%1, k=15)").arg(name))->setData(15);
+		smooth_menu->addAction(QStringLiteral("s(%1, k=20)").arg(name))->setData(20);
+		smooth_menu->addSeparator();
+		smooth_menu->addAction(tr("Custom k..."))->setData(-1);
+	}
+
 	// Interaction submenus: list current fixed terms.
 	auto *interaction_menu = menu.addMenu(tr("Add with main effects and interaction"));
 	auto *interaction_only_menu = menu.addMenu(tr("Add interaction only with..."));
@@ -799,6 +850,21 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	else if (action_text == tr("Add as predictor")) {
 		addPredictor(name);
 	}
+	else if (smooth_menu && chosen->parent() == smooth_menu) {
+		int k_val = chosen->data().toInt();
+		if (k_val == -1) {
+			// Custom k: prompt user.
+			bool ok = false;
+			int k_custom = QInputDialog::getInt(this, tr("Basis dimension"),
+				tr("Number of knots (k) for s(%1):").arg(name),
+				10, 3, 100, 1, &ok);
+			if (ok) {
+				addSmoothTerm(name, k_custom);
+			}
+		} else {
+			addSmoothTerm(name, k_val);
+		}
+	}
 	else if (action_text == tr("Add as grouping factor")) {
 		addRandomIntercept(name);
 	}
@@ -851,6 +917,31 @@ void AnalysisView::addPredictor(const QString &name)
 			m_formula_edit->setText(text + QStringLiteral(" ") + quoted);
 		else
 			m_formula_edit->setText(text + QStringLiteral(" + ") + quoted);
+	}
+	m_formula_edit->setFocus();
+	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+void AnalysisView::addSmoothTerm(const QString &name, int k)
+{
+	QString quoted = quoteIfNeeded(name);
+	QString term;
+	if (k == 10)
+		term = QStringLiteral("s(") + quoted + QStringLiteral(")");
+	else
+		term = QStringLiteral("s(%1, k=%2)").arg(quoted).arg(k);
+
+	QString text = m_formula_edit->text().trimmed();
+	if (text.isEmpty()) {
+		m_formula_edit->setText(QStringLiteral("~ ") + term);
+	} else if (!text.contains('~')) {
+		m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+	} else {
+		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+		if (rhs.isEmpty())
+			m_formula_edit->setText(text + QStringLiteral(" ") + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
 	}
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
@@ -1007,6 +1098,14 @@ void AnalysisView::removeFromFormula(const QString &name)
 		// rather than dropping the random effect entirely.
 		if (!rt.intercept && rt.slopes.empty()) {
 			rt.intercept = true;
+		}
+	}
+
+	// Remove smooth terms referencing this variable.
+	for (intptr_t i = parsed->smooth.size(); i >= 1; i--)
+	{
+		if (parsed->smooth[i].variable == name_s) {
+			parsed->smooth.remove_at(i);
 		}
 	}
 
@@ -2054,6 +2153,40 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 
 	// Notes below the table
 	tex += QStringLiteral("\\medskip\n");
+
+	// Smooth terms table (if any)
+	if (m.has_smooth_terms())
+	{
+		tex += QStringLiteral("\\begin{tabular}{lrrr}\n");
+		tex += QStringLiteral("\\hline\n");
+		tex += QStringLiteral(" & edf & $F$ & $p$ \\\\\n");
+		tex += QStringLiteral("\\hline\n");
+
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
+			QString label = QStringLiteral("s(%1)").arg(
+				QString::fromUtf8(sm.variable.data(), (int)sm.variable.size()));
+			label.replace('_', QStringLiteral("\\_"));
+
+			QString pval;
+			if (sm.p_value < 0.001)
+				pval = QStringLiteral("$<$\\,0.001");
+			else
+				pval = QString::number(sm.p_value, 'f', 4);
+
+			tex += QStringLiteral("%1 & %2 & %3 & %4 \\\\\n")
+				.arg(label)
+				.arg(sm.edf, 0, 'f', 3)
+				.arg(sm.F_stat, 0, 'f', 2)
+				.arg(pval);
+		}
+
+		tex += QStringLiteral("\\hline\n");
+		tex += QStringLiteral("\\end{tabular}\n\n");
+		tex += QStringLiteral("\\medskip\n");
+	}
+
 	tex += QStringLiteral("\\footnotesize\n");
 	QString family_display_tex = QString::fromUtf8(m.family.data(), (int)m.family.size());
 	if (m.is_negbin()) family_display_tex = QStringLiteral("Negative binomial");
@@ -2159,6 +2292,40 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	text += QStringLiteral("---\n");
 	text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+
+	// Smooth terms
+	if (m.has_smooth_terms())
+	{
+		text += QStringLiteral("Approximate significance of smooth terms:\n");
+		text += QString::asprintf("%-20s %8s %8s %10s %12s\n",
+		                           "", "edf", "Ref.df", "F", "p-value");
+
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
+			String label("s(");
+			label.append(sm.variable);
+			label.append(")");
+
+			char pbuf[16];
+			if (sm.p_value < 0.001)
+				snprintf(pbuf, sizeof(pbuf), "< 0.001");
+			else
+				snprintf(pbuf, sizeof(pbuf), "%.4f", sm.p_value);
+
+			const char *stars = "";
+			if (sm.p_value < 0.001) stars = " ***";
+			else if (sm.p_value < 0.01) stars = " **";
+			else if (sm.p_value < 0.05) stars = " *";
+			else if (sm.p_value < 0.1) stars = " .";
+
+			text += QString::asprintf("%-20s %8.3f %8.3f %10.2f %12s%s\n",
+			                           label.data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
+		}
+
+		text += QStringLiteral("---\n");
+		text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+	}
 
 	// Random effects
 	if (m.has_random_effects())

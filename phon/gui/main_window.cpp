@@ -1349,6 +1349,9 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 	}
 
+	try
+	{
+
 	// Handle scripts with a proper editor
 	if (doc->is<Script>())
 	{
@@ -1540,6 +1543,22 @@ void MainWindow::onDocumentRequested(Document *doc)
 	m_viewer->setCurrentIndex(tabIndex);
 
 	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+
+	} // try
+	catch (std::exception &e)
+	{
+		QApplication::restoreOverrideCursor();
+		m_progress_bar->setVisible(false);
+		QMessageBox::critical(this, tr("Error opening file"),
+			tr("Could not open \"%1\":\n%2").arg(qlabel, QString::fromUtf8(e.what())));
+	}
+	catch (...)
+	{
+		QApplication::restoreOverrideCursor();
+		m_progress_bar->setVisible(false);
+		QMessageBox::critical(this, tr("Error opening file"),
+			tr("Could not open \"%1\": an unexpected error occurred.").arg(qlabel));
+	}
 }
 
 

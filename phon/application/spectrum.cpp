@@ -25,6 +25,7 @@
 #include <phon/file.hpp>
 #include <phon/runtime.hpp>
 #include <phon/application/spectrum.hpp>
+#include <phon/application/resampler.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
 
@@ -42,7 +43,7 @@ Spectrum::Spectrum(Directory *parent, String path) :
 Spectrum::Spectrum(Directory *parent, const Handle<Sound> &sound, int channel,
                    double t1, double t2, speech::WindowType window_type,
                    int zero_padding, double preemph, double max_frequency,
-                   double dynamic_range) :
+                   double dynamic_range, int lpc_order) :
 	Document(meta::get_class<Spectrum>(), parent, String()),
 	m_sound_path(sound->path()),
 	m_channel(channel),
@@ -66,12 +67,18 @@ Spectrum::Spectrum(Directory *parent, const Handle<Sound> &sound, int channel,
 	}
 
 	compute(sound, zero_padding, preemph, max_frequency, dynamic_range);
+
+	// Compute LPC spectral envelope if requested.
+	if (lpc_order > 0) {
+		compute_lpc(sound, lpc_order, preemph);
+	}
+
 	m_loaded = true;
 }
 
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Computation
+//  FFT Computation
 // ─────────────────────────────────────────────────────────────────────────────
 
 void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double preemph,
@@ -203,6 +210,146 @@ void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double pree
 }
 
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  LPC Spectrum Computation
+//
+//  The LPC spectral envelope is the frequency response of the all-pole model
+//  estimated from the signal segment using Burg's method:
+//
+//      H(f) = 1 / |A(e^{j2πf/Fs})|²
+//
+//  where A(z) = 1 + a₁z⁻¹ + a₂z⁻² + … + aₚz⁻ᵖ.
+//
+//  To match the formant tracker's behaviour and produce a meaningful spectral
+//  envelope, the signal is first resampled to Fs = 2 × max_frequency. This
+//  concentrates all LPC poles in the displayed frequency range — without this
+//  step the poles are spread across the full Nyquist bandwidth and only one or
+//  two may fall within the displayed range.
+//
+//  The signal preparation mirrors Sound::get_formants():
+//    1. Resample to Fs = 2 × max_frequency.
+//    2. Apply pre-emphasis.
+//    3. Apply a Gaussian window.
+//    4. Compute LPC coefficients (Burg's method).
+//
+//  The envelope is evaluated at the same frequency bins as the FFT spectrum
+//  and shifted vertically so its peak matches the FFT peak, giving a visually
+//  coherent overlay.
+// ─────────────────────────────────────────────────────────────────────────────
+
+void Spectrum::compute_lpc(const Handle<Sound> &sound,
+                           int lpc_order, double preemph)
+{
+	m_lpc_order = lpc_order;
+
+	// Re-extract the segment from the sound.
+	intptr_t first_sample = sound->time_to_frame(m_t1);
+	intptr_t last_sample = sound->time_to_frame(m_t2);
+	first_sample = std::max<intptr_t>(first_sample, 1);
+	last_sample = std::min<intptr_t>(last_sample, sound->nframes());
+
+	auto segment = sound->get_channel(m_channel, first_sample, last_sample);
+
+	// ── Resample to concentrate poles in the displayed range ──
+	// Target sample rate = 2 × max displayed frequency, matching the formant
+	// tracker (see Sound::get_formants).
+	double Fs = 2.0 * m_max_freq;
+
+	Array<double> resampled_buf;
+	Array<double> *signal_ptr;
+
+	if (Fs < m_sample_rate - 1.0)
+	{
+		resampled_buf = resample(segment, m_sample_rate, Fs);
+		if (preemph > 0.0) {
+			speech::pre_emphasis(resampled_buf, Fs, preemph);
+		}
+		signal_ptr = &resampled_buf;
+	}
+	else
+	{
+		// max_frequency is already at Nyquist — no resampling needed.
+		Fs = m_sample_rate;
+		if (preemph > 0.0) {
+			speech::pre_emphasis(segment, Fs, preemph);
+		}
+		signal_ptr = &segment;
+	}
+
+	Array<double> &signal = *signal_ptr;
+	intptr_t nframe = signal.size();
+
+	// ── Apply Gaussian window (matching formant tracker) ──
+	auto win = speech::create_window(nframe, nframe, speech::WindowType::Gaussian);
+	Array<double> buffer(nframe, 0.0);
+
+	for (intptr_t j = 1; j <= nframe; j++) {
+		buffer[j] = signal[j] * win[j];
+	}
+
+	// ── Compute LPC coefficients (Burg's method) ──
+	auto coeffs = speech::get_lpc_coefficients(buffer, lpc_order);
+
+	if (coeffs.empty()) {
+		return; // ill-conditioned signal — skip LPC
+	}
+
+	// ── Evaluate the all-pole frequency response ──
+	intptr_t n_bins = static_cast<intptr_t>(m_power_dB.size());
+	m_lpc_dB.resize(n_bins);
+
+	constexpr double epsilon = 1e-300;
+	double lpc_peak = -std::numeric_limits<double>::infinity();
+
+	int p = static_cast<int>(coeffs.size());
+
+	for (intptr_t k = 0; k < n_bins; k++)
+	{
+		double freq = k * m_freq_resolution;
+
+		// Use the resampled rate Fs for the frequency-to-angle mapping.
+		// Since Fs = 2 × max_freq, frequencies from 0 to max_freq map to
+		// ω ∈ [0, π], which covers the full spectrum of the resampled signal.
+		double omega = 2.0 * M_PI * freq / Fs;
+
+		// Evaluate A(e^{jω}) = Σ_{i=0}^{p-1} a_i · e^{-jωi}
+		double re = 0.0, im = 0.0;
+		for (int i = 0; i < p; i++)
+		{
+			double angle = i * omega;
+			re += coeffs[i] * std::cos(angle);
+			im -= coeffs[i] * std::sin(angle);
+		}
+
+		// |A(e^{jω})|²
+		double mag_sq = re * re + im * im;
+
+		// H(f) = 1 / |A|² → dB = -10 log10(|A|²)
+		double dB = -10.0 * std::log10(std::max(mag_sq, epsilon));
+		m_lpc_dB[k] = dB;
+
+		if (dB > lpc_peak) {
+			lpc_peak = dB;
+		}
+	}
+
+	// ── Shift the LPC envelope to match the FFT peak ──
+	// This makes the overlay visually coherent: the two curves share the same
+	// vertical reference.
+	double shift = m_peak_dB - lpc_peak;
+	for (auto &dB : m_lpc_dB) {
+		dB += shift;
+	}
+
+	// ── Clamp to the same dynamic-range floor ─────
+	for (auto &dB : m_lpc_dB) {
+		if (dB < m_floor_dB) {
+			dB = m_floor_dB;
+		}
+	}
+}
+
+
 intptr_t Spectrum::next_power_of_two(intptr_t n)
 {
 	if (n <= 0) return 1;
@@ -234,10 +381,16 @@ intptr_t Spectrum::next_power_of_two(intptr_t n)
 //   peak_dB = -12.34
 //   floor_dB = -82.34
 //   bin_count = 1025
+//   lpc_order = 14
 //
 //   [data]
 //   -82.34
 //   -78.12
+//   ...
+//
+//   [lpc]          ← optional section, present only when lpc_order > 0
+//   -45.23
+//   -42.10
 //   ...
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -261,11 +414,23 @@ void Spectrum::write()
 	file.write_line(String::format("peak_dB = %.10f", m_peak_dB));
 	file.write_line(String::format("floor_dB = %.10f", m_floor_dB));
 	file.write_line(String::format("bin_count = %td", static_cast<intptr_t>(m_power_dB.size())));
+	file.write_line(String::format("lpc_order = %d", m_lpc_order));
 	file.write_line("");
 	file.write_line("[data]");
 
 	for (auto dB : m_power_dB) {
 		file.write_line(String::format("%.10f", dB));
+	}
+
+	// Write LPC section only if LPC was computed.
+	if (!m_lpc_dB.empty())
+	{
+		file.write_line("");
+		file.write_line("[lpc]");
+
+		for (auto dB : m_lpc_dB) {
+			file.write_line(String::format("%.10f", dB));
+		}
 	}
 
 	file.close();
@@ -276,6 +441,7 @@ void Spectrum::load()
 	File file(m_path, File::Read, Encoding::Utf8);
 	bool in_header = false;
 	bool in_data = false;
+	bool in_lpc = false;
 	intptr_t expected_bins = 0;
 
 	auto lines = file.read_lines();
@@ -290,14 +456,26 @@ void Spectrum::load()
 		if (line == "[header]") {
 			in_header = true;
 			in_data = false;
+			in_lpc = false;
 			continue;
 		}
 		if (line == "[data]") {
 			in_header = false;
 			in_data = true;
+			in_lpc = false;
 			m_power_dB.clear();
 			if (expected_bins > 0) {
 				m_power_dB.reserve(expected_bins);
+			}
+			continue;
+		}
+		if (line == "[lpc]") {
+			in_header = false;
+			in_data = false;
+			in_lpc = true;
+			m_lpc_dB.clear();
+			if (expected_bins > 0) {
+				m_lpc_dB.reserve(expected_bins);
 			}
 			continue;
 		}
@@ -326,11 +504,17 @@ void Spectrum::load()
 			else if (key == "peak_dB")         m_peak_dB = std::stod(std::string(val.data(), val.size()));
 			else if (key == "floor_dB")        m_floor_dB = std::stod(std::string(val.data(), val.size()));
 			else if (key == "bin_count")        expected_bins = std::stoll(std::string(val.data(), val.size()));
+			else if (key == "lpc_order")       m_lpc_order = std::stoi(std::string(val.data(), val.size()));
 		}
 		else if (in_data)
 		{
 			double dB = std::stod(std::string(line.data(), line.size()));
 			m_power_dB.push_back(dB);
+		}
+		else if (in_lpc)
+		{
+			double dB = std::stod(std::string(line.data(), line.size()));
+			m_lpc_dB.push_back(dB);
 		}
 	}
 
@@ -408,6 +592,12 @@ void Spectrum::initialize(Runtime &rt)
 		}
 		else if (key == "floor_dB") {
 			return spec.floor_dB();
+		}
+		else if (key == "lpc_order") {
+			return intptr_t(spec.lpc_order());
+		}
+		else if (key == "has_lpc") {
+			return spec.has_lpc();
 		}
 		throw error("[Index error] Spectrum type has no member named \"%\"", key);
 	};

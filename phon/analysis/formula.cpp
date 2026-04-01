@@ -20,6 +20,8 @@
  ***********************************************************************************************************************/
 
 #include <cctype>
+#include <cstdlib>
+#include <string>
 #include <phon/analysis/formula.hpp>
 
 namespace phonometrica::stats {
@@ -71,6 +73,24 @@ String FixedTerm::to_string() const
 
 
 // =====================================================================
+// SmoothTerm
+// =====================================================================
+
+String SmoothTerm::to_string() const
+{
+	String result("s(");
+	result.append(quote_name(variable));
+	if (k != 10)
+	{
+		result.append(", k=");
+		result.append(std::to_string(k));
+	}
+	result.append(")");
+	return result;
+}
+
+
+// =====================================================================
 // RandomTerm
 // =====================================================================
 
@@ -116,16 +136,27 @@ String Formula::to_string() const
 		result.append("0 + ");
 	}
 
+	bool need_plus = false;
+
 	for (intptr_t i = 1; i <= fixed.size(); i++)
 	{
-		if (i > 1) result.append(" + ");
+		if (need_plus) result.append(" + ");
 		result.append(fixed[i].to_string());
+		need_plus = true;
+	}
+
+	for (intptr_t i = 1; i <= smooth.size(); i++)
+	{
+		if (need_plus) result.append(" + ");
+		result.append(smooth[i].to_string());
+		need_plus = true;
 	}
 
 	for (intptr_t i = 1; i <= random.size(); i++)
 	{
-		if (!fixed.empty() || i > 1) result.append(" + ");
+		if (need_plus) result.append(" + ");
 		result.append(random[i].to_string());
+		need_plus = true;
 	}
 
 	return result;
@@ -155,6 +186,11 @@ Array<String> Formula::all_variables() const
 		}
 	}
 
+	for (intptr_t i = 1; i <= smooth.size(); i++)
+	{
+		add_unique(smooth[i].variable);
+	}
+
 	for (intptr_t i = 1; i <= random.size(); i++)
 	{
 		auto &rt = random[i];
@@ -177,7 +213,7 @@ namespace {
 enum class TokenType
 {
 	Name,      // identifier (column name)
-	Number,    // 0 or 1 (intercept control)
+	Number,    // integer (0, 1 for intercept control; any integer for k= in smooth terms)
 	Tilde,     // ~
 	Plus,      // +
 	Minus,     // -
@@ -186,6 +222,8 @@ enum class TokenType
 	Pipe,      // |
 	LParen,    // (
 	RParen,    // )
+	Comma,     // ,
+	Equals,    // =
 	End        // end of input
 };
 
@@ -226,6 +264,8 @@ public:
 		case '|': m_pos++; return { TokenType::Pipe, "|", 0 };
 		case '(': m_pos++; return { TokenType::LParen, "(", 0 };
 		case ')': m_pos++; return { TokenType::RParen, ")", 0 };
+		case ',': m_pos++; return { TokenType::Comma, ",", 0 };
+		case '=': m_pos++; return { TokenType::Equals, "=", 0 };
 		default:
 			break;
 		}
@@ -246,11 +286,18 @@ public:
 			return { TokenType::Name, std::move(name), 0 };
 		}
 
-		// Number: 0 or 1 (only when not part of a name)
-		if ((c == '0' || c == '1') && !is_name_char(peek(1)))
+		// Integer: one or more digits.
+		// Single 0 or 1 followed by a non-digit is used for intercept control.
+		// Multi-digit integers are used for k= in smooth terms.
+		if (std::isdigit(static_cast<unsigned char>(c)))
 		{
-			m_pos++;
-			return { TokenType::Number, String(&c, 1), c - '0' };
+			const char *start = m_pos;
+			while (m_pos < m_end && std::isdigit(static_cast<unsigned char>(*m_pos))) {
+				m_pos++;
+			}
+			String num_str(start, m_pos - start);
+			int value = std::atoi(std::string(start, m_pos - start).c_str());
+			return { TokenType::Number, std::move(num_str), value };
 		}
 
 		// Name: [a-zA-Z_][a-zA-Z0-9_.]* 
@@ -436,6 +483,7 @@ private:
 	}
 
 	// fixed_term := name (('*' | ':') name)*
+	// Special case: if name is "s" and followed by '(', parse as smooth term.
 	// "a * b" expands to: a, b, a:b
 	// "a : b" is just the interaction: a:b
 	void parse_fixed_term(Formula &f)
@@ -443,6 +491,13 @@ private:
 		expect(TokenType::Name, "Expected variable name");
 		String first = m_current.text;
 		advance();
+
+		// Detect smooth term: s(...)
+		if (first == "s" && m_current.type == TokenType::LParen)
+		{
+			parse_smooth_term(f);
+			return;
+		}
 
 		// Simple term (no operator following, or next is + - ) end)
 		if (m_current.type != TokenType::Star && m_current.type != TokenType::Colon)
@@ -500,6 +555,67 @@ private:
 			}
 			add_term(f, std::move(t));
 		}
+	}
+
+	// smooth_term := 's' '(' name [',' option]* ')'
+	// option := 'k' '=' number
+	//
+	// Examples:
+	//   s(duration)        → SmoothTerm{"duration", "cr", 10}
+	//   s(duration, k=15)  → SmoothTerm{"duration", "cr", 15}
+	//
+	// Precondition: "s" has been consumed as a Name, current token is LParen.
+	void parse_smooth_term(Formula &f)
+	{
+		expect(TokenType::LParen, "Expected '(' after 's'");
+		advance();
+
+		// Variable name
+		expect(TokenType::Name, "Expected variable name inside s()");
+		SmoothTerm st;
+		st.variable = m_current.text;
+		advance();
+
+		// Optional arguments: , k=N
+		while (m_current.type == TokenType::Comma)
+		{
+			advance(); // skip comma
+
+			expect(TokenType::Name, "Expected option name (e.g. 'k') inside s()");
+			String option = m_current.text;
+			advance();
+
+			expect(TokenType::Equals, "Expected '=' after option name inside s()");
+			advance();
+
+			if (option == "k")
+			{
+				expect(TokenType::Number, "Expected integer value for k= inside s()");
+				st.k = m_current.value;
+				if (st.k < 3) {
+					throw error("Smooth term basis dimension k must be at least 3 (got %)", st.k);
+				}
+				advance();
+			}
+			else
+			{
+				throw error("Unknown smooth term option '%' (supported: k)", option);
+			}
+		}
+
+		// Closing paren
+		expect(TokenType::RParen, "Expected ')' to close s()");
+		advance();
+
+		// Check for duplicate smooth on the same variable.
+		for (intptr_t i = 1; i <= f.smooth.size(); i++)
+		{
+			if (f.smooth[i].variable == st.variable) {
+				throw error("Duplicate smooth term for variable '%'", st.variable);
+			}
+		}
+
+		f.smooth.append(std::move(st));
 	}
 
 	// random_term := '(' random_inner '|' name ')'
