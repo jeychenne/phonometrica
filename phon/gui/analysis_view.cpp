@@ -1278,6 +1278,10 @@ void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 	else if (sr.dispersion_ratio < 1.0)
 		text += QStringLiteral("  (potential underdispersion)");
 
+	text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
+		.arg(sr.n_outliers)
+		.arg(format_p(sr.outlier_pvalue));
+
 	m_test_results_text->setPlainText(text);
 	m_test_results_group->setVisible(true);
 }

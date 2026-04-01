@@ -2432,6 +2432,12 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			}
 		}
 
+		// Z design info for simulation-based diagnostics (DHARMa-style scaled residuals).
+		// This is transient fitting-time data; not serialised.
+		reg.nterms = groups[g].nterms;
+		reg.indices = groups[g].indices;
+		reg.Z_design = groups[g].Z_design;
+
 		model.random_effects.append(std::move(reg));
 	}
 

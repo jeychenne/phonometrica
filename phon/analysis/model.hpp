@@ -15,6 +15,7 @@
 #define PHONOMETRICA_MODEL_HPP
 
 #include <cmath>
+#include <vector>
 #include <phon/string.hpp>
 #include <phon/array.hpp>
 #include <phon/utils/matrix.hpp>
@@ -35,6 +36,14 @@ struct RandomEffectGroup
 	// Conditional modes (BLUPs): nlevels × nterms, stored in column-major order.
 	// Empty until a mixed model is fitted.
 	Array<double> conditional_modes;
+
+	// ---- Z design info (for simulation-based diagnostics) ----
+	// These are populated at fitting time from GroupingInfo and are NOT serialised.
+	// If the model is loaded from file, they will be empty, and the diagnostic
+	// code falls back to the analytical (conditional) path.
+	intptr_t nterms = 1;                    // q_g: number of random terms per level
+	std::vector<intptr_t> indices;           // n_obs: per-observation level index [0, nlevels)
+	std::vector<double> Z_design;            // n_obs × nterms, row-major
 };
 
 
