@@ -153,6 +153,12 @@ Handle<Concordance> PitchQuery::execute()
 	// Build concordance with pitch metadata
 	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
+	// Duration columns
+	if (m_include_duration) {
+		conc->set_has_duration(true);
+		conc->set_duration_in_ms(m_duration_in_ms);
+	}
+
 	// Set pitch metadata — semitones and ERB are computed on the fly by the concordance
 	conc->set_pitch_meta(m_semitones, m_semitone_ref, m_erb);
 
@@ -260,6 +266,8 @@ Handle<Query> PitchQuery::copy() const
 	c->m_context = m_context;
 	c->m_context_length = m_context_length;
 	c->m_ref_constraint = m_ref_constraint;
+	c->m_include_duration = m_include_duration;
+	c->m_duration_in_ms = m_duration_in_ms;
 
 	// Copy pitch-specific fields
 	c->m_method = m_method;
@@ -479,6 +487,12 @@ void PitchQuery::write()
 		} break;
 		default:
 			type_attr.set_value("none");
+	}
+
+	if (m_include_duration) {
+		auto dur_node = option_node.append_child("Duration");
+		dur_node.append_attribute("enabled").set_value(true);
+		dur_node.append_attribute("unit").set_value(m_duration_in_ms ? "ms" : "s");
 	}
 
 	// Constraints

@@ -88,6 +88,8 @@ public:
 
 	bool is_measurement_column(intptr_t col) const;
 
+	bool is_duration_column(intptr_t col) const;
+
 	/// True if column `col` (1-based) is a stored formant or bandwidth value that can be edited.
 	bool is_editable_measurement(intptr_t col) const;
 
@@ -152,6 +154,18 @@ public:
 
 	/// Set intensity metadata. Called by IntensityQuery::execute().
 	void set_intensity_meta();
+
+	// ── Duration metadata ───────────────────────────────────────────────
+
+	bool has_duration() const { return m_has_duration; }
+
+	void set_has_duration(bool b) { m_has_duration = b; }
+
+	bool duration_in_ms() const { return m_duration_in_ms; }
+
+	void set_duration_in_ms(bool b) { m_duration_in_ms = b; }
+
+	int duration_column_count() const { return m_has_duration ? m_target_count : 0; }
 
 	// ── Layout toggle (wide/long) ────────────────────────────────────────
 
@@ -299,6 +313,11 @@ protected:
 	// ── Intensity metadata ──────────────────────────────────────────────
 
 	bool m_is_intensity = false;      // true if this concordance holds intensity data
+
+	// ── Duration metadata ───────────────────────────────────────────────
+
+	bool m_has_duration = false;       // true if duration column(s) are present
+	bool m_duration_in_ms = false;     // true if durations are in milliseconds
 
 	// ── Column aliases ───────────────────────────────────────────────────
 

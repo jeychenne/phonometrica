@@ -102,6 +102,11 @@ private:
 	QSpinBox *m_ctx_length = nullptr;
 	QSpinBox *m_ref_constraint = nullptr;
 
+	// Duration
+	QCheckBox *m_duration_check = nullptr;
+	QRadioButton *m_duration_s = nullptr;
+	QRadioButton *m_duration_ms = nullptr;
+
 	// Pitch settings
 	QComboBox *m_algorithm_combo = nullptr;
 	QLineEdit *m_min_pitch_edit = nullptr;

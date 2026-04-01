@@ -15,8 +15,8 @@
  *                                                                                                                     *
  * Created: 30/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Reusable plot widget supporting scatter plots, box plots, and histograms.                                  *
- *          Follows the same rendering pattern as SpectrumView.                                                        *
+ * Purpose: Reusable plot widget supporting scatter plots, grouped scatter plots with confidence ellipses,             *
+ *          box plots, histograms and bar charts. Follows the same rendering pattern as SpectrumView.                  *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -45,10 +45,24 @@ public:
 
 	explicit PlotWidget(QWidget *parent = nullptr);
 
-	/// Scatter plot.
+	/// Scatter plot. reverse_x / reverse_y invert the corresponding axis
+	/// (useful for formant charts where higher values go left/down).
 	void setData(std::vector<double> x, std::vector<double> y,
 	             const QString &x_label, const QString &y_label,
-	             const QString &title, RefLine ref = RefLine::None);
+	             const QString &title, RefLine ref = RefLine::None,
+	             bool reverse_x = false, bool reverse_y = false);
+
+	/// Grouped scatter plot. Each point belongs to a named group (groups[i]).
+	/// Optionally shows per-group mean markers and confidence ellipses.
+	/// chi2_scale is the chi-squared(2) quantile for the desired confidence level
+	/// (e.g. 2.2946 for 68.27%, 5.991 for 95%). For 2 df: -2*ln(1-p).
+	void setGroupedScatterData(std::vector<QString> groups,
+	                           std::vector<double> x, std::vector<double> y,
+	                           const QString &x_label, const QString &y_label,
+	                           const QString &title,
+	                           bool show_means, bool show_ellipses,
+	                           double chi2_scale = 2.2946,
+	                           bool reverse_x = false, bool reverse_y = false);
 
 	/// Box plot: groups[i] is the group label for values[i].
 	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
@@ -92,7 +106,7 @@ protected:
 
 private:
 
-	enum class Mode { Empty, Scatter, BoxPlot, Histogram, BarChart };
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart };
 
 	struct BoxStats
 	{
@@ -112,19 +126,41 @@ private:
 		int count = 0;
 	};
 
+	/// Per-group data for grouped scatter plot.
+	struct GroupData
+	{
+		QString label;
+		std::vector<double> x;
+		std::vector<double> y;
+		double mean_x = 0;
+		double mean_y = 0;
+		// Confidence ellipse parameters (in data coordinates).
+		// Semi-axes are pre-scaled by the chi-squared quantile.
+		double ellipse_angle = 0; // rotation angle in radians
+		double ellipse_a = 0;     // semi-axis along principal direction
+		double ellipse_b = 0;     // semi-axis along minor direction
+		bool ellipse_valid = false; // false when n < 3 or singular covariance
+	};
+
 	void renderPlot(QPainter &p, int w, int h);
 	void renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	                    double xlo, double xhi, double ylo, double yhi);
+	void renderGroupedScatter(QPainter &p, int left, int top, int pw, int ph);
 	void renderBoxPlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
 	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
 	void renderTitle(QPainter &p, int left, int pw, int top);
+	void renderLegend(QPainter &p, int left, int top, int pw, int ph);
 	void rebuildCache();
 
 	static std::vector<BoxStats> computeBoxStats(const std::vector<QString> &groups,
 	                                              const std::vector<double> &values);
 	static std::vector<HistBin> computeBins(const std::vector<double> &values, int nbins = 0);
 	static double quantile_sorted(const std::vector<double> &sorted, double p);
+	static std::vector<GroupData> buildGroups(const std::vector<QString> &labels,
+	                                          const std::vector<double> &x,
+	                                          const std::vector<double> &y,
+	                                          double chi2_scale);
 
 	Mode m_mode = Mode::Empty;
 
@@ -132,12 +168,19 @@ private:
 	std::vector<double> m_x;
 	std::vector<double> m_y;
 	RefLine m_ref_line = RefLine::None;
+	bool m_reverse_x = false;
+	bool m_reverse_y = false;
 
 	// Regression line overlay (scatter only)
 	bool m_show_regression = false;
 	double m_reg_intercept = 0;
 	double m_reg_slope = 0;
 	double m_reg_r2 = 0;
+
+	// Grouped scatter data
+	std::vector<GroupData> m_group_data;
+	bool m_show_means = false;
+	bool m_show_ellipses = false;
 
 	// Box plot data
 	std::vector<BoxStats> m_boxes;

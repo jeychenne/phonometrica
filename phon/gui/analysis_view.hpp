@@ -32,6 +32,7 @@
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QVBoxLayout>
 #include <QSpinBox>
 #include <QLabel>
 #include <QTableWidget>
@@ -78,6 +79,8 @@ private slots:
 	void onExportEdaPNG();
 	void onExportEdaPDF();
 	void onExportEdaSVG();
+	void onDetachEdaPlot();
+	void onReattachEdaPlot();
 
 private:
 
@@ -89,6 +92,7 @@ private:
 	QString formatLatex(const stats::Model &m) const;
 	void updateDiagnosticPlot();
 	void updateFitEnabled();
+	bool eventFilter(QObject *obj, QEvent *event) override;
 
 	// Formula building helpers
 	void setResponse(const QString &name);
@@ -152,8 +156,17 @@ private:
 	QSpinBox *m_bins_spin = nullptr;
 	QCheckBox *m_eda_regline_check = nullptr;
 	QCheckBox *m_eda_density_check = nullptr;
+	QLabel *m_eda_group_label = nullptr;
+	QComboBox *m_eda_group_combo = nullptr;
+	QCheckBox *m_eda_mean_check = nullptr;
+	QCheckBox *m_eda_ellipse_check = nullptr;
+	QSpinBox *m_eda_ellipse_spin = nullptr;
+	QCheckBox *m_eda_formant_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
 	QTableWidget *m_eda_summary = nullptr;
+	QVBoxLayout *m_eda_top_layout = nullptr;
+	QWidget *m_eda_float_window = nullptr;
+	QLabel *m_eda_placeholder = nullptr;
 
 	// Column list check mark icon for variables used in the formula.
 	QIcon m_check_icon;

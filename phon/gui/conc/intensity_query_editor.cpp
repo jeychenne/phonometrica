@@ -135,6 +135,22 @@ QWidget *IntensityQueryEditor::createSearchPanel()
 	m_ref_constraint->setToolTip(tr("Constraint used for context extraction and acoustic measurements"));
 	ref_layout->addWidget(m_ref_constraint);
 	ref_layout->addStretch();
+
+	m_duration_check = new QCheckBox(tr("Add target duration(s)"));
+	m_duration_check->setToolTip(tr("Add a column with the duration of each target's event"));
+	m_duration_s = new QRadioButton(tr("s"));
+	m_duration_ms = new QRadioButton(tr("ms"));
+	m_duration_s->setChecked(true);
+	m_duration_s->setEnabled(false);
+	m_duration_ms->setEnabled(false);
+	ref_layout->addWidget(m_duration_check);
+	ref_layout->addWidget(m_duration_s);
+	ref_layout->addWidget(m_duration_ms);
+	connect(m_duration_check, &QCheckBox::toggled, this, [this](bool on) {
+		m_duration_s->setEnabled(on);
+		m_duration_ms->setEnabled(on);
+	});
+
 	outer->addLayout(ref_layout);
 
 	connect(m_add_btn, &QPushButton::clicked, this, &IntensityQueryEditor::onAddConstraint);
@@ -343,6 +359,10 @@ void IntensityQueryEditor::parseQuery()
 	// Reference constraint (always set, independent of context type)
 	m_query->set_reference_constraint(m_ref_constraint->value());
 
+	// Duration
+	m_query->set_include_duration(m_duration_check->isChecked());
+	m_query->set_duration_in_ms(m_duration_ms->isChecked());
+
 	if (m_ctx_none->isChecked()) { m_query->set_context(Query::Context::None); }
 	else if (m_ctx_labels->isChecked()) {
 		m_query->set_context(Query::Context::Labels);
@@ -495,6 +515,11 @@ void IntensityQueryEditor::loadQuery()
 
 	// Reference constraint (always restore)
 	m_ref_constraint->setValue(m_query->reference_constraint());
+
+	// Duration
+	m_duration_check->setChecked(m_query->include_duration());
+	if (m_query->duration_in_ms()) m_duration_ms->setChecked(true);
+	else m_duration_s->setChecked(true);
 
 	switch (m_query->context()) {
 		case Query::Context::Labels: m_ctx_labels->setChecked(true); break;

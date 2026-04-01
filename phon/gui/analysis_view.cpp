@@ -42,6 +42,7 @@
 #include <QAction>
 #include <QToolButton>
 #include <QHeaderView>
+#include <QEvent>
 #include <QSet>
 #include <QPainter>
 #include <QStyledItemDelegate>
@@ -339,6 +340,15 @@ void AnalysisView::setupUi()
 	if (auto *btn = qobject_cast<QToolButton *>(eda_toolbar->widgetForAction(eda_save_action)))
 		btn->setPopupMode(QToolButton::InstantPopup);
 
+	//eda_toolbar->addSeparator();
+	QWidget* spacer = new QWidget();
+	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+	eda_toolbar->addWidget(spacer);
+
+	auto *detach_action = new QAction(QIcon(":/icons/maximize.svg"), tr("Detach plot"), this);
+	detach_action->setToolTip(tr("Open the plot in a resizable window"));
+	eda_toolbar->addAction(detach_action);
+
 	eda_layout->addWidget(eda_toolbar);
 
 	// ── Plot area ──
@@ -371,6 +381,36 @@ void AnalysisView::setupUi()
 	m_eda_density_check->setToolTip(tr("Overlay a kernel density estimate on the histogram"));
 	m_eda_density_check->setVisible(false);
 	eda_controls->addWidget(m_eda_density_check);
+
+	// ── Grouped scatter / formant chart controls ──
+	m_eda_group_label = new QLabel(tr("Group:"));
+	m_eda_group_label->setVisible(false);
+	eda_controls->addWidget(m_eda_group_label);
+	m_eda_group_combo = new QComboBox;
+	m_eda_group_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_group_combo->setToolTip(tr("Color points by a categorical variable"));
+	m_eda_group_combo->setVisible(false);
+	eda_controls->addWidget(m_eda_group_combo);
+	m_eda_mean_check = new QCheckBox(tr("Means"));
+	m_eda_mean_check->setToolTip(tr("Show the mean of each group"));
+	m_eda_mean_check->setVisible(false);
+	eda_controls->addWidget(m_eda_mean_check);
+	m_eda_ellipse_check = new QCheckBox(tr("Ellipses"));
+	m_eda_ellipse_check->setToolTip(tr("Show confidence ellipses around each group"));
+	m_eda_ellipse_check->setVisible(false);
+	eda_controls->addWidget(m_eda_ellipse_check);
+	m_eda_ellipse_spin = new QSpinBox;
+	m_eda_ellipse_spin->setRange(50, 99);
+	m_eda_ellipse_spin->setValue(68);
+	m_eda_ellipse_spin->setSuffix(QStringLiteral("%"));
+	m_eda_ellipse_spin->setToolTip(tr("Confidence level for the ellipses (68% \u2248 1\u03C3, 95% \u2248 2\u03C3)"));
+	m_eda_ellipse_spin->setVisible(false);
+	eda_controls->addWidget(m_eda_ellipse_spin);
+	m_eda_formant_check = new QCheckBox(tr("Formant chart"));
+	m_eda_formant_check->setToolTip(tr("Reverse both axes (high values at bottom-left, as in F1\u00D7F2 plots)"));
+	m_eda_formant_check->setVisible(false);
+	eda_controls->addWidget(m_eda_formant_check);
+
 	eda_controls->addStretch();
 
 	auto *eda_controls_widget = new QWidget;
@@ -386,11 +426,11 @@ void AnalysisView::setupUi()
 
 	// ── Assemble: splitter between (plot + controls) and stats ──
 	auto *eda_top = new QWidget;
-	auto *eda_top_layout = new QVBoxLayout(eda_top);
-	eda_top_layout->setContentsMargins(0, 0, 0, 0);
-	eda_top_layout->setSpacing(4);
-	eda_top_layout->addWidget(m_eda_plot, 1);
-	eda_top_layout->addWidget(eda_controls_widget);
+	m_eda_top_layout = new QVBoxLayout(eda_top);
+	m_eda_top_layout->setContentsMargins(0, 0, 0, 0);
+	m_eda_top_layout->setSpacing(4);
+	m_eda_top_layout->addWidget(m_eda_plot, 1);
+	m_eda_top_layout->addWidget(eda_controls_widget);
 
 	auto *eda_splitter = new QSplitter(Qt::Vertical);
 	eda_splitter->addWidget(eda_top);
@@ -426,16 +466,25 @@ void AnalysisView::setupUi()
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_regline_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_density_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(m_eda_group_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_formant_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
 	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
 }
+
 
 void AnalysisView::populateColumns()
 {
 	m_column_list->clear();
 	m_eda_x_combo->clear();
 	m_eda_y_combo->clear();
+	m_eda_group_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
 	m_eda_y_combo->addItem(tr("(None)"));
+	m_eda_group_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
 
@@ -445,6 +494,7 @@ void AnalysisView::populateColumns()
 		m_column_list->addItem(qname);
 		m_eda_x_combo->addItem(qname);
 		m_eda_y_combo->addItem(qname);
+		m_eda_group_combo->addItem(qname);
 	}
 
 	updateColumnMarkers();
@@ -482,7 +532,6 @@ void AnalysisView::updateFitEnabled()
 		m_column_list->setToolTip(tr("Source data is not available"));
 	}
 }
-
 
 // =====================================================================
 // Fit
@@ -708,6 +757,28 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	// ── Fixed effects ────────────────────────────────────────────────
 	menu.addAction(tr("Add as predictor"));
 
+	// Interaction submenus: list current fixed terms.
+	auto *interaction_menu = menu.addMenu(tr("Add with main effects and interaction"));
+	auto *interaction_only_menu = menu.addMenu(tr("Add interaction only with..."));
+
+	if (parsed && !parsed->fixed.empty())
+	{
+		for (intptr_t i = 1; i <= parsed->fixed.size(); i++)
+		{
+			auto term_s = parsed->fixed[i].to_string();
+			auto term_q = QString::fromUtf8(term_s.data(), (int)term_s.size());
+			interaction_menu->addAction(term_q);
+			interaction_only_menu->addAction(term_q);
+		}
+	}
+	else
+	{
+		auto *placeholder1 = interaction_menu->addAction(tr("(no fixed effects in formula)"));
+		placeholder1->setEnabled(false);
+		auto *placeholder2 = interaction_only_menu->addAction(tr("(no fixed effects in formula)"));
+		placeholder2->setEnabled(false);
+	}
+
 	// Smooth term: submenu for numeric columns with k choices and by-variable.
 	QMenu *smooth_menu = nullptr;
 	QMenu *smooth_by_menu = nullptr;
@@ -747,28 +818,6 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 				placeholder->setEnabled(false);
 			}
 		}
-	}
-
-	// Interaction submenus: list current fixed terms.
-	auto *interaction_menu = menu.addMenu(tr("Add with main effects and interaction"));
-	auto *interaction_only_menu = menu.addMenu(tr("Add interaction only with..."));
-
-	if (parsed && !parsed->fixed.empty())
-	{
-		for (intptr_t i = 1; i <= parsed->fixed.size(); i++)
-		{
-			auto term_s = parsed->fixed[i].to_string();
-			auto term_q = QString::fromUtf8(term_s.data(), (int)term_s.size());
-			interaction_menu->addAction(term_q);
-			interaction_only_menu->addAction(term_q);
-		}
-	}
-	else
-	{
-		auto *placeholder1 = interaction_menu->addAction(tr("(no fixed effects in formula)"));
-		placeholder1->setEnabled(false);
-		auto *placeholder2 = interaction_only_menu->addAction(tr("(no fixed effects in formula)"));
-		placeholder2->setEnabled(false);
 	}
 
 	menu.addSeparator();
@@ -1487,6 +1536,106 @@ void AnalysisView::onExportEdaSVG()
 	m_eda_plot->saveSVG(path);
 }
 
+void AnalysisView::onDetachEdaPlot()
+{
+	if (m_eda_float_window) {
+		// Already detached — just raise the window.
+		m_eda_float_window->raise();
+		m_eda_float_window->activateWindow();
+		return;
+	}
+
+	// Create a floating window. Parent is `this` with Qt::Window so it
+	// floats independently but is destroyed when the AnalysisView closes.
+	m_eda_float_window = new QWidget(this, Qt::Window);
+	m_eda_float_window->setWindowTitle(tr("EDA Plot"));
+	m_eda_float_window->setAttribute(Qt::WA_DeleteOnClose, false);
+	m_eda_float_window->installEventFilter(this);
+
+	auto *layout = new QVBoxLayout(m_eda_float_window);
+	layout->setContentsMargins(0, 0, 0, 0);
+	layout->setSpacing(0);
+
+	// Toolbar with export actions and a reattach button.
+	auto *toolbar = new QToolBar;
+	toolbar->setIconSize(QSize(20, 20));
+	toolbar->setMovable(false);
+
+	auto *save_menu = new QMenu(m_eda_float_window);
+	save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
+	save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEdaPDF);
+	save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportEdaSVG);
+
+	auto *save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), m_eda_float_window);
+	save_action->setMenu(save_menu);
+	toolbar->addAction(save_action);
+	if (auto *btn = qobject_cast<QToolButton *>(toolbar->widgetForAction(save_action)))
+		btn->setPopupMode(QToolButton::InstantPopup);
+
+	toolbar->addSeparator();
+	auto *reattach_action = toolbar->addAction(QIcon(":/icons/minimize.svg"), tr("Reattach"));
+	reattach_action->setToolTip(tr("Return the plot to the EDA tab"));
+	connect(reattach_action, &QAction::triggered, this, &AnalysisView::onReattachEdaPlot);
+
+	layout->addWidget(toolbar);
+
+	// Move the plot widget into the floating window.
+	m_eda_top_layout->removeWidget(m_eda_plot);
+	layout->addWidget(m_eda_plot, 1);
+	m_eda_plot->show();
+
+	// Insert a placeholder into the EDA tab.
+	m_eda_placeholder = new QLabel(tr("Plot detached — close the floating window or click Reattach to return it here."));
+	m_eda_placeholder->setAlignment(Qt::AlignCenter);
+	m_eda_placeholder->setWordWrap(true);
+	QPalette pal = m_eda_placeholder->palette();
+	pal.setColor(QPalette::WindowText, QColor(120, 120, 120));
+	m_eda_placeholder->setPalette(pal);
+	m_eda_top_layout->insertWidget(0, m_eda_placeholder, 1);
+
+	// Size the floating window to something reasonable.
+	m_eda_float_window->resize(700, 500);
+	m_eda_float_window->show();
+	m_eda_float_window->raise();
+}
+
+void AnalysisView::onReattachEdaPlot()
+{
+	if (!m_eda_float_window) return;
+
+	// Remove the plot from the floating window and return it to the EDA tab.
+	auto *float_layout = m_eda_float_window->layout();
+	if (float_layout)
+		float_layout->removeWidget(m_eda_plot);
+
+	// Remove the placeholder.
+	if (m_eda_placeholder) {
+		m_eda_top_layout->removeWidget(m_eda_placeholder);
+		delete m_eda_placeholder;
+		m_eda_placeholder = nullptr;
+	}
+
+	// Reinsert the plot at index 0 (above the controls bar).
+	m_eda_top_layout->insertWidget(0, m_eda_plot, 1);
+	m_eda_plot->show();
+
+	// Destroy the floating window.
+	m_eda_float_window->removeEventFilter(this);
+	m_eda_float_window->hide();
+	m_eda_float_window->deleteLater();
+	m_eda_float_window = nullptr;
+}
+
+bool AnalysisView::eventFilter(QObject *obj, QEvent *event)
+{
+	// When the floating plot window is closed, reattach the plot.
+	if (obj == m_eda_float_window && event->type() == QEvent::Close) {
+		onReattachEdaPlot();
+		return true; // event handled
+	}
+	return View::eventFilter(obj, event);
+}
+
 bool AnalysisView::isColumnNumeric(const String &col_name) const
 {
 	if (!m_analysis->has_source()) return false;
@@ -1523,6 +1672,12 @@ void AnalysisView::updateEdaPlot()
 		m_bins_spin->setVisible(false);
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_group_label->setVisible(false);
+		m_eda_group_combo->setVisible(false);
+		m_eda_mean_check->setVisible(false);
+		m_eda_ellipse_check->setVisible(false);
+		m_eda_ellipse_spin->setVisible(false);
+		m_eda_formant_check->setVisible(false);
 		return;
 	}
 
@@ -1553,6 +1708,13 @@ void AnalysisView::updateEdaPlot()
 	{
 		// ── Univariate: plot X alone ──
 		m_eda_regline_check->setVisible(false);
+		m_eda_group_label->setVisible(false);
+		m_eda_group_combo->setVisible(false);
+		m_eda_mean_check->setVisible(false);
+		m_eda_ellipse_check->setVisible(false);
+		m_eda_ellipse_spin->setVisible(false);
+		m_eda_formant_check->setVisible(false);
+
 		if (x_numeric)
 		{
 			// Histogram of numeric X values
@@ -1677,67 +1839,142 @@ void AnalysisView::updateEdaPlot()
 
 	if (x_numeric && y_numeric)
 	{
-		// Scatter: X continuous, Y continuous
-		std::vector<double> xv, yv;
-		xv.reserve(nr);
-		yv.reserve(nr);
-		for (intptr_t r = 1; r <= nr; r++)
-		{
-			auto vx = dt->get_cell(r, x_col);
-			auto vy = dt->get_cell(r, y_col);
-			if (vx.empty() || vy.empty()) continue;
-			bool okx, oky;
-			double dx = vx.to_float(&okx);
-			double dy = vy.to_float(&oky);
-			if (okx && oky) {
-				xv.push_back(dx);
-				yv.push_back(dy);
-			}
-		}
-		if (xv.empty()) { m_eda_plot->clear(); return; }
+		// ── Scatter or grouped scatter: X continuous, Y continuous ──
 
-		// Compute OLS regression before moving the vectors.
-		double reg_intercept = 0, reg_slope = 0, reg_r2 = 0;
-		bool reg_valid = false;
-		if (m_eda_regline_check->isChecked() && xv.size() >= 2)
-		{
-			size_t n = xv.size();
-			double sx = 0, sy = 0;
-			for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
-			double mx = sx / n, my = sy / n;
+		bool formant = m_eda_formant_check->isChecked();
+		bool has_group = (m_eda_group_combo->currentIndex() > 0);
 
-			double sxy = 0, sxx = 0, syy = 0;
-			for (size_t i = 0; i < n; i++) {
-				double dx = xv[i] - mx;
-				double dy = yv[i] - my;
-				sxy += dx * dy;
-				sxx += dx * dx;
-				syy += dy * dy;
-			}
-			if (sxx > 1e-15)
-			{
-				reg_slope = sxy / sxx;
-				reg_intercept = my - reg_slope * mx;
-				reg_r2 = (syy > 1e-15) ? (sxy * sxy) / (sxx * syy) : 0.0;
-				reg_valid = true;
-			}
-		}
+		// Show the group / formant controls.
+		m_eda_group_label->setVisible(true);
+		m_eda_group_combo->setVisible(true);
+		m_eda_formant_check->setVisible(true);
 
-		m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
-		                     y_name_q + QStringLiteral(" ~ ") + x_name_q);
+		// Mean/Ellipse visible only when a group is selected.
+		m_eda_mean_check->setVisible(has_group);
+		m_eda_ellipse_check->setVisible(has_group);
+		m_eda_ellipse_spin->setVisible(has_group);
 
-		m_eda_regline_check->setVisible(true);
+		// Regression line is available only without grouping.
+		m_eda_regline_check->setVisible(!has_group);
 		m_eda_density_check->setVisible(false);
-		if (reg_valid)
-			m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);
+
+		if (has_group)
+		{
+			// ── Grouped scatter ──
+			auto group_name_q = m_eda_group_combo->currentText();
+			auto group_name = String(group_name_q.toUtf8().constData());
+
+			intptr_t g_col = 0;
+			for (intptr_t j = 1; j <= nc; j++) {
+				if (dt->get_header(j) == group_name) { g_col = j; break; }
+			}
+			if (g_col < 1) { m_eda_plot->clear(); return; }
+
+			std::vector<double> xv, yv;
+			std::vector<QString> gv;
+			xv.reserve(nr);
+			yv.reserve(nr);
+			gv.reserve(nr);
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vx = dt->get_cell(r, x_col);
+				auto vy = dt->get_cell(r, y_col);
+				auto vg = dt->get_cell(r, g_col);
+				if (vx.empty() || vy.empty() || vg.empty()) continue;
+				bool okx, oky;
+				double dx = vx.to_float(&okx);
+				double dy = vy.to_float(&oky);
+				if (okx && oky) {
+					xv.push_back(dx);
+					yv.push_back(dy);
+					gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+				}
+			}
+			if (xv.empty()) { m_eda_plot->clear(); return; }
+
+			bool show_means = m_eda_mean_check->isChecked();
+			bool show_ellipses = m_eda_ellipse_check->isChecked();
+
+			// chi-squared quantile for 2 df: F(x) = 1 - exp(-x/2), so x = -2*ln(1-p).
+			double conf = m_eda_ellipse_spin->value() / 100.0;
+			double chi2_scale = -2.0 * std::log(1.0 - conf);
+
+			m_eda_plot->setGroupedScatterData(
+				std::move(gv), std::move(xv), std::move(yv),
+				x_name_q, y_name_q,
+				y_name_q + QStringLiteral(" ~ ") + x_name_q
+					+ QStringLiteral(" | ") + group_name_q,
+				show_means, show_ellipses, chi2_scale, formant, formant);
+		}
 		else
-			m_eda_plot->clearRegressionLine();
+		{
+			// ── Plain scatter ──
+			std::vector<double> xv, yv;
+			xv.reserve(nr);
+			yv.reserve(nr);
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vx = dt->get_cell(r, x_col);
+				auto vy = dt->get_cell(r, y_col);
+				if (vx.empty() || vy.empty()) continue;
+				bool okx, oky;
+				double dx = vx.to_float(&okx);
+				double dy = vy.to_float(&oky);
+				if (okx && oky) {
+					xv.push_back(dx);
+					yv.push_back(dy);
+				}
+			}
+			if (xv.empty()) { m_eda_plot->clear(); return; }
+
+			// Compute OLS regression before moving the vectors.
+			double reg_intercept = 0, reg_slope = 0, reg_r2 = 0;
+			bool reg_valid = false;
+			if (m_eda_regline_check->isChecked() && xv.size() >= 2)
+			{
+				size_t n = xv.size();
+				double sx = 0, sy = 0;
+				for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
+				double mx = sx / n, my = sy / n;
+
+				double sxy = 0, sxx = 0, syy = 0;
+				for (size_t i = 0; i < n; i++) {
+					double dx = xv[i] - mx;
+					double dy = yv[i] - my;
+					sxy += dx * dy;
+					sxx += dx * dx;
+					syy += dy * dy;
+				}
+				if (sxx > 1e-15)
+				{
+					reg_slope = sxy / sxx;
+					reg_intercept = my - reg_slope * mx;
+					reg_r2 = (syy > 1e-15) ? (sxy * sxy) / (sxx * syy) : 0.0;
+					reg_valid = true;
+				}
+			}
+
+			m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
+			                     y_name_q + QStringLiteral(" ~ ") + x_name_q,
+			                     PlotWidget::RefLine::None, formant, formant);
+
+			if (reg_valid)
+				m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);
+			else
+				m_eda_plot->clearRegressionLine();
+		}
 	}
 	else if (!x_numeric && y_numeric)
 	{
 		// Box plot: X categorical, Y continuous
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_group_label->setVisible(false);
+		m_eda_group_combo->setVisible(false);
+		m_eda_mean_check->setVisible(false);
+		m_eda_ellipse_check->setVisible(false);
+		m_eda_ellipse_spin->setVisible(false);
+		m_eda_formant_check->setVisible(false);
 
 		std::vector<QString> groups;
 		std::vector<double> vals;
@@ -1764,6 +2001,12 @@ void AnalysisView::updateEdaPlot()
 		// Unsupported combination (e.g. both categorical) — clear.
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_group_label->setVisible(false);
+		m_eda_group_combo->setVisible(false);
+		m_eda_mean_check->setVisible(false);
+		m_eda_ellipse_check->setVisible(false);
+		m_eda_ellipse_spin->setVisible(false);
+		m_eda_formant_check->setVisible(false);
 		m_eda_plot->clear();
 	}
 }
@@ -1931,61 +2174,144 @@ void AnalysisView::updateEdaSummary()
 
 	if (x_numeric && y_numeric)
 	{
-		// ── Scatter (both continuous): N, r, means, SDs ──
+		bool has_group = (m_eda_group_combo->currentIndex() > 0);
 
-		std::vector<double> xv, yv;
-		xv.reserve(nr);
-		yv.reserve(nr);
-		for (intptr_t r = 1; r <= nr; r++)
+		if (has_group)
 		{
-			auto vx = dt->get_cell(r, x_col);
-			auto vy = dt->get_cell(r, y_col);
-			if (vx.empty() || vy.empty()) continue;
-			bool okx, oky;
-			double dx = vx.to_float(&okx);
-			double dy = vy.to_float(&oky);
-			if (okx && oky) { xv.push_back(dx); yv.push_back(dy); }
+			// ── Grouped scatter: per-group N, Mean(X), SD(X), Mean(Y), SD(Y) ──
+
+			auto group_name_q = m_eda_group_combo->currentText();
+			auto group_name = String(group_name_q.toUtf8().constData());
+
+			intptr_t g_col = 0;
+			for (intptr_t j = 1; j <= nc; j++) {
+				if (dt->get_header(j) == group_name) { g_col = j; break; }
+			}
+			if (g_col < 1) return;
+
+			std::vector<QString> group_order;
+			struct GroupStats { std::vector<double> xv, yv; };
+			std::map<QString, GroupStats> grouped;
+
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vx = dt->get_cell(r, x_col);
+				auto vy = dt->get_cell(r, y_col);
+				auto vg = dt->get_cell(r, g_col);
+				if (vx.empty() || vy.empty() || vg.empty()) continue;
+				bool okx, oky;
+				double dx = vx.to_float(&okx);
+				double dy = vy.to_float(&oky);
+				if (!okx || !oky) continue;
+				auto qs = QString::fromUtf8(vg.data(), (int)vg.size());
+				if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
+				grouped[qs].xv.push_back(dx);
+				grouped[qs].yv.push_back(dy);
+			}
+			if (group_order.empty()) return;
+
+			m_eda_summary->setColumnCount(6);
+			m_eda_summary->setHorizontalHeaderLabels(
+				{group_name_q, tr("N"),
+				 QStringLiteral("Mean(%1)").arg(x_name_q),
+				 QStringLiteral("SD(%1)").arg(x_name_q),
+				 QStringLiteral("Mean(%1)").arg(y_name_q),
+				 QStringLiteral("SD(%1)").arg(y_name_q)});
+			m_eda_summary->setRowCount((int)group_order.size());
+
+			for (int g = 0; g < (int)group_order.size(); g++)
+			{
+				auto &gs = grouped[group_order[g]];
+				size_t n = gs.xv.size();
+
+				double sx = 0, sy = 0;
+				for (size_t i = 0; i < n; i++) { sx += gs.xv[i]; sy += gs.yv[i]; }
+				double mx = sx / n;
+				double my = sy / n;
+				double ssx = 0, ssy = 0;
+				for (size_t i = 0; i < n; i++) {
+					double dx = gs.xv[i] - mx;
+					double dy = gs.yv[i] - my;
+					ssx += dx * dx;
+					ssy += dy * dy;
+				}
+				double sd_x = (n > 1) ? std::sqrt(ssx / (n - 1)) : 0.0;
+				double sd_y = (n > 1) ? std::sqrt(ssy / (n - 1)) : 0.0;
+
+				m_eda_summary->setItem(g, 0, new QTableWidgetItem(group_order[g]));
+
+				auto set = [&](int col, const QString &text) {
+					auto *item = new QTableWidgetItem(text);
+					item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+					m_eda_summary->setItem(g, col, item);
+				};
+
+				set(1, QString::number(n));
+				set(2, QString::number(mx, 'f', 4));
+				set(3, QString::number(sd_x, 'f', 4));
+				set(4, QString::number(my, 'f', 4));
+				set(5, QString::number(sd_y, 'f', 4));
+			}
+			m_eda_summary->resizeColumnsToContents();
 		}
-		if (xv.empty()) return;
+		else
+		{
+			// ── Ungrouped scatter (both continuous): N, r, means, SDs ──
 
-		size_t n = xv.size();
-		double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-		for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
-		double mx = sx / n, my = sy / n;
-		for (size_t i = 0; i < n; i++) {
-			double dx = xv[i] - mx;
-			double dy = yv[i] - my;
-			sxx += dx * dx;
-			syy += dy * dy;
-			sxy += dx * dy;
+			std::vector<double> xv, yv;
+			xv.reserve(nr);
+			yv.reserve(nr);
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vx = dt->get_cell(r, x_col);
+				auto vy = dt->get_cell(r, y_col);
+				if (vx.empty() || vy.empty()) continue;
+				bool okx, oky;
+				double dx = vx.to_float(&okx);
+				double dy = vy.to_float(&oky);
+				if (okx && oky) { xv.push_back(dx); yv.push_back(dy); }
+			}
+			if (xv.empty()) return;
+
+			size_t n = xv.size();
+			double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
+			for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
+			double mx = sx / n, my = sy / n;
+			for (size_t i = 0; i < n; i++) {
+				double dx = xv[i] - mx;
+				double dy = yv[i] - my;
+				sxx += dx * dx;
+				syy += dy * dy;
+				sxy += dx * dy;
+			}
+			double sd_x = (n > 1) ? std::sqrt(sxx / (n - 1)) : 0.0;
+			double sd_y = (n > 1) ? std::sqrt(syy / (n - 1)) : 0.0;
+			double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
+
+			m_eda_summary->setColumnCount(6);
+			m_eda_summary->setHorizontalHeaderLabels(
+				{tr("N"), tr("r"),
+				 QStringLiteral("Mean(%1)").arg(x_name_q),
+				 QStringLiteral("SD(%1)").arg(x_name_q),
+				 QStringLiteral("Mean(%1)").arg(y_name_q),
+				 QStringLiteral("SD(%1)").arg(y_name_q)});
+			m_eda_summary->setRowCount(1);
+
+			auto set = [&](int col, const QString &text) {
+				auto *item = new QTableWidgetItem(text);
+				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(0, col, item);
+			};
+
+			set(0, QString::number(n));
+			set(1, QString::number(r, 'f', 4));
+			set(2, QString::number(mx, 'f', 4));
+			set(3, QString::number(sd_x, 'f', 4));
+			set(4, QString::number(my, 'f', 4));
+			set(5, QString::number(sd_y, 'f', 4));
+
+			m_eda_summary->resizeColumnsToContents();
 		}
-		double sd_x = (n > 1) ? std::sqrt(sxx / (n - 1)) : 0.0;
-		double sd_y = (n > 1) ? std::sqrt(syy / (n - 1)) : 0.0;
-		double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
-
-		m_eda_summary->setColumnCount(6);
-		m_eda_summary->setHorizontalHeaderLabels(
-			{tr("N"), tr("r"),
-			 QStringLiteral("Mean(%1)").arg(x_name_q),
-			 QStringLiteral("SD(%1)").arg(x_name_q),
-			 QStringLiteral("Mean(%1)").arg(y_name_q),
-			 QStringLiteral("SD(%1)").arg(y_name_q)});
-		m_eda_summary->setRowCount(1);
-
-		auto set = [&](int col, const QString &text) {
-			auto *item = new QTableWidgetItem(text);
-			item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_eda_summary->setItem(0, col, item);
-		};
-
-		set(0, QString::number(n));
-		set(1, QString::number(r, 'f', 4));
-		set(2, QString::number(mx, 'f', 4));
-		set(3, QString::number(sd_x, 'f', 4));
-		set(4, QString::number(my, 'f', 4));
-		set(5, QString::number(sd_y, 'f', 4));
-
-		m_eda_summary->resizeColumnsToContents();
 	}
 	else if (!x_numeric && y_numeric)
 	{

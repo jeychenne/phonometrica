@@ -27,6 +27,7 @@
 #include <QLineEdit>
 #include <QComboBox>
 #include <QRadioButton>
+#include <QCheckBox>
 #include <QSpinBox>
 #include <QListWidget>
 #include <QPushButton>
@@ -104,6 +105,11 @@ private:
 	QRadioButton *m_ctx_kwic = nullptr;
 	QSpinBox *m_ctx_length = nullptr;
 	QSpinBox *m_ref_constraint = nullptr;
+
+	// Duration checkbox
+	QCheckBox *m_duration_check = nullptr;
+	QRadioButton *m_duration_s = nullptr;
+	QRadioButton *m_duration_ms = nullptr;
 
 	// File selection
 	QListWidget *m_file_list = nullptr;

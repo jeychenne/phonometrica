@@ -82,6 +82,9 @@ Concordance::Concordance(const Concordance &other) :
 
 	m_is_intensity = other.m_is_intensity;
 
+	m_has_duration = other.m_has_duration;
+	m_duration_in_ms = other.m_duration_in_ms;
+
 	m_matches.reserve(other.m_matches.size());
 
 	for (auto &m : other.m_matches) {
@@ -376,6 +379,20 @@ String Concordance::get_default_header(intptr_t j) const
 		j--;
 	}
 
+	// Duration columns
+	if (m_has_duration)
+	{
+		if (j <= m_target_count)
+		{
+			auto unit = m_duration_in_ms ? "ms" : "s";
+			if (m_target_count == 1) {
+				return String::format("Duration (%s)", unit);
+			}
+			return String::format("Duration %d (%s)", (int) j, unit);
+		}
+		j -= m_target_count;
+	}
+
 	// Extra columns (formant measurements, etc.) — layout-dependent
 	auto eff = effective_extra_count();
 	if (eff > 0)
@@ -596,6 +613,22 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 		j--;
 	}
 
+	// Duration columns
+	if (m_has_duration)
+	{
+		if (j <= m_target_count)
+		{
+			auto *target = m_matches[mi]->get((intptr_t)j);
+			if (target) {
+				double dur = target->end_time - target->start_time;
+				if (m_duration_in_ms) dur *= 1000.0;
+				return String::format(m_duration_in_ms ? "%.1f" : "%.4f", dur);
+			}
+			return String();
+		}
+		j -= m_target_count;
+	}
+
 	// Extra columns (formant measurements, etc.) — layout-dependent
 	auto eff = effective_extra_count();
 	if (eff > 0)
@@ -763,11 +796,12 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 	// Map display row to match index
 	intptr_t mi = (m_layout == Layout::Long && has_measurement_data()) ? match_for_row(i) : i;
 
-	// Compute extra column index: strip file info, context, targets, context
+	// Compute extra column index: strip file info, context, targets, context, duration
 	intptr_t extra_j = j - FILE_INFO_COLUMN_COUNT;
 	if (has_context()) extra_j--;
 	extra_j -= m_target_count;
 	if (has_context()) extra_j--;
+	extra_j -= duration_column_count();
 
 	intptr_t stored_idx = stored_index_for_column(extra_j, i);
 	if (stored_idx < 0) {
@@ -787,7 +821,7 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 	if (!is_measurement_column(col)) return false;
 
 	// Compute extra column index
-	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count());
+	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
 
 	// Use row 1 — the stored_index_for_column logic for within_group doesn't depend on row in wide mode,
 	// and in long mode it only matters for determining the point (which doesn't affect editability).
@@ -839,7 +873,7 @@ intptr_t Concordance::row_count() const
 intptr_t Concordance::column_count() const
 {
 	// Add 1 for description.
-	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + effective_extra_count() + Property::category_count() + 1;
+	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + duration_column_count() + effective_extra_count() + Property::category_count() + 1;
 }
 
 
@@ -1185,6 +1219,13 @@ void Concordance::parse_options_from_xml(xml_node root)
 				m_context_type = Context::None;
 			}
 		}
+		else if (node.name() == str("Duration"))
+		{
+			auto attr = node.attribute("enabled");
+			m_has_duration = attr && attr.as_bool();
+			auto unit_attr = node.attribute("unit");
+			m_duration_in_ms = unit_attr && unit_attr.value() == str("ms");
+		}
 		else
 		{
 			throw error("Invalid option for concordance: %", node.name());
@@ -1358,6 +1399,12 @@ void Concordance::write()
 			type_attr.set_value("none");
 	}
 
+	if (m_has_duration) {
+		auto dur_node = option_node.append_child("Duration");
+		dur_node.append_attribute("enabled").set_value(true);
+		dur_node.append_attribute("unit").set_value(m_duration_in_ms ? "ms" : "s");
+	}
+
 	auto matches_node = root.append_child("Matches");
 	matches_node.append_attribute("count").set_value(m_matches.size());
 	matches_node.append_attribute("length").set_value(m_target_count);
@@ -1488,7 +1535,7 @@ bool Concordance::is_file_info_column(intptr_t col) const
 
 bool Concordance::is_metadata_column(intptr_t col) const
 {
-	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + effective_extra_count();
+	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count();
 	return col > bound;
 }
 
@@ -1496,9 +1543,16 @@ bool Concordance::is_measurement_column(intptr_t col) const
 {
 	auto eff = effective_extra_count();
 	if (eff == 0) return false;
-	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count();
+	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count();
 	intptr_t upper = lower + eff;
 	return col > lower && col <= upper;
+}
+
+bool Concordance::is_duration_column(intptr_t col) const
+{
+	if (!m_has_duration) return false;
+	intptr_t lower = FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count;
+	return col > lower && col <= lower + m_target_count;
 }
 
 void Concordance::find_labels_context()
