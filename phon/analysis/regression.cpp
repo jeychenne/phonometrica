@@ -598,6 +598,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 	intptr_t n = y.size();
 	intptr_t p = X.ncol();
+	intptr_t K = (intptr_t)smooth_ranges.size(); // number of penalty blocks
 
 	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
 	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
@@ -606,64 +607,149 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	MatrixXd XtX = Xm.transpose() * Xm;
 	VectorXd Xty = Xm.transpose() * ym;
 
-	// ── GCV grid search for optimal λ ────────────────────────────
+	// ── Extract per-smooth penalty sub-matrices from S ───────────
 
-	double best_log_lambda = 0;
-	double best_gcv = std::numeric_limits<double>::max();
-
-	// Total steps: coarse grid (141) + fine grid (31) = 172.
-	int progress_step = 0;
-	constexpr int total_steps = 172;
-
-	// Coarse grid: log10(λ) from -7 to 7
-	for (int k = -70; k <= 70; k++)
+	// Each S_j is p×p with nonzero entries only in the block for smooth j.
+	std::vector<MatrixXd> S_blocks(K, MatrixXd::Zero(p, p));
+	for (intptr_t j = 0; j < K; j++)
 	{
-		double log_lam = 0.1 * k;
-		double lam = std::pow(10.0, log_lam);
-		auto [g, edf, rss] = gcv_score(XtX, Xty, Sm, Xm, ym, lam, n, p);
-		if (g < best_gcv)
-		{
-			best_gcv = g;
-			best_log_lambda = log_lam;
+		auto &sr = smooth_ranges[j];
+		for (intptr_t r = 0; r < sr.col_count; r++) {
+			for (intptr_t c = 0; c < sr.col_count; c++) {
+				S_blocks[j](sr.col_start + r, sr.col_start + c) = Sm(sr.col_start + r, sr.col_start + c);
+			}
 		}
-		if (++progress_step % 5 == 0 && progress)
-			progress(progress_step, total_steps);
 	}
 
-	// Fine grid: refine around the best
-	double lo = best_log_lambda - 0.15;
-	double hi = best_log_lambda + 0.15;
-	for (int k = 0; k <= 30; k++)
+	// ── Per-smooth λ optimization via alternating GCV ────────────
+	//
+	// For K=1 or K=0 this reduces to the single-λ case.
+	// For K>1, we cycle: optimize λ_j holding others fixed, repeat.
+
+	std::vector<double> log_lambda(K, 0.0); // log10(λ_j), initialized to 1.0
+
+	// Step 1: Initialize with single-λ GCV.
+	if (K > 0)
 	{
-		double log_lam = lo + (hi - lo) * k / 30.0;
-		double lam = std::pow(10.0, log_lam);
-		auto [g, edf, rss] = gcv_score(XtX, Xty, Sm, Xm, ym, lam, n, p);
-		if (g < best_gcv)
+		double best_gcv = std::numeric_limits<double>::max();
+		for (int g = -50; g <= 50; g++)
 		{
-			best_gcv = g;
-			best_log_lambda = log_lam;
+			double log_lam = 0.1 * g;
+			double lam = std::pow(10.0, log_lam);
+			MatrixXd M = XtX + lam * Sm;
+			LDLT<MatrixXd> ldlt(M);
+			VectorXd beta = ldlt.solve(Xty);
+			double rss = (ym - Xm * beta).squaredNorm();
+			double edf = ldlt.solve(XtX).trace();
+			double denom = (double)n - edf;
+			double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
+			if (gcv < best_gcv)
+			{
+				best_gcv = gcv;
+				for (intptr_t j = 0; j < K; j++) log_lambda[j] = log_lam;
+			}
 		}
-		if (++progress_step % 5 == 0 && progress)
-			progress(progress_step, total_steps);
+	}
+
+	// Step 2: Alternating optimization.
+	int total_steps = std::max(K * 41 * 5, (intptr_t)1);
+	int step = 0;
+	if (progress) progress(0, total_steps);
+
+	int max_cycles = (K > 1) ? 10 : 1; // single smooth needs no alternating
+
+	for (int cycle = 0; cycle < max_cycles; cycle++)
+	{
+		double max_change = 0;
+
+		for (intptr_t j = 0; j < K; j++)
+		{
+			// Build penalty from all OTHER smooths at their current λ.
+			MatrixXd S_other = MatrixXd::Zero(p, p);
+			for (intptr_t k = 0; k < K; k++)
+			{
+				if (k != j) {
+					S_other += std::pow(10.0, log_lambda[k]) * S_blocks[k];
+				}
+			}
+
+			// GCV-optimize λ_j on a grid.
+			double best_gcv = std::numeric_limits<double>::max();
+			double best_log_lam = log_lambda[j];
+
+			// Coarse grid: 30 points around current value ± 3.5
+			double center = log_lambda[j];
+			for (int g = -15; g <= 15; g++)
+			{
+				double log_lam = center + 0.23 * g;
+				double lam = std::pow(10.0, log_lam);
+				MatrixXd M = XtX + S_other + lam * S_blocks[j];
+				LDLT<MatrixXd> ldlt(M);
+				VectorXd beta = ldlt.solve(Xty);
+				double rss = (ym - Xm * beta).squaredNorm();
+				double edf = ldlt.solve(XtX).trace();
+				double denom = (double)n - edf;
+				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
+				if (gcv < best_gcv)
+				{
+					best_gcv = gcv;
+					best_log_lam = log_lam;
+				}
+			}
+
+			// Fine grid: 10 points around best
+			double lo = best_log_lam - 0.25;
+			double hi = best_log_lam + 0.25;
+			for (int g = 0; g <= 10; g++)
+			{
+				double log_lam = lo + (hi - lo) * g / 10.0;
+				double lam = std::pow(10.0, log_lam);
+				MatrixXd M = XtX + S_other + lam * S_blocks[j];
+				LDLT<MatrixXd> ldlt(M);
+				VectorXd beta = ldlt.solve(Xty);
+				double rss = (ym - Xm * beta).squaredNorm();
+				double edf = ldlt.solve(XtX).trace();
+				double denom = (double)n - edf;
+				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
+				if (gcv < best_gcv)
+				{
+					best_gcv = gcv;
+					best_log_lam = log_lam;
+				}
+			}
+
+			double change = std::abs(best_log_lam - log_lambda[j]);
+			if (change > max_change) max_change = change;
+			log_lambda[j] = best_log_lam;
+
+			step += 41;
+			if (progress) progress(std::min(step, total_steps), total_steps);
+		}
+
+		// Convergence: all log(λ) changed by less than 0.05 (≈ 12% in λ)
+		if (max_change < 0.05 && cycle > 0) break;
 	}
 
 	if (progress) progress(total_steps, total_steps);
 
-	double lambda_opt = std::pow(10.0, best_log_lambda);
+	// ── Final fit at converged λ values ──────────────────────────
 
-	// ── Fit at optimal λ ─────────────────────────────────────────
+	MatrixXd S_final = MatrixXd::Zero(p, p);
+	for (intptr_t j = 0; j < K; j++) {
+		S_final += std::pow(10.0, log_lambda[j]) * S_blocks[j];
+	}
 
-	MatrixXd M = XtX + lambda_opt * Sm;
+	MatrixXd M = XtX + S_final;
 	LLT<MatrixXd> llt(M);
 	VectorXd beta_vec = llt.solve(Xty);
 	VectorXd resid = ym - Xm * beta_vec;
 	double rss = resid.squaredNorm();
 
-	// EDF and influence matrix: A = (X'X + λS)⁻¹ X'X
+	// EDF and influence matrix: A = (X'X + S_final)⁻¹ X'X
 	MatrixXd Minv_XtX = llt.solve(XtX);
 	double edf_total = Minv_XtX.trace();
 
-	// Bayesian covariance: Vβ = σ² (X'X + λS)⁻¹ X'X (X'X + λS)⁻¹
+	// Bayesian covariance: Vβ = σ² (X'X + S)⁻¹ X'X (X'X + S)⁻¹
 	double sigma2 = rss / ((double)n - edf_total);
 	if (sigma2 <= 0) sigma2 = 1e-10;
 	MatrixXd Minv = llt.solve(MatrixXd::Identity(p, p));
@@ -709,42 +795,34 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		sm.col_start = sr.col_start;
 		sm.col_count = sr.col_count;
 
-		// EDF: sum of diagonal of influence matrix for this smooth's columns.
 		sm.edf = 0;
 		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
 			sm.edf += Minv_XtX(j, j);
 		}
-
-		// Reference df: use EDF (Wood 2013b uses a correction, but EDF is adequate).
 		sm.ref_df = sm.edf;
 
-		// F-test: β_s' Vb_s⁻¹ β_s / edf_s, where β_s and Vb_s are the sub-blocks.
 		if (sm.edf > 0.001)
 		{
 			VectorXd beta_s = beta_vec.segment(sr.col_start, sr.col_count);
 			MatrixXd Vb_s = Vb.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
 
-			// Use pseudoinverse via eigendecomposition for numerical stability.
 			SelfAdjointEigenSolver<MatrixXd> es(Vb_s);
 			VectorXd evals = es.eigenvalues();
 			MatrixXd evecs = es.eigenvectors();
 			double tol = evals.maxCoeff() * 1e-10;
 			VectorXd evals_inv = VectorXd::Zero(sr.col_count);
 			for (intptr_t j = 0; j < sr.col_count; j++) {
-				if (evals[j] > tol) {
-					evals_inv[j] = 1.0 / evals[j];
-				}
+				if (evals[j] > tol) evals_inv[j] = 1.0 / evals[j];
 			}
 			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
 			sm.F_stat = quad / sm.ref_df;
 
-			// p-value from F(ref_df, residual_df) distribution.
 			double resid_df = std::max(1.0, (double)n - edf_total);
 			try {
 				boost::math::fisher_f fdist(sm.ref_df, resid_df);
 				sm.p_value = 1.0 - boost::math::cdf(fdist, sm.F_stat);
 			} catch (...) {
-				sm.p_value = 0; // extreme case
+				sm.p_value = 0;
 			}
 		}
 
@@ -770,13 +848,11 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	model.nobs = n;
 	model.nfixed = p;
 
-	// Log-likelihood (Gaussian profile)
 	model.loglik = -0.5 * n * (std::log(2.0 * M_PI) + std::log(sigma2) + 1.0);
 	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
 	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
 	model.deviance = rss;
 
-	// R² and adjusted R²
 	double ss_total = (ym.array() - ym.mean()).square().sum();
 	model.r2 = (ss_total > 0) ? 1.0 - rss / ss_total : 0.0;
 	double adj_denom = (double)n - edf_total;
@@ -789,11 +865,6 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 	return model;
 }
-
-
-// =====================================================================
-// Penalized GLM (non-Gaussian GAM) via Penalized IRLS with GCV
-// =====================================================================
 
 Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     const Array<double> &S, const Family &fam,

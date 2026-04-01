@@ -297,6 +297,10 @@ void SoundView::createToolBar()
 		tr("Zoom in"));
 	connect(zoom_in_action, &QAction::triggered, this, &SoundView::onZoomIn);
 
+	auto *goto_action = m_toolbar->addAction(QIcon(":/icons/text-cursor.svg"),
+		tr("Go to time..."));
+	connect(goto_action, &QAction::triggered, this, &SoundView::onGoToTime);
+
 	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/minimize.svg"),
 		tr("Zoom to selection"));
 	m_zoom_sel_action->setEnabled(false);
@@ -988,6 +992,67 @@ void SoundView::onPitchSettings()
 			pw->update();
 		}
 	}
+}
+
+void SoundView::onGoToTime()
+{
+	QDialog dlg(this);
+	dlg.setWindowTitle(tr("Go to time..."));
+	dlg.setMinimumWidth(280);
+
+	auto *layout = new QVBoxLayout(&dlg);
+	layout->addWidget(new QLabel(tr("Time (seconds):")));
+	auto *edit = new QLineEdit(&dlg);
+	layout->addWidget(edit);
+	layout->addStretch();
+
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	connect(edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	bool ok;
+	double t = edit->text().toDouble(&ok);
+	if (!ok)
+	{
+		QMessageBox::critical(this, tr("Go to time"),
+			tr("Invalid time value."));
+		return;
+	}
+
+	// Clamp to the sound's time range.
+	double dur = m_sound->duration();
+	if (t < 0) t = 0;
+	if (t > dur) t = dur;
+
+	// Place the cursor (point selection) at the requested time.
+	m_model->setSelection(t, t);
+
+	// If the point is already inside the current window, we're done.
+	if (t >= m_model->windowStart() && t <= m_model->windowEnd())
+		return;
+
+	// Otherwise, centre the window on the requested time, keeping the same duration.
+	double win_dur = m_model->windowDuration();
+	double new_start = t - win_dur / 2.0;
+	double new_end = t + win_dur / 2.0;
+
+	// Shift the window so it stays within the sound boundaries.
+	if (new_start < 0) {
+		new_end -= new_start; // shift right
+		new_start = 0;
+	}
+	if (new_end > dur) {
+		new_start -= (new_end - dur); // shift left
+		new_end = dur;
+	}
+	if (new_start < 0) new_start = 0;
+
+	m_model->setViewport(new_start, new_end);
 }
 
 void SoundView::onSelectWindow()

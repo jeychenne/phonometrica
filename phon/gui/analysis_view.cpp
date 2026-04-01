@@ -708,8 +708,9 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	// ── Fixed effects ────────────────────────────────────────────────
 	menu.addAction(tr("Add as predictor"));
 
-	// Smooth term: submenu for numeric columns with k choices.
+	// Smooth term: submenu for numeric columns with k choices and by-variable.
 	QMenu *smooth_menu = nullptr;
+	QMenu *smooth_by_menu = nullptr;
 	if (m_analysis->has_source() && isColumnNumeric(String(name.toUtf8().constData())))
 	{
 		smooth_menu = menu.addMenu(tr("Add as smooth"));
@@ -719,6 +720,33 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		smooth_menu->addAction(QStringLiteral("s(%1, k=20)").arg(name))->setData(20);
 		smooth_menu->addSeparator();
 		smooth_menu->addAction(tr("Custom k..."))->setData(-1);
+
+		// "with by variable" submenu: lists categorical columns.
+		smooth_by_menu = smooth_menu->addMenu(tr("with by variable"));
+		auto name_s = String(name.toUtf8().constData());
+		auto *dt = m_analysis->data();
+		if (dt)
+		{
+			intptr_t nc = dt->column_count();
+			bool has_categorical = false;
+			for (intptr_t j = 1; j <= nc; j++)
+			{
+				auto col_name = dt->get_header(j);
+				// Skip the numeric column itself and skip numeric columns.
+				if (col_name == name_s) continue;
+				if (isColumnNumeric(col_name)) continue;
+
+				auto col_q = QString::fromUtf8(col_name.data(), (int)col_name.size());
+				auto *action = smooth_by_menu->addAction(
+					QStringLiteral("s(%1, by=%2)").arg(name, col_q));
+				action->setData(col_q);
+				has_categorical = true;
+			}
+			if (!has_categorical) {
+				auto *placeholder = smooth_by_menu->addAction(tr("(no categorical variables)"));
+				placeholder->setEnabled(false);
+			}
+		}
 	}
 
 	// Interaction submenus: list current fixed terms.
@@ -850,6 +878,10 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	else if (action_text == tr("Add as predictor")) {
 		addPredictor(name);
 	}
+	else if (smooth_by_menu && chosen->parent() == smooth_by_menu) {
+		QString by_var = chosen->data().toString();
+		addSmoothTerm(name, 10, by_var);
+	}
 	else if (smooth_menu && chosen->parent() == smooth_menu) {
 		int k_val = chosen->data().toInt();
 		if (k_val == -1) {
@@ -922,14 +954,17 @@ void AnalysisView::addPredictor(const QString &name)
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
 }
 
-void AnalysisView::addSmoothTerm(const QString &name, int k)
+void AnalysisView::addSmoothTerm(const QString &name, int k, const QString &by)
 {
 	QString quoted = quoteIfNeeded(name);
-	QString term;
-	if (k == 10)
-		term = QStringLiteral("s(") + quoted + QStringLiteral(")");
-	else
-		term = QStringLiteral("s(%1, k=%2)").arg(quoted).arg(k);
+	QString term = QStringLiteral("s(") + quoted;
+	if (!by.isEmpty()) {
+		term += QStringLiteral(", by=") + quoteIfNeeded(by);
+	}
+	if (k != 10) {
+		term += QStringLiteral(", k=%1").arg(k);
+	}
+	term += QStringLiteral(")");
 
 	QString text = m_formula_edit->text().trimmed();
 	if (text.isEmpty()) {
