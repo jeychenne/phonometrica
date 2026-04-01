@@ -360,8 +360,17 @@ void SoundView::createToolBar()
 	connect(m_show_spectrogram_action, &QAction::toggled, this, &SoundView::onToggleSpectrogram);
 	spectrum_menu->addSeparator();
 
-	auto *view_spectrum_action = spectrum_menu->addAction(tr("View FFT spectrum"));
-	connect(view_spectrum_action, &QAction::triggered, this, &SoundView::onViewSpectralSlice);
+	auto *view_fft_action = spectrum_menu->addAction(tr("View FFT spectrum"));
+	connect(view_fft_action, &QAction::triggered, this,
+		[this]() { onViewSpectralSlice(SpectrumDisplayMode::FFT); });
+
+	auto *view_lpc_action = spectrum_menu->addAction(tr("View LPC spectrum"));
+	connect(view_lpc_action, &QAction::triggered, this,
+		[this]() { onViewSpectralSlice(SpectrumDisplayMode::LPC); });
+
+	auto *view_both_action = spectrum_menu->addAction(tr("View FFT && LPC spectrum"));
+	connect(view_both_action, &QAction::triggered, this,
+		[this]() { onViewSpectralSlice(SpectrumDisplayMode::Both); });
 	spectrum_menu->addSeparator();
 
 	auto *spectrogram_settings_action = spectrum_menu->addAction(tr("Spectrogram settings..."));
@@ -793,7 +802,7 @@ void SoundView::onSpectrogramSettings()
 	}
 }
 
-void SoundView::onViewSpectralSlice()
+void SoundView::onViewSpectralSlice(SpectrumDisplayMode mode)
 {
 	using namespace speech;
 
@@ -886,17 +895,33 @@ void SoundView::onViewSpectralSlice()
 	if (!m_show_average && !m_visible_channels.empty())
 		channel = m_visible_channels.front();
 
+	// Determine LPC order if an LPC spectrum is requested.
+	int lpc_order = 0;
+	if (mode != SpectrumDisplayMode::FFT)
+	{
+		// Try to read the LPC order from the formant settings; otherwise use a
+		// standard heuristic: 2 × (max_frequency / 1000) + 2.
+		try {
+			lpc_order = static_cast<int>(Settings::get_number("formants", "lpc_order"));
+		}
+		catch (...) {
+			double effective_max = (max_freq > 0) ? max_freq : (m_sound->sample_rate() / 2.0);
+			lpc_order = static_cast<int>(2.0 * effective_max / 1000.0) + 2;
+		}
+		if (lpc_order < 2) lpc_order = 2;
+	}
+
 	try
 	{
 		auto spec = make_handle<Spectrum>(nullptr, m_sound, channel, t1, t2,
-			window_type, 2, preemph, max_freq, dynamic_range);
-		auto *view = new SpectrumView(spec, this);
+			window_type, 2, preemph, max_freq, dynamic_range, lpc_order);
+		auto *view = new SpectrumView(spec, mode, this);
 		view->setAttribute(Qt::WA_DeleteOnClose);
 		view->show();
 	}
 	catch (std::exception &e)
 	{
-		QMessageBox::critical(this, tr("FFT spectrum"),
+		QMessageBox::critical(this, tr("Spectral slice"),
 			QString::fromUtf8(e.what()));
 	}
 }

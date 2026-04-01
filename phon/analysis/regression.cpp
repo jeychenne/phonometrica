@@ -21,6 +21,7 @@
 
 #include <boost/math/distributions/students_t.hpp>
 #include <boost/math/distributions/chi_squared.hpp>
+#include <boost/math/distributions/fisher_f.hpp>
 #include <boost/math/special_functions/digamma.hpp>
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/analysis/regression.hpp>
@@ -531,6 +532,484 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 
 	model.niter = outer_iter;
 	model.converged = converged;
+
+	return model;
+}
+
+
+// =====================================================================
+// Penalized linear model (Gaussian GAM) with GCV
+// =====================================================================
+
+// Evaluate GCV score for a given smoothing parameter λ.
+// Returns {gcv_score, edf, rss} for the penalized OLS:
+//   β̂(λ) = (X'X + λS)⁻¹ X'y
+//   GCV(λ) = n · RSS(λ) / (n − edf(λ))²
+//   edf(λ) = tr(X (X'X + λS)⁻¹ X') = tr((X'X + λS)⁻¹ X'X)
+//
+static std::tuple<double, double, double>
+gcv_score(const Matrix<double> &XtX, const Vector<double> &Xty,
+          const Matrix<double> &Sm, const Matrix<double> &Xm,
+          const Vector<double> &ym, double lambda, intptr_t n, intptr_t p)
+{
+	using namespace Eigen;
+
+	// Penalized normal equations: (X'X + λS) β = X'y
+	MatrixXd M = XtX + lambda * Sm;
+	LLT<MatrixXd> llt(M);
+	if (llt.info() != Eigen::Success)
+	{
+		// Fallback to LDLT for near-singular cases
+		LDLT<MatrixXd> ldlt(M);
+		VectorXd beta = ldlt.solve(Xty);
+		VectorXd resid = ym - Xm * beta;
+		double rss = resid.squaredNorm();
+		// EDF via trace: solve M Z = X'X, edf = tr(Z)
+		MatrixXd Z = ldlt.solve(XtX);
+		double edf = Z.trace();
+		double denom = (double)n - edf;
+		double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
+		return {gcv, edf, rss};
+	}
+
+	VectorXd beta = llt.solve(Xty);
+	VectorXd resid = ym - Xm * beta;
+	double rss = resid.squaredNorm();
+
+	// EDF: solve M Z = X'X, then edf = tr(Z)
+	MatrixXd Z = llt.solve(XtX);
+	double edf = Z.trace();
+
+	double denom = (double)n - edf;
+	double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
+
+	return {gcv, edf, rss};
+}
+
+
+Model penalized_lm(const Array<double> &y, const Array<double> &X,
+                   const Array<double> &S, intptr_t n_parametric,
+                   const std::vector<SmoothColumnRange> &smooth_ranges,
+                   FittingCallback progress)
+{
+	using namespace Eigen;
+
+	validate_inputs(y, X);
+
+	intptr_t n = y.size();
+	intptr_t p = X.ncol();
+
+	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
+	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
+
+	MatrixXd XtX = Xm.transpose() * Xm;
+	VectorXd Xty = Xm.transpose() * ym;
+
+	// ── GCV grid search for optimal λ ────────────────────────────
+
+	double best_log_lambda = 0;
+	double best_gcv = std::numeric_limits<double>::max();
+
+	// Total steps: coarse grid (141) + fine grid (31) = 172.
+	int progress_step = 0;
+	constexpr int total_steps = 172;
+
+	// Coarse grid: log10(λ) from -7 to 7
+	for (int k = -70; k <= 70; k++)
+	{
+		double log_lam = 0.1 * k;
+		double lam = std::pow(10.0, log_lam);
+		auto [g, edf, rss] = gcv_score(XtX, Xty, Sm, Xm, ym, lam, n, p);
+		if (g < best_gcv)
+		{
+			best_gcv = g;
+			best_log_lambda = log_lam;
+		}
+		if (++progress_step % 5 == 0 && progress)
+			progress(progress_step, total_steps);
+	}
+
+	// Fine grid: refine around the best
+	double lo = best_log_lambda - 0.15;
+	double hi = best_log_lambda + 0.15;
+	for (int k = 0; k <= 30; k++)
+	{
+		double log_lam = lo + (hi - lo) * k / 30.0;
+		double lam = std::pow(10.0, log_lam);
+		auto [g, edf, rss] = gcv_score(XtX, Xty, Sm, Xm, ym, lam, n, p);
+		if (g < best_gcv)
+		{
+			best_gcv = g;
+			best_log_lambda = log_lam;
+		}
+		if (++progress_step % 5 == 0 && progress)
+			progress(progress_step, total_steps);
+	}
+
+	if (progress) progress(total_steps, total_steps);
+
+	double lambda_opt = std::pow(10.0, best_log_lambda);
+
+	// ── Fit at optimal λ ─────────────────────────────────────────
+
+	MatrixXd M = XtX + lambda_opt * Sm;
+	LLT<MatrixXd> llt(M);
+	VectorXd beta_vec = llt.solve(Xty);
+	VectorXd resid = ym - Xm * beta_vec;
+	double rss = resid.squaredNorm();
+
+	// EDF and influence matrix: A = (X'X + λS)⁻¹ X'X
+	MatrixXd Minv_XtX = llt.solve(XtX);
+	double edf_total = Minv_XtX.trace();
+
+	// Bayesian covariance: Vβ = σ² (X'X + λS)⁻¹ X'X (X'X + λS)⁻¹
+	double sigma2 = rss / ((double)n - edf_total);
+	if (sigma2 <= 0) sigma2 = 1e-10;
+	MatrixXd Minv = llt.solve(MatrixXd::Identity(p, p));
+	MatrixXd Vb = sigma2 * Minv * XtX * Minv;
+
+	// ── Build Model ──────────────────────────────────────────────
+
+	Model model;
+	model.family = "gaussian";
+	model.link = "identity";
+	store_matrices(model, y, X);
+
+	model.beta = Array<double>(p, 0.0);
+	model.se = Array<double>(p, 0.0);
+	model.stat = Array<double>(p, 0.0);
+	model.p = Array<double>(p, 0.0);
+
+	for (intptr_t j = 0; j < p; j++)
+	{
+		model.beta[j + 1] = beta_vec[j];
+		model.se[j + 1] = std::sqrt(std::max(Vb(j, j), 0.0));
+	}
+
+	// t-statistics and p-values for parametric terms only.
+	boost::math::students_t tdist(std::max(1.0, (double)n - edf_total));
+	for (intptr_t j = 0; j < n_parametric; j++)
+	{
+		if (model.se[j + 1] > 0)
+		{
+			model.stat[j + 1] = model.beta[j + 1] / model.se[j + 1];
+			model.p[j + 1] = 2.0 * boost::math::cdf(boost::math::complement(tdist, std::abs(model.stat[j + 1])));
+		}
+	}
+
+	// ── Per-smooth EDF and F-test ────────────────────────────────
+
+	for (auto &sr : smooth_ranges)
+	{
+		Model::SmoothResult sm;
+		sm.variable = sr.variable;
+		sm.basis = sr.basis;
+		sm.k = sr.k;
+		sm.col_start = sr.col_start;
+		sm.col_count = sr.col_count;
+
+		// EDF: sum of diagonal of influence matrix for this smooth's columns.
+		sm.edf = 0;
+		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
+			sm.edf += Minv_XtX(j, j);
+		}
+
+		// Reference df: use EDF (Wood 2013b uses a correction, but EDF is adequate).
+		sm.ref_df = sm.edf;
+
+		// F-test: β_s' Vb_s⁻¹ β_s / edf_s, where β_s and Vb_s are the sub-blocks.
+		if (sm.edf > 0.001)
+		{
+			VectorXd beta_s = beta_vec.segment(sr.col_start, sr.col_count);
+			MatrixXd Vb_s = Vb.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
+
+			// Use pseudoinverse via eigendecomposition for numerical stability.
+			SelfAdjointEigenSolver<MatrixXd> es(Vb_s);
+			VectorXd evals = es.eigenvalues();
+			MatrixXd evecs = es.eigenvectors();
+			double tol = evals.maxCoeff() * 1e-10;
+			VectorXd evals_inv = VectorXd::Zero(sr.col_count);
+			for (intptr_t j = 0; j < sr.col_count; j++) {
+				if (evals[j] > tol) {
+					evals_inv[j] = 1.0 / evals[j];
+				}
+			}
+			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
+			sm.F_stat = quad / sm.ref_df;
+
+			// p-value from F(ref_df, residual_df) distribution.
+			double resid_df = std::max(1.0, (double)n - edf_total);
+			try {
+				boost::math::fisher_f fdist(sm.ref_df, resid_df);
+				sm.p_value = 1.0 - boost::math::cdf(fdist, sm.F_stat);
+			} catch (...) {
+				sm.p_value = 0; // extreme case
+			}
+		}
+
+		model.smooth_terms.append(std::move(sm));
+	}
+
+	// Fitted values and residuals
+	model.fitted = Array<double>(n, 0.0);
+	model.residuals = Array<double>(n, 0.0);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double yhat = 0;
+		for (intptr_t j = 0; j < p; j++) {
+			yhat += Xm(i, j) * beta_vec[j];
+		}
+		model.fitted[i + 1] = yhat;
+		model.residuals[i + 1] = ym[i] - yhat;
+	}
+
+	// Fit statistics
+	model.rse = std::sqrt(sigma2);
+	model.df_residual = std::max((intptr_t)1, (intptr_t)std::round((double)n - edf_total));
+	model.nobs = n;
+	model.nfixed = p;
+
+	// Log-likelihood (Gaussian profile)
+	model.loglik = -0.5 * n * (std::log(2.0 * M_PI) + std::log(sigma2) + 1.0);
+	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
+	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
+	model.deviance = rss;
+
+	// R² and adjusted R²
+	double ss_total = (ym.array() - ym.mean()).square().sum();
+	model.r2 = (ss_total > 0) ? 1.0 - rss / ss_total : 0.0;
+	double adj_denom = (double)n - edf_total;
+	model.adj_r2 = (adj_denom > 0 && ss_total > 0)
+		? 1.0 - (rss / adj_denom) / (ss_total / ((double)n - 1.0))
+		: 0.0;
+
+	model.converged = true;
+	model.niter = 0;
+
+	return model;
+}
+
+
+// =====================================================================
+// Penalized GLM (non-Gaussian GAM) via Penalized IRLS with GCV
+// =====================================================================
+
+Model penalized_glm(const Array<double> &y, const Array<double> &X,
+                    const Array<double> &S, const Family &fam,
+                    intptr_t n_parametric,
+                    const std::vector<SmoothColumnRange> &smooth_ranges,
+                    FittingCallback progress,
+                    int max_iter)
+{
+	using namespace Eigen;
+
+	validate_inputs(y, X);
+
+	intptr_t n = y.size();
+	intptr_t p = X.ncol();
+
+	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
+	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
+
+	// Initialize beta from unpenalized GLM-style: eta = link(y)
+	VectorXd beta = VectorXd::Zero(p);
+	VectorXd eta = fam.link(ym);
+	VectorXd mu = fam.linkinv(eta);
+
+	double lambda = 1.0; // will be optimized
+	bool converged = false;
+	int iter = 0;
+
+	for (iter = 0; iter < max_iter; iter++)
+	{
+		// Working weights and response
+		VectorXd mu_eta_vec = fam.mu_eta(mu);
+		VectorXd var_vec = fam.variance(mu);
+		VectorXd w(n), z(n);
+
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double dmu = std::max(std::abs(mu_eta_vec[i]), 1e-10);
+			double v = std::max(var_vec[i], 1e-10);
+			w[i] = dmu * dmu / v;
+			z[i] = eta[i] + (ym[i] - mu[i]) / dmu;
+		}
+
+		// Penalized WLS: (X'WX + λS) β = X'Wz
+		MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+		VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
+
+		// GCV for λ selection on this working model.
+		// GCV_w(λ) = Σ w_i (z_i - x_i'β)² / (n - edf)²
+		double best_gcv = std::numeric_limits<double>::max();
+		double best_lam = lambda;
+
+		// Grid search near current λ
+		for (int k = -50; k <= 50; k++)
+		{
+			double log_lam = 0.1 * k;
+			double lam = std::pow(10.0, log_lam);
+
+			MatrixXd M = XtWX + lam * Sm;
+			LDLT<MatrixXd> ldlt(M);
+			VectorXd b = ldlt.solve(XtWz);
+			VectorXd r = z - Xm * b;
+			double wrss = (w.array() * r.array().square()).sum();
+			MatrixXd Z = ldlt.solve(XtWX);
+			double edf = Z.trace();
+			double denom = (double)n - edf;
+			double g = (denom > 0.5) ? (double)n * wrss / (denom * denom) : 1e30;
+
+			if (g < best_gcv)
+			{
+				best_gcv = g;
+				best_lam = lam;
+			}
+		}
+		lambda = best_lam;
+
+		// Solve at optimal λ
+		MatrixXd M = XtWX + lambda * Sm;
+		LDLT<MatrixXd> ldlt(M);
+		VectorXd beta_new = ldlt.solve(XtWz);
+
+		// Check convergence
+		double delta = (beta_new - beta).norm() / (beta.norm() + 1e-10);
+		beta = beta_new;
+		eta = Xm * beta;
+		mu = fam.linkinv(eta);
+
+		if (delta < 1e-6)
+		{
+			converged = true;
+			break;
+		}
+
+		if (iter % 5 == 0 && progress)
+			progress(iter, max_iter);
+	}
+
+	if (progress) progress(max_iter, max_iter);
+
+	// ── Final quantities at convergence ──────────────────────────
+
+	VectorXd mu_eta_vec = fam.mu_eta(mu);
+	VectorXd var_vec = fam.variance(mu);
+	VectorXd w(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double dmu = std::max(std::abs(mu_eta_vec[i]), 1e-10);
+		double v = std::max(var_vec[i], 1e-10);
+		w[i] = dmu * dmu / v;
+	}
+
+	MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+	MatrixXd M = XtWX + lambda * Sm;
+	LDLT<MatrixXd> ldlt(M);
+	MatrixXd Minv = ldlt.solve(MatrixXd::Identity(p, p));
+	MatrixXd Minv_XtWX = ldlt.solve(XtWX);
+	double edf_total = Minv_XtWX.trace();
+
+	// Bayesian covariance
+	MatrixXd Vb = Minv * XtWX * Minv;
+
+	// ── Per-smooth EDF and F-test ────────────────────────────────
+
+	Array<Model::SmoothResult> smooth_results;
+
+	for (auto &sr : smooth_ranges)
+	{
+		Model::SmoothResult sm;
+		sm.variable = sr.variable;
+		sm.basis = sr.basis;
+		sm.k = sr.k;
+		sm.col_start = sr.col_start;
+		sm.col_count = sr.col_count;
+
+		sm.edf = 0;
+		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
+			sm.edf += Minv_XtWX(j, j);
+		}
+		sm.ref_df = sm.edf;
+
+		if (sm.edf > 0.001)
+		{
+			VectorXd beta_s = beta.segment(sr.col_start, sr.col_count);
+			MatrixXd Vb_s = Vb.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
+
+			SelfAdjointEigenSolver<MatrixXd> es(Vb_s);
+			VectorXd evals = es.eigenvalues();
+			MatrixXd evecs = es.eigenvectors();
+			double tol = evals.maxCoeff() * 1e-10;
+			VectorXd evals_inv = VectorXd::Zero(sr.col_count);
+			for (intptr_t j = 0; j < sr.col_count; j++) {
+				if (evals[j] > tol) evals_inv[j] = 1.0 / evals[j];
+			}
+			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
+			sm.F_stat = quad / sm.ref_df;
+
+			double resid_df = std::max(1.0, (double)n - edf_total);
+			try {
+				boost::math::fisher_f fdist(sm.ref_df, resid_df);
+				sm.p_value = 1.0 - boost::math::cdf(fdist, sm.F_stat);
+			} catch (...) {
+				sm.p_value = 0;
+			}
+		}
+
+		smooth_results.append(std::move(sm));
+	}
+
+	// ── Build Model ──────────────────────────────────────────────
+
+	Model model;
+	model.family = fam.name;
+	model.link = fam.link_name;
+	store_matrices(model, y, X);
+
+	model.beta = Array<double>(p, 0.0);
+	model.se = Array<double>(p, 0.0);
+	model.stat = Array<double>(p, 0.0);
+	model.p = Array<double>(p, 0.0);
+
+	for (intptr_t j = 0; j < p; j++)
+	{
+		model.beta[j + 1] = beta[j];
+		model.se[j + 1] = std::sqrt(std::max(Vb(j, j), 0.0));
+	}
+
+	// z-statistics and p-values for parametric terms
+	boost::math::chi_squared chisq_dist(1);
+	for (intptr_t j = 0; j < n_parametric; j++)
+	{
+		if (model.se[j + 1] > 0)
+		{
+			model.stat[j + 1] = model.beta[j + 1] / model.se[j + 1];
+			double wald = model.stat[j + 1] * model.stat[j + 1];
+			model.p[j + 1] = 1.0 - boost::math::cdf(chisq_dist, wald);
+		}
+	}
+
+	// Fitted values and residuals
+	model.fitted = Array<double>(n, 0.0);
+	model.residuals = Array<double>(n, 0.0);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		model.fitted[i + 1] = mu[i];
+		model.residuals[i + 1] = ym[i] - mu[i];
+	}
+
+	model.nobs = n;
+	model.nfixed = p;
+	model.loglik = fam.loglik(ym, mu);
+	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
+	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
+	model.deviance = -2.0 * model.loglik;
+	model.niter = iter;
+	model.converged = converged;
+	model.smooth_terms = std::move(smooth_results);
 
 	return model;
 }

@@ -100,6 +100,23 @@ struct Model
 	// ---- Random effects (empty for fixed-effects models) ----
 	Array<RandomEffectGroup> random_effects;
 
+	// ---- Smooth terms (empty for non-GAM models) ----
+	// One entry per s() term in the formula, populated by the penalized
+	// regression solver with EDF, F-test, and plotting metadata.
+	struct SmoothResult
+	{
+		String variable;       // covariate name, e.g. "duration"
+		String basis;          // basis type, e.g. "cr"
+		intptr_t k = 0;        // original basis dimension
+		double edf = 0;        // effective degrees of freedom
+		double ref_df = 0;     // reference df for F-test
+		double F_stat = 0;     // F-statistic
+		double p_value = 1;    // approximate p-value
+		intptr_t col_start = 0; // 0-based starting column in X for this smooth's basis
+		intptr_t col_count = 0; // number of basis columns
+	};
+	Array<SmoothResult> smooth_terms;
+
 	// ---- Design matrices (stored for predict/diagnostics) ----
 	// X: fixed-effects design matrix (nobs × nfixed), stored as 2D Array
 	Array<double> X;
@@ -111,6 +128,8 @@ struct Model
 	// ---- Convenience accessors ----
 
 	bool has_random_effects() const { return !random_effects.empty(); }
+
+	bool has_smooth_terms() const { return !smooth_terms.empty(); }
 
 	bool is_gaussian() const { return family == "gaussian"; }
 

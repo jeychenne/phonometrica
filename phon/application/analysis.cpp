@@ -19,8 +19,11 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <sstream>
 #include <iomanip>
+#include <limits>
+#include <string>
 #include <phon/application/analysis.hpp>
 #include <phon/application/project.hpp>
 #include <phon/utils/xml.hpp>
@@ -54,14 +57,14 @@ Analysis::Analysis(Directory *parent, const String &path) :
 // Fitting
 // =====================================================================
 
-int Analysis::fit(const String &formula_str, const String &family)
+int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress)
 {
 	if (!m_source) {
 		throw error("Cannot fit model: source data is not available");
 	}
 
 	auto formula = stats::Formula::parse(formula_str);
-	auto model = stats::fit(*m_source, formula, family, m_reference_levels);
+	auto model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
 	model.formula = formula.to_string();
 	m_models.push_back(std::move(model));
 	m_modified = true;
@@ -183,7 +186,13 @@ String doubles_to_string(const Array<double> &arr)
 	for (intptr_t i = 1; i <= arr.size(); i++)
 	{
 		if (i > 1) oss << ' ';
-		oss << arr[i];
+		double v = arr[i];
+		if (std::isnan(v))
+			oss << "nan";
+		else if (std::isinf(v))
+			oss << (v < 0 ? "-inf" : "inf");
+		else
+			oss << v;
 	}
 	return String(oss.str());
 }
@@ -200,16 +209,53 @@ String strings_to_csv(const Array<String> &arr)
 	return result;
 }
 
-// Parse space-separated doubles.
+// Parse space-separated doubles, handling NaN and Inf.
 Array<double> parse_doubles(const char *text)
 {
 	Array<double> result;
 	std::istringstream iss(text);
-	double v;
-	while (iss >> v) {
-		result.append(v);
+	std::string token;
+	while (iss >> token)
+	{
+		if (token == "nan" || token == "-nan" || token == "NaN" || token == "-NaN")
+			result.append(std::nan(""));
+		else if (token == "inf" || token == "Inf")
+			result.append(std::numeric_limits<double>::infinity());
+		else if (token == "-inf" || token == "-Inf")
+			result.append(-std::numeric_limits<double>::infinity());
+		else
+		{
+			try {
+				result.append(std::stod(token));
+			} catch (...) {
+				result.append(std::nan(""));
+			}
+		}
 	}
 	return result;
+}
+
+// Parse a single double value, handling NaN and Inf.
+double parse_double_safe(const char *text)
+{
+	std::string s(text);
+	// Trim whitespace.
+	size_t start = s.find_first_not_of(" \t\r\n");
+	if (start == std::string::npos) return std::nan("");
+	s = s.substr(start);
+
+	if (s == "nan" || s == "-nan" || s == "NaN" || s == "-NaN")
+		return std::nan("");
+	if (s == "inf" || s == "Inf")
+		return std::numeric_limits<double>::infinity();
+	if (s == "-inf" || s == "-Inf")
+		return -std::numeric_limits<double>::infinity();
+
+	try {
+		return std::stod(s);
+	} catch (...) {
+		return std::nan("");
+	}
 }
 
 // Parse comma-separated strings.
@@ -312,6 +358,27 @@ void Analysis::write()
 				add_data_node(gn, "ConditionalModes", doubles_to_string(re.conditional_modes));
 			}
 		}
+
+		// Smooth terms
+		if (m.has_smooth_terms())
+		{
+			auto sm_node = mn.append_child("SmoothTerms");
+
+			for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+			{
+				auto &sm = m.smooth_terms[i];
+				auto sn = sm_node.append_child("Smooth");
+				add_data_node(sn, "Variable", sm.variable);
+				add_data_node(sn, "Basis", sm.basis);
+				add_data_node(sn, "K", String::convert(sm.k));
+				add_data_node(sn, "Edf", String::format("%.17g", sm.edf));
+				add_data_node(sn, "RefDf", String::format("%.17g", sm.ref_df));
+				add_data_node(sn, "FStat", String::format("%.17g", sm.F_stat));
+				add_data_node(sn, "PValue", String::format("%.17g", sm.p_value));
+				add_data_node(sn, "ColStart", String::convert(sm.col_start));
+				add_data_node(sn, "ColCount", String::convert(sm.col_count));
+			}
+		}
 	}
 
 	write_xml(doc, m_path);
@@ -393,15 +460,15 @@ void Analysis::load()
 					else if (name == "Fitted")   m.fitted = parse_doubles(text);
 					else if (name == "Residuals") m.residuals = parse_doubles(text);
 					else if (name == "Y")        m.y = parse_doubles(text);
-					else if (name == "LogLik")   m.loglik = String(text).to_float();
-					else if (name == "AIC")      m.aic = String(text).to_float();
-					else if (name == "BIC")      m.bic = String(text).to_float();
-					else if (name == "Deviance") m.deviance = String(text).to_float();
-					else if (name == "RSE")      m.rse = String(text).to_float();
+					else if (name == "LogLik")   m.loglik = parse_double_safe(text);
+					else if (name == "AIC")      m.aic = parse_double_safe(text);
+					else if (name == "BIC")      m.bic = parse_double_safe(text);
+					else if (name == "Deviance") m.deviance = parse_double_safe(text);
+					else if (name == "RSE")      m.rse = parse_double_safe(text);
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
-					else if (name == "R2")       m.r2 = String(text).to_float();
-					else if (name == "AdjR2")    m.adj_r2 = String(text).to_float();
-					else if (name == "Theta")    m.theta = String(text).to_float();
+					else if (name == "R2")       m.r2 = parse_double_safe(text);
+					else if (name == "AdjR2")    m.adj_r2 = parse_double_safe(text);
+					else if (name == "Theta")    m.theta = parse_double_safe(text);
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
 					else if (name == "ResponseLevels") m.response_levels = parse_csv_strings(text);
@@ -427,6 +494,33 @@ void Analysis::load()
 							}
 
 							m.random_effects.append(std::move(re));
+						}
+					}
+					else if (name == "SmoothTerms")
+					{
+						for (auto sn = field.first_child(); sn; sn = sn.next_sibling())
+						{
+							if (sn.name() != str("Smooth")) continue;
+
+							stats::Model::SmoothResult sm;
+
+							for (auto sf = sn.first_child(); sf; sf = sf.next_sibling())
+							{
+								auto sfn = str(sf.name());
+								auto sft = sf.text().get();
+
+								if (sfn == "Variable")       sm.variable = sft;
+								else if (sfn == "Basis")     sm.basis = sft;
+								else if (sfn == "K")         sm.k = String(sft).to_int();
+								else if (sfn == "Edf")       sm.edf = parse_double_safe(sft);
+								else if (sfn == "RefDf")     sm.ref_df = parse_double_safe(sft);
+								else if (sfn == "FStat")     sm.F_stat = parse_double_safe(sft);
+								else if (sfn == "PValue")    sm.p_value = parse_double_safe(sft);
+								else if (sfn == "ColStart")  sm.col_start = String(sft).to_int();
+								else if (sfn == "ColCount")  sm.col_count = String(sft).to_int();
+							}
+
+							m.smooth_terms.append(std::move(sm));
 						}
 					}
 				}

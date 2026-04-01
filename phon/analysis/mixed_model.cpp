@@ -1686,7 +1686,8 @@ template<typename Objective>
 static NewtonResult newton_optimize(const Objective &obj,
                                      Eigen::VectorXd theta,
                                      int max_iter = 200,
-                                     double grad_tol = 1e-8)
+                                     double grad_tol = 1e-8,
+                                     FittingCallback progress = nullptr)
 {
 	intptr_t dim = theta.size();
 	NewtonResult res;
@@ -1839,8 +1840,13 @@ static NewtonResult newton_optimize(const Objective &obj,
 		{
 			stall_count = 0;
 		}
+
+		// Report progress.
+		if (progress && iter % 5 == 0)
+			progress(iter, max_iter);
 	}
 
+	if (progress) progress(max_iter, max_iter);
 	res.theta = theta;
 	res.niter = max_iter;
 	return res;
@@ -1855,7 +1861,8 @@ static NewtonResult newton_optimize(const Objective &obj,
 // =====================================================================
 
 Model mixed_model(const Array<double> &y, const Array<double> &X,
-                  const std::vector<GroupingInfo> &groups, const Family &fam)
+                  const std::vector<GroupingInfo> &groups, const Family &fam,
+                  FittingCallback progress)
 {
 
 	if (y.ndim() != 1) {
@@ -2034,7 +2041,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		theta[n_chol] = phi[p + G]; // log σ
 
-		auto newton_res = newton_optimize(gauss_obj, theta);
+		auto newton_res = newton_optimize(gauss_obj, theta, 200, 1e-8, progress);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -2157,7 +2164,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// Create PirlsObjective after beta_init is finalized
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol};
 
-		auto newton_res = newton_optimize(pirls_obj, theta);
+		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;

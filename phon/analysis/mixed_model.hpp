@@ -34,10 +34,14 @@
 #define PHONOMETRICA_MIXED_MODEL_HPP
 
 #include <vector>
+#include <functional>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/family.hpp>
 
 namespace phonometrica::stats {
+
+// Progress callback: receives (current_step, max_steps).
+using FittingCallback = std::function<void(int, int)>;
 
 // Information about a single random-effects term, built by the fitting layer.
 //
@@ -90,7 +94,8 @@ struct GroupingInfo
 //! \param fam       GLM family (gaussian, binomial, poisson, negbin)
 //! \return a fitted Model with random_effects populated (one RandomEffectGroup per grouping factor)
 Model mixed_model(const Array<double> &y, const Array<double> &X,
-                  const std::vector<GroupingInfo> &groups, const Family &fam);
+                  const std::vector<GroupingInfo> &groups, const Family &fam,
+                  FittingCallback progress = nullptr);
 
 } // namespace phonometrica::stats
 

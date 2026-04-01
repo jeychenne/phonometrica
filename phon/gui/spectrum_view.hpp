@@ -18,6 +18,11 @@
  * Purpose: Dialog that displays a power spectrum (spectral slice) as a frequency-vs-power line plot. Similar to       *
  *          Praat's "View spectral slice". The user can hover over the plot to read frequency and power values.         *
  *                                                                                                                     *
+ *          Supports three display modes:                                                                              *
+ *            - FFT only:      traditional power spectrum (blue curve).                                                *
+ *            - LPC only:      smooth spectral envelope from LPC analysis (red curve).                                 *
+ *            - FFT + LPC:     FFT spectrum with LPC envelope superimposed.                                            *
+ *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #ifndef PHONOMETRICA_SPECTRUM_VIEW_HPP
@@ -31,6 +36,15 @@
 
 namespace phonometrica {
 
+/// Display mode for the spectral slice dialog.
+enum class SpectrumDisplayMode
+{
+	FFT,    ///< Show only the FFT power spectrum.
+	LPC,    ///< Show only the LPC spectral envelope.
+	Both    ///< Show both FFT and LPC superimposed.
+};
+
+
 class SpectrumView : public QDialog
 {
 	Q_OBJECT
@@ -40,8 +54,11 @@ public:
 	/// Construct a spectrum view dialog.
 	///
 	/// @param spectrum   The spectrum document to display.
+	/// @param mode       Which curve(s) to draw (FFT, LPC, or both).
 	/// @param parent     Parent widget.
-	explicit SpectrumView(const Handle<Spectrum> &spectrum, QWidget *parent = nullptr);
+	explicit SpectrumView(const Handle<Spectrum> &spectrum,
+	                      SpectrumDisplayMode mode = SpectrumDisplayMode::FFT,
+	                      QWidget *parent = nullptr);
 
 	QSize sizeHint() const override { return {700, 400}; }
 
@@ -62,7 +79,7 @@ private:
 
 	void rebuildCache();
 
-	/// Render the full plot (background, axes, curve — no crosshair) into
+	/// Render the full plot (background, axes, curve(s) — no crosshair) into
 	/// the given painter at the specified logical dimensions.
 	void renderPlot(QPainter &p, int w, int h);
 
@@ -83,6 +100,9 @@ private:
 	int plotHeight() const;
 
 	Handle<Spectrum> m_spectrum;
+
+	// Which curve(s) to display.
+	SpectrumDisplayMode m_mode = SpectrumDisplayMode::FFT;
 
 	// Toolbar with export actions.
 	QToolBar *m_toolbar = nullptr;

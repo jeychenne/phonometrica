@@ -22,10 +22,15 @@
 #ifndef PHONOMETRICA_REGRESSION_HPP
 #define PHONOMETRICA_REGRESSION_HPP
 
+#include <vector>
+#include <functional>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/family.hpp>
 
 namespace phonometrica::stats {
+
+// Progress callback: receives (current_step, max_steps).
+using FittingCallback = std::function<void(int, int)>;
 
 //! Fits a linear regression model using ordinary least squares.
 //! \param y a vector of N observations
@@ -70,6 +75,51 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter = 50);
 //! \param max_iter maximum number of iterations.
 //! \return a Model.
 Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust = false, int max_iter = 200);
+
+
+//! A range of columns belonging to one smooth term in the augmented design matrix.
+struct SmoothColumnRange
+{
+	intptr_t col_start;   // 0-based starting column in X
+	intptr_t col_count;   // number of columns (k_eff)
+	String variable;      // covariate name
+	String basis;         // basis type ("cr")
+	intptr_t k;           // original basis dimension
+};
+
+
+//! Fits a penalized linear regression model (Gaussian GAM) via penalized OLS
+//! with smoothing parameter(s) selected by GCV.
+//!
+//! \param y response vector (n observations).
+//! \param X augmented design matrix (n × p, parametric + smooth basis columns).
+//! \param S total penalty matrix (p × p, sum of all smooth penalties, zero-padded).
+//! \param n_parametric number of leading parametric (unpenalized) columns in X.
+//! \param smooth_ranges column ranges for each smooth term (for EDF/F-test computation).
+//! \return a fitted Model with per-smooth EDF and test statistics in smooth_terms.
+Model penalized_lm(const Array<double> &y, const Array<double> &X,
+                   const Array<double> &S, intptr_t n_parametric,
+                   const std::vector<SmoothColumnRange> &smooth_ranges = {},
+                   FittingCallback progress = nullptr);
+
+
+//! Fits a penalized GLM (non-Gaussian GAM) via penalized IWLS
+//! with smoothing parameter selected by GCV at each outer iteration.
+//!
+//! \param y response vector.
+//! \param X augmented design matrix (parametric + smooth basis columns).
+//! \param S total penalty matrix (p × p).
+//! \param fam GLM family.
+//! \param n_parametric number of leading parametric columns.
+//! \param smooth_ranges column ranges for each smooth term.
+//! \param max_iter maximum number of PIRLS iterations.
+//! \return a fitted Model.
+Model penalized_glm(const Array<double> &y, const Array<double> &X,
+                    const Array<double> &S, const Family &fam,
+                    intptr_t n_parametric,
+                    const std::vector<SmoothColumnRange> &smooth_ranges = {},
+                    FittingCallback progress = nullptr,
+                    int max_iter = 50);
 
 } // namespace phonometrica::stats
 
