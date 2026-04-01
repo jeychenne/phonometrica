@@ -395,6 +395,12 @@ void Query::write()
 			type_attr.set_value("none");
 	}
 
+	if (m_include_duration) {
+		auto dur_node = option_node.append_child("Duration");
+		dur_node.append_attribute("enabled").set_value(true);
+		dur_node.append_attribute("unit").set_value(m_duration_in_ms ? "ms" : "s");
+	}
+
 	// Constraints
 	auto data_node = root.append_child("Constraints");
 	for (auto &constraint : m_constraints)
@@ -489,6 +495,13 @@ void Query::parse_options_from_xml(xml_node root)
 				throw error("Invalid type in Context node: %", type);
 			}
 		}
+		else if (node.name() == str("Duration"))
+		{
+			auto attr = node.attribute("enabled");
+			m_include_duration = attr && attr.as_bool();
+			auto unit_attr = node.attribute("unit");
+			m_duration_in_ms = unit_attr && unit_attr.value() == str("ms");
+		}
 		else
 		{
 			throw error("Invalid option in text query: %", node.name());
@@ -508,6 +521,8 @@ Handle<Query> Query::copy() const
 	copy->m_context = m_context;
 	copy->m_context_length = m_context_length;
 	copy->m_ref_constraint = m_ref_constraint;
+	copy->m_include_duration = m_include_duration;
+	copy->m_duration_in_ms = m_duration_in_ms;
 	copy->m_content_modified = true;
 
 	return copy;
@@ -516,6 +531,10 @@ Handle<Query> Query::copy() const
 Handle<Concordance> Query::execute()
 {
 	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, search(), nullptr);
+	if (m_include_duration) {
+		conc->set_has_duration(true);
+		conc->set_duration_in_ms(m_duration_in_ms);
+	}
 	auto label = this->label();
 	if (label.starts_with("Query ")) {
 		label = String::format("Concordance %d", Concordance::next_id());

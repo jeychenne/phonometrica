@@ -98,6 +98,14 @@ public:
 
 	void set_reference_constraint(int value);
 
+	bool include_duration() const { return m_include_duration; }
+
+	void set_include_duration(bool value) { m_include_duration = value; }
+
+	bool duration_in_ms() const { return m_duration_in_ms; }
+
+	void set_duration_in_ms(bool value) { m_duration_in_ms = value; }
+
 	bool empty();
 
     void request_cancel() { m_cancel_requested = true; }
@@ -162,6 +170,12 @@ protected:
 
 	// Context length, for KWIC mode
 	int m_context_length = 0;
+
+	// Whether to add duration column(s) to the concordance
+	bool m_include_duration = false;
+
+	// Whether durations are in milliseconds (true) or seconds (false)
+	bool m_duration_in_ms = false;
 
     // Let the user cancel a query that takes too much time
     bool m_cancel_requested = false;

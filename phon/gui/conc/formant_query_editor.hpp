@@ -104,6 +104,11 @@ private:
 	QSpinBox *m_ctx_length = nullptr;
 	QSpinBox *m_ref_constraint = nullptr;
 
+	// Duration
+	QCheckBox *m_duration_check = nullptr;
+	QRadioButton *m_duration_s = nullptr;
+	QRadioButton *m_duration_ms = nullptr;
+
 	// Formant settings — shared
 	QSpinBox *m_nformant_spin = nullptr;
 	QLineEdit *m_win_size_edit = nullptr;

@@ -44,12 +44,30 @@ static const QColor GRID_COLOR(220, 220, 220);
 static const QColor AXIS_COLOR(60, 60, 60);
 static const QColor BG_COLOR(255, 255, 255);
 
+// Categorical color palette (10 distinguishable colors, D3 Category10).
+static const QColor GROUP_PALETTE[] = {
+	QColor(31, 119, 180),    // blue
+	QColor(255, 127, 14),    // orange
+	QColor(44, 160, 44),     // green
+	QColor(214, 39, 40),     // red
+	QColor(148, 103, 189),   // purple
+	QColor(140, 86, 75),     // brown
+	QColor(227, 119, 194),   // pink
+	QColor(127, 127, 127),   // gray
+	QColor(188, 189, 34),    // olive
+	QColor(23, 190, 207),    // cyan
+};
+static constexpr int NUM_PALETTE_COLORS = 10;
+
 static constexpr int MARGIN_LEFT   = 65;
 static constexpr int MARGIN_RIGHT  = 20;
 static constexpr int MARGIN_TOP    = 30;
 static constexpr int MARGIN_BOTTOM = 45;
 
 static constexpr double POINT_RADIUS = 2.5;
+static constexpr double MEAN_MARKER_SIZE = 5.0;
+
+static constexpr int ELLIPSE_SEGMENTS = 64;
 
 
 // ── Axis tick helpers ───────────────────────────────────────────────
@@ -94,7 +112,8 @@ PlotWidget::PlotWidget(QWidget *parent) : QWidget(parent)
 
 void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
                           const QString &x_label, const QString &y_label,
-                          const QString &title, RefLine ref)
+                          const QString &title, RefLine ref,
+                          bool reverse_x, bool reverse_y)
 {
 	m_mode = Mode::Scatter;
 	m_x = std::move(x);
@@ -103,8 +122,42 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
 	m_y_label = y_label;
 	m_title = title;
 	m_ref_line = ref;
+	m_reverse_x = reverse_x;
+	m_reverse_y = reverse_y;
 	m_boxes.clear();
 	m_bins.clear();
+	m_group_data.clear();
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
+                                        std::vector<double> x, std::vector<double> y,
+                                        const QString &x_label, const QString &y_label,
+                                        const QString &title,
+                                        bool show_means, bool show_ellipses,
+                                        double chi2_scale,
+                                        bool reverse_x, bool reverse_y)
+{
+	m_mode = Mode::GroupedScatter;
+	m_group_data = buildGroups(groups, x, y, chi2_scale);
+	m_show_means = show_means;
+	m_show_ellipses = show_ellipses;
+	m_reverse_x = reverse_x;
+	m_reverse_y = reverse_y;
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+	m_x.clear();
+	m_y.clear();
+	m_boxes.clear();
+	m_bins.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_show_regression = false;
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -121,6 +174,7 @@ void PlotWidget::setBoxPlotData(std::vector<QString> groups, std::vector<double>
 	m_x.clear();
 	m_y.clear();
 	m_bins.clear();
+	m_group_data.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -137,6 +191,7 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_x.clear();
 	m_y.clear();
 	m_boxes.clear();
+	m_group_data.clear();
 	m_show_density = false;
 	m_density_x.clear();
 	m_density_y.clear();
@@ -158,6 +213,7 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_y.clear();
 	m_boxes.clear();
 	m_bins.clear();
+	m_group_data.clear();
 	m_show_regression = false;
 	m_cache_valid = false;
 	update();
@@ -207,9 +263,14 @@ void PlotWidget::clear()
 	m_bins.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_group_data.clear();
 	m_title.clear();
 	m_show_regression = false;
 	m_show_density = false;
+	m_show_means = false;
+	m_show_ellipses = false;
+	m_reverse_x = false;
+	m_reverse_y = false;
 	m_density_x.clear();
 	m_density_y.clear();
 	m_cache_valid = false;
@@ -338,6 +399,103 @@ std::vector<PlotWidget::HistBin> PlotWidget::computeBins(const std::vector<doubl
 }
 
 
+// ── Grouped scatter helpers ─────────────────────────────────────────
+
+std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
+	const std::vector<QString> &labels,
+	const std::vector<double> &x,
+	const std::vector<double> &y,
+	double chi2_scale)
+{
+	// Partition points into groups, preserving first-seen order.
+	std::vector<QString> order;
+	std::map<QString, size_t> index_map;
+
+	std::vector<GroupData> groups;
+
+	size_t n = std::min({labels.size(), x.size(), y.size()});
+	for (size_t i = 0; i < n; i++)
+	{
+		auto &lbl = labels[i];
+		auto it = index_map.find(lbl);
+		size_t gi;
+		if (it == index_map.end()) {
+			gi = groups.size();
+			index_map[lbl] = gi;
+			groups.emplace_back();
+			groups.back().label = lbl;
+		} else {
+			gi = it->second;
+		}
+		groups[gi].x.push_back(x[i]);
+		groups[gi].y.push_back(y[i]);
+	}
+
+	// Compute per-group statistics: mean and covariance → ellipse.
+	for (auto &gd : groups)
+	{
+		size_t gn = gd.x.size();
+		if (gn == 0) continue;
+
+		// Mean
+		double sx = 0, sy = 0;
+		for (size_t i = 0; i < gn; i++) { sx += gd.x[i]; sy += gd.y[i]; }
+		gd.mean_x = sx / gn;
+		gd.mean_y = sy / gn;
+
+		if (gn < 3) {
+			gd.ellipse_valid = false;
+			continue;
+		}
+
+		// 2×2 covariance matrix (sample covariance, dividing by n-1).
+		double cxx = 0, cyy = 0, cxy = 0;
+		for (size_t i = 0; i < gn; i++) {
+			double dx = gd.x[i] - gd.mean_x;
+			double dy = gd.y[i] - gd.mean_y;
+			cxx += dx * dx;
+			cyy += dy * dy;
+			cxy += dx * dy;
+		}
+		cxx /= (gn - 1);
+		cyy /= (gn - 1);
+		cxy /= (gn - 1);
+
+		// Eigenvalues of 2×2 symmetric matrix [[cxx, cxy], [cxy, cyy]].
+		double trace = cxx + cyy;
+		double det = cxx * cyy - cxy * cxy;
+		double disc = trace * trace * 0.25 - det;
+
+		if (disc < 0 || trace < 1e-15) {
+			gd.ellipse_valid = false;
+			continue;
+		}
+
+		double sqrt_disc = std::sqrt(disc);
+		double lambda1 = trace * 0.5 + sqrt_disc;
+		double lambda2 = trace * 0.5 - sqrt_disc;
+
+		if (lambda1 < 1e-15 || lambda2 < 0) {
+			// Degenerate — nearly collinear points.
+			gd.ellipse_valid = false;
+			continue;
+		}
+		// Clamp lambda2 to a tiny positive value for near-singular cases.
+		if (lambda2 < 1e-15) lambda2 = 1e-15;
+
+		// Rotation angle of the principal axis.
+		gd.ellipse_angle = 0.5 * std::atan2(2.0 * cxy, cxx - cyy);
+
+		// Semi-axes scaled by the chi-squared quantile for the desired confidence level.
+		gd.ellipse_a = std::sqrt(lambda1 * chi2_scale);
+		gd.ellipse_b = std::sqrt(lambda2 * chi2_scale);
+		gd.ellipse_valid = true;
+	}
+
+	return groups;
+}
+
+
 // ── Rendering ───────────────────────────────────────────────────────
 
 void PlotWidget::renderPlot(QPainter &p, int w, int h)
@@ -354,10 +512,11 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 
 	switch (m_mode)
 	{
-	case Mode::Scatter:   renderScatter(p, left, top, pw, ph, 0, 0, 0, 0); break;
-	case Mode::BoxPlot:   renderBoxPlot(p, left, top, pw, ph); break;
-	case Mode::Histogram: renderHistogram(p, left, top, pw, ph); break;
-	case Mode::BarChart:  renderBarChart(p, left, top, pw, ph); break;
+	case Mode::Scatter:        renderScatter(p, left, top, pw, ph, 0, 0, 0, 0); break;
+	case Mode::GroupedScatter: renderGroupedScatter(p, left, top, pw, ph); break;
+	case Mode::BoxPlot:        renderBoxPlot(p, left, top, pw, ph); break;
+	case Mode::Histogram:      renderHistogram(p, left, top, pw, ph); break;
+	case Mode::BarChart:       renderBarChart(p, left, top, pw, ph); break;
 	default: break;
 	}
 }
@@ -385,8 +544,17 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	if (xrange <= 0) xrange = 1;
 	if (yrange <= 0) yrange = 1;
 
-	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
-	auto dataToY = [&](double v) -> double { return bottom - ((v - ylo) / yrange) * ph; };
+	// Data-to-pixel mapping, with optional axis reversal (for formant charts).
+	auto dataToX = [&](double v) -> double {
+		if (m_reverse_x)
+			return left + ((xhi - v) / xrange) * pw;
+		return left + ((v - xlo) / xrange) * pw;
+	};
+	auto dataToY = [&](double v) -> double {
+		if (m_reverse_y)
+			return top + ((v - ylo) / yrange) * ph;
+		return bottom - ((v - ylo) / yrange) * ph;
+	};
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
@@ -505,6 +673,272 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 		p.drawEllipse(QPointF(x, y), POINT_RADIUS, POINT_RADIUS);
 	}
 	p.setClipping(false);
+}
+
+
+// ── Grouped scatter rendering ───────────────────────────────────────
+
+void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_group_data.empty()) return;
+
+	int bottom = top + ph;
+	int right  = left + pw;
+
+	// Compute global axis ranges from all group data.
+	double xlo = 1e30, xhi = -1e30, ylo = 1e30, yhi = -1e30;
+	for (auto &gd : m_group_data) {
+		for (double v : gd.x) { xlo = std::min(xlo, v); xhi = std::max(xhi, v); }
+		for (double v : gd.y) { ylo = std::min(ylo, v); yhi = std::max(yhi, v); }
+	}
+	// Pad the ellipses into the axis range if they would extend beyond data bounds.
+	if (m_show_ellipses)
+	{
+		for (auto &gd : m_group_data) {
+			if (!gd.ellipse_valid) continue;
+			// Conservative bound: semi-axis a is the largest possible extent.
+			double extent = std::max(gd.ellipse_a, gd.ellipse_b);
+			xlo = std::min(xlo, gd.mean_x - extent);
+			xhi = std::max(xhi, gd.mean_x + extent);
+			ylo = std::min(ylo, gd.mean_y - extent);
+			yhi = std::max(yhi, gd.mean_y + extent);
+		}
+	}
+
+	double xrange = xhi - xlo;
+	double yrange = yhi - ylo;
+	if (xrange < 1e-10) xrange = 1.0;
+	if (yrange < 1e-10) yrange = 1.0;
+	double xpad = xrange * 0.06;
+	double ypad = yrange * 0.06;
+	xlo -= xpad; xhi += xpad;
+	ylo -= ypad; yhi += ypad;
+	xrange = xhi - xlo;
+	yrange = yhi - ylo;
+
+	auto dataToX = [&](double v) -> double {
+		if (m_reverse_x)
+			return left + ((xhi - v) / xrange) * pw;
+		return left + ((v - xlo) / xrange) * pw;
+	};
+	auto dataToY = [&](double v) -> double {
+		if (m_reverse_y)
+			return top + ((v - ylo) / yrange) * ph;
+		return bottom - ((v - ylo) / yrange) * ph;
+	};
+
+	// Frame
+	p.setPen(QPen(AXIS_COLOR, 1));
+	p.drawRect(left, top, pw, ph);
+
+	// Axes
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	// X grid + ticks
+	double xtick = nice_tick(xrange);
+	double x0 = std::ceil(xlo / xtick) * xtick;
+
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = x0; v <= xhi; v += xtick) {
+		double x = dataToX(v);
+		if (x > left + 1 && x < right - 1)
+			p.drawLine(QPointF(x, top), QPointF(x, bottom));
+	}
+
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = x0; v <= xhi; v += xtick) {
+		double x = dataToX(v);
+		if (x < left - 2 || x > right + 2) continue;
+		p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, label);
+	}
+	{ int tw = fm.horizontalAdvance(m_x_label);
+	  p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, m_x_label); }
+
+	// Y grid + ticks
+	double ytick = nice_tick(yrange);
+	double y0 = std::ceil(ylo / ytick) * ytick;
+
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y > top + 1 && y < bottom - 1)
+			p.drawLine(QPointF(left, y), QPointF(right, y));
+	}
+
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y < top - 2 || y > bottom + 2) continue;
+		p.drawLine(QPointF(left - 4, y), QPointF(left, y));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(left - 6 - lw, int(y) + fm.ascent() / 2 - 1, label);
+	}
+	{ p.save(); p.translate(14, top + ph / 2); p.rotate(-90);
+	  int tw = fm.horizontalAdvance(m_y_label);
+	  p.drawText(-tw / 2, 0, m_y_label); p.restore(); }
+
+	// Title
+	renderTitle(p, left, pw, top);
+
+	// Clip to plot area
+	p.setClipRect(left, top, pw, ph);
+
+	int ngroups = (int)m_group_data.size();
+
+	// Draw ellipses first (behind points).
+	if (m_show_ellipses)
+	{
+		for (int g = 0; g < ngroups; g++)
+		{
+			auto &gd = m_group_data[g];
+			if (!gd.ellipse_valid) continue;
+
+			QColor ec = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+
+			// Build parametric ellipse path in data coordinates,
+			// then map to pixel coordinates.
+			QPainterPath path;
+			double ca = std::cos(gd.ellipse_angle);
+			double sa = std::sin(gd.ellipse_angle);
+
+			for (int i = 0; i <= ELLIPSE_SEGMENTS; i++)
+			{
+				double t = 2.0 * M_PI * i / ELLIPSE_SEGMENTS;
+				double ex = gd.ellipse_a * std::cos(t);
+				double ey = gd.ellipse_b * std::sin(t);
+				// Rotate by ellipse angle
+				double dx = ex * ca - ey * sa;
+				double dy = ex * sa + ey * ca;
+
+				double px = dataToX(gd.mean_x + dx);
+				double py = dataToY(gd.mean_y + dy);
+
+				if (i == 0)
+					path.moveTo(px, py);
+				else
+					path.lineTo(px, py);
+			}
+
+			// Semi-transparent fill + solid border
+			QColor fill_color = ec;
+			fill_color.setAlpha(30);
+			p.setBrush(fill_color);
+			p.setPen(QPen(ec, 1.5));
+			p.drawPath(path);
+		}
+	}
+
+	// Draw points per group.
+	for (int g = 0; g < ngroups; g++)
+	{
+		auto &gd = m_group_data[g];
+		QColor pc = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+		pc.setAlpha(180);
+
+		p.setPen(Qt::NoPen);
+		p.setBrush(pc);
+		size_t gn = std::min(gd.x.size(), gd.y.size());
+		for (size_t i = 0; i < gn; i++) {
+			double px = dataToX(gd.x[i]);
+			double py = dataToY(gd.y[i]);
+			p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+		}
+	}
+
+	// Draw mean markers on top.
+	if (m_show_means)
+	{
+		for (int g = 0; g < ngroups; g++)
+		{
+			auto &gd = m_group_data[g];
+			QColor mc = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+
+			double px = dataToX(gd.mean_x);
+			double py = dataToY(gd.mean_y);
+
+			// Draw a cross marker (+).
+			p.setPen(QPen(mc, 2.5));
+			p.drawLine(QPointF(px - MEAN_MARKER_SIZE, py),
+			           QPointF(px + MEAN_MARKER_SIZE, py));
+			p.drawLine(QPointF(px, py - MEAN_MARKER_SIZE),
+			           QPointF(px, py + MEAN_MARKER_SIZE));
+
+			// Filled circle behind the cross for emphasis.
+			QColor fc = mc;
+			fc.setAlpha(220);
+			p.setPen(QPen(mc.darker(130), 1.2));
+			p.setBrush(fc);
+			p.drawEllipse(QPointF(px, py), POINT_RADIUS + 1.5, POINT_RADIUS + 1.5);
+		}
+	}
+
+	p.setClipping(false);
+
+	// Legend
+	renderLegend(p, left, top, pw, ph);
+}
+
+
+// ── Legend ───────────────────────────────────────────────────────────
+
+void PlotWidget::renderLegend(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_group_data.empty()) return;
+
+	QFont font;
+	font.setPixelSize(10);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	int ngroups = (int)m_group_data.size();
+	int swatch = 10;
+	int spacing = 4;
+	int line_h = std::max(fm.height(), swatch) + 2;
+	int padding = 6;
+
+	// Compute legend dimensions.
+	int max_label_w = 0;
+	for (auto &gd : m_group_data)
+		max_label_w = std::max(max_label_w, fm.horizontalAdvance(gd.label));
+
+	int legend_w = padding + swatch + spacing + max_label_w + padding;
+	int legend_h = padding + ngroups * line_h + padding;
+
+	// Position in the top-right corner of the plot area.
+	int lx = left + pw - legend_w - 8;
+	int ly = top + 8;
+
+	// Background
+	QColor bg(255, 255, 255, 210);
+	p.setPen(QPen(GRID_COLOR, 1));
+	p.setBrush(bg);
+	p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+	// Entries
+	for (int g = 0; g < ngroups; g++)
+	{
+		QColor c = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+		int ey = ly + padding + g * line_h;
+
+		// Color swatch
+		p.setPen(Qt::NoPen);
+		p.setBrush(c);
+		p.drawEllipse(QPointF(lx + padding + swatch / 2.0, ey + line_h / 2.0),
+		              swatch / 2.0, swatch / 2.0);
+
+		// Label
+		p.setPen(AXIS_COLOR);
+		p.drawText(lx + padding + swatch + spacing,
+		           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+		           m_group_data[g].label);
+	}
 }
 
 
