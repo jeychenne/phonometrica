@@ -291,7 +291,23 @@ endif()
 ##  EXECUTABLE    ##
 ####################
 
-add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
+if (APPLE)
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE phonometrica.cpp ${QRC_SOURCES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+            MACOSX_BUNDLE_GUI_IDENTIFIER    "org.phonometrica-ling.phonometrica"
+            MACOSX_BUNDLE_BUNDLE_NAME       "Phonometrica"
+            MACOSX_BUNDLE_BUNDLE_VERSION    "${PHON_VERSION_MAJOR}.${PHON_VERSION_MINOR}.${PHON_VERSION_MICRO}"
+            MACOSX_BUNDLE_SHORT_VERSION_STRING "${PHON_VERSION_MAJOR}.${PHON_VERSION_MINOR}.${PHON_VERSION_MICRO}"
+            MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in"
+            MACOSX_BUNDLE_ICON_FILE         "icons/phonometrica.icns"
+    )
+    add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND /Users/julieneychenne/Qt/6.11.0/macos/bin/macdeployqt
+            ${CMAKE_BINARY_DIR}/phonometrica.app
+            COMMENT "Deploying Qt frameworks into bundle...")
+else ()
+    add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
+endif ()
 target_link_libraries(${PROJECT_NAME} PRIVATE phon-runtime pcre2-8)
 
 if(WITH_APPLICATION)

@@ -29,7 +29,8 @@
 #else
 #include <phon/runtime.hpp>
 #endif
-
+#include <QStyleFactory>
+#include <QStyle>
 
 using namespace phonometrica;
 
@@ -148,7 +149,12 @@ int main(int argc, char **argv)
 
 	// No arguments: launch the GUI.
 #ifdef PHON_GUI
+#ifdef PHON_MACOS
+	QApplication::setStyle("macOS");
+#endif
 	QApplication app(argc, argv);
+	qDebug() << "Available styles:" << QStyleFactory::keys();
+	qDebug() << "Current style:" << app.style()->objectName();
 	// QApplication sets LC_ALL to the system locale, which breaks strtod/sscanf
 	// parsing of numbers with '.' as decimal separator (e.g. French locale uses ',').
 	// Force LC_NUMERIC back to "C" so that pugixml's as_double(), strtod(), sscanf("%lf")
