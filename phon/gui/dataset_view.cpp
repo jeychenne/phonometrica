@@ -82,6 +82,9 @@ void DatasetView::setupUi()
 	auto *compl_action = m_toolbar->addAction(QIcon(":/icons/set-complement.svg"), tr("Complement"));
 	compl_action->setToolTip(tr("Get complement (A \u2216 B)"));
 
+	auto *merge_action = m_toolbar->addAction(QIcon(":/icons/layers.svg"), tr("Merge"));
+	merge_action->setToolTip(tr("Horizontal merge: add columns from another table"));
+
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);
 	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -134,6 +137,7 @@ void DatasetView::setupUi()
 	connect(union_action, &QAction::triggered, this, &DatasetView::onUnion);
 	connect(intersect_action, &QAction::triggered, this, &DatasetView::onIntersection);
 	connect(compl_action, &QAction::triggered, this, &DatasetView::onComplement);
+	connect(merge_action, &QAction::triggered, this, &DatasetView::onMerge);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &DatasetView::onContextMenu);
 }
 
@@ -352,6 +356,223 @@ void DatasetView::onComplement()
 	try
 	{
 		auto result = m_ds->complement(*other, String(name.toUtf8().constData()));
+		Project::updated();
+		emit datasetCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+// ── Merge ──────────────────────────────────────────────────
+
+Handle<DataTable> DatasetView::pickDataTable(const QString &title)
+{
+	auto concordances = Project::get()->get_concordances();
+	auto datasets = Project::get()->get_datasets();
+	QStringList names;
+
+	for (auto &d : datasets)
+	{
+		if (d.get() != m_ds.get())
+			names << QString::fromUtf8(d->label().data(), (int) d->label().size());
+	}
+	for (auto &c : concordances)
+	{
+		names << QString::fromUtf8(c->label().data(), (int) c->label().size());
+	}
+
+	if (names.isEmpty())
+	{
+		QMessageBox::information(this, title, tr("No other data tables available."));
+		return {};
+	}
+
+	bool ok;
+	auto choice = QInputDialog::getItem(this, title, tr("Select data table:"), names, 0, false, &ok);
+	if (!ok) return {};
+
+	for (auto &d : datasets)
+	{
+		auto lbl = QString::fromUtf8(d->label().data(), (int) d->label().size());
+		if (lbl == choice && d.get() != m_ds.get())
+		{
+			d->open();
+			return d;
+		}
+	}
+	for (auto &c : concordances)
+	{
+		auto lbl = QString::fromUtf8(c->label().data(), (int) c->label().size());
+		if (lbl == choice)
+		{
+			c->open();
+			return c;
+		}
+	}
+
+	return {};
+}
+
+void DatasetView::onMerge()
+{
+	auto other = pickDataTable(tr("Merge tables"));
+	if (!other) return;
+
+	// Check row count compatibility.
+	if (m_ds->row_count() != other->row_count())
+	{
+		QMessageBox::critical(this, tr("Error"),
+			tr("Cannot merge: tables have different numbers of rows (%1 vs %2).")
+				.arg((int) m_ds->row_count()).arg((int) other->row_count()));
+		return;
+	}
+
+	// ── If the other table is a Concordance, the result must be a Concordance. ──
+	// We flip the perspective: the concordance is the base and this dataset's columns are merged into it.
+	auto *other_conc = dynamic_cast<Concordance *>(other.get());
+	if (other_conc)
+	{
+		auto a_cols = other_conc->column_count(); // A = concordance (base)
+		auto b_cols = m_ds->column_count();       // B = this dataset
+		auto rows = other_conc->row_count();
+
+		std::map<String, intptr_t> a_headers;
+		for (intptr_t j = 1; j <= a_cols; j++) {
+			a_headers[other_conc->get_header(j)] = j;
+		}
+
+		Array<std::pair<String, intptr_t>> columns_to_add;
+
+		for (intptr_t j = 1; j <= b_cols; j++)
+		{
+			auto header = m_ds->get_header(j);
+			auto it = a_headers.find(header);
+
+			if (it == a_headers.end())
+			{
+				columns_to_add.append(std::make_pair(header, j));
+			}
+			else
+			{
+				bool same = true;
+				for (intptr_t i = 1; i <= rows; i++)
+				{
+					if (other_conc->get_cell(i, it->second) != m_ds->get_cell(i, j)) {
+						same = false;
+						break;
+					}
+				}
+
+				if (!same)
+				{
+					auto qheader = QString::fromUtf8(header.data(), (int) header.size());
+					auto answer = QMessageBox::question(this, tr("Column conflict"),
+						tr("Column \"%1\" has different values.\nAdd the dataset's values as \"%1 (B)\"?")
+							.arg(qheader),
+						QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+					if (answer == QMessageBox::Yes)
+					{
+						auto suffixed = header;
+						suffixed.append(" (B)");
+						columns_to_add.append(std::make_pair(suffixed, j));
+					}
+				}
+			}
+		}
+
+		if (columns_to_add.empty())
+		{
+			QMessageBox::information(this, tr("Merge"),
+				tr("No new columns to add."));
+			return;
+		}
+
+		bool ok;
+		auto name = QInputDialog::getText(this, tr("Merge"), tr("Name for the result:"),
+			QLineEdit::Normal, tr("Merged"), &ok);
+		if (!ok || name.isEmpty()) return;
+
+		try
+		{
+			// The concordance merges with this dataset (dataset columns are B).
+			auto result = other_conc->merge(*m_ds, String(name.toUtf8().constData()), columns_to_add);
+			Project::updated();
+			emit concordanceCreated(result);
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+		}
+		return;
+	}
+
+	// ── Other table is a Dataset → result is a Dataset. ──
+	auto a_cols = m_ds->column_count();
+	auto b_cols = other->column_count();
+	auto rows = m_ds->row_count();
+
+	std::map<String, intptr_t> a_headers;
+	for (intptr_t j = 1; j <= a_cols; j++) {
+		a_headers[m_ds->get_header(j)] = j;
+	}
+
+	Array<std::pair<String, intptr_t>> columns_to_add;
+	Array<std::pair<intptr_t, intptr_t>> columns_to_overwrite;
+
+	for (intptr_t j = 1; j <= b_cols; j++)
+	{
+		auto header = other->get_header(j);
+		auto it = a_headers.find(header);
+
+		if (it == a_headers.end())
+		{
+			columns_to_add.append(std::make_pair(header, j));
+		}
+		else
+		{
+			bool same = true;
+			for (intptr_t i = 1; i <= rows; i++)
+			{
+				if (m_ds->get_cell(i, it->second) != other->get_cell(i, j)) {
+					same = false;
+					break;
+				}
+			}
+
+			if (!same)
+			{
+				auto qheader = QString::fromUtf8(header.data(), (int) header.size());
+				auto answer = QMessageBox::question(this, tr("Column conflict"),
+					tr("Column \"%1\" has different values.\nOverwrite with values from B?")
+						.arg(qheader),
+					QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+				if (answer == QMessageBox::Yes)
+				{
+					columns_to_overwrite.append(std::make_pair(it->second, j));
+				}
+			}
+		}
+	}
+
+	if (columns_to_add.empty() && columns_to_overwrite.empty())
+	{
+		QMessageBox::information(this, tr("Merge"),
+			tr("No new columns to add and no columns to overwrite."));
+		return;
+	}
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Merge"), tr("Name for the result:"),
+		QLineEdit::Normal, tr("Merged"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		auto result = m_ds->merge(*other, String(name.toUtf8().constData()), columns_to_add, columns_to_overwrite);
 		Project::updated();
 		emit datasetCreated(result);
 	}

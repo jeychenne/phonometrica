@@ -85,11 +85,23 @@ Concordance::Concordance(const Concordance &other) :
 	m_has_duration = other.m_has_duration;
 	m_duration_in_ms = other.m_duration_in_ms;
 
+	m_aux_columns = other.m_aux_columns;
+	m_aux_pitch_st = other.m_aux_pitch_st;
+	m_aux_pitch_erb = other.m_aux_pitch_erb;
+	m_aux_formant_erb = other.m_aux_formant_erb;
+	m_aux_formant_bark = other.m_aux_formant_bark;
+
+	m_label = other.m_label;
+
 	m_matches.reserve(other.m_matches.size());
 
 	for (auto &m : other.m_matches) {
 		m_matches.append(std::make_unique<Match>(*m));
 	}
+
+	m_context = other.m_context;
+
+	m_loaded = true;
 	m_content_modified = true;
 }
 
@@ -413,6 +425,19 @@ String Concordance::get_default_header(intptr_t j) const
 		j -= eff;
 	}
 
+	// Auxiliary columns from merge
+	if (!m_aux_columns.empty())
+	{
+		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		{
+			int dw = aux_col_display_width(c);
+			if (j <= dw) {
+				return aux_display_header(c, j);
+			}
+			j -= dw;
+		}
+	}
+
 	// We are now ready to consume the properties. Switch to base 0 because
 	// we'll use an iterator.
 	j--;
@@ -727,6 +752,19 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 		j -= eff;
 	}
 
+	// Auxiliary columns from merge
+	if (!m_aux_columns.empty())
+	{
+		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		{
+			int dw = aux_col_display_width(c);
+			if (j <= dw) {
+				return aux_display_value(c, mi, j);
+			}
+			j -= dw;
+		}
+	}
+
 	// We are now ready to consume the properties. Switch to base 0 because
 	// we'll use an iterator.
 	j--;
@@ -873,7 +911,7 @@ intptr_t Concordance::row_count() const
 intptr_t Concordance::column_count() const
 {
 	// Add 1 for description.
-	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + duration_column_count() + effective_extra_count() + Property::category_count() + 1;
+	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + duration_column_count() + effective_extra_count() + aux_display_column_count() + Property::category_count() + 1;
 }
 
 
@@ -1056,6 +1094,47 @@ void Concordance::load()
 						m_header_aliases[String(key_attr.value())] = String(child.text().get());
 					}
 				}
+			}
+		}
+		else if (node.name() == str("AuxColumns"))
+		{
+			m_aux_pitch_st = node.attribute("pitch_st").as_bool(false);
+			m_aux_pitch_erb = node.attribute("pitch_erb").as_bool(false);
+			m_aux_formant_erb = node.attribute("formant_erb").as_bool(false);
+			m_aux_formant_bark = node.attribute("formant_bark").as_bool(false);
+
+			for (auto col_node = node.first_child(); col_node; col_node = col_node.next_sibling())
+			{
+				if (col_node.name() != str("Column")) continue;
+				auto hdr_attr = col_node.attribute("header");
+				if (!hdr_attr) continue;
+
+				AuxColumn col;
+				col.header = String(hdr_attr.value());
+
+				auto type_attr = col_node.attribute("type");
+				std::string_view type_str = type_attr ? type_attr.value() : "text";
+				if (type_str == "numeric")        col.type = AuxColumnType::Numeric;
+				else if (type_str == "formant_hz") col.type = AuxColumnType::FormantHz;
+				else if (type_str == "bandwidth_hz") col.type = AuxColumnType::BandwidthHz;
+				else if (type_str == "pitch_hz")   col.type = AuxColumnType::PitchHz;
+				else if (type_str == "intensity_db") col.type = AuxColumnType::IntensityDb;
+				else                               col.type = AuxColumnType::Text;
+
+				if (col.type == AuxColumnType::PitchHz) {
+					col.semitone_ref = col_node.attribute("semitone_ref").as_double(100);
+				}
+
+				for (auto cell = col_node.first_child(); cell; cell = cell.next_sibling())
+				{
+					if (cell.name() != str("Cell")) continue;
+					if (col.type == AuxColumnType::Text) {
+						col.text_data.append(String(cell.text().get()));
+					} else {
+						col.num_data.append(String(cell.text().get()).to_float());
+					}
+				}
+				m_aux_columns.append(std::move(col));
 			}
 		}
 		else if (node.name() == str("Metadata"))
@@ -1483,6 +1562,49 @@ void Concordance::write()
 		}
 	}
 
+	// ── Auxiliary columns from merge ──────────────────────────────────────
+	if (!m_aux_columns.empty())
+	{
+		auto aux_node = root.append_child("AuxColumns");
+		if (m_aux_pitch_st) aux_node.append_attribute("pitch_st").set_value(true);
+		if (m_aux_pitch_erb) aux_node.append_attribute("pitch_erb").set_value(true);
+		if (m_aux_formant_erb) aux_node.append_attribute("formant_erb").set_value(true);
+		if (m_aux_formant_bark) aux_node.append_attribute("formant_bark").set_value(true);
+
+		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		{
+			auto &col = m_aux_columns[c];
+			auto col_node = aux_node.append_child("Column");
+			col_node.append_attribute("header").set_value(col.header.data());
+
+			const char *type_str = "text";
+			switch (col.type) {
+			case AuxColumnType::Numeric:     type_str = "numeric"; break;
+			case AuxColumnType::FormantHz:   type_str = "formant_hz"; break;
+			case AuxColumnType::BandwidthHz: type_str = "bandwidth_hz"; break;
+			case AuxColumnType::PitchHz:     type_str = "pitch_hz"; break;
+			case AuxColumnType::IntensityDb: type_str = "intensity_db"; break;
+			default: break;
+			}
+			col_node.append_attribute("type").set_value(type_str);
+
+			if (col.type == AuxColumnType::PitchHz) {
+				col_node.append_attribute("semitone_ref").set_value(
+					String::format("%.1f", col.semitone_ref).data());
+			}
+
+			auto nrows = (col.type == AuxColumnType::Text) ? col.text_data.size() : col.num_data.size();
+			for (intptr_t r = 1; r <= nrows; r++)
+			{
+				if (col.type == AuxColumnType::Text) {
+					add_data_node(col_node, "Cell", col.text_data[r]);
+				} else {
+					add_data_node(col_node, "Cell", String::format("%.17g", col.num_data[r]));
+				}
+			}
+		}
+	}
+
 	// ── Matches ───────────────────────────────────────────────────────────
 	auto msg = String("Writing concordance %1").arg(label());
 	request_progress(msg, "Writing matches...", (int)m_matches.size());
@@ -1535,7 +1657,7 @@ bool Concordance::is_file_info_column(intptr_t col) const
 
 bool Concordance::is_metadata_column(intptr_t col) const
 {
-	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count();
+	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count() + aux_display_column_count();
 	return col > bound;
 }
 
@@ -1746,6 +1868,262 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	parent->append(conc, false);
 
 	return conc;
+}
+
+bool Concordance::matches_equal(const Concordance &other) const
+{
+	if (m_matches.size() != other.m_matches.size()) return false;
+
+	for (intptr_t i = 1; i <= m_matches.size(); i++)
+	{
+		if (*m_matches[i] != *other.m_matches[i]) return false;
+	}
+	return true;
+}
+
+Handle<Concordance> Concordance::merge(const DataTable &other, const String &label,
+                                       const Array<std::pair<String, intptr_t>> &columns_to_add) const
+{
+	if (row_count() != other.row_count()) {
+		throw error("Cannot merge: tables have different numbers of rows (% vs %)", row_count(), other.row_count());
+	}
+
+	// Start with a copy of this concordance.
+	auto result = make_handle<Concordance>(*this);
+	result->m_loaded = true;
+	result->set_label(label, false);
+
+	auto nrows = m_matches.size();
+	auto *other_conc = dynamic_cast<const Concordance *>(&other);
+
+	for (intptr_t idx = 1; idx <= columns_to_add.size(); idx++)
+	{
+		auto &[hdr, b_col] = columns_to_add[idx];
+
+		AuxColumn col;
+		col.header = hdr;
+
+		// Detect type from source
+		if (other_conc && other_conc->is_stored_measurement(b_col))
+		{
+			col.type = other_conc->get_measurement_type(b_col);
+			if (col.type == AuxColumnType::PitchHz) {
+				col.semitone_ref = other_conc->semitone_reference();
+			}
+			col.num_data.resize(nrows);
+			for (intptr_t i = 1; i <= nrows; i++) {
+				col.num_data[i] = other_conc->get_raw_measurement_value(i, b_col);
+			}
+		}
+		else
+		{
+			// Try to parse as numeric
+			bool all_numeric = true;
+			Array<double> nums;
+			nums.resize(nrows);
+			for (intptr_t i = 1; i <= nrows; i++)
+			{
+				auto cell = other.get_cell(i, b_col);
+				if (cell == "nan" || cell.empty()) {
+					nums[i] = std::nan("");
+				} else {
+					bool ok;
+					nums[i] = cell.to_float(&ok);
+					if (!ok) { all_numeric = false; break; }
+				}
+			}
+
+			if (all_numeric)
+			{
+				col.type = AuxColumnType::Numeric;
+				col.num_data = std::move(nums);
+			}
+			else
+			{
+				col.type = AuxColumnType::Text;
+				col.text_data.resize(nrows);
+				for (intptr_t i = 1; i <= nrows; i++) {
+					col.text_data[i] = other.get_cell(i, b_col);
+				}
+			}
+		}
+
+		result->m_aux_columns.append(std::move(col));
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
+}
+
+// ── Aux column display logic ────────────────────────────────────────────────
+
+intptr_t Concordance::aux_display_column_count() const
+{
+	intptr_t total = 0;
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+		total += aux_col_display_width(c);
+	}
+	return total;
+}
+
+int Concordance::aux_col_display_width(intptr_t c) const
+{
+	auto &col = m_aux_columns[c];
+	switch (col.type) {
+	case AuxColumnType::PitchHz:
+		return 1 + (m_aux_pitch_st ? 1 : 0) + (m_aux_pitch_erb ? 1 : 0);
+	case AuxColumnType::FormantHz:
+	case AuxColumnType::BandwidthHz:
+		return 1 + (m_aux_formant_erb ? 1 : 0) + (m_aux_formant_bark ? 1 : 0);
+	default:
+		return 1;
+	}
+}
+
+String Concordance::aux_display_header(intptr_t c, intptr_t k) const
+{
+	auto &col = m_aux_columns[c];
+	if (k == 1) return col.header;
+
+	// Derived headers
+	int derived = (int)(k - 2); // 0-based within derived columns
+
+	switch (col.type) {
+	case AuxColumnType::PitchHz:
+		if (m_aux_pitch_st && derived == 0) {
+			return col.header + " [ST]";
+		}
+		return col.header + " [ERB]";
+	case AuxColumnType::FormantHz:
+	case AuxColumnType::BandwidthHz:
+		if (m_aux_formant_erb && derived == 0) {
+			return col.header + " [ERB]";
+		}
+		return col.header + " [Bark]";
+	default:
+		return col.header;
+	}
+}
+
+String Concordance::aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const
+{
+	auto &col = m_aux_columns[c];
+
+	if (col.type == AuxColumnType::Text) {
+		return (mi <= col.text_data.size()) ? col.text_data[mi] : String();
+	}
+
+	// All other types use num_data
+	if (mi > col.num_data.size()) return String();
+	double val = col.num_data[mi];
+
+	if (k == 1) {
+		// Base value
+		if (std::isnan(val)) return "nan";
+		if (col.type == AuxColumnType::IntensityDb)
+			return String::format("%.1f", val);
+		if (col.type == AuxColumnType::Numeric) {
+			if (std::isfinite(val) && val == std::floor(val))
+				return String::convert(intptr_t(val));
+			return String::convert(val);
+		}
+		// FormantHz, BandwidthHz, PitchHz — format with hz_decimals
+		int hz_dec = 1;
+		try { hz_dec = Settings::get_int("display", "hz_decimals"); }
+		catch (...) { }
+		char fmt[16];
+		std::snprintf(fmt, sizeof(fmt), "%%.%df", hz_dec);
+		return String::format(fmt, val);
+	}
+
+	// Derived value
+	if (!std::isfinite(val) || val <= 0) return "nan";
+
+	int derived = (int)(k - 2);
+
+	if (col.type == AuxColumnType::PitchHz) {
+		if (m_aux_pitch_st && derived == 0) {
+			return String::format("%.2f", speech::hertz_to_semitones(val, col.semitone_ref));
+		}
+		return String::format("%.2f", speech::hertz_to_erb(val));
+	}
+
+	if (col.type == AuxColumnType::FormantHz || col.type == AuxColumnType::BandwidthHz) {
+		if (m_aux_formant_erb && derived == 0) {
+			return String::format("%.3f", speech::hertz_to_erb(val));
+		}
+		return String::format("%.3f", speech::hertz_to_bark(val));
+	}
+
+	return "nan";
+}
+
+bool Concordance::has_aux_pitch() const
+{
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+		if (m_aux_columns[c].type == AuxColumnType::PitchHz) return true;
+	}
+	return false;
+}
+
+bool Concordance::has_aux_formant() const
+{
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+		auto t = m_aux_columns[c].type;
+		if (t == AuxColumnType::FormantHz || t == AuxColumnType::BandwidthHz) return true;
+	}
+	return false;
+}
+
+void Concordance::set_aux_pitch_semitones(bool b) { m_aux_pitch_st = b; }
+void Concordance::set_aux_pitch_erb(bool b) { m_aux_pitch_erb = b; }
+void Concordance::set_aux_formant_erb(bool b) { m_aux_formant_erb = b; }
+void Concordance::set_aux_formant_bark(bool b) { m_aux_formant_bark = b; }
+
+// ── Measurement column introspection (for merge) ────────────────────────────
+
+bool Concordance::is_stored_measurement(intptr_t col) const
+{
+	if (!is_measurement_column(col)) return false;
+	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
+	return stored_index_for_column(extra_j, 1) >= 0;
+}
+
+Concordance::AuxColumnType Concordance::get_measurement_type(intptr_t col) const
+{
+	if (!is_measurement_column(col)) return AuxColumnType::Numeric;
+
+	if (m_is_intensity) return AuxColumnType::IntensityDb;
+	if (m_is_pitch) return AuxColumnType::PitchHz;
+
+	// Formant: determine if formant Hz or bandwidth Hz
+	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
+	int d0 = (int)(extra_j - 1); // 0-based within extra columns
+	int dfpp = display_fields_per_point();
+	if (dfpp == 0) return AuxColumnType::Numeric;
+
+	int within_group = d0 % dfpp;
+	int nf = m_nformant;
+	if (within_group < nf) return AuxColumnType::FormantHz;
+	if (m_has_bandwidth && within_group < nf + nf) return AuxColumnType::BandwidthHz;
+
+	return AuxColumnType::Numeric;
+}
+
+double Concordance::get_raw_measurement_value(intptr_t row, intptr_t col) const
+{
+	if (!is_measurement_column(col)) return std::nan("");
+
+	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
+	intptr_t stored_idx = stored_index_for_column(extra_j, row);
+	if (stored_idx < 0) return std::nan("");
+
+	intptr_t mi = (m_layout == Layout::Long && has_measurement_data()) ? match_for_row(row) : row;
+	auto &meas = m_matches[mi]->measurements;
+	if (stored_idx < (intptr_t)meas.size()) return meas[stored_idx];
+	return std::nan("");
 }
 
 bool Concordance::update_match(intptr_t i, intptr_t target)

@@ -141,6 +141,7 @@ private:
 
 	void updateWindowTitle();
 	void updateRecentProjects(const String &mostRecent = String());
+	void updateSaveActions();
 	void rebuildRecentMenu();
 	QString lastDirectory() const;
 	void setLastDirectory(const QString &path);
@@ -195,6 +196,9 @@ private:
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;
+	QAction *m_open_recent_action = nullptr;
+	QAction *m_save_action = nullptr;
+	QAction *m_save_as_action = nullptr;
 
 	// Central area: tabbed panels (each panel contains one or more views).
 	QTabWidget *m_viewer = nullptr;

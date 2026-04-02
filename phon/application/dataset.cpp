@@ -520,4 +520,61 @@ Handle<Dataset> Dataset::complement(const Dataset &other, const String &label) c
 
 	return result;
 }
+
+Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
+                               const Array<std::pair<String, intptr_t>> &columns_to_add,
+                               const Array<std::pair<intptr_t, intptr_t>> &columns_to_overwrite) const
+{
+	if (nrow != other.row_count()) {
+		throw error("Cannot merge: tables have different numbers of rows (% vs %)", nrow, other.row_count());
+	}
+
+	// Start with a copy of this dataset.
+	auto result = make_handle<Dataset>(*this);
+	result->m_loaded = true;
+	result->set_label(label, false);
+
+	// Overwrite columns: replace A's column data with B's cell values.
+	for (auto &[a_col, b_col] : columns_to_overwrite)
+	{
+		auto *col = result->m_columns[a_col].get();
+		for (intptr_t i = 1; i <= nrow; i++)
+		{
+			auto val = other.get_cell(i, b_col);
+			switch (col->type())
+			{
+			case ColumnType::Numeric:
+			{
+				bool ok;
+				double d = val.to_float(&ok);
+				result->cast_num(col)->set(i, ok ? d : std::nan(""));
+				break;
+			}
+			case ColumnType::Boolean:
+				result->cast_bool(col)->set(i, val.to_bool());
+				break;
+			default:
+				result->cast_string(col)->set(i, val);
+				break;
+			}
+		}
+	}
+
+	// Add new columns from B as text columns.
+	for (auto &[hdr, b_col] : columns_to_add)
+	{
+		auto new_col = std::make_unique<TColumn<String>>(nrow);
+		for (intptr_t i = 1; i <= nrow; i++) {
+			new_col->set(i, other.get_cell(i, b_col));
+		}
+		result->m_labels.append(hdr);
+		result->m_columns.append(std::move(new_col));
+		result->ncol++;
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
+}
 } // namespace phonometrica

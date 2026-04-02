@@ -91,6 +91,13 @@ public:
 	/// Throws an error with a descriptive message if the columns are incompatible.
 	void check_columns_compatible(const Dataset &other) const;
 
+	/// Horizontal merge: add columns from `other` to a copy of this dataset.
+	/// `columns_to_add`: (header_name, B_column_index) pairs for new columns.
+	/// `columns_to_overwrite`: (A_column_index, B_column_index) pairs where B overwrites A.
+	Handle<Dataset> merge(const DataTable &other, const String &label,
+	                      const Array<std::pair<String, intptr_t>> &columns_to_add,
+	                      const Array<std::pair<intptr_t, intptr_t>> &columns_to_overwrite) const;
+
 	static void initialize(Runtime &rt);
 
 private:

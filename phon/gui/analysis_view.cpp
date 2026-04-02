@@ -1653,7 +1653,7 @@ bool AnalysisView::isColumnNumeric(const String &col_name) const
 	for (intptr_t r = 1; r <= nr && checked < 20; r++)
 	{
 		auto val = dt->get_cell(r, col);
-		if (val.empty()) continue;
+		if (val.empty() || val == "nan" || val == "NaN" || val == "NA") continue;
 		bool ok;
 		val.to_float(&ok);
 		if (!ok) return false;
