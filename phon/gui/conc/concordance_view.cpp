@@ -160,6 +160,11 @@ void ConcordanceView::setupUi()
 	split_action->setChecked(m_open_in_split);
 	split_action->setToolTip(tr("When checked, open the annotation beside the concordance; otherwise open it in a new tab"));
 
+	auto *highlight_action = display_menu->addAction(tr("Highlight targets"));
+	highlight_action->setCheckable(true);
+	highlight_action->setChecked(m_conc->highlight_targets());
+	highlight_action->setToolTip(tr("Show target columns in bold red"));
+
 	auto *display_action = new QAction(QIcon(":/icons/display.svg"), tr("Display settings"), this);
 	display_action->setMenu(display_menu);
 	m_toolbar->addAction(display_action);
@@ -341,6 +346,13 @@ void ConcordanceView::setupUi()
 
 	connect(split_action, &QAction::toggled, this, [this](bool checked) {
 		m_open_in_split = checked;
+	});
+
+	connect(highlight_action, &QAction::toggled, this, [this](bool checked) {
+		m_conc->set_highlight_targets(checked);
+		m_conc->modify();
+		m_model->refreshAll();
+		emit titleChanged(label());
 	});
 
 	// Header double-click for column renaming

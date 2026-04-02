@@ -84,6 +84,7 @@ Concordance::Concordance(const Concordance &other) :
 
 	m_has_duration = other.m_has_duration;
 	m_duration_in_ms = other.m_duration_in_ms;
+	m_highlight_targets = other.m_highlight_targets;
 
 	m_aux_columns = other.m_aux_columns;
 	m_aux_pitch_st = other.m_aux_pitch_st;
@@ -1305,6 +1306,11 @@ void Concordance::parse_options_from_xml(xml_node root)
 			auto unit_attr = node.attribute("unit");
 			m_duration_in_ms = unit_attr && unit_attr.value() == str("ms");
 		}
+		else if (node.name() == str("HighlightTargets"))
+		{
+			auto attr = node.attribute("enabled");
+			m_highlight_targets = !attr || attr.as_bool(); // default true
+		}
 		else
 		{
 			throw error("Invalid option for concordance: %", node.name());
@@ -1482,6 +1488,10 @@ void Concordance::write()
 		auto dur_node = option_node.append_child("Duration");
 		dur_node.append_attribute("enabled").set_value(true);
 		dur_node.append_attribute("unit").set_value(m_duration_in_ms ? "ms" : "s");
+	}
+
+	if (!m_highlight_targets) {
+		option_node.append_child("HighlightTargets").append_attribute("enabled").set_value(false);
 	}
 
 	auto matches_node = root.append_child("Matches");
