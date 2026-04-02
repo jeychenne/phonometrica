@@ -100,7 +100,19 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 			auto qmsg = QString::fromUtf8(msg.data(), (int) msg.size());
 			QMessageBox::warning(this, tr("Warning"), qmsg);
 		});
+		project->modification_changed.connect([this]() {
+			updateSaveActions();
+			updateWindowTitle();
+		});
 	}
+
+	// When any document is modified, update the save actions and refresh
+	// the file manager so that the modification star appears immediately.
+	Document::file_modified.connect([this]() {
+		updateSaveActions();
+		updateWindowTitle();
+		m_file_manager->refresh();
+	});
 
 	updateWindowTitle();
 

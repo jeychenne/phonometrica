@@ -76,6 +76,8 @@ bool DatasetModel::setData(const QModelIndex &index, const QVariant &value, int 
 	{
 		auto text = String(value.toString().toUtf8().constData());
 		m_ds->set_cell(row, col, text);
+		m_ds->set_content_modified(true);
+		Document::file_modified();
 		emit dataChanged(this->index(index.row(), 0),
 		                 this->index(index.row(), columnCount() - 1));
 		return true;
