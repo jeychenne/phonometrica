@@ -147,6 +147,16 @@ FileManager::FileManager(Project *project, QWidget *parent) :
 	m_project->metadata_updated.connect([this]() {
 		refresh();
 	});
+
+	// Preserve expanded directories across model resets (e.g. drag-and-drop).
+	connect(m_proxy, &QAbstractItemModel::modelAboutToBeReset, this, [this]() {
+		m_expanded_save.clear();
+		saveExpandedState(QModelIndex());
+	});
+	connect(m_proxy, &QAbstractItemModel::modelReset, this, [this]() {
+		restoreExpandedState(QModelIndex());
+		m_expanded_save.clear();
+	});
 }
 
 void FileManager::setupUi()
@@ -318,6 +328,39 @@ void FileManager::expandRoots()
 void FileManager::expandAll()
 {
 	m_tree->expandAll();
+}
+
+void FileManager::saveExpandedState(const QModelIndex &proxyParent)
+{
+	int rows = m_proxy->rowCount(proxyParent);
+	for (int r = 0; r < rows; r++)
+	{
+		auto proxyChild = m_proxy->index(r, 0, proxyParent);
+		if (m_tree->isExpanded(proxyChild))
+		{
+			auto sourceChild = toSource(proxyChild);
+			auto *elem = m_model->elementFromIndex(sourceChild);
+			if (elem)
+				m_expanded_save.insert(elem);
+			saveExpandedState(proxyChild);
+		}
+	}
+}
+
+void FileManager::restoreExpandedState(const QModelIndex &proxyParent)
+{
+	int rows = m_proxy->rowCount(proxyParent);
+	for (int r = 0; r < rows; r++)
+	{
+		auto proxyChild = m_proxy->index(r, 0, proxyParent);
+		auto sourceChild = toSource(proxyChild);
+		auto *elem = m_model->elementFromIndex(sourceChild);
+		if (elem && m_expanded_save.count(elem))
+		{
+			m_tree->expand(proxyChild);
+			restoreExpandedState(proxyChild);
+		}
+	}
 }
 
 // ---------------------------------------------------------
