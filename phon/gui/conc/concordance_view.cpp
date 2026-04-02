@@ -499,7 +499,10 @@ bool ConcordanceView::save()
 
 void ConcordanceView::discardChanges()
 {
-	m_conc->discard_changes();
+	if (m_conc->has_path())
+		m_conc->reload();
+	else
+		m_conc->discard_changes();
 }
 
 // ── Toolbar actions ─────────────────────────────────────

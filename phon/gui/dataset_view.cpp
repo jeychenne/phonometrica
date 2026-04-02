@@ -211,6 +211,11 @@ void DatasetView::setupUi()
 		bool is_filtered = has_rules && m_proxy->visibleRowCount() < m_model->rowCount();
 		m_subset_action->setEnabled(is_filtered);
 	});
+
+	// Update the tab label (adds/removes the modification star) when a cell is edited.
+	connect(m_model, &QAbstractItemModel::dataChanged, this, [this]() {
+		emit titleChanged(label());
+	});
 }
 
 // ── View interface ──────────────────────────────────────
@@ -267,7 +272,10 @@ bool DatasetView::save()
 
 void DatasetView::discardChanges()
 {
-	m_ds->discard_changes();
+	if (m_ds->has_path())
+		m_ds->reload();
+	else
+		m_ds->discard_changes();
 }
 
 // ── Toolbar actions ─────────────────────────────────────

@@ -74,6 +74,9 @@ void Annotation::load()
 		return;
 	}
 
+	// Clear existing data so load() is idempotent on reload.
+	m_layers.clear();
+
 	switch (m_type)
 	{
 		case Type::Native:
