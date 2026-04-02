@@ -30,11 +30,14 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <algorithm>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/outlier_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/analysis/column_metrics.hpp>
 
 namespace phonometrica {
 
@@ -117,6 +120,24 @@ void ConcordanceView::setupUi()
 
 	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
 	analyze_action->setToolTip(tr("Open analysis view for this concordance"));
+
+	m_toolbar->addSeparator();
+
+	// -- Filter / Subset --
+	m_filter_action = m_toolbar->addAction(QIcon(":/icons/list-filter.svg"), tr("Filter"));
+	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
+	m_filter_action->setCheckable(true);
+
+	m_clear_filter_action = m_toolbar->addAction(QIcon(":/icons/filter-x.svg"), tr("Clear filters"));
+	m_clear_filter_action->setToolTip(tr("Remove all filter rules"));
+	m_clear_filter_action->setEnabled(false);
+
+	m_subset_action = m_toolbar->addAction(QIcon(":/icons/scissors.svg"), tr("Subset"));
+	m_subset_action->setToolTip(tr("Create a new concordance from the visible (filtered) rows"));
+	m_subset_action->setEnabled(false);
+
+	auto *metric_action = m_toolbar->addAction(QIcon(":/icons/sigma.svg"), tr("Metric column"));
+	metric_action->setToolTip(tr("Compute a distance metric (z-score, etc.) for outlier detection"));
 
 	m_toolbar->addSeparator();
 
@@ -273,6 +294,16 @@ void ConcordanceView::setupUi()
 
 	layout->addWidget(m_toolbar);
 
+	// ── Filter bar (hidden by default) ────────────────
+	m_model = new ConcordanceModel(m_conc, this);
+	m_proxy = new DataFilterProxyModel(this);
+	m_proxy->setSourceModel(m_model);
+
+	m_filter_bar = new FilterBar(m_proxy, this);
+	m_filter_bar->hide();
+	setupFilterBar();
+	layout->addWidget(m_filter_bar);
+
 	// ── Count label + active target spinner ────────────
 	auto *info_row = new QHBoxLayout;
 	m_count_label = new QLabel;
@@ -289,9 +320,8 @@ void ConcordanceView::setupUi()
 	layout->addLayout(info_row);
 
 	// ── Table ──────────────────────────────────────────
-	m_model = new ConcordanceModel(m_conc, this);
 	m_table = new QTableView;
-	m_table->setModel(m_model);
+	m_table->setModel(m_proxy);
 	m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
 	m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	// Allow double-click editing on editable cells (measurement columns).
@@ -302,6 +332,13 @@ void ConcordanceView::setupUi()
 	m_table->horizontalHeader()->setStretchLastSection(false);
 	m_table->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_table->setSortingEnabled(false);
+
+	// Sorting is handled via the header context menu (right-click),
+	// not by clicking — this avoids interfering with double-click rename.
+	auto *hdr = m_table->horizontalHeader();
+	hdr->setSectionsClickable(false);
+	hdr->setSortIndicatorShown(false);
+	hdr->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	// Monospace font for the table body.
 	QFont mono("monospace", m_table->font().pointSize());
@@ -332,6 +369,10 @@ void ConcordanceView::setupUi()
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_conc);
 	});
+	connect(m_filter_action, &QAction::toggled, this, &ConcordanceView::onToggleFilter);
+	connect(m_clear_filter_action, &QAction::triggered, this, &ConcordanceView::onClearFilters);
+	connect(m_subset_action, &QAction::triggered, this, &ConcordanceView::onCreateSubset);
+	connect(metric_action, &QAction::triggered, this, &ConcordanceView::onAddMetricColumn);
 	connect(m_table, &QTableView::doubleClicked, this, &ConcordanceView::onDoubleClick);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &ConcordanceView::onContextMenu);
 
@@ -355,9 +396,43 @@ void ConcordanceView::setupUi()
 		emit titleChanged(label());
 	});
 
-	// Header double-click for column renaming
-	connect(m_table->horizontalHeader(), &QHeaderView::sectionDoubleClicked,
-	        this, &ConcordanceView::onHeaderDoubleClick);
+	// Header context menu: sort + rename
+	connect(hdr, &QHeaderView::customContextMenuRequested, this, [this](const QPoint &pos) {
+		auto *header = m_table->horizontalHeader();
+		int section = header->logicalIndexAt(pos);
+		if (section < 0) return;
+
+		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
+		QMenu menu(this);
+		menu.addAction(tr("Sort \"%1\" ascending").arg(col_name), this, [this, section, header]() {
+			m_proxy->sort(section, Qt::AscendingOrder);
+			header->setSortIndicator(section, Qt::AscendingOrder);
+			header->setSortIndicatorShown(true);
+		});
+		menu.addAction(tr("Sort \"%1\" descending").arg(col_name), this, [this, section, header]() {
+			m_proxy->sort(section, Qt::DescendingOrder);
+			header->setSortIndicator(section, Qt::DescendingOrder);
+			header->setSortIndicatorShown(true);
+		});
+		menu.addSeparator();
+		menu.addAction(tr("Remove sort"), this, [this, header]() {
+			m_proxy->sort(-1, Qt::AscendingOrder);
+			header->setSortIndicatorShown(false);
+		});
+		menu.addSeparator();
+		menu.addAction(tr("Rename column..."), this, [this, section]() {
+			onHeaderDoubleClick(section);
+		});
+		menu.exec(header->mapToGlobal(pos));
+	});
+
+	connect(m_proxy, &DataFilterProxyModel::filterChanged, this, [this]() {
+		updateCountLabel();
+		bool has_rules = m_proxy->ruleCount() > 0;
+		m_clear_filter_action->setEnabled(has_rules);
+		bool is_filtered = has_rules && m_proxy->visibleRowCount() < m_model->rowCount();
+		m_subset_action->setEnabled(is_filtered);
+	});
 }
 
 // ── View interface ──────────────────────────────────────
@@ -437,7 +512,7 @@ void ConcordanceView::onPlay()
 			tr("Select a single match to play."));
 		return;
 	}
-	playMatch(row);
+	playMatch(mapToSourceRow(row));
 }
 
 void ConcordanceView::onStop()
@@ -454,7 +529,7 @@ void ConcordanceView::onViewMatch()
 			tr("Select a single match to view."));
 		return;
 	}
-	viewMatch(row);
+	viewMatch(mapToSourceRow(row));
 }
 
 void ConcordanceView::onBookmark()
@@ -462,9 +537,10 @@ void ConcordanceView::onBookmark()
 	int row = selectedRow();
 	if (row < 0) return;
 
-	auto &match = m_conc->get_match(row + 1);
+	int src = mapToSourceRow(row);
+	auto &match = m_conc->get_match(src + 1);
 	int target = m_target_spin->value();
-	auto context = m_conc->get_context(row + 1);
+	auto context = m_conc->get_context(src + 1);
 
 	String title = match.get_value(target);
 	String notes;
@@ -478,11 +554,18 @@ void ConcordanceView::onBookmark()
 
 void ConcordanceView::onDeleteRows()
 {
-	auto rows = selectedRows();
-	if (rows.isEmpty()) return;
+	auto proxy_rows = selectedRows();
+	if (proxy_rows.isEmpty()) return;
 
-	for (int i = rows.size() - 1; i >= 0; i--)
-		m_model->removeMatch(rows[i]);
+	// Map proxy rows to source rows.
+	QList<int> source_rows;
+	for (int pr : proxy_rows) {
+		source_rows.append(mapToSourceRow(pr));
+	}
+	std::sort(source_rows.begin(), source_rows.end());
+
+	for (int i = source_rows.size() - 1; i >= 0; i--)
+		m_model->removeMatch(source_rows[i]);
 
 	m_conc->modify();
 	updateCountLabel();
@@ -943,7 +1026,9 @@ void ConcordanceView::onDoubleClick(const QModelIndex &index)
 {
 	if (!index.isValid()) return;
 
-	intptr_t col = index.column() + 1;
+	// Map the proxy column to source for the editable check.
+	auto source_idx = m_proxy->mapToSource(index);
+	intptr_t col = source_idx.column() + 1;
 
 	// If the cell is editable (measurement column), let the default editor handle it.
 	// The model's flags() returns Qt::ItemIsEditable for these cells.
@@ -951,7 +1036,7 @@ void ConcordanceView::onDoubleClick(const QModelIndex &index)
 		return;
 
 	// Otherwise, navigate to the match in the annotation.
-	viewMatch(index.row());
+	viewMatch(source_idx.row());
 }
 
 void ConcordanceView::onContextMenu(const QPoint &pos)
@@ -960,7 +1045,8 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 	if (!index.isValid()) return;
 
 	m_table->selectRow(index.row());
-	auto &match = m_conc->get_match(index.row() + 1);
+	int src = mapToSourceRow(index.row());
+	auto &match = m_conc->get_match(src + 1);
 
 	QMenu menu(this);
 
@@ -972,7 +1058,8 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 	menu.addSeparator();
 
 	// Edit cell — only for editable measurement columns
-	intptr_t col = index.column() + 1;
+	auto source_idx = m_proxy->mapToSource(index);
+	intptr_t col = source_idx.column() + 1;
 	if (m_conc->is_editable_measurement(col))
 	{
 		menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit cell"), this, [this, index]() {
@@ -992,19 +1079,30 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 void ConcordanceView::updateCountLabel()
 {
+	auto total = m_conc->row_count();
+	auto visible = m_proxy->visibleRowCount();
+
 	if (m_conc->layout() == Concordance::Layout::Long && m_conc->has_measurement_data())
 	{
-		auto nmatches = m_conc->row_count() / m_conc->measurement_points().size();
-		auto nrows = m_conc->row_count();
-		m_count_label->setText(tr("%1 match(es) \u00d7 %2 point(s) = %3 row(s)")
-			.arg((int) nmatches)
-			.arg((int) m_conc->measurement_points().size())
-			.arg((int) nrows));
+		auto npoints = (int) m_conc->measurement_points().size();
+		auto nmatches = total / npoints;
+		if (visible < (int) total) {
+			m_count_label->setText(tr("Showing %1 of %2 row(s) (%3 match(es) \u00d7 %4 point(s))")
+				.arg(visible).arg((int) total).arg((int) nmatches).arg(npoints));
+		}
+		else {
+			m_count_label->setText(tr("%1 match(es) \u00d7 %2 point(s) = %3 row(s)")
+				.arg((int) nmatches).arg(npoints).arg((int) total));
+		}
 	}
 	else
 	{
-		auto count = m_conc->row_count();
-		m_count_label->setText(tr("%1 match(es)").arg((int) count));
+		if (visible < (int) total) {
+			m_count_label->setText(tr("Showing %1 of %2 match(es)").arg(visible).arg((int) total));
+		}
+		else {
+			m_count_label->setText(tr("%1 match(es)").arg((int) total));
+		}
 	}
 }
 
@@ -1068,6 +1166,278 @@ QList<int> ConcordanceView::selectedRows() const
 		rows.append(idx.row());
 	std::sort(rows.begin(), rows.end());
 	return rows;
+}
+
+int ConcordanceView::mapToSourceRow(int proxyRow) const
+{
+	auto source_idx = m_proxy->mapToSource(m_proxy->index(proxyRow, 0));
+	return source_idx.row();
+}
+
+// ── Filter / Subset ────────────────────────────────────────
+
+void ConcordanceView::setupFilterBar()
+{
+	QStringList headers;
+	for (intptr_t j = 1; j <= m_conc->column_count(); j++) {
+		auto h = m_conc->get_header(j);
+		headers << QString::fromUtf8(h.data(), (int) h.size());
+	}
+
+	m_filter_bar->setColumns(headers,
+		// isNumeric callback: try to parse the first non-empty cell.
+		[this](int col) -> bool {
+			intptr_t c = col + 1;
+			for (intptr_t i = 1; i <= m_conc->row_count() && i <= 20; i++) {
+				auto cell = m_conc->get_cell(i, c);
+				if (cell.empty()) continue;
+				bool ok;
+				cell.to_float(&ok);
+				return ok;
+			}
+			return false;
+		},
+		// getLevels callback: collect unique values (sample first 5000 rows for speed).
+		[this](int col) -> QStringList {
+			QSet<QString> seen;
+			intptr_t c = col + 1;
+			intptr_t limit = std::min(m_conc->row_count(), (intptr_t)5000);
+			for (intptr_t i = 1; i <= limit; i++) {
+				auto cell = m_conc->get_cell(i, c);
+				auto qs = QString::fromUtf8(cell.data(), (int) cell.size());
+				seen.insert(qs);
+			}
+			QStringList levels(seen.begin(), seen.end());
+			levels.sort(Qt::CaseInsensitive);
+			return levels;
+		}
+	);
+}
+
+void ConcordanceView::onToggleFilter()
+{
+	bool show = m_filter_action->isChecked();
+	m_filter_bar->setVisible(show);
+	m_proxy->setFilterEnabled(show);
+
+	// Auto-add a first rule so the user can start filtering immediately.
+	if (show && m_proxy->ruleCount() == 0) {
+		m_filter_bar->appendStrip();
+	}
+}
+
+void ConcordanceView::onClearFilters()
+{
+	m_proxy->clearRules();
+	m_filter_bar->rebuild();
+}
+
+void ConcordanceView::onCreateSubset()
+{
+	auto visible = m_proxy->visibleSourceRows();
+	if (visible.isEmpty() || visible.size() == m_model->rowCount()) return;
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Create subset"),
+		tr("Name for the subset:"),
+		QLineEdit::Normal, tr("Filtered"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		std::vector<int> rows(visible.begin(), visible.end());
+		auto result = m_conc->subset(rows, String(name.toUtf8().constData()));
+		Project::updated();
+		emit concordanceCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void ConcordanceView::onAddMetricColumn()
+{
+	auto nrows = m_conc->row_count();
+	auto ncols = m_conc->column_count();
+
+	if (nrows == 0) {
+		QMessageBox::information(this, tr("Information"), tr("The concordance is empty."));
+		return;
+	}
+
+	// ── Detect numeric and text columns by sampling cells ──
+	QStringList num_names, text_names;
+	QVector<int> num_indices, text_indices;
+
+	intptr_t sample_limit = std::min(nrows, (intptr_t)20);
+
+	for (intptr_t j = 1; j <= ncols; j++)
+	{
+		auto h = m_conc->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+
+		// Sample the first non-empty cells to decide the type.
+		bool all_numeric = true;
+		bool found_any = false;
+
+		for (intptr_t i = 1; i <= sample_limit; i++) {
+			auto cell = m_conc->get_cell(i, j);
+			if (cell.empty() || cell == "nan") continue;
+			found_any = true;
+			bool ok;
+			cell.to_float(&ok);
+			if (!ok) {
+				all_numeric = false;
+				break;
+			}
+		}
+
+		if (found_any && all_numeric) {
+			num_names << qh;
+			num_indices << (int) j;
+		}
+		else if (found_any) {
+			text_names << qh;
+			text_indices << (int) j;
+		}
+	}
+
+	if (num_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No numeric columns detected."));
+		return;
+	}
+
+	OutlierDialog dlg(num_names, num_indices, text_names, text_indices, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto metric = dlg.selectedMetric();
+	auto group_cols = dlg.groupByColumns();
+	auto col_name = dlg.columnName();
+
+	if (col_name.isEmpty()) return;
+
+	try
+	{
+		// Build composite group labels from selected group-by columns.
+		std::vector<std::string> groups;
+		if (!group_cols.isEmpty()) {
+			groups.resize(nrows);
+			for (intptr_t i = 1; i <= nrows; i++) {
+				std::string key;
+				for (int gc : group_cols) {
+					auto cell = m_conc->get_cell(i, gc);
+					if (!key.empty()) key += '|';
+					key.append(cell.data(), cell.size());
+				}
+				groups[i - 1] = std::move(key);
+			}
+		}
+
+		// Helper: extract a numeric column by parsing cells.
+		auto extract_column = [&](int col_1based) -> std::vector<double> {
+			std::vector<double> vals(nrows);
+			for (intptr_t i = 1; i <= nrows; i++) {
+				auto cell = m_conc->get_cell(i, col_1based);
+				if (cell.empty() || cell == "nan") {
+					vals[i - 1] = std::nan("");
+				}
+				else {
+					bool ok;
+					double v = cell.to_float(&ok);
+					vals[i - 1] = ok ? v : std::nan("");
+				}
+			}
+			return vals;
+		};
+
+		std::vector<double> result;
+
+		if (stats::is_multivariate(metric))
+		{
+			auto cols = dlg.selectedColumns();
+			if (cols.size() < 2) {
+				QMessageBox::information(this, tr("Information"),
+					tr("Please select at least two columns for this metric."));
+				return;
+			}
+			std::vector<std::vector<double>> columns;
+			for (int c : cols) {
+				columns.push_back(extract_column(c));
+			}
+			result = stats::compute_multivariate_metric(columns, groups, metric);
+		}
+		else
+		{
+			int col = dlg.selectedColumn();
+			auto values = extract_column(col);
+			result = stats::compute_column_metric(values, groups, metric);
+		}
+
+		// Add as a new auxiliary column.
+		m_conc->add_numeric_column(String(col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		updateColumnVisibility();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		// Auto-add filter rule if requested.
+		if (dlg.addFilter())
+		{
+			double threshold = dlg.filterThreshold();
+
+			// Find the new column by header name (it's NOT the last column in concordances
+			// because property/description columns come after aux columns).
+			int new_col_idx = -1;
+			for (int j = 0; j < m_model->columnCount(); j++) {
+				auto h = m_model->headerData(j, Qt::Horizontal).toString();
+				if (h == col_name) {
+					new_col_idx = j;
+					break;
+				}
+			}
+			if (new_col_idx < 0) return; // shouldn't happen
+
+			bool is_positive = (metric == stats::ColumnMetric::AbsZScore ||
+			                    metric == stats::ColumnMetric::AbsModifiedZScore ||
+			                    metric == stats::ColumnMetric::Percentile ||
+			                    metric == stats::ColumnMetric::EuclideanDistance ||
+			                    metric == stats::ColumnMetric::MahalanobisDistance);
+
+			if (is_positive)
+			{
+				FilterRule rule;
+				rule.column = new_col_idx;
+				rule.op = FilterOp::Le;
+				rule.value = QString::number(threshold, 'f', 2);
+				m_proxy->addRule(rule);
+			}
+			else
+			{
+				FilterRule rule_ge;
+				rule_ge.column = new_col_idx;
+				rule_ge.op = FilterOp::Ge;
+				rule_ge.value = QString::number(-threshold, 'f', 2);
+				m_proxy->addRule(rule_ge);
+
+				FilterRule rule_le;
+				rule_le.column = new_col_idx;
+				rule_le.op = FilterOp::Le;
+				rule_le.value = QString::number(threshold, 'f', 2);
+				m_proxy->addRule(rule_le);
+			}
+
+			m_filter_action->setChecked(true);
+			m_filter_bar->rebuild();
+		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
 }
 
 } // namespace phonometrica

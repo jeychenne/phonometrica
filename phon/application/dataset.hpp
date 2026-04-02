@@ -22,6 +22,7 @@
 #ifndef PHONOMETRICA_DATASET_HPP
 #define PHONOMETRICA_DATASET_HPP
 
+#include <vector>
 #include <phon/application/data_table.hpp>
 
 namespace phonometrica {
@@ -86,6 +87,14 @@ public:
 	Handle<Dataset> intersect(const Dataset &other, const String &label) const;
 
 	Handle<Dataset> complement(const Dataset &other, const String &label) const;
+
+	/// Create a subset containing only the specified rows (0-based indices).
+	/// The result is a new in-memory Dataset added to the project.
+	Handle<Dataset> subset(const std::vector<int> &rows_0based, const String &label) const;
+
+	/// Append a new numeric column with the given header and values.
+	/// The values vector must have exactly row_count() elements.
+	void add_numeric_column(const String &header, const std::vector<double> &values);
 
 	/// Check that this dataset has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.
