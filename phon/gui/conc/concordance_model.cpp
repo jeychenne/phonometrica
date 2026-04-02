@@ -66,13 +66,13 @@ QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 		}
 		case Qt::FontRole:
 		{
-			if (m_conc->is_target(col))
+			if (m_conc->highlight_targets() && m_conc->is_target(col))
 				return m_bold_font;
 			return {};
 		}
 		case Qt::ForegroundRole:
 		{
-			if (m_conc->is_target(col))
+			if (m_conc->highlight_targets() && m_conc->is_target(col))
 				return QColor(Qt::red);
 			return {};
 		}

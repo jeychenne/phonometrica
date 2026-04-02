@@ -186,6 +186,10 @@ public:
 
 	int duration_column_count() const { return m_has_duration ? m_target_count : 0; }
 
+	bool highlight_targets() const { return m_highlight_targets; }
+
+	void set_highlight_targets(bool b) { m_highlight_targets = b; }
+
 	// ── Layout toggle (wide/long) ────────────────────────────────────────
 
 	Layout layout() const { return m_layout; }
@@ -389,6 +393,7 @@ protected:
 
 	bool m_has_duration = false;       // true if duration column(s) are present
 	bool m_duration_in_ms = false;     // true if durations are in milliseconds
+	bool m_highlight_targets = true;   // bold red targets in the view
 
 	// ── Column aliases ───────────────────────────────────────────────────
 
