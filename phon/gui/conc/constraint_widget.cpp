@@ -48,9 +48,9 @@ void ConstraintWidget::setupUi()
 	m_relation_combo->addItem(tr("is aligned with"), static_cast<int>(Constraint::Relation::Alignment));
 	m_relation_combo->addItem(tr("is left aligned with"), static_cast<int>(Constraint::Relation::LeftAlignment));
 	m_relation_combo->addItem(tr("is right aligned with"), static_cast<int>(Constraint::Relation::RightAlignment));
-	m_relation_combo->addItem(tr("precedes"), static_cast<int>(Constraint::Relation::Precedence));
-	m_relation_combo->addItem(tr("follows"), static_cast<int>(Constraint::Relation::Subsequence));
-	m_relation_combo->setToolTip(tr("Relation to the previous constraint"));
+	m_relation_combo->addItem(tr("precedes"), static_cast<int>(Constraint::Relation::Subsequence));
+	m_relation_combo->addItem(tr("follows"), static_cast<int>(Constraint::Relation::Precedence));
+	m_relation_combo->setToolTip(tr("Temporal relation between the previous constraint and this one"));
 	m_relation_combo->setVisible(false);
 	m_relation_combo->setFixedWidth(130);
 
