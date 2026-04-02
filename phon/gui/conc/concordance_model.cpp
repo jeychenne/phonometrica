@@ -94,6 +94,7 @@ bool ConcordanceModel::setData(const QModelIndex &index, const QVariant &value, 
 	{
 		auto text = String(value.toString().toUtf8().constData());
 		m_conc->set_cell(row, col, text);
+		Document::file_modified();
 
 		// Emit dataChanged for the whole row so that derived columns (ERB/Bark) update too.
 		emit dataChanged(this->index(index.row(), 0),

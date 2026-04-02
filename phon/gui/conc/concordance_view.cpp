@@ -392,6 +392,7 @@ void ConcordanceView::setupUi()
 	connect(highlight_action, &QAction::toggled, this, [this](bool checked) {
 		m_conc->set_highlight_targets(checked);
 		m_conc->modify();
+		Document::file_modified();
 		m_model->refreshAll();
 		emit titleChanged(label());
 	});
@@ -568,6 +569,7 @@ void ConcordanceView::onDeleteRows()
 		m_model->removeMatch(source_rows[i]);
 
 	m_conc->modify();
+	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
 }

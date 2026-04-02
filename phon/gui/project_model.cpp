@@ -156,6 +156,9 @@ bool ProjectModel::setData(const QModelIndex &index, const QVariant &value, int 
 	auto text = value.toString().toUtf8();
 	dir->set_label(String(text.constData(), text.size()));
 
+	if (m_project)
+		m_project->modify();
+
 	emit dataChanged(index, index, {Qt::DisplayRole});
 	return true;
 }

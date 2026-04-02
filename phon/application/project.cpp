@@ -1389,6 +1389,7 @@ Handle<Document> Project::get(const String &path)
 void Project::modify()
 {
 	m_modified = true;
+	modification_changed();
 }
 
 void Project::create(Runtime &rt)

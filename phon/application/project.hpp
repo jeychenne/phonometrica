@@ -176,6 +176,9 @@ public:
 	// Inform the UI that the project has been modified.
 	Signal<> notify_update;
 
+	// Lightweight signal: the modification flag has changed (no full refresh).
+	Signal<> modification_changed;
+
 	// Inform the viewer that the views need to be saved
 	Signal<> about_to_close;
 

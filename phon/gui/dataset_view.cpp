@@ -295,6 +295,7 @@ void DatasetView::onDeleteRows()
 		m_model->removeRow(source_rows[i]);
 
 	m_ds->set_content_modified(true);
+	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
 }
@@ -321,6 +322,7 @@ void DatasetView::onDeleteColumns()
 		m_model->removeColumn(cols[i]);
 
 	m_ds->set_content_modified(true);
+	Document::file_modified();
 	updateCountLabel();
 	m_table->resizeColumnsToContents();
 	emit titleChanged(label());

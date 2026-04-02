@@ -528,6 +528,7 @@ void FileManager::buildRootContextMenu(QMenu &menu, const QModelIndex &sourceInd
 
 		menu.addAction(tr("Sort by name"), [this, dir]() {
 			dir->sort();
+			m_project->modify();
 			refresh();
 		});
 	}
@@ -563,6 +564,7 @@ void FileManager::buildDirectoryContextMenu(QMenu &menu, const QModelIndex &sour
 		if (answer == QMessageBox::Yes)
 		{
 			m_project->remove(Handle<Directory>(dir));
+			m_project->modify();
 			refresh();
 		}
 	});
@@ -605,6 +607,7 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 		if (answer == QMessageBox::Yes)
 		{
 			m_project->remove(Handle<Document>(doc));
+			m_project->modify();
 			refresh();
 		}
 	});
@@ -626,6 +629,7 @@ void FileManager::buildBookmarkContextMenu(QMenu &menu, const QModelIndex &sourc
 			return;
 
 		m_project->remove(Handle<Bookmark>(bookmark));
+		m_project->modify();
 		refresh();
 	});
 }
@@ -678,6 +682,7 @@ void FileManager::addFilesToDirectory(const QModelIndex &sourceParent)
 		m_project->add_file(std::move(path), handle, type, true);
 	}
 
+	m_project->modify();
 	refresh();
 	auto proxyParent = toProxy(sourceParent);
 	if (proxyParent.isValid())
@@ -751,6 +756,7 @@ void FileManager::removeSelectedElements()
 		}
 	}
 
+	m_project->modify();
 	refresh();
 }
 
