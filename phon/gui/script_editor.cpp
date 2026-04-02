@@ -36,6 +36,9 @@ ScriptEditor::ScriptEditor(QWidget *parent) :
 
 	// Notify the view on text changes.
 	connect(this, &QsciScintilla::textChanged, this, &ScriptEditor::contentModified);
+
+	// Clear error indicators whenever the text is modified (keyboard, paste, undo, etc.).
+	connect(this, &QsciScintilla::textChanged, this, &ScriptEditor::clearErrors);
 }
 
 
@@ -276,10 +279,6 @@ void ScriptEditor::keyPressEvent(QKeyEvent *e)
 		handleSmartIndent();
 		return;
 	}
-
-	// Clear error indicators on any edit.
-	if (!e->text().isEmpty() && e->text().at(0).isPrint())
-		clearErrors();
 
 	QsciScintilla::keyPressEvent(e);
 }

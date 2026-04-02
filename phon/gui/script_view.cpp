@@ -25,6 +25,7 @@
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QTimer>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
@@ -143,7 +144,10 @@ void ScriptView::setupUi()
 	connect(m_searchbar, &SearchBar::replaceRequested, this, &ScriptView::onReplace);
 	connect(m_searchbar, &SearchBar::replaceAllRequested, this, &ScriptView::onReplaceAll);
 
-	m_editor->setFocus();
+	// Defer focus: setFocus() during construction is ignored because the widget
+	// is not yet visible. Posting to the next event-loop tick lets Qt process
+	// the show event first, so Scintilla can accept the focus.
+	QTimer::singleShot(0, m_editor, [this]() { m_editor->setFocus(); });
 }
 
 

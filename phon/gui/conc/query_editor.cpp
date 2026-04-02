@@ -152,6 +152,7 @@ QWidget *QueryEditor::createSearchPanel()
 	ref_layout->addWidget(new QLabel(tr("Reference constraint:")));
 	m_ref_constraint = new QSpinBox;
 	m_ref_constraint->setRange(1, 1);
+	m_ref_constraint->setEnabled(false);
 	m_ref_constraint->setToolTip(tr("Constraint used for context extraction and acoustic measurements"));
 	ref_layout->addWidget(m_ref_constraint);
 	ref_layout->addStretch();
@@ -524,6 +525,7 @@ void QueryEditor::onAddConstraint()
 	m_constraints.append(cw);
 	m_remove_btn->setEnabled(true);
 	m_ref_constraint->setRange(1, idx);
+	m_ref_constraint->setEnabled(true);
 
 	// Show alignment spacer on the first constraint now that there are siblings.
 	m_constraints[1]->setRelationPlaceholder(true);
@@ -545,6 +547,7 @@ void QueryEditor::onRemoveConstraint()
 
 	m_remove_btn->setEnabled(m_constraints.size() > 1);
 	m_ref_constraint->setRange(1, (int) m_constraints.size());
+	m_ref_constraint->setEnabled(m_constraints.size() > 1);
 
 	// Hide alignment spacer when back to a single constraint.
 	if (m_constraints.size() == 1) {
