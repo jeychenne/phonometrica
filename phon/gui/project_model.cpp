@@ -253,48 +253,66 @@ bool ProjectModel::dropMimeData(const QMimeData *data, Qt::DropAction action,
 		elements.push_back(reinterpret_cast<Element *>(ptr));
 	}
 
-	// Process moves one by one.
+	bool changed = false;
+
 	for (auto *elem : elements)
 	{
 		auto *srcDir = elem->parent();
 		if (!srcDir)
-			continue; // cannot move a root directory
-
-		// Don't move into the same position.
-		if (srcDir == targetDir)
 			continue;
 
 		int srcRow = rowOfElement(elem);
 		if (srcRow < 0)
 			continue;
 
-		QModelIndex srcParent = indexFromElement(srcDir);
-
-		// Keep the element alive during the move.
-		Handle<Element> handle(elem);
-
-		// Remove from source.
-		beginRemoveRows(srcParent, srcRow, srcRow);
-		srcDir->remove(handle);
-		endRemoveRows();
-
-		// Insert into target.
+		// Compute effective destination row.
 		int dstRow = (row >= 0 && row <= (int) targetDir->size()) ? row : (int) targetDir->size();
-		QModelIndex dstParent = parent; // use the parent index we were given
 
-		beginInsertRows(dstParent, dstRow, dstRow);
-		// Insert at 1-based position; -1 means append.
-		if (dstRow >= (int) targetDir->size())
-			targetDir->append(std::move(handle));
+		// Same directory: this is a reorder.
+		if (srcDir == targetDir)
+		{
+			// After removal the array shrinks by one, so adjust the
+			// destination if it comes after the source.
+			int adjustedDst = (dstRow > srcRow) ? dstRow - 1 : dstRow;
+
+			// Nothing to do if the item would stay in place.
+			if (adjustedDst == srcRow)
+				continue;
+
+			Handle<Element> handle(elem);
+			srcDir->remove(handle);
+			elem->set_parent(nullptr, false);
+
+			if (adjustedDst >= (int) targetDir->size())
+				targetDir->append(std::move(handle));
+			else
+				targetDir->insert(adjustedDst + 1, std::move(handle));
+		}
 		else
-			targetDir->insert(dstRow + 1, std::move(handle));
-		endInsertRows();
+		{
+			// Cross-directory move.
+			Handle<Element> handle(elem);
+			srcDir->remove(handle);
+			elem->set_parent(nullptr, false);
+
+			if (dstRow >= (int) targetDir->size())
+				targetDir->append(std::move(handle));
+			else
+				targetDir->insert(dstRow + 1, std::move(handle));
+		}
+
+		changed = true;
 	}
 
-	if (m_project)
-		m_project->modify();
+	if (changed)
+	{
+		refresh();
 
-	return true;
+		if (m_project)
+			m_project->modify();
+	}
+
+	return changed;
 }
 
 // ---------------------------------------------------------

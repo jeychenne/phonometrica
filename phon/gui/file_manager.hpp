@@ -30,6 +30,7 @@
 #include <QMenu>
 #include <QSortFilterProxyModel>
 #include <QVBoxLayout>
+#include <unordered_set>
 
 namespace phonometrica {
 
@@ -136,11 +137,18 @@ private:
 	void openDocument(const QModelIndex &sourceIndex);
 	void renameElement(const QModelIndex &sourceIndex);
 
+	// Expanded-state preservation across model resets.
+	void saveExpandedState(const QModelIndex &proxyParent);
+	void restoreExpandedState(const QModelIndex &proxyParent);
+
 	Project *m_project;
 	ProjectModel *m_model;
 	ProjectFilterModel *m_proxy;
 	QTreeView *m_tree;
 	QLineEdit *m_search;
+
+	// Temporarily stores expanded elements during a model reset.
+	std::unordered_set<Element *> m_expanded_save;
 };
 
 } // namespace phonometrica
