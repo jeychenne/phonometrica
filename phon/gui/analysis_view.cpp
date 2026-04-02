@@ -326,8 +326,10 @@ void AnalysisView::setupUi()
 
 	// ── EDA toolbar (export actions, matching SpectrumView) ──
 	auto *eda_toolbar = new QToolBar;
-	eda_toolbar->setIconSize(QSize(20, 20));
+	eda_toolbar->setIconSize(QSize(16, 16));
 	eda_toolbar->setMovable(false);
+	eda_toolbar->setContentsMargins(2, 0, 2, 0);
+	eda_toolbar->setStyleSheet(QStringLiteral("QToolBar { spacing: 2px; }"));
 
 	auto *eda_save_menu = new QMenu(this);
 	eda_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
@@ -381,6 +383,25 @@ void AnalysisView::setupUi()
 	m_eda_density_check->setToolTip(tr("Overlay a kernel density estimate on the histogram"));
 	m_eda_density_check->setVisible(false);
 	eda_controls->addWidget(m_eda_density_check);
+	m_eda_bw_label = new QLabel(tr("Smoothing:"));
+	m_eda_bw_label->setVisible(false);
+	eda_controls->addWidget(m_eda_bw_label);
+	m_eda_bw_slider = new QSlider(Qt::Horizontal);
+	m_eda_bw_slider->setRange(10, 500);
+	m_eda_bw_slider->setValue(100);
+	m_eda_bw_slider->setFixedWidth(120);
+	m_eda_bw_slider->setToolTip(tr("Bandwidth adjustment factor (1.00 = default Silverman rule, "
+	                                "lower = more detail, higher = smoother)"));
+	m_eda_bw_slider->setVisible(false);
+	eda_controls->addWidget(m_eda_bw_slider);
+	m_eda_bw_spin = new QDoubleSpinBox;
+	m_eda_bw_spin->setRange(0.10, 5.00);
+	m_eda_bw_spin->setSingleStep(0.05);
+	m_eda_bw_spin->setDecimals(2);
+	m_eda_bw_spin->setValue(1.00);
+	m_eda_bw_spin->setFixedWidth(65);
+	m_eda_bw_spin->setVisible(false);
+	eda_controls->addWidget(m_eda_bw_spin);
 
 	// ── Grouped scatter / formant chart controls ──
 	m_eda_group_label = new QLabel(tr("Group:"));
@@ -391,6 +412,14 @@ void AnalysisView::setupUi()
 	m_eda_group_combo->setToolTip(tr("Color points by a categorical variable"));
 	m_eda_group_combo->setVisible(false);
 	eda_controls->addWidget(m_eda_group_combo);
+	m_eda_label_label = new QLabel(tr("Label:"));
+	m_eda_label_label->setVisible(false);
+	eda_controls->addWidget(m_eda_label_label);
+	m_eda_label_combo = new QComboBox;
+	m_eda_label_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_label_combo->setToolTip(tr("Render the value of a variable as text at each data point"));
+	m_eda_label_combo->setVisible(false);
+	eda_controls->addWidget(m_eda_label_combo);
 	m_eda_mean_check = new QCheckBox(tr("Means"));
 	m_eda_mean_check->setToolTip(tr("Show the mean of each group"));
 	m_eda_mean_check->setVisible(false);
@@ -466,7 +495,20 @@ void AnalysisView::setupUi()
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_regline_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_density_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+	connect(m_eda_bw_slider, &QSlider::valueChanged, this, [this](int v) {
+		m_eda_bw_spin->blockSignals(true);
+		m_eda_bw_spin->setValue(v / 100.0);
+		m_eda_bw_spin->blockSignals(false);
+		onEdaChanged();
+	});
+	connect(m_eda_bw_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double v) {
+		m_eda_bw_slider->blockSignals(true);
+		m_eda_bw_slider->setValue(qRound(v * 100.0));
+		m_eda_bw_slider->blockSignals(false);
+		onEdaChanged();
+	});
 	connect(m_eda_group_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_label_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
@@ -482,9 +524,11 @@ void AnalysisView::populateColumns()
 	m_eda_x_combo->clear();
 	m_eda_y_combo->clear();
 	m_eda_group_combo->clear();
+	m_eda_label_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
 	m_eda_y_combo->addItem(tr("(None)"));
 	m_eda_group_combo->addItem(tr("(None)"));
+	m_eda_label_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
 
@@ -495,6 +539,7 @@ void AnalysisView::populateColumns()
 		m_eda_x_combo->addItem(qname);
 		m_eda_y_combo->addItem(qname);
 		m_eda_group_combo->addItem(qname);
+		m_eda_label_combo->addItem(qname);
 	}
 
 	updateColumnMarkers();
@@ -1672,8 +1717,13 @@ void AnalysisView::updateEdaPlot()
 		m_bins_spin->setVisible(false);
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_bw_label->setVisible(false);
+		m_eda_bw_slider->setVisible(false);
+		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_label_label->setVisible(false);
+		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
@@ -1710,6 +1760,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_regline_check->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_label_label->setVisible(false);
+		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
@@ -1726,7 +1778,7 @@ void AnalysisView::updateEdaPlot()
 				if (v.empty()) continue;
 				bool ok;
 				double d = v.to_float(&ok);
-				if (ok) vals.push_back(d);
+				if (ok && std::isfinite(d)) vals.push_back(d);
 			}
 			if (vals.empty()) { m_eda_plot->clear(); return; }
 
@@ -1740,6 +1792,12 @@ void AnalysisView::updateEdaPlot()
 			                              x_name_q, nbins);
 
 			m_eda_density_check->setVisible(true);
+			{
+				bool density_on = m_eda_density_check->isChecked();
+				m_eda_bw_label->setVisible(density_on);
+				m_eda_bw_slider->setVisible(density_on);
+				m_eda_bw_spin->setVisible(density_on);
+			}
 
 			if (want_density)
 			{
@@ -1761,6 +1819,10 @@ void AnalysisView::updateEdaPlot()
 				if (s < 1e-15) s = sd;
 				if (s < 1e-15) s = 1.0;
 				double h = 0.9 * s * std::pow((double)n, -0.2);
+
+				// Apply the user-adjustable bandwidth multiplier (R's adjust parameter).
+				double adjust = m_eda_bw_spin->value();
+				h *= adjust;
 
 				double xlo = vals_copy.front() - 3.0 * h;
 				double xhi = vals_copy.back()  + 3.0 * h;
@@ -1804,6 +1866,9 @@ void AnalysisView::updateEdaPlot()
 		else
 		{
 			m_eda_density_check->setVisible(false);
+			m_eda_bw_label->setVisible(false);
+			m_eda_bw_slider->setVisible(false);
+			m_eda_bw_spin->setVisible(false);
 			// Bar chart of categorical X counts
 			std::map<QString, int> counts;
 			std::vector<QString> order;
@@ -1843,10 +1908,13 @@ void AnalysisView::updateEdaPlot()
 
 		bool formant = m_eda_formant_check->isChecked();
 		bool has_group = (m_eda_group_combo->currentIndex() > 0);
+		bool has_label = (m_eda_label_combo->currentIndex() > 0);
 
-		// Show the group / formant controls.
+		// Show the group / label / formant controls.
 		m_eda_group_label->setVisible(true);
 		m_eda_group_combo->setVisible(true);
+		m_eda_label_label->setVisible(true);
+		m_eda_label_combo->setVisible(true);
 		m_eda_formant_check->setVisible(true);
 
 		// Mean/Ellipse visible only when a group is selected.
@@ -1857,6 +1925,9 @@ void AnalysisView::updateEdaPlot()
 		// Regression line is available only without grouping.
 		m_eda_regline_check->setVisible(!has_group);
 		m_eda_density_check->setVisible(false);
+		m_eda_bw_label->setVisible(false);
+		m_eda_bw_slider->setVisible(false);
+		m_eda_bw_spin->setVisible(false);
 
 		if (has_group)
 		{
@@ -1870,24 +1941,40 @@ void AnalysisView::updateEdaPlot()
 			}
 			if (g_col < 1) { m_eda_plot->clear(); return; }
 
+			// Resolve label column (may be the same as group column).
+			intptr_t l_col = 0;
+			if (has_label) {
+				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == label_name) { l_col = j; break; }
+				}
+			}
+
 			std::vector<double> xv, yv;
 			std::vector<QString> gv;
+			std::vector<QString> lv;
 			xv.reserve(nr);
 			yv.reserve(nr);
 			gv.reserve(nr);
+			if (l_col > 0) lv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
 				auto vx = dt->get_cell(r, x_col);
 				auto vy = dt->get_cell(r, y_col);
 				auto vg = dt->get_cell(r, g_col);
 				if (vx.empty() || vy.empty() || vg.empty()) continue;
+				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
-				if (okx && oky) {
+				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
 					gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+					if (l_col > 0) {
+						auto vl = dt->get_cell(r, l_col);
+						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
+					}
 				}
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
@@ -1899,12 +1986,17 @@ void AnalysisView::updateEdaPlot()
 			double conf = m_eda_ellipse_spin->value() / 100.0;
 			double chi2_scale = -2.0 * std::log(1.0 - conf);
 
+			// Build title: Y ~ X | Group [/ Label].
+			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
+				+ QStringLiteral(" | ") + group_name_q;
+			if (has_label && l_col != g_col)
+				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
+
 			m_eda_plot->setGroupedScatterData(
 				std::move(gv), std::move(xv), std::move(yv),
-				x_name_q, y_name_q,
-				y_name_q + QStringLiteral(" ~ ") + x_name_q
-					+ QStringLiteral(" | ") + group_name_q,
-				show_means, show_ellipses, chi2_scale, formant, formant);
+				x_name_q, y_name_q, title,
+				show_means, show_ellipses, chi2_scale, formant, formant,
+				std::move(lv));
 		}
 		else
 		{
@@ -1920,7 +2012,7 @@ void AnalysisView::updateEdaPlot()
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
-				if (okx && oky) {
+				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
 				}
@@ -1969,8 +2061,13 @@ void AnalysisView::updateEdaPlot()
 		// Box plot: X categorical, Y continuous
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_bw_label->setVisible(false);
+		m_eda_bw_slider->setVisible(false);
+		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_label_label->setVisible(false);
+		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
@@ -1987,7 +2084,7 @@ void AnalysisView::updateEdaPlot()
 			if (vx.empty() || vy.empty()) continue;
 			bool ok;
 			double dy = vy.to_float(&ok);
-			if (!ok) continue;
+			if (!ok || !std::isfinite(dy)) continue;
 			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
 			vals.push_back(dy);
 		}
@@ -2001,8 +2098,13 @@ void AnalysisView::updateEdaPlot()
 		// Unsupported combination (e.g. both categorical) — clear.
 		m_eda_regline_check->setVisible(false);
 		m_eda_density_check->setVisible(false);
+		m_eda_bw_label->setVisible(false);
+		m_eda_bw_slider->setVisible(false);
+		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_label_label->setVisible(false);
+		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
@@ -2089,7 +2191,7 @@ void AnalysisView::updateEdaSummary()
 				if (v.empty()) { missing++; continue; }
 				bool ok;
 				double d = v.to_float(&ok);
-				if (ok) vals.push_back(d);
+				if (ok && std::isfinite(d)) vals.push_back(d);
 				else missing++;
 			}
 			if (vals.empty()) return;
@@ -2178,7 +2280,7 @@ void AnalysisView::updateEdaSummary()
 
 		if (has_group)
 		{
-			// ── Grouped scatter: per-group N, Mean(X), SD(X), Mean(Y), SD(Y) ──
+			// ── Grouped scatter: per-group N, Mean(X), SD(X), Mean(Y), SD(Y), Missing ──
 
 			auto group_name_q = m_eda_group_combo->currentText();
 			auto group_name = String(group_name_q.toUtf8().constData());
@@ -2192,6 +2294,7 @@ void AnalysisView::updateEdaSummary()
 			std::vector<QString> group_order;
 			struct GroupStats { std::vector<double> xv, yv; };
 			std::map<QString, GroupStats> grouped;
+			intptr_t included = 0;
 
 			for (intptr_t r = 1; r <= nr; r++)
 			{
@@ -2202,21 +2305,27 @@ void AnalysisView::updateEdaSummary()
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
-				if (!okx || !oky) continue;
+				if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
 				auto qs = QString::fromUtf8(vg.data(), (int)vg.size());
 				if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
 				grouped[qs].xv.push_back(dx);
 				grouped[qs].yv.push_back(dy);
+				included++;
 			}
 			if (group_order.empty()) return;
 
-			m_eda_summary->setColumnCount(6);
-			m_eda_summary->setHorizontalHeaderLabels(
-				{group_name_q, tr("N"),
-				 QStringLiteral("Mean(%1)").arg(x_name_q),
-				 QStringLiteral("SD(%1)").arg(x_name_q),
-				 QStringLiteral("Mean(%1)").arg(y_name_q),
-				 QStringLiteral("SD(%1)").arg(y_name_q)});
+			intptr_t missing = nr - included;
+			int ncols = missing > 0 ? 7 : 6;
+
+			m_eda_summary->setColumnCount(ncols);
+			QStringList headers = {
+				group_name_q, tr("N"),
+				QStringLiteral("Mean(%1)").arg(x_name_q),
+				QStringLiteral("SD(%1)").arg(x_name_q),
+				QStringLiteral("Mean(%1)").arg(y_name_q),
+				QStringLiteral("SD(%1)").arg(y_name_q)};
+			if (missing > 0) headers.append(tr("Missing"));
+			m_eda_summary->setHorizontalHeaderLabels(headers);
 			m_eda_summary->setRowCount((int)group_order.size());
 
 			for (int g = 0; g < (int)group_order.size(); g++)
@@ -2251,6 +2360,10 @@ void AnalysisView::updateEdaSummary()
 				set(3, QString::number(sd_x, 'f', 4));
 				set(4, QString::number(my, 'f', 4));
 				set(5, QString::number(sd_y, 'f', 4));
+
+				// Show missing only on the first row (it's a global count).
+				if (g == 0 && missing > 0)
+					set(6, QString::number(missing));
 			}
 			m_eda_summary->resizeColumnsToContents();
 		}
@@ -2261,15 +2374,17 @@ void AnalysisView::updateEdaSummary()
 			std::vector<double> xv, yv;
 			xv.reserve(nr);
 			yv.reserve(nr);
+			intptr_t missing = 0;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
 				auto vx = dt->get_cell(r, x_col);
 				auto vy = dt->get_cell(r, y_col);
-				if (vx.empty() || vy.empty()) continue;
+				if (vx.empty() || vy.empty()) { missing++; continue; }
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
-				if (okx && oky) { xv.push_back(dx); yv.push_back(dy); }
+				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) { xv.push_back(dx); yv.push_back(dy); }
+				else missing++;
 			}
 			if (xv.empty()) return;
 
@@ -2288,13 +2403,16 @@ void AnalysisView::updateEdaSummary()
 			double sd_y = (n > 1) ? std::sqrt(syy / (n - 1)) : 0.0;
 			double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
 
-			m_eda_summary->setColumnCount(6);
-			m_eda_summary->setHorizontalHeaderLabels(
-				{tr("N"), tr("r"),
-				 QStringLiteral("Mean(%1)").arg(x_name_q),
-				 QStringLiteral("SD(%1)").arg(x_name_q),
-				 QStringLiteral("Mean(%1)").arg(y_name_q),
-				 QStringLiteral("SD(%1)").arg(y_name_q)});
+			int ncols = missing > 0 ? 7 : 6;
+			m_eda_summary->setColumnCount(ncols);
+			QStringList headers = {
+				tr("N"), tr("r"),
+				QStringLiteral("Mean(%1)").arg(x_name_q),
+				QStringLiteral("SD(%1)").arg(x_name_q),
+				QStringLiteral("Mean(%1)").arg(y_name_q),
+				QStringLiteral("SD(%1)").arg(y_name_q)};
+			if (missing > 0) headers.append(tr("Missing"));
+			m_eda_summary->setHorizontalHeaderLabels(headers);
 			m_eda_summary->setRowCount(1);
 
 			auto set = [&](int col, const QString &text) {
@@ -2309,6 +2427,7 @@ void AnalysisView::updateEdaSummary()
 			set(3, QString::number(sd_x, 'f', 4));
 			set(4, QString::number(my, 'f', 4));
 			set(5, QString::number(sd_y, 'f', 4));
+			if (missing > 0) set(6, QString::number(missing));
 
 			m_eda_summary->resizeColumnsToContents();
 		}
@@ -2319,6 +2438,7 @@ void AnalysisView::updateEdaSummary()
 
 		std::vector<QString> group_order;
 		std::map<QString, std::vector<double>> grouped;
+		intptr_t included = 0;
 
 		for (intptr_t r = 1; r <= nr; r++)
 		{
@@ -2327,17 +2447,23 @@ void AnalysisView::updateEdaSummary()
 			if (vx.empty() || vy.empty()) continue;
 			bool ok;
 			double dy = vy.to_float(&ok);
-			if (!ok) continue;
+			if (!ok || !std::isfinite(dy)) continue;
 			auto qs = QString::fromUtf8(vx.data(), (int)vx.size());
 			if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
 			grouped[qs].push_back(dy);
+			included++;
 		}
 		if (group_order.empty()) return;
 
-		m_eda_summary->setColumnCount(7);
-		m_eda_summary->setHorizontalHeaderLabels(
-			{x_name_q, tr("N"), tr("Mean"), tr("SD"),
-			 tr("Min"), tr("Median"), tr("Max")});
+		intptr_t missing = nr - included;
+		int ncols = missing > 0 ? 8 : 7;
+
+		m_eda_summary->setColumnCount(ncols);
+		QStringList headers = {
+			x_name_q, tr("N"), tr("Mean"), tr("SD"),
+			tr("Min"), tr("Median"), tr("Max")};
+		if (missing > 0) headers.append(tr("Missing"));
+		m_eda_summary->setHorizontalHeaderLabels(headers);
 		m_eda_summary->setRowCount((int)group_order.size());
 
 		for (int g = 0; g < (int)group_order.size(); g++)
@@ -2367,6 +2493,10 @@ void AnalysisView::updateEdaSummary()
 			set(4, QString::number(vals.front(), 'f', 4));
 			set(5, QString::number(sorted_median(vals), 'f', 4));
 			set(6, QString::number(vals.back(), 'f', 4));
+
+			// Show missing only on the first row (it's a global count).
+			if (g == 0 && missing > 0)
+				set(7, QString::number(missing));
 		}
 		m_eda_summary->resizeColumnsToContents();
 	}

@@ -383,6 +383,8 @@ if(WITH_GUI)
         icons/filter-x.svg
         icons/scissors.svg
         icons/sigma.svg
+        icons/grid-2x2-x.svg
+        icons/list-x.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

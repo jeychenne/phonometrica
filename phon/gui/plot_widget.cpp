@@ -127,6 +127,7 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
 	m_boxes.clear();
 	m_bins.clear();
 	m_group_data.clear();
+	m_use_labels = false;
 	m_cache_valid = false;
 	update();
 }
@@ -137,12 +138,14 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
                                         const QString &title,
                                         bool show_means, bool show_ellipses,
                                         double chi2_scale,
-                                        bool reverse_x, bool reverse_y)
+                                        bool reverse_x, bool reverse_y,
+                                        std::vector<QString> point_labels)
 {
 	m_mode = Mode::GroupedScatter;
-	m_group_data = buildGroups(groups, x, y, chi2_scale);
+	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels);
 	m_show_means = show_means;
 	m_show_ellipses = show_ellipses;
+	m_use_labels = !point_labels.empty();
 	m_reverse_x = reverse_x;
 	m_reverse_y = reverse_y;
 	m_x_label = x_label;
@@ -269,6 +272,7 @@ void PlotWidget::clear()
 	m_show_density = false;
 	m_show_means = false;
 	m_show_ellipses = false;
+	m_use_labels = false;
 	m_reverse_x = false;
 	m_reverse_y = false;
 	m_density_x.clear();
@@ -405,7 +409,8 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 	const std::vector<QString> &labels,
 	const std::vector<double> &x,
 	const std::vector<double> &y,
-	double chi2_scale)
+	double chi2_scale,
+	const std::vector<QString> &point_labels)
 {
 	// Partition points into groups, preserving first-seen order.
 	std::vector<QString> order;
@@ -413,6 +418,7 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 
 	std::vector<GroupData> groups;
 
+	bool has_labels = !point_labels.empty();
 	size_t n = std::min({labels.size(), x.size(), y.size()});
 	for (size_t i = 0; i < n; i++)
 	{
@@ -429,6 +435,8 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 		}
 		groups[gi].x.push_back(x[i]);
 		groups[gi].y.push_back(y[i]);
+		if (has_labels && i < point_labels.size())
+			groups[gi].symbols.push_back(point_labels[i]);
 	}
 
 	// Compute per-group statistics: mean and covariance → ellipse.
@@ -842,13 +850,38 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 		QColor pc = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
 		pc.setAlpha(180);
 
-		p.setPen(Qt::NoPen);
-		p.setBrush(pc);
 		size_t gn = std::min(gd.x.size(), gd.y.size());
-		for (size_t i = 0; i < gn; i++) {
-			double px = dataToX(gd.x[i]);
-			double py = dataToY(gd.y[i]);
-			p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+		bool has_symbols = !gd.symbols.empty();
+
+		if (has_symbols)
+		{
+			// Render text labels at each data point.
+			QFont label_font;
+			label_font.setPixelSize(10);
+			label_font.setBold(true);
+			p.setFont(label_font);
+			QFontMetrics lfm(label_font);
+			p.setPen(pc);
+			p.setBrush(Qt::NoBrush);
+
+			for (size_t i = 0; i < gn; i++) {
+				double px = dataToX(gd.x[i]);
+				double py = dataToY(gd.y[i]);
+				const auto &sym = (i < gd.symbols.size()) ? gd.symbols[i] : gd.label;
+				int tw = lfm.horizontalAdvance(sym);
+				p.drawText(int(px) - tw / 2, int(py) + lfm.ascent() / 2, sym);
+			}
+		}
+		else
+		{
+			// Draw filled circles.
+			p.setPen(Qt::NoPen);
+			p.setBrush(pc);
+			for (size_t i = 0; i < gn; i++) {
+				double px = dataToX(gd.x[i]);
+				double py = dataToY(gd.y[i]);
+				p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+			}
 		}
 	}
 
@@ -863,19 +896,44 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 			double px = dataToX(gd.mean_x);
 			double py = dataToY(gd.mean_y);
 
-			// Draw a cross marker (+).
-			p.setPen(QPen(mc, 2.5));
-			p.drawLine(QPointF(px - MEAN_MARKER_SIZE, py),
-			           QPointF(px + MEAN_MARKER_SIZE, py));
-			p.drawLine(QPointF(px, py - MEAN_MARKER_SIZE),
-			           QPointF(px, py + MEAN_MARKER_SIZE));
+			if (m_use_labels)
+			{
+				// Render mean as a large bold text label.
+				QFont mean_font;
+				mean_font.setPixelSize(16);
+				mean_font.setBold(true);
+				p.setFont(mean_font);
+				QFontMetrics mfm(mean_font);
+				int tw = mfm.horizontalAdvance(gd.label);
 
-			// Filled circle behind the cross for emphasis.
-			QColor fc = mc;
-			fc.setAlpha(220);
-			p.setPen(QPen(mc.darker(130), 1.2));
-			p.setBrush(fc);
-			p.drawEllipse(QPointF(px, py), POINT_RADIUS + 1.5, POINT_RADIUS + 1.5);
+				// White halo for readability.
+				QPainterPath text_path;
+				text_path.addText(px - tw / 2.0, py + mfm.ascent() / 2.0, mean_font, gd.label);
+				p.setPen(QPen(Qt::white, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+				p.setBrush(Qt::NoBrush);
+				p.drawPath(text_path);
+
+				// Filled text.
+				p.setPen(Qt::NoPen);
+				p.setBrush(mc);
+				p.drawPath(text_path);
+			}
+			else
+			{
+				// Draw a cross marker (+).
+				p.setPen(QPen(mc, 2.5));
+				p.drawLine(QPointF(px - MEAN_MARKER_SIZE, py),
+				           QPointF(px + MEAN_MARKER_SIZE, py));
+				p.drawLine(QPointF(px, py - MEAN_MARKER_SIZE),
+				           QPointF(px, py + MEAN_MARKER_SIZE));
+
+				// Filled circle behind the cross for emphasis.
+				QColor fc = mc;
+				fc.setAlpha(220);
+				p.setPen(QPen(mc.darker(130), 1.2));
+				p.setBrush(fc);
+				p.drawEllipse(QPointF(px, py), POINT_RADIUS + 1.5, POINT_RADIUS + 1.5);
+			}
 		}
 	}
 
