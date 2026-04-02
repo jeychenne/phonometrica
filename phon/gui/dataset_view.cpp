@@ -60,7 +60,7 @@ void DatasetView::setupUi()
 	m_toolbar->addSeparator();
 
 	// -- Editing --
-	auto *del_row_action = m_toolbar->addAction(QIcon(":/icons/trash-2.svg"), tr("Delete row(s)"));
+	auto *del_row_action = m_toolbar->addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Delete row(s)"));
 	del_row_action->setToolTip(tr("Delete selected row(s)"));
 
 	auto *del_col_action = m_toolbar->addAction(QIcon(":/icons/circle-minus.svg"), tr("Delete column(s)"));
@@ -878,8 +878,8 @@ void DatasetView::onContextMenu(const QPoint &pos)
 
 	QMenu menu(this);
 
-	menu.addAction(QIcon(":/icons/trash-2.svg"), tr("Delete row(s)"), this, &DatasetView::onDeleteRows);
-	menu.addAction(QIcon(":/icons/circle-minus.svg"), tr("Delete column(s)"), this, &DatasetView::onDeleteColumns);
+	menu.addAction(QIcon(":/icons/list-x.svg"), tr("Delete row(s)"), this, &DatasetView::onDeleteRows);
+	menu.addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Delete column(s)"), this, &DatasetView::onDeleteColumns);
 	menu.addSeparator();
 	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit cell"), this, [this, index]() {
 		m_table->edit(index);

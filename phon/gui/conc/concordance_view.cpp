@@ -90,7 +90,7 @@ void ConcordanceView::setupUi()
 
 	m_toolbar->addSeparator();
 
-	auto *del_action = m_toolbar->addAction(QIcon(":/icons/trash-2.svg"), tr("Delete"));
+	auto *del_action = m_toolbar->addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Delete"));
 	del_action->setToolTip(tr("Delete selected row(s)"));
 
 	auto *edit_action = m_toolbar->addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit"));
@@ -1055,7 +1055,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 	menu.addAction(QIcon(":/icons/file-search-corner.svg"), tr("View in annotation"), this, &ConcordanceView::onViewMatch);
 
 	if (match.annotation()->has_sound())
-		menu.addAction(QIcon(":/icons/play-selection.svg"), tr("Play match"), this, &ConcordanceView::onPlay);
+		menu.addAction(QIcon(":/icons/play.svg"), tr("Play match"), this, &ConcordanceView::onPlay);
 
 	menu.addSeparator();
 
@@ -1070,7 +1070,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 	}
 
 	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit event"), this, &ConcordanceView::onEditEvent);
-	menu.addAction(QIcon(":/icons/trash-2.svg"), tr("Remove match"), this, &ConcordanceView::onDeleteRows);
+	menu.addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Remove match"), this, &ConcordanceView::onDeleteRows);
 	menu.addSeparator();
 	menu.addAction(QIcon(":/icons/book-marked.svg"), tr("Bookmark match"), this, &ConcordanceView::onBookmark);
 

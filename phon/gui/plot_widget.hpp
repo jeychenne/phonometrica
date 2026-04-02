@@ -56,13 +56,16 @@ public:
 	/// Optionally shows per-group mean markers and confidence ellipses.
 	/// chi2_scale is the chi-squared(2) quantile for the desired confidence level
 	/// (e.g. 2.2946 for 68.27%, 5.991 for 95%). For 2 df: -2*ln(1-p).
+	/// point_labels, when non-empty, renders text at each point position
+	/// instead of filled circles. point_labels[i] is the text for point i.
 	void setGroupedScatterData(std::vector<QString> groups,
 	                           std::vector<double> x, std::vector<double> y,
 	                           const QString &x_label, const QString &y_label,
 	                           const QString &title,
 	                           bool show_means, bool show_ellipses,
 	                           double chi2_scale = 2.2946,
-	                           bool reverse_x = false, bool reverse_y = false);
+	                           bool reverse_x = false, bool reverse_y = false,
+	                           std::vector<QString> point_labels = {});
 
 	/// Box plot: groups[i] is the group label for values[i].
 	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
@@ -132,6 +135,7 @@ private:
 		QString label;
 		std::vector<double> x;
 		std::vector<double> y;
+		std::vector<QString> symbols; // per-point text labels (empty vector = draw circles)
 		double mean_x = 0;
 		double mean_y = 0;
 		// Confidence ellipse parameters (in data coordinates).
@@ -160,7 +164,8 @@ private:
 	static std::vector<GroupData> buildGroups(const std::vector<QString> &labels,
 	                                          const std::vector<double> &x,
 	                                          const std::vector<double> &y,
-	                                          double chi2_scale);
+	                                          double chi2_scale,
+	                                          const std::vector<QString> &point_labels = {});
 
 	Mode m_mode = Mode::Empty;
 
@@ -181,6 +186,7 @@ private:
 	std::vector<GroupData> m_group_data;
 	bool m_show_means = false;
 	bool m_show_ellipses = false;
+	bool m_use_labels = false; // true when per-point text labels are active
 
 	// Box plot data
 	std::vector<BoxStats> m_boxes;

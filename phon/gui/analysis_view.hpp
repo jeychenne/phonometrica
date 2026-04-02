@@ -34,6 +34,8 @@
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
+#include <QSlider>
 #include <QLabel>
 #include <QTableWidget>
 #include <QGroupBox>
@@ -156,8 +158,13 @@ private:
 	QSpinBox *m_bins_spin = nullptr;
 	QCheckBox *m_eda_regline_check = nullptr;
 	QCheckBox *m_eda_density_check = nullptr;
+	QLabel *m_eda_bw_label = nullptr;
+	QSlider *m_eda_bw_slider = nullptr;
+	QDoubleSpinBox *m_eda_bw_spin = nullptr;
 	QLabel *m_eda_group_label = nullptr;
 	QComboBox *m_eda_group_combo = nullptr;
+	QLabel *m_eda_label_label = nullptr;
+	QComboBox *m_eda_label_combo = nullptr;
 	QCheckBox *m_eda_mean_check = nullptr;
 	QCheckBox *m_eda_ellipse_check = nullptr;
 	QSpinBox *m_eda_ellipse_spin = nullptr;
