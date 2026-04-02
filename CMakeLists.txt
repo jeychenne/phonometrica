@@ -362,6 +362,7 @@ if(WITH_GUI)
         icons/tex.svg
         icons/check.svg
         icons/text-cursor.svg
+        icons/merge-tables.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

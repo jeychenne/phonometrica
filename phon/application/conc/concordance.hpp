@@ -45,6 +45,25 @@ public:
 		Long   // one row per time point; Step and Time columns added
 	};
 
+	enum class AuxColumnType
+	{
+		Text,          // generic text
+		Numeric,       // generic number (no conversion)
+		FormantHz,     // formant in Hz → can toggle ERB, Bark
+		BandwidthHz,   // bandwidth in Hz → can toggle ERB, Bark
+		PitchHz,       // F0 in Hz → can toggle semitones, ERB-rate
+		IntensityDb    // intensity in dB → no derived toggles
+	};
+
+	struct AuxColumn
+	{
+		String header;
+		AuxColumnType type = AuxColumnType::Text;
+		Array<double> num_data;    // 1-based; used for Numeric and measurement types
+		Array<String> text_data;   // 1-based; used for Text type
+		double semitone_ref = 100; // semitone reference Hz (PitchHz only)
+	};
+
 	Concordance(Directory *parent, const String &path);
 
 	Concordance(intptr_t target_count, Context ctx, intptr_t context_length, Array<AutoMatch> matches, Directory *parent,
@@ -218,6 +237,45 @@ public:
 	/// Throws an error with a descriptive message if the columns are incompatible.
 	void check_columns_compatible(const Concordance &other) const;
 
+	/// Check that this concordance has the same matches as `other`.
+	bool matches_equal(const Concordance &other) const;
+
+	/// Horizontal merge: add columns from `other` to a copy of this concordance.
+	/// `columns_to_add` is a list of (display_header, B_column_index) pairs; types are auto-detected.
+	Handle<Concordance> merge(const DataTable &other, const String &label,
+	                          const Array<std::pair<String, intptr_t>> &columns_to_add) const;
+
+	intptr_t aux_stored_count() const { return m_aux_columns.size(); }
+	intptr_t aux_display_column_count() const;
+
+	/// Returns the number of display columns produced by aux column c (1-based).
+	int aux_col_display_width(intptr_t c) const;
+
+	/// True if any aux column of the given measurement type exists.
+	bool has_aux_pitch() const;
+	bool has_aux_formant() const;
+
+	// ── Aux toggle flags ────────────────────────────────────────────────
+	bool aux_pitch_semitones() const { return m_aux_pitch_st; }
+	bool aux_pitch_erb() const { return m_aux_pitch_erb; }
+	bool aux_formant_erb() const { return m_aux_formant_erb; }
+	bool aux_formant_bark() const { return m_aux_formant_bark; }
+
+	void set_aux_pitch_semitones(bool b);
+	void set_aux_pitch_erb(bool b);
+	void set_aux_formant_erb(bool b);
+	void set_aux_formant_bark(bool b);
+
+	// ── Measurement column introspection (for merge) ────────────────────
+	/// True if col is a stored (non-derived) measurement column.
+	bool is_stored_measurement(intptr_t col) const;
+
+	/// Returns the type tag for a stored measurement column.
+	AuxColumnType get_measurement_type(intptr_t col) const;
+
+	/// Returns the raw stored double for a measurement column, NaN otherwise.
+	double get_raw_measurement_value(intptr_t row, intptr_t col) const;
+
 	bool update_match(intptr_t i, intptr_t target);
 
 	void update_context(intptr_t i);
@@ -285,6 +343,12 @@ protected:
 	/// Detect formant metadata from old-format headers and migrate measurement vectors.
 	void normalize_after_load();
 
+	/// Return the display header for the k-th display sub-column (1-based) of aux column c (1-based).
+	String aux_display_header(intptr_t c, intptr_t k) const;
+
+	/// Return the display value for the k-th display sub-column (1-based) of aux column c, at row mi (1-based).
+	String aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const;
+
 	Array<AutoMatch> m_matches;
 
 	// Left and right context
@@ -329,6 +393,15 @@ protected:
 	// ── Column aliases ───────────────────────────────────────────────────
 
 	std::map<String, String> m_header_aliases;   // default_header → user display name
+
+	// ── Auxiliary columns from horizontal merge ──────────────────────────
+
+	Array<AuxColumn> m_aux_columns;     // 1-based typed aux columns
+
+	bool m_aux_pitch_st = false;        // show semitone columns for merged F0
+	bool m_aux_pitch_erb = false;       // show ERB-rate columns for merged F0
+	bool m_aux_formant_erb = false;     // show ERB columns for merged formants
+	bool m_aux_formant_bark = false;    // show Bark columns for merged formants
 
 	String m_label;
 

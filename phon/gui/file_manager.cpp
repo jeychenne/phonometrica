@@ -25,6 +25,8 @@
 #include <QInputDialog>
 #include <QShortcut>
 #include <QKeyEvent>
+#include <QApplication>
+#include <QClipboard>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/project_model.hpp>
 #include <phon/application/project.hpp>
@@ -578,6 +580,14 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 	{
 		menu.addAction(tr("Analyze"), [this, dt]() {
 			emit analysisRequested(dt);
+		});
+	}
+
+	if (doc && doc->has_path())
+	{
+		menu.addAction(tr("Copy full path"), [doc]() {
+			auto path = QString::fromUtf8(doc->path().data(), (int) doc->path().size());
+			QApplication::clipboard()->setText(path);
 		});
 	}
 

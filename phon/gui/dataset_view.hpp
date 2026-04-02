@@ -29,6 +29,7 @@
 #include <QLabel>
 #include <phon/gui/view.hpp>
 #include <phon/gui/dataset_model.hpp>
+#include <phon/application/conc/concordance.hpp>
 
 namespace phonometrica {
 
@@ -51,6 +52,7 @@ signals:
 
 	void requestAnalysis(Handle<DataTable> source);
 	void datasetCreated(Handle<Dataset> ds);
+	void concordanceCreated(Handle<Concordance> conc);
 
 private slots:
 
@@ -61,6 +63,7 @@ private slots:
 	void onUnion();
 	void onIntersection();
 	void onComplement();
+	void onMerge();
 
 	void onContextMenu(const QPoint &pos);
 
@@ -73,6 +76,7 @@ private:
 	QList<int> selectedRows() const;
 	QList<int> selectedColumns() const;
 	Handle<Dataset> pickDataset(const QString &title);
+	Handle<DataTable> pickDataTable(const QString &title);
 
 	DatasetModel *m_model = nullptr;
 	QTableView *m_table = nullptr;

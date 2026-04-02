@@ -71,6 +71,7 @@ private slots:
 	void onUnion();
 	void onIntersection();
 	void onComplement();
+	void onMerge();
 
 	void onDoubleClick(const QModelIndex &index);
 	void onContextMenu(const QPoint &pos);
@@ -86,6 +87,11 @@ private slots:
 	void onTogglePitchSemitones(bool checked);
 	void onTogglePitchErb(bool checked);
 
+	void onToggleAuxPitchSemitones(bool checked);
+	void onToggleAuxPitchErb(bool checked);
+	void onToggleAuxFormantErb(bool checked);
+	void onToggleAuxFormantBark(bool checked);
+
 	void onHeaderDoubleClick(int section);
 
 private:
@@ -99,6 +105,7 @@ private:
 	int selectedRow() const;
 	QList<int> selectedRows() const;
 	Handle<Concordance> pickConcordance(const QString &title);
+	Handle<DataTable> pickDataTable(const QString &title);
 
 	ConcordanceModel *m_model = nullptr;
 	QTableView *m_table = nullptr;
@@ -106,13 +113,17 @@ private:
 	QLabel *m_count_label = nullptr;
 	QSpinBox *m_target_spin = nullptr;
 
-	// Scales menu actions (stored so we can update checked state)
+	// Native scales menu actions
 	QAction *m_erb_action = nullptr;
 	QAction *m_bark_action = nullptr;
-
-	// Pitch scales menu actions
 	QAction *m_pitch_st_action = nullptr;
 	QAction *m_pitch_erb_action = nullptr;
+
+	// Merged aux scales menu actions
+	QAction *m_aux_pitch_st_action = nullptr;
+	QAction *m_aux_pitch_erb_action = nullptr;
+	QAction *m_aux_formant_erb_action = nullptr;
+	QAction *m_aux_formant_bark_action = nullptr;
 
 	std::unique_ptr<AudioPlayer> m_player;
 	Handle<Concordance> m_conc;

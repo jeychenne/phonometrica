@@ -90,8 +90,12 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 		project->notify_update.connect([this]() {
 			updateWindowTitle();
 			m_file_manager->refresh();
+			updateSaveActions();
 		});
-		project->notify_closed.connect([this]() { updateWindowTitle(); });
+		project->notify_closed.connect([this]() {
+			updateWindowTitle();
+			updateSaveActions();
+		});
 		project->notify_error.connect([this](const String &msg) {
 			auto qmsg = QString::fromUtf8(msg.data(), (int) msg.size());
 			QMessageBox::warning(this, tr("Warning"), qmsg);
@@ -128,7 +132,7 @@ QMenu *MainWindow::createFileMenu()
 	m_recent_menu = menu->addMenu(tr("Recent projects"));
 	rebuildRecentMenu();
 
-	menu->addAction(tr("Open most recent project"), QKeySequence(tr("Ctrl+Shift+O")), this, [this]() {
+	m_open_recent_action = menu->addAction(tr("Open most recent project"), QKeySequence(tr("Ctrl+Shift+O")), this, [this]() {
 		try
 		{
 			auto &lst = Settings::get_list("recent_projects");
@@ -145,13 +149,16 @@ QMenu *MainWindow::createFileMenu()
 				tr("Could not open project: %1").arg(e.what()));
 		}
 	});
+	m_open_recent_action->setEnabled(m_recent_menu && !m_recent_menu->isEmpty());
 	menu->addSeparator();
 	menu->addAction(tr("Add files to project..."), QKeySequence(tr("Ctrl+Shift+A")), this, &MainWindow::onAddFiles);
 	menu->addAction(tr("Add content of directory to project..."), this, &MainWindow::onAddFolder);
 	menu->addSeparator();
 
-	menu->addAction(tr("Save project"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::onSaveProject);
-	menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
+	m_save_action = menu->addAction(tr("Save project"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::onSaveProject);
+	m_save_as_action = menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
+	m_save_action->setEnabled(false);
+	m_save_as_action->setEnabled(false);
 	menu->addSeparator();
 
 	menu->addAction(tr("Preferences..."), this, &MainWindow::onEditPreferences);
@@ -528,6 +535,9 @@ void MainWindow::rebuildRecentMenu()
 	}
 
 	m_recent_menu->setEnabled(!m_recent_menu->isEmpty());
+
+	if (m_open_recent_action)
+		m_open_recent_action->setEnabled(!m_recent_menu->isEmpty());
 }
 
 
@@ -1125,6 +1135,14 @@ void MainWindow::updateUndoRedoState()
 	m_redo_action->setEnabled(view && view->canRedo());
 }
 
+void MainWindow::updateSaveActions()
+{
+	auto *project = Project::get();
+	bool empty = !project || project->empty();
+	m_save_action->setEnabled(!empty && project->modified());
+	m_save_as_action->setEnabled(!empty);
+}
+
 
 // ---------------------------------------------------------
 //  Analysis menu slots
@@ -1622,6 +1640,9 @@ void MainWindow::openDataset(Handle<Dataset> ds)
 
 	connect(view, &DatasetView::datasetCreated,
 		this, &MainWindow::openDataset);
+
+	connect(view, &DatasetView::concordanceCreated,
+		this, &MainWindow::openConcordance);
 
 	addViewTab(view);
 }

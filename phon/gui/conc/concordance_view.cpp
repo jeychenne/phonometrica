@@ -33,6 +33,7 @@
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
@@ -104,6 +105,9 @@ void ConcordanceView::setupUi()
 	auto *compl_action = m_toolbar->addAction(QIcon(":/icons/set-complement.svg"), tr("Complement"));
 	compl_action->setToolTip(tr("Get complement (A \u2216 B)"));
 
+	auto *merge_action = m_toolbar->addAction(QIcon(":/icons/merge-tables.svg"), tr("Merge"));
+	merge_action->setToolTip(tr("Horizontal merge: add columns from another table"));
+
 	m_toolbar->addSeparator();
 
 	auto *rename_action = m_toolbar->addAction(QIcon(":/icons/tag.svg"), tr("Rename"));
@@ -162,54 +166,93 @@ void ConcordanceView::setupUi()
 	if (auto *db = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(display_action)))
 		db->setPopupMode(QToolButton::InstantPopup);
 
-	// -- Scales menu (Add/Remove ERB, Bark) — only for formant concordances --
-	if (m_conc->nformant() > 0)
+	// -- Scales menu — shows relevant sections based on native + merged measurement types --
+	bool need_scales = (m_conc->nformant() > 0) || m_conc->is_pitch()
+	                 || m_conc->has_aux_pitch() || m_conc->has_aux_formant();
+	if (need_scales)
 	{
 		auto *scales_menu = new QMenu(this);
 
-		m_erb_action = scales_menu->addAction(tr("ERB values"));
-		m_erb_action->setCheckable(true);
-		m_erb_action->setChecked(m_conc->has_erb());
-		m_erb_action->setToolTip(tr("Show formant values converted to the ERB scale"));
+		// Native formant scales
+		if (m_conc->nformant() > 0)
+		{
+			m_erb_action = scales_menu->addAction(tr("ERB values"));
+			m_erb_action->setCheckable(true);
+			m_erb_action->setChecked(m_conc->has_erb());
+			m_erb_action->setToolTip(tr("Show formant values converted to the ERB scale"));
 
-		m_bark_action = scales_menu->addAction(tr("Bark values"));
-		m_bark_action->setCheckable(true);
-		m_bark_action->setChecked(m_conc->has_bark());
-		m_bark_action->setToolTip(tr("Show formant values converted to the Bark scale"));
+			m_bark_action = scales_menu->addAction(tr("Bark values"));
+			m_bark_action->setCheckable(true);
+			m_bark_action->setChecked(m_conc->has_bark());
+			m_bark_action->setToolTip(tr("Show formant values converted to the Bark scale"));
+
+			connect(m_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleErb);
+			connect(m_bark_action, &QAction::toggled, this, &ConcordanceView::onToggleBark);
+		}
+
+		// Native pitch scales
+		if (m_conc->is_pitch())
+		{
+			if (m_conc->nformant() > 0) scales_menu->addSeparator();
+
+			m_pitch_st_action = scales_menu->addAction(tr("Semitones"));
+			m_pitch_st_action->setCheckable(true);
+			m_pitch_st_action->setChecked(m_conc->has_semitones());
+			m_pitch_st_action->setToolTip(tr("Show pitch values converted to semitones"));
+
+			m_pitch_erb_action = scales_menu->addAction(tr("ERB rate"));
+			m_pitch_erb_action->setCheckable(true);
+			m_pitch_erb_action->setChecked(m_conc->has_pitch_erb());
+			m_pitch_erb_action->setToolTip(tr("Show pitch values converted to the ERB scale"));
+
+			connect(m_pitch_st_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchSemitones);
+			connect(m_pitch_erb_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchErb);
+		}
+
+		// Merged F0 scales
+		if (m_conc->has_aux_pitch())
+		{
+			if (m_conc->nformant() > 0 || m_conc->is_pitch()) scales_menu->addSeparator();
+
+			m_aux_pitch_st_action = scales_menu->addAction(tr("F0 \u2192 Semitones"));
+			m_aux_pitch_st_action->setCheckable(true);
+			m_aux_pitch_st_action->setChecked(m_conc->aux_pitch_semitones());
+			m_aux_pitch_st_action->setToolTip(tr("Show F0 values converted to semitones"));
+
+			m_aux_pitch_erb_action = scales_menu->addAction(tr("F0 \u2192 ERB rate"));
+			m_aux_pitch_erb_action->setCheckable(true);
+			m_aux_pitch_erb_action->setChecked(m_conc->aux_pitch_erb());
+			m_aux_pitch_erb_action->setToolTip(tr("Show F0 values converted to the ERB scale"));
+
+			connect(m_aux_pitch_st_action, &QAction::toggled, this, &ConcordanceView::onToggleAuxPitchSemitones);
+			connect(m_aux_pitch_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleAuxPitchErb);
+		}
+
+		// Merged formant scales
+		if (m_conc->has_aux_formant())
+		{
+			if (m_conc->nformant() > 0 || m_conc->is_pitch() || m_conc->has_aux_pitch())
+				scales_menu->addSeparator();
+
+			m_aux_formant_erb_action = scales_menu->addAction(tr("formants \u2192 ERB"));
+			m_aux_formant_erb_action->setCheckable(true);
+			m_aux_formant_erb_action->setChecked(m_conc->aux_formant_erb());
+			m_aux_formant_erb_action->setToolTip(tr("Show formant values converted to ERB"));
+
+			m_aux_formant_bark_action = scales_menu->addAction(tr("formants \u2192 Bark"));
+			m_aux_formant_bark_action->setCheckable(true);
+			m_aux_formant_bark_action->setChecked(m_conc->aux_formant_bark());
+			m_aux_formant_bark_action->setToolTip(tr("Show formant values converted to Bark"));
+
+			connect(m_aux_formant_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleAuxFormantErb);
+			connect(m_aux_formant_bark_action, &QAction::toggled, this, &ConcordanceView::onToggleAuxFormantBark);
+		}
 
 		auto *scales_action = new QAction(QIcon(":/icons/ruler.svg"), tr("Scales"), this);
 		scales_action->setMenu(scales_menu);
 		m_toolbar->addAction(scales_action);
 		if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(scales_action)))
 			sb->setPopupMode(QToolButton::InstantPopup);
-
-		connect(m_erb_action, &QAction::toggled, this, &ConcordanceView::onToggleErb);
-		connect(m_bark_action, &QAction::toggled, this, &ConcordanceView::onToggleBark);
-	}
-
-	// -- Scales menu for pitch concordances --
-	if (m_conc->is_pitch())
-	{
-		auto *scales_menu = new QMenu(this);
-
-		m_pitch_st_action = scales_menu->addAction(tr("Semitones"));
-		m_pitch_st_action->setCheckable(true);
-		m_pitch_st_action->setChecked(m_conc->has_semitones());
-		m_pitch_st_action->setToolTip(tr("Show pitch values converted to semitones"));
-
-		m_pitch_erb_action = scales_menu->addAction(tr("ERB rate"));
-		m_pitch_erb_action->setCheckable(true);
-		m_pitch_erb_action->setChecked(m_conc->has_pitch_erb());
-		m_pitch_erb_action->setToolTip(tr("Show pitch values converted to the ERB scale"));
-
-		auto *scales_action = new QAction(QIcon(":/icons/ruler.svg"), tr("Scales"), this);
-		scales_action->setMenu(scales_menu);
-		m_toolbar->addAction(scales_action);
-		if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(scales_action)))
-			sb->setPopupMode(QToolButton::InstantPopup);
-
-		connect(m_pitch_st_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchSemitones);
-		connect(m_pitch_erb_action, &QAction::toggled, this, &ConcordanceView::onTogglePitchErb);
 	}
 
 	// ── Right-aligned help button ─────────────────────
@@ -279,6 +322,7 @@ void ConcordanceView::setupUi()
 	connect(union_action, &QAction::triggered, this, &ConcordanceView::onUnion);
 	connect(intersect_action, &QAction::triggered, this, &ConcordanceView::onIntersection);
 	connect(compl_action, &QAction::triggered, this, &ConcordanceView::onComplement);
+	connect(merge_action, &QAction::triggered, this, &ConcordanceView::onMerge);
 	connect(rename_action, &QAction::triggered, this, &ConcordanceView::onRename);
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_conc);
@@ -571,6 +615,159 @@ void ConcordanceView::onComplement()
 	}
 }
 
+Handle<DataTable> ConcordanceView::pickDataTable(const QString &title)
+{
+	auto concordances = Project::get()->get_concordances();
+	auto datasets = Project::get()->get_datasets();
+	QStringList names;
+
+	for (auto &c : concordances)
+	{
+		if (c.get() != m_conc.get())
+			names << QString::fromUtf8(c->label().data(), (int) c->label().size());
+	}
+	for (auto &d : datasets)
+	{
+		names << QString::fromUtf8(d->label().data(), (int) d->label().size());
+	}
+
+	if (names.isEmpty())
+	{
+		QMessageBox::information(this, title, tr("No other data tables available."));
+		return {};
+	}
+
+	bool ok;
+	auto choice = QInputDialog::getItem(this, title, tr("Select data table:"), names, 0, false, &ok);
+	if (!ok) return {};
+
+	for (auto &c : concordances)
+	{
+		auto lbl = QString::fromUtf8(c->label().data(), (int) c->label().size());
+		if (lbl == choice && c.get() != m_conc.get())
+		{
+			c->open();
+			return c;
+		}
+	}
+	for (auto &d : datasets)
+	{
+		auto lbl = QString::fromUtf8(d->label().data(), (int) d->label().size());
+		if (lbl == choice)
+		{
+			d->open();
+			return d;
+		}
+	}
+
+	return {};
+}
+
+void ConcordanceView::onMerge()
+{
+	auto other = pickDataTable(tr("Merge tables"));
+	if (!other) return;
+
+	// Check row count compatibility.
+	if (m_conc->row_count() != other->row_count())
+	{
+		QMessageBox::critical(this, tr("Error"),
+			tr("Cannot merge: tables have different numbers of rows (%1 vs %2).")
+				.arg((int) m_conc->row_count()).arg((int) other->row_count()));
+		return;
+	}
+
+	// If the other table is a concordance, check match equality.
+	auto *other_conc = dynamic_cast<Concordance *>(other.get());
+	if (other_conc && !m_conc->matches_equal(*other_conc))
+	{
+		QMessageBox::critical(this, tr("Error"),
+			tr("Cannot merge concordances: they have different matches."));
+		return;
+	}
+
+	// Classify columns: shared, unique to B, or conflicting.
+	auto a_cols = m_conc->column_count();
+	auto b_cols = other->column_count();
+	auto rows = m_conc->row_count();
+
+	std::map<String, intptr_t> a_headers;
+	for (intptr_t j = 1; j <= a_cols; j++) {
+		a_headers[m_conc->get_header(j)] = j;
+	}
+
+	Array<std::pair<String, intptr_t>> columns_to_add;
+
+	for (intptr_t j = 1; j <= b_cols; j++)
+	{
+		// Skip derived measurement columns (ERB, Bark, semitones) in source concordance.
+		// These will be recomputed from the raw stored values via the aux toggle mechanism.
+		if (other_conc && other_conc->is_measurement_column(j) && !other_conc->is_stored_measurement(j))
+			continue;
+
+		auto header = other->get_header(j);
+		auto it = a_headers.find(header);
+
+		if (it == a_headers.end())
+		{
+			// B-only column: add it.
+			columns_to_add.append(std::make_pair(header, j));
+		}
+		else
+		{
+			// Same name: check if values differ.
+			bool same = true;
+			for (intptr_t i = 1; i <= rows; i++)
+			{
+				if (m_conc->get_cell(i, it->second) != other->get_cell(i, j)) {
+					same = false;
+					break;
+				}
+			}
+
+			if (!same)
+			{
+				auto qheader = QString::fromUtf8(header.data(), (int) header.size());
+				auto answer = QMessageBox::question(this, tr("Column conflict"),
+					tr("Column \"%1\" has different values.\nAdd the other table's values as \"%1 (B)\"?")
+						.arg(qheader),
+					QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+
+				if (answer == QMessageBox::Yes)
+				{
+					auto suffixed = header;
+					suffixed.append(" (B)");
+					columns_to_add.append(std::make_pair(suffixed, j));
+				}
+			}
+			// If same values: skip (already present through A).
+		}
+	}
+
+	if (columns_to_add.empty())
+	{
+		QMessageBox::information(this, tr("Merge"),
+			tr("No new columns to add. The other table has no unique or conflicting columns."));
+		return;
+	}
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Merge"), tr("Name for the result:"),
+		QLineEdit::Normal, tr("Merged"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		auto result = m_conc->merge(*other, String(name.toUtf8().constData()), columns_to_add);
+		Project::updated();
+		emit concordanceCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
 // ── Display toggles ─────────────────────────────────────
 
 void ConcordanceView::onToggleMatchInfo(bool visible)
@@ -634,6 +831,44 @@ void ConcordanceView::onTogglePitchSemitones(bool checked)
 void ConcordanceView::onTogglePitchErb(bool checked)
 {
 	m_conc->set_has_pitch_erb(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+// ── Merged aux scales ──────────────────────────────────────
+
+void ConcordanceView::onToggleAuxPitchSemitones(bool checked)
+{
+	m_conc->set_aux_pitch_semitones(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onToggleAuxPitchErb(bool checked)
+{
+	m_conc->set_aux_pitch_erb(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onToggleAuxFormantErb(bool checked)
+{
+	m_conc->set_aux_formant_erb(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onToggleAuxFormantBark(bool checked)
+{
+	m_conc->set_aux_formant_bark(checked);
 	m_model->refreshAll();
 	updateColumnVisibility();
 	m_table->resizeColumnsToContents();
