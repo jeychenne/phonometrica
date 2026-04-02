@@ -30,6 +30,7 @@
 #include <phon/gui/dataset_view.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
+#include <phon/analysis/column_metrics.hpp>
 
 namespace phonometrica {
 
@@ -67,6 +68,24 @@ void DatasetView::setupUi()
 
 	m_toolbar->addSeparator();
 
+	// -- Filter / Subset --
+	m_filter_action = m_toolbar->addAction(QIcon(":/icons/list-filter.svg"), tr("Filter"));
+	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
+	m_filter_action->setCheckable(true);
+
+	m_clear_filter_action = m_toolbar->addAction(QIcon(":/icons/filter-x.svg"), tr("Clear filters"));
+	m_clear_filter_action->setToolTip(tr("Remove all filter rules"));
+	m_clear_filter_action->setEnabled(false);
+
+	m_subset_action = m_toolbar->addAction(QIcon(":/icons/scissors.svg"), tr("Subset"));
+	m_subset_action->setToolTip(tr("Create a new dataset from the visible (filtered) rows"));
+	m_subset_action->setEnabled(false);
+
+	auto *metric_action = m_toolbar->addAction(QIcon(":/icons/sigma.svg"), tr("Metric column"));
+	metric_action->setToolTip(tr("Compute a distance metric (z-score, etc.) for outlier detection"));
+
+	m_toolbar->addSeparator();
+
 	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
 	analyze_action->setToolTip(tr("Open analysis view for this dataset"));
 
@@ -98,6 +117,16 @@ void DatasetView::setupUi()
 
 	layout->addWidget(m_toolbar);
 
+	// ── Filter bar (hidden by default) ────────────────
+	m_model = new DatasetModel(m_ds, this);
+	m_proxy = new DataFilterProxyModel(this);
+	m_proxy->setSourceModel(m_model);
+
+	m_filter_bar = new FilterBar(m_proxy, this);
+	m_filter_bar->hide();
+	setupFilterBar();
+	layout->addWidget(m_filter_bar);
+
 	// ── Count label ────────────────────────────────────
 	auto *info_row = new QHBoxLayout;
 	m_count_label = new QLabel;
@@ -108,9 +137,8 @@ void DatasetView::setupUi()
 	layout->addLayout(info_row);
 
 	// ── Table ──────────────────────────────────────────
-	m_model = new DatasetModel(m_ds, this);
 	m_table = new QTableView;
-	m_table->setModel(m_model);
+	m_table->setModel(m_proxy);
 	m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
 	m_table->setSelectionMode(QAbstractItemView::ExtendedSelection);
 	m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
@@ -119,6 +147,13 @@ void DatasetView::setupUi()
 	m_table->horizontalHeader()->setStretchLastSection(false);
 	m_table->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_table->setSortingEnabled(false);
+
+	// Sorting is handled via the header context menu (right-click),
+	// not by clicking — this avoids interfering with other header interactions.
+	auto *hdr = m_table->horizontalHeader();
+	hdr->setSectionsClickable(false);
+	hdr->setSortIndicatorShown(false);
+	hdr->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	m_table->resizeColumnsToContents();
 
@@ -131,6 +166,10 @@ void DatasetView::setupUi()
 	connect(csv_action, &QAction::triggered, this, &DatasetView::onExportCsv);
 	connect(del_row_action, &QAction::triggered, this, &DatasetView::onDeleteRows);
 	connect(del_col_action, &QAction::triggered, this, &DatasetView::onDeleteColumns);
+	connect(m_filter_action, &QAction::toggled, this, &DatasetView::onToggleFilter);
+	connect(m_clear_filter_action, &QAction::triggered, this, &DatasetView::onClearFilters);
+	connect(m_subset_action, &QAction::triggered, this, &DatasetView::onCreateSubset);
+	connect(metric_action, &QAction::triggered, this, &DatasetView::onAddMetricColumn);
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_ds);
 	});
@@ -139,6 +178,39 @@ void DatasetView::setupUi()
 	connect(compl_action, &QAction::triggered, this, &DatasetView::onComplement);
 	connect(merge_action, &QAction::triggered, this, &DatasetView::onMerge);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &DatasetView::onContextMenu);
+
+	connect(hdr, &QHeaderView::customContextMenuRequested, this, [this](const QPoint &pos) {
+		auto *header = m_table->horizontalHeader();
+		int section = header->logicalIndexAt(pos);
+		if (section < 0) return;
+
+		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
+		QMenu menu(this);
+		menu.addAction(tr("Sort \"%1\" ascending").arg(col_name), this, [this, section, header]() {
+			m_proxy->sort(section, Qt::AscendingOrder);
+			header->setSortIndicator(section, Qt::AscendingOrder);
+			header->setSortIndicatorShown(true);
+		});
+		menu.addAction(tr("Sort \"%1\" descending").arg(col_name), this, [this, section, header]() {
+			m_proxy->sort(section, Qt::DescendingOrder);
+			header->setSortIndicator(section, Qt::DescendingOrder);
+			header->setSortIndicatorShown(true);
+		});
+		menu.addSeparator();
+		menu.addAction(tr("Remove sort"), this, [this, header]() {
+			m_proxy->sort(-1, Qt::AscendingOrder);
+			header->setSortIndicatorShown(false);
+		});
+		menu.exec(header->mapToGlobal(pos));
+	});
+
+	connect(m_proxy, &DataFilterProxyModel::filterChanged, this, [this]() {
+		updateCountLabel();
+		bool has_rules = m_proxy->ruleCount() > 0;
+		m_clear_filter_action->setEnabled(has_rules);
+		bool is_filtered = has_rules && m_proxy->visibleRowCount() < m_model->rowCount();
+		m_subset_action->setEnabled(is_filtered);
+	});
 }
 
 // ── View interface ──────────────────────────────────────
@@ -202,17 +274,25 @@ void DatasetView::discardChanges()
 
 void DatasetView::onDeleteRows()
 {
-	auto rows = selectedRows();
-	if (rows.isEmpty())
+	auto proxy_rows = selectedRows();
+	if (proxy_rows.isEmpty())
 	{
 		QMessageBox::information(this, tr("Information"),
 			tr("Select one or more rows to delete."));
 		return;
 	}
 
+	// Map proxy rows to source rows.
+	QList<int> source_rows;
+	for (int pr : proxy_rows) {
+		auto source_idx = m_proxy->mapToSource(m_proxy->index(pr, 0));
+		source_rows.append(source_idx.row());
+	}
+	std::sort(source_rows.begin(), source_rows.end());
+
 	// Remove from bottom to top to keep indices valid.
-	for (int i = rows.size() - 1; i >= 0; i--)
-		m_model->removeRow(rows[i]);
+	for (int i = source_rows.size() - 1; i >= 0; i--)
+		m_model->removeRow(source_rows[i]);
 
 	m_ds->set_content_modified(true);
 	updateCountLabel();
@@ -582,6 +662,211 @@ void DatasetView::onMerge()
 	}
 }
 
+// ── Filter / Subset ────────────────────────────────────────
+
+void DatasetView::setupFilterBar()
+{
+	QStringList headers;
+	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+		auto h = m_ds->get_header(j);
+		headers << QString::fromUtf8(h.data(), (int) h.size());
+	}
+
+	m_filter_bar->setColumns(headers,
+		// isNumeric callback
+		[this](int col) -> bool {
+			return m_ds->is_numeric(col + 1); // 0-based → 1-based
+		},
+		// getLevels callback
+		[this](int col) -> QStringList {
+			QStringList levels;
+			auto arr = m_ds->get_levels(col + 1);
+			for (intptr_t i = 1; i <= arr.size(); i++) {
+				levels << QString::fromUtf8(arr[i].data(), (int) arr[i].size());
+			}
+			return levels;
+		}
+	);
+}
+
+void DatasetView::onToggleFilter()
+{
+	bool show = m_filter_action->isChecked();
+	m_filter_bar->setVisible(show);
+	m_proxy->setFilterEnabled(show);
+
+	// Auto-add a first rule so the user can start filtering immediately.
+	if (show && m_proxy->ruleCount() == 0) {
+		m_filter_bar->appendStrip();
+	}
+}
+
+void DatasetView::onClearFilters()
+{
+	m_proxy->clearRules();
+	m_filter_bar->rebuild();
+}
+
+void DatasetView::onCreateSubset()
+{
+	auto visible = m_proxy->visibleSourceRows();
+	if (visible.isEmpty() || visible.size() == m_model->rowCount()) return;
+
+	bool ok;
+	auto name = QInputDialog::getText(this, tr("Create subset"),
+		tr("Name for the subset:"),
+		QLineEdit::Normal, tr("Filtered"), &ok);
+	if (!ok || name.isEmpty()) return;
+
+	try
+	{
+		std::vector<int> rows(visible.begin(), visible.end());
+		auto result = m_ds->subset(rows, String(name.toUtf8().constData()));
+		Project::updated();
+		emit datasetCreated(result);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onAddMetricColumn()
+{
+	// Collect numeric and text columns.
+	QStringList num_names, text_names;
+	QVector<int> num_indices, text_indices;
+
+	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+		auto h = m_ds->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+		if (m_ds->is_numeric(j)) {
+			num_names << qh;
+			num_indices << (int) j;
+		}
+		else if (m_ds->is_text(j)) {
+			text_names << qh;
+			text_indices << (int) j;
+		}
+	}
+
+	if (num_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No numeric columns available."));
+		return;
+	}
+
+	OutlierDialog dlg(num_names, num_indices, text_names, text_indices, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto metric = dlg.selectedMetric();
+	auto group_cols = dlg.groupByColumns();
+	auto col_name = dlg.columnName();
+
+	if (col_name.isEmpty()) return;
+
+	try
+	{
+		// Build composite group labels from selected group-by columns.
+		std::vector<std::string> groups;
+		if (!group_cols.isEmpty()) {
+			auto nrows = m_ds->row_count();
+			groups.resize(nrows);
+			for (intptr_t i = 0; i < nrows; i++) {
+				std::string key;
+				for (int gc : group_cols) {
+					auto text_span = m_ds->text_column(gc);
+					if (!key.empty()) key += '|';
+					key.append(text_span[i + 1].data(), text_span[i + 1].size());
+				}
+				groups[i] = std::move(key);
+			}
+		}
+
+		std::vector<double> result;
+
+		if (stats::is_multivariate(metric))
+		{
+			// Multi-column metric.
+			auto cols = dlg.selectedColumns();
+			if (cols.size() < 2) {
+				QMessageBox::information(this, tr("Information"),
+					tr("Please select at least two columns for this metric."));
+				return;
+			}
+			std::vector<std::vector<double>> columns;
+			for (int c : cols) {
+				auto span = m_ds->numeric_column(c);
+				columns.emplace_back(span.begin(), span.end());
+			}
+			result = stats::compute_multivariate_metric(columns, groups, metric);
+		}
+		else
+		{
+			// Single-column metric.
+			int col = dlg.selectedColumn();
+			auto span = m_ds->numeric_column(col);
+			std::vector<double> values(span.begin(), span.end());
+			result = stats::compute_column_metric(values, groups, metric);
+		}
+
+		// Add the column.
+		m_ds->add_numeric_column(String(col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar(); // refresh column list in filter bar
+		updateCountLabel();
+		emit titleChanged(label());
+
+		// Auto-add filter rule if requested.
+		if (dlg.addFilter())
+		{
+			double threshold = dlg.filterThreshold();
+			int new_col_idx = m_ds->column_count() - 1; // 0-based for the proxy
+
+			// For absolute/distance metrics, use ≤ directly.
+			// For signed metrics (ZScore, ModifiedZScore), filter on absolute value: add two rules.
+			bool is_positive = (metric == stats::ColumnMetric::AbsZScore ||
+			                    metric == stats::ColumnMetric::AbsModifiedZScore ||
+			                    metric == stats::ColumnMetric::Percentile ||
+			                    metric == stats::ColumnMetric::EuclideanDistance ||
+			                    metric == stats::ColumnMetric::MahalanobisDistance);
+
+			if (is_positive)
+			{
+				FilterRule rule;
+				rule.column = new_col_idx;
+				rule.op = FilterOp::Le;
+				rule.value = QString::number(threshold, 'f', 2);
+				m_proxy->addRule(rule);
+			}
+			else
+			{
+				// For signed z-scores: keep values where -threshold ≤ value ≤ threshold.
+				FilterRule rule_ge;
+				rule_ge.column = new_col_idx;
+				rule_ge.op = FilterOp::Ge;
+				rule_ge.value = QString::number(-threshold, 'f', 2);
+				m_proxy->addRule(rule_ge);
+
+				FilterRule rule_le;
+				rule_le.column = new_col_idx;
+				rule_le.op = FilterOp::Le;
+				rule_le.value = QString::number(threshold, 'f', 2);
+				m_proxy->addRule(rule_le);
+			}
+
+			// Show the filter bar and update UI.
+			m_filter_action->setChecked(true);
+			m_filter_bar->rebuild();
+		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
 // ── Context menu ────────────────────────────────────────
 
 void DatasetView::onContextMenu(const QPoint &pos)
@@ -605,9 +890,17 @@ void DatasetView::onContextMenu(const QPoint &pos)
 
 void DatasetView::updateCountLabel()
 {
-	auto nrows = m_ds->row_count();
+	auto total = m_ds->row_count();
 	auto ncols = m_ds->column_count();
-	m_count_label->setText(tr("%1 row(s), %2 column(s)").arg((int) nrows).arg((int) ncols));
+	auto visible = m_proxy->visibleRowCount();
+
+	if (visible < (int) total) {
+		m_count_label->setText(tr("Showing %1 of %2 row(s), %3 column(s)")
+			.arg(visible).arg((int) total).arg((int) ncols));
+	}
+	else {
+		m_count_label->setText(tr("%1 row(s), %2 column(s)").arg((int) total).arg((int) ncols));
+	}
 }
 
 int DatasetView::selectedRow() const

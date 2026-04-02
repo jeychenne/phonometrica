@@ -577,4 +577,51 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 
 	return result;
 }
+
+Handle<Dataset> Dataset::subset(const std::vector<int> &rows_0based, const String &label) const
+{
+	// Create an empty result with the same column structure.
+	auto result = make_handle<Dataset>(nullptr);
+	result->m_labels = m_labels;
+	result->ncol = ncol;
+	result->m_loaded = true;
+	result->m_content_modified = true;
+	result->set_label(label, false);
+
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
+	}
+	// Columns were cloned with all rows — reset them to empty.
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result->m_columns[j]->resize(0);
+	}
+
+	// Append selected rows (convert 0-based to 1-based).
+	for (int row : rows_0based) {
+		result->append_row_from(*this, row + 1);
+	}
+
+	auto parent = Project::get()->data().get();
+	parent->append(result, false);
+
+	return result;
+}
+
+void Dataset::add_numeric_column(const String &header, const std::vector<double> &values)
+{
+	if ((intptr_t)values.size() != nrow) {
+		throw error("Cannot add column '%': expected % values, got %", header, nrow, (intptr_t)values.size());
+	}
+
+	auto new_col = std::make_unique<TColumn<double>>(nrow);
+	for (intptr_t i = 0; i < nrow; i++) {
+		new_col->set(i + 1, values[i]);
+	}
+
+	m_labels.append(header);
+	m_columns.append(std::move(new_col));
+	ncol++;
+	m_content_modified = true;
+}
+
 } // namespace phonometrica

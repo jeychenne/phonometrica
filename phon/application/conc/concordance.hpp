@@ -23,6 +23,7 @@
 #define PHONOMETRICA_CONCORDANCE_HPP
 
 #include <map>
+#include <vector>
 #include <phon/application/data_table.hpp>
 #include <phon/application/conc/match.hpp>
 
@@ -236,6 +237,14 @@ public:
 	Handle<Concordance> intersect(const Concordance &other, const String &label) const;
 
 	Handle<Concordance> complement(const Concordance &other, const String &label) const;
+
+	/// Create a subset containing only the specified rows (0-based indices).
+	/// The result is a new in-memory Concordance added to the project.
+	Handle<Concordance> subset(const std::vector<int> &rows_0based, const String &label) const;
+
+	/// Append a new numeric auxiliary column with the given header and values.
+	/// The values vector must have exactly row_count() elements.
+	void add_numeric_column(const String &header, const std::vector<double> &values);
 
 	/// Check that this concordance has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.

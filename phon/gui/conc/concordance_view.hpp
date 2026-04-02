@@ -30,6 +30,9 @@
 #include <QSpinBox>
 #include <phon/gui/view.hpp>
 #include <phon/gui/conc/concordance_model.hpp>
+#include <phon/gui/data_filter.hpp>
+#include <phon/gui/filter_bar.hpp>
+#include <phon/gui/outlier_dialog.hpp>
 #include <phon/application/audio_player.hpp>
 
 namespace phonometrica {
@@ -73,6 +76,11 @@ private slots:
 	void onComplement();
 	void onMerge();
 
+	void onToggleFilter();
+	void onClearFilters();
+	void onCreateSubset();
+	void onAddMetricColumn();
+
 	void onDoubleClick(const QModelIndex &index);
 	void onContextMenu(const QPoint &pos);
 
@@ -99,19 +107,26 @@ private:
 	void setupUi();
 	void updateCountLabel();
 	void updateColumnVisibility();
+	void setupFilterBar();
 	void stopPlayer();
 	void playMatch(int row);
 	void viewMatch(int row);
 	int selectedRow() const;
 	QList<int> selectedRows() const;
+	int mapToSourceRow(int proxyRow) const;
 	Handle<Concordance> pickConcordance(const QString &title);
 	Handle<DataTable> pickDataTable(const QString &title);
 
 	ConcordanceModel *m_model = nullptr;
+	DataFilterProxyModel *m_proxy = nullptr;
+	FilterBar *m_filter_bar = nullptr;
 	QTableView *m_table = nullptr;
 	QToolBar *m_toolbar = nullptr;
 	QLabel *m_count_label = nullptr;
 	QSpinBox *m_target_spin = nullptr;
+	QAction *m_filter_action = nullptr;
+	QAction *m_clear_filter_action = nullptr;
+	QAction *m_subset_action = nullptr;
 
 	// Native scales menu actions
 	QAction *m_erb_action = nullptr;

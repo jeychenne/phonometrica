@@ -1880,6 +1880,89 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	return conc;
 }
 
+Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, const String &label) const
+{
+	Array<AutoMatch> result;
+	result.reserve((intptr_t)rows_0based.size());
+
+	for (int row : rows_0based) {
+		intptr_t idx = row + 1; // convert to 1-based
+		if (idx >= 1 && idx <= m_matches.size()) {
+			result.append(std::make_unique<Match>(*m_matches[idx]));
+		}
+	}
+
+	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
+	conc->set_label(label, false);
+	copy_metadata_to(*conc);
+
+	// Copy header aliases.
+	for (auto &[key, val] : m_header_aliases) {
+		conc->set_header_alias(key, val);
+	}
+
+	// Subset aux columns.
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		auto &src = m_aux_columns[c];
+		AuxColumn dst;
+		dst.header = src.header;
+		dst.type = src.type;
+		dst.semitone_ref = src.semitone_ref;
+
+		intptr_t n = (intptr_t)rows_0based.size();
+
+		if (src.type == AuxColumnType::Text) {
+			dst.text_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t src_idx = rows_0based[i] + 1;
+				if (src_idx >= 1 && src_idx <= src.text_data.size())
+					dst.text_data[i + 1] = src.text_data[src_idx];
+			}
+		}
+		else {
+			dst.num_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t src_idx = rows_0based[i] + 1;
+				if (src_idx >= 1 && src_idx <= src.num_data.size())
+					dst.num_data[i + 1] = src.num_data[src_idx];
+			}
+		}
+
+		conc->m_aux_columns.append(std::move(dst));
+	}
+
+	// Copy aux display flags.
+	conc->m_aux_pitch_st = m_aux_pitch_st;
+	conc->m_aux_pitch_erb = m_aux_pitch_erb;
+	conc->m_aux_formant_erb = m_aux_formant_erb;
+	conc->m_aux_formant_bark = m_aux_formant_bark;
+
+	auto parent = Project::get()->data().get();
+	parent->append(conc, false);
+
+	return conc;
+}
+
+void Concordance::add_numeric_column(const String &header, const std::vector<double> &values)
+{
+	if ((intptr_t)values.size() != row_count()) {
+		throw error("Cannot add column '%': expected % values, got %",
+		             header, row_count(), (intptr_t)values.size());
+	}
+
+	AuxColumn col;
+	col.header = header;
+	col.type = AuxColumnType::Numeric;
+	col.num_data.resize((intptr_t)values.size());
+	for (intptr_t i = 0; i < (intptr_t)values.size(); i++) {
+		col.num_data[i + 1] = values[i];
+	}
+
+	m_aux_columns.append(std::move(col));
+	modify();
+}
+
 bool Concordance::matches_equal(const Concordance &other) const
 {
 	if (m_matches.size() != other.m_matches.size()) return false;
