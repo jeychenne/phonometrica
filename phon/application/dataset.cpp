@@ -66,6 +66,12 @@ void Dataset::set_label(String value, bool mutate)
 
 void Dataset::load()
 {
+	// Clear existing data so load() is idempotent on reload.
+	m_columns.clear();
+	m_labels.clear();
+	nrow = 0;
+	ncol = 0;
+
 	auto ext = filesystem::ext(m_path, true);
 
 	if (ext == ".csv")

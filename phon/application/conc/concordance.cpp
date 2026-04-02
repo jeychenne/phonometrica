@@ -980,6 +980,38 @@ void Concordance::load()
 		throw error("Expected a concordance, got a % file instead", attr.as_string());
 	}
 
+	// Clear existing data so load() is idempotent on reload.
+	m_matches.clear();
+	m_context.clear();
+	m_extra_headers.clear();
+	m_measurement_points.clear();
+	m_base_headers.clear();
+	m_header_aliases.clear();
+	m_aux_columns.clear();
+	m_nformant = 0;
+	m_has_bandwidth = false;
+	m_has_erb = false;
+	m_has_bark = false;
+	m_has_auto_params = false;
+	m_has_series = true;
+	m_has_average = false;
+	m_is_pitch = false;
+	m_has_semitones = false;
+	m_semitone_ref = 100;
+	m_has_pitch_erb = false;
+	m_is_intensity = false;
+	m_has_duration = false;
+	m_duration_in_ms = false;
+	m_highlight_targets = true;
+	m_aux_pitch_st = false;
+	m_aux_pitch_erb = false;
+	m_aux_formant_erb = false;
+	m_aux_formant_bark = false;
+	m_target_count = 0;
+	m_context_length = 0;
+	m_context_type = Context::None;
+	m_layout = Layout::Wide;
+
 	// Temporary storage for old-format fields_per_point (used during migration)
 	int loaded_fpp = 0;
 

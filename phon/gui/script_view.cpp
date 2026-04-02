@@ -271,7 +271,10 @@ bool ScriptView::isModified() const
 
 void ScriptView::discardChanges()
 {
-	m_script->discard_changes();
+	if (m_script->has_path())
+		m_script->reload();
+	else
+		m_script->discard_changes();
 }
 
 QString ScriptView::label() const

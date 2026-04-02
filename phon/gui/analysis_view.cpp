@@ -168,7 +168,10 @@ bool AnalysisView::save()
 
 void AnalysisView::discardChanges()
 {
-	// Nothing to do — the analysis is not reloaded on discard.
+	if (m_analysis->has_path())
+		m_analysis->reload();
+	else
+		m_analysis->discard_changes();
 }
 
 

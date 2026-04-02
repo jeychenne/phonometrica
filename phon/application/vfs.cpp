@@ -619,8 +619,10 @@ Property Document::parse_property(xml_node prop_node, const std::type_info &type
 
 void Document::reload()
 {
+	m_loaded = false;
 	discard_changes();
 	load();
+	m_loaded = true;
 }
 
 bool Document::quick_search(const String &text) const

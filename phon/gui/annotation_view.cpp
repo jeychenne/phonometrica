@@ -87,7 +87,10 @@ bool AnnotationView::save()
 
 void AnnotationView::discardChanges()
 {
-	m_annot->discard_changes();
+	if (m_annot->has_path())
+		m_annot->reload();
+	else
+		m_annot->discard_changes();
 }
 
 void AnnotationView::escape()
