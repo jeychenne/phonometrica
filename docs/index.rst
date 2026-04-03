@@ -69,6 +69,7 @@ Topics
    annotation
    query
    concordance
+   transform
    scripting/index
    scripting/plugins
    License <about/license>

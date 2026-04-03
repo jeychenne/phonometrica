@@ -13,58 +13,56 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 31/03/2026                                                                                                 *
+ * Created: 03/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: QAbstractTableModel adapter around a Dataset object. Provides free sorting/selection through QTableView.   *
+ * Purpose: Dialog for applying a user-defined formula to a numeric column. Provides a formula input field with live   *
+ *          preview, a column name field with auto-generation, and a help summary of available functions.              *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_DATASET_MODEL_HPP
-#define PHONOMETRICA_DATASET_MODEL_HPP
+#ifndef PHONOMETRICA_TRANSFORM_DIALOG_HPP
+#define PHONOMETRICA_TRANSFORM_DIALOG_HPP
 
-#include <QAbstractTableModel>
-#include <phon/application/dataset.hpp>
+#include <QDialog>
+#include <QLineEdit>
+#include <QTableWidget>
+#include <QLabel>
+#include <QDialogButtonBox>
+#include <QVector>
 
 namespace phonometrica {
 
-class DatasetModel final : public QAbstractTableModel
+class TransformDialog final : public QDialog
 {
 	Q_OBJECT
 
 public:
 
-	explicit DatasetModel(Handle<Dataset> ds, QObject *parent = nullptr);
+	/// @param column_name  Display name of the column being transformed.
+	/// @param samples      First few values from the column (for the live preview).
+	TransformDialog(const QString &column_name, const QVector<double> &samples, QWidget *parent = nullptr);
 
-	int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+	/// The formula entered by the user.
+	QString formula() const;
 
-	int columnCount(const QModelIndex &parent = QModelIndex()) const override;
-
-	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-
-	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
-
-	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
-
-	bool setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role = Qt::EditRole) override;
-
-	Qt::ItemFlags flags(const QModelIndex &index) const override;
-
-	// Remove a row and notify the view.
-	void removeRow(int row);
-
-	// Remove a column and notify the view.
-	void removeColumn(int col);
-
-	// Refresh all data (e.g. after structural changes).
-	void refreshAll();
-
-	Handle<Dataset> dataset() const { return m_ds; }
+	/// The name chosen for the new column.
+	QString newColumnName() const;
 
 private:
 
-	Handle<Dataset> m_ds;
+	void updatePreview();
+
+	QLineEdit *m_formula_edit = nullptr;
+	QLineEdit *m_name_edit = nullptr;
+	QTableWidget *m_preview = nullptr;
+	QLabel *m_error_label = nullptr;
+	QDialogButtonBox *m_buttons = nullptr;
+
+	QVector<double> m_samples;
+	QString m_column_name;
+	bool m_auto_name = true;
 };
 
 } // namespace phonometrica
 
-#endif // PHONOMETRICA_DATASET_MODEL_HPP
+#endif // PHONOMETRICA_TRANSFORM_DIALOG_HPP

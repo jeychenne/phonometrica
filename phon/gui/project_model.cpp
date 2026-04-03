@@ -498,7 +498,7 @@ QIcon ProjectModel::iconForElement(Element *elem) const
         return QIcon(":/icons/file-search-corner.svg");
 
     if (dynamic_cast<Concordance *>(elem))
-        return QIcon(":/icons/scan-eye.svg");
+        return QIcon(":/icons/concordance.svg");
 
 	return iconProvider.icon(QFileInfo("/dummy/file.txt"));
 }

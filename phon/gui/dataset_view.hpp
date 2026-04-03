@@ -75,6 +75,11 @@ private slots:
 	void onAddMetricColumn();
 
 	void onContextMenu(const QPoint &pos);
+	void onRenameColumn(int section);
+	void onRecodeColumn(int section);
+	void onTransformColumn(int section);
+	void onDuplicateColumn(int section);
+	void onMoveColumn(int section);
 
 private:
 

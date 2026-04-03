@@ -370,6 +370,52 @@ void Dataset::remove_column(intptr_t j)
     ncol--;
 }
 
+void Dataset::duplicate_column(intptr_t src, intptr_t dest)
+{
+    assert(src >= 1 && src <= ncol);
+    assert(dest >= 1 && dest <= ncol + 1);
+
+    auto cloned = std::unique_ptr<Column>(m_columns[src]->clone());
+    auto label = m_labels[src];
+
+    if (dest > ncol) {
+        m_labels.append(std::move(label));
+        m_columns.append(std::move(cloned));
+    }
+    else {
+        m_labels.insert(dest, std::move(label));
+        m_columns.insert(dest, std::move(cloned));
+    }
+    ncol++;
+    m_content_modified = true;
+}
+
+void Dataset::move_column(intptr_t src, intptr_t dest)
+{
+    assert(src >= 1 && src <= ncol);
+    assert(dest >= 1 && dest <= ncol);
+    if (src == dest) return;
+
+    // Extract the column and label from the source position.
+    auto col = std::move(m_columns[src]);
+    auto label = m_labels[src];
+    m_labels.remove_at(src);
+    m_columns.remove_at(src);
+
+    // After removal the array has ncol-1 elements. Inserting at the
+    // original dest position produces the correct final ordering because
+    // Array::insert appends when pos > size.
+    if (dest > ncol - 1) {
+        m_labels.append(std::move(label));
+        m_columns.append(std::move(col));
+    }
+    else {
+        m_labels.insert(dest, std::move(label));
+        m_columns.insert(dest, std::move(col));
+    }
+    m_content_modified = true;
+}
+
 // ── Set operations ─────────────────────────────────────────
 
 String Dataset::row_key(intptr_t i) const
@@ -613,6 +659,15 @@ Handle<Dataset> Dataset::subset(const std::vector<int> &rows_0based, const Strin
 	return result;
 }
 
+void Dataset::set_header(intptr_t j, const String &name)
+{
+	if (j < 1 || j > ncol) {
+		throw error("Column index % is out of range", j);
+	}
+	m_labels[j] = name;
+	m_content_modified = true;
+}
+
 void Dataset::add_numeric_column(const String &header, const std::vector<double> &values)
 {
 	if ((intptr_t)values.size() != nrow) {
@@ -620,6 +675,23 @@ void Dataset::add_numeric_column(const String &header, const std::vector<double>
 	}
 
 	auto new_col = std::make_unique<TColumn<double>>(nrow);
+	for (intptr_t i = 0; i < nrow; i++) {
+		new_col->set(i + 1, values[i]);
+	}
+
+	m_labels.append(header);
+	m_columns.append(std::move(new_col));
+	ncol++;
+	m_content_modified = true;
+}
+
+void Dataset::add_text_column(const String &header, const std::vector<String> &values)
+{
+	if ((intptr_t)values.size() != nrow) {
+		throw error("Cannot add column '%': expected % values, got %", header, nrow, (intptr_t)values.size());
+	}
+
+	auto new_col = std::make_unique<TColumn<String>>(nrow);
 	for (intptr_t i = 0; i < nrow; i++) {
 		new_col->set(i + 1, values[i]);
 	}

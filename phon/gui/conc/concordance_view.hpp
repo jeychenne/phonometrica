@@ -83,6 +83,8 @@ private slots:
 
 	void onDoubleClick(const QModelIndex &index);
 	void onContextMenu(const QPoint &pos);
+	void onRecodeColumn(int section);
+	void onTransformColumn(int section);
 
 	void onToggleMatchInfo(bool visible);
 	void onToggleContext(bool visible);

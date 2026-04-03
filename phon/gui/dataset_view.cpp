@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -28,9 +29,12 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <phon/gui/dataset_view.hpp>
+#include <phon/gui/recode_dialog.hpp>
+#include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/column_metrics.hpp>
+#include <phon/analysis/formula_engine.hpp>
 
 namespace phonometrica {
 
@@ -154,6 +158,7 @@ void DatasetView::setupUi()
 	hdr->setSectionsClickable(false);
 	hdr->setSortIndicatorShown(false);
 	hdr->setContextMenuPolicy(Qt::CustomContextMenu);
+	hdr->setToolTip(tr("Right-click for column options (sort, rename, recode, transform)"));
 
 	m_table->resizeColumnsToContents();
 
@@ -185,7 +190,10 @@ void DatasetView::setupUi()
 		if (section < 0) return;
 
 		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
+		intptr_t col_1based = section + 1;
 		QMenu menu(this);
+
+		// ── Sort ───────────────────────────────────────
 		menu.addAction(tr("Sort \"%1\" ascending").arg(col_name), this, [this, section, header]() {
 			m_proxy->sort(section, Qt::AscendingOrder);
 			header->setSortIndicator(section, Qt::AscendingOrder);
@@ -201,6 +209,59 @@ void DatasetView::setupUi()
 			m_proxy->sort(-1, Qt::AscendingOrder);
 			header->setSortIndicatorShown(false);
 		});
+
+		// ── Rename ─────────────────────────────────────
+		menu.addSeparator();
+		menu.addAction(QIcon(":/icons/tag.svg"), tr("Rename column..."), this, [this, section]() {
+			onRenameColumn(section);
+		});
+
+		if (m_ds->column_count() > 1)
+		{
+			menu.addAction(QIcon(":/icons/circle-minus.svg"), tr("Delete column \"%1\"").arg(col_name), this, [this, section]() {
+				auto name = m_proxy->headerData(section, Qt::Horizontal).toString();
+				auto answer = QMessageBox::question(this, tr("Delete column"),
+					tr("Delete column \"%1\"?").arg(name),
+					QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+				if (answer != QMessageBox::Yes) return;
+
+				m_model->removeColumn(section);
+				m_ds->set_content_modified(true);
+				Document::file_modified();
+				updateCountLabel();
+				m_table->resizeColumnsToContents();
+				setupFilterBar();
+				emit titleChanged(label());
+			});
+		}
+
+		// ── Duplicate / Move ───────────────────────────
+		menu.addSeparator();
+		menu.addAction(tr("Duplicate column..."), this, [this, section]() {
+			onDuplicateColumn(section);
+		});
+		menu.addAction(tr("Move column..."), this, [this, section]() {
+			onMoveColumn(section);
+		});
+
+		// ── Recode (text columns only) ─────────────────
+		if (m_ds->is_text(col_1based))
+		{
+			menu.addSeparator();
+			menu.addAction(tr("Recode values..."), this, [this, section]() {
+				onRecodeColumn(section);
+			});
+		}
+
+		// ── Transform (numeric columns only) ───────────
+		if (m_ds->is_numeric(col_1based))
+		{
+			menu.addSeparator();
+			menu.addAction(tr("Transform..."), this, [this, section]() {
+				onTransformColumn(section);
+			});
+		}
+
 		menu.exec(header->mapToGlobal(pos));
 	});
 
@@ -787,7 +848,7 @@ void DatasetView::onAddMetricColumn()
 				for (int gc : group_cols) {
 					auto text_span = m_ds->text_column(gc);
 					if (!key.empty()) key += '|';
-					key.append(text_span[i + 1].data(), text_span[i + 1].size());
+					key.append(text_span[i].data(), text_span[i].size());
 				}
 				groups[i] = std::move(key);
 			}
@@ -870,6 +931,235 @@ void DatasetView::onAddMetricColumn()
 			m_filter_action->setChecked(true);
 			m_filter_bar->rebuild();
 		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+// ── Column rename / recode / transform ─────────────────
+
+void DatasetView::onRenameColumn(int section)
+{
+	auto current = m_model->headerData(section, Qt::Horizontal, Qt::DisplayRole).toString();
+
+	bool ok;
+	auto new_name = QInputDialog::getText(this,
+		tr("Rename column"),
+		tr("New name for column \"%1\":").arg(current),
+		QLineEdit::Normal, current, &ok);
+
+	if (!ok || new_name.trimmed().isEmpty()) return;
+
+	m_model->setHeaderData(section, Qt::Horizontal, new_name.trimmed(), Qt::EditRole);
+	setupFilterBar(); // refresh column names in filter bar
+	emit titleChanged(label());
+}
+
+void DatasetView::onRecodeColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	auto col_name_str = m_ds->get_header(col);
+	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
+
+	// Collect unique levels.
+	auto levels_arr = m_ds->get_levels(col);
+	QStringList levels;
+	for (intptr_t i = 1; i <= levels_arr.size(); i++) {
+		levels << QString::fromUtf8(levels_arr[i].data(), (int) levels_arr[i].size());
+	}
+
+	RecodeDialog dlg(col_name, levels, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	auto mapping = dlg.mapping();
+
+	try
+	{
+		// Build the new column by mapping each row's value.
+		auto text_span = m_ds->text_column(col);
+		std::vector<String> new_values(m_ds->row_count());
+
+		for (intptr_t i = 0; i < m_ds->row_count(); i++)
+		{
+			auto original = QString::fromUtf8(text_span[i].data(), (int) text_span[i].size());
+			auto it = mapping.find(original);
+			if (it != mapping.end()) {
+				new_values[i] = String(it.value().toUtf8().constData());
+			}
+			else {
+				new_values[i] = text_span[i]; // Keep original if not in mapping.
+			}
+		}
+
+		m_ds->add_text_column(String(new_col_name.toUtf8().constData()), new_values);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onTransformColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	auto col_name_str = m_ds->get_header(col);
+	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
+
+	// Collect sample values for the preview (first 8 rows).
+	auto span = m_ds->numeric_column(col);
+	QVector<double> samples;
+	intptr_t sample_count = std::min(m_ds->row_count(), (intptr_t)8);
+	for (intptr_t i = 0; i < sample_count; i++)
+		samples.append(span[i]);
+
+	TransformDialog dlg(col_name, samples, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	try
+	{
+		FormulaEngine engine;
+		engine.parse(dlg.formula().toStdString());
+
+		std::vector<double> result(m_ds->row_count());
+		int nan_count = 0;
+
+		for (intptr_t i = 0; i < m_ds->row_count(); i++)
+		{
+			double val = span[i];
+			result[i] = engine.evaluate(val);
+			if (std::isnan(result[i]) && !std::isnan(val))
+				nan_count++;
+		}
+
+		m_ds->add_numeric_column(String(new_col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		if (nan_count > 0)
+		{
+			QMessageBox::information(this, tr("Transform"),
+				tr("%1 value(s) produced NaN (non-positive input, division by zero, etc.).")
+					.arg(nan_count));
+		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+// ── Column position helper ─────────────────────────────
+
+static QStringList buildPositionList(const Handle<Dataset> &ds, int exclude = -1)
+{
+	QStringList items;
+	for (intptr_t j = 1; j <= ds->column_count(); j++)
+	{
+		if ((int) j == exclude) continue;
+		auto h = ds->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+		items << QStringLiteral("%1 \u2014 Before \"%2\"").arg(j).arg(qh);
+	}
+	int end_pos = (int) ds->column_count() + 1;
+	items << QStringLiteral("%1 \u2014 At the end").arg(end_pos);
+	return items;
+}
+
+void DatasetView::onDuplicateColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	auto col_name_str = m_ds->get_header(col);
+	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
+
+	auto items = buildPositionList(m_ds);
+	// Default: right after the source column.
+	int default_idx = (int) col; // 0-based index in the list → position col+1
+
+	bool ok;
+	auto choice = QInputDialog::getItem(this,
+		tr("Duplicate column"),
+		tr("Insert copy of \"%1\" at:").arg(col_name),
+		items, default_idx, false, &ok);
+	if (!ok) return;
+
+	// Parse the position number from the chosen item.
+	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt();
+
+	try
+	{
+		m_ds->duplicate_column(col, dest);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		Document::file_modified();
+		emit titleChanged(label());
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onMoveColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	auto col_name_str = m_ds->get_header(col);
+	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
+
+	if (m_ds->column_count() < 2) return;
+
+	// Build position list from the perspective of the layout after
+	// the source column is removed, so that "Before «X»" means what the user expects.
+	QStringList items;
+	int slot = 1;
+	for (intptr_t j = 1; j <= m_ds->column_count(); j++)
+	{
+		if (j == col) continue; // skip the column being moved
+		auto h = m_ds->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+		items << QStringLiteral("%1 \u2014 Before \"%2\"").arg(slot).arg(qh);
+		slot++;
+	}
+	items << QStringLiteral("%1 \u2014 At the end").arg(slot);
+
+	bool ok;
+	auto choice = QInputDialog::getItem(this,
+		tr("Move column"),
+		tr("Move \"%1\" to:").arg(col_name),
+		items, 0, false, &ok);
+	if (!ok) return;
+
+	// Parse the slot number — this is the 1-based insert position in the
+	// array after removal of the source column.
+	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt();
+
+	try
+	{
+		// move_column removes src, then inserts at dest in the post-removal array.
+		m_ds->move_column(col, dest);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		Document::file_modified();
+		emit titleChanged(label());
 	}
 	catch (std::exception &e)
 	{

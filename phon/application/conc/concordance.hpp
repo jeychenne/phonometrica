@@ -246,6 +246,10 @@ public:
 	/// The values vector must have exactly row_count() elements.
 	void add_numeric_column(const String &header, const std::vector<double> &values);
 
+	/// Append a new text auxiliary column with the given header and values.
+	/// The values vector must have exactly row_count() elements.
+	void add_text_column(const String &header, const std::vector<String> &values);
+
 	/// Check that this concordance has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.
 	void check_columns_compatible(const Concordance &other) const;
@@ -263,6 +267,13 @@ public:
 
 	/// Returns the number of display columns produced by aux column c (1-based).
 	int aux_col_display_width(intptr_t c) const;
+
+	/// Given a 1-based display column index, return the 1-based stored aux column index
+	/// if it falls in the aux region, or 0 if it does not.
+	intptr_t resolve_aux_column(intptr_t display_col) const;
+
+	/// Remove the stored aux column at 1-based index c.
+	void remove_aux_column(intptr_t c);
 
 	/// True if any aux column of the given measurement type exists.
 	bool has_aux_pitch() const;

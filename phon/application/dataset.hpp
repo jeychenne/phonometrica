@@ -82,6 +82,14 @@ public:
 	// Remove column j (1-based). Shifts subsequent columns left.
 	void remove_column(intptr_t j);
 
+	// Duplicate column src (1-based) and insert the copy at position dest (1-based).
+	// dest may be column_count()+1 to append at the end.
+	void duplicate_column(intptr_t src, intptr_t dest);
+
+	// Move column src (1-based) to position dest (1-based).
+	// dest is interpreted as the target position in the final layout.
+	void move_column(intptr_t src, intptr_t dest);
+
 	Handle<Dataset> unite(const Dataset &other, const String &label) const;
 
 	Handle<Dataset> intersect(const Dataset &other, const String &label) const;
@@ -92,9 +100,16 @@ public:
 	/// The result is a new in-memory Dataset added to the project.
 	Handle<Dataset> subset(const std::vector<int> &rows_0based, const String &label) const;
 
+	/// Set the header (column name) for column j (1-based).
+	void set_header(intptr_t j, const String &name);
+
 	/// Append a new numeric column with the given header and values.
 	/// The values vector must have exactly row_count() elements.
 	void add_numeric_column(const String &header, const std::vector<double> &values);
+
+	/// Append a new text column with the given header and values.
+	/// The values vector must have exactly row_count() elements.
+	void add_text_column(const String &header, const std::vector<String> &values);
 
 	/// Check that this dataset has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.

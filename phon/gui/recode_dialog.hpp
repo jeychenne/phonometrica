@@ -13,58 +13,47 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 31/03/2026                                                                                                 *
+ * Created: 03/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: QAbstractTableModel adapter around a Dataset object. Provides free sorting/selection through QTableView.   *
+ * Purpose: Dialog for recoding the levels of a categorical (text) column. Displays a two-column table where the       *
+ *          left column shows the original values (read-only) and the right column shows the new values (editable,     *
+ *          defaulting to the original). The result is used to create a new column with remapped values.               *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_DATASET_MODEL_HPP
-#define PHONOMETRICA_DATASET_MODEL_HPP
+#ifndef PHONOMETRICA_RECODE_DIALOG_HPP
+#define PHONOMETRICA_RECODE_DIALOG_HPP
 
-#include <QAbstractTableModel>
-#include <phon/application/dataset.hpp>
+#include <QDialog>
+#include <QTableWidget>
+#include <QLineEdit>
 
 namespace phonometrica {
 
-class DatasetModel final : public QAbstractTableModel
+class RecodeDialog final : public QDialog
 {
 	Q_OBJECT
 
 public:
 
-	explicit DatasetModel(Handle<Dataset> ds, QObject *parent = nullptr);
+	/// @param column_name  Display name of the column being recoded.
+	/// @param levels       Unique values in the column (sorted).
+	RecodeDialog(const QString &column_name, const QStringList &levels, QWidget *parent = nullptr);
 
-	int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+	/// Name chosen for the new column.
+	QString newColumnName() const;
 
-	int columnCount(const QModelIndex &parent = QModelIndex()) const override;
-
-	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-
-	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
-
-	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
-
-	bool setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role = Qt::EditRole) override;
-
-	Qt::ItemFlags flags(const QModelIndex &index) const override;
-
-	// Remove a row and notify the view.
-	void removeRow(int row);
-
-	// Remove a column and notify the view.
-	void removeColumn(int col);
-
-	// Refresh all data (e.g. after structural changes).
-	void refreshAll();
-
-	Handle<Dataset> dataset() const { return m_ds; }
+	/// Mapping from original value to new value.
+	/// Keys are all original levels; values are the (possibly edited) new labels.
+	QMap<QString, QString> mapping() const;
 
 private:
 
-	Handle<Dataset> m_ds;
+	QTableWidget *m_table = nullptr;
+	QLineEdit *m_name_edit = nullptr;
+	QStringList m_levels;
 };
 
 } // namespace phonometrica
 
-#endif // PHONOMETRICA_DATASET_MODEL_HPP
+#endif // PHONOMETRICA_RECODE_DIALOG_HPP
