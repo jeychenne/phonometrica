@@ -66,6 +66,9 @@ public:
 	// Show the find & replace bar.
 	virtual void replace() {}
 
+	// Whether this view supports find (and find & replace).
+	virtual bool supportsFind() const { return false; }
+
 	// Undo/redo support. The default implementation uses the command processor.
 	// ScriptView overrides these to delegate to QPlainTextEdit's built-in undo.
 	virtual void undo();

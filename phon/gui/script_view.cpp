@@ -26,6 +26,7 @@
 #include <QDesktopServices>
 #include <QUrl>
 #include <QTimer>
+#include <QKeyEvent>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
@@ -143,6 +144,9 @@ void ScriptView::setupUi()
 	connect(m_searchbar, &SearchBar::findRequested, this, &ScriptView::onFind);
 	connect(m_searchbar, &SearchBar::replaceRequested, this, &ScriptView::onReplace);
 	connect(m_searchbar, &SearchBar::replaceAllRequested, this, &ScriptView::onReplaceAll);
+
+	// Intercept keyboard shortcuts before QScintilla swallows them.
+	m_editor->installEventFilter(this);
 
 	// Defer focus: setFocus() during construction is ignored because the widget
 	// is not yet visible. Posting to the next event-loop tick lets Qt process
@@ -368,6 +372,42 @@ void ScriptView::onViewBytecode()
 // ─────────────────────────────────────────────────
 //  Find / Replace
 // ─────────────────────────────────────────────────
+
+bool ScriptView::eventFilter(QObject *obj, QEvent *event)
+{
+	if (obj == m_editor)
+	{
+		if (event->type() == QEvent::ShortcutOverride)
+		{
+			// QScintilla accepts ShortcutOverride for many key combos,
+			// preventing Qt from dispatching them as shortcuts. We claim
+			// Ctrl+F and Ctrl+H here so QScintilla never sees them; they
+			// will arrive as a normal KeyPress which we handle below.
+			auto *ke = static_cast<QKeyEvent *>(event);
+			if (ke->matches(QKeySequence::Find) ||
+				(ke->modifiers() == Qt::ControlModifier && ke->key() == Qt::Key_H))
+			{
+				event->accept();
+				return true;
+			}
+		}
+		else if (event->type() == QEvent::KeyPress)
+		{
+			auto *ke = static_cast<QKeyEvent *>(event);
+			if (ke->matches(QKeySequence::Find))
+			{
+				find();
+				return true;
+			}
+			if (ke->modifiers() == Qt::ControlModifier && ke->key() == Qt::Key_H)
+			{
+				replace();
+				return true;
+			}
+		}
+	}
+	return QWidget::eventFilter(obj, event);
+}
 
 void ScriptView::find()
 {

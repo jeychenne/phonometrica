@@ -205,8 +205,15 @@ QMenu *MainWindow::createEditMenu()
 
 	menu->addSeparator();
 
-	m_find_action = menu->addAction(tr("Find..."), QKeySequence::Find, this, &MainWindow::onFind);
-	m_replace_action = menu->addAction(tr("Replace..."), QKeySequence(tr("Ctrl+H")), this, &MainWindow::onReplace);
+	m_find_action = menu->addAction(tr("Find..."), this, &MainWindow::onFind);
+	m_find_action->setShortcut(QKeySequence::Find);
+	m_find_action->setShortcutContext(Qt::WidgetShortcut); // display only; keyboard handled by view
+	m_find_action->setEnabled(false);
+
+	m_replace_action = menu->addAction(tr("Replace..."), this, &MainWindow::onReplace);
+	m_replace_action->setShortcut(QKeySequence(tr("Ctrl+H")));
+	m_replace_action->setShortcutContext(Qt::WidgetShortcut); // display only; keyboard handled by view
+	m_replace_action->setEnabled(false);
 
 	// Save current view (Ctrl+S)
 	auto *saveView = new QAction(this);
@@ -1136,6 +1143,7 @@ void MainWindow::onRedo()
 void MainWindow::onActiveTabChanged(int /*index*/)
 {
 	updateUndoRedoState();
+	updateFindReplaceState();
 }
 
 void MainWindow::updateUndoRedoState()
@@ -1145,6 +1153,16 @@ void MainWindow::updateUndoRedoState()
 	auto *view = currentView();
 	m_undo_action->setEnabled(view && view->canUndo());
 	m_redo_action->setEnabled(view && view->canRedo());
+}
+
+void MainWindow::updateFindReplaceState()
+{
+	if (!m_find_action || !m_replace_action)
+		return;
+	auto *view = currentView();
+	bool supported = view && view->supportsFind();
+	m_find_action->setEnabled(supported);
+	m_replace_action->setEnabled(supported);
 }
 
 void MainWindow::updateSaveActions()

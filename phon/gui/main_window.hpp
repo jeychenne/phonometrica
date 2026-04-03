@@ -116,6 +116,7 @@ private slots:
 	// Tab management
 	void onActiveTabChanged(int index);
 	void updateUndoRedoState();
+	void updateFindReplaceState();
 
 	// Plugins
 	void onRunScript();
