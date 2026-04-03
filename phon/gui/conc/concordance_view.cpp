@@ -579,10 +579,13 @@ bool ConcordanceView::save()
 
 void ConcordanceView::discardChanges()
 {
-	if (m_conc->has_path())
+	if (m_conc->has_path()) {
 		m_conc->reload();
-	else
-		m_conc->discard_changes();
+	} else {
+		// In-memory document: remove from project tree since there's nothing to revert to.
+		m_conc->detach();
+		Project::updated();
+	}
 }
 
 // ── Toolbar actions ─────────────────────────────────────

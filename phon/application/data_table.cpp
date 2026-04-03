@@ -21,8 +21,10 @@
 
 #include <phon/file.hpp>
 #include <phon/runtime/runtime.hpp>
+#include <phon/runtime/regex.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/data_table.hpp>
+#include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/analysis/fitting.hpp>
 
@@ -86,6 +88,41 @@ void DataTable::to_csv(const String &path, const String &sep)
 			else file.write(sep);
 		}
 	}
+}
+
+
+// =====================================================================
+// find_column: locate a column by header name (case-sensitive).
+// =====================================================================
+
+intptr_t DataTable::find_column(const String &name) const
+{
+	auto ncol = column_count();
+
+	for (intptr_t j = 1; j <= ncol; j++)
+	{
+		if (get_header(j) == name)
+			return j;
+	}
+
+	return 0;
+}
+
+
+// =====================================================================
+// get_field helper: build a List of column headers.
+// =====================================================================
+
+static Variant make_headers_list(Runtime &rt, DataTable &table)
+{
+	auto ncol = table.column_count();
+	Array<Variant> result;
+
+	for (intptr_t j = 1; j <= ncol; j++) {
+		result.append(table.get_header(j));
+	}
+
+	return make_handle<List>(&rt, std::move(result));
 }
 
 
@@ -202,6 +239,367 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 
 // =====================================================================
+// filter() implementation: expression-based row filtering.
+//
+// Syntax:
+//   filter(table, "vowel == 'a' and 'F1 (Hz)' > 500")
+//   filter(table, "vowel == 'a' or vowel == 'e'")
+//   filter(table, "vowel == 'a' and F1 > 500 or vowel == 'e' and F1 > 600")
+//   filter(table, "vowel == 'a' and 'F1 (Hz)' > 500", "my label")
+//
+// Column names and string values may be single-quoted (required when
+// they contain spaces or special characters). Bare numbers are parsed
+// as numeric thresholds. Clauses are joined by `and` and/or `or`.
+// `and` has higher precedence than `or` (standard boolean logic):
+//   A and B or C and D  →  (A and B) or (C and D)
+//
+// Supported operators:
+//   ==  !=  <  <=  >  >=  contains  !contains  matches
+// =====================================================================
+
+// --- Filter operator enum (file-local) --------------------------------
+
+enum class ScriptFilterOp
+{
+	Eq,            // ==
+	Ne,            // !=
+	Lt,            // <
+	Le,            // <=
+	Gt,            // >
+	Ge,            // >=
+	Contains,      // contains (case-insensitive)
+	NotContains,   // !contains (case-insensitive)
+	Regex          // matches (PCRE2 regex)
+};
+
+static ScriptFilterOp parse_filter_op(const String &op)
+{
+	if (op == "==") return ScriptFilterOp::Eq;
+	if (op == "!=") return ScriptFilterOp::Ne;
+	if (op == "<")  return ScriptFilterOp::Lt;
+	if (op == "<=") return ScriptFilterOp::Le;
+	if (op == ">")  return ScriptFilterOp::Gt;
+	if (op == ">=") return ScriptFilterOp::Ge;
+	if (op == "contains")  return ScriptFilterOp::Contains;
+	if (op == "!contains") return ScriptFilterOp::NotContains;
+	if (op == "matches")   return ScriptFilterOp::Regex;
+
+	throw error("[Type error] Unknown filter operator \"%\". "
+	            "Expected one of: ==, !=, <, <=, >, >=, contains, !contains, matches", op);
+}
+
+// --- Test a single cell against a prepared clause ---------------------
+
+static bool test_cell(const String &cell, ScriptFilterOp op, const String &value,
+                      double num_value, bool num_valid, phonometrica::Regex *re)
+{
+	switch (op)
+	{
+	case ScriptFilterOp::Eq:
+	{
+		if (num_valid) {
+			bool ok;
+			double cv = cell.to_float(&ok);
+			if (ok) return cv == num_value;
+		}
+		return String::iequals(cell, value);
+	}
+	case ScriptFilterOp::Ne:
+	{
+		if (num_valid) {
+			bool ok;
+			double cv = cell.to_float(&ok);
+			if (ok) return cv != num_value;
+		}
+		return !String::iequals(cell, value);
+	}
+	case ScriptFilterOp::Lt:
+	{
+		bool ok;
+		double cv = cell.to_float(&ok);
+		return ok && cv < num_value;
+	}
+	case ScriptFilterOp::Le:
+	{
+		bool ok;
+		double cv = cell.to_float(&ok);
+		return ok && cv <= num_value;
+	}
+	case ScriptFilterOp::Gt:
+	{
+		bool ok;
+		double cv = cell.to_float(&ok);
+		return ok && cv > num_value;
+	}
+	case ScriptFilterOp::Ge:
+	{
+		bool ok;
+		double cv = cell.to_float(&ok);
+		return ok && cv >= num_value;
+	}
+	case ScriptFilterOp::Contains:
+		return cell.icontains(value);
+
+	case ScriptFilterOp::NotContains:
+		return !cell.icontains(value);
+
+	case ScriptFilterOp::Regex:
+		return re && re->match(cell);
+	}
+
+	return true;
+}
+
+// --- Tokenizer --------------------------------------------------------
+
+static std::vector<String> tokenize_filter_expr(const String &expr)
+{
+	std::vector<String> tokens;
+	const char *p   = expr.data();
+	const char *end = p + expr.size();
+
+	while (p < end)
+	{
+		while (p < end && std::isspace(static_cast<unsigned char>(*p)))
+			p++;
+		if (p >= end) break;
+
+		if (*p == '\'')
+		{
+			p++;
+			const char *start = p;
+
+			while (p < end && *p != '\'')
+				p++;
+			if (p >= end) {
+				throw error("Unterminated quoted string in filter expression");
+			}
+
+			tokens.emplace_back(start, intptr_t(p - start));
+			p++;
+		}
+		else
+		{
+			const char *start = p;
+
+			while (p < end && !std::isspace(static_cast<unsigned char>(*p)) && *p != '\'')
+				p++;
+
+			tokens.emplace_back(start, intptr_t(p - start));
+		}
+	}
+
+	return tokens;
+}
+
+// --- Expression parser ------------------------------------------------
+//
+// Grammar (with standard precedence: `and` binds tighter than `or`):
+//
+//   expression → and_group ('or' and_group)*
+//   and_group  → clause ('and' clause)*
+//   clause     → column operator value
+
+struct FilterClause
+{
+	String column;
+	String op;
+	String value;
+};
+
+using AndGroup = std::vector<FilterClause>;
+using FilterExpr = std::vector<AndGroup>;
+
+static FilterExpr parse_filter_expr(const String &expr)
+{
+	auto tokens = tokenize_filter_expr(expr);
+	FilterExpr groups;
+	AndGroup current_group;
+
+	size_t i = 0;
+	auto n = tokens.size();
+
+	while (i < n)
+	{
+		if (i + 2 >= n) {
+			throw error("Incomplete filter clause: expected 'column operator value' at end of expression");
+		}
+
+		FilterClause clause;
+
+		clause.column = tokens[i++];
+
+		clause.op = tokens[i++];
+		if (clause.op == "!" && i < n && tokens[i] == "contains") {
+			clause.op = "!contains";
+			i++;
+		}
+
+		if (i >= n) {
+			throw error("Missing value after operator \"%\" in filter expression", clause.op);
+		}
+		clause.value = tokens[i++];
+
+		current_group.push_back(std::move(clause));
+
+		if (i < n)
+		{
+			if (tokens[i] == "and") {
+				i++;
+				if (i >= n) {
+					throw error("Trailing 'and' at end of filter expression");
+				}
+			}
+			else if (tokens[i] == "or") {
+				i++;
+				if (i >= n) {
+					throw error("Trailing 'or' at end of filter expression");
+				}
+				groups.push_back(std::move(current_group));
+				current_group.clear();
+			}
+			else {
+				throw error("Expected 'and' or 'or' between filter clauses, got \"%\"", tokens[i]);
+			}
+		}
+	}
+
+	if (!current_group.empty()) {
+		groups.push_back(std::move(current_group));
+	}
+
+	if (groups.empty()) {
+		throw error("Empty filter expression");
+	}
+
+	return groups;
+}
+
+// --- Prepared clause --------------------------------------------------
+
+struct PreparedClause
+{
+	intptr_t col;
+	ScriptFilterOp op;
+	String value;
+	double num_value;
+	bool num_valid;
+	std::unique_ptr<phonometrica::Regex> re;
+};
+
+using PreparedAndGroup = std::vector<PreparedClause>;
+
+// --- Core filter logic ------------------------------------------------
+
+static Variant filter_rows(DataTable &table, const String &expr, const String &label)
+{
+	table.open();
+
+	auto groups = parse_filter_expr(expr);
+
+	std::vector<PreparedAndGroup> prepared_groups;
+	prepared_groups.reserve(groups.size());
+
+	for (auto &group : groups)
+	{
+		PreparedAndGroup pg;
+		pg.reserve(group.size());
+
+		for (auto &c : group)
+		{
+			PreparedClause pc;
+
+			pc.col = table.find_column(c.column);
+			if (pc.col == 0) {
+				throw error("[Index error] Table has no column named \"%\"", c.column);
+			}
+
+			pc.op = parse_filter_op(c.op);
+			pc.value = std::move(c.value);
+			pc.num_value = 0.0;
+			pc.num_valid = false;
+
+			if (pc.op == ScriptFilterOp::Eq || pc.op == ScriptFilterOp::Ne ||
+			    pc.op == ScriptFilterOp::Lt || pc.op == ScriptFilterOp::Le ||
+			    pc.op == ScriptFilterOp::Gt || pc.op == ScriptFilterOp::Ge)
+			{
+				bool ok;
+				pc.num_value = pc.value.to_float(&ok);
+				pc.num_valid = ok;
+
+				if (!pc.num_valid && (pc.op == ScriptFilterOp::Lt || pc.op == ScriptFilterOp::Le ||
+				                      pc.op == ScriptFilterOp::Gt || pc.op == ScriptFilterOp::Ge))
+				{
+					throw error("[Type error] Operator \"%\" requires a numeric value, got \"%\"", c.op, pc.value);
+				}
+			}
+
+			if (pc.op == ScriptFilterOp::Regex) {
+				pc.re = std::make_unique<phonometrica::Regex>(pc.value);
+			}
+
+			pg.push_back(std::move(pc));
+		}
+
+		prepared_groups.push_back(std::move(pg));
+	}
+
+	// Scan all rows — a row passes if ANY group matches (OR of ANDs).
+	auto nrow = table.row_count();
+	std::vector<int> matching;
+	matching.reserve(nrow);
+
+	for (intptr_t i = 1; i <= nrow; i++)
+	{
+		bool row_pass = false;
+
+		for (auto &pg : prepared_groups)
+		{
+			bool group_pass = true;
+
+			for (auto &pc : pg)
+			{
+				auto cell = table.get_cell(i, pc.col);
+
+				if (!test_cell(cell, pc.op, pc.value, pc.num_value, pc.num_valid, pc.re.get()))
+				{
+					group_pass = false;
+					break;
+				}
+			}
+
+			if (group_pass) {
+				row_pass = true;
+				break;
+			}
+		}
+
+		if (row_pass) {
+			matching.push_back(static_cast<int>(i - 1));
+		}
+	}
+
+	// Dispatch to the concrete subclass's subset() method.
+	if (table.is<Dataset>())
+	{
+		auto &ds = dynamic_cast<Dataset &>(table);
+		auto result = ds.subset(matching, label);
+		Project::updated();
+		return result;
+	}
+	else if (table.is<Concordance>())
+	{
+		auto &conc = dynamic_cast<Concordance &>(table);
+		auto result = conc.subset(matching, label);
+		Project::updated();
+		return result;
+	}
+
+	throw error("[Type error] filter() is not supported for this table type");
+}
+
+
+// =====================================================================
 // Scripting bindings
 // =====================================================================
 
@@ -305,11 +703,104 @@ void DataTable::initialize(Runtime &rt)
 		throw error("[Index error] Model type has no member named \"%\"", key);
 	};
 
+	// ─── filter(table, expression) ────────────────────────────────────
+
+	auto filter2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto &expr  = cast<String>(args[1]);
+
+		String label("filter: ");
+		label.append(expr);
+
+		return filter_rows(table, expr, label);
+	};
+
+	// ─── filter(table, expression, label) ─────────────────────────────
+
+	auto filter3 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto &expr  = cast<String>(args[1]);
+		auto &label = cast<String>(args[2]);
+
+		return filter_rows(table, expr, label);
+	};
+
+	// ─── Dataset field access ─────────────────────────────────────────
+
+	auto dataset_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &ds = cast<Dataset>(args[0]);
+		auto &key = cast<String>(args[1]);
+
+		if (key == "path") {
+			return ds.path();
+		}
+		if (key == "label") {
+			return ds.label();
+		}
+		if (key == "description") {
+			return ds.description();
+		}
+		ds.open();
+		if (key == "nrow" || key == "length") {
+			return ds.row_count();
+		}
+		if (key == "ncol") {
+			return ds.column_count();
+		}
+		if (key == "empty") {
+			return ds.empty();
+		}
+		if (key == "headers") {
+			return make_headers_list(rt, ds);
+		}
+
+		throw error("[Index error] Dataset type has no member named \"%\"", key);
+	};
+
+	// ─── Concordance field access ─────────────────────────────────────
+
+	auto conc_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &conc = cast<Concordance>(args[0]);
+		auto &key = cast<String>(args[1]);
+
+		if (key == "path") {
+			return conc.path();
+		}
+		if (key == "label") {
+			return conc.label();
+		}
+		if (key == "description") {
+			return conc.description();
+		}
+		conc.open();
+		if (key == "nrow" || key == "length") {
+			return conc.row_count();
+		}
+		if (key == "ncol") {
+			return conc.column_count();
+		}
+		if (key == "empty") {
+			return conc.empty();
+		}
+		if (key == "headers") {
+			return make_headers_list(rt, conc);
+		}
+		if (key == "target_count") {
+			return intptr_t(conc.target_count());
+		}
+
+		throw error("[Index error] Concordance type has no member named \"%\"", key);
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 
-	// Register fit() with DataTable as first argument — works for both Dataset and Concordance
+	// Register fit()
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
 	rt.add_global("fit", fit3, { CLS(String), CLS(DataTable), CLS(String) });
+
+	// Register filter()
+	rt.add_global("filter", filter2, { CLS(DataTable), CLS(String) });
+	rt.add_global("filter", filter3, { CLS(DataTable), CLS(String), CLS(String) });
 
 	// Register model functions
 	rt.add_global("summarize", summarize_model, { CLS(stats::Model) });
@@ -324,6 +815,14 @@ void DataTable::initialize(Runtime &rt)
 	// Register Model field access
 	auto model_cls = CLS(stats::Model);
 	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });
+
+	// Register Dataset field access
+	auto dataset_cls = CLS(Dataset);
+	dataset_cls->add_method(rt.get_field_string, dataset_get_field, { CLS(Dataset), CLS(String) });
+
+	// Register Concordance field access
+	auto conc_cls = CLS(Concordance);
+	conc_cls->add_method(rt.get_field_string, conc_get_field, { CLS(Concordance), CLS(String) });
 
 #undef CLS
 }

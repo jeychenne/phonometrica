@@ -47,6 +47,7 @@ public:
 
 	QString label() const override;
 	String path() const override;
+	Document* document() const override { return m_ds.get(); }
 	bool isModified() const override;
 	bool save() override;
 	void discardChanges() override;

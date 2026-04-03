@@ -1386,13 +1386,21 @@ void MainWindow::onDocumentRequested(Document *doc)
 		if (!panel)
 			continue;
 
-		// Check all views in the panel for a matching path.
+		// Check all views in the panel for a matching document.
 		for (auto *v : panel->views())
 		{
-			if (v->path() == doc->path())
-			{
-				m_viewer->setCurrentIndex(i);
-				return;
+			if (doc->has_path()) {
+				// Path-based identity for file-backed documents.
+				if (v->path() == doc->path()) {
+					m_viewer->setCurrentIndex(i);
+					return;
+				}
+			} else {
+				// Pointer-based identity for in-memory documents.
+				if (v->document() == doc) {
+					m_viewer->setCurrentIndex(i);
+					return;
+				}
 			}
 		}
 	}

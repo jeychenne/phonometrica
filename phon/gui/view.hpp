@@ -29,6 +29,8 @@
 
 namespace phonometrica {
 
+class Document;
+
 class View : public QWidget
 {
 	Q_OBJECT
@@ -44,6 +46,11 @@ public:
 
 	// File path associated with this view (empty if unsaved/untitled).
 	virtual String path() const { return {}; }
+
+	// The Document backing this view, or nullptr if not applicable.
+	// Used for pointer-based identity when the document has no disk path
+	// (e.g. in-memory subsets created by filter() or set operations).
+	virtual Document* document() const { return nullptr; }
 
 	// Whether the content has unsaved changes.
 	virtual bool isModified() const { return false; }

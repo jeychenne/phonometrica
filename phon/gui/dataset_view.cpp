@@ -333,10 +333,13 @@ bool DatasetView::save()
 
 void DatasetView::discardChanges()
 {
-	if (m_ds->has_path())
+	if (m_ds->has_path()) {
 		m_ds->reload();
-	else
-		m_ds->discard_changes();
+	} else {
+		// In-memory document: remove from project tree since there's nothing to revert to.
+		m_ds->detach();
+		Project::updated();
+	}
 }
 
 // ── Toolbar actions ─────────────────────────────────────
