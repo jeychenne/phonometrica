@@ -27,6 +27,7 @@
 #include <QUrl>
 #include <QTimer>
 #include <QKeyEvent>
+#include <QShortcut>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
@@ -147,6 +148,16 @@ void ScriptView::setupUi()
 
 	// Intercept keyboard shortcuts before QScintilla swallows them.
 	m_editor->installEventFilter(this);
+
+	// QShortcuts handle Ctrl+F / Ctrl+H when a non-QScintilla child (e.g. the
+	// search bar) has focus.  The event filter above handles the QScintilla case.
+	auto *findShortcut = new QShortcut(QKeySequence::Find, this);
+	findShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(findShortcut, &QShortcut::activated, this, &ScriptView::find);
+
+	auto *replaceShortcut = new QShortcut(QKeySequence(tr("Ctrl+H")), this);
+	replaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(replaceShortcut, &QShortcut::activated, this, &ScriptView::replace);
 
 	// Defer focus: setFocus() during construction is ignored because the widget
 	// is not yet visible. Posting to the next event-loop tick lets Qt process
