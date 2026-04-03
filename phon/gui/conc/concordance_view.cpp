@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -32,12 +33,15 @@
 #include <QFileInfo>
 #include <algorithm>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/recode_dialog.hpp>
+#include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/outlier_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/analysis/column_metrics.hpp>
+#include <phon/analysis/formula_engine.hpp>
 
 namespace phonometrica {
 
@@ -339,6 +343,7 @@ void ConcordanceView::setupUi()
 	hdr->setSectionsClickable(false);
 	hdr->setSortIndicatorShown(false);
 	hdr->setContextMenuPolicy(Qt::CustomContextMenu);
+	hdr->setToolTip(tr("Right-click for column options (sort, rename, recode, transform)"));
 
 	// Monospace font for the table body.
 	QFont mono("monospace", m_table->font().pointSize());
@@ -397,14 +402,17 @@ void ConcordanceView::setupUi()
 		emit titleChanged(label());
 	});
 
-	// Header context menu: sort + rename
+	// Header context menu: sort + rename + recode + transform
 	connect(hdr, &QHeaderView::customContextMenuRequested, this, [this](const QPoint &pos) {
 		auto *header = m_table->horizontalHeader();
 		int section = header->logicalIndexAt(pos);
 		if (section < 0) return;
 
 		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
+		intptr_t col_1based = section + 1;
 		QMenu menu(this);
+
+		// ── Sort ───────────────────────────────────────
 		menu.addAction(tr("Sort \"%1\" ascending").arg(col_name), this, [this, section, header]() {
 			m_proxy->sort(section, Qt::AscendingOrder);
 			header->setSortIndicator(section, Qt::AscendingOrder);
@@ -420,10 +428,82 @@ void ConcordanceView::setupUi()
 			m_proxy->sort(-1, Qt::AscendingOrder);
 			header->setSortIndicatorShown(false);
 		});
+
+		// ── Rename ─────────────────────────────────────
 		menu.addSeparator();
 		menu.addAction(tr("Rename column..."), this, [this, section]() {
 			onHeaderDoubleClick(section);
 		});
+
+		// ── Delete (aux columns only) ──────────────────
+		intptr_t aux_idx = m_conc->resolve_aux_column(col_1based);
+		if (aux_idx > 0)
+		{
+			// Walk back to the first display column of this aux group to get the base header name.
+			intptr_t first_col = col_1based;
+			while (first_col > 1 && m_conc->resolve_aux_column(first_col - 1) == aux_idx) {
+				first_col--;
+			}
+			auto base_name_str = m_conc->get_default_header(first_col);
+			auto base_name = QString::fromUtf8(base_name_str.data(), (int) base_name_str.size());
+
+			menu.addAction(QIcon(":/icons/circle-minus.svg"), tr("Delete column \"%1\"").arg(base_name),
+				this, [this, aux_idx, base_name]()
+			{
+				auto answer = QMessageBox::question(this, tr("Delete column"),
+					tr("Delete column \"%1\"?").arg(base_name),
+					QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+				if (answer != QMessageBox::Yes) return;
+
+				m_conc->remove_aux_column(aux_idx);
+				m_model->refreshAll();
+				m_table->resizeColumnsToContents();
+				updateColumnVisibility();
+				setupFilterBar();
+				updateCountLabel();
+				emit titleChanged(label());
+			});
+		}
+
+		// ── Detect column type by sampling cells ───────
+		intptr_t nrows = m_conc->row_count();
+		intptr_t sample_limit = std::min(nrows, (intptr_t)20);
+		bool all_numeric = true;
+		bool found_any = false;
+
+		for (intptr_t i = 1; i <= sample_limit; i++) {
+			auto cell = m_conc->get_cell(i, col_1based);
+			if (cell.empty() || cell == "nan") continue;
+			found_any = true;
+			bool ok;
+			cell.to_float(&ok);
+			if (!ok) {
+				all_numeric = false;
+				break;
+			}
+		}
+
+		bool is_numeric = found_any && all_numeric;
+		bool is_text = found_any && !all_numeric;
+
+		// ── Recode (text columns only) ─────────────────
+		if (is_text)
+		{
+			menu.addSeparator();
+			menu.addAction(tr("Recode values..."), this, [this, section]() {
+				onRecodeColumn(section);
+			});
+		}
+
+		// ── Transform (numeric columns only) ───────────
+		if (is_numeric)
+		{
+			menu.addSeparator();
+			menu.addAction(tr("Transform..."), this, [this, section]() {
+				onTransformColumn(section);
+			});
+		}
+
 		menu.exec(header->mapToGlobal(pos));
 	});
 
@@ -976,6 +1056,139 @@ void ConcordanceView::onToggleAuxFormantBark(bool checked)
 }
 
 // ── Column renaming ─────────────────────────────────────
+
+// ── Column recode / transform ──────────────────────────
+
+void ConcordanceView::onRecodeColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	intptr_t nrows = m_conc->row_count();
+	auto col_hdr = m_conc->get_header(col);
+	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
+
+	// Collect unique levels.
+	QSet<QString> seen;
+	for (intptr_t i = 1; i <= nrows; i++) {
+		auto cell = m_conc->get_cell(i, col);
+		seen.insert(QString::fromUtf8(cell.data(), (int) cell.size()));
+	}
+	QStringList levels(seen.begin(), seen.end());
+	levels.sort(Qt::CaseInsensitive);
+
+	RecodeDialog dlg(col_name, levels, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	auto mapping = dlg.mapping();
+
+	try
+	{
+		std::vector<String> new_values(nrows);
+		for (intptr_t i = 1; i <= nrows; i++)
+		{
+			auto cell = m_conc->get_cell(i, col);
+			auto original = QString::fromUtf8(cell.data(), (int) cell.size());
+			auto it = mapping.find(original);
+			if (it != mapping.end()) {
+				new_values[i - 1] = String(it.value().toUtf8().constData());
+			}
+			else {
+				new_values[i - 1] = cell;
+			}
+		}
+
+		m_conc->add_text_column(String(new_col_name.toUtf8().constData()), new_values);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		updateColumnVisibility();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void ConcordanceView::onTransformColumn(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	intptr_t nrows = m_conc->row_count();
+	auto col_hdr = m_conc->get_header(col);
+	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
+
+	// Collect sample values for the preview (first 8 rows).
+	QVector<double> samples;
+	intptr_t sample_count = std::min(nrows, (intptr_t)8);
+	for (intptr_t i = 1; i <= sample_count; i++)
+	{
+		auto cell = m_conc->get_cell(i, col);
+		if (cell.empty() || cell == "nan") {
+			samples.append(std::numeric_limits<double>::quiet_NaN());
+		}
+		else {
+			bool ok;
+			double v = cell.to_float(&ok);
+			samples.append(ok ? v : std::numeric_limits<double>::quiet_NaN());
+		}
+	}
+
+	TransformDialog dlg(col_name, samples, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	try
+	{
+		FormulaEngine engine;
+		engine.parse(dlg.formula().toStdString());
+
+		std::vector<double> result(nrows);
+		int nan_count = 0;
+
+		for (intptr_t i = 1; i <= nrows; i++)
+		{
+			auto cell = m_conc->get_cell(i, col);
+			double val;
+
+			if (cell.empty() || cell == "nan") {
+				val = std::numeric_limits<double>::quiet_NaN();
+			}
+			else {
+				bool ok;
+				val = cell.to_float(&ok);
+				if (!ok) val = std::numeric_limits<double>::quiet_NaN();
+			}
+
+			result[i - 1] = engine.evaluate(val);
+			if (std::isnan(result[i - 1]) && !std::isnan(val))
+				nan_count++;
+		}
+
+		m_conc->add_numeric_column(String(new_col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		updateColumnVisibility();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		if (nan_count > 0)
+		{
+			QMessageBox::information(this, tr("Transform"),
+				tr("%1 value(s) produced NaN (non-positive input, division by zero, etc.).")
+					.arg(nan_count));
+		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
 
 void ConcordanceView::onHeaderDoubleClick(int section)
 {

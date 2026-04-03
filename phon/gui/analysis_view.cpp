@@ -360,35 +360,69 @@ void AnalysisView::setupUi()
 	m_eda_plot = new PlotWidget;
 
 	// ── Controls between plot and stats ──
-	auto *eda_controls = new QHBoxLayout;
-	eda_controls->setSpacing(6);
-	eda_controls->addWidget(new QLabel(tr("X:")));
+	// Row 1: variable selectors
+	auto *eda_vars = new QHBoxLayout;
+	eda_vars->setSpacing(6);
+	eda_vars->addWidget(new QLabel(tr("X:")));
 	m_eda_x_combo = new QComboBox;
 	m_eda_x_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	eda_controls->addWidget(m_eda_x_combo);
-	eda_controls->addWidget(new QLabel(tr("Y:")));
+	eda_vars->addWidget(m_eda_x_combo);
+	eda_vars->addWidget(new QLabel(tr("Y:")));
 	m_eda_y_combo = new QComboBox;
 	m_eda_y_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	eda_controls->addWidget(m_eda_y_combo);
+	eda_vars->addWidget(m_eda_y_combo);
+
+	// ── Grouped scatter / formant chart controls ──
+	m_eda_group_label = new QLabel(tr("Group:"));
+	m_eda_group_label->setVisible(false);
+	eda_vars->addWidget(m_eda_group_label);
+	m_eda_group_combo = new QComboBox;
+	m_eda_group_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_group_combo->setToolTip(tr("Color points by a categorical variable"));
+	m_eda_group_combo->setVisible(false);
+	eda_vars->addWidget(m_eda_group_combo);
+	m_eda_pool_label = new QLabel(tr("Pool by:"));
+	m_eda_pool_label->setVisible(false);
+	eda_vars->addWidget(m_eda_pool_label);
+	m_eda_pool_combo = new QComboBox;
+	m_eda_pool_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_pool_combo->setToolTip(tr("Average X and Y values within each (group, pool) cell before plotting "
+	                                "(e.g. pool by speaker to get one point per speaker per vowel)"));
+	m_eda_pool_combo->setVisible(false);
+	eda_vars->addWidget(m_eda_pool_combo);
+	m_eda_label_label = new QLabel(tr("Label:"));
+	m_eda_label_label->setVisible(false);
+	eda_vars->addWidget(m_eda_label_label);
+	m_eda_label_combo = new QComboBox;
+	m_eda_label_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_label_combo->setToolTip(tr("Render the value of a variable as text at each data point"));
+	m_eda_label_combo->setVisible(false);
+	eda_vars->addWidget(m_eda_label_combo);
+	eda_vars->addStretch();
+
+	// Row 2: secondary options (bins, checkboxes, smoothing)
+	auto *eda_options = new QHBoxLayout;
+	eda_options->setContentsMargins(0, 5, 0, 5);
+	eda_options->setSpacing(6);
 	m_bins_label = new QLabel(tr("Bins:"));
-	eda_controls->addWidget(m_bins_label);
+	eda_options->addWidget(m_bins_label);
 	m_bins_spin = new QSpinBox;
 	m_bins_spin->setRange(0, 200);
 	m_bins_spin->setValue(0); // 0 = auto (Sturges' rule)
 	m_bins_spin->setSpecialValueText(tr("Auto"));
 	m_bins_spin->setToolTip(tr("Number of histogram bins (0 = automatic)"));
-	eda_controls->addWidget(m_bins_spin);
+	eda_options->addWidget(m_bins_spin);
 	m_eda_regline_check = new QCheckBox(tr("Regression line"));
 	m_eda_regline_check->setToolTip(tr("Overlay an OLS regression line on the scatter plot"));
 	m_eda_regline_check->setVisible(false);
-	eda_controls->addWidget(m_eda_regline_check);
+	eda_options->addWidget(m_eda_regline_check);
 	m_eda_density_check = new QCheckBox(tr("Density curve"));
 	m_eda_density_check->setToolTip(tr("Overlay a kernel density estimate on the histogram"));
 	m_eda_density_check->setVisible(false);
-	eda_controls->addWidget(m_eda_density_check);
+	eda_options->addWidget(m_eda_density_check);
 	m_eda_bw_label = new QLabel(tr("Smoothing:"));
 	m_eda_bw_label->setVisible(false);
-	eda_controls->addWidget(m_eda_bw_label);
+	eda_options->addWidget(m_eda_bw_label);
 	m_eda_bw_slider = new QSlider(Qt::Horizontal);
 	m_eda_bw_slider->setRange(10, 500);
 	m_eda_bw_slider->setValue(100);
@@ -396,7 +430,7 @@ void AnalysisView::setupUi()
 	m_eda_bw_slider->setToolTip(tr("Bandwidth adjustment factor (1.00 = default Silverman rule, "
 	                                "lower = more detail, higher = smoother)"));
 	m_eda_bw_slider->setVisible(false);
-	eda_controls->addWidget(m_eda_bw_slider);
+	eda_options->addWidget(m_eda_bw_slider);
 	m_eda_bw_spin = new QDoubleSpinBox;
 	m_eda_bw_spin->setRange(0.10, 5.00);
 	m_eda_bw_spin->setSingleStep(0.05);
@@ -404,49 +438,36 @@ void AnalysisView::setupUi()
 	m_eda_bw_spin->setValue(1.00);
 	m_eda_bw_spin->setFixedWidth(65);
 	m_eda_bw_spin->setVisible(false);
-	eda_controls->addWidget(m_eda_bw_spin);
-
-	// ── Grouped scatter / formant chart controls ──
-	m_eda_group_label = new QLabel(tr("Group:"));
-	m_eda_group_label->setVisible(false);
-	eda_controls->addWidget(m_eda_group_label);
-	m_eda_group_combo = new QComboBox;
-	m_eda_group_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	m_eda_group_combo->setToolTip(tr("Color points by a categorical variable"));
-	m_eda_group_combo->setVisible(false);
-	eda_controls->addWidget(m_eda_group_combo);
-	m_eda_label_label = new QLabel(tr("Label:"));
-	m_eda_label_label->setVisible(false);
-	eda_controls->addWidget(m_eda_label_label);
-	m_eda_label_combo = new QComboBox;
-	m_eda_label_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	m_eda_label_combo->setToolTip(tr("Render the value of a variable as text at each data point"));
-	m_eda_label_combo->setVisible(false);
-	eda_controls->addWidget(m_eda_label_combo);
+	eda_options->addWidget(m_eda_bw_spin);
 	m_eda_mean_check = new QCheckBox(tr("Means"));
 	m_eda_mean_check->setToolTip(tr("Show the mean of each group"));
 	m_eda_mean_check->setVisible(false);
-	eda_controls->addWidget(m_eda_mean_check);
+	eda_options->addWidget(m_eda_mean_check);
 	m_eda_ellipse_check = new QCheckBox(tr("Ellipses"));
 	m_eda_ellipse_check->setToolTip(tr("Show confidence ellipses around each group"));
 	m_eda_ellipse_check->setVisible(false);
-	eda_controls->addWidget(m_eda_ellipse_check);
+	eda_options->addWidget(m_eda_ellipse_check);
 	m_eda_ellipse_spin = new QSpinBox;
 	m_eda_ellipse_spin->setRange(50, 99);
 	m_eda_ellipse_spin->setValue(68);
 	m_eda_ellipse_spin->setSuffix(QStringLiteral("%"));
 	m_eda_ellipse_spin->setToolTip(tr("Confidence level for the ellipses (68% \u2248 1\u03C3, 95% \u2248 2\u03C3)"));
 	m_eda_ellipse_spin->setVisible(false);
-	eda_controls->addWidget(m_eda_ellipse_spin);
+	eda_options->addWidget(m_eda_ellipse_spin);
 	m_eda_formant_check = new QCheckBox(tr("Formant chart"));
 	m_eda_formant_check->setToolTip(tr("Reverse both axes (high values at bottom-left, as in F1\u00D7F2 plots)"));
 	m_eda_formant_check->setVisible(false);
-	eda_controls->addWidget(m_eda_formant_check);
+	eda_options->addWidget(m_eda_formant_check);
+	eda_options->addStretch();
 
-	eda_controls->addStretch();
+	auto *eda_controls_layout = new QVBoxLayout;
+	eda_controls_layout->setContentsMargins(0, 0, 0, 0);
+	eda_controls_layout->setSpacing(2);
+	eda_controls_layout->addLayout(eda_vars);
+	eda_controls_layout->addLayout(eda_options);
 
 	auto *eda_controls_widget = new QWidget;
-	eda_controls_widget->setLayout(eda_controls);
+	eda_controls_widget->setLayout(eda_controls_layout);
 
 	// ── Summary table ──
 	m_eda_summary = new QTableWidget;
@@ -511,6 +532,7 @@ void AnalysisView::setupUi()
 		onEdaChanged();
 	});
 	connect(m_eda_group_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_pool_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_label_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
@@ -527,10 +549,12 @@ void AnalysisView::populateColumns()
 	m_eda_x_combo->clear();
 	m_eda_y_combo->clear();
 	m_eda_group_combo->clear();
+	m_eda_pool_combo->clear();
 	m_eda_label_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
 	m_eda_y_combo->addItem(tr("(None)"));
 	m_eda_group_combo->addItem(tr("(None)"));
+	m_eda_pool_combo->addItem(tr("(None)"));
 	m_eda_label_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
@@ -542,6 +566,7 @@ void AnalysisView::populateColumns()
 		m_eda_x_combo->addItem(qname);
 		m_eda_y_combo->addItem(qname);
 		m_eda_group_combo->addItem(qname);
+		m_eda_pool_combo->addItem(qname);
 		m_eda_label_combo->addItem(qname);
 	}
 
@@ -1725,6 +1750,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_pool_label->setVisible(false);
+		m_eda_pool_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -1763,6 +1790,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_regline_check->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_pool_label->setVisible(false);
+		m_eda_pool_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -1911,11 +1940,14 @@ void AnalysisView::updateEdaPlot()
 
 		bool formant = m_eda_formant_check->isChecked();
 		bool has_group = (m_eda_group_combo->currentIndex() > 0);
+		bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
 		bool has_label = (m_eda_label_combo->currentIndex() > 0);
 
-		// Show the group / label / formant controls.
+		// Show the group / pool / label / formant controls.
 		m_eda_group_label->setVisible(true);
 		m_eda_group_combo->setVisible(true);
+		m_eda_pool_label->setVisible(has_group);
+		m_eda_pool_combo->setVisible(has_group);
 		m_eda_label_label->setVisible(true);
 		m_eda_label_combo->setVisible(true);
 		m_eda_formant_check->setVisible(true);
@@ -1953,6 +1985,15 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 
+			// Resolve pool column.
+			intptr_t p_col = 0;
+			if (has_pool) {
+				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == pool_name) { p_col = j; break; }
+				}
+			}
+
 			std::vector<double> xv, yv;
 			std::vector<QString> gv;
 			std::vector<QString> lv;
@@ -1967,6 +2008,7 @@ void AnalysisView::updateEdaPlot()
 				auto vg = dt->get_cell(r, g_col);
 				if (vx.empty() || vy.empty() || vg.empty()) continue;
 				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+				if (p_col > 0 && dt->get_cell(r, p_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
@@ -1982,6 +2024,68 @@ void AnalysisView::updateEdaPlot()
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
 
+			// ── Pooling: collapse to one point per (pool, group) cell ──
+			if (p_col > 0)
+			{
+				// Re-read raw data including pool column to build the cell map.
+				struct PoolCell {
+					double sx = 0, sy = 0;
+					int n = 0;
+					QString group;
+					std::map<QString, int> label_freq;
+				};
+				std::map<std::pair<QString, QString>, PoolCell> cells;
+				std::vector<std::pair<QString, QString>> cell_order;
+
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = dt->get_cell(r, x_col);
+					auto vy = dt->get_cell(r, y_col);
+					auto vg = dt->get_cell(r, g_col);
+					auto vp = dt->get_cell(r, p_col);
+					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
+					if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+
+					auto key = std::make_pair(
+						QString::fromUtf8(vp.data(), (int)vp.size()),
+						QString::fromUtf8(vg.data(), (int)vg.size()));
+					if (cells.find(key) == cells.end()) cell_order.push_back(key);
+					auto &c = cells[key];
+					c.sx += dx;
+					c.sy += dy;
+					c.n++;
+					c.group = key.second;
+					if (l_col > 0) {
+						auto vl = dt->get_cell(r, l_col);
+						c.label_freq[QString::fromUtf8(vl.data(), (int)vl.size())]++;
+					}
+				}
+
+				// Replace the raw vectors with one averaged point per cell.
+				xv.clear(); yv.clear(); gv.clear(); lv.clear();
+				for (auto &key : cell_order) {
+					auto &c = cells[key];
+					if (c.n == 0) continue;
+					xv.push_back(c.sx / c.n);
+					yv.push_back(c.sy / c.n);
+					gv.push_back(c.group);
+					if (l_col > 0) {
+						// Most frequent label within the cell.
+						QString best;
+						int best_n = 0;
+						for (auto &kv : c.label_freq) {
+							if (kv.second > best_n) { best = kv.first; best_n = kv.second; }
+						}
+						lv.push_back(best);
+					}
+				}
+				if (xv.empty()) { m_eda_plot->clear(); return; }
+			}
+
 			bool show_means = m_eda_mean_check->isChecked();
 			bool show_ellipses = m_eda_ellipse_check->isChecked();
 
@@ -1989,11 +2093,13 @@ void AnalysisView::updateEdaPlot()
 			double conf = m_eda_ellipse_spin->value() / 100.0;
 			double chi2_scale = -2.0 * std::log(1.0 - conf);
 
-			// Build title: Y ~ X | Group [/ Label].
+			// Build title: Y ~ X | Group [/ Label] [pooled by Pool].
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
 				+ QStringLiteral(" | ") + group_name_q;
 			if (has_label && l_col != g_col)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
+			if (p_col > 0)
+				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText() + QStringLiteral("]");
 
 			m_eda_plot->setGroupedScatterData(
 				std::move(gv), std::move(xv), std::move(yv),
@@ -2069,6 +2175,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_pool_label->setVisible(false);
+		m_eda_pool_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -2106,6 +2214,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_bw_spin->setVisible(false);
 		m_eda_group_label->setVisible(false);
 		m_eda_group_combo->setVisible(false);
+		m_eda_pool_label->setVisible(false);
+		m_eda_pool_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -2294,26 +2404,77 @@ void AnalysisView::updateEdaSummary()
 			}
 			if (g_col < 1) return;
 
+			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
+			intptr_t p_col = 0;
+			if (has_pool) {
+				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == pool_name) { p_col = j; break; }
+				}
+			}
+
 			std::vector<QString> group_order;
 			struct GroupStats { std::vector<double> xv, yv; };
 			std::map<QString, GroupStats> grouped;
 			intptr_t included = 0;
 
-			for (intptr_t r = 1; r <= nr; r++)
+			if (p_col > 0)
 			{
-				auto vx = dt->get_cell(r, x_col);
-				auto vy = dt->get_cell(r, y_col);
-				auto vg = dt->get_cell(r, g_col);
-				if (vx.empty() || vy.empty() || vg.empty()) continue;
-				bool okx, oky;
-				double dx = vx.to_float(&okx);
-				double dy = vy.to_float(&oky);
-				if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
-				auto qs = QString::fromUtf8(vg.data(), (int)vg.size());
-				if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
-				grouped[qs].xv.push_back(dx);
-				grouped[qs].yv.push_back(dy);
-				included++;
+				// Pool first: collapse to one mean per (pool, group) cell,
+				// then feed the cell means into the per-group stats.
+				struct PoolCell { double sx = 0, sy = 0; int n = 0; QString group; };
+				std::map<std::pair<QString, QString>, PoolCell> cells;
+				std::vector<std::pair<QString, QString>> cell_order;
+
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = dt->get_cell(r, x_col);
+					auto vy = dt->get_cell(r, y_col);
+					auto vg = dt->get_cell(r, g_col);
+					auto vp = dt->get_cell(r, p_col);
+					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+					included++;
+
+					auto key = std::make_pair(
+						QString::fromUtf8(vp.data(), (int)vp.size()),
+						QString::fromUtf8(vg.data(), (int)vg.size()));
+					if (cells.find(key) == cells.end()) cell_order.push_back(key);
+					auto &c = cells[key];
+					c.sx += dx; c.sy += dy; c.n++;
+					c.group = key.second;
+				}
+
+				for (auto &key : cell_order) {
+					auto &c = cells[key];
+					if (c.n == 0) continue;
+					if (grouped.find(c.group) == grouped.end()) group_order.push_back(c.group);
+					grouped[c.group].xv.push_back(c.sx / c.n);
+					grouped[c.group].yv.push_back(c.sy / c.n);
+				}
+			}
+			else
+			{
+				// No pooling: raw data points.
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = dt->get_cell(r, x_col);
+					auto vy = dt->get_cell(r, y_col);
+					auto vg = dt->get_cell(r, g_col);
+					if (vx.empty() || vy.empty() || vg.empty()) continue;
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+					auto qs = QString::fromUtf8(vg.data(), (int)vg.size());
+					if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
+					grouped[qs].xv.push_back(dx);
+					grouped[qs].yv.push_back(dy);
+					included++;
+				}
 			}
 			if (group_order.empty()) return;
 

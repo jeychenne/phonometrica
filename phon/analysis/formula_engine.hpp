@@ -13,58 +13,82 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 31/03/2026                                                                                                 *
+ * Created: 03/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: QAbstractTableModel adapter around a Dataset object. Provides free sorting/selection through QTableView.   *
+ * Purpose: Lightweight expression evaluator for column transformations. Parses a formula string into an AST and       *
+ *          evaluates it for a given value of x. Supports standard math functions, phonetic scale conversions           *
+ *          (bark, erb, mel, st), and the constants pi and e.                                                          *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_DATASET_MODEL_HPP
-#define PHONOMETRICA_DATASET_MODEL_HPP
+#ifndef PHONOMETRICA_FORMULA_ENGINE_HPP
+#define PHONOMETRICA_FORMULA_ENGINE_HPP
 
-#include <QAbstractTableModel>
-#include <phon/application/dataset.hpp>
+#include <memory>
+#include <string>
 
 namespace phonometrica {
 
-class DatasetModel final : public QAbstractTableModel
+class FormulaEngine
 {
-	Q_OBJECT
-
 public:
 
-	explicit DatasetModel(Handle<Dataset> ds, QObject *parent = nullptr);
+	/// Parse a formula string (e.g. "log(x)", "bark(x)", "x / 1000").
+	/// The variable `x` represents the cell value.
+	/// Throws std::runtime_error on syntax errors.
+	void parse(const std::string &formula);
 
-	int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+	/// Evaluate the parsed formula for a given value of x.
+	/// Returns NaN for domain errors (e.g. log of a negative number).
+	double evaluate(double x) const;
 
-	int columnCount(const QModelIndex &parent = QModelIndex()) const override;
-
-	QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
-
-	bool setData(const QModelIndex &index, const QVariant &value, int role = Qt::EditRole) override;
-
-	QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
-
-	bool setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role = Qt::EditRole) override;
-
-	Qt::ItemFlags flags(const QModelIndex &index) const override;
-
-	// Remove a row and notify the view.
-	void removeRow(int row);
-
-	// Remove a column and notify the view.
-	void removeColumn(int col);
-
-	// Refresh all data (e.g. after structural changes).
-	void refreshAll();
-
-	Handle<Dataset> dataset() const { return m_ds; }
+	/// Validate a formula without keeping the result.
+	/// Returns an empty string on success, or an error message on failure.
+	static std::string validate(const std::string &formula);
 
 private:
 
-	Handle<Dataset> m_ds;
+	struct Node;
+	using NodePtr = std::unique_ptr<Node>;
+
+	enum class Func {
+		Log, Log10, Log2, Sqrt, Abs, Exp, Round, Floor, Ceil,
+		Bark, Erb, Mel, St, Pow
+	};
+
+	struct Node {
+		enum class Kind { Num, Var, BinOp, Neg, Call };
+		Kind kind;
+		double num = 0;
+		char op = 0;
+		Func func = Func::Log;
+		NodePtr left, right;
+	};
+
+	enum class Tok { Num, Id, Plus, Minus, Star, Slash, Caret, LPar, RPar, Comma, End };
+
+	struct Lex {
+		const char *cur = nullptr;
+		const char *end = nullptr;
+		Tok tok = Tok::End;
+		double num = 0;
+		std::string id;
+
+		void next();
+	};
+
+	static NodePtr pExpr(Lex &L);
+	static NodePtr pTerm(Lex &L);
+	static NodePtr pUnary(Lex &L);
+	static NodePtr pPower(Lex &L);
+	static NodePtr pPrimary(Lex &L);
+
+	static double eval(const Node *n, double x);
+	static Func lookupFunc(const std::string &name);
+
+	NodePtr m_root;
 };
 
 } // namespace phonometrica
 
-#endif // PHONOMETRICA_DATASET_MODEL_HPP
+#endif // PHONOMETRICA_FORMULA_ENGINE_HPP

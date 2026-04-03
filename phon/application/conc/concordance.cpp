@@ -1995,6 +1995,25 @@ void Concordance::add_numeric_column(const String &header, const std::vector<dou
 	modify();
 }
 
+void Concordance::add_text_column(const String &header, const std::vector<String> &values)
+{
+	if ((intptr_t)values.size() != row_count()) {
+		throw error("Cannot add column '%': expected % values, got %",
+		             header, row_count(), (intptr_t)values.size());
+	}
+
+	AuxColumn col;
+	col.header = header;
+	col.type = AuxColumnType::Text;
+	col.text_data.resize((intptr_t)values.size());
+	for (intptr_t i = 0; i < (intptr_t)values.size(); i++) {
+		col.text_data[i + 1] = values[i];
+	}
+
+	m_aux_columns.append(std::move(col));
+	modify();
+}
+
 bool Concordance::matches_equal(const Concordance &other) const
 {
 	if (m_matches.size() != other.m_matches.size()) return false;
@@ -2105,6 +2124,37 @@ int Concordance::aux_col_display_width(intptr_t c) const
 	default:
 		return 1;
 	}
+}
+
+intptr_t Concordance::resolve_aux_column(intptr_t display_col) const
+{
+	if (m_aux_columns.empty()) return 0;
+
+	// The aux region starts right after measurement/extra columns.
+	intptr_t aux_start = FILE_INFO_COLUMN_COUNT + context_column_count()
+	                   + m_target_count + duration_column_count()
+	                   + effective_extra_count();
+	intptr_t aux_end = aux_start + aux_display_column_count();
+
+	if (display_col <= aux_start || display_col > aux_end) return 0;
+
+	// Walk through stored aux columns to find which one owns this display column.
+	intptr_t j = display_col - aux_start; // 1-based position within aux region
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		int dw = aux_col_display_width(c);
+		if (j <= dw) return c;
+		j -= dw;
+	}
+
+	return 0; // shouldn't happen
+}
+
+void Concordance::remove_aux_column(intptr_t c)
+{
+	assert(c >= 1 && c <= m_aux_columns.size());
+	m_aux_columns.remove_at(c);
+	modify();
 }
 
 String Concordance::aux_display_header(intptr_t c, intptr_t k) const

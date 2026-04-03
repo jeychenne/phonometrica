@@ -385,6 +385,7 @@ if(WITH_GUI)
         icons/sigma.svg
         icons/grid-2x2-x.svg
         icons/list-x.svg
+        icons/concordance.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

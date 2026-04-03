@@ -90,7 +90,7 @@ bool DatasetModel::setData(const QModelIndex &index, const QVariant &value, int 
 
 QVariant DatasetModel::headerData(int section, Qt::Orientation orientation, int role) const
 {
-	if (orientation == Qt::Horizontal && role == Qt::DisplayRole)
+	if (orientation == Qt::Horizontal && (role == Qt::DisplayRole || role == Qt::EditRole))
 	{
 		auto text = m_ds->get_header(section + 1);
 		return QString::fromUtf8(text.data(), (int) text.size());
@@ -102,6 +102,20 @@ QVariant DatasetModel::headerData(int section, Qt::Orientation orientation, int 
 	}
 
 	return {};
+}
+
+bool DatasetModel::setHeaderData(int section, Qt::Orientation orientation, const QVariant &value, int role)
+{
+	if (orientation != Qt::Horizontal || role != Qt::EditRole) return false;
+
+	auto new_name = value.toString().trimmed();
+	if (new_name.isEmpty()) return false;
+
+	m_ds->set_header(section + 1, String(new_name.toUtf8().constData()));
+	m_ds->set_content_modified(true);
+	Document::file_modified();
+	emit headerDataChanged(Qt::Horizontal, section, section);
+	return true;
 }
 
 Qt::ItemFlags DatasetModel::flags(const QModelIndex &index) const
