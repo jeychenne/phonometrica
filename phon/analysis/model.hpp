@@ -23,6 +23,7 @@
 #define PHONOMETRICA_MODEL_HPP
 
 #include <cmath>
+#include <limits>
 #include <vector>
 #include <phon/string.hpp>
 #include <phon/array.hpp>
@@ -89,6 +90,13 @@ struct Model
 	intptr_t df_residual = 0;  // residual degrees of freedom
 	double r2 = 0;             // R² (Gaussian only)
 	double adj_r2 = 0;         // adjusted R² (Gaussian only)
+
+	// ---- Nakagawa pseudo-R² (mixed models only) ----
+	// Marginal R²: proportion of variance explained by fixed effects.
+	// Conditional R²: proportion explained by fixed + random effects.
+	// NaN means not computed (e.g. no random effects, or design matrix unavailable).
+	double r2_marginal = std::numeric_limits<double>::quiet_NaN();
+	double r2_conditional = std::numeric_limits<double>::quiet_NaN();
 
 	// ---- Negative binomial specific ----
 	double theta = 0;          // NB overdispersion parameter (θ > 0); 0 for other families
@@ -180,6 +188,91 @@ struct Model
 			fitted[i + 1] = mu[i];
 			residuals[i + 1] = ym[i] - mu[i];
 		}
+	}
+	// Compute Nakagawa & Schielzeth (2013) pseudo-R² for mixed models.
+	// Stores results in r2_marginal and r2_conditional.
+	// No-op (leaves NaN) for fixed-effects-only models or if X/beta are empty.
+	void compute_pseudo_r2()
+	{
+		if (!has_random_effects()) return;
+		if (X.empty() || beta.empty()) return;
+		if (nobs <= 0 || nfixed <= 0) return;
+
+		// σ²_f: variance of the fixed-effects linear predictor.
+		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
+		Eigen::Map<Vector<double>> bm(const_cast<double*>(beta.data()), nfixed);
+		Vector<double> eta_fixed = Xm * bm;
+		double mean_eta = eta_fixed.mean();
+		double var_f = (eta_fixed.array() - mean_eta).square().mean();
+
+		// σ²_r: random-effects variance contribution.
+		double var_r = 0;
+		for (intptr_t gi = 1; gi <= random_effects.size(); gi++)
+		{
+			auto &re = random_effects[gi];
+			intptr_t q = re.term_names.size();
+
+			if (!re.Z_design.empty() && !re.cov_chol.empty() && q > 0)
+			{
+				// Reconstruct Σ = L L' from the packed Cholesky factor.
+				// Note: cov_chol stores the raw Cholesky factor from Eigen::LLT
+				// (NOT log-diagonal like the optimization parameters).
+				Eigen::MatrixXd L = Eigen::MatrixXd::Zero(q, q);
+				for (intptr_t r = 0; r < q; r++)
+					for (intptr_t c = 0; c <= r; c++)
+					{
+						intptr_t idx = r * (r + 1) / 2 + c;
+						L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx + 1] : 0.0;
+					}
+				Eigen::MatrixXd Sigma = L * L.transpose();
+
+				// Z_g: n × q, row-major.
+				Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
+					Zg(re.Z_design.data(), nobs, q);
+
+				// σ²_r,g = tr(Z_g' Z_g Σ_g) / n
+				Eigen::MatrixXd ZtZ = (Zg.transpose() * Zg) / static_cast<double>(nobs);
+				var_r += (ZtZ.array() * Sigma.array()).sum();
+			}
+			else
+			{
+				// Fallback: sum of diagonal variances.
+				// Exact for random intercepts, approximate for random slopes.
+				for (intptr_t t = 1; t <= re.variance.size(); t++)
+					var_r += re.variance[t];
+			}
+		}
+
+		// σ²_d: distribution-specific variance.
+		double var_d = 0;
+		if (is_gaussian())
+		{
+			var_d = rse * rse;
+		}
+		else if (family == "binomial")
+		{
+			var_d = M_PI * M_PI / 3.0; // logit link
+		}
+		else if (family == "poisson")
+		{
+			double lambda = std::exp(mean_eta + (var_f + var_r) / 2.0);
+			var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10));
+		}
+		else if (is_negbin())
+		{
+			double lambda = std::exp(mean_eta + (var_f + var_r) / 2.0);
+			var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10) + 1.0 / std::max(theta, 1e-10));
+		}
+		else
+		{
+			return; // unsupported family
+		}
+
+		double denom = var_f + var_r + var_d;
+		if (denom <= 0) return;
+
+		r2_marginal = var_f / denom;
+		r2_conditional = (var_f + var_r) / denom;
 	}
 };
 

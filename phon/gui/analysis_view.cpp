@@ -2968,6 +2968,11 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 			.arg(m.r2, 0, 'f', 4)
 			.arg(m.adj_r2, 0, 'f', 4);
 	}
+	if (m.has_random_effects() && !std::isnan(m.r2_marginal)) {
+		tex += QStringLiteral("; $R^2_m$ = %1; $R^2_c$ = %2")
+			.arg(m.r2_marginal, 0, 'f', 4)
+			.arg(m.r2_conditional, 0, 'f', 4);
+	}
 	if (m.is_negbin()) {
 		tex += QStringLiteral("; $\\theta$ = %1").arg(m.theta, 0, 'f', 4);
 	}
@@ -3015,6 +3020,115 @@ void AnalysisView::onExportPlot()
 // =====================================================================
 // Summary formatting
 // =====================================================================
+
+// Nakagawa & Schielzeth (2013) pseudo-R² for mixed models.
+// R²_marginal  = σ²_f / (σ²_f + σ²_r + σ²_d)    [fixed effects only]
+// R²_conditional = (σ²_f + σ²_r) / (σ²_f + σ²_r + σ²_d)  [fixed + random]
+//
+// References:
+//   Nakagawa, S. & Schielzeth, H. (2013). A general and simple method for
+//     obtaining R² from generalized linear mixed-effects models.
+//     Methods in Ecology and Evolution, 4(2), 133–142.
+//   Nakagawa, S., Johnson, P.C.D. & Schielzeth, H. (2017). The coefficient
+//     of determination R² and intra-class correlation coefficient from
+//     generalized linear mixed-effects models revisited and expanded.
+//     Journal of the Royal Society Interface, 14(134), 20170213.
+struct NakagawaR2 { double marginal; double conditional; };
+
+static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
+{
+	if (!m.has_random_effects()) return std::nullopt;
+	if (m.X.empty() || m.beta.empty()) return std::nullopt;
+	if (m.nobs <= 0 || m.nfixed <= 0) return std::nullopt;
+
+	// ── σ²_f: variance of the fixed-effects linear predictor ────────
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(m.X.data()), m.nobs, m.nfixed);
+	Eigen::Map<Vector<double>> bm(const_cast<double*>(m.beta.data()), m.nfixed);
+	Vector<double> eta_fixed = Xm * bm;
+	double mean_eta = eta_fixed.mean();
+	double var_f = (eta_fixed.array() - mean_eta).square().mean();
+
+	// ── σ²_r: random-effects variance contribution ──────────────────
+	// For each grouping factor:
+	//   - If Z_design is available: σ²_r,g = tr(Z_g' Z_g Σ_g) / n
+	//   - Otherwise: sum of diagonal variances (exact for random
+	//     intercepts, approximate for random slopes).
+	double var_r = 0;
+	for (intptr_t gi = 1; gi <= m.random_effects.size(); gi++)
+	{
+		auto &re = m.random_effects[gi];
+		intptr_t q = re.term_names.size();
+
+		if (!re.Z_design.empty() && !re.cov_chol.empty() && q > 0)
+		{
+			// Reconstruct covariance from Cholesky: L → Σ = L L'
+			// cov_chol stores the raw Cholesky factor (NOT log-diagonal).
+			Eigen::MatrixXd L = Eigen::MatrixXd::Zero(q, q);
+			for (intptr_t r = 0; r < q; r++)
+			{
+				for (intptr_t c = 0; c <= r; c++)
+				{
+					intptr_t idx = r * (r + 1) / 2 + c;
+					L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx + 1] : 0.0;
+				}
+			}
+			Eigen::MatrixXd Sigma = L * L.transpose();
+
+			// Z_g is n × q, row-major in re.Z_design
+			Eigen::Map<const Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>
+				Zg(re.Z_design.data(), m.nobs, q);
+
+			// tr(Z_g' Z_g Σ_g) / n
+			Eigen::MatrixXd ZtZ = (Zg.transpose() * Zg) / static_cast<double>(m.nobs);
+			var_r += (ZtZ.array() * Sigma.array()).sum();
+		}
+		else
+		{
+			// Fallback: sum of diagonal variance components.
+			// Exact for random intercepts, approximate for slopes.
+			for (intptr_t t = 1; t <= re.variance.size(); t++)
+				var_r += re.variance[t];
+		}
+	}
+
+	// ── σ²_d: distribution-specific variance ────────────────────────
+	double var_d = 0;
+	if (m.is_gaussian())
+	{
+		var_d = m.rse * m.rse;
+	}
+	else if (m.family == "binomial")
+	{
+		// Logit link: π²/3
+		var_d = M_PI * M_PI / 3.0;
+	}
+	else if (m.family == "poisson")
+	{
+		// Lognormal approximation: log(1 + 1/λ̄)
+		// where λ̄ = exp(mean(η) + (σ²_f + σ²_r) / 2)
+		double lambda = std::exp(mean_eta + (var_f + var_r) / 2.0);
+		var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10));
+	}
+	else if (m.is_negbin())
+	{
+		// NB2 lognormal approximation: log(1 + 1/λ̄ + 1/θ)
+		double lambda = std::exp(mean_eta + (var_f + var_r) / 2.0);
+		double theta = std::max(m.theta, 1e-10);
+		var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10) + 1.0 / theta);
+	}
+	else
+	{
+		return std::nullopt; // unsupported family
+	}
+
+	double denom = var_f + var_r + var_d;
+	if (denom <= 0) return std::nullopt;
+
+	NakagawaR2 result;
+	result.marginal = var_f / denom;
+	result.conditional = (var_f + var_r) / denom;
+	return result;
+}
 
 QString AnalysisView::formatSummary(const stats::Model &m) const
 {
@@ -3129,6 +3243,23 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		}
 
 		text += QStringLiteral("\n");
+
+		// Nakagawa pseudo-R² (marginal and conditional)
+		double r2m = m.r2_marginal;
+		double r2c = m.r2_conditional;
+		// Recompute on-the-fly if loaded from an old file without stored values.
+		if (std::isnan(r2m) && !m.X.empty() && !m.beta.empty())
+		{
+			auto r2 = compute_nakagawa_r2(m);
+			if (r2) { r2m = r2->marginal; r2c = r2->conditional; }
+		}
+		if (!std::isnan(r2m))
+		{
+			text += QString::asprintf("Pseudo R-squared (Nakagawa):\n");
+			text += QString::asprintf("  Marginal  (fixed effects):          %.4f\n", r2m);
+			text += QString::asprintf("  Conditional (fixed + random):       %.4f\n", r2c);
+			text += QStringLiteral("\n");
+		}
 	}
 	else if (m.is_gaussian())
 	{

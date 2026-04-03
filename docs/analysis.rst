@@ -107,6 +107,11 @@ The Summary tab displays detailed results for the selected model:
   reference degrees of freedom, *F*-statistic, and approximate *p*-value for each smooth.
 - **Random effects** (mixed models): variance and standard deviation for each random term,
   plus the covariance structure (correlations between random slopes).
+- **Pseudo R²** (mixed models): Nakagawa & Schielzeth (2013) marginal and conditional R².
+  The marginal R² measures the proportion of variance explained by fixed effects alone;
+  the conditional R² measures the proportion explained by both fixed and random effects.
+  Computed for all families (Gaussian, Binomial, Poisson, Negative binomial) using the
+  appropriate distribution-specific variance.
 
 The toolbar above the summary provides:
 
