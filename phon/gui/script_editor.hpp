@@ -64,6 +64,7 @@ signals:
 
 protected:
 
+	bool event(QEvent *e) override;
 	void keyPressEvent(QKeyEvent *e) override;
 
 private:

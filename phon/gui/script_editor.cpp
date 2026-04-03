@@ -257,6 +257,24 @@ void ScriptEditor::activateHints(bool value)
 //  Key handling & smart auto-indentation
 // ─────────────────────────────────────────────────
 
+bool ScriptEditor::event(QEvent *e)
+{
+	// QScintilla accepts ShortcutOverride for many key combos, preventing
+	// Qt's shortcut system from dispatching them to MainWindow actions.
+	// We explicitly ignore the combos we handle at application level.
+	if (e->type() == QEvent::ShortcutOverride)
+	{
+		auto *ke = static_cast<QKeyEvent *>(e);
+		if (ke->matches(QKeySequence::Find) ||
+			(ke->modifiers() == Qt::ControlModifier && ke->key() == Qt::Key_H))
+		{
+			e->ignore();
+			return false;
+		}
+	}
+	return QsciScintilla::event(e);
+}
+
 void ScriptEditor::keyPressEvent(QKeyEvent *e)
 {
 	if (e->key() == Qt::Key_Return || e->key() == Qt::Key_Enter)

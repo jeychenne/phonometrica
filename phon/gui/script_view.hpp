@@ -52,6 +52,7 @@ public:
 	void execute() override;
 	void find() override;
 	void replace() override;
+	bool supportsFind() const override { return true; }
 	void escape() override;
 	void undo() override;
 	void redo() override;
@@ -61,6 +62,10 @@ public:
 	// ── Script-specific ────────────────────────────────
 
 	Handle<Script> script() const { return m_script; }
+
+protected:
+
+	bool eventFilter(QObject *obj, QEvent *event) override;
 
 private slots:
 
