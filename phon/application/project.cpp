@@ -564,6 +564,7 @@ void Project::parse_data(xml_node root, Directory *folder)
 				else if (cls == std::string_view("Concordance"))
 				{
 					auto conc = make_handle<Concordance>(folder, std::move(path));
+					conc->from_xml(node, m_directory);
 					folder->append(conc, false);
 					register_file(conc->path(), conc);
 				}

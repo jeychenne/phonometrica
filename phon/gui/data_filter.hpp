@@ -108,6 +108,11 @@ private:
 	bool m_enabled = true;
 };
 
+// Convert between FilterOp and serialization strings used by FilterRuleData.
+// Strings: "==", "!=", "<", "<=", ">", ">=", "contains", "!contains", "matches", "in".
+const char *filter_op_to_string(FilterOp op);
+FilterOp string_to_filter_op(const char *s);
+
 } // namespace phonometrica
 
 #endif // PHONOMETRICA_DATA_FILTER_HPP

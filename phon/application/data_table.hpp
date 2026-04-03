@@ -30,6 +30,18 @@ namespace phonometrica {
 
 class Runtime;
 
+
+/// Lightweight description of a filter rule, stored in the application layer
+/// (no Qt dependency). Serialized in the project XML as view metadata.
+struct FilterRuleData
+{
+	String column;          // column header name
+	String op;              // ==, !=, <, <=, >, >=, contains, !contains, matches, in
+	String value;           // threshold or pattern (unused for "in")
+	Array<String> set_values;  // factor levels (only for "in")
+};
+
+
 class DataTable : public Document
 {
 public:
@@ -56,7 +68,27 @@ public:
 	/// Returns 0 if not found.
 	intptr_t find_column(const String &name) const;
 
+	// ── Saved filter rules ───────────────────────────────────────────
+
+	const Array<FilterRuleData> &filter_rules() const { return m_filter_rules; }
+	bool filter_enabled() const { return m_filter_enabled; }
+
+	/// Replace the saved filter rules. Does NOT mark the document as modified
+	/// (filters are view metadata, not data changes).
+	void set_filter_rules(Array<FilterRuleData> rules, bool enabled);
+
+	/// Clear all saved filter rules.
+	void clear_filter_rules();
+
 	static void initialize(Runtime &rt);
+
+protected:
+
+	void metadata_to_xml(xml_node meta_node) override;
+
+	void metadata_from_xml(xml_node meta_node) override;
+
+	bool needs_metadata_node() const override;
 
 private:
 
@@ -64,6 +96,9 @@ private:
 
 	bool uses_external_metadata() const override;
 
+	Array<FilterRuleData> m_filter_rules;
+
+	bool m_filter_enabled = true;
 };
 
 

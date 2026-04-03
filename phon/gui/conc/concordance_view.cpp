@@ -308,6 +308,31 @@ void ConcordanceView::setupUi()
 	setupFilterBar();
 	layout->addWidget(m_filter_bar);
 
+	// Restore saved filter rules from the document.
+	if (!m_conc->filter_rules().empty())
+	{
+		auto &saved = m_conc->filter_rules();
+		for (intptr_t r = 1; r <= saved.size(); r++)
+		{
+			auto &rd = saved[r];
+			FilterRule rule;
+			intptr_t col = m_conc->find_column(rd.column);
+			rule.column = (col > 0) ? static_cast<int>(col - 1) : 0;
+			rule.op = string_to_filter_op(rd.op.data());
+			if (rule.op == FilterOp::InSet) {
+				for (intptr_t k = 1; k <= rd.set_values.size(); k++)
+					rule.set_values << QString::fromUtf8(rd.set_values[k].data(), (int)rd.set_values[k].size());
+			} else {
+				rule.value = QString::fromUtf8(rd.value.data(), (int)rd.value.size());
+			}
+			m_proxy->addRule(rule);
+		}
+		m_proxy->setFilterEnabled(m_conc->filter_enabled());
+		m_filter_bar->rebuild();
+		m_filter_bar->show();
+		m_filter_action->setChecked(true);
+	}
+
 	// ── Count label + active target spinner ────────────
 	auto *info_row = new QHBoxLayout;
 	m_count_label = new QLabel;
@@ -513,6 +538,25 @@ void ConcordanceView::setupUi()
 		m_clear_filter_action->setEnabled(has_rules);
 		bool is_filtered = has_rules && m_proxy->visibleRowCount() < m_model->rowCount();
 		m_subset_action->setEnabled(is_filtered);
+
+		// Sync filter rules to the document for project serialization.
+		Array<FilterRuleData> saved;
+		for (auto &r : m_proxy->rules()) {
+			FilterRuleData rd;
+			if (r.column >= 0 && r.column < m_model->columnCount()) {
+				auto h = m_conc->get_header(r.column + 1);
+				rd.column = h;
+			}
+			rd.op = filter_op_to_string(r.op);
+			if (r.op == FilterOp::InSet) {
+				for (auto &v : r.set_values)
+					rd.set_values.append(String(v.toUtf8().constData()));
+			} else {
+				rd.value = String(r.value.toUtf8().constData());
+			}
+			saved.append(std::move(rd));
+		}
+		m_conc->set_filter_rules(std::move(saved), m_proxy->isFilterEnabled());
 	});
 }
 

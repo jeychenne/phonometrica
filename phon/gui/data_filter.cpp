@@ -222,4 +222,40 @@ bool DataFilterProxyModel::matchesRule(int sourceRow, const FilterRule &rule) co
 	return true;
 }
 
+// ─── FilterOp ↔ String conversions ──────────────────────────────────
+
+const char *filter_op_to_string(FilterOp op)
+{
+	switch (op)
+	{
+	case FilterOp::Eq:          return "==";
+	case FilterOp::Ne:          return "!=";
+	case FilterOp::Lt:          return "<";
+	case FilterOp::Le:          return "<=";
+	case FilterOp::Gt:          return ">";
+	case FilterOp::Ge:          return ">=";
+	case FilterOp::Contains:    return "contains";
+	case FilterOp::NotContains: return "!contains";
+	case FilterOp::Regex:       return "matches";
+	case FilterOp::InSet:       return "in";
+	}
+	return "==";
+}
+
+FilterOp string_to_filter_op(const char *s)
+{
+	std::string_view sv(s);
+	if (sv == "==")         return FilterOp::Eq;
+	if (sv == "!=")         return FilterOp::Ne;
+	if (sv == "<")          return FilterOp::Lt;
+	if (sv == "<=")         return FilterOp::Le;
+	if (sv == ">")          return FilterOp::Gt;
+	if (sv == ">=")         return FilterOp::Ge;
+	if (sv == "contains")   return FilterOp::Contains;
+	if (sv == "!contains")  return FilterOp::NotContains;
+	if (sv == "matches")    return FilterOp::Regex;
+	if (sv == "in")         return FilterOp::InSet;
+	return FilterOp::Eq;
+}
+
 } // namespace phonometrica

@@ -169,8 +169,9 @@ QMenu *MainWindow::createFileMenu()
 
 	m_save_action = menu->addAction(tr("Save project"), QKeySequence(tr("Ctrl+Shift+S")), this, &MainWindow::onSaveProject);
 	m_save_as_action = menu->addAction(tr("Save project as..."), this, &MainWindow::onSaveProjectAs);
-	m_save_action->setEnabled(false);
-	m_save_as_action->setEnabled(false);
+	// Always enable save actions
+	// m_save_action->setEnabled(false);
+	// m_save_as_action->setEnabled(false);
 	menu->addSeparator();
 
 	menu->addAction(tr("Preferences..."), this, &MainWindow::onEditPreferences);
@@ -475,6 +476,14 @@ void MainWindow::updateWindowTitle()
 		if (project->modified())
 			title += tr(" *");
 		m_project_dock->setWindowTitle(title);
+
+		// Show full project path as a tooltip on the dock title bar.
+		if (project->has_path()) {
+			auto &pp = project->path();
+			m_project_dock->setToolTip(QString::fromUtf8(pp.data(), (int) pp.size()));
+		} else {
+			m_project_dock->setToolTip(tr("Not saved yet"));
+		}
 	}
 	else if (m_project_dock)
 	{
@@ -1169,8 +1178,9 @@ void MainWindow::updateSaveActions()
 {
 	auto *project = Project::get();
 	bool empty = !project || project->empty();
-	m_save_action->setEnabled(!empty && project->modified());
-	m_save_as_action->setEnabled(!empty);
+	// Always enable save actions
+	// m_save_action->setEnabled(!empty && project->modified());
+	// m_save_as_action->setEnabled(!empty);
 }
 
 
