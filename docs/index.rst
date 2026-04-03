@@ -69,6 +69,7 @@ Topics
    annotation
    query
    concordance
+   analysis
    transform
    scripting/index
    scripting/plugins

@@ -22,6 +22,7 @@
 #include <QHBoxLayout>
 #include <QLineEdit>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QPushButton>
 #include <QLabel>
 #include <QKeyEvent>
@@ -48,6 +49,12 @@ void SearchBar::setupUi()
 	m_close_btn->setToolTip(tr("Close (Escape)"));
 	layout->addWidget(m_close_btn);
 	connect(m_close_btn, &QPushButton::clicked, this, &QWidget::hide);
+
+	// Layer selector (hidden by default; shown when setLayerChoices() is called).
+	m_layer_combo = new QComboBox(this);
+	m_layer_combo->setToolTip(tr("Layer to search in"));
+	m_layer_combo->hide();
+	layout->addWidget(m_layer_combo);
 
 	// Search field
 	m_search_edit = new QLineEdit(this);
@@ -129,6 +136,22 @@ bool SearchBar::usesRegex() const
 bool SearchBar::isCaseSensitive() const
 {
 	return m_case_check->isChecked();
+}
+
+void SearchBar::setLayerChoices(const QStringList &layer_names)
+{
+	m_layer_combo->clear();
+	m_layer_combo->addItem(tr("(All layers)"));
+	for (auto &name : layer_names)
+		m_layer_combo->addItem(name);
+	m_layer_combo->show();
+}
+
+int SearchBar::selectedLayer() const
+{
+	// Index 0 = "(All layers)" → return 0.
+	// Index 1..N → return 1-based layer index.
+	return m_layer_combo ? m_layer_combo->currentIndex() : 0;
 }
 
 } // namespace phonometrica

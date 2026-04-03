@@ -26,6 +26,7 @@
 
 class QLineEdit;
 class QCheckBox;
+class QComboBox;
 class QPushButton;
 
 namespace phonometrica {
@@ -44,10 +45,18 @@ public:
 	// Show both search and replace fields.
 	void setSearchAndReplace();
 
+	// Populate and show a layer selector combo.
+	// The first item is always "(All layers)"; subsequent items correspond to
+	// 1-based layer indices. When not called, the combo stays hidden.
+	void setLayerChoices(const QStringList &layer_names);
+
 	QString searchText() const;
 	QString replacementText() const;
 	bool usesRegex() const;
 	bool isCaseSensitive() const;
+
+	// Returns 0 for "(All layers)", or a 1-based layer index.
+	int selectedLayer() const;
 
 signals:
 
@@ -63,6 +72,7 @@ private:
 	QLineEdit *m_replace_edit = nullptr;
 	QCheckBox *m_case_check = nullptr;
 	QCheckBox *m_regex_check = nullptr;
+	QComboBox *m_layer_combo = nullptr;
 	QPushButton *m_find_btn = nullptr;
 	QPushButton *m_replace_btn = nullptr;
 	QPushButton *m_replace_all_btn = nullptr;

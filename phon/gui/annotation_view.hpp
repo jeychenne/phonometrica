@@ -28,6 +28,7 @@
 #include <QToolButton>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/layer_widget.hpp>
+#include <phon/gui/search_bar.hpp>
 #include <phon/application/annotation.hpp>
 
 namespace phonometrica {
@@ -48,6 +49,11 @@ public:
 	bool save() override;
 	void discardChanges() override;
 	void escape() override;
+
+	// Find/replace support.
+	void find() override;
+	void replace() override;
+	bool supportsFind() const override { return true; }
 
 	Handle<Annotation> annotation() const { return m_annot; }
 
@@ -105,6 +111,11 @@ private slots:
 	// Modification tracking.
 	void onLayerModified();
 
+	// Find/replace actions.
+	void onAnnotFind();
+	void onAnnotReplace();
+	void onAnnotReplaceAll();
+
 private:
 
 	int focusedLayerIndex() const;
@@ -112,6 +123,8 @@ private:
 	LayerWidget *createLayerWidget(intptr_t layer_index);
 	void clearGhostAnchors();
 	void applyLayerVisibility();
+	void populateSearchBarLayers();
+	void seedSearchCursor();
 
 	Handle<Annotation> m_annot;
 
@@ -128,6 +141,14 @@ private:
 	QAction *m_link_action = nullptr;
 	QAction *m_add_anchor_action = nullptr;
 	QAction *m_remove_anchor_action = nullptr;
+
+	// Find/replace bar.
+	SearchBar *m_searchbar = nullptr;
+
+	// Search cursor: layer and event index for "find next" continuation.
+	// Both are 1-based. 0 means "start from the beginning".
+	intptr_t m_search_layer = 0;
+	intptr_t m_search_event = 0;
 };
 
 } // namespace phonometrica

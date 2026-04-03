@@ -24,11 +24,14 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QVBoxLayout>
+#include <QShortcut>
+#include <optional>
 #include <phon/gui/annotation_view.hpp>
 #include <phon/gui/annotation_commands.hpp>
 #include <phon/gui/new_layer_dialog.hpp>
 #include <phon/gui/layer_visibility_dialog.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/runtime/regex.hpp>
 
 namespace phonometrica {
 
@@ -95,6 +98,13 @@ void AnnotationView::discardChanges()
 
 void AnnotationView::escape()
 {
+	// If the search bar is visible, close it first.
+	if (m_searchbar && m_searchbar->isVisible())
+	{
+		m_searchbar->hide();
+		return;
+	}
+
 	// If an inline event editor is open, cancel it.
 	for (auto *layer : m_layers)
 	{
@@ -167,6 +177,24 @@ void AnnotationView::addAnnotationLayers(QLayout *layout)
 		auto *widget = createLayerWidget(i);
 		vbox->addWidget(widget);
 	}
+
+	// Find/replace bar (hidden by default).
+	m_searchbar = new SearchBar(this);
+	populateSearchBarLayers();
+	vbox->addWidget(m_searchbar);
+	connect(m_searchbar, &SearchBar::findRequested, this, &AnnotationView::onAnnotFind);
+	connect(m_searchbar, &SearchBar::replaceRequested, this, &AnnotationView::onAnnotReplace);
+	connect(m_searchbar, &SearchBar::replaceAllRequested, this, &AnnotationView::onAnnotReplaceAll);
+
+	// Keyboard shortcuts for find/replace (the main window's action shortcuts
+	// are display-only; each view must provide its own).
+	auto *findShortcut = new QShortcut(QKeySequence::Find, this);
+	findShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(findShortcut, &QShortcut::activated, this, &AnnotationView::find);
+
+	auto *replaceShortcut = new QShortcut(QKeySequence(tr("Ctrl+H")), this);
+	replaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+	connect(replaceShortcut, &QShortcut::activated, this, &AnnotationView::replace);
 }
 
 void AnnotationView::addDisplayMenuEntries(QMenu *menu)
@@ -759,6 +787,326 @@ void AnnotationView::onLayerModified()
 {
 	emit modificationChanged(true);
 	emit titleChanged(label());
+}
+
+
+// ─────────────────────────────────────────────────
+//  Find / Replace
+// ─────────────────────────────────────────────────
+
+void AnnotationView::populateSearchBarLayers()
+{
+	QStringList names;
+	intptr_t count = m_annot->size();
+	for (intptr_t i = 1; i <= count; i++)
+	{
+		auto lbl = m_annot->get_layer_label(i);
+		QString display = QString::number(i);
+		if (!lbl.empty())
+			display += QStringLiteral(": ") + QString::fromUtf8(lbl.data(), (int)lbl.size());
+		names.append(display);
+	}
+	m_searchbar->setLayerChoices(names);
+}
+
+void AnnotationView::seedSearchCursor()
+{
+	m_search_layer = 0;
+	m_search_event = 0;
+
+	// If an event is currently selected on the focused layer, start
+	// searching from that position so the next Find advances past it.
+	int layer = focusedLayerIndex();
+	if (layer < 1) return;
+
+	auto *model = timeModel();
+	if (!model->hasSelection()) return;
+
+	double mid = (model->selectionStart() + model->selectionEnd()) / 2;
+	intptr_t ev = m_annot->get_event_at_time(layer, mid);
+	if (ev > 0)
+	{
+		m_search_layer = layer;
+		m_search_event = ev;
+	}
+}
+
+void AnnotationView::find()
+{
+	m_searchbar->setSearch();
+	seedSearchCursor();
+}
+
+void AnnotationView::replace()
+{
+	m_searchbar->setSearchAndReplace();
+	seedSearchCursor();
+}
+
+void AnnotationView::onAnnotFind()
+{
+	auto needle_q = m_searchbar->searchText();
+	if (needle_q.isEmpty()) return;
+
+	String needle(needle_q.toUtf8().constData());
+	bool use_regex = m_searchbar->usesRegex();
+	bool case_sensitive = m_searchbar->isCaseSensitive();
+	int target_layer = m_searchbar->selectedLayer(); // 0 = all
+
+	// Build the regex if requested.
+	std::optional<Regex> re;
+	if (use_regex)
+	{
+		try {
+			int flags = case_sensitive ? Regex::None : Regex::Caseless;
+			re.emplace(needle, flags);
+		}
+		catch (std::exception &e) {
+			QMessageBox::warning(this, tr("Find"),
+				tr("Invalid regular expression: %1").arg(e.what()));
+			return;
+		}
+	}
+
+	intptr_t nlayers = m_annot->size();
+
+	// Build the list of layers to search.
+	intptr_t first_layer = (target_layer > 0) ? target_layer : 1;
+	intptr_t last_layer = (target_layer > 0) ? target_layer : nlayers;
+
+	// Starting position for continuation. On the first call (or after reset)
+	// m_search_layer == 0, so we start from the beginning.
+	intptr_t start_l = (m_search_layer > 0) ? m_search_layer : first_layer;
+	intptr_t start_e = m_search_event; // 0 means "start from event 1"
+
+	// We wrap around once: go from (start_l, start_e) to (start_l, start_e - 1).
+	bool wrapped = false;
+	intptr_t l = start_l;
+
+	while (true)
+	{
+		if (l >= first_layer && l <= last_layer)
+		{
+			auto &layer = m_annot->layers()[l];
+			intptr_t nevents = layer.count();
+			intptr_t e_begin = (l == start_l && !wrapped) ? (start_e + 1) : 1;
+
+			for (intptr_t e = e_begin; e <= nevents; e++)
+			{
+				// If we've wrapped and returned to the start position, stop.
+				if (wrapped && l == start_l && e > start_e)
+					goto not_found;
+
+				auto &ev = layer.events[e];
+
+				bool match;
+				if (use_regex)
+					match = re->match(ev.text);
+				else
+					match = case_sensitive ? ev.text.contains(needle) : ev.text.icontains(needle);
+
+				if (match)
+				{
+					// Update search cursor for next invocation.
+					m_search_layer = l;
+					m_search_event = e;
+
+					// Scroll to the event if it's outside the viewport.
+					auto *model = timeModel();
+					double ws = model->windowStart();
+					double we = model->windowEnd();
+					if (ev.start < ws || ev.end > we || ev.start > we || ev.end < ws)
+					{
+						openSelection(l, ev.start, ev.end);
+					}
+					else
+					{
+						model->setSelection(ev.start, ev.end);
+						onFocusEvent(l, ev.center(), false);
+					}
+					return;
+				}
+			}
+		}
+
+		// Advance to the next layer.
+		l++;
+		if (l > last_layer)
+		{
+			if (wrapped)
+				goto not_found;
+			wrapped = true;
+			l = first_layer;
+		}
+		if (wrapped && l > start_l)
+			goto not_found;
+	}
+
+not_found:
+	QMessageBox::information(this, tr("Find"), tr("Text not found."));
+	m_search_layer = 0;
+	m_search_event = 0;
+}
+
+void AnnotationView::onAnnotReplace()
+{
+	auto needle_q = m_searchbar->searchText();
+	auto replacement_q = m_searchbar->replacementText();
+	if (needle_q.isEmpty()) return;
+
+	String needle(needle_q.toUtf8().constData());
+	String replacement(replacement_q.toUtf8().constData());
+	bool use_regex = m_searchbar->usesRegex();
+	bool case_sensitive = m_searchbar->isCaseSensitive();
+
+	// If we have a current match, replace it first.
+	if (m_search_layer > 0 && m_search_event > 0)
+	{
+		auto &layer = m_annot->layers()[m_search_layer];
+		if (m_search_event <= layer.count())
+		{
+			auto &ev = layer.events[m_search_event];
+			String new_text(ev.text);
+
+			if (use_regex)
+			{
+				try {
+					int flags = case_sensitive ? Regex::None : Regex::Caseless;
+					Regex re(needle, flags);
+					new_text.replace(re, replacement, 1);
+				}
+				catch (std::exception &) {
+					// Invalid regex — skip replacement silently, onAnnotFind will report.
+				}
+			}
+			else
+			{
+				if (case_sensitive)
+				{
+					new_text.replace(needle, replacement, 1);
+				}
+				else
+				{
+					String::const_iterator match_end;
+					auto it = new_text.ifind(needle, new_text.begin(), &match_end);
+					if (it != new_text.end())
+						new_text.replace(it, match_end, replacement);
+				}
+			}
+
+			if (new_text != ev.text)
+			{
+				m_annot->set_event_text(m_search_layer, m_search_event, new_text);
+				// Refresh the affected layer widget.
+				for (auto *w : m_layers) {
+					if (w->layerIndex() == m_search_layer) {
+						w->update();
+						break;
+					}
+				}
+				onLayerModified();
+			}
+		}
+	}
+
+	// Advance to the next match.
+	onAnnotFind();
+}
+
+void AnnotationView::onAnnotReplaceAll()
+{
+	auto needle_q = m_searchbar->searchText();
+	auto replacement_q = m_searchbar->replacementText();
+	if (needle_q.isEmpty()) return;
+
+	String needle(needle_q.toUtf8().constData());
+	String replacement(replacement_q.toUtf8().constData());
+	bool use_regex = m_searchbar->usesRegex();
+	bool case_sensitive = m_searchbar->isCaseSensitive();
+	int target_layer = m_searchbar->selectedLayer();
+
+	std::optional<Regex> re;
+	if (use_regex)
+	{
+		try {
+			int flags = case_sensitive ? Regex::None : Regex::Caseless;
+			re.emplace(needle, flags);
+		}
+		catch (std::exception &e) {
+			QMessageBox::warning(this, tr("Replace"),
+				tr("Invalid regular expression: %1").arg(e.what()));
+			return;
+		}
+	}
+
+	intptr_t nlayers = m_annot->size();
+	intptr_t first_layer = (target_layer > 0) ? target_layer : 1;
+	intptr_t last_layer = (target_layer > 0) ? target_layer : nlayers;
+
+	int count = 0;
+
+	for (intptr_t l = first_layer; l <= last_layer; l++)
+	{
+		auto &layer = m_annot->layers()[l];
+		intptr_t nevents = layer.count();
+
+		for (intptr_t e = 1; e <= nevents; e++)
+		{
+			auto &ev = layer.events[e];
+			String new_text(ev.text);
+
+			if (use_regex)
+			{
+				// String::replace(Regex&, ...) only replaces the first match.
+				// Loop until no more matches.
+				while (re->match(new_text))
+					new_text.replace(*re, replacement);
+			}
+			else if (case_sensitive)
+				new_text.replace(needle, replacement); // ntimes = -1 → all
+			else
+			{
+				// Case-insensitive plain text: use ifind + positional replace.
+				String::const_iterator match_end;
+				auto it = new_text.ifind(needle, new_text.begin(), &match_end);
+				while (it != new_text.end())
+				{
+					new_text.replace(it, match_end, replacement);
+					// Restart search after the replacement.
+					auto offset = std::distance(new_text.cbegin(), it) + replacement.size();
+					auto restart = new_text.begin();
+					std::advance(restart, offset);
+					it = new_text.ifind(needle, restart, &match_end);
+				}
+			}
+
+			if (new_text != ev.text)
+			{
+				m_annot->set_event_text(l, e, new_text);
+				count++;
+			}
+		}
+	}
+
+	if (count == 0)
+	{
+		QMessageBox::information(this, tr("Replace"), tr("Text not found."));
+	}
+	else
+	{
+		// Refresh all affected layer widgets.
+		for (auto *w : m_layers) {
+			intptr_t li = w->layerIndex();
+			if (li >= first_layer && li <= last_layer)
+				w->update();
+		}
+		onLayerModified();
+		QMessageBox::information(this, tr("Replace"),
+			tr("%1 replacement(s) made.").arg(count));
+	}
+
+	m_search_layer = 0;
+	m_search_event = 0;
 }
 
 } // namespace phonometrica
