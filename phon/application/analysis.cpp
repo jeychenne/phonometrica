@@ -66,6 +66,7 @@ int Analysis::fit(const String &formula_str, const String &family, stats::Fittin
 	auto formula = stats::Formula::parse(formula_str);
 	auto model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
 	model.formula = formula.to_string();
+	model.compute_pseudo_r2();
 	m_models.push_back(std::move(model));
 	m_modified = true;
 	m_content_modified = true;
@@ -333,6 +334,8 @@ void Analysis::write()
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
 		add_data_node(mn, "R2", String::format("%.17g", m.r2));
 		add_data_node(mn, "AdjR2", String::format("%.17g", m.adj_r2));
+		add_data_node(mn, "R2Marginal", String::format("%.17g", m.r2_marginal));
+		add_data_node(mn, "R2Conditional", String::format("%.17g", m.r2_conditional));
 		add_data_node(mn, "Theta", String::format("%.17g", m.theta));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
@@ -468,6 +471,8 @@ void Analysis::load()
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
 					else if (name == "R2")       m.r2 = parse_double_safe(text);
 					else if (name == "AdjR2")    m.adj_r2 = parse_double_safe(text);
+					else if (name == "R2Marginal")     m.r2_marginal = parse_double_safe(text);
+					else if (name == "R2Conditional")   m.r2_conditional = parse_double_safe(text);
 					else if (name == "Theta")    m.theta = parse_double_safe(text);
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
