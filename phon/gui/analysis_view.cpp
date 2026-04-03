@@ -49,6 +49,8 @@
 #include <QTextEdit>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/gui/analysis_view.hpp>
+#include <phon/gui/help_browser.hpp>
+#include <phon/analysis/model_comparison.hpp>
 #include <phon/application/project.hpp>
 
 namespace phonometrica {
@@ -211,6 +213,13 @@ void AnalysisView::setupUi()
 	m_fit_button->setDefault(true);
 	top_bar->addWidget(m_fit_button);
 
+	auto *help_button = new QPushButton(QIcon(QStringLiteral(":/icons/circle-help.svg")), QString());
+	help_button->setFlat(true);
+	help_button->setFixedSize(24, 24);
+	help_button->setIconSize(QSize(16, 16));
+	help_button->setToolTip(tr("Open documentation for the Analysis view"));
+	top_bar->addWidget(help_button);
+
 	main_layout->addLayout(top_bar);
 
 	// ── Main content ────────────────────────────────────────────────
@@ -237,6 +246,8 @@ void AnalysisView::setupUi()
 	auto *model_layout = new QVBoxLayout(model_group);
 	model_layout->setContentsMargins(4, 4, 4, 4);
 	m_model_list = new QListWidget;
+	m_model_list->setSelectionMode(QAbstractItemView::ExtendedSelection);
+	m_model_list->setToolTip(tr("Select two or more models, then click Compare for pairwise tests"));
 	model_layout->addWidget(m_model_list);
 
 	auto *model_buttons = new QHBoxLayout;
@@ -503,6 +514,9 @@ void AnalysisView::setupUi()
 	// ── Connections ─────────────────────────────────────────────────
 
 	connect(m_fit_button, &QPushButton::clicked, this, &AnalysisView::onFit);
+	connect(help_button, &QPushButton::clicked, this, [this]() {
+		HelpBrowser::showPage(QStringLiteral("analysis"), this);
+	});
 	connect(m_formula_edit, &QLineEdit::returnPressed, this, &AnalysisView::onFit);
 	connect(m_model_list, &QListWidget::currentRowChanged, this, &AnalysisView::onModelSelected);
 	connect(m_delete_button, &QPushButton::clicked, this, &AnalysisView::onDeleteModel);
@@ -751,26 +765,124 @@ void AnalysisView::onCompareModels()
 {
 	if (m_analysis->model_count() < 2) return;
 
+	// Determine which models to compare: if 2+ are selected, use those;
+	// otherwise compare all models.
+	std::vector<int> indices;
+	auto selected = m_model_list->selectedItems();
+	if (selected.size() >= 2)
+	{
+		for (auto *item : selected)
+			indices.push_back(m_model_list->row(item));
+		std::sort(indices.begin(), indices.end());
+	}
+	else
+	{
+		indices.resize(m_analysis->model_count());
+		std::iota(indices.begin(), indices.end(), 0);
+	}
+
+	if ((int)indices.size() < 2) return;
+
+	// Collect model pointers.
+	std::vector<const stats::Model *> models;
+	models.reserve(indices.size());
+	for (int i : indices)
+		models.push_back(&m_analysis->model(i));
+
+	auto result = stats::anova_compare(models, indices);
+
+	// ── Format the output ────────────────────────────────────────────
+
+	auto format_p = [](double p) -> QString {
+		if (std::isnan(p)) return QString();
+		if (p < 2.2e-16) return QStringLiteral("< 2.2e-16");
+		if (p < 0.001)   return QString::asprintf("%.2e", p);
+		return QString::number(p, 'f', 4);
+	};
+
+	auto signif_stars = [](double p) -> const char * {
+		if (std::isnan(p)) return "";
+		if (p < 0.001) return " ***";
+		if (p < 0.01)  return " **";
+		if (p < 0.05)  return " *";
+		if (p < 0.1)   return " .";
+		return "";
+	};
+
 	QString text;
+
+	// ── Information criteria table ───────────────────────────────────
+
 	text += QStringLiteral("Model comparison\n");
 	text += QStringLiteral("================\n\n");
-	text += QString::asprintf("%-8s %-40s %8s %10s %10s %12s\n",
+	text += QString::asprintf("%-8s %-40s %6s %10s %10s %12s\n",
 	                           "", "Formula", "npar", "AIC", "BIC", "logLik");
 	text += QStringLiteral("------------------------------------------------------------------------------------\n");
 
-	for (int i = 0; i < m_analysis->model_count(); i++)
+	for (auto &row : result.rows)
 	{
-		auto &m = m_analysis->model(i);
-		QString mlabel = QStringLiteral("Model %1").arg(i + 1);
+		int model_idx = indices[row.original_index]; // map back to analysis model index
+		auto &m = m_analysis->model(model_idx);
+		QString mlabel = QStringLiteral("Model %1").arg(model_idx + 1);
 		QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
 		if (formula.length() > 40)
 			formula = formula.left(37) + QStringLiteral("...");
 
-		text += QString::asprintf("%-8s %-40s %8ld %10.1f %10.1f %12.1f\n",
+		text += QString::asprintf("%-8s %-40s %6ld %10.1f %10.1f %12.1f\n",
 		                           mlabel.toUtf8().constData(),
 		                           formula.toUtf8().constData(),
-		                           (long)m.nparams(),
-		                           m.aic, m.bic, m.loglik);
+		                           (long)row.npar,
+		                           row.aic, row.bic, row.loglik);
+	}
+
+	// ── Pairwise likelihood ratio tests ──────────────────────────────
+
+	text += QStringLiteral("\n\nPairwise likelihood ratio tests\n");
+	text += QStringLiteral("===============================\n\n");
+	text += QString::asprintf("%-18s %6s %10s %12s\n",
+	                           "", "Df", "Chisq", "Pr(>Chisq)");
+	text += QStringLiteral("----------------------------------------------------\n");
+
+	for (auto &pair : result.pairs)
+	{
+		int idx_a = indices[result.rows[pair.index_a].original_index];
+		int idx_b = indices[result.rows[pair.index_b].original_index];
+		QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
+
+		if (pair.df_diff > 0)
+		{
+			QString pstr = format_p(pair.p_value);
+			const char *stars = signif_stars(pair.p_value);
+
+			text += QString::asprintf("%-18s %6ld %10.4f   %-12s%s\n",
+			                           plabel.toUtf8().constData(),
+			                           (long)pair.df_diff,
+			                           pair.chisq,
+			                           pstr.toUtf8().constData(),
+			                           stars);
+		}
+		else
+		{
+			// Same nparams — LRT undefined.
+			text += QString::asprintf("%-18s %6s %10s   %s\n",
+			                           plabel.toUtf8().constData(),
+			                           "--", "--", "(same complexity)");
+		}
+	}
+
+	text += QStringLiteral("---\nSignif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n");
+
+	// ── Warnings (if any) ────────────────────────────────────────────
+
+	if (result.has_warnings())
+	{
+		text += QStringLiteral("\nWARNING\n");
+		for (auto &w : result.warnings)
+		{
+			text += QStringLiteral("  \u2022 "); // bullet
+			text += QString::fromUtf8(w.data(), (int)w.size());
+			text += QStringLiteral("\n");
+		}
 	}
 
 	m_summary->setPlainText(text);

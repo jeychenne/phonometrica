@@ -264,6 +264,7 @@ void FileManager::setupKeyboardShortcuts()
 
 	// Ctrl+F — focus the search bar
 	auto *searchShortcut = new QShortcut(QKeySequence::Find, this);
+	searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 	connect(searchShortcut, &QShortcut::activated, [this]() {
 		m_search->setFocus();
 		m_search->selectAll();
