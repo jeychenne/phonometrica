@@ -379,8 +379,8 @@ if(WITH_GUI)
         icons/check.svg
         icons/text-cursor.svg
         icons/merge-tables.svg
-        icons/list-filter.svg
         icons/filter-x.svg
+        icons/filter.svg
         icons/scissors.svg
         icons/sigma.svg
         icons/grid-2x2-x.svg
