@@ -263,6 +263,12 @@ LayerWidget *AnnotationView::createLayerWidget(intptr_t layer_index)
 	connect(layer, &LayerWidget::editingSharedAnchor, this, &AnnotationView::onEditingSharedAnchor);
 	connect(layer, &LayerWidget::temporaryAnchor, this, &AnnotationView::onTemporaryAnchor);
 
+	// Undo recording signals.
+	connect(layer, &LayerWidget::anchorCreationDone, this, &AnnotationView::onAnchorCreationDone);
+	connect(layer, &LayerWidget::anchorRemovalDone, this, &AnnotationView::onAnchorRemovalDone);
+	connect(layer, &LayerWidget::anchorMoveDone, this, &AnnotationView::onAnchorMoveDone);
+	connect(layer, &LayerWidget::eventTextEdited, this, &AnnotationView::onEventTextEdited);
+
 	// Show the layer number in the Y-axis.
 	yAxis()->addLayer(layer);
 
@@ -451,8 +457,9 @@ void AnnotationView::onRenameLayer()
 
 	if (ok)
 	{
-		m_annot->set_layer_label(index, name);
-		onLayerModified();
+		auto cmd = std::make_unique<RenameLayerCommand>(this, index,
+			current, String(name.toUtf8().constData()));
+		submit(std::move(cmd));
 	}
 }
 
@@ -1107,6 +1114,151 @@ void AnnotationView::onAnnotReplaceAll()
 
 	m_search_layer = 0;
 	m_search_event = 0;
+}
+
+// ─────────────────────────────────────────────────
+//  Undo/redo helper methods
+// ─────────────────────────────────────────────────
+
+LayerWidget *AnnotationView::findLayerWidget(intptr_t layer_index) const
+{
+	for (auto *w : m_layers)
+	{
+		if (w->layerIndex() == layer_index)
+			return w;
+	}
+	return nullptr;
+}
+
+void AnnotationView::refreshLayer(intptr_t layer_index)
+{
+	if (auto *w = findLayerWidget(layer_index))
+		w->invalidateCache();
+}
+
+void AnnotationView::doAddAnchor(intptr_t layer_index, double time)
+{
+	m_annot->add_anchor(layer_index, time);
+	refreshLayer(layer_index);
+	onLayerModified();
+}
+
+void AnnotationView::doRemoveAnchor(intptr_t layer_index, double time)
+{
+	m_annot->remove_anchor(layer_index, time);
+	refreshLayer(layer_index);
+	onLayerModified();
+}
+
+void AnnotationView::doMoveAnchor(intptr_t layer_index, double from, double to)
+{
+	auto &layer = m_annot->mutable_layer(layer_index);
+
+	for (intptr_t i = 1; i <= layer.count(); i++)
+	{
+		auto &ev = layer.events[i];
+		if (ev.start == from && from != 0)
+		{
+			ev.start = to;
+			if (i > 1)
+				layer.events[i - 1].end = to;
+			break;
+		}
+		else if (ev.end == from)
+		{
+			ev.end = to;
+			if (i < layer.count())
+				layer.events[i + 1].start = to;
+			break;
+		}
+	}
+
+	m_annot->set_graph_modified(true);
+	refreshLayer(layer_index);
+	onLayerModified();
+}
+
+void AnnotationView::doSetEventText(intptr_t layer_index, intptr_t event_1based, const String &text)
+{
+	m_annot->set_event_text(layer_index, event_1based, text);
+	refreshLayer(layer_index);
+	onLayerModified();
+}
+
+void AnnotationView::doSetEventText(intptr_t layer_index, double time, const String &text)
+{
+	// Find the event at the given time and set its text.
+	auto &layer = m_annot->mutable_layer(layer_index);
+	for (intptr_t i = 1; i <= layer.count(); i++)
+	{
+		if (layer.events[i].start == time)
+		{
+			layer.events[i].text = text;
+			break;
+		}
+	}
+	m_annot->set_graph_modified(true);
+	refreshLayer(layer_index);
+	onLayerModified();
+}
+
+void AnnotationView::doRestoreTextsAroundAnchor(intptr_t layer_index, double time,
+                                                 const String &left_text, const String &right_text)
+{
+	// After add_anchor split an interval at `time`, restore the original texts
+	// to both halves.
+	auto &layer = m_annot->mutable_layer(layer_index);
+	for (intptr_t i = 1; i <= layer.count(); i++)
+	{
+		if (layer.events[i].end == time)
+		{
+			layer.events[i].text = left_text;
+			if (i < layer.count() && layer.events[i + 1].start == time)
+				layer.events[i + 1].text = right_text;
+			break;
+		}
+	}
+	m_annot->set_graph_modified(true);
+	refreshLayer(layer_index);
+}
+
+void AnnotationView::doSetLayerLabel(intptr_t layer_index, const String &name)
+{
+	m_annot->set_layer_label(layer_index, name);
+	onLayerModified();
+}
+
+
+// ─────────────────────────────────────────────────
+//  Undo recording slots
+// ─────────────────────────────────────────────────
+
+void AnnotationView::onAnchorCreationDone(intptr_t layer_index, double time)
+{
+	auto cmd = std::make_unique<AddAnchorCommand>(this, layer_index, time);
+	record(std::move(cmd));
+}
+
+void AnnotationView::onAnchorRemovalDone(intptr_t layer_index, double time,
+                                          bool is_instant, String left_text, String right_text)
+{
+	auto cmd = std::make_unique<RemoveAnchorCommand>(this, layer_index, time,
+		is_instant, std::move(left_text), std::move(right_text));
+	record(std::move(cmd));
+}
+
+void AnnotationView::onAnchorMoveDone(intptr_t layer_index, double from, double to)
+{
+	auto cmd = std::make_unique<MoveAnchorCommand>(this, layer_index, from, to);
+	record(std::move(cmd));
+}
+
+void AnnotationView::onEventTextEdited(intptr_t layer_index, intptr_t event_1based,
+                                        String old_text, String new_text)
+{
+	auto cmd = std::make_unique<EditEventTextCommand>(this, layer_index, event_1based,
+		std::move(old_text), std::move(new_text));
+	record(std::move(cmd));
 }
 
 } // namespace phonometrica

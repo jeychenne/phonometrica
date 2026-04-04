@@ -53,6 +53,10 @@ public:
 	void discardChanges() override;
 	QString helpAnchor() const override { return QStringLiteral("dataset"); }
 
+	// Public helpers for undo/redo commands.
+	DatasetModel *dsModel() const { return m_model; }
+	void refreshAfterChange();
+
 signals:
 
 	void requestAnalysis(Handle<DataTable> source);

@@ -91,6 +91,11 @@ public:
 	bool isEditing() const { return m_editing_event >= 0; }
 	void cancelEdit();
 
+	// ── Undo helpers ─────────────────────────────────
+	// Called by undo/redo commands to refresh the widget after a model change.
+
+	void invalidateCache() { m_event_cache.clear(); update(); }
+
 signals:
 
 	// Emitted when this layer gains focus (so the view can unfocus others).
@@ -123,6 +128,26 @@ signals:
 
 	// Emitted when the mouse moves during anchor editing, so other layers can show a temporary line.
 	void temporaryAnchor(intptr_t layer_index, double time);
+
+	// ── Undo recording signals ───────────────────────
+	// Emitted after a user-initiated mutation succeeds, carrying enough state
+	// for AnnotationView to create an undo command via record().
+
+	// Emitted after a user-initiated anchor creation.
+	void anchorCreationDone(intptr_t layer_index, double time);
+
+	// Emitted after a user-initiated anchor removal.
+	// For interval layers: left_text and right_text are the texts of the two events
+	// that were merged. For instant layers: left_text is the instant's text, right_text is empty.
+	void anchorRemovalDone(intptr_t layer_index, double time,
+	                       bool is_instant, String left_text, String right_text);
+
+	// Emitted after a user-initiated anchor move (drag completed).
+	void anchorMoveDone(intptr_t layer_index, double from, double to);
+
+	// Emitted after the inline editor commits a text change.
+	void eventTextEdited(intptr_t layer_index, intptr_t event_1based,
+	                     String old_text, String new_text);
 
 protected:
 

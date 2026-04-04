@@ -29,6 +29,7 @@
 #include <QInputDialog>
 #include <QFileDialog>
 #include <phon/gui/dataset_view.hpp>
+#include <phon/gui/dataset_commands.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
@@ -407,14 +408,26 @@ void DatasetView::onDeleteRows()
 	}
 	std::sort(source_rows.begin(), source_rows.end());
 
-	// Remove from bottom to top to keep indices valid.
+	// Remove from bottom to top, collecting saved data for undo.
+	std::vector<DeleteDatasetRowsCommand::RemovedRow> removed;
+	removed.reserve(source_rows.size());
 	for (int i = source_rows.size() - 1; i >= 0; i--)
-		m_model->removeRow(source_rows[i]);
+	{
+		int row = source_rows[i];
+		auto saved = m_model->extractRow(row);
+		removed.push_back({row, std::move(saved)});
+	}
+
+	// Reverse so they're sorted ascending by source_row.
+	std::reverse(removed.begin(), removed.end());
 
 	m_ds->set_content_modified(true);
 	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
+
+	auto cmd = std::make_unique<DeleteDatasetRowsCommand>(this, std::move(removed));
+	record(std::move(cmd));
 }
 
 void DatasetView::onDeleteColumns()
@@ -434,15 +447,27 @@ void DatasetView::onDeleteColumns()
 		return;
 	}
 
-	// Remove from right to left to keep indices valid.
+	// Remove from right to left, collecting saved data for undo.
+	std::vector<DeleteDatasetColumnsCommand::RemovedColumn> removed;
+	removed.reserve(cols.size());
 	for (int i = cols.size() - 1; i >= 0; i--)
-		m_model->removeColumn(cols[i]);
+	{
+		int col = cols[i];
+		auto saved = m_model->extractColumn(col);
+		removed.push_back({col, std::move(saved)});
+	}
+
+	// Reverse so they're sorted ascending by column index.
+	std::reverse(removed.begin(), removed.end());
 
 	m_ds->set_content_modified(true);
 	Document::file_modified();
 	updateCountLabel();
 	m_table->resizeColumnsToContents();
 	emit titleChanged(label());
+
+	auto cmd = std::make_unique<DeleteDatasetColumnsCommand>(this, std::move(removed));
+	record(std::move(cmd));
 }
 
 void DatasetView::onExportCsv()
@@ -937,6 +962,8 @@ void DatasetView::onAddMetricColumn()
 		updateCountLabel();
 		emit titleChanged(label());
 
+		record(std::make_unique<AddDatasetColumnCommand>(this));
+
 		// Auto-add filter rule if requested.
 		if (dlg.addFilter())
 		{
@@ -1000,9 +1027,9 @@ void DatasetView::onRenameColumn(int section)
 
 	if (!ok || new_name.trimmed().isEmpty()) return;
 
-	m_model->setHeaderData(section, Qt::Horizontal, new_name.trimmed(), Qt::EditRole);
-	setupFilterBar(); // refresh column names in filter bar
-	emit titleChanged(label());
+	auto cmd = std::make_unique<RenameDatasetColumnCommand>(this, section,
+		current, new_name.trimmed());
+	submit(std::move(cmd));
 }
 
 void DatasetView::onRecodeColumn(int section)
@@ -1050,6 +1077,8 @@ void DatasetView::onRecodeColumn(int section)
 		setupFilterBar();
 		updateCountLabel();
 		emit titleChanged(label());
+
+		record(std::make_unique<AddDatasetColumnCommand>(this));
 	}
 	catch (std::exception &e)
 	{
@@ -1098,6 +1127,8 @@ void DatasetView::onTransformColumn(int section)
 		setupFilterBar();
 		updateCountLabel();
 		emit titleChanged(label());
+
+		record(std::make_unique<AddDatasetColumnCommand>(this));
 
 		if (nan_count > 0)
 		{
@@ -1158,6 +1189,9 @@ void DatasetView::onDuplicateColumn(int section)
 		updateCountLabel();
 		Document::file_modified();
 		emit titleChanged(label());
+
+		auto cmd = std::make_unique<DuplicateDatasetColumnCommand>(this, dest);
+		record(std::move(cmd));
 	}
 	catch (std::exception &e)
 	{
@@ -1200,14 +1234,8 @@ void DatasetView::onMoveColumn(int section)
 
 	try
 	{
-		// move_column removes src, then inserts at dest in the post-removal array.
-		m_ds->move_column(col, dest);
-		m_model->refreshAll();
-		m_table->resizeColumnsToContents();
-		setupFilterBar();
-		updateCountLabel();
-		Document::file_modified();
-		emit titleChanged(label());
+		auto cmd = std::make_unique<MoveDatasetColumnCommand>(this, (int)col, dest);
+		submit(std::move(cmd));
 	}
 	catch (std::exception &e)
 	{
@@ -1286,6 +1314,21 @@ QList<int> DatasetView::selectedColumns() const
 	QList<int> result(cols.begin(), cols.end());
 	std::sort(result.begin(), result.end());
 	return result;
+}
+
+
+// ─────────────────────────────────────────────────
+//  Undo/redo helpers
+// ─────────────────────────────────────────────────
+
+void DatasetView::refreshAfterChange()
+{
+	m_ds->set_content_modified(true);
+	Document::file_modified();
+	m_table->resizeColumnsToContents();
+	setupFilterBar();
+	updateCountLabel();
+	emit titleChanged(label());
 }
 
 } // namespace phonometrica

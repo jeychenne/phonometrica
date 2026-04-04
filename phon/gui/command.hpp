@@ -25,6 +25,7 @@
 
 #include <memory>
 #include <vector>
+#include <phon/string.hpp>
 
 namespace phonometrica {
 
@@ -43,6 +44,10 @@ public:
 
 	// Re-apply after undo. The default calls execute().
 	virtual void redo() { execute(); }
+
+	// Human-readable description of this command (e.g. "Add anchor").
+	// Used for status display; not required.
+	virtual String description() const { return {}; }
 };
 
 using AutoCommand = std::unique_ptr<Command>;
@@ -56,6 +61,9 @@ public:
 
 	CommandProcessor() = default;
 
+	// Maximum number of commands kept on the undo stack.
+	static constexpr size_t max_stack_size = 50;
+
 	// Submit a new command: execute it and push it onto the undo stack.
 	// Clears the redo stack. Returns true if the command succeeded.
 	bool submit(AutoCommand cmd)
@@ -63,9 +71,19 @@ public:
 		if (!cmd->execute())
 			return false;
 
-		m_undo_stack.push_back(std::move(cmd));
+		push_undo(std::move(cmd));
 		m_redo_stack.clear();
 		return true;
+	}
+
+	// Record a command that has already been executed externally.
+	// Pushes it onto the undo stack without calling execute().
+	// Clears the redo stack. Use this when the action was performed
+	// by existing code and you just want to register it for undo.
+	void record(AutoCommand cmd)
+	{
+		push_undo(std::move(cmd));
+		m_redo_stack.clear();
 	}
 
 	bool can_undo() const { return !m_undo_stack.empty(); }
@@ -100,6 +118,13 @@ public:
 	}
 
 private:
+
+	void push_undo(AutoCommand cmd)
+	{
+		if (m_undo_stack.size() >= max_stack_size)
+			m_undo_stack.erase(m_undo_stack.begin());
+		m_undo_stack.push_back(std::move(cmd));
+	}
 
 	std::vector<AutoCommand> m_undo_stack;
 	std::vector<AutoCommand> m_redo_stack;

@@ -196,6 +196,10 @@ void LayerWidget::createAnchor(double time, bool silent)
 		if (m_sharing_anchors && !silent)
 			emit anchorAdded(m_layer_index, time);
 		emit modified();
+
+		// Record for undo (user-initiated adds only).
+		if (!silent)
+			emit anchorCreationDone(m_layer_index, time);
 	}
 	catch (std::exception &e)
 	{
@@ -221,6 +225,37 @@ bool LayerWidget::removeAnchor(double time, bool silent)
 		if (target < 0)
 			return false;
 
+		// Capture state before removal for undo.
+		bool is_instant = hasInstants();
+		String saved_left, saved_right;
+		auto &layer = m_annot->layers()[m_layer_index];
+		if (is_instant)
+		{
+			// Find the instant at target and save its text.
+			for (intptr_t i = 1; i <= layer.count(); i++)
+			{
+				if (layer.events[i].start == target)
+				{
+					saved_left = layer.events[i].text;
+					break;
+				}
+			}
+		}
+		else
+		{
+			// Find the two adjacent intervals sharing the boundary at target.
+			for (intptr_t i = 1; i <= layer.count(); i++)
+			{
+				if (layer.events[i].end == target)
+				{
+					saved_left = layer.events[i].text;
+					if (i < layer.count())
+						saved_right = layer.events[i + 1].text;
+					break;
+				}
+			}
+		}
+
 		bool removed = m_annot->remove_anchor(m_layer_index, target);
 
 		if (removed)
@@ -230,6 +265,11 @@ bool LayerWidget::removeAnchor(double time, bool silent)
 			if (m_sharing_anchors && !silent)
 				emit anchorRemoved(m_layer_index, target);
 			emit modified();
+
+			// Record for undo (user-initiated removes only).
+			if (!silent)
+				emit anchorRemovalDone(m_layer_index, target, is_instant,
+				                       std::move(saved_left), std::move(saved_right));
 			return true;
 		}
 	}
@@ -616,10 +656,19 @@ void LayerWidget::commitEdit()
 		auto *ev = m_event_cache[m_editing_event];
 		if (new_text != QString(ev->text))
 		{
+			// Save old text for undo.
+			String old_text = ev->text;
+			intptr_t event_1based = m_editing_event + 1;
+
 			// event_index in cache is 0-based; annotation API is 1-based.
-			m_annot->set_event_text(m_layer_index, m_editing_event + 1, new_text);
+			m_annot->set_event_text(m_layer_index, event_1based, new_text);
 			m_event_cache.clear();
 			emit modified();
+
+			// Record for undo.
+			emit eventTextEdited(m_layer_index, event_1based,
+			                     std::move(old_text),
+			                     String(new_text.toUtf8().constData()));
 		}
 	}
 
@@ -1150,6 +1199,9 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 			if (m_sharing_anchors)
 				emit anchorMoved(m_layer_index, from, m_dropped_anchor_time);
 			emit modified();
+
+			// Record for undo.
+			emit anchorMoveDone(m_layer_index, from, m_dropped_anchor_time);
 		}
 		else
 		{
