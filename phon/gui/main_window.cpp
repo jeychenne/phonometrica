@@ -346,12 +346,16 @@ QMenu *MainWindow::createHelpMenu()
 	menu->addSeparator();
 
 	menu->addAction(tr("About Phonometrica"), [this]() {
+		auto version = QString::fromStdString(utils::get_version());
+		auto date = QString::fromStdString(utils::get_date());
 		QMessageBox::about(this, tr("About Phonometrica"),
-			tr("<h3>Phonometrica</h3>"
+			tr("<h3>Phonometrica %1</h3>"
+			   "<p>Release date: %2</p>"
 			   "<p>An open-source platform for the annotation "
 			   "and analysis of speech corpora.</p>"
-               "<p>&copy; 2019-2026 Julien Eychenne</p>"
-               "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>"));
+			   "<p>&copy; 2019-2026 Julien Eychenne</p>"
+			   "<p>&copy; 2019-2025 Léa Courdès-Murphy</p>")
+			.arg(version, date));
 	});
 
 	return menu;
