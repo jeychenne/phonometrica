@@ -33,6 +33,7 @@
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/conc/intensity_query.hpp>
+#include <phon/application/spectrum.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/application/analysis.hpp>
 
@@ -1158,6 +1159,7 @@ void Project::initialize(Runtime &rt)
 {
 	Annotation::initialize(rt);
 	Sound::initialize(rt);
+	Spectrum::initialize(rt);
 	DataTable::initialize(rt);
 	Dataset::initialize(rt);
 	Document::initialize(rt);
@@ -1716,6 +1718,7 @@ void Project::preinitialize(Runtime &rt)
 	auto doc_type = rt.add_standard_type<Document>("Document", elem_type.get());
 	rt.add_standard_type<Annotation>("Annotation", doc_type.get());
 	rt.add_standard_type<Sound>("Sound", doc_type.get());
+	rt.add_standard_type<Spectrum>("Spectrum", doc_type.get());
 	auto dt_type = rt.add_standard_type<DataTable>("DataTable", doc_type.get());
 	rt.add_standard_type<Dataset>("Dataset", dt_type.get());
 	rt.add_standard_type<Concordance>("Concordance", dt_type.get());

@@ -249,7 +249,7 @@ QWidget *ProtocolQueryEditor::createMetadataPanel()
 	{
 		auto *layout = new QVBoxLayout(group);
 		auto *label = new QLabel(tr("The current project doesn't have any properties."));
-		label->setStyleSheet("color: gray; font-style: italic;");
+		label->setStyleSheet("color: palette(disabled-text); font-style: italic;");
 		layout->addWidget(label);
 		return group;
 	}

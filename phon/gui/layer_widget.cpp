@@ -560,8 +560,8 @@ void LayerWidget::beginEditing(int event_index)
 		m_inline_edit->setFont(f);
 
 		m_inline_edit->setStyleSheet(
-			QStringLiteral("QTextEdit { background: rgba(255,255,255,240); "
-			               "border: 2px solid #4488cc; border-radius: 3px; "
+			QStringLiteral("QTextEdit { background: palette(base); "
+			               "border: 2px solid palette(highlight); border-radius: 3px; "
 			               "padding: 4px; }"));
 	}
 

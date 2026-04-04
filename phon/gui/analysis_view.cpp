@@ -1774,7 +1774,7 @@ void AnalysisView::onDetachEdaPlot()
 	m_eda_placeholder->setAlignment(Qt::AlignCenter);
 	m_eda_placeholder->setWordWrap(true);
 	QPalette pal = m_eda_placeholder->palette();
-	pal.setColor(QPalette::WindowText, QColor(120, 120, 120));
+	pal.setColor(QPalette::WindowText, pal.color(QPalette::Disabled, QPalette::WindowText));
 	m_eda_placeholder->setPalette(pal);
 	m_eda_top_layout->insertWidget(0, m_eda_placeholder, 1);
 
