@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 #include <QPainter>
 #include <QMouseEvent>
@@ -60,6 +61,13 @@ SpectrogramWidget::SpectrogramWidget(TimeModel *model, const Handle<Sound> &soun
 	connect(m_model, &TimeModel::cursorCleared, this, &SpectrogramWidget::onCursorCleared);
 	connect(m_model, &TimeModel::playbackTimeChanged, this, &SpectrogramWidget::onPlaybackChanged);
 	connect(m_model, &TimeModel::playbackCleared, this, &SpectrogramWidget::onPlaybackCleared);
+
+	// Debounce timer: coalesces rapid viewport changes (zoom, scroll, arrow keys)
+	// so the expensive spectrogram FFT computation runs only once after a quiet period.
+	m_debounce_timer = new QTimer(this);
+	m_debounce_timer->setSingleShot(true);
+	m_debounce_timer->setInterval(120); // ms
+	connect(m_debounce_timer, &QTimer::timeout, this, &SpectrogramWidget::onDebounceFired);
 }
 
 void SpectrogramWidget::readSettings()
@@ -94,6 +102,9 @@ void SpectrogramWidget::readSettings()
 	}
 
 	m_cache_valid = false;
+	m_cache_start = -1; // settings changed — no incremental pan possible
+	m_cached_nframe = 0; // force window rebuild on next computeSpectrogram()
+	m_cached_nfft = 0;
 	readFormantSettings();
 }
 
@@ -164,12 +175,27 @@ double SpectrogramWidget::hertzToY(double hz) const
 
 
 // ─────────────────────────────────────────────────
-//  Spectrogram computation (in physical pixels)
+//  Spectrogram computation (in logical pixels)
 // ─────────────────────────────────────────────────
 
-Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
+// Local helper: in-place pre-emphasis on a raw double buffer (mirrors speech::pre_emphasis
+// but avoids requiring an Array<double>).
+static void apply_pre_emphasis(double *data, intptr_t n, double sample_rate, double threshold)
+{
+	if (n < 2 || threshold <= 0.0 || sample_rate <= 0.0) return;
+	const double alpha = std::exp(-2.0 * M_PI * threshold / sample_rate);
+	for (auto i = n - 1; i >= 1; i--) {
+		data[i] -= alpha * data[i - 1];
+	}
+}
+
+Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h, double window_start, double window_duration,
+                                                    double &out_min_dB, double &out_max_dB)
 {
 	using namespace speech;
+
+	out_min_dB = 1e9;
+	out_max_dB = -1e9;
 
 	auto sample_rate = m_sound->sample_rate();
 	auto nyquist_frequency = double(sample_rate) / 2;
@@ -195,10 +221,24 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 		return Matrix<double>(0, 0);
 	}
 
+	// Rebuild the cached window function only when FFT parameters change
+	// (i.e. after a settings change). This avoids recalculating all the
+	// sin/exp values on every viewport scroll.
+	if (nframe != m_cached_nframe || nfft != m_cached_nfft)
+	{
+		m_cached_window = create_window(nframe, nfft, m_window_type);
+		m_cached_nframe = nframe;
+		m_cached_nfft = nfft;
+
+		m_cached_weight = 0;
+		for (double x : m_cached_window) m_cached_weight += x * x;
+	}
+
+	double k1 = 1.0 / (sample_rate * m_cached_weight); // at DC and Nyquist frequencies.
+	double k2 = 2.0 / (sample_rate * m_cached_weight); // at other frequencies.
+
 	// Get audio data. We get a bit more data before and after the window so that we can calculate
 	// frames at the edge.
-	auto window_duration = m_model->windowDuration();
-	auto window_start = m_model->windowStart();
 	auto slice_duration = window_duration / w;
 	auto offset = (slice_duration - analysis_window_duration) / 2;
 	auto first_sample = m_sound->time_to_frame(window_start + offset);
@@ -216,13 +256,35 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 	Matrix<double> raster(w, h);
 	raster.setZero(w, h);
 
-	auto win = create_window(nframe, nfft, m_window_type);
+	// Fill the reusable audio buffer from the sound's raw float data, avoiding
+	// the allocation that get_channel() would perform on every call.
+	auto sample_count = last_sample - first_sample + 1;
+	m_audio_buffer.resize(sample_count);
 
-	// Weight power.
-	double weight = 0;
-	for (double x : win) weight += x * x;
-	double k1 = 1.0 / (sample_rate * weight); // at DC and Nyquist frequencies.
-	double k2 = 2.0 / (sample_rate * weight); // at other frequencies.
+	if (m_channel == 0)
+	{
+		// Average across channels.
+		int nchan = m_sound->nchannel();
+		std::fill(m_audio_buffer.begin(), m_audio_buffer.end(), 0.0);
+		for (int c = 1; c <= nchan; c++)
+		{
+			auto view = m_sound->channel_view(c, first_sample, last_sample);
+			for (intptr_t i = 0; i < sample_count; i++)
+				m_audio_buffer[i] += view[i];
+		}
+		double inv_nchan = 1.0 / nchan;
+		for (intptr_t i = 0; i < sample_count; i++)
+			m_audio_buffer[i] *= inv_nchan;
+	}
+	else
+	{
+		// Single channel — copy float→double.
+		auto view = m_sound->channel_view(m_channel, first_sample, last_sample);
+		for (intptr_t i = 0; i < sample_count; i++)
+			m_audio_buffer[i] = view[i];
+	}
+
+	apply_pre_emphasis(m_audio_buffer.data(), sample_count, sample_rate, m_preemph_threshold);
 
 	std::vector<double> input(nfft, 0.0);
 	std::vector<std::complex<double>> output(half_nfft + 1, std::complex<double>(0, 0));
@@ -232,17 +294,13 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 	pocketfft::stride_t stride_in{sizeof(double)};
 	pocketfft::stride_t stride_out{sizeof(std::complex<double>)};
 
-	auto data = m_sound->get_channel(m_channel, first_sample, last_sample);
-	speech::pre_emphasis(data, sample_rate, m_preemph_threshold);
-
 	for (intptr_t x = 0; x < w; x++)
 	{
 		auto t = window_start + x * slice_duration + offset;
 		auto from_sample = m_sound->time_to_frame(t) - first_sample;
 		auto to_sample = from_sample + nframe;
-		auto it = data.begin() + from_sample;
 
-		if (from_sample < 0 || to_sample >= data.size())
+		if (from_sample < 0 || to_sample >= sample_count)
 		{
 			// Can't compute FFT — outside the bounds. Mark as NaN (will render as white).
 			for (int j = 0; j < h; j++) {
@@ -251,11 +309,13 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 			continue;
 		}
 
+		auto *src = m_audio_buffer.data() + from_sample;
+
 		// Apply window and fill FFT input buffer.
 		for (intptr_t j = 0; j < nframe; j++)
 		{
-			// win is a 1-based Array; j+1 maps to raw position j.
-			input[j] = (*it++) * win[j + 1];
+			// m_cached_window is a 1-based Array; j+1 maps to raw position j.
+			input[j] = src[j] * m_cached_window[j + 1];
 		}
 		for (intptr_t j = nframe; j < nfft; j++) {
 			input[j] = 0;
@@ -278,27 +338,31 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 			amplitude[y] = dB;
 		}
 
-		// Map amplitude bins to raster pixels with linear interpolation.
+		// Map amplitude bins to raster pixels with linear interpolation,
+		// tracking min/max dB inline to avoid a separate scan pass.
 		double ceiling_bin = m_max_freq * half_nfft / nyquist_frequency;
 		for (intptr_t y = 1; y <= h; y++)
 		{
 			double freq = double(y * ceiling_bin) / (h - 1.0);
 			int bin = int(freq);
+			double amp;
 
 			if (bin >= half_nfft)
 			{
-				raster(x, y - 1) = amplitude[half_nfft - 1];
+				amp = amplitude[half_nfft - 1];
 			}
 			else
 			{
 				// Linear interpolation between adjacent bins.
 				double a1 = amplitude[bin];
 				double a2 = amplitude[bin + 1];
-				double delta = a2 - a1;
-				double remainder = freq - bin;
-				double amp = a1 + (delta * remainder);
-				raster(x, y - 1) = amp;
+				amp = a1 + (a2 - a1) * (freq - bin);
 			}
+
+			raster(x, y - 1) = amp;
+
+			if (amp > out_max_dB) out_max_dB = amp;
+			if (amp < out_min_dB) out_min_dB = amp;
 		}
 	}
 
@@ -310,11 +374,178 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h)
 //  Cache management
 // ─────────────────────────────────────────────────
 
+QImage SpectrogramWidget::rasterToImage(const Matrix<double> &raster,
+                                        double min_dB, double max_dB, int dynamic_range,
+                                        int target_w, int target_h)
+{
+	int rw = raster.rows();  // raster columns (time)
+	int rh = raster.cols();  // raster rows (frequency)
+
+	if (rw <= 0 || rh <= 0 || min_dB >= max_dB)
+	{
+		QImage img(target_w, target_h, QImage::Format_RGB32);
+		img.fill(Qt::white);
+		return img;
+	}
+
+	min_dB = (std::max)(min_dB, max_dB - dynamic_range);
+	double inv_range = 255.0 / (max_dB - min_dB);
+
+	// Build a small image at raster resolution (1:1 mapping, no upscale loop).
+	QImage small(rw, rh, QImage::Format_RGB32);
+	small.fill(Qt::white);
+
+	for (int img_y = 0; img_y < rh; img_y++)
+	{
+		int freq_j = rh - 1 - img_y; // reverse: top = high freq
+		auto *scanline = reinterpret_cast<QRgb *>(small.scanLine(img_y));
+
+		for (int img_x = 0; img_x < rw; img_x++)
+		{
+			double value = (std::max)(raster(img_x, freq_j), min_dB);
+			if (std::isnan(value)) value = min_dB;
+
+			int g = 255 - int((value - min_dB) * inv_range + 0.5);
+			if (g < 0) g = 0;
+			if (g > 255) g = 255;
+
+			scanline[img_x] = qRgb(g, g, g);
+		}
+	}
+
+	// Let Qt handle the upscale to the target (physical) resolution.
+	// FastTransformation = nearest-neighbour, which is appropriate for spectrograms.
+	if (rw == target_w && rh == target_h)
+		return small;
+
+	return small.scaled(target_w, target_h, Qt::IgnoreAspectRatio, Qt::FastTransformation);
+}
+
+bool SpectrogramWidget::tryIncrementalPan()
+{
+	if (m_cache.isNull() || m_cache_start < 0)
+		return false;
+
+	double new_start = m_model->windowStart();
+	double new_end = m_model->windowEnd();
+	double new_dur = new_end - new_start;
+	double old_dur = m_cache_end - m_cache_start;
+	int lw = width();
+	int lh = height();
+
+	// Must be same zoom level and same widget size.
+	if (std::abs(new_dur - old_dur) > 1e-9 || lw != m_cache_lw || lh != m_cache_lh)
+		return false;
+
+	double shift_time = new_start - m_cache_start;
+	if (std::abs(shift_time) < 1e-9)
+		return true; // no actual shift
+
+	int shift_px = int(round(shift_time / new_dur * lw));
+	if (shift_px == 0)
+		return true; // sub-pixel shift — existing cache is close enough
+	if (std::abs(shift_px) >= lw)
+		return false; // full shift — fall back to full recompute
+
+	const double dpr = devicePixelRatioF();
+	int pw = m_cache.width();
+	int ph = m_cache.height();
+	int phys_shift = int(round(shift_px * dpr));
+
+	if (std::abs(phys_shift) >= pw)
+		return false;
+
+	// Shift the existing image: copy the reusable portion.
+	QImage shifted(pw, ph, QImage::Format_RGB32);
+	shifted.setDevicePixelRatio(dpr);
+	shifted.fill(Qt::white);
+
+	if (phys_shift > 0)
+	{
+		// Window moved right → keep the right part of the old image on the left.
+		int copy_width = pw - phys_shift;
+		for (int y = 0; y < ph; y++)
+		{
+			auto *src = reinterpret_cast<const QRgb *>(m_cache.constScanLine(y));
+			auto *dst = reinterpret_cast<QRgb *>(shifted.scanLine(y));
+			memcpy(dst, src + phys_shift, copy_width * sizeof(QRgb));
+		}
+	}
+	else
+	{
+		int abs_shift = -phys_shift;
+		int copy_width = pw - abs_shift;
+		for (int y = 0; y < ph; y++)
+		{
+			auto *src = reinterpret_cast<const QRgb *>(m_cache.constScanLine(y));
+			auto *dst = reinterpret_cast<QRgb *>(shifted.scanLine(y));
+			memcpy(dst + abs_shift, src, copy_width * sizeof(QRgb));
+		}
+	}
+
+	m_cache = std::move(shifted);
+
+	// Compute just the exposed strip.
+	int strip_lw = std::abs(shift_px);
+	int strip_phys_x;
+	int strip_phys_w;
+	double strip_start;
+
+	if (shift_px > 0)
+	{
+		// New content on the right.
+		strip_phys_x = pw - phys_shift;
+		strip_phys_w = phys_shift;
+		strip_start = new_start + double(lw - strip_lw) / lw * new_dur;
+	}
+	else
+	{
+		// New content on the left.
+		strip_phys_x = 0;
+		strip_phys_w = -phys_shift;
+		strip_start = new_start;
+	}
+
+	// Cap strip columns to avoid excessive FFTs on very wide displays.
+	int strip_cols = std::min(strip_lw, MAX_SPECTROGRAM_COLUMNS);
+	double strip_dur = double(strip_lw) / lw * new_dur;
+	double strip_min, strip_max;
+	auto strip_raster = computeSpectrogram(strip_cols, lh, strip_start, strip_dur,
+	                                       strip_min, strip_max);
+
+	if (strip_raster.rows() == 0 || strip_raster.cols() == 0)
+		return false;
+
+	// Build a scaled strip image at physical pixel resolution.
+	auto strip_img = rasterToImage(strip_raster, m_cache_min_dB, m_cache_max_dB,
+	                               m_dynamic_range, strip_phys_w, ph);
+
+	// Blit strip_img directly into m_cache using raw pixel copies.
+	// We cannot use QPainter here because m_cache has its devicePixelRatio set,
+	// which causes QPainter to interpret positions as logical coordinates
+	// (multiplied by DPR), misplacing the strip on HiDPI displays.
+	for (int y = 0; y < ph; y++)
+	{
+		auto *src = reinterpret_cast<const QRgb *>(strip_img.constScanLine(y));
+		auto *dst = reinterpret_cast<QRgb *>(m_cache.scanLine(y));
+		memcpy(dst + strip_phys_x, src, strip_phys_w * sizeof(QRgb));
+	}
+
+	// Update cached viewport.
+	m_cache_start = new_start;
+	m_cache_end = new_end;
+	m_cache_valid = true;
+
+	return true;
+}
+
 void SpectrogramWidget::rebuildCache()
 {
 	const double dpr = devicePixelRatioF();
-	const int pw = int(width() * dpr);   // physical pixel width
-	const int ph = int(height() * dpr);  // physical pixel height
+	const int lw = width();              // logical pixel width
+	const int lh = height();             // logical pixel height
+	const int pw = int(lw * dpr);        // physical pixel width
+	const int ph = int(lh * dpr);        // physical pixel height
 
 	if (pw <= 0 || ph <= 0) {
 		m_cache = QImage();
@@ -322,59 +553,36 @@ void SpectrogramWidget::rebuildCache()
 		return;
 	}
 
-	auto raster = computeSpectrogram(pw, ph);
+	double win_start = m_model->windowStart();
+	double win_dur = m_model->windowDuration();
 
-	m_cache = QImage(pw, ph, QImage::Format_RGB32);
-	m_cache.setDevicePixelRatio(dpr);
-	m_cache.fill(Qt::white);
+	// Cap the number of FFT columns — spectrograms don't benefit from
+	// more than ~1200 columns regardless of display width.
+	int raster_w = std::min(lw, MAX_SPECTROGRAM_COLUMNS);
+	double min_dB, max_dB;
+
+	auto raster = computeSpectrogram(raster_w, lh, win_start, win_dur, min_dB, max_dB);
 
 	if (raster.rows() == 0 || raster.cols() == 0) {
+		m_cache = QImage(pw, ph, QImage::Format_RGB32);
+		m_cache.setDevicePixelRatio(dpr);
+		m_cache.fill(Qt::white);
 		m_cache_valid = true;
 		return;
 	}
 
-	// Find min and max dB in the raster, ignoring NaN.
-	double max_dB = -1e9;
-	double min_dB = 1e9;
+	// Build the image at raster resolution and let Qt scale to physical size.
+	m_cache = rasterToImage(raster, min_dB, max_dB, m_dynamic_range, pw, ph);
+	m_cache.setDevicePixelRatio(dpr);
 
-	for (int i = 0; i < raster.rows(); i++) {
-		for (int j = 0; j < raster.cols(); j++) {
-			double val = raster(i, j);
-			if (std::isfinite(val)) {
-				if (val > max_dB) max_dB = val;
-				if (val < min_dB) min_dB = val;
-			}
-		}
-	}
-
-	// Min and max can only be equal if we have zeros, in which case we don't fill the image.
-	if (min_dB != max_dB)
-	{
-		// Adjust minimum to fit the dynamic range.
-		min_dB = (std::max)(min_dB, max_dB - m_dynamic_range);
-
-		// The image must be filled with frequency reversed: high frequencies at the top.
-		// raster columns go 0 (low freq) to ph-1 (high freq).
-		// Image rows go 0 (top = high freq) to ph-1 (bottom = low freq).
-		for (int img_y = 0; img_y < ph; img_y++)
-		{
-			int freq_j = ph - 1 - img_y; // reverse: top = high freq
-			auto *scanline = reinterpret_cast<QRgb *>(m_cache.scanLine(img_y));
-
-			for (int img_x = 0; img_x < pw; img_x++)
-			{
-				double value = (std::max)(raster(img_x, freq_j), min_dB);
-				if (std::isnan(value)) value = min_dB;
-
-				int g = 255 - int(round((value - min_dB) * 255.0 / (max_dB - min_dB)));
-				if (g < 0) g = 0;
-				if (g > 255) g = 255;
-
-				scanline[img_x] = qRgb(g, g, g);
-			}
-		}
-	}
-
+	// Store the viewport and normalization for incremental pan.
+	min_dB = (std::max)(min_dB, max_dB - m_dynamic_range);
+	m_cache_start = win_start;
+	m_cache_end = win_start + win_dur;
+	m_cache_lw = lw;
+	m_cache_lh = lh;
+	m_cache_min_dB = min_dB;
+	m_cache_max_dB = max_dB;
 	m_cache_valid = true;
 }
 
@@ -581,6 +789,16 @@ void SpectrogramWidget::paintEvent(QPaintEvent *)
 void SpectrogramWidget::resizeEvent(QResizeEvent *)
 {
 	m_cache_valid = false;
+	m_cache_start = -1; // dimensions changed — no incremental pan possible
+	m_formants_valid = false;
+}
+
+void SpectrogramWidget::showEvent(QShowEvent *)
+{
+	// The viewport may have changed while we were hidden (onViewportChanged
+	// is skipped for hidden widgets). Force a full rebuild on the next paint.
+	m_cache_valid = false;
+	m_cache_start = -1;
 	m_formants_valid = false;
 }
 
@@ -676,6 +894,36 @@ void SpectrogramWidget::leaveEvent(QEvent *)
 
 void SpectrogramWidget::onViewportChanged(double, double)
 {
+	// Skip all work when the widget is hidden — no point computing FFTs
+	// that will never be painted. showEvent() invalidates the cache when
+	// the widget becomes visible again.
+	if (isHidden())
+		return;
+
+	m_formants_valid = false;
+
+	// Try the cheap incremental pan first (shift image + compute only the new strip).
+	if (tryIncrementalPan())
+	{
+		// Success — cache is updated. Start the debounce timer for a clean
+		// full recompute (to fix normalization seams) and formant rebuild.
+		m_debounce_timer->start();
+		update();
+		return;
+	}
+
+	// Incremental pan failed (zoom change, large shift, first paint, etc.).
+	// Always invalidate so paintEvent does a full rebuild — showing a stale
+	// spectrogram from a different viewport is worse than a brief lag.
+	m_cache_valid = false;
+	m_debounce_timer->start();
+	update();
+}
+
+void SpectrogramWidget::onDebounceFired()
+{
+	// Force a clean full recompute regardless of whether incremental pan was used.
+	// This ensures pixel-perfect normalization and rebuilds formants.
 	m_cache_valid = false;
 	m_formants_valid = false;
 	update();

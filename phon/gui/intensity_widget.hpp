@@ -26,6 +26,7 @@
 #include <vector>
 #include <QWidget>
 #include <QPixmap>
+#include <QTimer>
 #include <phon/application/sound.hpp>
 #include <phon/gui/time_model.hpp>
 
@@ -54,6 +55,7 @@ protected:
 
 	void paintEvent(QPaintEvent *event) override;
 	void resizeEvent(QResizeEvent *event) override;
+	void showEvent(QShowEvent *event) override;
 	void mousePressEvent(QMouseEvent *event) override;
 	void mouseMoveEvent(QMouseEvent *event) override;
 	void mouseReleaseEvent(QMouseEvent *event) override;
@@ -76,6 +78,9 @@ private slots:
 	void onPlaybackChanged(double time);
 	void onPlaybackCleared();
 
+	// Called when the debounce timer fires after a viewport change.
+	void onDebounceFired();
+
 private:
 
 	void rebuildCache();
@@ -96,6 +101,9 @@ private:
 	// Cached pixmap of the intensity curve (no overlays).
 	QPixmap m_cache;
 	bool m_cache_valid = false;
+
+	// Debounce timer: coalesces rapid viewport changes.
+	QTimer *m_debounce_timer = nullptr;
 
 	// Intensity settings.
 	double m_min_dB = 50;

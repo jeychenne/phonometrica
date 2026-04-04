@@ -60,6 +60,13 @@ PitchWidget::PitchWidget(TimeModel *model, const Handle<Sound> &sound, int chann
 	connect(m_model, &TimeModel::cursorCleared, this, &PitchWidget::onCursorCleared);
 	connect(m_model, &TimeModel::playbackTimeChanged, this, &PitchWidget::onPlaybackChanged);
 	connect(m_model, &TimeModel::playbackCleared, this, &PitchWidget::onPlaybackCleared);
+
+	// Debounce timer: coalesces rapid viewport changes so the expensive
+	// pitch tracking computation runs only once after a quiet period.
+	m_debounce_timer = new QTimer(this);
+	m_debounce_timer->setSingleShot(true);
+	m_debounce_timer->setInterval(120); // ms
+	connect(m_debounce_timer, &QTimer::timeout, this, &PitchWidget::onDebounceFired);
 }
 
 void PitchWidget::readSettings()
@@ -375,6 +382,11 @@ void PitchWidget::resizeEvent(QResizeEvent *)
 	m_cache_valid = false;
 }
 
+void PitchWidget::showEvent(QShowEvent *)
+{
+	m_cache_valid = false;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Mouse interaction
@@ -466,6 +478,20 @@ void PitchWidget::leaveEvent(QEvent *)
 // ─────────────────────────────────────────────────
 
 void PitchWidget::onViewportChanged(double, double)
+{
+	if (isHidden())
+		return;
+
+	// Leading-edge throttle: recompute immediately on the first change
+	// (e.g. single button click), coalesce subsequent rapid changes.
+	if (!m_debounce_timer->isActive())
+		m_cache_valid = false;
+
+	m_debounce_timer->start();
+	update();
+}
+
+void PitchWidget::onDebounceFired()
 {
 	m_cache_valid = false;
 	update();
