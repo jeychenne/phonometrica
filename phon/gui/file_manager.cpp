@@ -177,6 +177,7 @@ void FileManager::setupUi()
 	m_tree->setIndentation(16);
 	m_tree->setUniformRowHeights(true);
 	m_tree->setExpandsOnDoubleClick(false); // we handle double-click ourselves
+	m_tree->setFrameShape(QFrame::NoFrame);
 
 	// Selection
 	m_tree->setSelectionMode(QAbstractItemView::ExtendedSelection);
@@ -207,6 +208,10 @@ void FileManager::setupUi()
     m_search->setPlaceholderText(tr("Filter..."));
     m_search->setClearButtonEnabled(true);
 	m_search->addAction(QIcon(":/icons/search.svg"), QLineEdit::LeadingPosition);
+#if PHON_MACOS
+	// Match the height of a native NSSearchField.
+	m_search->setMinimumHeight(32);
+#endif
     connect(m_search, &QLineEdit::textChanged, this, &FileManager::onFilterTextChanged);
     layout->addWidget(m_search);
 

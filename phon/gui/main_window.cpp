@@ -426,7 +426,6 @@ void MainWindow::createDockWidgets()
 	bottom_tabs->addTab(m_console, tr("Console"));
 	bottom_tabs->addTab(m_output, tr("Output"));
 	bottom_tabs->addTab(m_ipa_panel, tr("IPA"));
-	// bottom_tabs->setDocumentMode(true);
 
 	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);
@@ -441,6 +440,16 @@ void MainWindow::createDockWidgets()
 	m_info_panel = new InfoPanel(Project::get(), m_info_dock);
 	m_info_dock->setWidget(m_info_panel);
 	addDockWidget(Qt::RightDockWidgetArea, m_info_dock);
+
+	// Harmonize the dock title bar height with the viewer's tab bar.
+#if PHON_MACOS
+	auto dock_style = QStringLiteral(
+		"QDockWidget { font-size: 13px; }"
+		"QDockWidget::title { padding: 4px 6px; }");
+	m_project_dock->setStyleSheet(dock_style);
+	m_console_dock->setStyleSheet(dock_style);
+	m_info_dock->setStyleSheet(dock_style);
+#endif
 
 	// Wire file manager selection to info panel.
 	connect(m_file_manager, &FileManager::selectionChanged, m_info_panel, &InfoPanel::onSelectionChanged);
