@@ -59,7 +59,10 @@ bool DeleteDatasetColumnsCommand::execute()
 	// Called on redo: re-remove the same columns (right to left).
 	auto *model = m_view->dsModel();
 	for (int i = (int) m_removed.size() - 1; i >= 0; i--)
+	{
 		m_removed[i].data = model->extractColumn(m_removed[i].col);
+		m_view->adjustFiltersAfterColumnRemove(m_removed[i].col);
+	}
 
 	m_view->refreshAfterChange();
 	return true;
@@ -70,7 +73,10 @@ void DeleteDatasetColumnsCommand::undo()
 	// Restore columns in ascending order (left to right).
 	auto *model = m_view->dsModel();
 	for (auto &rc : m_removed)
+	{
 		model->insertColumn(rc.col, std::move(rc.data));
+		m_view->adjustFiltersAfterColumnInsert(rc.col);
+	}
 
 	m_view->refreshAfterChange();
 }
@@ -89,6 +95,7 @@ bool AddDatasetColumnCommand::execute()
 		int col = model->columnCount(); // insert at end (0-based = current count)
 		model->insertColumn(col, std::move(m_saved));
 		m_has_saved = false;
+		m_view->adjustFiltersAfterColumnInsert(col);
 		m_view->refreshAfterChange();
 	}
 	// On first call (via record()), the column was already added.
@@ -101,6 +108,7 @@ void AddDatasetColumnCommand::undo()
 	int last = model->columnCount() - 1;
 	m_saved = model->extractColumn(last);
 	m_has_saved = true;
+	m_view->adjustFiltersAfterColumnRemove(last);
 	m_view->refreshAfterChange();
 }
 
@@ -136,6 +144,7 @@ bool DuplicateDatasetColumnCommand::execute()
 		int col_0 = m_dest_col - 1; // 0-based
 		model->insertColumn(col_0, std::move(m_saved));
 		m_has_saved = false;
+		m_view->adjustFiltersAfterColumnInsert(col_0);
 		m_view->refreshAfterChange();
 	}
 	// On first call (via record()), the column was already duplicated.
@@ -148,6 +157,7 @@ void DuplicateDatasetColumnCommand::undo()
 	int col_0 = m_dest_col - 1; // 0-based
 	m_saved = model->extractColumn(col_0);
 	m_has_saved = true;
+	m_view->adjustFiltersAfterColumnRemove(col_0);
 	m_view->refreshAfterChange();
 }
 
@@ -162,6 +172,7 @@ bool MoveDatasetColumnCommand::execute()
 	auto ds = m_view->dsModel()->dataset();
 	ds->move_column(m_src, m_dest);
 	ds->set_content_modified(true);
+	m_view->adjustFiltersAfterColumnMove(m_src - 1, m_dest - 1);
 	m_view->dsModel()->refreshAll();
 	m_view->refreshAfterChange();
 	return true;
@@ -169,18 +180,10 @@ bool MoveDatasetColumnCommand::execute()
 
 void MoveDatasetColumnCommand::undo()
 {
-	// Reverse the move. move_column(src, dest) removes src then inserts at dest
-	// in the post-removal array. To reverse, we need to figure out the inverse.
-	//
-	// After move(src, dest):
-	//   - Column that was at src is now at effective position dest.
-	//   - To reverse: move it from dest back to src.
-	//
-	// This is correct because move_column's semantics are symmetric when
-	// the arguments are swapped for undo.
 	auto ds = m_view->dsModel()->dataset();
 	ds->move_column(m_dest, m_src);
 	ds->set_content_modified(true);
+	m_view->adjustFiltersAfterColumnMove(m_dest - 1, m_src - 1);
 	m_view->dsModel()->refreshAll();
 	m_view->refreshAfterChange();
 }

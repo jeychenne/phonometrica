@@ -129,7 +129,7 @@ void ConcordanceView::setupUi()
 	m_toolbar->addSeparator();
 
 	// -- Filter / Subset --
-	m_filter_action = m_toolbar->addAction(QIcon(":/icons/filter.svg"), tr("Filter"));
+	m_filter_action = m_toolbar->addAction(QIcon(":/icons/list-filter.svg"), tr("Filter"));
 	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
 	m_filter_action->setCheckable(true);
 
@@ -1747,6 +1747,18 @@ void ConcordanceView::refreshAfterStructuralChange()
 	setupFilterBar();
 	updateCountLabel();
 	emit titleChanged(label());
+}
+
+void ConcordanceView::adjustFiltersAfterColumnRemove(int col)
+{
+	m_proxy->adjustAfterColumnRemove(col);
+	m_filter_bar->rebuild();
+}
+
+void ConcordanceView::adjustFiltersAfterColumnInsert(int col)
+{
+	m_proxy->adjustAfterColumnInsert(col);
+	m_filter_bar->rebuild();
 }
 
 } // namespace phonometrica

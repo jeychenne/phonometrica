@@ -92,6 +92,78 @@ void DataFilterProxyModel::setFilterEnabled(bool enabled)
 	emit filterChanged();
 }
 
+void DataFilterProxyModel::adjustAfterColumnRemove(int col)
+{
+	bool changed = false;
+
+	for (int i = m_rules.size() - 1; i >= 0; i--)
+	{
+		if (m_rules[i].column == col)
+		{
+			m_rules.removeAt(i);
+			changed = true;
+		}
+		else if (m_rules[i].column > col)
+		{
+			m_rules[i].column--;
+			changed = true;
+		}
+	}
+
+	if (changed)
+	{
+		invalidateFilter();
+		emit filterChanged();
+	}
+}
+
+void DataFilterProxyModel::adjustAfterColumnInsert(int col)
+{
+	bool changed = false;
+
+	for (auto &rule : m_rules)
+	{
+		if (rule.column >= col)
+		{
+			rule.column++;
+			changed = true;
+		}
+	}
+
+	if (changed)
+	{
+		invalidateFilter();
+		emit filterChanged();
+	}
+}
+
+void DataFilterProxyModel::adjustAfterColumnMove(int from, int to)
+{
+	// Model a remove-at-from then insert-at-to.
+	for (auto &rule : m_rules)
+	{
+		if (rule.column == from)
+		{
+			// This rule's column was moved. After remove, indices shift down
+			// for columns > from. Then insert at to shifts indices up for >= to.
+			// The moved column lands at position to.
+			rule.column = to;
+		}
+		else
+		{
+			// Simulate the remove: shift down if after the removed column.
+			int c = rule.column;
+			if (c > from) c--;
+			// Simulate the insert: shift up if at or after the insertion point.
+			if (c >= to) c++;
+			rule.column = c;
+		}
+	}
+
+	invalidateFilter();
+	emit filterChanged();
+}
+
 int DataFilterProxyModel::visibleRowCount() const
 {
 	return rowCount();

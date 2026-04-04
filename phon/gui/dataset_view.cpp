@@ -74,7 +74,7 @@ void DatasetView::setupUi()
 	m_toolbar->addSeparator();
 
 	// -- Filter / Subset --
-	m_filter_action = m_toolbar->addAction(QIcon(":/icons/filter.svg"), tr("Filter"));
+	m_filter_action = m_toolbar->addAction(QIcon(":/icons/list-filter.svg"), tr("Filter"));
 	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
 	m_filter_action->setCheckable(true);
 
@@ -455,6 +455,7 @@ void DatasetView::onDeleteColumns()
 		int col = cols[i];
 		auto saved = m_model->extractColumn(col);
 		removed.push_back({col, std::move(saved)});
+		m_proxy->adjustAfterColumnRemove(col);
 	}
 
 	// Reverse so they're sorted ascending by column index.
@@ -1183,6 +1184,7 @@ void DatasetView::onDuplicateColumn(int section)
 	try
 	{
 		m_ds->duplicate_column(col, dest);
+		m_proxy->adjustAfterColumnInsert(dest - 1); // dest is 1-based
 		m_model->refreshAll();
 		m_table->resizeColumnsToContents();
 		setupFilterBar();
@@ -1329,6 +1331,24 @@ void DatasetView::refreshAfterChange()
 	setupFilterBar();
 	updateCountLabel();
 	emit titleChanged(label());
+}
+
+void DatasetView::adjustFiltersAfterColumnRemove(int col)
+{
+	m_proxy->adjustAfterColumnRemove(col);
+	m_filter_bar->rebuild();
+}
+
+void DatasetView::adjustFiltersAfterColumnInsert(int col)
+{
+	m_proxy->adjustAfterColumnInsert(col);
+	m_filter_bar->rebuild();
+}
+
+void DatasetView::adjustFiltersAfterColumnMove(int from, int to)
+{
+	m_proxy->adjustAfterColumnMove(from, to);
+	m_filter_bar->rebuild();
 }
 
 } // namespace phonometrica

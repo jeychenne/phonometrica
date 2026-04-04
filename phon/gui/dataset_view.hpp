@@ -57,6 +57,11 @@ public:
 	DatasetModel *dsModel() const { return m_model; }
 	void refreshAfterChange();
 
+	// Filter adjustment after column structural changes (0-based column indices).
+	void adjustFiltersAfterColumnRemove(int col);
+	void adjustFiltersAfterColumnInsert(int col);
+	void adjustFiltersAfterColumnMove(int from, int to);
+
 signals:
 
 	void requestAnalysis(Handle<DataTable> source);
