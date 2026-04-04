@@ -82,6 +82,14 @@ public:
 	void setFilterEnabled(bool enabled);
 	bool isFilterEnabled() const { return m_enabled; }
 
+	// Adjust rule column indices after structural column changes.
+	// col is 0-based. Rules targeting the removed column are deleted.
+	void adjustAfterColumnRemove(int col);
+	// col is 0-based insertion point.
+	void adjustAfterColumnInsert(int col);
+	// from/to are 0-based; models a remove-at-from then insert-at-to.
+	void adjustAfterColumnMove(int from, int to);
+
 	// Number of rows passing the filter in the source model.
 	int visibleRowCount() const;
 

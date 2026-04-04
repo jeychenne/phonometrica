@@ -63,6 +63,9 @@ bool AddConcAuxColumnCommand::execute()
 		conc->restore_aux_column(conc->aux_stored_count() + 1, std::move(m_saved_col));
 		m_has_saved = false;
 		m_view->refreshAfterStructuralChange();
+		// The restored column is now the last one in the model.
+		int inserted_col = m_view->concModel()->columnCount() - 1;
+		m_view->adjustFiltersAfterColumnInsert(inserted_col);
 	}
 	// On first call (via record()), the column was already added by the view code.
 	return true;
@@ -72,8 +75,11 @@ void AddConcAuxColumnCommand::undo()
 {
 	auto conc = m_view->concModel()->concordance();
 	intptr_t last = conc->aux_stored_count();
+	// The column to remove maps to the last source-model column.
+	int removed_col = m_view->concModel()->columnCount() - 1;
 	m_saved_col = conc->extract_aux_column(last);
 	m_has_saved = true;
+	m_view->adjustFiltersAfterColumnRemove(removed_col);
 	m_view->refreshAfterStructuralChange();
 }
 

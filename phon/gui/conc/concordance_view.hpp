@@ -60,6 +60,10 @@ public:
 	void refreshAfterRowChange();
 	void refreshAfterStructuralChange();
 
+	// Filter adjustment after column structural changes (0-based column indices).
+	void adjustFiltersAfterColumnRemove(int col);
+	void adjustFiltersAfterColumnInsert(int col);
+
 signals:
 
 	void openAnnotation(const Handle<Annotation> &annot, intptr_t layer, double start, double end, bool split);
