@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <QKeyEvent>
+#include <QApplication>
 #include <Qsci/qsciapis.h>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/phon_lexer.hpp>
@@ -83,8 +84,8 @@ void ScriptEditor::setupEditor()
 	// Line numbers.
 	setMarginType(0, NumberMargin);
 	setMarginWidth(0, QStringLiteral("00000"));
-	setMarginsBackgroundColor(QColor(220, 220, 220));
-	setMarginsForegroundColor(QColor(75, 75, 75));
+	setMarginsBackgroundColor(QApplication::palette().color(QPalette::AlternateBase));
+	setMarginsForegroundColor(QApplication::palette().color(QPalette::PlaceholderText));
 	setMarginsFont(editorFont);
 
 	// Hide the default symbol margin (margin 1).
@@ -96,7 +97,8 @@ void ScriptEditor::setupEditor()
 
 	// Caret and selection.
 	setCaretLineVisible(true);
-	setCaretLineBackgroundColor(QColor(245, 245, 245));
+	auto caretBg = QApplication::palette().color(QPalette::AlternateBase);
+	setCaretLineBackgroundColor(caretBg);
 
 	// Brace matching.
 	setBraceMatching(SloppyBraceMatch);

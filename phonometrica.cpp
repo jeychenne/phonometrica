@@ -147,9 +147,6 @@ int main(int argc, char **argv)
 
 	// No arguments: launch the GUI.
 #ifdef PHON_GUI
-#ifdef PHON_MACOS
-	QApplication::setStyle("macOS");
-#endif
 	QApplication app(argc, argv);
 
 	// QApplication sets LC_ALL to the system locale, which breaks strtod/sscanf

@@ -426,10 +426,7 @@ void MainWindow::createDockWidgets()
 	bottom_tabs->addTab(m_console, tr("Console"));
 	bottom_tabs->addTab(m_output, tr("Output"));
 	bottom_tabs->addTab(m_ipa_panel, tr("IPA"));
-	bottom_tabs->setStyleSheet(R"(
-    QTabWidget::pane {
-        border: none;
-    })");
+	// bottom_tabs->setDocumentMode(true);
 
 	m_console_dock->setWidget(bottom_tabs);
 	addDockWidget(Qt::BottomDockWidgetArea, m_console_dock);

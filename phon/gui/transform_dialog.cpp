@@ -83,7 +83,7 @@ TransformDialog::TransformDialog(const QString &column_name, const QVector<doubl
 
 	// ── Error label ────────────────────────────────────
 	m_error_label = new QLabel;
-	m_error_label->setStyleSheet("color: red;");
+	m_error_label->setStyleSheet("QLabel { color: #cc3333; font-weight: bold; }");
 	m_error_label->hide();
 	layout->addWidget(m_error_label);
 

@@ -73,7 +73,7 @@ QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 		case Qt::ForegroundRole:
 		{
 			if (m_conc->highlight_targets() && m_conc->is_target(col))
-				return QColor(Qt::red);
+				return QColor(200, 40, 40);
 			return {};
 		}
 		default:

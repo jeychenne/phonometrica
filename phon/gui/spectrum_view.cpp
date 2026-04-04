@@ -102,7 +102,7 @@ SpectrumView::SpectrumView(const Handle<Spectrum> &spectrum, SpectrumDisplayMode
 	m_status->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 	m_status->setIndent(8);
 	m_status->setFixedHeight(22);
-	m_status->setStyleSheet(QStringLiteral("QLabel { background: #f0f0f0; color: #333; font-size: 11px; }"));
+	m_status->setStyleSheet(QStringLiteral("QLabel { background: palette(alternate-base); color: palette(text); font-size: 11px; }"));
 	layout->addWidget(m_status);
 
 	// Show bandwidth information initially.
