@@ -60,6 +60,13 @@ IntensityWidget::IntensityWidget(TimeModel *model, const Handle<Sound> &sound, i
 	connect(m_model, &TimeModel::cursorCleared, this, &IntensityWidget::onCursorCleared);
 	connect(m_model, &TimeModel::playbackTimeChanged, this, &IntensityWidget::onPlaybackChanged);
 	connect(m_model, &TimeModel::playbackCleared, this, &IntensityWidget::onPlaybackCleared);
+
+	// Debounce timer: coalesces rapid viewport changes so the expensive
+	// intensity computation runs only once after a quiet period.
+	m_debounce_timer = new QTimer(this);
+	m_debounce_timer->setSingleShot(true);
+	m_debounce_timer->setInterval(120); // ms
+	connect(m_debounce_timer, &QTimer::timeout, this, &IntensityWidget::onDebounceFired);
 }
 
 void IntensityWidget::readSettings()
@@ -329,6 +336,11 @@ void IntensityWidget::resizeEvent(QResizeEvent *)
 	m_cache_valid = false;
 }
 
+void IntensityWidget::showEvent(QShowEvent *)
+{
+	m_cache_valid = false;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Mouse interaction
@@ -420,6 +432,20 @@ void IntensityWidget::leaveEvent(QEvent *)
 // ─────────────────────────────────────────────────
 
 void IntensityWidget::onViewportChanged(double, double)
+{
+	if (isHidden())
+		return;
+
+	// Leading-edge throttle: recompute immediately on the first change
+	// (e.g. single button click), coalesce subsequent rapid changes.
+	if (!m_debounce_timer->isActive())
+		m_cache_valid = false;
+
+	m_debounce_timer->start();
+	update();
+}
+
+void IntensityWidget::onDebounceFired()
 {
 	m_cache_valid = false;
 	update();

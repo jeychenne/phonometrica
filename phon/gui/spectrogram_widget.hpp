@@ -27,6 +27,7 @@
 #include <complex>
 #include <QWidget>
 #include <QImage>
+#include <QTimer>
 #include <phon/application/sound.hpp>
 #include <phon/gui/time_model.hpp>
 #include <phon/analysis/signal_processing.hpp>
@@ -61,6 +62,7 @@ protected:
 
 	void paintEvent(QPaintEvent *event) override;
 	void resizeEvent(QResizeEvent *event) override;
+	void showEvent(QShowEvent *event) override;
 	void mousePressEvent(QMouseEvent *event) override;
 	void mouseMoveEvent(QMouseEvent *event) override;
 	void mouseReleaseEvent(QMouseEvent *event) override;
@@ -83,13 +85,33 @@ private slots:
 	void onPlaybackChanged(double time);
 	void onPlaybackCleared();
 
+	// Called when the debounce timer fires after a viewport change.
+	void onDebounceFired();
+
 private:
+
+	// Maximum number of FFT columns to compute, regardless of widget width.
+	// Spectrograms are inherently blurry — extra columns beyond this are wasted.
+	static constexpr int MAX_SPECTROGRAM_COLUMNS = 1200;
 
 	void rebuildCache();
 
 	// Compute the spectrogram raster: a (w x h) matrix of dB values.
-	// w and h are in physical pixels (accounting for device pixel ratio).
-	Matrix<double> computeSpectrogram(int w, int h);
+	// w and h are in logical pixels (w is capped by MAX_SPECTROGRAM_COLUMNS).
+	// The time range is given explicitly so the method can be called for a partial
+	// strip during incremental pan. out_min_dB/out_max_dB are set to the raster's
+	// dB extremes, avoiding a separate scan pass.
+	Matrix<double> computeSpectrogram(int w, int h, double start_time, double duration,
+	                                  double &out_min_dB, double &out_max_dB);
+
+	// Attempt to reuse most of the cached image when the viewport has panned
+	// without changing zoom. Returns true if the cache was updated incrementally.
+	bool tryIncrementalPan();
+
+	// Build a QImage from a raster, scale it to (target_w × target_h), and return it.
+	static QImage rasterToImage(const Matrix<double> &raster,
+	                            double min_dB, double max_dB, int dynamic_range,
+	                            int target_w, int target_h);
 
 	// Formant estimation for the current viewport.
 	void rebuildFormantCache();
@@ -109,12 +131,35 @@ private:
 	QImage m_cache;
 	bool m_cache_valid = false;
 
+	// Viewport and dimensions that the current cache represents.
+	// Used to detect pan operations for incremental updates.
+	double m_cache_start = -1;
+	double m_cache_end = -1;
+	int m_cache_lw = 0;
+	int m_cache_lh = 0;
+	double m_cache_min_dB = 0;
+	double m_cache_max_dB = 0;
+
+	// Debounce timer: after an incremental pan or a leading-edge recompute,
+	// the timer fires to do a clean full recompute (fixing normalization seams)
+	// and to rebuild the formant overlay.
+	QTimer *m_debounce_timer = nullptr;
+
 	// Spectrogram settings.
 	double m_window_length;           // Duration of the analysis window (seconds).
 	double m_max_freq;                // Highest frequency to display (Hz).
 	double m_preemph_threshold;       // Pre-emphasis threshold (Hz).
 	int m_dynamic_range;              // Dynamic range in dB.
 	speech::WindowType m_window_type; // Window function.
+
+	// Cached analysis window — regenerated only when settings change.
+	Array<double> m_cached_window;
+	int m_cached_nframe = 0;
+	int m_cached_nfft = 0;
+	double m_cached_weight = 0; // sum of squared window values
+
+	// Reusable audio buffer — avoids a heap allocation per recompute.
+	std::vector<double> m_audio_buffer;
 
 	// Formant overlay.
 	bool m_show_formants = false;
