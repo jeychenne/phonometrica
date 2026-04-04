@@ -43,4 +43,10 @@ bool View::submit(AutoCommand cmd)
 	return ok;
 }
 
+void View::record(AutoCommand cmd)
+{
+	m_commands.record(std::move(cmd));
+	emit undoRedoChanged(canUndo(), canRedo());
+}
+
 } // namespace phonometrica

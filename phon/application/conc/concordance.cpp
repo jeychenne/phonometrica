@@ -2157,6 +2157,24 @@ void Concordance::remove_aux_column(intptr_t c)
 	modify();
 }
 
+Concordance::AuxColumn Concordance::extract_aux_column(intptr_t c)
+{
+	assert(c >= 1 && c <= m_aux_columns.size());
+	auto col = std::move(m_aux_columns[c]);
+	m_aux_columns.remove_at(c);
+	modify();
+	return col;
+}
+
+void Concordance::restore_aux_column(intptr_t c, AuxColumn col)
+{
+	if (c > m_aux_columns.size())
+		m_aux_columns.append(std::move(col));
+	else
+		m_aux_columns.insert(c, std::move(col));
+	modify();
+}
+
 String Concordance::aux_display_header(intptr_t c, intptr_t k) const
 {
 	auto &col = m_aux_columns[c];

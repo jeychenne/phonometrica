@@ -84,6 +84,10 @@ public:
 	// Submit a command: execute it and push onto the undo stack.
 	bool submit(AutoCommand cmd);
 
+	// Record a command that has already been executed externally.
+	// Pushes it onto the undo stack without calling execute().
+	void record(AutoCommand cmd);
+
 	bool canUndo() const { return m_commands.can_undo(); }
 	bool canRedo() const { return m_commands.can_redo(); }
 

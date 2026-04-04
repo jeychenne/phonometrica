@@ -55,6 +55,18 @@ public:
 	// Remove a column and notify the view.
 	void removeColumn(int col);
 
+	// Remove a row and return saved state for undo.
+	Dataset::SavedRow extractRow(int row);
+
+	// Restore a previously extracted row.
+	void insertRow(int row, const Dataset::SavedRow &data);
+
+	// Remove a column and return saved state for undo.
+	Dataset::SavedColumn extractColumn(int col);
+
+	// Restore a previously extracted column.
+	void insertColumn(int col, Dataset::SavedColumn data);
+
 	// Refresh all data (e.g. after structural changes).
 	void refreshAll();
 

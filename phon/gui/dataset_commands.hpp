@@ -13,152 +13,189 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 26/03/2026                                                                                                 *
+ * Created: 04/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: see header.                                                                                                *
+ * Purpose: Undoable commands for dataset views: row/column deletion, column addition, rename, duplicate, move.        *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <phon/gui/annotation_commands.hpp>
-#include <phon/gui/annotation_view.hpp>
+#ifndef PHONOMETRICA_DATASET_COMMANDS_HPP
+#define PHONOMETRICA_DATASET_COMMANDS_HPP
+
+#include <vector>
+#include <phon/gui/command.hpp>
+#include <phon/gui/dataset_model.hpp>
 
 namespace phonometrica {
 
-// ─────────────────────────────────────────────────
-//  AddLayerCommand
-// ─────────────────────────────────────────────────
-
-bool AddLayerCommand::execute()
-{
-	return m_view->addLayer(m_index, m_name, m_has_instants);
-}
-
-void AddLayerCommand::undo()
-{
-	m_view->removeLayer(m_index);
-}
+class DatasetView;
 
 
 // ─────────────────────────────────────────────────
-//  RemoveLayerCommand
+//  DeleteDatasetRowsCommand
 // ─────────────────────────────────────────────────
+// Recorded after rows have been removed.
 
-bool RemoveLayerCommand::execute()
+class DeleteDatasetRowsCommand : public Command
 {
-	// Save the layer's metadata before removing it, so undo can recreate
-	// an (empty) layer with the same name and type.
-	auto annot = m_view->annotation();
-	m_saved_name = annot->get_layer_label(m_index);
-	m_saved_has_instants = annot->layer_has_instants(m_index);
+public:
 
-	m_view->removeLayer(m_index);
-	return true;
-}
-
-void RemoveLayerCommand::undo()
-{
-	// Re-create the layer. Note: this creates an empty layer — event content
-	// is not preserved. This matches the wx version's behaviour.
-	m_view->addLayer(m_index, m_saved_name, m_saved_has_instants);
-}
-
-
-// ─────────────────────────────────────────────────
-//  AddAnchorCommand
-// ─────────────────────────────────────────────────
-
-bool AddAnchorCommand::execute()
-{
-	// Called on redo (not on first execution, which is done by LayerWidget and recorded).
-	m_view->doAddAnchor(m_layer_index, m_time);
-	return true;
-}
-
-void AddAnchorCommand::undo()
-{
-	m_view->doRemoveAnchor(m_layer_index, m_time);
-}
-
-
-// ─────────────────────────────────────────────────
-//  RemoveAnchorCommand
-// ─────────────────────────────────────────────────
-
-bool RemoveAnchorCommand::execute()
-{
-	// Called on redo.
-	m_view->doRemoveAnchor(m_layer_index, m_time);
-	return true;
-}
-
-void RemoveAnchorCommand::undo()
-{
-	// Re-add the anchor and restore event texts.
-	m_view->doAddAnchor(m_layer_index, m_time);
-
-	if (m_is_instant)
+	struct RemovedRow
 	{
-		// The instant was re-inserted with empty text. Restore the original text.
-		m_view->doSetEventText(m_layer_index, m_time, m_left_text);
-	}
-	else
+		int source_row;  // 0-based
+		Dataset::SavedRow data;
+	};
+
+	DeleteDatasetRowsCommand(DatasetView *view, std::vector<RemovedRow> removed) :
+		m_view(view), m_removed(std::move(removed)) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Delete rows"; }
+
+private:
+
+	DatasetView *m_view;
+	std::vector<RemovedRow> m_removed; // sorted ascending by source_row
+};
+
+
+// ─────────────────────────────────────────────────
+//  DeleteDatasetColumnsCommand
+// ─────────────────────────────────────────────────
+// Recorded after columns have been removed.
+
+class DeleteDatasetColumnsCommand : public Command
+{
+public:
+
+	struct RemovedColumn
 	{
-		// add_anchor split an interval at m_time, creating two events.
-		// Restore the original texts to both halves.
-		m_view->doRestoreTextsAroundAnchor(m_layer_index, m_time, m_left_text, m_right_text);
-	}
-}
+		int col;  // 0-based
+		Dataset::SavedColumn data;
+	};
+
+	DeleteDatasetColumnsCommand(DatasetView *view, std::vector<RemovedColumn> removed) :
+		m_view(view), m_removed(std::move(removed)) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Delete columns"; }
+
+private:
+
+	DatasetView *m_view;
+	std::vector<RemovedColumn> m_removed; // sorted ascending by col
+};
 
 
 // ─────────────────────────────────────────────────
-//  MoveAnchorCommand
+//  AddDatasetColumnCommand
 // ─────────────────────────────────────────────────
+// Recorded after a recode/transform/metric adds a column.
+// The new column is always appended at the end.
 
-bool MoveAnchorCommand::execute()
+class AddDatasetColumnCommand : public Command
 {
-	// Called on redo.
-	m_view->doMoveAnchor(m_layer_index, m_from, m_to);
-	return true;
-}
+public:
 
-void MoveAnchorCommand::undo()
-{
-	m_view->doMoveAnchor(m_layer_index, m_to, m_from);
-}
+	AddDatasetColumnCommand(DatasetView *view) :
+		m_view(view) {}
 
+	bool execute() override;
+	void undo() override;
 
-// ─────────────────────────────────────────────────
-//  EditEventTextCommand
-// ─────────────────────────────────────────────────
+	String description() const override { return "Add column"; }
 
-bool EditEventTextCommand::execute()
-{
-	// Called on redo.
-	m_view->doSetEventText(m_layer_index, m_event_index, m_new_text);
-	return true;
-}
+private:
 
-void EditEventTextCommand::undo()
-{
-	m_view->doSetEventText(m_layer_index, m_event_index, m_old_text);
-}
+	DatasetView *m_view;
+	Dataset::SavedColumn m_saved;
+	bool m_has_saved = false;
+};
 
 
 // ─────────────────────────────────────────────────
-//  RenameLayerCommand
+//  RenameDatasetColumnCommand
 // ─────────────────────────────────────────────────
 
-bool RenameLayerCommand::execute()
+class RenameDatasetColumnCommand : public Command
 {
-	// Called on redo.
-	m_view->doSetLayerLabel(m_layer_index, m_new_name);
-	return true;
-}
+public:
 
-void RenameLayerCommand::undo()
+	RenameDatasetColumnCommand(DatasetView *view, int section,
+	                           QString old_name, QString new_name) :
+		m_view(view), m_section(section),
+		m_old_name(std::move(old_name)), m_new_name(std::move(new_name)) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Rename column"; }
+
+private:
+
+	DatasetView *m_view;
+	int m_section;
+	QString m_old_name;
+	QString m_new_name;
+};
+
+
+// ─────────────────────────────────────────────────
+//  DuplicateDatasetColumnCommand
+// ─────────────────────────────────────────────────
+// Recorded after a column has been duplicated.
+// Undo removes the inserted copy.
+
+class DuplicateDatasetColumnCommand : public Command
 {
-	m_view->doSetLayerLabel(m_layer_index, m_old_name);
-}
+public:
+
+	DuplicateDatasetColumnCommand(DatasetView *view, int dest_col) :
+		m_view(view), m_dest_col(dest_col) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Duplicate column"; }
+
+private:
+
+	DatasetView *m_view;
+	int m_dest_col; // 1-based destination position
+	Dataset::SavedColumn m_saved;
+	bool m_has_saved = false;
+};
+
+
+// ─────────────────────────────────────────────────
+//  MoveDatasetColumnCommand
+// ─────────────────────────────────────────────────
+// Wraps move_column. Undo moves back.
+
+class MoveDatasetColumnCommand : public Command
+{
+public:
+
+	MoveDatasetColumnCommand(DatasetView *view, int src, int dest) :
+		m_view(view), m_src(src), m_dest(dest) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Move column"; }
+
+private:
+
+	DatasetView *m_view;
+	int m_src;  // 1-based original position
+	int m_dest; // 1-based destination in post-removal array
+};
 
 
 } // namespace phonometrica
+
+#endif // PHONOMETRICA_DATASET_COMMANDS_HPP

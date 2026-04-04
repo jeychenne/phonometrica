@@ -275,6 +275,12 @@ public:
 	/// Remove the stored aux column at 1-based index c.
 	void remove_aux_column(intptr_t c);
 
+	/// Extract an aux column, removing it from the concordance and returning it for undo storage.
+	AuxColumn extract_aux_column(intptr_t c);
+
+	/// Restore a previously extracted aux column at position c (1-based).
+	void restore_aux_column(intptr_t c, AuxColumn col);
+
 	/// True if any aux column of the given measurement type exists.
 	bool has_aux_pitch() const;
 	bool has_aux_formant() const;

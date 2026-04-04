@@ -55,6 +55,11 @@ public:
 	void discardChanges() override;
 	QString helpAnchor() const override { return QStringLiteral("concordance"); }
 
+	// Public helpers for undo/redo commands.
+	ConcordanceModel *concModel() const { return m_model; }
+	void refreshAfterRowChange();
+	void refreshAfterStructuralChange();
+
 signals:
 
 	void openAnnotation(const Handle<Annotation> &annot, intptr_t layer, double start, double end, bool split);

@@ -65,6 +65,19 @@ public:
 	bool addLayer(intptr_t index, const String &name, bool has_instants);
 	void removeLayer(intptr_t index);
 
+	// ── Undo/redo helper methods ─────────────────────
+	// Called by annotation commands during undo/redo.
+	// Each method mutates the annotation model and refreshes the affected layer widget.
+
+	void doAddAnchor(intptr_t layer_index, double time);
+	void doRemoveAnchor(intptr_t layer_index, double time);
+	void doMoveAnchor(intptr_t layer_index, double from, double to);
+	void doSetEventText(intptr_t layer_index, intptr_t event_1based, const String &text);
+	void doSetEventText(intptr_t layer_index, double time, const String &text);
+	void doRestoreTextsAroundAnchor(intptr_t layer_index, double time,
+	                                const String &left_text, const String &right_text);
+	void doSetLayerLabel(intptr_t layer_index, const String &name);
+
 protected:
 
 	// SoundView hooks.
@@ -116,11 +129,23 @@ private slots:
 	void onAnnotReplace();
 	void onAnnotReplaceAll();
 
+	// ── Undo recording slots ─────────────────────────
+	// Connected to LayerWidget signals; create and record undo commands.
+
+	void onAnchorCreationDone(intptr_t layer_index, double time);
+	void onAnchorRemovalDone(intptr_t layer_index, double time,
+	                         bool is_instant, String left_text, String right_text);
+	void onAnchorMoveDone(intptr_t layer_index, double from, double to);
+	void onEventTextEdited(intptr_t layer_index, intptr_t event_1based,
+	                       String old_text, String new_text);
+
 private:
 
 	int focusedLayerIndex() const;
 	int layerLayoutOffset() const;
 	LayerWidget *createLayerWidget(intptr_t layer_index);
+	LayerWidget *findLayerWidget(intptr_t layer_index) const;
+	void refreshLayer(intptr_t layer_index);
 	void clearGhostAnchors();
 	void applyLayerVisibility();
 	void populateSearchBarLayers();

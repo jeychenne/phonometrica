@@ -33,6 +33,7 @@
 #include <QFileInfo>
 #include <algorithm>
 #include <phon/gui/conc/concordance_view.hpp>
+#include <phon/gui/conc/concordance_commands.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/outlier_dialog.hpp>
@@ -695,13 +696,26 @@ void ConcordanceView::onDeleteRows()
 	}
 	std::sort(source_rows.begin(), source_rows.end());
 
+	// Remove from bottom to top, collecting removed matches for undo.
+	std::vector<DeleteMatchesCommand::RemovedMatch> removed;
+	removed.reserve(source_rows.size());
 	for (int i = source_rows.size() - 1; i >= 0; i--)
-		m_model->removeMatch(source_rows[i]);
+	{
+		int row = source_rows[i];
+		auto match = m_model->removeMatch(row);
+		removed.push_back({row, std::move(match)});
+	}
+
+	// Reverse so they're sorted ascending by source_row (for undo insertion order).
+	std::reverse(removed.begin(), removed.end());
 
 	m_conc->modify();
 	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
+
+	auto cmd = std::make_unique<DeleteMatchesCommand>(this, std::move(removed));
+	record(std::move(cmd));
 }
 
 void ConcordanceView::onEditEvent()
@@ -1153,6 +1167,8 @@ void ConcordanceView::onRecodeColumn(int section)
 		setupFilterBar();
 		updateCountLabel();
 		emit titleChanged(label());
+
+		record(std::make_unique<AddConcAuxColumnCommand>(this));
 	}
 	catch (std::exception &e)
 	{
@@ -1224,6 +1240,8 @@ void ConcordanceView::onTransformColumn(int section)
 		updateCountLabel();
 		emit titleChanged(label());
 
+		record(std::make_unique<AddConcAuxColumnCommand>(this));
+
 		if (nan_count > 0)
 		{
 			QMessageBox::information(this, tr("Transform"),
@@ -1251,8 +1269,9 @@ void ConcordanceView::onHeaderDoubleClick(int section)
 
 	if (!ok) return;
 
-	m_model->setHeaderData(section, Qt::Horizontal, new_name, Qt::EditRole);
-	emit titleChanged(label());
+	auto cmd = std::make_unique<RenameConcColumnCommand>(this, section,
+		current_display, new_name);
+	submit(std::move(cmd));
 }
 
 void ConcordanceView::updateColumnVisibility()
@@ -1649,6 +1668,8 @@ void ConcordanceView::onAddMetricColumn()
 		updateCountLabel();
 		emit titleChanged(label());
 
+		record(std::make_unique<AddConcAuxColumnCommand>(this));
+
 		// Auto-add filter rule if requested.
 		if (dlg.addFilter())
 		{
@@ -1703,6 +1724,29 @@ void ConcordanceView::onAddMetricColumn()
 	{
 		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
 	}
+}
+
+
+// ─────────────────────────────────────────────────
+//  Undo/redo helpers
+// ─────────────────────────────────────────────────
+
+void ConcordanceView::refreshAfterRowChange()
+{
+	m_conc->modify();
+	Document::file_modified();
+	updateCountLabel();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::refreshAfterStructuralChange()
+{
+	m_model->refreshAll();
+	m_table->resizeColumnsToContents();
+	updateColumnVisibility();
+	setupFilterBar();
+	updateCountLabel();
+	emit titleChanged(label());
 }
 
 } // namespace phonometrica

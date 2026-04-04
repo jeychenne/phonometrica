@@ -13,151 +13,176 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 26/03/2026                                                                                                 *
+ * Created: 04/04/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: see header.                                                                                                *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <phon/gui/annotation_commands.hpp>
-#include <phon/gui/annotation_view.hpp>
+#include <phon/gui/dataset_commands.hpp>
+#include <phon/gui/dataset_view.hpp>
 
 namespace phonometrica {
 
 // ─────────────────────────────────────────────────
-//  AddLayerCommand
+//  DeleteDatasetRowsCommand
 // ─────────────────────────────────────────────────
 
-bool AddLayerCommand::execute()
+bool DeleteDatasetRowsCommand::execute()
 {
-	return m_view->addLayer(m_index, m_name, m_has_instants);
-}
+	// Called on redo: re-remove the same rows (bottom to top).
+	auto *model = m_view->dsModel();
+	for (int i = (int) m_removed.size() - 1; i >= 0; i--)
+		m_removed[i].data = model->extractRow(m_removed[i].source_row);
 
-void AddLayerCommand::undo()
-{
-	m_view->removeLayer(m_index);
-}
-
-
-// ─────────────────────────────────────────────────
-//  RemoveLayerCommand
-// ─────────────────────────────────────────────────
-
-bool RemoveLayerCommand::execute()
-{
-	// Save the layer's metadata before removing it, so undo can recreate
-	// an (empty) layer with the same name and type.
-	auto annot = m_view->annotation();
-	m_saved_name = annot->get_layer_label(m_index);
-	m_saved_has_instants = annot->layer_has_instants(m_index);
-
-	m_view->removeLayer(m_index);
+	m_view->refreshAfterChange();
 	return true;
 }
 
-void RemoveLayerCommand::undo()
+void DeleteDatasetRowsCommand::undo()
 {
-	// Re-create the layer. Note: this creates an empty layer — event content
-	// is not preserved. This matches the wx version's behaviour.
-	m_view->addLayer(m_index, m_saved_name, m_saved_has_instants);
+	// Restore rows in ascending order.
+	auto *model = m_view->dsModel();
+	for (auto &rr : m_removed)
+		model->insertRow(rr.source_row, rr.data);
+
+	m_view->refreshAfterChange();
 }
 
 
 // ─────────────────────────────────────────────────
-//  AddAnchorCommand
+//  DeleteDatasetColumnsCommand
 // ─────────────────────────────────────────────────
 
-bool AddAnchorCommand::execute()
+bool DeleteDatasetColumnsCommand::execute()
 {
-	// Called on redo (not on first execution, which is done by LayerWidget and recorded).
-	m_view->doAddAnchor(m_layer_index, m_time);
+	// Called on redo: re-remove the same columns (right to left).
+	auto *model = m_view->dsModel();
+	for (int i = (int) m_removed.size() - 1; i >= 0; i--)
+		m_removed[i].data = model->extractColumn(m_removed[i].col);
+
+	m_view->refreshAfterChange();
 	return true;
 }
 
-void AddAnchorCommand::undo()
+void DeleteDatasetColumnsCommand::undo()
 {
-	m_view->doRemoveAnchor(m_layer_index, m_time);
+	// Restore columns in ascending order (left to right).
+	auto *model = m_view->dsModel();
+	for (auto &rc : m_removed)
+		model->insertColumn(rc.col, std::move(rc.data));
+
+	m_view->refreshAfterChange();
 }
 
 
 // ─────────────────────────────────────────────────
-//  RemoveAnchorCommand
+//  AddDatasetColumnCommand
 // ─────────────────────────────────────────────────
 
-bool RemoveAnchorCommand::execute()
+bool AddDatasetColumnCommand::execute()
 {
-	// Called on redo.
-	m_view->doRemoveAnchor(m_layer_index, m_time);
-	return true;
-}
-
-void RemoveAnchorCommand::undo()
-{
-	// Re-add the anchor and restore event texts.
-	m_view->doAddAnchor(m_layer_index, m_time);
-
-	if (m_is_instant)
+	// Called on redo: restore the saved column at the end.
+	if (m_has_saved)
 	{
-		// The instant was re-inserted with empty text. Restore the original text.
-		m_view->doSetEventText(m_layer_index, m_time, m_left_text);
+		auto *model = m_view->dsModel();
+		int col = model->columnCount(); // insert at end (0-based = current count)
+		model->insertColumn(col, std::move(m_saved));
+		m_has_saved = false;
+		m_view->refreshAfterChange();
 	}
-	else
+	// On first call (via record()), the column was already added.
+	return true;
+}
+
+void AddDatasetColumnCommand::undo()
+{
+	auto *model = m_view->dsModel();
+	int last = model->columnCount() - 1;
+	m_saved = model->extractColumn(last);
+	m_has_saved = true;
+	m_view->refreshAfterChange();
+}
+
+
+// ─────────────────────────────────────────────────
+//  RenameDatasetColumnCommand
+// ─────────────────────────────────────────────────
+
+bool RenameDatasetColumnCommand::execute()
+{
+	m_view->dsModel()->setHeaderData(m_section, Qt::Horizontal, m_new_name, Qt::EditRole);
+	m_view->refreshAfterChange();
+	return true;
+}
+
+void RenameDatasetColumnCommand::undo()
+{
+	m_view->dsModel()->setHeaderData(m_section, Qt::Horizontal, m_old_name, Qt::EditRole);
+	m_view->refreshAfterChange();
+}
+
+
+// ─────────────────────────────────────────────────
+//  DuplicateDatasetColumnCommand
+// ─────────────────────────────────────────────────
+
+bool DuplicateDatasetColumnCommand::execute()
+{
+	// Called on redo: restore the saved column.
+	if (m_has_saved)
 	{
-		// add_anchor split an interval at m_time, creating two events.
-		// Restore the original texts to both halves.
-		m_view->doRestoreTextsAroundAnchor(m_layer_index, m_time, m_left_text, m_right_text);
+		auto *model = m_view->dsModel();
+		int col_0 = m_dest_col - 1; // 0-based
+		model->insertColumn(col_0, std::move(m_saved));
+		m_has_saved = false;
+		m_view->refreshAfterChange();
 	}
-}
-
-
-// ─────────────────────────────────────────────────
-//  MoveAnchorCommand
-// ─────────────────────────────────────────────────
-
-bool MoveAnchorCommand::execute()
-{
-	// Called on redo.
-	m_view->doMoveAnchor(m_layer_index, m_from, m_to);
+	// On first call (via record()), the column was already duplicated.
 	return true;
 }
 
-void MoveAnchorCommand::undo()
+void DuplicateDatasetColumnCommand::undo()
 {
-	m_view->doMoveAnchor(m_layer_index, m_to, m_from);
+	auto *model = m_view->dsModel();
+	int col_0 = m_dest_col - 1; // 0-based
+	m_saved = model->extractColumn(col_0);
+	m_has_saved = true;
+	m_view->refreshAfterChange();
 }
 
 
 // ─────────────────────────────────────────────────
-//  EditEventTextCommand
+//  MoveDatasetColumnCommand
 // ─────────────────────────────────────────────────
 
-bool EditEventTextCommand::execute()
+bool MoveDatasetColumnCommand::execute()
 {
-	// Called on redo.
-	m_view->doSetEventText(m_layer_index, m_event_index, m_new_text);
+	// Called on redo: move src → dest.
+	auto ds = m_view->dsModel()->dataset();
+	ds->move_column(m_src, m_dest);
+	ds->set_content_modified(true);
+	m_view->dsModel()->refreshAll();
+	m_view->refreshAfterChange();
 	return true;
 }
 
-void EditEventTextCommand::undo()
+void MoveDatasetColumnCommand::undo()
 {
-	m_view->doSetEventText(m_layer_index, m_event_index, m_old_text);
-}
-
-
-// ─────────────────────────────────────────────────
-//  RenameLayerCommand
-// ─────────────────────────────────────────────────
-
-bool RenameLayerCommand::execute()
-{
-	// Called on redo.
-	m_view->doSetLayerLabel(m_layer_index, m_new_name);
-	return true;
-}
-
-void RenameLayerCommand::undo()
-{
-	m_view->doSetLayerLabel(m_layer_index, m_old_name);
+	// Reverse the move. move_column(src, dest) removes src then inserts at dest
+	// in the post-removal array. To reverse, we need to figure out the inverse.
+	//
+	// After move(src, dest):
+	//   - Column that was at src is now at effective position dest.
+	//   - To reverse: move it from dest back to src.
+	//
+	// This is correct because move_column's semantics are symmetric when
+	// the arguments are swapped for undo.
+	auto ds = m_view->dsModel()->dataset();
+	ds->move_column(m_dest, m_src);
+	ds->set_content_modified(true);
+	m_view->dsModel()->refreshAll();
+	m_view->refreshAfterChange();
 }
 
 

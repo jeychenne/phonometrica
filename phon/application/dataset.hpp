@@ -124,7 +124,7 @@ public:
 
 	static void initialize(Runtime &rt);
 
-private:
+	// ── Column storage (public for undo/redo support) ──
 
 	struct Column
 	{
@@ -140,6 +140,8 @@ private:
 
         ColumnType find_type(const std::type_info &t) const;
 	};
+
+	using AutoColumn = std::unique_ptr<Column>;
 
 	template<class T>
 	struct TColumn : public Column
@@ -165,6 +167,44 @@ private:
 		Array<T> data;
 	};
 
+	// ── Undo/redo support ────────────────────────────
+
+	/// A typed cell value for row save/restore.
+	struct CellValue
+	{
+		ColumnType type = ColumnType::Text;
+		double num = 0;
+		String str;
+		bool flag = false;
+	};
+
+	/// A saved row: one CellValue per column (1-based indexing).
+	struct SavedRow
+	{
+		Array<CellValue> cells;
+	};
+
+	/// A saved column: header + polymorphic column data.
+	struct SavedColumn
+	{
+		String label;
+		AutoColumn data;
+	};
+
+	/// Remove row i (1-based) and return its data for undo.
+	SavedRow extract_row(intptr_t i);
+
+	/// Insert a previously extracted row at position i (1-based).
+	void insert_row(intptr_t i, const SavedRow &row);
+
+	/// Remove column j (1-based) and return it for undo.
+	SavedColumn extract_column(intptr_t j);
+
+	/// Insert a previously extracted column at position j (1-based).
+	void insert_column(intptr_t j, SavedColumn col);
+
+private:
+
 	void read_from_csv(std::string_view sep = ",");
 
 	void load() override;
@@ -179,8 +219,6 @@ private:
 
 	TColumn<String>* cast_string(Column *col) { return static_cast<TColumn<String>*>(col); }
 	const TColumn<String>* cast_string(Column *col) const { return static_cast<TColumn<String>*>(col); }
-
-	using AutoColumn = std::unique_ptr<Column>;
 
 	/// Build a tab-separated string key for row i (1-based), used for set membership.
 	String row_key(intptr_t i) const;

@@ -416,6 +416,96 @@ void Dataset::move_column(intptr_t src, intptr_t dest)
     m_content_modified = true;
 }
 
+
+// ── Undo/redo support ─────────────────────────────────────
+
+Dataset::SavedRow Dataset::extract_row(intptr_t i)
+{
+	assert(i >= 1 && i <= nrow);
+
+	SavedRow row;
+	row.cells.resize(ncol);
+
+	for (intptr_t j = 1; j <= ncol; j++)
+	{
+		auto col = m_columns[j].get();
+		CellValue &cv = row.cells[j];
+		cv.type = col->type();
+
+		switch (cv.type)
+		{
+		case ColumnType::Numeric:
+			cv.num = cast_num(col)->get(i);
+			break;
+		case ColumnType::Boolean:
+			cv.flag = cast_bool(col)->get(i);
+			break;
+		default:
+			cv.str = cast_string(col)->get(i);
+			break;
+		}
+	}
+
+	// Now remove the row (shifts subsequent rows up).
+	remove_row(i);
+	return row;
+}
+
+void Dataset::insert_row(intptr_t i, const SavedRow &row)
+{
+	assert(i >= 1 && i <= nrow + 1);
+	assert(row.cells.size() == ncol);
+
+	for (intptr_t j = 1; j <= ncol; j++)
+	{
+		auto col = m_columns[j].get();
+		auto &cv = row.cells[j];
+
+		switch (cv.type)
+		{
+		case ColumnType::Numeric:
+			cast_num(col)->data.insert(i, cv.num);
+			break;
+		case ColumnType::Boolean:
+			cast_bool(col)->data.insert(i, cv.flag);
+			break;
+		default:
+			cast_string(col)->data.insert(i, cv.str);
+			break;
+		}
+	}
+
+	nrow++;
+}
+
+Dataset::SavedColumn Dataset::extract_column(intptr_t j)
+{
+	assert(j >= 1 && j <= ncol);
+	SavedColumn sc;
+	sc.label = m_labels[j];
+	sc.data = std::move(m_columns[j]);
+	m_labels.remove_at(j);
+	m_columns.remove_at(j);
+	ncol--;
+	return sc;
+}
+
+void Dataset::insert_column(intptr_t j, SavedColumn col)
+{
+	assert(j >= 1 && j <= ncol + 1);
+
+	if (j > ncol) {
+		m_labels.append(std::move(col.label));
+		m_columns.append(std::move(col.data));
+	}
+	else {
+		m_labels.insert(j, std::move(col.label));
+		m_columns.insert(j, std::move(col.data));
+	}
+	ncol++;
+}
+
+
 // ── Set operations ─────────────────────────────────────────
 
 String Dataset::row_key(intptr_t i) const

@@ -140,6 +140,36 @@ void DatasetModel::removeColumn(int col)
 	endRemoveColumns();
 }
 
+Dataset::SavedRow DatasetModel::extractRow(int row)
+{
+	beginRemoveRows(QModelIndex(), row, row);
+	auto saved = m_ds->extract_row(row + 1); // 1-based
+	endRemoveRows();
+	return saved;
+}
+
+void DatasetModel::insertRow(int row, const Dataset::SavedRow &data)
+{
+	beginInsertRows(QModelIndex(), row, row);
+	m_ds->insert_row(row + 1, data); // 1-based
+	endInsertRows();
+}
+
+Dataset::SavedColumn DatasetModel::extractColumn(int col)
+{
+	beginRemoveColumns(QModelIndex(), col, col);
+	auto saved = m_ds->extract_column(col + 1); // 1-based
+	endRemoveColumns();
+	return saved;
+}
+
+void DatasetModel::insertColumn(int col, Dataset::SavedColumn data)
+{
+	beginInsertColumns(QModelIndex(), col, col);
+	m_ds->insert_column(col + 1, std::move(data)); // 1-based
+	endInsertColumns();
+}
+
 void DatasetModel::refreshAll()
 {
 	beginResetModel();
