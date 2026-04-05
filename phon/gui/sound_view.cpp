@@ -297,10 +297,6 @@ void SoundView::createToolBar()
 		tr("Zoom in"));
 	connect(zoom_in_action, &QAction::triggered, this, &SoundView::onZoomIn);
 
-	auto *goto_action = m_toolbar->addAction(QIcon(":/icons/text-cursor.svg"),
-		tr("Go to time..."));
-	connect(goto_action, &QAction::triggered, this, &SoundView::onGoToTime);
-
 	m_zoom_sel_action = m_toolbar->addAction(QIcon(":/icons/minimize.svg"),
 		tr("Zoom to selection"));
 	m_zoom_sel_action->setEnabled(false);
@@ -310,8 +306,12 @@ void SoundView::createToolBar()
 		tr("View whole file"));
 	connect(view_all_action, &QAction::triggered, this, &SoundView::onViewAll);
 
+	auto *goto_action = m_toolbar->addAction(QIcon(":/icons/text-cursor.svg"),
+		tr("Go to time..."));
+	connect(goto_action, &QAction::triggered, this, &SoundView::onGoToTime);
+
 	auto *sel_window_action = m_toolbar->addAction(QIcon(":/icons/select-window.svg"),
-		tr("Select window"));
+	tr("Select window"));
 	connect(sel_window_action, &QAction::triggered, this, &SoundView::onSelectWindow);
 
 	m_toolbar->addSeparator();
