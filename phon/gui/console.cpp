@@ -23,7 +23,7 @@
 #include <QTextBlock>
 #include <QScrollBar>
 #include <QTabWidget>
-#include <phon/string.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/runtime.hpp>
 #include <phon/runtime/file.hpp>
@@ -35,15 +35,7 @@ Console::Console(Runtime &rt, QWidget *parent) :
 {
 	setFrameShape(QFrame::NoFrame);
 	setUndoRedoEnabled(false);
-
-	// Monospace font.
-#if PHON_MACOS
-	setFont(QFont("Monaco", 13));
-#elif PHON_WINDOWS
-	setFont(QFont("Consolas", 10));
-#else
-	setFont(QFont("Monospace", 12));
-#endif
+	setFont(defaultMonoFont());
 
 	// Make the console accessible from the runtime (used by ScriptView::execute).
 	rt.console = this;

@@ -28,6 +28,7 @@
 #include <QTextStream>
 #include <QMessageBox>
 #include <phon/gui/output_panel.hpp>
+#include <phon/gui/font_helpers.hpp>
 
 namespace phonometrica {
 
@@ -64,10 +65,7 @@ OutputPanel::OutputPanel(QWidget *parent) :
 	m_text->setUndoRedoEnabled(false);
 
 	// Use a monospace font for aligned columns.
-	QFont font("monospace");
-	font.setStyleHint(QFont::Monospace);
-	font.setPointSize(QApplication::font().pointSize());
-	m_text->setFont(font);
+	m_text->setFont(defaultMonoFont());
 
 	layout->addWidget(m_text);
 }

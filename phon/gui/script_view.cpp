@@ -32,6 +32,7 @@
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
 #include <phon/gui/console.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/output_panel.hpp>
 #include <phon/application/settings.hpp>
@@ -361,13 +362,7 @@ void ScriptView::onViewBytecode()
 		auto *view = new QPlainTextEdit(&dlg);
 		view->setReadOnly(true);
 		view->setPlainText(text);
-#if PHON_MACOS
-		view->setFont(QFont("Monaco", 12));
-#elif PHON_WINDOWS
-		view->setFont(QFont("Consolas", 10));
-#else
-		view->setFont(QFont("Monospace", 11));
-#endif
+		view->setFont(defaultMonoFont());
 		layout->addWidget(view);
 		dlg.exec();
 	}

@@ -38,6 +38,7 @@
 #include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/outlier_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
@@ -372,9 +373,7 @@ void ConcordanceView::setupUi()
 	hdr->setToolTip(tr("Right-click for column options (sort, rename, recode, transform)"));
 
 	// Monospace font for the table body.
-	QFont mono("monospace", m_table->font().pointSize());
-	mono.setStyleHint(QFont::Monospace);
-	m_table->setFont(mono);
+	m_table->setFont(defaultMonoFont());
 
 	m_table->resizeColumnsToContents();
 
