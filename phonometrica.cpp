@@ -157,8 +157,9 @@ int main(int argc, char **argv)
 	QApplication::setApplicationName("Phonometrica");
 	QApplication::setOrganizationName("Phonometrica");
 	QGuiApplication::setDesktopFileName("Phonometrica");
+#ifndef PHON_MACOS
 	app.setWindowIcon(QIcon(":/icons/phonometrica.svg"));
-
+#endif
 	Runtime runtime(argv[0]);
 	runtime.set_text_mode(false);
 	initialize(runtime);
