@@ -113,11 +113,13 @@ PlotWidget::PlotWidget(QWidget *parent) : QWidget(parent)
 void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
                           const QString &x_label, const QString &y_label,
                           const QString &title, RefLine ref,
-                          bool reverse_x, bool reverse_y)
+                          bool reverse_x, bool reverse_y,
+                          std::vector<QString> point_labels)
 {
 	m_mode = Mode::Scatter;
 	m_x = std::move(x);
 	m_y = std::move(y);
+	m_point_labels = std::move(point_labels);
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
@@ -127,7 +129,7 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
 	m_boxes.clear();
 	m_bins.clear();
 	m_group_data.clear();
-	m_use_labels = false;
+	m_use_labels = !m_point_labels.empty();
 	m_cache_valid = false;
 	update();
 }
@@ -153,6 +155,7 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
+	m_point_labels.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -262,6 +265,7 @@ void PlotWidget::clear()
 	m_mode = Mode::Empty;
 	m_x.clear();
 	m_y.clear();
+	m_point_labels.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -672,13 +676,33 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	}
 
 	// Points
-	p.setPen(Qt::NoPen);
-	p.setBrush(POINT_COLOR);
 	size_t n = std::min(m_x.size(), m_y.size());
-	for (size_t i = 0; i < n; i++) {
-		double x = dataToX(m_x[i]);
-		double y = dataToY(m_y[i]);
-		p.drawEllipse(QPointF(x, y), POINT_RADIUS, POINT_RADIUS);
+	if (m_use_labels && !m_point_labels.empty())
+	{
+		QFont label_font;
+		label_font.setPixelSize(10);
+		label_font.setBold(true);
+		p.setFont(label_font);
+		QFontMetrics lfm(label_font);
+		p.setPen(POINT_COLOR);
+		p.setBrush(Qt::NoBrush);
+		for (size_t i = 0; i < n; i++) {
+			double x = dataToX(m_x[i]);
+			double y = dataToY(m_y[i]);
+			const auto &sym = (i < m_point_labels.size()) ? m_point_labels[i] : QString();
+			int tw = lfm.horizontalAdvance(sym);
+			p.drawText(int(x) - tw / 2, int(y) + lfm.ascent() / 2, sym);
+		}
+	}
+	else
+	{
+		p.setPen(Qt::NoPen);
+		p.setBrush(POINT_COLOR);
+		for (size_t i = 0; i < n; i++) {
+			double x = dataToX(m_x[i]);
+			double y = dataToY(m_y[i]);
+			p.drawEllipse(QPointF(x, y), POINT_RADIUS, POINT_RADIUS);
+		}
 	}
 	p.setClipping(false);
 }

@@ -19,7 +19,9 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <QContextMenuEvent>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QTextBlock>
 #include <QScrollBar>
 #include <QTabWidget>
@@ -147,6 +149,19 @@ void Console::keyPressEvent(QKeyEvent *e)
 	}
 
 	QPlainTextEdit::keyPressEvent(e);
+}
+
+void Console::contextMenuEvent(QContextMenuEvent *e)
+{
+	auto *menu = createStandardContextMenu();
+	menu->addSeparator();
+	auto *reset_action = menu->addAction(tr("Reset"));
+	connect(reset_action, &QAction::triggered, this, [this]() {
+		clear();
+		addPrompt();
+	});
+	menu->exec(e->globalPos());
+	delete menu;
 }
 
 
