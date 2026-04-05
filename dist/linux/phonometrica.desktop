@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Phonometrica
+GenericName=Phonetic Corpus Tool
+Comment=Annotate and analyze speech corpora
+Exec=phonometrica %F
+Icon=Icon=/usr/local/share/icons/hicolor/scalable/apps/org.phonometrica.Phonometrica.svg
+Terminal=false
+Categories=Education;Science;
+MimeType=application/x-phonometrica-project;
+Keywords=phonetics;linguistics;annotation;speech;corpus;

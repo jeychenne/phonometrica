@@ -1,0 +1,27 @@
+Source: phonometrica
+Section: science
+Priority: optional
+Maintainer: Julien Eychenne <julien.eychenne@usherbrooke.ca>
+Build-Depends:
+ debhelper-compat (= 13),
+ cmake (>= 3.20),
+ g++ (>= 12),
+ qt6-base-dev,
+ qt6-svg-dev,
+ libqscintilla2-qt6-dev,
+ libsndfile1-dev,
+ libasound2-dev,
+ python3-sphinx
+Standards-Version: 4.7.0
+Homepage: https://github.com/jeychenne/phonometrica
+Rules-Requires-Root: no
+
+Package: phonometrica
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Phonetic corpus annotation and analysis
+ Phonometrica is an open-source tool for the annotation and analysis
+ of speech corpora. It supports multi-layer time-aligned annotations,
+ acoustic queries (formant, pitch, intensity), text concordances, and
+ statistical modelling including linear and generalized linear mixed
+ models and generalized additive models.

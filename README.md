@@ -21,9 +21,9 @@ Pre-built binaries are available from the [releases page](https://github.com/jey
 
 ## Building from source
 
-Phonometrica is written in C++ (C++17) and uses Qt 6 for its graphical interface. You need:
+Phonometrica is written in C++ (C++20) and uses Qt 6 for its graphical interface. You need:
 
-- A C++17-compliant compiler (GCC 10+, Clang 13+, or MSVC 2019+)
+- A C++20-compliant compiler (GCC 10+, Clang 13+, or MSVC 2019+)
 - CMake 3.21 or later
 - Qt 6.2 or later (Widgets, Svg, PrintSupport modules)
 - QScintilla for Qt 6
