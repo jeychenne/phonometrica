@@ -2220,20 +2220,37 @@ void AnalysisView::updateEdaPlot()
 		else
 		{
 			// ── Plain scatter ──
+
+			// Resolve label column if selected.
+			intptr_t l_col = 0;
+			if (has_label) {
+				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == label_name) { l_col = j; break; }
+				}
+			}
+
 			std::vector<double> xv, yv;
+			std::vector<QString> lv;
 			xv.reserve(nr);
 			yv.reserve(nr);
+			if (l_col > 0) lv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
 				auto vx = dt->get_cell(r, x_col);
 				auto vy = dt->get_cell(r, y_col);
 				if (vx.empty() || vy.empty()) continue;
+				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
 				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
+					if (l_col > 0) {
+						auto vl = dt->get_cell(r, l_col);
+						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
+					}
 				}
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
@@ -2265,9 +2282,13 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 
+			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
+			if (has_label && l_col > 0)
+				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
+
 			m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
-			                     y_name_q + QStringLiteral(" ~ ") + x_name_q,
-			                     PlotWidget::RefLine::None, formant, formant);
+			                     title, PlotWidget::RefLine::None, formant, formant,
+			                     std::move(lv));
 
 			if (reg_valid)
 				m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);

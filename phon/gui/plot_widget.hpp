@@ -50,7 +50,8 @@ public:
 	void setData(std::vector<double> x, std::vector<double> y,
 	             const QString &x_label, const QString &y_label,
 	             const QString &title, RefLine ref = RefLine::None,
-	             bool reverse_x = false, bool reverse_y = false);
+	             bool reverse_x = false, bool reverse_y = false,
+	             std::vector<QString> point_labels = {});
 
 	/// Grouped scatter plot. Each point belongs to a named group (groups[i]).
 	/// Optionally shows per-group mean markers and confidence ellipses.
@@ -172,6 +173,7 @@ private:
 	// Scatter data
 	std::vector<double> m_x;
 	std::vector<double> m_y;
+	std::vector<QString> m_point_labels; // per-point text labels for plain scatter (empty = draw circles)
 	RefLine m_ref_line = RefLine::None;
 	bool m_reverse_x = false;
 	bool m_reverse_y = false;

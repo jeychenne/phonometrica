@@ -64,6 +64,7 @@ signals:
 protected:
 
 	void keyPressEvent(QKeyEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
 
 private:
 
