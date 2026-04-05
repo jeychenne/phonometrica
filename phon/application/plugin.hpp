@@ -23,7 +23,7 @@
 #define PHONOMETRICA_PLUGIN_HPP
 
 #include <functional>
-#include <phon/utils/any.hpp>
+#include <any>
 #include <phon/application/protocol.hpp>
 
 namespace phonometrica {
