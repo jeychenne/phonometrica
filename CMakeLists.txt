@@ -482,6 +482,29 @@ endif()
 
 
 ####################
+##  INSTALL       ##
+####################
+
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+
+    install(TARGETS ${PROJECT_NAME}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+    install(FILES ${CMAKE_SOURCE_DIR}/dist/linux/phonometrica.desktop
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications)
+
+    install(FILES ${CMAKE_SOURCE_DIR}/dist/linux/org.phonometrica.Phonometrica.metainfo.xml
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/metainfo)
+
+    install(FILES ${CMAKE_SOURCE_DIR}/icons/phonometrica.svg
+            DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/apps
+            RENAME org.phonometrica.Phonometrica.svg)
+endif()
+
+
+
+####################
 ##  UNIT TESTS    ##
 ####################
 
