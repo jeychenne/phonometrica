@@ -1,243 +1,236 @@
+.. _queries:
+
 Queries
 =======
 
 
-Phonometrica offers a number of features to find get_concordances in a corpus. It
-also allows user to customize its search interface by creating search
-grammars specifically tailored for a project. Concordancing features are
-available in the ``Search`` menu.
+Phonometrica offers a number of features to search through annotated corpora and extract acoustic measurements.
+Query features are available in the **Analysis** menu.
 
 
-Simple queries
---------------
+.. _text-queries:
 
+Text queries
+------------
 
-To run a new query, click on ``Edit > Edit new query...`` or use
-the shortcut ``alt+Q``. This will open a new
-search window, which lets you search through all the annotations in your corpus. 
+To run a new text query, click on ``Analysis > Find in annotations...`` or use
+the shortcut ``Ctrl+Shift+F``. This opens the query editor, which lets you search
+through all the annotations in your corpus.
 
 The Files box
 ~~~~~~~~~~~~~
 
-The ``Files`` box in the top left corner allows you to select the type
-of files to search in (documents or annotations). You can either select
-files individually if you want to restrict your query to a particular
-set of files, or leave all files unchecked, in which case Phonometrica will
-try to search in all files.
+The ``Files`` box allows you to select which annotation files to search in. You can select files individually
+to restrict your query, or leave all files unchecked to search in all annotation files.
 
 The Search box
 ~~~~~~~~~~~~~~
 
-The ``Search`` box in the top right corner allows you to enter some text
-or a regular expression to search for. Next to the search field, a spin
-box lets you select the tier you want to search in. The default choice
-is ``Any tier``, which means that Phonometrica will try to find your pattern
-in all tiers of the selected files. You can restrict the search to a
-particular tier by selecting the appropriate tier number. Alternatively,
-you can specify a *tier name pattern* using a regular expression. If you
-do specify a tier name pattern, Phonometrica will ignore the tier number and
-will search instead in any tier whose name matches the pattern.
+The ``Search`` box allows you to enter a text pattern or a regular expression to search for.
+Next to the search field, a spin box lets you select the **layer** you want to search in. The default choice
+is ``Any layer``, which means that Phonometrica will search in all layers of the selected files. You can
+restrict the search to a particular layer by selecting its index. Alternatively, you can specify a **layer
+name pattern** using a regular expression. If you specify a layer name pattern, Phonometrica will ignore the
+layer index and search instead in any layer whose name matches the pattern.
 
-By default, the text in the search field is interpreted as a regular
-expression. If you are looking for plain text string instead, you can
-select ``plain text`` instead of ``regular expression`` in the selector
-located under the ``+`` and ``-`` buttons. Whether you use a plain text
-string or a regular expression, the search will be case-insensitive by
-default, which means that strings like "foo", "Foo" and "FOO" are
-treated as identical. To perform a case sensitive search, simply check
-the ``case sensitive`` box.
+By default, the text in the search field is interpreted as a regular expression. If you prefer plain text
+matching, you can select ``plain text`` instead of ``regular expression`` in the selector below the ``+``
+and ``-`` buttons. Whether you use plain text or a regular expression, the search is case-insensitive by
+default. To perform a case-sensitive search, check the ``case sensitive`` box.
 
-Concordances in a simple query follow the KWIC model (key word in
-context), which means that a match is extracted along with its left and
-right context. (The length of the context window can be adjusted in the
-preferences.) When the context window is longer than the context of the
-match in a given item (time point or interval), Phonometrica will extract
-additional text in the preceeding/following items until the left/right
-contexts have the expected length. If it cannot find enough items, it
-will pad the text with white space. By default, Phonometrica will use one
-white space character to join the text from different intervals. You can
-specify a different string (including an empty string) in the
-``Separator`` field.
+Concordances from a simple query follow the **KWIC** (Key Word In Context) model, which means that a match
+is extracted along with its left and right context. The length of the context window can be adjusted in the
+preferences. When the context window extends beyond a single event, Phonometrica joins text from adjacent
+events using a separator (one space by default, configurable in the ``Separator`` field).
 
-Metadata
-~~~~~~~~
 
-If you have added properties to your project, a set of field boxes
-will be added below the ``Files`` and ``Search`` box. Each field
-category is displayed as a group box containing a list of all the labels
-of this category. You can check or uncheck any label in any category
-(each category also has an ``All labels`` button to check/uncheck all
-labels at once). The search engine will filter files based on the
-conditions that you specify in the field box. Within a category, it
-uses the Boolean ``OR`` operator to find the subset of files that has
-either label. Across categories, it uses the ``AND`` operator to find
-the intersection of all the subsets defined by each category.
+Metadata filters
+~~~~~~~~~~~~~~~~
 
-At the bottom of search window, an additional field lets you filter
-files based on their description. For example, it is possible to extract
-all the files that contain (or do not contain) a specific string.
+If your project has properties, a set of filter controls appears below the search area. Each property
+category is displayed as a group of checkboxes. The search engine filters files based on the conditions
+you specify:
 
-Viewing results
-~~~~~~~~~~~~~~~
+- **Within** a category, Phonometrica uses the Boolean **OR** operator: a file matches if it has any of the checked labels.
+- **Across** categories, Phonometrica uses the Boolean **AND** operator: a file must match all categories.
 
-Once you hit the ``ok`` button, the result of your query is presented as
-a new ``query view`` in the viewer. You can browse the results with the
-mouse wheel. The information panel on the right-hand side displays
-information about the selected token.
+An additional field at the bottom allows you to filter files based on their **description** (including or
+excluding files that contain a specific string).
 
-If an annotation is bound to a sound file, you can play a match by
-double-clicking on it or by pressing the space bar (you can also
-interrupt it by pressing ``Esc``).
 
-Right-clicking on item will display a context menu that allows you to
-perform a number of actions:
+Saving and editing queries
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
--  ``Play selection``: this will play the corresponding item if the
-   annotation is bound to a sound file.
+You can **save** a query for later reuse using the ``Save`` or ``Save as...`` buttons in the query editor.
+Saved queries are stored as ``.phon-query`` files and appear in the project tree. To re-run or modify a
+saved query, use ``Analysis > Edit last query...`` (``Ctrl+L``) or double-click on the query in the
+project tree.
 
--  ``Open in annotation``: this will open the annotation in a new view,
-   along with its sound file if it is bound to a sound.
 
--  ``Open selection in Praat``: if Praat is installed and configured to
-   work with Phonometrica, this will open the match in Praat. Phonometrica will open
-   the TextGrid (and the sound file if the annotation is bound) in Praat
-   and will display the current match. (Note that you need to have Praat
-   already running for this to work.)
+.. _complex-queries:
 
--  ``Edit item text``: this allows you to modify the text of the item
-   where the match was found. (Note that the query view is currently not
-   updated to reflect this change.)
-
--  ``Create table view``: this will convert the concordance set, along
-   with all its metadata, to a table that can be imported into a
-   spreadsheet program.
-
--  ``Export results to tab-separated file (CSV)...``: this exports the
-   concordance set, along with all its metadata, to a CSV file that can
-   be imported into a spreadsheet program.
-
--  ``Bookmark search result``: this allows you to bookmark a matched
-   item. Bookmarks are displayed in the bookmark panel, which can
-   accessed by clicking on the star in the bottom left corner of the
-   main window.
-   
 Complex queries
 ---------------
 
-After performing a `simple queries <simple.md>`__ on a set of annotation
-files, Phonometrica attempts to find a set of get_concordances in one item (point
-or interval) at a time. While it is possible for an item to match a
-given search pattern several times if several substrings match the
-pattern, matches are nevertheless limited to a single item.
-
-Sometimes, however, we might want to match text in several items
-*simultaneously*. Such a query is called a *complex query* in Phonometrica.
-There are 3 types of relations between items, detailed below: alignment,
-precedence and dominance.
+A simple query searches for a pattern in one event (interval or instant) at a time. Sometimes, however,
+you need to match text in several events **simultaneously** — for instance, to find a word on one layer
+that is aligned with a particular part-of-speech tag on another layer. This is called a *complex query*.
 
 Building a complex query
 ~~~~~~~~~~~~~~~~~~~~~~~~
 
-When you open a search window, two small buttons with a ``+`` and ``-``
-sign appear below the main the search field. These buttons allow you to
-add and remove search items. Any query which has more than one search
-item is a complex query.
+Below the main search field, two buttons (``+`` and ``-``) allow you to add and remove search constraints.
+Any query with more than one constraint is a complex query.
 
-When you add one or more search items, you will notice that each of them
-(except the last one) is followed by a selector with 3 possible values:
-``is aligned with``, ``precedes`` and ``dominates``. They correspond to
-the tier item relations ``alignment``, ``precedence`` and ``dominance``,
-respectively.
+When you add one or more constraints, each constraint (except the last) is followed by a selector that
+specifies the **relation** between the current constraint and the next one. Phonometrica supports the
+following relations:
 
-Contrary to simple queries, complex queries do not use the KWIC model to
-display results. Instead of displaying a matched string in its context,
-it lets the user select a ``display tier``, which appears at the top of
-the search box. The text that is displayed is the concatenation of all
-the items contain within the time interval defined by simultaneous
-satisfaction of the constraints on each search item. Several examples
-are given below.
 
-Alignment relation
-~~~~~~~~~~~~~~~~~~
+Alignment
+^^^^^^^^^
 
-Two items are aligned if they are on different tiers and their left and
-right boundaries coincide. Suppose that you have a word tier (tier 1),
-where each word was segmented, and a part-of-speech (POS) tier (tier 2)
-which is aligned with the word tier. To extract all the nouns in the
-corpus, you could do the following:
+Two events are **aligned** if they are on different layers and their left and right boundaries coincide.
 
--  set ``NOUN`` as the search pattern for tier 1, and choose the
-   ``is aligned with`` value of the relation selector.
--  set ``.+`` as the search pattern for tier 2
--  set the display tier to tier 2
+*Example*: to extract all nouns from a corpus with a word layer (layer 1) and a POS layer (layer 2) that
+is aligned with the word layer: set ``NOUN`` as the search pattern for layer 1, choose ``is aligned with``,
+set ``.+`` as the pattern for layer 2, and choose layer 2 as the display layer. Phonometrica will return
+the words on layer 2 that are exactly aligned with a ``NOUN`` item on layer 1.
 
-Phonometrica will first look for all items whose text contains "NOUN" on tier
-1, and will keep all those items which contain a non-empty label in an
-item of tier 2 which is exactly aligned with a NOUN item on tier 1.
-Phonometrica will then return a list of the text labels on tier 2 which match
-the above criteria.
 
-As another example, suppose you now want to extract all the adverbs that
-end with *-ly*. You could do the following:
+Left alignment
+^^^^^^^^^^^^^^
 
--  set ``ADV`` as the search pattern for tier 1, and choose the
-   ``is aligned with`` value of the relation selector.
--  set ``.+ly$`` as the search pattern for tier 2
--  set the display tier to tier 2
+Two events are **left-aligned** if they share their left boundary (start time) but not necessarily their
+right boundary. This is useful for hierarchical structures where a larger unit starts at the same point
+as a smaller unit.
 
-Assuming that tier 2 contains exactly one word per interval, this will
-successfully extract all the adverbs on tier 2 that end with *-ly*.
 
-Precedence relation
-~~~~~~~~~~~~~~~~~~~
+Right alignment
+^^^^^^^^^^^^^^^
 
-Two items are in a precedence relation if they immediately follow each
-other. You can search for arbitrarily long sequences by chaining search
-items on the same tier. When you specify a sequence, Phonometrica will
-retrieve the text from the display tier that is included within the span
-defined by the sequence.
+Two events are **right-aligned** if they share their right boundary (end time). This is the mirror of
+left alignment.
 
-Suppose that you have a word tier (tier 1) and a POS tier (tier 2), as
-in the alignment examples. Instead of searching for a single word, you
-might be interested in looking for word sequences. To find all the
-``DET+NOUN`` sequences, you could do the following:
 
--  set ``DET`` as the search pattern for the first tier item in tier 1,
-   and choose the ``precedes`` value of the relation selector.
--  set ``NOUN`` as the search pattern for the second tier item, setting
-   the tier number to 1 to ensure you are looking in the same tier
--  set the display tier to tier 2
+Dominance
+^^^^^^^^^
 
-Phonometrica will first look for all ``DET`` items on tier one, and will keep
-only those that are followed by a ``NOUN`` item on the same tier. It
-will then display the text that results from the concatenation of all
-the items on tier 2 within the span determined by the beginning of the
-``DET`` item and by the end of ``NOUN`` item on tier 1.
+An event *a* **dominates** an event *b* if *a* and *b* are on different layers, the left boundary of *b*
+is greater than or equal to that of *a*, and the right boundary of *b* is less than or equal to that of
+*a*. Dominance relations encode hierarchical structures — for instance, a word dominating the syllables
+it contains.
 
-Dominance relation
-~~~~~~~~~~~~~~~~~~
 
-An item ``a`` dominates an item ``b`` if ``a`` and ``b`` are on
-different tier, the left boundary of ``b`` is greater or equal to that
-of ``a``, and the right boundary of ``b`` is lesser or equal to that of
-``a``. Dominance relations typically encode hierarchical structures, for
-instance ``word > syllable > segment``.
+Strict dominance
+^^^^^^^^^^^^^^^^
 
-Suppose you have 3 tiers in your file: the first one contains spans
-which denote syllables, the second one contains syllabic constituents
-("syll") ("Onset", "Nucleus", "Coda") and the last one individual
-segments ("p", "a", "t"...). In order to retrieve all syllables that end
-in a coda, you could do the following:
+**Strict dominance** is like dominance, but requires that the boundaries are *strictly* contained: the
+dominated event's boundaries must fall strictly within those of the dominating event (not coinciding
+with either boundary). This is useful when you want to exclude cases where the inner event spans the
+entire outer event.
 
--  set ``syll`` as the search pattern for tier 1, and choose the
-   ``dominates`` value of the relation selector.
--  set ``Coda`` as the search pattern for tier 2
--  set the display tier to tier 3
 
-This query will first get all the items that have a ``syll`` label on
-the first tier; then, for each of those, it will look for a label
-``Coda`` on tier 2 within the limits of the span on tier 1; for each
-item which matches both conditions, it will display the concatenated
-text of the items on tier 3 that are dominated by the matching item on
-tier 1.
-   
+Precedence (precedes)
+^^^^^^^^^^^^^^^^^^^^^
+
+Two events are in a **precedence** relation if the first one immediately precedes the second on the same
+layer (i.e. the end time of the first event equals the start time of the second). You can chain
+multiple constraints with this relation to search for sequences of events.
+
+*Example*: to find all ``DET + NOUN`` sequences on a POS layer (layer 1), with the result displayed from
+a word layer (layer 2): set ``DET`` for the first constraint on layer 1, choose ``precedes``, and set
+``NOUN`` for the second constraint on layer 1. The display layer should be set to layer 2. Phonometrica
+will return the concatenated words from layer 2 that span the matched sequence on layer 1.
+
+
+Subsequence (follows)
+^^^^^^^^^^^^^^^^^^^^^
+
+The **follows** relation is the reverse of precedence: the first event immediately follows the second.
+
+
+Display layer
+~~~~~~~~~~~~~
+
+Complex queries do not use the KWIC model. Instead, you choose a **display layer** at the top of the
+search editor. The text displayed in the result is the concatenation of all events on the display layer
+within the time span defined by the matched constraints.
+
+
+.. _acoustic-queries:
+
+Acoustic queries
+----------------
+
+In addition to text queries, Phonometrica can extract acoustic measurements from your corpus. Acoustic queries
+combine the text search infrastructure (constraints, metadata filters, file selection) with acoustic analysis
+algorithms. The results are displayed in a concordance view with additional measurement columns.
+
+All acoustic queries require that the annotation files being searched are bound to sound files.
+
+
+Formant queries
+~~~~~~~~~~~~~~~
+
+To run a formant query, click on ``Analysis > Measure formants...``. The formant query editor extends the
+text query editor with a panel for formant analysis settings:
+
+- **Number of formants**: the maximum number of formants to extract (typically 3 or 4).
+- **Maximum frequency**: the highest frequency below which formants are expected (e.g. 5000 Hz for male
+  voices, 5500 Hz for female voices).
+- **Window length**: the duration of the LPC analysis window (in seconds).
+- **LPC order**: the number of prediction coefficients. By default, Phonometrica uses 2 × *number of formants* + 2.
+
+Formant values are measured at either the **midpoint** of the matched event or as an **n-point average**
+over equally spaced time points. When n-point averaging is used, the result concordance can be toggled between
+wide format (one row per match, with F1_1, F1_2, ... columns) and long format (one row per time point) using
+the Display settings menu.
+
+**Weenink's method**: Phonometrica implements an automatic formant selection method based on
+Weenink (2015), which evaluates multiple LPC analyses with different parameter settings and selects the
+formant track that best matches reference values for the vowel category. To use this method, select
+*Automatic* instead of *Manual* in the formant settings panel.
+
+Optionally, you can include **bandwidth** columns in the output. Formant values stored in Hertz can be
+converted to **ERB** or **Bark** scales on the fly using the Scales menu in the concordance toolbar
+(see :ref:`concordance-view`).
+
+
+Pitch queries
+~~~~~~~~~~~~~
+
+To run a pitch query, click on ``Analysis > Measure pitch...``. The pitch query editor adds a panel for
+pitch analysis settings:
+
+- **Algorithm**: Phonometrica supports the SWIPE algorithm [CAM2007]_ and the Praat algorithm [BOE1993]_.
+- **Minimum pitch** and **Maximum pitch**: the expected pitch range.
+- **Voicing threshold**: sensitivity to voicing detection (SWIPE) or related algorithm-specific parameters.
+- **Time step**: determines the temporal resolution of the pitch track.
+
+Like formant queries, pitch can be measured at the midpoint or as an n-point average. Pitch values in
+Hertz can be converted to **semitones** (relative to a reference) or to **ERB rate** via the Scales menu.
+
+
+Intensity queries
+~~~~~~~~~~~~~~~~~
+
+To run an intensity query, click on ``Analysis > Measure intensity...``. The intensity query editor adds
+settings for:
+
+- **Minimum intensity** and **Maximum intensity**: the expected intensity range.
+- **Time step**: the temporal resolution of the intensity contour.
+
+Intensity can be measured at the midpoint or as an n-point average.
+
+
+References
+----------
+
+.. [BIR2001] Bird, Steven & Mark Liberman. 2001. A Formal Framework for Linguistic Annotation. *Speech Communication* 33(1–2). 23–60.
+
+.. [CAM2007] Camacho, Arturo. 2007. SWIPE: A sawtooth waveform inspired pitch estimator for speech and music. PhD dissertation, University of Florida Gainesville.
+
+.. [BOE1993] Boersma, Paul. 1993. Accurate short-term analysis of the fundamental frequency and the harmonics-to-noise ratio of a sampled sound. *Proceedings of the Institute of Phonetic Sciences, University of Amsterdam* 17. 97–110.
+
+.. [WEE2015] Weenink, David. 2015. Improved formant frequency measurements of short segments. *Proceedings of the 18th International Congress of Phonetic Sciences*. Glasgow: University of Glasgow.

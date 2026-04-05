@@ -4,7 +4,7 @@ Sound visualization and analysis
 ================================
 
 Phonometrica offers a dedicated environment for speech visualization and analysis. To visualize a sound file, you need to open it in a **sound view**. 
-To open a sound view, double-click on a sound file in the file manager, on right-click on it and choose ``View file`` from the context menu. 
+To open a sound view, double-click on a sound file in the file manager, or right-click on it and choose ``View file`` from the context menu. 
 When it is opened, the sound view will display the first 10 seconds of the sound file, or the whole sound file if it is shorter than that.
 
 
@@ -40,20 +40,20 @@ sound file, or **fixed magnitude** to set a custom magnitude. Note that the larg
 Spectrogram
 ~~~~~~~~~~~
 
-A spectrogram offers a three-dimensional representation of signal, with time on the *x* axis, frequency on the
+A spectrogram offers a three-dimensional representation of the signal, with time on the *x* axis, frequency on the
 *y* axis and intensity as shades of grey (the darker it is, the higher the intensity is). The appearance of the
-spectrogram can be ajusted by changing the following settings, using the ``Spectrogram settings...`` command
+spectrogram can be adjusted by changing the following settings, using the ``Spectrogram settings...`` command
 available from the spectrogram menu |spectrogram| in the toolbar:
 
-* ``spectrogram type``: the type of spectrogram is determined by the duration of the analysis.
+* ``spectrogram type``: the type of spectrogram is determined by the duration of the analysis window.
   A **wide-band spectrogram** is obtained with a short analysis window (5 ms by default): this type of spectrogram has good
-  frequency resolution, which allows us to see individual glottal pulses as vertical striation lines, but it has poor frequency resolution. A **narrow-band spectrogram** uses a long window analysis (25 ms by default): it has poor time resolution but good frequency resolution, which allows us to see individual harmonics as thin horizontal bands. You can choose a custom window length
-  (in millisecons) if the default choices don't fit your needs.
+  time resolution, which allows us to see individual glottal pulses as vertical striation lines, but it has poor frequency resolution. A **narrow-band spectrogram** uses a long analysis window (25 ms by default): it has poor time resolution but good frequency resolution, which allows us to see individual harmonics as thin horizontal bands. You can choose a custom window length
+  (in milliseconds) if the default choices don't fit your needs.
 * ``frequency range``: the range of frequencies that is displayed. If this value is higher than the Nyquist frequency for
   a given file (i.e. half its sampling frequency), Phonometrica will use the Nyquist frequency instead of this setting.
-* ``dynamic range`` This value determines the degree of contrast in the spectrogram. All values that are less than
-  *max_dB - dynamic_range* are displayed in white, where *max_dB* is the the highest intensity in the current window.
-* ``window type``: This parameter indicates the shape of the window that is applied to a segment of the sound file before
+* ``dynamic range``: this value determines the degree of contrast in the spectrogram. All values that are less than
+  *max_dB − dynamic_range* are displayed in white, where *max_dB* is the highest intensity in the current window.
+* ``window type``: this parameter indicates the shape of the window that is applied to a segment of the sound file before
   calculating its Fast Fourier Transform.
 * ``pre-emphasis threshold``: threshold of the high-pass pre-emphasis filter. The amplitude of the frequencies above this
   threshold will be increased. This value is plugged into the following equation: :math:`y[n] = x[n] - \exp(-2 \pi f \frac{1}{F_s}) x[n-1]`,
@@ -66,20 +66,18 @@ Formant tracks
 ~~~~~~~~~~~~~~
 
 Formant tracks are overlaid over the spectrogram, so the spectrogram must be visible to be able to display formants. By default,
-Phonometrica shows the first 4 formants (F1, F2, F3, F4), if they are defined. Phonometrica formant tracking algorithm is based
+Phonometrica shows the first 4 formants (F1, F2, F3, F4), if they are defined. Phonometrica's formant tracking algorithm is based
 on Linear Predictive Coding (LPC). The ``Formant settings...`` command (available from the formants menu |formants| in the
-toolbar) allows you adjust the formant tracking algorithm's parameters:
+toolbar) allows you to adjust the formant tracking algorithm's parameters:
 
-* ``number of formants``: this is the maximum number of formants that will be extracted and displayed over the spectrogram
-* ``maximum frequency``: this is the highest frequency in the sound below which formants are expected to be found. For
-  vowel analysis, a good rule of thumb is to use 5000 Hz for male voices and 5500 for female voices. We usually expect to find 5 formants
-  within this frequency range.
+* ``number of formants``: the maximum number of formants to extract and display over the spectrogram.
+* ``maximum frequency``: the highest frequency below which formants are expected to be found. For
+  vowel analysis, a good rule of thumb is to use 5000 Hz for male voices and 5500 Hz for female voices.
 * ``maximum bandwidth``: candidate formants whose bandwidth exceeds this threshold (400 Hz by default) will be discarded. If you don't
   want this behavior, set this value to a high value such as ``maximum frequency``.
-* ``window length``: this is the duration (in seconds) of the analysis window that will be used to calculate prediction coefficients.
-* ``LPC order``: this represents the number of prediction coefficients that will be used to perform LPC analysis. For a male voice,
-  we usually expect roughly one formant per thousand Hertz. (Add 10% for female voices.) By default, Phonometrica applies the following
-  formula:  :math:`LPC order = 2n + 2`, where *n* is the expected number of formants.
+* ``window length``: the duration (in seconds) of the analysis window used to calculate prediction coefficients.
+* ``LPC order``: the number of prediction coefficients used for LPC analysis. By default, Phonometrica applies the following
+  formula:  :math:`LPC\ order = 2n + 2`, where *n* is the expected number of formants.
 
 Pitch track
 ~~~~~~~~~~~
@@ -87,8 +85,8 @@ Pitch track
 The pitch track is a two-dimensional representation of the sound which shows how pitch (measured in Hertz) changes over time. Phonometrica uses the SWIPE algorithm [CAM2007]_ for 
 pitch tracking. The ``Pitch settings...`` command (available from the pitch menu |pitch| in the toolbar) allows you to adjust the algorithm's parameters:
 
-* ``minimum pitch``: this is the lowest pitch value expected to be found in the sound.
-* ``maximum pitch``: this is the highest pitch value expected to be found in the sound.
+* ``minimum pitch``: the lowest pitch value expected to be found in the sound.
+* ``maximum pitch``: the highest pitch value expected to be found in the sound.
 * ``time step``: this determines the number of points used to estimate pitch in the current window.
 * ``voicing threshold``: this determines the sensitivity of the algorithm to voicing detection. This parameter is a value between 0.2 and 0.5 (inclusive).
 
@@ -101,8 +99,8 @@ Intensity track
 The intensity track is a two-dimensional representation of the sound which shows how intensity (measured in decibels) changes over time. The ``Intensity settings...`` command
 (available from the intensity menu |intensity| in the toolbar) allows you to adjust intensity settings:
 
-* ``minimum intensity``: this is the lowest intensity value expected to be found in the sound.
-* ``maximum intensity``: this is the highest intensity value expected to be found in the sound.
+* ``minimum intensity``: the lowest intensity value expected to be found in the sound.
+* ``maximum intensity``: the highest intensity value expected to be found in the sound.
 * ``time step``: this determines the number of points used to estimate intensity in the current window.
 
 You can show or hide the intensity track using the ``Show intensity`` command in the intensity menu.
@@ -129,8 +127,8 @@ First, you can select any part of the wavebar to display it as the current windo
 the mouse over the wavebar and use the scroll wheel: scrolling down will shift the current window forward, and scrolling up will shift it backward.
 
 Once you have selected a portion of the file, you can change it using the toolbar's buttons. The forward |forward| and backward |backward| buttons will shift the current window by 
-a small amount, right or left, respectively. This has a similar effect to scrolling the mouse wheel over the wavebar. You can also zoom in |zoomin| or zoom out |zoomout| on the 
-current window, which allows you to view the sound file with varying degrees of detail. If you would like to zoom in on on a specific part of the current window, click where you would 
+a small amount, right or left, respectively. You can also zoom in |zoomin| or zoom out |zoomout| on the 
+current window, which allows you to view the sound file with varying degrees of detail. If you would like to zoom in on a specific part of the current window, click where you would 
 like your selection to start, and drag the mouse until the end of the selection. You can change the current window to this selection by clicking on the ``Zoom to selection``
 button |zoomsel|, or by clicking on the middle button of the mouse (i.e. the scroll wheel).
 
@@ -142,24 +140,43 @@ Acoustic measurements
 ~~~~~~~~~~~~~~~~~~~~~
 
 In order to perform manual acoustic measurements, you must first enable **mouse tracking** by clicking on the ``Enable mouse tracking`` button |mouse| in the toolbar. Once mouse tracking
-is activated, a vertical line will follow the cursor whenever you move the mouse over one of the sound plots. This moving cursor will keeps track of the current time in the waveform 
+is activated, a vertical line will follow the cursor whenever you move the mouse over one of the sound plots. This moving cursor keeps track of the current time in the waveform 
 plot. If you click on the left button anywhere in one of the sound plots, a **persistent cursor** will be displayed. (You can remove the persistent cursor by clicking on the right
 button.)
 
-Once a persistent cursor is visible, you can perform acoustic measurements by using clicking on one of the dedicated commands. These commands will print their output in the console:
+Once a persistent cursor is visible, you can perform acoustic measurements by using the dedicated commands. These commands will print their output in the console:
 
-* The ``Get pitch`` command in the pitch menu |pitch| prints the pitch under the cursor
-* The ``Get intensity`` command in the intensity menu |intensity| prints the intensity under the cursor
-* The ``Get formants`` command in the formants menu |formants| prints the value of the visible formants, as well as their respective bandwidth, under the cursor
+* The ``Get pitch`` command in the pitch menu |pitch| prints the pitch under the cursor.
+* The ``Get intensity`` command in the intensity menu |intensity| prints the intensity under the cursor.
+* The ``Get formants`` command in the formants menu |formants| prints the value of the visible formants, as well as their respective bandwidth, under the cursor.
 
 Note that for these commands to work, the corresponding plot must be visible (e.g. the pitch plot must be visible if you want to measure pitch).
+
+
+.. _spectral-slice:
+
+Spectral slice
+~~~~~~~~~~~~~~
+
+Phonometrica can display a **spectral slice** (power spectrum) at the current cursor position. This is similar to
+Praat's "View spectral slice" feature. To view a spectral slice, place a persistent cursor on the sound (by clicking
+with mouse tracking enabled) and then choose ``View spectral slice`` from the spectrogram menu |spectrogram| in the toolbar.
+
+A new window will open showing the power spectrum as a frequency-versus-power line plot. The spectral slice
+supports three display modes:
+
+* **FFT only**: the traditional power spectrum computed via Fast Fourier Transform (shown as a blue curve).
+* **LPC only**: a smooth spectral envelope derived from LPC analysis (shown as a red curve).
+* **FFT + LPC**: both the FFT spectrum and the LPC envelope superimposed.
+
+You can hover over the plot to read frequency and power values at the cursor position. The spectral slice
+can be exported to **PNG**, **PDF**, or **SVG** using the toolbar buttons in the spectrum window.
 
 
 References
 ----------
 
 .. [CAM2007] Camacho, Arturo. 2007. SWIPE: A sawtooth waveform inspired pitch estimator for speech and music. PhD dissertation, University of Florida Gainesville.
-
 
 
 
@@ -212,11 +229,11 @@ References
     :height: 16px
     :width: 16px
 
-.. |zoomsel| image:: ../icons/minimize-2.svg
+.. |zoomsel| image:: ../icons/minimize.svg
     :height: 16px
     :width: 16px
 
-.. |zoomall| image:: ../icons/maximize-2.svg
+.. |zoomall| image:: ../icons/maximize.svg
     :height: 16px
     :width: 16px
 

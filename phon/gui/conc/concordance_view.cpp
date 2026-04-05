@@ -129,7 +129,7 @@ void ConcordanceView::setupUi()
 	m_toolbar->addSeparator();
 
 	// -- Filter / Subset --
-	m_filter_action = m_toolbar->addAction(QIcon(":/icons/list-filter.svg"), tr("Filter"));
+	m_filter_action = m_toolbar->addAction(QIcon(":/icons/filter.svg"), tr("Filter"));
 	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
 	m_filter_action->setCheckable(true);
 

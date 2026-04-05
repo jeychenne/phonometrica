@@ -15,19 +15,23 @@ Overview
 
 Phonometrica is a free, open-source software platform for the annotation and analysis of speech corpora.
 It offers a user-friendly interface to manage, annotate, analyze and query language corpora.
-It is particularly well suited for dealing with time-aligned data. The main features it offers are:
+It is particularly well suited for dealing with time-aligned data, and integrates corpus management,
+acoustic analysis, and statistical modeling into a single workflow. The main features it offers are:
 
-   * Project management: organize files into projects.
-   * Sound visualization and annotation: visualize and annotate speech sounds on multiple layers
-   * Extensible metadata: annotate files with properties, which allow you to sort and organize your corpus.
-   * Queries: build and save simple or complex queries; search strings or patterns across layers.
-   * Data analysis: hypothesis testing, linear, logistic and Poisson regression
-   * Scripting engine: Phonometrica can be configured and extended with an easy-to-use scripting language and JSON files.
-   * Standard-based: Phonometrica files are encoded in XML and Unicode.
-   * Interaction with Praat: Phonometrica can read and write TextGrid files and open files directly in Praat.
+   * **Project management**: organize files into projects with extensible metadata (properties).
+   * **Sound visualization and analysis**: visualize waveforms, spectrograms, pitch tracks, formant tracks, intensity curves, and spectral slices.
+   * **Sound annotation**: create and edit multi-layer annotations based on annotation graphs; import and export Praat TextGrids.
+   * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, and intensity measurements.
+   * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; toggle between wide and long formats; perform set operations on concordances.
+   * **Statistical analysis**: fit linear, logistic, Poisson, and negative binomial regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; inspect diagnostic plots and exploratory visualizations.
+   * **Scripting engine**: Phonometrica can be configured and extended with an easy-to-use scripting language, JSON-based plugins, and coding protocols.
+   * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
+   * **Interaction with Praat**: Phonometrica can read and write TextGrid files and open files directly in Praat.
 
-Phonometrica runs on all major platforms (Windows, macOS and GNU/Linux) and is freely available under the terms of the GNU General Public License.
-The latest version can be downloaded from http://www.phonometrica-ling.org. If you have questions, problems, or would like to report a bug, please contact us at phonometrica.dev@gmail.com.
+Phonometrica runs on all major platforms (Windows, macOS and GNU/Linux) and is freely available under the terms of the
+GNU General Public License (version 3). The latest version can be downloaded from http://www.phonometrica-ling.org.
+The source code is available at https://github.com/jeychenne/phonometrica.
+If you have questions, problems, or would like to report a bug, please contact us at phonometrica.dev@gmail.com.
 
 
 .. figure:: img/main_window.png
@@ -38,23 +42,23 @@ The latest version can be downloaded from http://www.phonometrica-ling.org. If y
 Download
 ========
 
-Phonometrica 0.7.6
-------------------
+Phonometrica |release|
+----------------------
 
--  Windows 7 and later:
-   `setup\_phonometrica.exe <https://github.com/phonometrica/phonometrica/releases/download/v0.7.6/setup_phonometrica.exe>`__
--  MacOS 10.12 and later:
-   `phonometrica-0.7.6.dmg <https://github.com/phonometrica/phonometrica/releases/download/v0.7.6/phonometrica-0.7.6.dmg>`__
--  Linux (Debian 10/Ubuntu 20.04): `phonometrica-0.7.6.deb <https://github.com/phonometrica/phonometrica/releases/download/v0.7.6/phonometrica-0.7.6.deb>`__
--  source code: `phonometrica-0.7.6.zip <https://github.com/phonometrica/phonometrica/archive/v0.7.6.zip>`__ | `phonometrica-0.7.6.tar.gz <https://github.com/phonometrica/phonometrica/archive/v0.7.6.tar.gz>`__
+-  Windows:
+   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/setup_phonometrica.exe>`__
+-  macOS:
+   `phonometrica-0.9.0.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/phonometrica-0.9.0.dmg>`__
+-  Linux (Debian/Ubuntu):
+   `phonometrica-0.9.0.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/phonometrica-0.9.0.deb>`__
+-  source code: `phonometrica-0.9.0.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.0.zip>`__ | `phonometrica-0.9.0.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.0.tar.gz>`__
 
-  
+
 Manual
 ------
 
-Phonometrica's documentation is available as a `PDF <https://github.com/phonometrica/phonometrica/releases/download/v0.7.6/phonometrica_manual.pdf>`_ file.
-
-**Note: Phonometrica is still under development and the documentation is not yet up-to-date.**
+Phonometrica's documentation is available as a `PDF <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/phonometrica_manual.pdf>`_ file.
+It is also accessible from within the application via the **Help** buttons available in each view.
 
 
 Topics
@@ -69,6 +73,7 @@ Topics
    annotation
    query
    concordance
+   dataset
    analysis
    transform
    scripting/index
@@ -78,10 +83,15 @@ Topics
    about/release-notes
 
 
+.. _how-to-cite:
 
-How to cite?
-============
+How to cite
+===========
 
-To cite Phonometrica, you can use the following citation [EYC2019]_:
+To cite Phonometrica, please use the following reference [EYC2025]_:
 
-.. [EYC2019] Eychenne, Julien & Léa Courdès-Murphy (2019). Phonometrica: an open platform for the analysis of speech corpora. *Proceedings of the Seoul International Conference on Speech Sciences 2019*, Seoul National University, pp. 107-108.
+.. [EYC2025] Eychenne, Julien & Léa Courdès-Murphy (2025). Annotation et analyse de données sociophonologiques sur grands corpus : présentation de la plateforme Phonometrica. In Wim Remysen & Hélène Blondeau (eds.) *(Re)donner la parole aux corpus montréalais : Regards rétrospectifs et prospectifs*. Montreal: Presses Universitaires de Montréal, pp. 255–270.
+
+You may also cite the earlier conference paper [EYC2019]_:
+
+.. [EYC2019] Eychenne, Julien & Léa Courdès-Murphy (2019). Phonometrica: an open platform for the analysis of speech corpora. *Proceedings of the Seoul International Conference on Speech Sciences 2019*, Seoul National University, pp. 107–108.
