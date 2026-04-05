@@ -24,6 +24,7 @@
 #include <Qsci/qsciapis.h>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/phon_lexer.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/include/autocompletion_list.hpp>
 #include <phon/include/function_declarations.hpp>
 
@@ -53,13 +54,8 @@ void ScriptEditor::setupEditor()
 	m_lexer = new PhonLexer(this);
 
 	// Set the editor font on the lexer so all styles inherit it.
-#if PHON_MACOS
-	auto editorFont = QFont("Monaco", 13);
-#elif PHON_WINDOWS
-	auto editorFont = QFont("Consolas", 10);
-#else
-	auto editorFont = QFont("Monospace", 12);
-#endif
+	auto editorFont = defaultMonoFont();
+
 	m_lexer->setDefaultFont(editorFont);
 	setLexer(m_lexer);
 

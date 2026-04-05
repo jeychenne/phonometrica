@@ -3,7 +3,11 @@
 ###################################
 
 cmake_minimum_required(VERSION 3.20)
-project(phonometrica LANGUAGES C CXX)
+if(APPLE)
+    project(Phonometrica LANGUAGES C CXX)
+else()
+    project(phonometrica LANGUAGES C CXX)
+endif(APPLE)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -292,14 +296,20 @@ endif()
 ####################
 
 if (APPLE)
-    add_executable(${PROJECT_NAME} MACOSX_BUNDLE phonometrica.cpp ${QRC_SOURCES})
+    # Mark the .icns as a resource so CMake copies it into the bundle
+    set(MACOS_ICON "${CMAKE_SOURCE_DIR}/icons/phonometrica.icns")
+    set_source_files_properties(${MACOS_ICON} PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources"
+    )
+
+    add_executable(${PROJECT_NAME} MACOSX_BUNDLE phonometrica.cpp ${QRC_SOURCES} ${MACOS_ICON})
     set_target_properties(${PROJECT_NAME} PROPERTIES
             MACOSX_BUNDLE_GUI_IDENTIFIER    "org.phonometrica-ling.phonometrica"
             MACOSX_BUNDLE_BUNDLE_NAME       "Phonometrica"
             MACOSX_BUNDLE_BUNDLE_VERSION    "${PHON_VERSION_MAJOR}.${PHON_VERSION_MINOR}.${PHON_VERSION_MICRO}"
             MACOSX_BUNDLE_SHORT_VERSION_STRING "${PHON_VERSION_MAJOR}.${PHON_VERSION_MINOR}.${PHON_VERSION_MICRO}"
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in"
-            MACOSX_BUNDLE_ICON_FILE         "icons/phonometrica.icns"
+            MACOSX_BUNDLE_ICON_FILE "phonometrica.icns"
     )
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
             COMMAND /Users/julieneychenne/Qt/6.11.0/macos/bin/macdeployqt

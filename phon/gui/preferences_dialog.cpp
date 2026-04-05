@@ -26,6 +26,7 @@
 #include <QPushButton>
 #include <QMessageBox>
 #include <phon/gui/preferences_dialog.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
@@ -195,7 +196,7 @@ QWidget *PreferencesDialog::createAppearancePage()
 	}
 	catch (...)
 	{
-		m_font_combo->setCurrentFont(QFont("Monospace"));
+		m_font_combo->setCurrentFont(defaultMonoFont());
 		m_font_size->setValue(12);
 	}
 
@@ -265,16 +266,9 @@ void PreferencesDialog::reset()
 	m_hz_decimals->setValue(0);
 
 	// Appearance — platform defaults
-#if defined(Q_OS_MACOS)
-	m_font_combo->setCurrentFont(QFont("Monaco"));
-	m_font_size->setValue(13);
-#elif defined(Q_OS_WIN)
-	m_font_combo->setCurrentFont(QFont("Consolas"));
-	m_font_size->setValue(10);
-#else
-	m_font_combo->setCurrentFont(QFont("Monospace"));
-	m_font_size->setValue(12);
-#endif
+	auto font = defaultMonoFont();
+	m_font_combo->setCurrentFont(font);
+	m_font_size->setValue(font.pointSize());
 }
 
 } // namespace phonometrica

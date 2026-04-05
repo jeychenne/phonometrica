@@ -49,6 +49,7 @@
 #include <QTextEdit>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/gui/analysis_view.hpp>
+#include <phon/gui/font_helpers.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/application/project.hpp>
@@ -285,10 +286,7 @@ void AnalysisView::setupUi()
 
 	m_summary = new QPlainTextEdit;
 	m_summary->setReadOnly(true);
-	QFont mono(QStringLiteral("monospace"));
-	mono.setStyleHint(QFont::Monospace);
-	mono.setPointSize(10);
-	m_summary->setFont(mono);
+	m_summary->setFont(defaultMonoFont(10));
 	m_summary->setPlaceholderText(tr("Fit a model to see results here."));
 	summary_layout->addWidget(m_summary, 1);
 
