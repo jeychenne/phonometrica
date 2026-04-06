@@ -282,6 +282,12 @@ void AnalysisView::setupUi()
 	auto *save_txt_action = summary_toolbar->addAction(QIcon(":/icons/save.svg"), tr("Save as text..."));
 	auto *save_latex_action = summary_toolbar->addAction(QIcon(":/icons/file-spreadsheet.svg"), tr("Save as LaTeX table..."));
 
+	summary_toolbar->addSeparator();
+	m_blup_check = new QCheckBox(tr("Show random effects"));
+	m_blup_check->setToolTip(tr("Show conditional modes (BLUPs) for each level of each grouping factor"));
+	m_blup_check->setEnabled(false);
+	summary_toolbar->addWidget(m_blup_check);
+
 	summary_layout->addWidget(summary_toolbar);
 
 	m_summary = new QPlainTextEdit;
@@ -328,6 +334,9 @@ void AnalysisView::setupUi()
 	m_posthoc_conf_spin->setSuffix(QStringLiteral(" "));
 	posthoc_top->addWidget(m_posthoc_conf_spin);
 	posthoc_top->addStretch();
+	auto *posthoc_copy_button = new QPushButton(QIcon(":/icons/clipboard-copy.svg"), tr("Copy"));
+	posthoc_copy_button->setToolTip(tr("Copy post-hoc results to clipboard"));
+	posthoc_top->addWidget(posthoc_copy_button);
 	posthoc_layout->addLayout(posthoc_top);
 
 	auto *emm_group = new QGroupBox(tr("Estimated Marginal Means"));
@@ -588,6 +597,12 @@ void AnalysisView::setupUi()
 	connect(copy_action, &QAction::triggered, this, &AnalysisView::onCopySummary);
 	connect(save_txt_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryText);
 	connect(save_latex_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryLatex);
+	connect(m_blup_check, &QCheckBox::toggled, this, [this](bool) {
+		if (m_current_model >= 0 && m_current_model < m_analysis->model_count()) {
+			auto &m = m_analysis->model(m_current_model);
+			m_summary->setPlainText(formatSummary(m));
+		}
+	});
 	connect(m_eda_y_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_x_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_bins_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
@@ -618,6 +633,7 @@ void AnalysisView::setupUi()
 	connect(m_posthoc_trend_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_adj_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_conf_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &AnalysisView::onPostHocChanged);
+	connect(posthoc_copy_button, &QPushButton::clicked, this, &AnalysisView::onExportPostHoc);
 }
 
 
@@ -785,6 +801,7 @@ void AnalysisView::onModelSelected(int row)
 void AnalysisView::displayModel(int index)
 {
 	auto &m = m_analysis->model(index);
+	m_blup_check->setEnabled(m.has_random_effects());
 	m_summary->setPlainText(formatSummary(m));
 	updateDiagnosticPlot();
 	populatePostHocFactors();
@@ -821,6 +838,7 @@ void AnalysisView::onDeleteModel()
 		m_summary->clear();
 		m_plot->clear();
 		clearTestResults();
+		m_blup_check->setEnabled(false);
 		m_posthoc_factor_combo->clear();
 		m_posthoc_trend_combo->clear();
 		m_posthoc_emm_table->clear();
@@ -3078,6 +3096,64 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 
 		tex += QStringLiteral("\\hline\n");
 		tex += QStringLiteral("\\end{tabular}\n\n");
+
+		// Conditional modes (BLUPs) in LaTeX
+		if (m_blup_check->isChecked())
+		{
+			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			{
+				auto &re = m.random_effects[g];
+				intptr_t q = re.term_names.size();
+				intptr_t J = re.nlevels;
+
+				if (re.conditional_modes.empty()) continue;
+
+				tex += QStringLiteral("\\medskip\n");
+				tex += QStringLiteral("Conditional modes for \\textit{%1}:\n\n")
+					.arg(QString::fromUtf8(re.group_name.data(), (int)re.group_name.size())
+					     .replace('_', QStringLiteral("\\_")));
+
+				// Build tabular spec: l + r columns for each term
+				tex += QStringLiteral("\\begin{tabular}{l");
+				for (intptr_t t = 0; t < q; t++) {
+					tex += QStringLiteral("r");
+				}
+				tex += QStringLiteral("}\n\\hline\n");
+
+				// Header row
+				tex += QStringLiteral("Level");
+				for (intptr_t t = 1; t <= q; t++) {
+					QString tname = QString::fromUtf8(re.term_names[t].data(), (int)re.term_names[t].size());
+					tname.replace('_', QStringLiteral("\\_"));
+					tex += QStringLiteral(" & %1").arg(tname);
+				}
+				tex += QStringLiteral(" \\\\\n\\hline\n");
+
+				// Data rows
+				for (intptr_t j = 0; j < J; j++)
+				{
+					QString level_label;
+					if (j + 1 <= re.level_names.size())
+						level_label = QString::fromUtf8(re.level_names[j + 1].data(), (int)re.level_names[j + 1].size());
+					else
+						level_label = QString::number(j + 1);
+					level_label.replace('_', QStringLiteral("\\_"));
+
+					tex += level_label;
+
+					for (intptr_t t = 0; t < q; t++)
+					{
+						intptr_t idx = j * q + t + 1;
+						double val = (idx <= re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
+						tex += QString::asprintf(" & %.4f", val);
+					}
+					tex += QStringLiteral(" \\\\\n");
+				}
+
+				tex += QStringLiteral("\\hline\n");
+				tex += QStringLiteral("\\end{tabular}\n\n");
+			}
+		}
 	}
 
 	// Notes below the table
@@ -3421,6 +3497,53 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			text += QString::asprintf("  Marginal  (fixed effects):          %.4f\n", r2m);
 			text += QString::asprintf("  Conditional (fixed + random):       %.4f\n", r2c);
 			text += QStringLiteral("\n");
+		}
+
+		// Conditional modes (BLUPs)
+		if (m_blup_check->isChecked())
+		{
+			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			{
+				auto &re = m.random_effects[g];
+				intptr_t q = re.term_names.size();
+				intptr_t J = re.nlevels;
+
+				if (re.conditional_modes.empty()) continue;
+
+				text += QStringLiteral("Conditional modes for %1:\n")
+					.arg(QString::fromUtf8(re.group_name.data(), (int)re.group_name.size()));
+
+				// Header: Level, then each term name
+				text += QString::asprintf("%-20s", "Level");
+				for (intptr_t t = 1; t <= q; t++) {
+					text += QString::asprintf(" %12s", re.term_names[t].data());
+				}
+				text += QStringLiteral("\n");
+
+				// One row per level
+				for (intptr_t j = 0; j < J; j++)
+				{
+					// Level name: use level_names if available, otherwise index
+					QString level_label;
+					if (j + 1 <= re.level_names.size())
+						level_label = QString::fromUtf8(re.level_names[j + 1].data(), (int)re.level_names[j + 1].size());
+					else
+						level_label = QString::number(j + 1);
+
+					text += QString::asprintf("%-20s", level_label.toUtf8().constData());
+
+					for (intptr_t t = 0; t < q; t++)
+					{
+						// conditional_modes: nlevels × nterms, row-major (j * q + t)
+						intptr_t idx = j * q + t + 1;
+						double val = (idx <= re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
+						text += QString::asprintf(" %12.4f", val);
+					}
+					text += QStringLiteral("\n");
+				}
+
+				text += QStringLiteral("\n");
+			}
 		}
 	}
 	else if (m.is_gaussian())

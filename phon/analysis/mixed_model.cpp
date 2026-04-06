@@ -2415,6 +2415,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		RandomEffectGroup reg;
 		reg.group_name = groups[g].name;
 		reg.nlevels = groups[g].nlevels;
+		reg.level_names = groups[g].levels;
 
 		intptr_t qg = lay.q[g];
 

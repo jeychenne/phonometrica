@@ -39,10 +39,12 @@ struct RandomEffectGroup
 {
 	String group_name;             // e.g. "speaker"
 	Array<String> term_names;      // names of random terms within this group
+	Array<String> level_names;     // names of group levels, e.g. {"spk01", "spk02", ...}
 	intptr_t nlevels = 0;          // number of group levels (e.g. number of speakers)
 	Array<double> variance;        // variance for each term (diagonal of covariance matrix)
 	Array<double> cov_chol;        // lower triangle of Cholesky factor of covariance matrix (packed)
-	// Conditional modes (BLUPs): nlevels × nterms, stored in column-major order.
+	// Conditional modes (BLUPs): nlevels × nterms, stored in row-major order
+	// (level index varies slowest). Element (j, t) = conditional_modes[j * nterms + t].
 	// Empty until a mixed model is fitted.
 	Array<double> conditional_modes;
 

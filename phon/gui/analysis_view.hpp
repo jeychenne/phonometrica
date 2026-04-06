@@ -149,6 +149,7 @@ private:
 	// Right panel (tabbed)
 	QTabWidget *m_right_tabs = nullptr;
 	QPlainTextEdit *m_summary = nullptr;
+	QCheckBox *m_blup_check = nullptr;
 
 	// Diagnostics tab
 	QComboBox *m_plot_type_combo = nullptr;
