@@ -37,6 +37,7 @@ namespace phonometrica {
 class Project;
 class ProjectModel;
 class Element;
+class Directory;
 class Document;
 class DataTable;
 class TimeStamp;
@@ -101,6 +102,9 @@ signals:
 
 	// Emitted when the selection changes.
 	void selectionChanged(QList<Document*> docs);
+
+	// Emitted when the user requests to create a new note in a directory.
+	void noteRequested(Directory *dir);
 
 protected:
 

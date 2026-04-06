@@ -7,5 +7,6 @@
 #define PHON_EXT_CONCORDANCE  ".phon-conc"
 #define PHON_EXT_ANALYSIS     ".phon-analysis"
 #define PHON_EXT_SCRIPT       ".phon"
+#define PHON_EXT_NOTE         ".phon-note"
 
 #endif // PHONOMETRICA_CONSTANTS_HPP

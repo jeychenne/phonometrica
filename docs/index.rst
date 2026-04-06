@@ -25,6 +25,7 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; toggle between wide and long formats; perform set operations on concordances.
    * **Statistical analysis**: fit linear, logistic, Poisson, and negative binomial regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; inspect diagnostic plots and exploratory visualizations.
    * **Scripting engine**: Phonometrica can be configured and extended with an easy-to-use scripting language, JSON-based plugins, and coding protocols.
+   * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
    * **Interaction with Praat**: Phonometrica can read and write TextGrid files and open files directly in Praat.
 
@@ -76,6 +77,7 @@ Topics
    dataset
    analysis
    transform
+   notes
    scripting/index
    scripting/plugins
    License <about/license>

@@ -396,6 +396,12 @@ if(WITH_GUI)
         icons/grid-2x2-x.svg
         icons/list-x.svg
         icons/concordance.svg
+        icons/notebook-pen.svg
+        icons/bold.svg
+        icons/underline.svg
+        icons/italic.svg
+        icons/list-ordered.svg
+        icons/list.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

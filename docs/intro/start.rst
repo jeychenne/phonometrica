@@ -7,8 +7,8 @@ Main window
 
 The main window is divided into several areas:
 
-- The **file manager** (left panel) displays the hierarchical structure of the project. It also provides
-  access to **bookmarks** associated with the current project.
+- The **file manager** (left panel) displays the hierarchical structure of the project. It contains
+  folders for your corpus files, queries, data tables, analyses, scripts, research notes, and bookmarks.
 - The **information panel** (right panel) displays and lets you edit metadata about the file(s) currently
   selected in the file manager. When multiple files are selected, the information panel shows a batch editing
   view where you can add, edit, or remove properties for all selected files at once.

@@ -25,6 +25,7 @@
 #include <phon/application/sound.hpp>
 #include <phon/application/annotation.hpp>
 #include <phon/application/script.hpp>
+#include <phon/application/note.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/metadata.hpp>
@@ -88,6 +89,8 @@ public:
 	const Handle<Directory> & analyses() const;
 
 	const Handle<Directory> & queries() const;
+
+	const Handle<Directory> & notes() const;
 
 	const String &directory() const;
 
@@ -206,6 +209,8 @@ private:
 	void parse_changelog(xml_node root);
 	void parse_data(xml_node root, Directory *folder);
 
+	void parse_notes(xml_node root, Directory *folder);
+
 	void write_corpus(xml_node root);
 	void write_metadata(xml_node root);
 	void write_bookmarks(xml_node root);
@@ -213,6 +218,7 @@ private:
 	void write_data(xml_node root);
 	void write_analyses(xml_node root);
 	void write_queries(xml_node root);
+	void write_notes(xml_node root);
 
 	void add_folder(String path, const Handle<Directory> &parent, bool importing);
 
@@ -299,6 +305,8 @@ private:
 	Handle<Directory> m_analyses;
 
 	Handle<Directory> m_queries;
+
+	Handle<Directory> m_notes;
 
 	// UUID for the project.
 	String m_uuid;

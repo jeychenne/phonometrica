@@ -15,8 +15,8 @@
  *                                                                                                                     *
  * Created: 21/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Qt item model wrapping the project's virtual file system. The model exposes the five root directories      *
- * (Corpus, Queries, Scripts, Data, Bookmarks) as top-level items, with their contents mapped directly from the VFS.   *
+ * Purpose: Qt item model wrapping the project's virtual file system. The model exposes the seven root directories     *
+ * (Corpus, Queries, Data tables, Analyses, Scripts, Notes, Bookmarks) as top-level items, with their contents        *
  * Element* pointers are stored as internalPointer() in QModelIndex — no duplication of the tree structure.             *
  *                                                                                                                     *
  ***********************************************************************************************************************/
@@ -43,7 +43,7 @@ class ProjectModel : public QAbstractItemModel
 
 public:
 
-	static constexpr int ROOT_COUNT = 6;
+	static constexpr int ROOT_COUNT = 7;
 
 	explicit ProjectModel(Project *project, QObject *parent = nullptr);
 

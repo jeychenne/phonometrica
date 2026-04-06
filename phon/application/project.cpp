@@ -69,7 +69,8 @@ Project::Project(Runtime &rt, String path) :
 		m_scripts(make_handle<Directory>(nullptr, "Scripts")),
         m_data(make_handle<Directory>(nullptr, "Data tables")),
 		m_analyses(make_handle<Directory>(nullptr, "Analyses")),
-		m_queries(make_handle<Directory>(nullptr, "Queries"))
+		m_queries(make_handle<Directory>(nullptr, "Queries")),
+		m_notes(make_handle<Directory>(nullptr, "Notes"))
 {
 	if (path.empty())
 	{
@@ -95,7 +96,7 @@ Project *Project::get()
 
 bool Project::modified() const
 {
-	return m_modified || m_corpus->modified() || m_scripts->modified() || m_bookmarks->modified() || m_data->modified() || m_queries->modified();
+	return m_modified || m_corpus->modified() || m_scripts->modified() || m_bookmarks->modified() || m_data->modified() || m_queries->modified() || m_notes->modified();
 }
 
 const String &Project::path() const
@@ -129,6 +130,7 @@ void Project::save()
 	m_scripts->save_content();
 	m_data->save_content();
 	m_queries->save_content();
+	m_notes->save_content();
 
 	write();
 
@@ -158,6 +160,7 @@ void Project::load()
 		static const std::string_view bookmarks_tag("Bookmarks");
 		static const std::string_view data_tag("Data");
 		static const std::string_view analyses_tag("Analyses");
+		static const std::string_view notes_tag("Notes");
 
 		if (root.name() != project_tag) {
 			throw error("[Input/Output] Invalid XML project root");
@@ -203,6 +206,10 @@ void Project::load()
 			else if (node.name() == analyses_tag)
 			{
 				parse_data(node, m_analyses.get());
+			}
+			else if (node.name() == notes_tag)
+			{
+				parse_notes(node, m_notes.get());
 			}
 		}
 
@@ -589,6 +596,50 @@ void Project::parse_data(xml_node root, Directory *folder)
 	}
 }
 
+void Project::parse_notes(xml_node root, Directory *folder)
+{
+	using str = std::string_view;
+
+	for (auto node = root.first_child(); node; node = node.next_sibling())
+	{
+		if (node.name() == str("Directory") || node.name() == str("VFolder"))
+		{
+			String label;
+			auto attr = node.attribute("label");
+			if (attr) label = attr.value();
+			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto sub = subfolder.get();
+			folder->append(std::move(subfolder), false);
+
+			parse_notes(node, sub);
+		}
+		else if (node.name() == str("Document") || node.name() == str("VFile"))
+		{
+			String path;
+			auto path_node = node.child("Path");
+			if (path_node) {
+				path = path_node.text().get();
+			}
+			else {
+				path = node.text().get();
+			}
+			interpolate(path, m_directory);
+
+			try
+			{
+				auto note = make_handle<Note>(folder, std::move(path));
+				folder->append(note, false);
+				register_file(note->path(), note);
+			}
+			catch (std::exception &e)
+			{
+				auto msg = String::format("Skipping missing or unreadable file: %s", e.what());
+				notify_error(msg);
+			}
+		}
+	}
+}
+
 void Project::parse_bookmarks(xml_node root, Directory *folder)
 {
 	using str = std::string_view;
@@ -765,6 +816,15 @@ void Project::write_queries(xml_node root)
 	m_queries->discard_changes();
 }
 
+void Project::write_notes(xml_node root)
+{
+	for (auto &file : *m_notes) {
+		file->to_xml(root);
+	}
+
+	m_notes->discard_changes();
+}
+
 void Project::write()
 {
 	assert(has_path());
@@ -796,6 +856,9 @@ void Project::write()
 
 	auto bookmarks_node = root.append_child("Bookmarks");
 	write_bookmarks(bookmarks_node);
+
+	auto notes_node = root.append_child("Notes");
+	write_notes(notes_node);
 
 	write_xml(doc, m_path);
 }
@@ -942,6 +1005,25 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		p->append(vfile);
         //emit_signal(script_loaded, make_handle<Handle<Script>>(std::move(script)));
 	}
+	else if (ext == PHON_EXT_NOTE)
+	{
+		Directory *p = m_notes.get();
+
+		if (static_cast<int>(type) & static_cast<int>(FileType::Note))
+		{
+			if (parent->toplevel() == p) {
+				p = parent.get();
+			}
+		}
+		else
+		{
+			return set_import_flag();
+		}
+
+		auto note = make_handle<Note>(p, std::move(path));
+		vfile = recast<Document>(note);
+		p->append(vfile);
+	}
 	else
 	{
 		return set_import_flag(); // Ignore unknown files
@@ -1071,6 +1153,11 @@ const Handle<Directory> & Project::analyses() const
 const Handle<Directory> &Project::queries() const
 {
 	return m_queries;
+}
+
+const Handle<Directory> &Project::notes() const
+{
+	return m_notes;
 }
 
 
@@ -1354,6 +1441,7 @@ void Project::clear()
     m_scripts->clear(false);
     m_bookmarks->clear(false);
     m_queries->clear(false);
+    m_notes->clear(false);
 	m_uuid.clear();
     m_path = String();
     m_directory = String();
@@ -1442,7 +1530,7 @@ void Project::remove(const Handle<Document> &folder)
 
 bool Project::is_root(const Directory *folder) const
 {
-    return folder == m_corpus.get() || folder == m_scripts.get() || folder == m_queries.get() || folder == m_data.get() || folder == m_bookmarks.get();
+    return folder == m_corpus.get() || folder == m_scripts.get() || folder == m_queries.get() || folder == m_data.get() || folder == m_analyses.get() || folder == m_bookmarks.get() || folder == m_notes.get();
 }
 
 void Project::emit_signal(const String &signal, Variant value)
@@ -1600,7 +1688,7 @@ void Project::tag_file(Handle<Document> &file, const String &category, const Str
 
 bool Project::empty() const
 {
-    return m_corpus->empty() && m_data->empty() && m_scripts->empty() && m_bookmarks->empty();
+    return m_corpus->empty() && m_data->empty() && m_scripts->empty() && m_bookmarks->empty() && m_notes->empty();
 }
 
 Array<Handle<Sound>> Project::get_sounds() const
@@ -1723,6 +1811,7 @@ void Project::preinitialize(Runtime &rt)
 	rt.add_standard_type<Dataset>("Dataset", dt_type.get());
 	rt.add_standard_type<Concordance>("Concordance", dt_type.get());
 	rt.add_standard_type<Script>("Script", doc_type.get());
+	rt.add_standard_type<Note>("Note", doc_type.get());
 	rt.add_standard_type<Query>("Query", doc_type.get());
 	rt.add_standard_type<FormantQuery>("FormantQuery", doc_type.get());
 	rt.add_standard_type<PitchQuery>("PitchQuery", doc_type.get());

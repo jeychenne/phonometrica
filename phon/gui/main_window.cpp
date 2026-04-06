@@ -40,6 +40,7 @@
 #include <phon/gui/view.hpp>
 #include <phon/gui/view_panel.hpp>
 #include <phon/gui/script_view.hpp>
+#include <phon/gui/note_view.hpp>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/annotation_view.hpp>
 #include <phon/gui/dataset_view.hpp>
@@ -137,6 +138,7 @@ QMenu *MainWindow::createFileMenu()
 	auto *menu = new QMenu(tr("&File"), this);
 
 	menu->addAction(tr("New script"), QKeySequence::New, this, &MainWindow::onNewScript);
+	menu->addAction(tr("New note"), this, &MainWindow::onNewNote);
 	menu->addSeparator();
 
 	menu->addAction(tr("Open project..."), QKeySequence(tr("Ctrl+O")), this, &MainWindow::onOpenProject);
@@ -391,6 +393,12 @@ void MainWindow::createDockWidgets()
 
 	m_file_manager = new FileManager(Project::get(), m_project_dock);
 	connect(m_file_manager, &FileManager::documentRequested, this, &MainWindow::onDocumentRequested);
+
+	connect(m_file_manager, &FileManager::noteRequested, this, [this](Directory *dir) {
+		auto note = make_handle<Note>(dir);
+		openNote(note);
+		statusBar()->showMessage(tr("New note"), 2000);
+	});
 	connect(m_file_manager, &FileManager::analysisRequested, this, [this](DataTable *dt) {
 		openAnalysis(Handle<DataTable>(dt));
 	});
@@ -615,6 +623,13 @@ void MainWindow::onNewScript()
 	auto script = make_handle<Script>(Project::get()->scripts().get());
 	openScript(script);
 	statusBar()->showMessage(tr("New script"), 2000);
+}
+
+void MainWindow::onNewNote()
+{
+	auto note = make_handle<Note>(Project::get()->notes().get());
+	openNote(note);
+	statusBar()->showMessage(tr("New note"), 2000);
 }
 
 void MainWindow::onOpenProject()
@@ -1437,6 +1452,15 @@ void MainWindow::onDocumentRequested(Document *doc)
 		return;
 	}
 
+	// Handle research notes
+	if (doc->is<Note>())
+	{
+		auto *note = static_cast<Note *>(doc);
+		openNote(Handle<Note>(note));
+		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
+		return;
+	}
+
 	// Handle annotation files
 	if (doc->is<Annotation>())
 	{
@@ -1686,6 +1710,12 @@ ViewPanel *MainWindow::addViewTab(View *view)
 void MainWindow::openScript(const Handle<Script> &script)
 {
 	auto *view = new ScriptView(m_runtime, m_console, script);
+	addViewTab(view);
+}
+
+void MainWindow::openNote(const Handle<Note> &note)
+{
+	auto *view = new NoteView(note);
 	addViewTab(view);
 }
 
