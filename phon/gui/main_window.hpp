@@ -27,6 +27,7 @@
 #include <phon/gui/output_panel.hpp>
 #include <phon/gui/ipa_panel.hpp>
 #include <phon/application/script.hpp>
+#include <phon/application/note.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/conc/query.hpp>
 #include <phon/application/plugin.hpp>
@@ -73,6 +74,7 @@ private slots:
 
 	// File menu
 	void onNewScript();
+	void onNewNote();
 	void onOpenProject();
 	void onAddFiles();
 	void onAddFolder();
@@ -151,6 +153,7 @@ private:
 	ViewPanel *addViewTab(View *view);
 
 	void openScript(const Handle<Script> &script);
+	void openNote(const Handle<Note> &note);
 
 	void openDataset(Handle<Dataset> ds);
 

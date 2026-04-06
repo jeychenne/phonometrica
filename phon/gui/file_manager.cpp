@@ -547,8 +547,22 @@ void FileManager::buildRootContextMenu(QMenu &menu, const QModelIndex &sourceInd
 	bool isData = (dir == m_project->data().get());
 	bool isAnalyses = (dir == m_project->analyses().get());
 	bool isQueries = (dir == m_project->queries().get());
+	bool isNotes = (dir == m_project->notes().get());
 
-	if (isCorpus || isScripts || isData || isAnalyses || isQueries)
+	if (isNotes)
+	{
+		menu.addAction(tr("New note"), [this, sourceIndex]() {
+			// Emit a signal so MainWindow can create a new NoteView.
+			auto *dir = dynamic_cast<Directory *>(m_model->elementFromIndex(sourceIndex));
+			if (dir)
+				emit noteRequested(dir);
+		});
+
+		menu.addAction(tr("Add files..."), [this, sourceIndex]() {
+			addFilesToDirectory(sourceIndex);
+		});
+	}
+	else if (isCorpus || isScripts || isData || isAnalyses || isQueries)
 	{
 		menu.addAction(tr("Add files..."), [this, sourceIndex]() {
 			addFilesToDirectory(sourceIndex);
@@ -707,6 +721,10 @@ void FileManager::addFilesToDirectory(const QModelIndex &sourceParent)
 	{
 		filter = tr("Scripts (*.phon);;All files (*)");
 	}
+	else if (dir->toplevel() == m_project->notes().get())
+	{
+		filter = tr("Research notes (*.phon-note);;All files (*)");
+	}
 
 	auto files = QFileDialog::getOpenFileNames(this, tr("Add files"), QString(), filter);
 	if (files.isEmpty())
@@ -726,6 +744,8 @@ void FileManager::addFilesToDirectory(const QModelIndex &sourceParent)
 			type = FileType::Dataset;
 		else if (dir->toplevel() == m_project->queries().get())
 			type = FileType::Query;
+		else if (dir->toplevel() == m_project->notes().get())
+			type = FileType::Note;
 
 		auto handle = Handle<Directory>(dir);
 		m_project->add_file(std::move(path), handle, type, true);

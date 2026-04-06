@@ -15,6 +15,7 @@ This is a major release. Phonometrica has gained substantial new functionality f
 - Output panel for script execution output, separate from the interactive console.
 - Batch property editing: select multiple files in the file manager and edit their properties at once through the information panel.
 - Context-sensitive help: each view has a Help button that links to the relevant documentation page.
+- Research notes: create and edit rich-text notes (bold, italic, headings, lists) within your project, stored as HTML (``.phon-note``).
 
 **Sound visualization**
 

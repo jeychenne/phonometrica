@@ -451,10 +451,11 @@ Directory *ProjectModel::rootAt(int row) const
 	{
 	case 0: return m_project->corpus().get();
 	case 1: return m_project->queries().get();
-	case 2: return m_project->scripts().get();
-	case 3: return m_project->data().get();
-	case 4: return m_project->analyses().get();
-	case 5: return m_project->bookmarks().get();
+	case 2: return m_project->data().get();
+	case 3: return m_project->analyses().get();
+	case 4: return m_project->scripts().get();
+	case 5: return m_project->notes().get();
+	case 6: return m_project->bookmarks().get();
 	default: return nullptr;
 	}
 }
@@ -468,10 +469,11 @@ QIcon ProjectModel::iconForElement(Element *elem) const
     {
         if (dir == rootAt(0)) return QIcon(":/icons/database.svg");
         if (dir == rootAt(1)) return QIcon(":/icons/search.svg");
-        if (dir == rootAt(2)) return QIcon(":/icons/square-terminal.svg");
-        if (dir == rootAt(3)) return QIcon(":/icons/sheet.svg");
-        if (dir == rootAt(4)) return QIcon(":/icons/statistics.svg");
-        if (dir == rootAt(5)) return QIcon(":/icons/book-marked.svg");
+        if (dir == rootAt(2)) return QIcon(":/icons/sheet.svg");
+        if (dir == rootAt(3)) return QIcon(":/icons/statistics.svg");
+        if (dir == rootAt(4)) return QIcon(":/icons/square-terminal.svg");
+        if (dir == rootAt(5)) return QIcon(":/icons/notebook-pen.svg");
+        if (dir == rootAt(6)) return QIcon(":/icons/book-marked.svg");
 
         return iconProvider.icon(QFileIconProvider::Folder);
     }
@@ -484,6 +486,9 @@ QIcon ProjectModel::iconForElement(Element *elem) const
 
     if (dynamic_cast<Script *>(elem))
         return QIcon(":/icons/file-terminal.svg");
+
+    if (dynamic_cast<Note *>(elem))
+        return QIcon(":/icons/file-text.svg");
 
     if (dynamic_cast<Bookmark *>(elem))
         return QIcon(":/icons/file-bookmarked.svg");

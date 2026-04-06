@@ -42,8 +42,9 @@ enum class FileType
 	Query = 4,
 	Script = 8,
 	Dataset = 16,
+	Note = 32,
 	CorpusFile = Annotation|Sound,
-	Any = Annotation|Sound|Query|Script|Dataset
+	Any = Annotation|Sound|Query|Script|Dataset|Note
 };
 
 
