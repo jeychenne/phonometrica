@@ -326,6 +326,7 @@ struct DesignMatrix
 	Array<double> y;          // response vector (n)
 	Array<String> coef_names; // coefficient names (p)
 	Array<String> response_levels; // for binary text response: [reference, success] (empty for numeric)
+	Array<Model::VariableInfo> variable_info; // per-variable metadata for EMMs
 	intptr_t nobs = 0;
 	intptr_t ncol = 0;
 };
@@ -478,6 +479,18 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	// Coefficient names
 	for (intptr_t j = 0; j < p; j++) {
 		dm.coef_names.append(all_columns[j].name);
+	}
+
+	// Variable metadata for post-hoc analysis (estimated marginal means).
+	// One entry per unique predictor variable, recording whether it is
+	// numeric or categorical and (for categoricals) the full level set.
+	for (auto &kv : var_exp_map)
+	{
+		Model::VariableInfo vi;
+		vi.name = String(kv.first);
+		vi.numeric = kv.second.numeric;
+		vi.levels = kv.second.levels;
+		dm.variable_info.append(std::move(vi));
 	}
 
 	return dm;
@@ -973,6 +986,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	model.formula = formula.to_string();
 	model.coef_names = std::move(dm.coef_names);
 	model.response_levels = std::move(dm.response_levels);
+	model.variable_info = std::move(dm.variable_info);
 
 	// For GAMs, set nfixed to the number of parametric terms only.
 	// Smooth basis coefficients are reported separately via smooth_terms.

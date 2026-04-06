@@ -63,6 +63,18 @@ static void store_matrices(Model &model, const Array<double> &y, const Array<dou
 	model.nfixed = X.ncol();
 }
 
+// Store the variance-covariance matrix of fixed-effect coefficients in the model.
+static void store_vcov(Model &model, const Eigen::MatrixXd &cov)
+{
+	intptr_t p = cov.rows();
+	model.vcov = Array<double>(p, p, 0.0);
+	for (intptr_t i = 0; i < p; i++) {
+		for (intptr_t j = 0; j < p; j++) {
+			model.vcov(i + 1, j + 1) = cov(i, j);
+		}
+	}
+}
+
 // =====================================================================
 // Linear model (OLS)
 // =====================================================================
@@ -131,6 +143,9 @@ Model lm(const Array<double> &y, const Array<double> &X)
 		model.stat[i] = model.beta[i] / model.se[i];
 		model.p[i] = 2 * (1 - cdf(dist, std::abs(model.stat[i])));
 	}
+
+	// Store full variance-covariance matrix: σ²(X'X)⁻¹
+	store_vcov(model, static_cast<double>(rv) * var);
 
 	// R²
 	double ybar = mean(y);
@@ -271,6 +286,9 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 	} else {
 		cov = glm_covariance(X, fam, weights);
 	}
+
+	// Store full variance-covariance matrix
+	store_vcov(model, cov);
 
 	// Standard errors
 	model.se = Array<double>(m, 0.0);
@@ -515,6 +533,9 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 		}
 		Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
 		Eigen::MatrixXd cov = XtWX.inverse();
+
+		// Store full variance-covariance matrix
+		store_vcov(model, cov);
 
 		model.se = Array<double>(p, 0.0);
 		model.stat = Array<double>(p, 0.0);
@@ -761,6 +782,9 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	model.family = "gaussian";
 	model.link = "identity";
 	store_matrices(model, y, X);
+
+	// Store full variance-covariance matrix
+	store_vcov(model, Vb);
 
 	model.beta = Array<double>(p, 0.0);
 	model.se = Array<double>(p, 0.0);
@@ -1039,6 +1063,9 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	model.family = fam.name;
 	model.link = fam.link_name;
 	store_matrices(model, y, X);
+
+	// Store full variance-covariance matrix
+	store_vcov(model, Vb);
 
 	model.beta = Array<double>(p, 0.0);
 	model.se = Array<double>(p, 0.0);

@@ -2386,6 +2386,16 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		model.p[i] = 2.0 * (1.0 - boost::math::cdf(normal, std::abs(model.stat[i])));
 	}
 
+	// Store full variance-covariance matrix of fixed effects
+	{
+		model.vcov = Array<double>(p, p, 0.0);
+		for (intptr_t i = 0; i < p; i++) {
+			for (intptr_t j = 0; j < p; j++) {
+				model.vcov(i + 1, j + 1) = vcov(i, j);
+			}
+		}
+	}
+
 	model.fitted = Array<double>(n, 0.0);
 	model.residuals = Array<double>(n, 0.0);
 	for (intptr_t i = 0; i < n; i++)
