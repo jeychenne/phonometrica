@@ -7,7 +7,7 @@ Phonometrica provides a dedicated environment for fitting and comparing statisti
 To open an analysis, create one from a concordance or dataset using the **Analyze** command,
 or open an existing ``.phon-analysis`` file. The analysis view is divided into three areas:
 a **top bar** for entering formulas, a **left panel** with column and model lists, and a
-**right panel** with tabs for results, diagnostics, and exploratory plots.
+**right panel** with tabs for results, post-hoc tests, diagnostics, and exploratory plots.
 
 
 Top bar
@@ -118,6 +118,101 @@ The toolbar above the summary provides:
 - **Copy to clipboard**: copy the summary text.
 - **Save as text**: save the summary to a plain text file.
 - **Save as LaTeX table**: export the coefficient table in LaTeX format.
+
+
+Post-hoc tab
+------------
+
+The Post-hoc tab provides estimated marginal means (EMMs) and pairwise contrasts for the
+categorical factors in the selected model. This is the standard approach for post-hoc
+analysis in linear and generalized linear models.
+
+The toolbar at the top of the tab contains the following controls:
+
+- **Factor**: select the categorical variable for which to compute EMMs or trends.
+- **Trend**: select a numeric variable to estimate its slope at each level of the factor
+  (emtrends mode). Leave as "(None)" for standard estimated marginal means.
+- **Adjustment**: the method used to correct *p*-values for multiple comparisons:
+
+  - *Holm* (default): Holm's step-down procedure. Uniformly more powerful than Bonferroni
+    while still controlling the family-wise error rate.
+  - *Bonferroni*: multiply each *p*-value by the number of tests.
+  - *None*: no adjustment (raw *p*-values).
+
+- **Confidence**: the confidence level for intervals (default: 0.95).
+
+Estimated marginal means
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+EMMs are population-averaged predictions at each level of the target factor. Other categorical
+factors in the model are balanced (equal weight across their levels), and numeric covariates
+are held at their observed means. This ensures that the estimated means are not biased by
+unequal sample sizes or covariate imbalances.
+
+The upper table displays:
+
+- **Level**: each level of the selected factor.
+- **EMM**: the estimated marginal mean on the response scale.
+- **SE**: the standard error.
+- **Lower CI** / **Upper CI**: confidence interval bounds.
+
+For models with a non-identity link function (e.g. logistic or Poisson regression), two
+additional columns show the link-scale EMM and SE. The response-scale CIs are obtained by
+back-transforming the link-scale CI endpoints through the inverse link function, which
+produces asymmetric but more accurate intervals than the delta method.
+
+Emtrends mode
+~~~~~~~~~~~~~
+
+When a numeric variable is selected in the **Trend** dropdown, the tab switches to
+*emtrends* mode. Instead of estimated marginal means, it computes the slope (trend) of
+the selected continuous variable at each level of the factor.
+
+This is useful for testing whether a continuous effect differs across groups. For example,
+with the model ``F2 ~ frequency * group``, selecting Factor = "group" and Trend = "frequency"
+will estimate the slope of frequency for each group. The pairwise contrasts then test
+whether these slopes differ significantly.
+
+Trends are reported on the link scale. For Gaussian models with identity link, these are
+the response-scale slopes (e.g. Hz per unit of frequency). For models with a log or logit
+link, they represent the change in the linear predictor per unit of the trend variable
+(e.g. change in log-odds per unit of frequency for logistic regression).
+
+Pairwise contrasts
+~~~~~~~~~~~~~~~~~~
+
+The lower table shows all pairwise differences between levels, with columns for:
+
+- **Contrast**: the pair being compared (e.g. "a - i").
+- **Estimate**: the difference between the two EMMs (or trends) on the link scale.
+- **SE**: the standard error of the contrast, accounting for the covariance between EMMs.
+- **t value** or **z value**: the Wald test statistic (t for Gaussian fixed-effects
+  models, z for GLMs and mixed models).
+- **p value**: the *p*-value after adjustment for multiple comparisons.
+
+Significant contrasts (*p* < 0.05) are highlighted in bold. Significance codes
+(\*\*\* < 0.001, \*\* < 0.01, \* < 0.05, . < 0.1) appear in the rightmost column.
+
+Mathematical background
+~~~~~~~~~~~~~~~~~~~~~~~
+
+EMMs are computed following Searle, Speed & Milliken (1980), using the terminology
+of Lenth (2016). For a model with fixed-effects coefficient vector **β** and covariance
+matrix **V**, the EMM for each level is a linear function **Lβ** where **L** is a
+prediction matrix (the "reference grid"). Standard errors are obtained from
+SE = √diag(**L V L'**), and confidence intervals use the appropriate *t* or *z*
+quantiles.
+
+For generalized linear models, response-scale standard errors are computed via the
+delta method, and confidence intervals use endpoint back-transformation through the
+inverse link function.
+
+.. note::
+
+   EMMs for mixed-effects models use the fixed-effects coefficients only. Random effects
+   integrate out to zero at the population level and do not contribute to the EMMs.
+   The covariance matrix is the conditional variance Var(β̂ | θ̂) from the Henderson
+   system, which is the same quantity reported by lme4 and glmmTMB in R.
 
 
 Model comparison
@@ -253,6 +348,26 @@ Tips
   may need a different family, additional predictors, or data transformation.
 - For vowel formant plots, use the **Formant chart** checkbox in the EDA tab to reverse
   both axes.
+- After fitting a model with a categorical predictor, switch to the **Post-hoc** tab to
+  see which levels differ from each other. The Holm adjustment (default) controls the
+  family-wise error rate while being more powerful than Bonferroni.
+- For interaction models (e.g. ``F2 ~ frequency * group``), use the **Trend** dropdown in
+  the Post-hoc tab to test whether the slope of a continuous variable differs across groups.
+
+
+References
+----------
+
+- Holm, S. (1979). A simple sequentially rejective multiple test procedure.
+  *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- Lenth, R.V. (2016). Least-squares means: the R package lsmeans.
+  *Journal of Statistical Software*, 69(1), 1–33.
+- Nakagawa, S. & Schielzeth, H. (2013). A general and simple method for obtaining
+  R² from generalized linear mixed-effects models. *Methods in Ecology and Evolution*,
+  4(2), 133–142.
+- Searle, S.R., Speed, F.M. & Milliken, G.A. (1980). Population marginal means in the
+  linear model: an alternative to least squares means. *The American Statistician*,
+  34(4), 216–221.
 
 
 .. |help| image:: ../icons/circle-help.svg

@@ -293,6 +293,68 @@ void AnalysisView::setupUi()
 	m_right_tabs->addTab(summary_widget, tr("Summary"));
 	m_right_tabs->setTabToolTip(0, tr("Coefficient table and goodness-of-fit statistics for the selected model"));
 
+	// Post-hoc tab
+	auto *posthoc_widget = new QWidget;
+	auto *posthoc_layout = new QVBoxLayout(posthoc_widget);
+	posthoc_layout->setContentsMargins(4, 4, 4, 4);
+	posthoc_layout->setSpacing(4);
+
+	auto *posthoc_top = new QHBoxLayout;
+	posthoc_top->addWidget(new QLabel(tr("Factor:")));
+	m_posthoc_factor_combo = new QComboBox;
+	m_posthoc_factor_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	posthoc_top->addWidget(m_posthoc_factor_combo);
+	posthoc_top->addSpacing(12);
+	posthoc_top->addWidget(new QLabel(tr("Trend:")));
+	m_posthoc_trend_combo = new QComboBox;
+	m_posthoc_trend_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_posthoc_trend_combo->setToolTip(tr("Select a numeric variable to estimate its slope at each level of the factor (emtrends).\n"
+	                                     "Leave as \"(None)\" for estimated marginal means."));
+	posthoc_top->addWidget(m_posthoc_trend_combo);
+	posthoc_top->addSpacing(12);
+	posthoc_top->addWidget(new QLabel(tr("Adjustment:")));
+	m_posthoc_adj_combo = new QComboBox;
+	m_posthoc_adj_combo->addItem(tr("Holm"), QStringLiteral("holm"));
+	m_posthoc_adj_combo->addItem(tr("Bonferroni"), QStringLiteral("bonferroni"));
+	m_posthoc_adj_combo->addItem(tr("None"), QStringLiteral("none"));
+	posthoc_top->addWidget(m_posthoc_adj_combo);
+	posthoc_top->addSpacing(12);
+	posthoc_top->addWidget(new QLabel(tr("Confidence:")));
+	m_posthoc_conf_spin = new QDoubleSpinBox;
+	m_posthoc_conf_spin->setRange(0.80, 0.99);
+	m_posthoc_conf_spin->setSingleStep(0.01);
+	m_posthoc_conf_spin->setDecimals(2);
+	m_posthoc_conf_spin->setValue(0.95);
+	m_posthoc_conf_spin->setSuffix(QStringLiteral(" "));
+	posthoc_top->addWidget(m_posthoc_conf_spin);
+	posthoc_top->addStretch();
+	posthoc_layout->addLayout(posthoc_top);
+
+	auto *emm_group = new QGroupBox(tr("Estimated Marginal Means"));
+	auto *emm_glayout = new QVBoxLayout(emm_group);
+	emm_glayout->setContentsMargins(4, 4, 4, 4);
+	m_posthoc_emm_table = new QTableWidget;
+	m_posthoc_emm_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_posthoc_emm_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	m_posthoc_emm_table->setAlternatingRowColors(true);
+	m_posthoc_emm_table->verticalHeader()->setVisible(false);
+	emm_glayout->addWidget(m_posthoc_emm_table);
+	posthoc_layout->addWidget(emm_group, 1);
+
+	auto *contrast_group = new QGroupBox(tr("Pairwise Contrasts"));
+	auto *contrast_glayout = new QVBoxLayout(contrast_group);
+	contrast_glayout->setContentsMargins(4, 4, 4, 4);
+	m_posthoc_contrast_table = new QTableWidget;
+	m_posthoc_contrast_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	m_posthoc_contrast_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	m_posthoc_contrast_table->setAlternatingRowColors(true);
+	m_posthoc_contrast_table->verticalHeader()->setVisible(false);
+	contrast_glayout->addWidget(m_posthoc_contrast_table);
+	posthoc_layout->addWidget(contrast_group, 1);
+
+	m_right_tabs->addTab(posthoc_widget, tr("Post-hoc"));
+	m_right_tabs->setTabToolTip(1, tr("Estimated marginal means and pairwise contrasts for categorical factors"));
+
 	auto *diag_widget = new QWidget;
 	auto *diag_layout = new QVBoxLayout(diag_widget);
 	diag_layout->setContentsMargins(4, 4, 4, 4);
@@ -328,7 +390,7 @@ void AnalysisView::setupUi()
 	diag_layout->addWidget(m_test_results_group);
 
 	m_right_tabs->addTab(diag_widget, tr("Diagnostics"));
-	m_right_tabs->setTabToolTip(1, tr("Residual plots to check model assumptions"));
+	m_right_tabs->setTabToolTip(2, tr("Residual plots to check model assumptions"));
 
 	// EDA tab
 	auto *eda_widget = new QWidget;
@@ -502,7 +564,7 @@ void AnalysisView::setupUi()
 	eda_layout->addWidget(eda_splitter, 1);
 
 	m_right_tabs->addTab(eda_widget, tr("EDA"));
-	m_right_tabs->setTabToolTip(2, tr("Exploratory Data Analysis: visualize variables before fitting a model"));
+	m_right_tabs->setTabToolTip(3, tr("Exploratory Data Analysis: visualize variables before fitting a model"));
 
 	splitter->addWidget(m_right_tabs);
 	splitter->setStretchFactor(0, 0);
@@ -552,6 +614,10 @@ void AnalysisView::setupUi()
 	connect(m_eda_formant_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
 	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
+	connect(m_posthoc_factor_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
+	connect(m_posthoc_trend_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
+	connect(m_posthoc_adj_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
+	connect(m_posthoc_conf_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &AnalysisView::onPostHocChanged);
 }
 
 
@@ -721,6 +787,7 @@ void AnalysisView::displayModel(int index)
 	auto &m = m_analysis->model(index);
 	m_summary->setPlainText(formatSummary(m));
 	updateDiagnosticPlot();
+	populatePostHocFactors();
 }
 
 
@@ -754,6 +821,14 @@ void AnalysisView::onDeleteModel()
 		m_summary->clear();
 		m_plot->clear();
 		clearTestResults();
+		m_posthoc_factor_combo->clear();
+		m_posthoc_trend_combo->clear();
+		m_posthoc_emm_table->clear();
+		m_posthoc_emm_table->setRowCount(0);
+		m_posthoc_emm_table->setColumnCount(0);
+		m_posthoc_contrast_table->clear();
+		m_posthoc_contrast_table->setRowCount(0);
+		m_posthoc_contrast_table->setColumnCount(0);
 	}
 
 	emit titleChanged(label());
@@ -1243,32 +1318,100 @@ void AnalysisView::addRandomIntercept(const QString &name)
 
 void AnalysisView::addInteraction(const QString &name, const QString &other, bool withMainEffects)
 {
-	QString quoted = quoteIfNeeded(name);
-	// withMainEffects → "name * other" (expands to main effects + interaction)
-	// interaction only → "name:other" (interaction term alone)
-	QString term = withMainEffects
-		? (quoted + QStringLiteral(" * ") + other)
-		: (quoted + QStringLiteral(":") + other);
-	QString text = m_formula_edit->text().trimmed();
-
-	if (text.isEmpty() || !text.contains('~'))
+	if (withMainEffects)
 	{
-		if (text.isEmpty())
-			m_formula_edit->setText(QStringLiteral("~ ") + term);
-		else
-			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+		// Parse-modify-regenerate: produce "a * b" by ensuring both main effects
+		// and the interaction are present, then collapsing to * notation.
+		auto parsed = tryParseFormula();
+		if (!parsed) {
+			// No valid formula yet — just write "name * other".
+			QString text = m_formula_edit->text().trimmed();
+			QString term = quoteIfNeeded(name) + QStringLiteral(" * ") + quoteIfNeeded(other);
+			if (text.isEmpty() || !text.contains('~'))
+				m_formula_edit->setText(text.isEmpty() ? (QStringLiteral("~ ") + term) : (text + QStringLiteral(" ~ ") + term));
+			else {
+				QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+				m_formula_edit->setText(rhs.isEmpty() ? (text + QStringLiteral(" ") + term) : (text + QStringLiteral(" + ") + term));
+			}
+			m_formula_edit->setFocus();
+			m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+			return;
+		}
+
+		auto name_s = String(name.toUtf8().constData());
+		auto other_s = String(other.toUtf8().constData());
+
+		// Remove existing main effects of both variables (if present),
+		// since * will re-introduce them.
+		auto &fixed = parsed->fixed;
+		for (intptr_t i = fixed.size(); i >= 1; i--)
+		{
+			if (fixed[i].variables.size() == 1 &&
+			    (fixed[i].variables[1] == name_s || fixed[i].variables[1] == other_s))
+			{
+				fixed.remove_at(i);
+			}
+		}
+
+		// Also remove any existing a:b interaction (will be re-added by *).
+		for (intptr_t i = fixed.size(); i >= 1; i--)
+		{
+			if (fixed[i].variables.size() == 2)
+			{
+				auto &v = fixed[i].variables;
+				if ((v[1] == name_s && v[2] == other_s) ||
+				    (v[1] == other_s && v[2] == name_s))
+				{
+					fixed.remove_at(i);
+				}
+			}
+		}
+
+		// Add both main effects + interaction (the formula serialiser will
+		// produce "a + b + a:b"; the user sees the expanded form, which is
+		// unambiguous and correct).
+		stats::FixedTerm ft_a;
+		ft_a.variables.append(name_s);
+		fixed.append(std::move(ft_a));
+
+		stats::FixedTerm ft_b;
+		ft_b.variables.append(other_s);
+		fixed.append(std::move(ft_b));
+
+		stats::FixedTerm ft_ab;
+		ft_ab.variables.append(name_s);
+		ft_ab.variables.append(other_s);
+		fixed.append(std::move(ft_ab));
+
+		applyFormula(*parsed);
 	}
 	else
 	{
-		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
-		if (rhs.isEmpty())
-			m_formula_edit->setText(text + QStringLiteral(" ") + term);
-		else
-			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
-	}
+		// Interaction-only (a:b) — simple append.
+		QString quoted_name = quoteIfNeeded(name);
+		QString quoted_other = quoteIfNeeded(other);
+		QString term = quoted_name + QStringLiteral(":") + quoted_other;
+		QString text = m_formula_edit->text().trimmed();
 
-	m_formula_edit->setFocus();
-	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+		if (text.isEmpty() || !text.contains('~'))
+		{
+			if (text.isEmpty())
+				m_formula_edit->setText(QStringLiteral("~ ") + term);
+			else
+				m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+		}
+		else
+		{
+			QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+			if (rhs.isEmpty())
+				m_formula_edit->setText(text + QStringLiteral(" ") + term);
+			else
+				m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+		}
+
+		m_formula_edit->setFocus();
+		m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+	}
 }
 
 void AnalysisView::addRandomSlope(const QString &variable, const QString &group, bool correlated)
@@ -3297,6 +3440,315 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 
 	return text;
+}
+
+
+// =====================================================================
+// Post-hoc: Estimated Marginal Means and Pairwise Contrasts
+// =====================================================================
+
+static QString formatPValue(double p)
+{
+	if (p < 0.001)
+		return QStringLiteral("< 0.001");
+	if (p < 0.01)
+		return QString::asprintf("%.4f", p);
+	return QString::asprintf("%.3f", p);
+}
+
+static QString formatSignificance(double p)
+{
+	if (p < 0.001) return QStringLiteral("***");
+	if (p < 0.01)  return QStringLiteral("**");
+	if (p < 0.05)  return QStringLiteral("*");
+	if (p < 0.1)   return QStringLiteral(".");
+	return QString();
+}
+
+void AnalysisView::populatePostHocFactors()
+{
+	m_posthoc_factor_combo->blockSignals(true);
+	m_posthoc_trend_combo->blockSignals(true);
+	m_posthoc_factor_combo->clear();
+	m_posthoc_trend_combo->clear();
+	m_posthoc_trend_combo->addItem(tr("(None)"));
+
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
+	{
+		m_posthoc_factor_combo->blockSignals(false);
+		m_posthoc_trend_combo->blockSignals(false);
+		return;
+	}
+
+	auto &m = m_analysis->model(m_current_model);
+
+	if (!m.has_variable_info())
+	{
+		m_posthoc_factor_combo->blockSignals(false);
+		m_posthoc_trend_combo->blockSignals(false);
+		return;
+	}
+
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	{
+		auto &vi = m.variable_info[i];
+		auto qname = QString::fromUtf8(vi.name.data(), (int)vi.name.size());
+
+		if (!vi.numeric && vi.levels.size() >= 2) {
+			m_posthoc_factor_combo->addItem(qname);
+		}
+		if (vi.numeric) {
+			m_posthoc_trend_combo->addItem(qname);
+		}
+	}
+
+	m_posthoc_factor_combo->blockSignals(false);
+	m_posthoc_trend_combo->blockSignals(false);
+
+	if (m_posthoc_factor_combo->count() > 0) {
+		updatePostHoc();
+	}
+	else {
+		m_posthoc_emm_table->clear();
+		m_posthoc_emm_table->setRowCount(0);
+		m_posthoc_emm_table->setColumnCount(0);
+		m_posthoc_contrast_table->clear();
+		m_posthoc_contrast_table->setRowCount(0);
+		m_posthoc_contrast_table->setColumnCount(0);
+	}
+}
+
+
+void AnalysisView::onPostHocChanged()
+{
+	updatePostHoc();
+}
+
+
+void AnalysisView::updatePostHoc()
+{
+	m_posthoc_emm_table->clear();
+	m_posthoc_emm_table->setRowCount(0);
+	m_posthoc_emm_table->setColumnCount(0);
+	m_posthoc_contrast_table->clear();
+	m_posthoc_contrast_table->setRowCount(0);
+	m_posthoc_contrast_table->setColumnCount(0);
+
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
+		return;
+	if (m_posthoc_factor_combo->count() == 0 || m_posthoc_factor_combo->currentIndex() < 0)
+		return;
+
+	auto &model = m_analysis->model(m_current_model);
+
+	if (!model.has_vcov() || !model.has_variable_info())
+		return;
+
+	QString factor_qstr = m_posthoc_factor_combo->currentText();
+	String factor(factor_qstr.toUtf8().constData());
+
+	QString adj_qstr = m_posthoc_adj_combo->currentData().toString();
+	String adjustment(adj_qstr.toUtf8().constData());
+
+	double conf_level = m_posthoc_conf_spin->value();
+
+	bool is_identity = (model.link == "identity");
+
+	// Determine whether we are in emtrends mode.
+	bool trend_mode = (m_posthoc_trend_combo->currentIndex() > 0);
+	QString trend_var_qstr;
+	if (trend_mode) {
+		trend_var_qstr = m_posthoc_trend_combo->currentText();
+	}
+
+	try
+	{
+		stats::EMMResult emm;
+		if (trend_mode) {
+			String trend_var(trend_var_qstr.toUtf8().constData());
+			emm = stats::emtrends(model, factor, trend_var, conf_level);
+		}
+		else {
+			emm = stats::emmeans(model, factor, conf_level);
+		}
+
+		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
+
+		// ── Populate EMM / trends table ─────────────────────────────
+
+		intptr_t K = emm.levels.size();
+
+		// Column headers change depending on mode.
+		QString value_header = trend_mode
+			? tr("Slope") : tr("EMM");
+		QString value_link_header = trend_mode
+			? tr("Slope (link)") : tr("EMM (link)");
+
+		QStringList emm_headers;
+		emm_headers << tr("Level") << value_header << tr("SE")
+		            << tr("Lower CI") << tr("Upper CI");
+		if (!is_identity && !trend_mode) {
+			emm_headers << value_link_header << tr("SE (link)");
+		}
+
+		m_posthoc_emm_table->setColumnCount(emm_headers.size());
+		m_posthoc_emm_table->setHorizontalHeaderLabels(emm_headers);
+		m_posthoc_emm_table->setRowCount((int)K);
+
+		for (intptr_t i = 0; i < K; i++)
+		{
+			int row = (int)i;
+			m_posthoc_emm_table->setItem(row, 0,
+				new QTableWidgetItem(QString::fromUtf8(emm.levels[i + 1].data(),
+				                                       (int)emm.levels[i + 1].size())));
+
+			auto *emm_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean[i + 1]));
+			emm_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_emm_table->setItem(row, 1, emm_item);
+
+			auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se[i + 1]));
+			se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_emm_table->setItem(row, 2, se_item);
+
+			auto *lo_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.lower_ci[i + 1]));
+			lo_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_emm_table->setItem(row, 3, lo_item);
+
+			auto *hi_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.upper_ci[i + 1]));
+			hi_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_emm_table->setItem(row, 4, hi_item);
+
+			if (!is_identity && !trend_mode)
+			{
+				auto *emm_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean_link[i + 1]));
+				emm_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, 5, emm_link_item);
+
+				auto *se_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se_link[i + 1]));
+				se_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, 6, se_link_item);
+			}
+		}
+
+		m_posthoc_emm_table->resizeColumnsToContents();
+
+		// ── Populate contrast table ─────────────────────────────────
+
+		intptr_t npairs = contrasts.label.size();
+
+		QString stat_header = (std::isfinite(contrasts.df) && contrasts.df > 0)
+		                      ? tr("t value") : tr("z value");
+
+		QStringList con_headers;
+		con_headers << tr("Contrast") << tr("Estimate") << tr("SE")
+		            << stat_header << tr("p value") << QString();
+
+		m_posthoc_contrast_table->setColumnCount(con_headers.size());
+		m_posthoc_contrast_table->setHorizontalHeaderLabels(con_headers);
+		m_posthoc_contrast_table->setRowCount((int)npairs);
+
+		for (intptr_t i = 0; i < npairs; i++)
+		{
+			int row = (int)i;
+			double pval = contrasts.p_value[i + 1];
+			bool sig = (pval < 0.05);
+
+			m_posthoc_contrast_table->setItem(row, 0,
+				new QTableWidgetItem(QString::fromUtf8(contrasts.label[i + 1].data(),
+				                                       (int)contrasts.label[i + 1].size())));
+
+			auto *est_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.estimate[i + 1]));
+			est_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_contrast_table->setItem(row, 1, est_item);
+
+			auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.se[i + 1]));
+			se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_contrast_table->setItem(row, 2, se_item);
+
+			auto *stat_item = new QTableWidgetItem(QString::asprintf("%.3f", contrasts.stat[i + 1]));
+			stat_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_contrast_table->setItem(row, 3, stat_item);
+
+			auto *p_item = new QTableWidgetItem(formatPValue(pval));
+			p_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_posthoc_contrast_table->setItem(row, 4, p_item);
+
+			auto *sig_item = new QTableWidgetItem(formatSignificance(pval));
+			sig_item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+			m_posthoc_contrast_table->setItem(row, 5, sig_item);
+
+			// Bold significant rows.
+			if (sig) {
+				QFont bold = m_posthoc_contrast_table->font();
+				bold.setBold(true);
+				for (int c = 0; c < con_headers.size(); c++) {
+					if (auto *item = m_posthoc_contrast_table->item(row, c))
+						item->setFont(bold);
+				}
+			}
+		}
+
+		m_posthoc_contrast_table->resizeColumnsToContents();
+	}
+	catch (std::exception &e)
+	{
+		// Show the error in the EMM table as a single-cell message.
+		m_posthoc_emm_table->setColumnCount(1);
+		m_posthoc_emm_table->setRowCount(1);
+		m_posthoc_emm_table->setHorizontalHeaderLabels({tr("Error")});
+		m_posthoc_emm_table->setItem(0, 0, new QTableWidgetItem(QString::fromUtf8(e.what())));
+		m_posthoc_emm_table->resizeColumnsToContents();
+	}
+}
+
+
+void AnalysisView::onExportPostHoc()
+{
+	if (m_posthoc_emm_table->rowCount() == 0) return;
+
+	QString text;
+
+	// EMM table
+	text += tr("Estimated Marginal Means") + QStringLiteral("\n");
+	for (int c = 0; c < m_posthoc_emm_table->columnCount(); c++) {
+		if (c > 0) text += QStringLiteral("\t");
+		text += m_posthoc_emm_table->horizontalHeaderItem(c)->text();
+	}
+	text += QStringLiteral("\n");
+	for (int r = 0; r < m_posthoc_emm_table->rowCount(); r++) {
+		for (int c = 0; c < m_posthoc_emm_table->columnCount(); c++) {
+			if (c > 0) text += QStringLiteral("\t");
+			if (auto *item = m_posthoc_emm_table->item(r, c))
+				text += item->text();
+		}
+		text += QStringLiteral("\n");
+	}
+
+	// Contrast table
+	if (m_posthoc_contrast_table->rowCount() > 0)
+	{
+		text += QStringLiteral("\n") + tr("Pairwise Contrasts") + QStringLiteral("\n");
+		for (int c = 0; c < m_posthoc_contrast_table->columnCount(); c++) {
+			if (c > 0) text += QStringLiteral("\t");
+			text += m_posthoc_contrast_table->horizontalHeaderItem(c)->text();
+		}
+		text += QStringLiteral("\n");
+		for (int r = 0; r < m_posthoc_contrast_table->rowCount(); r++) {
+			for (int c = 0; c < m_posthoc_contrast_table->columnCount(); c++) {
+				if (c > 0) text += QStringLiteral("\t");
+				if (auto *item = m_posthoc_contrast_table->item(r, c))
+					text += item->text();
+			}
+			text += QStringLiteral("\n");
+		}
+	}
+
+	QApplication::clipboard()->setText(text);
+
+	auto *main_win = qobject_cast<QMainWindow *>(window());
+	if (main_win && main_win->statusBar()) {
+		main_win->statusBar()->showMessage(tr("Post-hoc results copied to clipboard"), 2000);
+	}
 }
 
 } // namespace phonometrica

@@ -75,6 +75,27 @@ struct Model
 	Array<double> stat;        // test statistics (t-values for Gaussian, z-values for GLM)
 	Array<double> p;           // p-values
 
+	// ---- Variance-covariance matrix of fixed-effect coefficients ----
+	// nfixed × nfixed matrix (2D Array). For OLS: σ²(X'X)⁻¹; for GLMs: (X'WX)⁻¹;
+	// for mixed models: conditional Var(β̂ | θ̂) from the Henderson inverse.
+	// Populated by the fitting routines; empty if the model was loaded from file
+	// without vcov or constructed directly.
+	Array<double> vcov;
+
+	// ---- Variable metadata (for post-hoc analysis, e.g. estimated marginal means) ----
+	// One entry per unique predictor variable in the formula's fixed effects.
+	// Records whether the variable is numeric or categorical, and for categoricals,
+	// the complete set of levels (reference level first). This information is needed
+	// to construct reference grids for estimated marginal means and contrasts.
+	// Populated by fit(); empty if the model was constructed directly.
+	struct VariableInfo
+	{
+		String name;               // column name in the data, e.g. "vowel"
+		bool numeric = true;       // true for continuous, false for categorical
+		Array<String> levels;      // categorical only: all levels, reference first; empty for numeric
+	};
+	Array<VariableInfo> variable_info;
+
 	// ---- Predictions and residuals ----
 	Array<double> fitted;      // fitted values (conditional on random effects if present)
 	Array<double> residuals;   // response residuals (y - fitted)
@@ -138,6 +159,10 @@ struct Model
 	bool has_random_effects() const { return !random_effects.empty(); }
 
 	bool has_smooth_terms() const { return !smooth_terms.empty(); }
+
+	bool has_vcov() const { return !vcov.empty(); }
+
+	bool has_variable_info() const { return !variable_info.empty(); }
 
 	bool is_gaussian() const { return family == "gaussian"; }
 

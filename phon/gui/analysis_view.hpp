@@ -46,6 +46,7 @@
 #include <phon/application/analysis.hpp>
 #include <phon/analysis/formula.hpp>
 #include <phon/analysis/scaled_residuals.hpp>
+#include <phon/analysis/emmeans.hpp>
 
 namespace phonometrica {
 
@@ -83,6 +84,8 @@ private slots:
 	void onExportEdaSVG();
 	void onDetachEdaPlot();
 	void onReattachEdaPlot();
+	void onPostHocChanged();
+	void onExportPostHoc();
 
 private:
 
@@ -122,6 +125,8 @@ private:
 	void updateEdaPlot();
 	void updateEdaSummary();
 	bool isColumnNumeric(const String &col_name) const;
+	void updatePostHoc();
+	void populatePostHocFactors();
 
 	Handle<Analysis> m_analysis;
 	int m_current_model = -1;
@@ -179,6 +184,14 @@ private:
 
 	// Column list check mark icon for variables used in the formula.
 	QIcon m_check_icon;
+
+	// Post-hoc tab
+	QComboBox *m_posthoc_factor_combo = nullptr;
+	QComboBox *m_posthoc_trend_combo = nullptr;
+	QComboBox *m_posthoc_adj_combo = nullptr;
+	QDoubleSpinBox *m_posthoc_conf_spin = nullptr;
+	QTableWidget *m_posthoc_emm_table = nullptr;
+	QTableWidget *m_posthoc_contrast_table = nullptr;
 };
 
 } // namespace phonometrica
