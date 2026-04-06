@@ -355,6 +355,7 @@ void Analysis::write()
 				auto gn = re_node.append_child("Group");
 				add_data_node(gn, "Name", re.group_name);
 				add_data_node(gn, "TermNames", strings_to_csv(re.term_names));
+				add_data_node(gn, "LevelNames", strings_to_csv(re.level_names));
 				add_data_node(gn, "Nlevels", String::convert(re.nlevels));
 				add_data_node(gn, "Variance", doubles_to_string(re.variance));
 				add_data_node(gn, "CovChol", doubles_to_string(re.cov_chol));
@@ -380,6 +381,29 @@ void Analysis::write()
 				add_data_node(sn, "PValue", String::format("%.17g", sm.p_value));
 				add_data_node(sn, "ColStart", String::convert(sm.col_start));
 				add_data_node(sn, "ColCount", String::convert(sm.col_count));
+			}
+		}
+
+		// Variance-covariance matrix (stored as flat array; dimensions = nfixed × nfixed)
+		if (m.has_vcov())
+		{
+			add_data_node(mn, "Vcov", doubles_to_string(m.vcov));
+		}
+
+		// Variable metadata for post-hoc analysis
+		if (m.has_variable_info())
+		{
+			auto vi_node = mn.append_child("VariableInfo");
+
+			for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+			{
+				auto &vi = m.variable_info[i];
+				auto vn = vi_node.append_child("Var");
+				add_data_node(vn, "Name", vi.name);
+				add_data_node(vn, "Numeric", vi.numeric ? "true" : "false");
+				if (!vi.numeric && !vi.levels.empty()) {
+					add_data_node(vn, "Levels", strings_to_csv(vi.levels));
+				}
 			}
 		}
 	}
@@ -492,6 +516,7 @@ void Analysis::load()
 
 								if (gfn == "Name")               re.group_name = gft;
 								else if (gfn == "TermNames")      re.term_names = parse_csv_strings(gft);
+								else if (gfn == "LevelNames")     re.level_names = parse_csv_strings(gft);
 								else if (gfn == "Nlevels")         re.nlevels = String(gft).to_int();
 								else if (gfn == "Variance")        re.variance = parse_doubles(gft);
 								else if (gfn == "CovChol")         re.cov_chol = parse_doubles(gft);
@@ -526,6 +551,39 @@ void Analysis::load()
 							}
 
 							m.smooth_terms.append(std::move(sm));
+						}
+					}
+					else if (name == "Vcov")
+					{
+						auto flat = parse_doubles(text);
+						// Reconstruct as nfixed × nfixed 2D array.
+						if (m.nfixed > 0 && flat.size() == m.nfixed * m.nfixed)
+						{
+							m.vcov = Array<double>(m.nfixed, m.nfixed, 0.0);
+							for (intptr_t k = 1; k <= flat.size(); k++) {
+								m.vcov.data()[k - 1] = flat[k];
+							}
+						}
+					}
+					else if (name == "VariableInfo")
+					{
+						for (auto vn = field.first_child(); vn; vn = vn.next_sibling())
+						{
+							if (vn.name() != str("Var")) continue;
+
+							stats::Model::VariableInfo vi;
+
+							for (auto vf = vn.first_child(); vf; vf = vf.next_sibling())
+							{
+								auto vfn = str(vf.name());
+								auto vft = vf.text().get();
+
+								if (vfn == "Name")         vi.name = vft;
+								else if (vfn == "Numeric")  vi.numeric = (str(vft) == str("true"));
+								else if (vfn == "Levels")   vi.levels = parse_csv_strings(vft);
+							}
+
+							m.variable_info.append(std::move(vi));
 						}
 					}
 				}

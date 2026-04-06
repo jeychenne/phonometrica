@@ -118,6 +118,23 @@ The toolbar above the summary provides:
 - **Copy to clipboard**: copy the summary text.
 - **Save as text**: save the summary to a plain text file.
 - **Save as LaTeX table**: export the coefficient table in LaTeX format.
+- **Show random effects**: (enabled only for mixed-effects models) when checked, the summary
+  includes a table of conditional modes (BLUPs) for each grouping factor. Each row shows one
+  level of the grouping variable (e.g. one speaker) and the estimated deviation from the
+  population mean for each random term (intercept, slopes).
+
+  Conditional modes are best linear unbiased predictors (BLUPs) of the random effects, also
+  known as *ranef* in R's lme4 terminology. They represent each group's estimated deviation
+  from the population-level fixed effects. For example, a positive random intercept for
+  speaker *A* means that speaker *A*'s response is estimated to be higher than the population
+  mean, after accounting for the fixed effects.
+
+  .. note::
+
+     Conditional modes are shrinkage estimates: they are pulled toward zero relative to
+     simple group-level means, with more shrinkage for groups with fewer observations or
+     higher residual variance. This is a desirable property — it reduces overfitting to
+     small groups.
 
 
 Post-hoc tab
@@ -353,11 +370,16 @@ Tips
   family-wise error rate while being more powerful than Bonferroni.
 - For interaction models (e.g. ``F2 ~ frequency * group``), use the **Trend** dropdown in
   the Post-hoc tab to test whether the slope of a continuous variable differs across groups.
+- For mixed-effects models, check **Show random effects** in the Summary toolbar to inspect
+  the conditional modes (BLUPs) for each speaker, item, or other grouping factor. Large
+  deviations from zero may indicate influential groups worth investigating.
 
 
 References
 ----------
 
+- Bates, D., Mächler, M., Bolker, B. & Walker, S. (2015). Fitting linear mixed-effects
+  models using lme4. *Journal of Statistical Software*, 67(1), 1–48.
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure.
   *Scandinavian Journal of Statistics*, 6(2), 65–70.
 - Lenth, R.V. (2016). Least-squares means: the R package lsmeans.
