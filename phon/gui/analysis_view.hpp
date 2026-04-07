@@ -171,6 +171,8 @@ private:
 	QComboBox *m_eda_group_combo = nullptr;
 	QLabel *m_eda_pool_label = nullptr;
 	QComboBox *m_eda_pool_combo = nullptr;
+	QLabel *m_eda_style_label = nullptr;
+	QComboBox *m_eda_style_combo = nullptr;
 	QLabel *m_eda_label_label = nullptr;
 	QComboBox *m_eda_label_combo = nullptr;
 	QCheckBox *m_eda_mean_check = nullptr;
