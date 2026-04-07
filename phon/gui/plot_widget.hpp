@@ -59,6 +59,12 @@ public:
 	/// (e.g. 2.2946 for 68.27%, 5.991 for 95%). For 2 df: -2*ln(1-p).
 	/// point_labels, when non-empty, renders text at each point position
 	/// instead of filled circles. point_labels[i] is the text for point i.
+	///
+	/// style_groups, when non-empty, introduces a second grouping dimension:
+	/// color encodes the base group (groups[i]), while line/marker style
+	/// encodes the style group (style_groups[i]). Ellipses are computed for
+	/// each (group, style_group) combination; same-vowel ellipses share a
+	/// color but differ in dash pattern and marker shape.
 	void setGroupedScatterData(std::vector<QString> groups,
 	                           std::vector<double> x, std::vector<double> y,
 	                           const QString &x_label, const QString &y_label,
@@ -66,7 +72,8 @@ public:
 	                           bool show_means, bool show_ellipses,
 	                           double chi2_scale = 2.2946,
 	                           bool reverse_x = false, bool reverse_y = false,
-	                           std::vector<QString> point_labels = {});
+	                           std::vector<QString> point_labels = {},
+	                           std::vector<QString> style_groups = {});
 
 	/// Box plot: groups[i] is the group label for values[i].
 	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
@@ -145,6 +152,13 @@ private:
 		double ellipse_a = 0;     // semi-axis along principal direction
 		double ellipse_b = 0;     // semi-axis along minor direction
 		bool ellipse_valid = false; // false when n < 3 or singular covariance
+
+		// Two-factor grouping indices.
+		// color_index selects into GROUP_PALETTE (base group, e.g. vowel).
+		// style_index selects into STYLE_PENS (condition).
+		// When no style dimension is active, both default to the sequential group index.
+		int color_index = 0;
+		int style_index = 0;
 	};
 
 	void renderPlot(QPainter &p, int w, int h);
@@ -166,7 +180,12 @@ private:
 	                                          const std::vector<double> &x,
 	                                          const std::vector<double> &y,
 	                                          double chi2_scale,
-	                                          const std::vector<QString> &point_labels = {});
+	                                          const std::vector<QString> &point_labels = {},
+	                                          const std::vector<QString> &style_groups = {});
+
+	/// Draw a marker shape at (px, py) based on style_index.
+	/// 0 = circle, 1 = triangle-up, 2 = diamond, 3 = square.
+	static void drawMarker(QPainter &p, double px, double py, double r, int style_index);
 
 	Mode m_mode = Mode::Empty;
 
@@ -189,6 +208,12 @@ private:
 	bool m_show_means = false;
 	bool m_show_ellipses = false;
 	bool m_use_labels = false; // true when per-point text labels are active
+
+	// Two-factor legend labels.
+	// When m_style_labels is non-empty, the legend shows two sections:
+	// color swatches for m_color_labels, and line-style samples for m_style_labels.
+	std::vector<QString> m_color_labels;
+	std::vector<QString> m_style_labels;
 
 	// Box plot data
 	std::vector<BoxStats> m_boxes;

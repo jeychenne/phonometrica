@@ -59,6 +59,15 @@ static const QColor GROUP_PALETTE[] = {
 };
 static constexpr int NUM_PALETTE_COLORS = 10;
 
+// Pen styles for the style dimension (condition).
+static const Qt::PenStyle STYLE_PENS[] = {
+	Qt::SolidLine, Qt::DashLine, Qt::DashDotLine, Qt::DotLine
+};
+static constexpr int NUM_STYLE_PENS = 4;
+
+// Fill alpha values per style index (decreasing so overlapping ellipses remain readable).
+static const int FILL_ALPHAS[] = { 30, 18, 12, 8 };
+
 static constexpr int MARGIN_LEFT   = 65;
 static constexpr int MARGIN_RIGHT  = 20;
 static constexpr int MARGIN_TOP    = 30;
@@ -108,6 +117,48 @@ PlotWidget::PlotWidget(QWidget *parent) : QWidget(parent)
 }
 
 
+// ── Marker shapes ───────────────────────────────────────────────────
+
+void PlotWidget::drawMarker(QPainter &p, double px, double py, double r, int style_index)
+{
+	switch (style_index % NUM_STYLE_PENS)
+	{
+	case 0: // circle
+		p.drawEllipse(QPointF(px, py), r, r);
+		break;
+	case 1: // triangle-up
+	{
+		double h = r * 1.15;
+		QPointF pts[3] = {
+			{px, py - h},
+			{px - h, py + h * 0.6},
+			{px + h, py + h * 0.6}
+		};
+		p.drawPolygon(pts, 3);
+		break;
+	}
+	case 2: // diamond
+	{
+		double d = r * 1.1;
+		QPointF pts[4] = {
+			{px, py - d},
+			{px + d, py},
+			{px, py + d},
+			{px - d, py}
+		};
+		p.drawPolygon(pts, 4);
+		break;
+	}
+	case 3: // square
+	{
+		double s = r * 0.9;
+		p.drawRect(QRectF(px - s, py - s, 2 * s, 2 * s));
+		break;
+	}
+	}
+}
+
+
 // ── Public setters ──────────────────────────────────────────────────
 
 void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
@@ -129,6 +180,8 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
 	m_boxes.clear();
 	m_bins.clear();
 	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
 	m_use_labels = !m_point_labels.empty();
 	m_cache_valid = false;
 	update();
@@ -141,10 +194,11 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
                                         bool show_means, bool show_ellipses,
                                         double chi2_scale,
                                         bool reverse_x, bool reverse_y,
-                                        std::vector<QString> point_labels)
+                                        std::vector<QString> point_labels,
+                                        std::vector<QString> style_groups)
 {
 	m_mode = Mode::GroupedScatter;
-	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels);
+	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels, style_groups);
 	m_show_means = show_means;
 	m_show_ellipses = show_ellipses;
 	m_use_labels = !point_labels.empty();
@@ -164,6 +218,32 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 	m_show_density = false;
 	m_density_x.clear();
 	m_density_y.clear();
+
+	// Build legend label lists.
+	m_color_labels.clear();
+	m_style_labels.clear();
+
+	if (!style_groups.empty())
+	{
+		// Extract unique base-group labels and style labels preserving insertion order.
+		// We reconstruct from the group_data's color_index and style_index.
+		std::map<int, QString> color_map, style_map;
+		for (auto &gd : m_group_data) {
+			if (color_map.find(gd.color_index) == color_map.end()) {
+				// The label contains "base\x1Fstyle"; extract the base part.
+				int sep = gd.label.indexOf(QChar(0x1F));
+				color_map[gd.color_index] = (sep >= 0) ? gd.label.left(sep) : gd.label;
+			}
+			if (style_map.find(gd.style_index) == style_map.end()) {
+				int sep = gd.label.indexOf(QChar(0x1F));
+				style_map[gd.style_index] = (sep >= 0) ? gd.label.mid(sep + 1) : gd.label;
+			}
+		}
+		// Convert maps (sorted by index) to vectors.
+		for (auto &kv : color_map) m_color_labels.push_back(kv.second);
+		for (auto &kv : style_map) m_style_labels.push_back(kv.second);
+	}
+
 	m_cache_valid = false;
 	update();
 }
@@ -181,6 +261,8 @@ void PlotWidget::setBoxPlotData(std::vector<QString> groups, std::vector<double>
 	m_y.clear();
 	m_bins.clear();
 	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -198,6 +280,8 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_y.clear();
 	m_boxes.clear();
 	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
 	m_show_density = false;
 	m_density_x.clear();
 	m_density_y.clear();
@@ -220,6 +304,8 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_boxes.clear();
 	m_bins.clear();
 	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
 	m_show_regression = false;
 	m_cache_valid = false;
 	update();
@@ -271,6 +357,8 @@ void PlotWidget::clear()
 	m_bar_labels.clear();
 	m_bar_counts.clear();
 	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
 	m_title.clear();
 	m_show_regression = false;
 	m_show_density = false;
@@ -414,11 +502,19 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 	const std::vector<double> &x,
 	const std::vector<double> &y,
 	double chi2_scale,
-	const std::vector<QString> &point_labels)
+	const std::vector<QString> &point_labels,
+	const std::vector<QString> &style_groups)
 {
 	// Partition points into groups, preserving first-seen order.
 	std::vector<QString> order;
 	std::map<QString, size_t> index_map;
+
+	// Track unique base groups and style groups for index assignment.
+	bool has_style = !style_groups.empty();
+	std::vector<QString> base_order;
+	std::map<QString, int> base_index_map;
+	std::vector<QString> style_order;
+	std::map<QString, int> style_index_map;
 
 	std::vector<GroupData> groups;
 
@@ -426,14 +522,49 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 	size_t n = std::min({labels.size(), x.size(), y.size()});
 	for (size_t i = 0; i < n; i++)
 	{
-		auto &lbl = labels[i];
-		auto it = index_map.find(lbl);
+		// Build the composite group key.
+		QString key;
+		if (has_style && i < style_groups.size()) {
+			key = labels[i] + QChar(0x1F) + style_groups[i];
+		} else {
+			key = labels[i];
+		}
+
+		auto it = index_map.find(key);
 		size_t gi;
 		if (it == index_map.end()) {
 			gi = groups.size();
-			index_map[lbl] = gi;
+			index_map[key] = gi;
 			groups.emplace_back();
-			groups.back().label = lbl;
+			groups.back().label = key;
+
+			// Assign color_index and style_index.
+			if (has_style && i < style_groups.size()) {
+				auto &base = labels[i];
+				auto bit = base_index_map.find(base);
+				if (bit == base_index_map.end()) {
+					int ci = (int)base_order.size();
+					base_order.push_back(base);
+					base_index_map[base] = ci;
+					groups.back().color_index = ci;
+				} else {
+					groups.back().color_index = bit->second;
+				}
+
+				auto &sty = style_groups[i];
+				auto sit = style_index_map.find(sty);
+				if (sit == style_index_map.end()) {
+					int si = (int)style_order.size();
+					style_order.push_back(sty);
+					style_index_map[sty] = si;
+					groups.back().style_index = si;
+				} else {
+					groups.back().style_index = sit->second;
+				}
+			} else {
+				groups.back().color_index = (int)gi;
+				groups.back().style_index = 0;
+			}
 		} else {
 			gi = it->second;
 		}
@@ -717,6 +848,8 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 	int bottom = top + ph;
 	int right  = left + pw;
 
+	bool styled = !m_style_labels.empty();
+
 	// Compute global axis ranges from all group data.
 	double xlo = 1e30, xhi = -1e30, ylo = 1e30, yhi = -1e30;
 	for (auto &gd : m_group_data) {
@@ -832,7 +965,9 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 			auto &gd = m_group_data[g];
 			if (!gd.ellipse_valid) continue;
 
-			QColor ec = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+			QColor ec = GROUP_PALETTE[gd.color_index % NUM_PALETTE_COLORS];
+			Qt::PenStyle ps = styled ? STYLE_PENS[gd.style_index % NUM_STYLE_PENS] : Qt::SolidLine;
+			int alpha = styled ? FILL_ALPHAS[gd.style_index % NUM_STYLE_PENS] : 30;
 
 			// Build parametric ellipse path in data coordinates,
 			// then map to pixel coordinates.
@@ -858,11 +993,11 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 					path.lineTo(px, py);
 			}
 
-			// Semi-transparent fill + solid border
+			// Semi-transparent fill + styled border
 			QColor fill_color = ec;
-			fill_color.setAlpha(30);
+			fill_color.setAlpha(alpha);
 			p.setBrush(fill_color);
-			p.setPen(QPen(ec, 1.5));
+			p.setPen(QPen(ec, 1.5, ps));
 			p.drawPath(path);
 		}
 	}
@@ -871,7 +1006,7 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 	for (int g = 0; g < ngroups; g++)
 	{
 		auto &gd = m_group_data[g];
-		QColor pc = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+		QColor pc = GROUP_PALETTE[gd.color_index % NUM_PALETTE_COLORS];
 		pc.setAlpha(180);
 
 		size_t gn = std::min(gd.x.size(), gd.y.size());
@@ -898,13 +1033,17 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 		}
 		else
 		{
-			// Draw filled circles.
+			// Draw markers (shape varies by style_index when styled).
 			p.setPen(Qt::NoPen);
 			p.setBrush(pc);
 			for (size_t i = 0; i < gn; i++) {
 				double px = dataToX(gd.x[i]);
 				double py = dataToY(gd.y[i]);
-				p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+				if (styled) {
+					drawMarker(p, px, py, POINT_RADIUS, gd.style_index);
+				} else {
+					p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+				}
 			}
 		}
 	}
@@ -915,7 +1054,7 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 		for (int g = 0; g < ngroups; g++)
 		{
 			auto &gd = m_group_data[g];
-			QColor mc = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+			QColor mc = GROUP_PALETTE[gd.color_index % NUM_PALETTE_COLORS];
 
 			double px = dataToX(gd.mean_x);
 			double py = dataToY(gd.mean_y);
@@ -923,16 +1062,23 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 			if (m_use_labels)
 			{
 				// Render mean as a large bold text label.
+				// For styled groups, show the base group label (before the separator).
+				QString display_label = gd.label;
+				if (styled) {
+					int sep = display_label.indexOf(QChar(0x1F));
+					if (sep >= 0) display_label = display_label.left(sep);
+				}
+
 				QFont mean_font;
 				mean_font.setPixelSize(16);
 				mean_font.setBold(true);
 				p.setFont(mean_font);
 				QFontMetrics mfm(mean_font);
-				int tw = mfm.horizontalAdvance(gd.label);
+				int tw = mfm.horizontalAdvance(display_label);
 
 				// White halo for readability.
 				QPainterPath text_path;
-				text_path.addText(px - tw / 2.0, py + mfm.ascent() / 2.0, mean_font, gd.label);
+				text_path.addText(px - tw / 2.0, py + mfm.ascent() / 2.0, mean_font, display_label);
 				p.setPen(QPen(Qt::white, 3.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 				p.setBrush(Qt::NoBrush);
 				p.drawPath(text_path);
@@ -951,12 +1097,16 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 				p.drawLine(QPointF(px, py - MEAN_MARKER_SIZE),
 				           QPointF(px, py + MEAN_MARKER_SIZE));
 
-				// Filled circle behind the cross for emphasis.
+				// Filled marker behind the cross for emphasis.
 				QColor fc = mc;
 				fc.setAlpha(220);
 				p.setPen(QPen(mc.darker(130), 1.2));
 				p.setBrush(fc);
-				p.drawEllipse(QPointF(px, py), POINT_RADIUS + 1.5, POINT_RADIUS + 1.5);
+				if (styled) {
+					drawMarker(p, px, py, POINT_RADIUS + 1.5, gd.style_index);
+				} else {
+					p.drawEllipse(QPointF(px, py), POINT_RADIUS + 1.5, POINT_RADIUS + 1.5);
+				}
 			}
 		}
 	}
@@ -979,47 +1129,124 @@ void PlotWidget::renderLegend(QPainter &p, int left, int top, int pw, int ph)
 	p.setFont(font);
 	QFontMetrics fm(font);
 
-	int ngroups = (int)m_group_data.size();
 	int swatch = 10;
 	int spacing = 4;
 	int line_h = std::max(fm.height(), swatch) + 2;
 	int padding = 6;
 
-	// Compute legend dimensions.
-	int max_label_w = 0;
-	for (auto &gd : m_group_data)
-		max_label_w = std::max(max_label_w, fm.horizontalAdvance(gd.label));
+	bool styled = !m_style_labels.empty();
 
-	int legend_w = padding + swatch + spacing + max_label_w + padding;
-	int legend_h = padding + ngroups * line_h + padding;
-
-	// Position in the top-right corner of the plot area.
-	int lx = left + pw - legend_w - 8;
-	int ly = top + 8;
-
-	// Background
-	QColor bg(255, 255, 255, 210);
-	p.setPen(QPen(GRID_COLOR, 1));
-	p.setBrush(bg);
-	p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
-
-	// Entries
-	for (int g = 0; g < ngroups; g++)
+	if (!styled)
 	{
-		QColor c = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
-		int ey = ly + padding + g * line_h;
+		// ── Single-factor legend (original behavior) ──
+		int ngroups = (int)m_group_data.size();
 
-		// Color swatch
-		p.setPen(Qt::NoPen);
-		p.setBrush(c);
-		p.drawEllipse(QPointF(lx + padding + swatch / 2.0, ey + line_h / 2.0),
-		              swatch / 2.0, swatch / 2.0);
+		int max_label_w = 0;
+		for (auto &gd : m_group_data)
+			max_label_w = std::max(max_label_w, fm.horizontalAdvance(gd.label));
 
-		// Label
-		p.setPen(AXIS_COLOR);
-		p.drawText(lx + padding + swatch + spacing,
-		           ey + (line_h + fm.ascent() - fm.descent()) / 2,
-		           m_group_data[g].label);
+		int legend_w = padding + swatch + spacing + max_label_w + padding;
+		int legend_h = padding + ngroups * line_h + padding;
+
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+
+		QColor bg(255, 255, 255, 210);
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.setBrush(bg);
+		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+		for (int g = 0; g < ngroups; g++)
+		{
+			QColor c = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+			int ey = ly + padding + g * line_h;
+
+			p.setPen(Qt::NoPen);
+			p.setBrush(c);
+			p.drawEllipse(QPointF(lx + padding + swatch / 2.0, ey + line_h / 2.0),
+			              swatch / 2.0, swatch / 2.0);
+
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_group_data[g].label);
+		}
+	}
+	else
+	{
+		// ── Two-factor legend: color section + style section ──
+		int ncolors = (int)m_color_labels.size();
+		int nstyles = (int)m_style_labels.size();
+
+		// Measure widths.
+		int max_color_w = 0;
+		for (auto &lbl : m_color_labels)
+			max_color_w = std::max(max_color_w, fm.horizontalAdvance(lbl));
+		int max_style_w = 0;
+		for (auto &lbl : m_style_labels)
+			max_style_w = std::max(max_style_w, fm.horizontalAdvance(lbl));
+
+		int line_sample_w = 24; // width of the line-style sample
+		int content_w = std::max(swatch + spacing + max_color_w,
+		                         line_sample_w + spacing + max_style_w);
+		int legend_w = padding + content_w + padding;
+
+		// Height: color entries + separator + style entries.
+		int sep_h = 6;
+		int legend_h = padding + ncolors * line_h + sep_h + nstyles * line_h + padding;
+
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+
+		QColor bg(255, 255, 255, 210);
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.setBrush(bg);
+		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+		// Color entries.
+		for (int i = 0; i < ncolors; i++)
+		{
+			QColor c = GROUP_PALETTE[i % NUM_PALETTE_COLORS];
+			int ey = ly + padding + i * line_h;
+
+			p.setPen(Qt::NoPen);
+			p.setBrush(c);
+			p.drawEllipse(QPointF(lx + padding + swatch / 2.0, ey + line_h / 2.0),
+			              swatch / 2.0, swatch / 2.0);
+
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_color_labels[i]);
+		}
+
+		// Separator line.
+		int sep_y = ly + padding + ncolors * line_h + sep_h / 2;
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.drawLine(lx + padding, sep_y, lx + legend_w - padding, sep_y);
+
+		// Style entries (line-style sample + marker + label).
+		for (int i = 0; i < nstyles; i++)
+		{
+			int ey = ly + padding + ncolors * line_h + sep_h + i * line_h;
+			int cy = ey + line_h / 2;
+
+			// Draw a short line segment with the appropriate pen style.
+			p.setPen(QPen(AXIS_COLOR, 1.5, STYLE_PENS[i % NUM_STYLE_PENS]));
+			p.setBrush(Qt::NoBrush);
+			p.drawLine(lx + padding, cy, lx + padding + line_sample_w, cy);
+
+			// Draw a small marker in the middle of the line segment.
+			p.setPen(Qt::NoPen);
+			p.setBrush(AXIS_COLOR);
+			drawMarker(p, lx + padding + line_sample_w / 2.0, cy, 3.0, i);
+
+			// Label
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + line_sample_w + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_style_labels[i]);
+		}
 	}
 }
 

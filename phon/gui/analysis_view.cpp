@@ -23,6 +23,7 @@
 #include <numeric>
 #include <algorithm>
 #include <map>
+#include <tuple>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -470,6 +471,15 @@ void AnalysisView::setupUi()
 	                                "(e.g. pool by speaker to get one point per speaker per vowel)"));
 	m_eda_pool_combo->setVisible(false);
 	eda_vars->addWidget(m_eda_pool_combo);
+	m_eda_style_label = new QLabel(tr("Style:"));
+	m_eda_style_label->setVisible(false);
+	eda_vars->addWidget(m_eda_style_label);
+	m_eda_style_combo = new QComboBox;
+	m_eda_style_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_style_combo->setToolTip(tr("Differentiate ellipse line style and marker shape by a second categorical variable "
+	                                 "(e.g. condition). Color still encodes the Group variable."));
+	m_eda_style_combo->setVisible(false);
+	eda_vars->addWidget(m_eda_style_combo);
 	m_eda_label_label = new QLabel(tr("Label:"));
 	m_eda_label_label->setVisible(false);
 	eda_vars->addWidget(m_eda_label_label);
@@ -622,6 +632,7 @@ void AnalysisView::setupUi()
 	});
 	connect(m_eda_group_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_pool_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_style_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_label_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
@@ -644,11 +655,13 @@ void AnalysisView::populateColumns()
 	m_eda_y_combo->clear();
 	m_eda_group_combo->clear();
 	m_eda_pool_combo->clear();
+	m_eda_style_combo->clear();
 	m_eda_label_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
 	m_eda_y_combo->addItem(tr("(None)"));
 	m_eda_group_combo->addItem(tr("(None)"));
 	m_eda_pool_combo->addItem(tr("(None)"));
+	m_eda_style_combo->addItem(tr("(None)"));
 	m_eda_label_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
@@ -661,6 +674,7 @@ void AnalysisView::populateColumns()
 		m_eda_y_combo->addItem(qname);
 		m_eda_group_combo->addItem(qname);
 		m_eda_pool_combo->addItem(qname);
+		m_eda_style_combo->addItem(qname);
 		m_eda_label_combo->addItem(qname);
 	}
 
@@ -2023,6 +2037,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_group_combo->setVisible(false);
 		m_eda_pool_label->setVisible(false);
 		m_eda_pool_combo->setVisible(false);
+		m_eda_style_label->setVisible(false);
+		m_eda_style_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -2063,6 +2079,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_group_combo->setVisible(false);
 		m_eda_pool_label->setVisible(false);
 		m_eda_pool_combo->setVisible(false);
+		m_eda_style_label->setVisible(false);
+		m_eda_style_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -2213,12 +2231,15 @@ void AnalysisView::updateEdaPlot()
 		bool has_group = (m_eda_group_combo->currentIndex() > 0);
 		bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
 		bool has_label = (m_eda_label_combo->currentIndex() > 0);
+		bool has_style = (m_eda_style_combo->currentIndex() > 0);
 
 		// Show the group / pool / label / formant controls.
 		m_eda_group_label->setVisible(true);
 		m_eda_group_combo->setVisible(true);
 		m_eda_pool_label->setVisible(has_group);
 		m_eda_pool_combo->setVisible(has_group);
+		m_eda_style_label->setVisible(has_group);
+		m_eda_style_combo->setVisible(has_group);
 		m_eda_label_label->setVisible(true);
 		m_eda_label_combo->setVisible(true);
 		m_eda_formant_check->setVisible(true);
@@ -2265,13 +2286,24 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 
+			// Resolve style column.
+			intptr_t s_col = 0;
+			if (has_style) {
+				auto style_name = String(m_eda_style_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == style_name) { s_col = j; break; }
+				}
+			}
+
 			std::vector<double> xv, yv;
 			std::vector<QString> gv;
 			std::vector<QString> lv;
+			std::vector<QString> sv;
 			xv.reserve(nr);
 			yv.reserve(nr);
 			gv.reserve(nr);
 			if (l_col > 0) lv.reserve(nr);
+			if (s_col > 0) sv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
 				auto vx = dt->get_cell(r, x_col);
@@ -2280,6 +2312,7 @@ void AnalysisView::updateEdaPlot()
 				if (vx.empty() || vy.empty() || vg.empty()) continue;
 				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
 				if (p_col > 0 && dt->get_cell(r, p_col).empty()) continue;
+				if (s_col > 0 && dt->get_cell(r, s_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
@@ -2291,22 +2324,29 @@ void AnalysisView::updateEdaPlot()
 						auto vl = dt->get_cell(r, l_col);
 						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
 					}
+					if (s_col > 0) {
+						auto vs = dt->get_cell(r, s_col);
+						sv.push_back(QString::fromUtf8(vs.data(), (int)vs.size()));
+					}
 				}
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
 
-			// ── Pooling: collapse to one point per (pool, group) cell ──
+			// ── Pooling: collapse to one point per (pool, group[, style]) cell ──
 			if (p_col > 0)
 			{
 				// Re-read raw data including pool column to build the cell map.
+				// The cell key is (pool, group, style) — style is empty when s_col == 0.
 				struct PoolCell {
 					double sx = 0, sy = 0;
 					int n = 0;
 					QString group;
+					QString style;
 					std::map<QString, int> label_freq;
 				};
-				std::map<std::pair<QString, QString>, PoolCell> cells;
-				std::vector<std::pair<QString, QString>> cell_order;
+				using CellKey = std::tuple<QString, QString, QString>;
+				std::map<CellKey, PoolCell> cells;
+				std::vector<CellKey> cell_order;
 
 				for (intptr_t r = 1; r <= nr; r++)
 				{
@@ -2316,20 +2356,28 @@ void AnalysisView::updateEdaPlot()
 					auto vp = dt->get_cell(r, p_col);
 					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
 					if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+					if (s_col > 0 && dt->get_cell(r, s_col).empty()) continue;
 					bool okx, oky;
 					double dx = vx.to_float(&okx);
 					double dy = vy.to_float(&oky);
 					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
 
-					auto key = std::make_pair(
-						QString::fromUtf8(vp.data(), (int)vp.size()),
-						QString::fromUtf8(vg.data(), (int)vg.size()));
+					QString pool_str = QString::fromUtf8(vp.data(), (int)vp.size());
+					QString group_str = QString::fromUtf8(vg.data(), (int)vg.size());
+					QString style_str;
+					if (s_col > 0) {
+						auto vs = dt->get_cell(r, s_col);
+						style_str = QString::fromUtf8(vs.data(), (int)vs.size());
+					}
+
+					auto key = std::make_tuple(pool_str, group_str, style_str);
 					if (cells.find(key) == cells.end()) cell_order.push_back(key);
 					auto &c = cells[key];
 					c.sx += dx;
 					c.sy += dy;
 					c.n++;
-					c.group = key.second;
+					c.group = group_str;
+					c.style = style_str;
 					if (l_col > 0) {
 						auto vl = dt->get_cell(r, l_col);
 						c.label_freq[QString::fromUtf8(vl.data(), (int)vl.size())]++;
@@ -2337,13 +2385,15 @@ void AnalysisView::updateEdaPlot()
 				}
 
 				// Replace the raw vectors with one averaged point per cell.
-				xv.clear(); yv.clear(); gv.clear(); lv.clear();
+				xv.clear(); yv.clear(); gv.clear(); lv.clear(); sv.clear();
 				for (auto &key : cell_order) {
 					auto &c = cells[key];
 					if (c.n == 0) continue;
 					xv.push_back(c.sx / c.n);
 					yv.push_back(c.sy / c.n);
 					gv.push_back(c.group);
+					if (s_col > 0)
+						sv.push_back(c.style);
 					if (l_col > 0) {
 						// Most frequent label within the cell.
 						QString best;
@@ -2364,9 +2414,11 @@ void AnalysisView::updateEdaPlot()
 			double conf = m_eda_ellipse_spin->value() / 100.0;
 			double chi2_scale = -2.0 * std::log(1.0 - conf);
 
-			// Build title: Y ~ X | Group [/ Label] [pooled by Pool].
+			// Build title: Y ~ X | Group [× Style] [/ Label] [pooled by Pool].
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
 				+ QStringLiteral(" | ") + group_name_q;
+			if (has_style && s_col > 0)
+				title += QStringLiteral(" \u00D7 ") + m_eda_style_combo->currentText();
 			if (has_label && l_col != g_col)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
 			if (p_col > 0)
@@ -2376,7 +2428,7 @@ void AnalysisView::updateEdaPlot()
 				std::move(gv), std::move(xv), std::move(yv),
 				x_name_q, y_name_q, title,
 				show_means, show_ellipses, chi2_scale, formant, formant,
-				std::move(lv));
+				std::move(lv), std::move(sv));
 		}
 		else
 		{
@@ -2469,6 +2521,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_group_combo->setVisible(false);
 		m_eda_pool_label->setVisible(false);
 		m_eda_pool_combo->setVisible(false);
+		m_eda_style_label->setVisible(false);
+		m_eda_style_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
@@ -2508,6 +2562,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_group_combo->setVisible(false);
 		m_eda_pool_label->setVisible(false);
 		m_eda_pool_combo->setVisible(false);
+		m_eda_style_label->setVisible(false);
+		m_eda_style_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
