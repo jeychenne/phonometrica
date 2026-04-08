@@ -658,7 +658,14 @@ void LayerWidget::commitEdit()
 		{
 			// Save old text for undo.
 			String old_text = ev->text;
-			intptr_t event_1based = m_editing_event + 1;
+			intptr_t event_1based = m_annot->get_event_index(m_layer_index, ev->start);
+			if (event_1based == 0)
+			{
+				m_editing_event = -1;
+				setFocus();
+				update();
+				return;
+			}
 
 			// event_index in cache is 0-based; annotation API is 1-based.
 			m_annot->set_event_text(m_layer_index, event_1based, new_text);

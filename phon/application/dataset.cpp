@@ -76,7 +76,7 @@ void Dataset::load()
 
 	if (ext == ".csv")
 	{
-		read_from_csv("\t");
+		read_from_csv(m_separator.view());
 	}
 	else
 	{
@@ -87,6 +87,50 @@ void Dataset::load()
 void Dataset::write()
 {
 
+}
+
+void Dataset::set_separator(String sep)
+{
+	m_separator = std::move(sep);
+	// Force a reload the next time the dataset is accessed.
+	m_loaded = false;
+}
+
+bool Dataset::needs_metadata_node() const
+{
+	return m_separator != "\t" || DataTable::needs_metadata_node();
+}
+
+void Dataset::metadata_to_xml(xml_node meta_node)
+{
+	DataTable::metadata_to_xml(meta_node);
+
+	if (m_separator != "\t")
+	{
+		auto sep_node = meta_node.append_child("Separator");
+		// Store a human-readable name so the project XML remains legible.
+		const char *name = (m_separator == ",")  ? "comma" :
+		                   (m_separator == ";")  ? "semicolon" : "tab";
+		sep_node.text().set(name);
+	}
+}
+
+void Dataset::metadata_from_xml(xml_node meta_node)
+{
+	DataTable::metadata_from_xml(meta_node);
+
+	static const std::string_view sep_tag("Separator");
+
+	for (auto node = meta_node.first_child(); node; node = node.next_sibling())
+	{
+		if (node.name() == sep_tag)
+		{
+			std::string_view val = node.text().get();
+			if (val == "comma")          m_separator = ",";
+			else if (val == "semicolon") m_separator = ";";
+			else                         m_separator = "\t";
+		}
+	}
 }
 
 void Dataset::read_from_csv(std::string_view sep)

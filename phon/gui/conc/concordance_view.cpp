@@ -22,6 +22,9 @@
 #include <cmath>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QFormLayout>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QHeaderView>
 #include <QMenu>
 #include <QAction>
@@ -99,8 +102,8 @@ void ConcordanceView::setupUi()
 	auto *del_action = m_toolbar->addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Delete"));
 	del_action->setToolTip(tr("Delete selected row(s)"));
 
-	auto *edit_action = m_toolbar->addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit"));
-	edit_action->setToolTip(tr("Edit selected event"));
+	auto *edit_action = m_toolbar->addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit match text"));
+	edit_action->setToolTip(tr("Edit selected match text (concordance only)"));
 
 	m_toolbar->addSeparator();
 
@@ -390,7 +393,7 @@ void ConcordanceView::setupUi()
 	connect(view_action, &QAction::triggered, this, &ConcordanceView::onViewMatch);
 	connect(bookmark_action, &QAction::triggered, this, &ConcordanceView::onBookmark);
 	connect(del_action, &QAction::triggered, this, &ConcordanceView::onDeleteRows);
-	connect(edit_action, &QAction::triggered, this, &ConcordanceView::onEditEvent);
+	connect(edit_action, &QAction::triggered, this, &ConcordanceView::onEditMatchText);
 	connect(union_action, &QAction::triggered, this, &ConcordanceView::onUnion);
 	connect(intersect_action, &QAction::triggered, this, &ConcordanceView::onIntersection);
 	connect(compl_action, &QAction::triggered, this, &ConcordanceView::onComplement);
@@ -717,11 +720,173 @@ void ConcordanceView::onDeleteRows()
 	record(std::move(cmd));
 }
 
+QVector<QString> ConcordanceView::promptTargetTexts(Match &match, int target_count,
+                                                     const QString &title, bool edit_annotation)
+{
+	auto &annot = *match.annotation();
+
+	// Collect current text for each target.
+	QVector<QString> current(target_count + 1); // 1-based
+	for (int i = 1; i <= target_count; i++)
+	{
+		auto *t = match.get(i);
+		if (edit_annotation)
+		{
+			intptr_t event_idx = annot.get_event_index(t->layer, t->start_time);
+			if (event_idx > 0)
+			{
+				const auto &ev = annot.get_event(t->layer, event_idx);
+				current[i] = QString::fromUtf8(ev.text.data(), (int) ev.text.size());
+			}
+		}
+		else
+		{
+			current[i] = QString::fromUtf8(t->value.data(), (int) t->value.size());
+		}
+	}
+
+	// Single target: use a plain QInputDialog.
+	if (target_count == 1)
+	{
+		bool ok;
+		auto result = QInputDialog::getText(this, title,
+			tr("Text:"), QLineEdit::Normal, current[1], &ok);
+		if (!ok) return {};
+		return { QString(), result }; // index 0 unused, result at index 1
+	}
+
+	// Multiple targets: one QLineEdit per target in a form dialog.
+	QDialog dlg(this);
+	dlg.setWindowTitle(title);
+
+	auto *form = new QFormLayout;
+	QVector<QLineEdit *> edits(target_count + 1, nullptr);
+
+	for (int i = 1; i <= target_count; i++)
+	{
+		auto *t = match.get(i);
+		auto layer_lbl = annot.get_layer_label(t->layer);
+		auto label = QString("Target %1 (%2)").arg(i)
+		             .arg(QString::fromUtf8(layer_lbl.data(), (int) layer_lbl.size()));
+
+		auto *edit = new QLineEdit(current[i], &dlg);
+		edits[i] = edit;
+		form->addRow(label, edit);
+	}
+
+	auto *buttons = new QDialogButtonBox(
+		QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+	connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+
+	auto *layout = new QVBoxLayout(&dlg);
+	layout->addLayout(form);
+	layout->addWidget(buttons);
+
+	if (dlg.exec() != QDialog::Accepted)
+		return {};
+
+	QVector<QString> result(target_count + 1);
+	for (int i = 1; i <= target_count; i++)
+		result[i] = edits[i]->text();
+	return result;
+}
+
 void ConcordanceView::onEditEvent()
 {
-	QMessageBox::information(this, tr("Not yet implemented"),
-		tr("Event editing in concordances will be available soon."));
+	auto rows = selectedRows();
+	if (rows.size() != 1)
+	{
+		QMessageBox::information(this, tr("Edit annotation event"),
+			tr("Select a single match to edit."));
+		return;
+	}
+
+	int proxy_row = rows.first();
+	int src = mapToSourceRow(proxy_row);
+	auto &match = m_conc->get_match(src + 1);
+	int target_count = m_conc->target_count();
+
+	auto new_texts = promptTargetTexts(match, target_count,
+	                                   tr("Edit annotation event"), true);
+	if (new_texts.isEmpty())
+		return;
+
+	auto &annot = *match.annotation();
+	bool any_changed = false;
+
+	for (int i = 1; i <= target_count; i++)
+	{
+		auto *t = match.get(i);
+		intptr_t event_idx = annot.get_event_index(t->layer, t->start_time);
+		if (event_idx == 0) continue;
+
+		const auto &event = annot.get_event(t->layer, event_idx);
+		auto old_qs = QString::fromUtf8(event.text.data(), (int) event.text.size());
+		if (new_texts[i] == old_qs) continue;
+
+		annot.set_event_text(t->layer, event_idx,
+		                     String(new_texts[i].toUtf8().constData()));
+		any_changed = true;
+	}
+
+	if (!any_changed)
+		return;
+
+	annot.set_graph_modified(true);
+
+	// Re-sync all targets from the updated annotation.
+	for (int i = 1; i <= target_count; i++)
+	{
+		bool modified;
+		match.update(i, modified);
+	}
+
+	m_model->refreshRow(src);
+	Project::get()->modify();
 }
+
+void ConcordanceView::onEditMatchText()
+{
+	auto rows = selectedRows();
+	if (rows.size() != 1)
+	{
+		QMessageBox::information(this, tr("Edit match text"),
+			tr("Select a single match to edit."));
+		return;
+	}
+
+	int proxy_row = rows.first();
+	int src = mapToSourceRow(proxy_row);
+	auto &match = m_conc->get_match(src + 1);
+	int target_count = m_conc->target_count();
+
+	auto new_texts = promptTargetTexts(match, target_count,
+	                                   tr("Edit match text"), false);
+	if (new_texts.isEmpty())
+		return;
+
+	bool any_changed = false;
+
+	for (int i = 1; i <= target_count; i++)
+	{
+		auto *t = match.get(i);
+		auto old_qs = QString::fromUtf8(t->value.data(), (int) t->value.size());
+		if (new_texts[i] == old_qs) continue;
+
+		t->value = String(new_texts[i].toUtf8().constData());
+		any_changed = true;
+	}
+
+	if (!any_changed)
+		return;
+
+	m_conc->modify();
+	m_model->refreshRow(src);
+	Project::get()->modify();
+}
+
+
 
 void ConcordanceView::onExportCsv()
 {
@@ -1350,7 +1515,8 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 		});
 	}
 
-	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit event"), this, &ConcordanceView::onEditEvent);
+	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit match text"), this, &ConcordanceView::onEditMatchText);
+	menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit annotation event"), this, &ConcordanceView::onEditEvent);
 	menu.addAction(QIcon(":/icons/grid-2x2-x.svg"), tr("Remove match"), this, &ConcordanceView::onDeleteRows);
 	menu.addSeparator();
 	menu.addAction(QIcon(":/icons/book-marked.svg"), tr("Bookmark match"), this, &ConcordanceView::onBookmark);
