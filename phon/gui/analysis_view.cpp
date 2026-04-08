@@ -598,6 +598,18 @@ void AnalysisView::setupUi()
 	});
 	connect(m_formula_edit, &QLineEdit::returnPressed, this, &AnalysisView::onFit);
 	connect(m_model_list, &QListWidget::currentRowChanged, this, &AnalysisView::onModelSelected);
+	connect(m_model_list, &QListWidget::itemSelectionChanged, this, [this]() {
+		auto selected = m_model_list->selectedItems();
+		if (selected.size() == 1)
+		{
+			int row = m_model_list->row(selected.first());
+			if (row != m_current_model)
+				return; // currentRowChanged will handle it
+			// Current row didn't change but selection collapsed to one item
+			// (e.g. after a Compare): force a display refresh.
+			displayModel(row);
+		}
+	});
 	connect(m_delete_button, &QPushButton::clicked, this, &AnalysisView::onDeleteModel);
 	connect(m_compare_button, &QPushButton::clicked, this, &AnalysisView::onCompareModels);
 	connect(m_column_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onColumnDoubleClicked);
@@ -828,12 +840,22 @@ void AnalysisView::displayModel(int index)
 
 void AnalysisView::onDeleteModel()
 {
-	int row = m_model_list->currentRow();
-	if (row < 0) return;
+	auto selected = m_model_list->selectedItems();
+	if (selected.isEmpty()) return;
 
-	m_analysis->remove_model(row);
-	delete m_model_list->takeItem(row);
+	// Collect rows in descending order so removals don't shift subsequent indices.
+	QList<int> rows;
+	for (auto *item : selected)
+		rows.append(m_model_list->row(item));
+	std::sort(rows.begin(), rows.end(), std::greater<int>());
 
+	for (int row : rows)
+	{
+		m_analysis->remove_model(row);
+		delete m_model_list->takeItem(row);
+	}
+
+	// Re-number remaining models.
 	for (int i = 0; i < m_model_list->count(); i++)
 	{
 		auto &m = m_analysis->model(i);
