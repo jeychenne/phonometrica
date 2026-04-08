@@ -32,7 +32,9 @@
 #include <phon/application/project.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/data_table.hpp>
+#include <phon/application/dataset.hpp>
 #include <phon/application/annotation.hpp>
+#include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
 
@@ -646,6 +648,38 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 		menu.addAction(tr("Analyze"), [this, dt]() {
 			emit analysisRequested(dt);
 		});
+	}
+
+	// CSV separator picker — only for Dataset backed by a .csv file.
+	if (auto *ds = dynamic_cast<Dataset *>(doc))
+	{
+		if (ds->has_path())
+		{
+			auto ext = filesystem::ext(ds->path(), true);
+			if (ext == ".csv")
+			{
+				auto *sepMenu = menu.addMenu(tr("Separator"));
+
+				struct SepOption { QString label; String sep; };
+				const SepOption options[] = {
+					{ tr("Tab (default)"), "\t" },
+					{ tr("Comma (,)"),     ","  },
+					{ tr("Semicolon (;)"), ";"  },
+				};
+
+				for (auto &opt : options)
+				{
+					auto *act = sepMenu->addAction(opt.label, [this, ds, sep = opt.sep]() {
+						ds->set_separator(sep);
+						m_project->modify();
+						// Re-open so the DatasetView reloads with the new separator.
+						emit documentRequested(ds);
+					});
+					act->setCheckable(true);
+					act->setChecked(ds->separator() == opt.sep);
+				}
+			}
+		}
 	}
 
 	if (doc && doc->has_path())

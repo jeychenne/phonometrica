@@ -203,9 +203,18 @@ public:
 	/// Insert a previously extracted column at position j (1-based).
 	void insert_column(intptr_t j, SavedColumn col);
 
+	// Separator used when reading this CSV file (stored in the project).
+	// Default is tab; other common values are "," and ";".
+	String separator() const { return m_separator; }
+	void set_separator(String sep);
+
+	void metadata_to_xml(xml_node meta_node) override;
+	void metadata_from_xml(xml_node meta_node) override;
+	bool needs_metadata_node() const override;
+
 private:
 
-	void read_from_csv(std::string_view sep = ",");
+	void read_from_csv(std::string_view sep = "\t");
 
 	void load() override;
 
@@ -232,6 +241,8 @@ private:
 	Array<AutoColumn> m_columns;
 
 	String m_label;
+
+	String m_separator = "\t";
 
 	intptr_t nrow = 0;
 

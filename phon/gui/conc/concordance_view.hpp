@@ -78,6 +78,10 @@ private slots:
 	void onBookmark();
 	void onDeleteRows();
 	void onEditEvent();
+	void onEditMatchText();
+
+private:
+
 	void onExportCsv();
 	void onRename();
 
@@ -117,6 +121,10 @@ private slots:
 private:
 
 	void setupUi();
+	// Shared dialog for single- and multi-target editing.
+	// Returns one QString per target (1-based); empty list means cancelled.
+	QVector<QString> promptTargetTexts(Match &match, int target_count,
+	                                   const QString &title, bool edit_annotation);
 	void updateCountLabel();
 	void updateColumnVisibility();
 	void setupFilterBar();
