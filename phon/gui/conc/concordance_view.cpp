@@ -32,7 +32,7 @@
 #include <QToolButton>
 #include <QMessageBox>
 #include <QInputDialog>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QFileInfo>
 #include <algorithm>
 #include <phon/gui/conc/concordance_view.hpp>
@@ -594,8 +594,8 @@ bool ConcordanceView::save()
 		auto current_label = QString::fromUtf8(m_conc->label().data(), (int) m_conc->label().size());
 		auto suggested = current_label + QStringLiteral(".phon-conc");
 
-		auto path = QFileDialog::getSaveFileName(this, tr("Save concordance..."),
-			suggested, tr("Concordance (*.phon-conc)"));
+		auto path = getSaveFileName(this, tr("Save concordance..."),
+			tr("Concordance (*.phon-conc)"), suggested);
 		if (path.isEmpty()) return false;
 
 		// If the user kept the suggested base name, clear the explicit label
@@ -890,8 +890,8 @@ void ConcordanceView::onEditMatchText()
 
 void ConcordanceView::onExportCsv()
 {
-	auto path = QFileDialog::getSaveFileName(this, tr("Export to CSV..."),
-		QString(), tr("CSV files (*.csv *.txt)"));
+	auto path = getSaveFileName(this, tr("Export to CSV..."),
+		tr("CSV files (*.csv *.txt)"));
 	if (path.isEmpty()) return;
 
 	try

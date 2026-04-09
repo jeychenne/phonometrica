@@ -28,7 +28,7 @@
 #include <QFontMetrics>
 #include <QMenu>
 #include <QToolButton>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QMessageBox>
 #include <QSvgGenerator>
 #include <QPrinter>
@@ -502,8 +502,8 @@ void SpectrumView::leaveEvent(QEvent *)
 
 void SpectrumView::onSavePNG()
 {
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Save spectrum as PNG"), QString(), tr("PNG image (*.png)"));
+	QString path = getSaveFileName(this,
+		tr("Save spectrum as PNG"), tr("PNG image (*.png)"));
 	if (path.isEmpty()) return;
 
 	// Export at 2× resolution using the device-pixel-ratio pattern:
@@ -526,8 +526,8 @@ void SpectrumView::onSavePNG()
 
 void SpectrumView::onSavePDF()
 {
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Save spectrum as PDF"), QString(), tr("PDF document (*.pdf)"));
+	QString path = getSaveFileName(this,
+		tr("Save spectrum as PDF"), tr("PDF document (*.pdf)"));
 	if (path.isEmpty()) return;
 
 	int w = width();
@@ -556,8 +556,8 @@ void SpectrumView::onSavePDF()
 
 void SpectrumView::onSaveSVG()
 {
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Save spectrum as SVG"), QString(), tr("SVG image (*.svg)"));
+	QString path = getSaveFileName(this,
+		tr("Save spectrum as SVG"), tr("SVG image (*.svg)"));
 	if (path.isEmpty()) return;
 
 	int w = width();

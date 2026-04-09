@@ -22,7 +22,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QInputDialog>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QVBoxLayout>
 #include <QShortcut>
 #include <optional>
@@ -74,7 +74,7 @@ bool AnnotationView::save()
 
 	if (!m_annot->has_path())
 	{
-		auto path = QFileDialog::getSaveFileName(this, tr("Save annotation..."), QString(),
+		auto path = getSaveFileName(this, tr("Save annotation..."),
 			tr("Annotation (*.phon-annot)"));
 		if (path.isEmpty())
 			return false;

@@ -24,7 +24,7 @@
 #include <QFormLayout>
 #include <QLabel>
 #include <QPushButton>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QDialogButtonBox>
 #include <phon/gui/csv_dialog.hpp>
 
@@ -50,9 +50,9 @@ CsvDialog::CsvDialog(const QString &title, bool read, QWidget *parent) :
 	connect(browse_btn, &QPushButton::clicked, [this]() {
 		QString path;
 		if (m_read)
-			path = QFileDialog::getOpenFileName(this, tr("Select CSV file"), QString(), tr("CSV files (*.csv *.tsv *.txt);;All files (*)"));
+			path = getOpenFileName(this, tr("Select CSV file"), tr("CSV files (*.csv *.tsv *.txt);;All files (*)"));
 		else
-			path = QFileDialog::getSaveFileName(this, tr("Export to CSV"), QString(), tr("CSV files (*.csv *.tsv *.txt);;All files (*)"));
+			path = getSaveFileName(this, tr("Export to CSV"), tr("CSV files (*.csv *.tsv *.txt);;All files (*)"));
 		if (!path.isEmpty())
 			m_path_edit->setText(path);
 	});
