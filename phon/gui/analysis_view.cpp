@@ -35,7 +35,7 @@
 #include <QMainWindow>
 #include <QStatusBar>
 #include <QProgressBar>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QClipboard>
 #include <QApplication>
 #include <QFile>
@@ -143,9 +143,8 @@ bool AnalysisView::save()
 
 	if (firstSave)
 	{
-		auto path = QFileDialog::getSaveFileName(this, tr("Save analysis as..."),
-			QStringLiteral("untitled.phon-analysis"),
-			tr("Phonometrica analysis (*.phon-analysis)"));
+		auto path = getSaveFileName(this, tr("Save analysis as..."),
+			tr("Phonometrica analysis (*.phon-analysis)"), QStringLiteral("untitled.phon-analysis"));
 
 		if (path.isEmpty())
 			return false;
@@ -1880,8 +1879,8 @@ void AnalysisView::onExportEdaPNG()
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Export plot as PNG"), QString(), tr("PNG image (*.png)"));
+	QString path = getSaveFileName(this,
+		tr("Export plot as PNG"), tr("PNG image (*.png)"));
 	if (path.isEmpty()) return;
 	if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
 		path += QStringLiteral(".png");
@@ -1894,8 +1893,8 @@ void AnalysisView::onExportEdaPDF()
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Export plot as PDF"), QString(), tr("PDF document (*.pdf)"));
+	QString path = getSaveFileName(this,
+		tr("Export plot as PDF"), tr("PDF document (*.pdf)"));
 	if (path.isEmpty()) return;
 	if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
 		path += QStringLiteral(".pdf");
@@ -1908,8 +1907,8 @@ void AnalysisView::onExportEdaSVG()
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Export plot as SVG"), QString(), tr("SVG image (*.svg)"));
+	QString path = getSaveFileName(this,
+		tr("Export plot as SVG"), tr("SVG image (*.svg)"));
 	if (path.isEmpty()) return;
 	if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
 		path += QStringLiteral(".svg");
@@ -3055,8 +3054,8 @@ void AnalysisView::onSaveSummaryText()
 	auto text = m_summary->toPlainText();
 	if (text.isEmpty()) return;
 
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Save summary"), QString(),
+	QString path = getSaveFileName(this,
+		tr("Save summary"),
 		tr("Text file (*.txt)"));
 	if (path.isEmpty()) return;
 
@@ -3070,8 +3069,8 @@ void AnalysisView::onSaveSummaryLatex()
 {
 	if (m_current_model < 0 || m_current_model >= m_analysis->model_count()) return;
 
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Save as LaTeX"), QString(),
+	QString path = getSaveFileName(this,
+		tr("Save as LaTeX"),
 		tr("LaTeX file (*.tex)"));
 	if (path.isEmpty()) return;
 
@@ -3316,8 +3315,8 @@ void AnalysisView::onExportPlot()
 		return;
 	}
 
-	QString path = QFileDialog::getSaveFileName(this,
-		tr("Export plot"), QString(),
+	QString path = getSaveFileName(this,
+		tr("Export plot"),
 		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
 	if (path.isEmpty()) return;
 

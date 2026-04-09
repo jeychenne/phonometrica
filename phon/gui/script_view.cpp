@@ -21,7 +21,7 @@
 
 #include <QVBoxLayout>
 #include <QPlainTextEdit>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
@@ -177,9 +177,8 @@ bool ScriptView::save()
 
 	if (firstSave)
 	{
-		auto path = QFileDialog::getSaveFileName(this, tr("Save script as..."),
-			QStringLiteral("untitled.phon"),
-			tr("Phonometrica script (*.phon)"));
+		auto path = getSaveFileName(this, tr("Save script as..."),
+			tr("Phonometrica script (*.phon)"), QStringLiteral("untitled.phon"));
 
 		if (path.isEmpty())
 			return false;

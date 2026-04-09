@@ -19,7 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QMessageBox>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -760,7 +760,7 @@ void FileManager::addFilesToDirectory(const QModelIndex &sourceParent)
 		filter = tr("Research notes (*.phon-note);;All files (*)");
 	}
 
-	auto files = QFileDialog::getOpenFileNames(this, tr("Add files"), QString(), filter);
+	auto files = getOpenFileNames(this, tr("Add files"), filter);
 	if (files.isEmpty())
 		return;
 

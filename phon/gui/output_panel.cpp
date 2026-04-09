@@ -23,7 +23,7 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QTabWidget>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QFile>
 #include <QTextStream>
 #include <QMessageBox>
@@ -136,9 +136,8 @@ void OutputPanel::onCopyAll()
 
 void OutputPanel::onSaveToFile()
 {
-	auto path = QFileDialog::getSaveFileName(this, tr("Save output to file"),
-		QStringLiteral("output.txt"),
-		tr("Text files (*.txt);;All files (*)"));
+	auto path = getSaveFileName(this, tr("Save output to file"),
+		tr("Text files (*.txt);;All files (*)"), QStringLiteral("output.txt"));
 
 	if (path.isEmpty())
 		return;

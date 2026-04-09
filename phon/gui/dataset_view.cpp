@@ -27,7 +27,7 @@
 #include <QAction>
 #include <QMessageBox>
 #include <QInputDialog>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <phon/gui/dataset_view.hpp>
 #include <phon/gui/dataset_commands.hpp>
 #include <phon/gui/recode_dialog.hpp>
@@ -355,8 +355,8 @@ bool DatasetView::save()
 		auto current_label = QString::fromUtf8(m_ds->label().data(), (int) m_ds->label().size());
 		auto suggested = current_label + QStringLiteral(".csv");
 
-		auto path = QFileDialog::getSaveFileName(this, tr("Save dataset..."),
-			suggested, tr("CSV files (*.csv)"));
+		auto path = getSaveFileName(this, tr("Save dataset..."),
+			tr("CSV files (*.csv)"), suggested);
 		if (path.isEmpty()) return false;
 
 		m_ds->set_path(String(path.toUtf8().constData()), true);
@@ -473,8 +473,8 @@ void DatasetView::onDeleteColumns()
 
 void DatasetView::onExportCsv()
 {
-	auto path = QFileDialog::getSaveFileName(this, tr("Export to CSV..."),
-		QString(), tr("CSV files (*.csv *.txt)"));
+	auto path = getSaveFileName(this, tr("Export to CSV..."),
+		tr("CSV files (*.csv *.txt)"));
 	if (path.isEmpty()) return;
 
 	try

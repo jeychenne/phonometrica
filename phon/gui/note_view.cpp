@@ -20,7 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <QVBoxLayout>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QTextList>
 #include <QTextBlock>
 #include <phon/gui/note_view.hpp>
@@ -151,9 +151,9 @@ bool NoteView::save()
 
 	if (firstSave)
 	{
-		auto path = QFileDialog::getSaveFileName(this, tr("Save note as..."),
-			QStringLiteral("untitled") + QStringLiteral(PHON_EXT_NOTE),
-			tr("Research note (*%1)").arg(QStringLiteral(PHON_EXT_NOTE)));
+		auto path = getSaveFileName(this, tr("Save note as..."),
+			tr("Research note (*%1)").arg(QStringLiteral(PHON_EXT_NOTE)),
+			QStringLiteral("untitled") + QStringLiteral(PHON_EXT_NOTE));
 
 		if (path.isEmpty())
 			return false;

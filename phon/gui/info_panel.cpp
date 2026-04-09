@@ -24,7 +24,7 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHeaderView>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QMessageBox>
 #include <phon/gui/info_panel.hpp>
 #include <phon/gui/csv_dialog.hpp>
@@ -882,8 +882,7 @@ void InfoPanel::onBindSound()
 	if (!annot)
 		return;
 
-	auto path = QFileDialog::getOpenFileName(this, tr("Bind annotation to sound file..."),
-		QString(), tr("Sound files (*.wav *.aiff *.flac *.ogg *.mp3);;All files (*)"));
+	auto path = getOpenFileName(this, tr("Bind annotation to sound file..."), tr("Sound files (*.wav *.aiff *.flac *.ogg *.mp3);;All files (*)"));
 
 	if (path.isEmpty())
 		return;

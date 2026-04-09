@@ -24,7 +24,7 @@
 #include <QApplication>
 #include <QMenuBar>
 #include <QStatusBar>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -593,24 +593,12 @@ void MainWindow::rebuildRecentMenu()
 
 QString MainWindow::lastDirectory() const
 {
-	try
-	{
-		auto dir = Settings::get_last_directory();
-		if (!dir.empty())
-			return QString::fromUtf8(dir.data(), (int) dir.size());
-	}
-	catch (...) { }
-
-	return QString();
+	return phonometrica::lastDirectory();
 }
 
 void MainWindow::setLastDirectory(const QString &path)
 {
-	if (!path.isEmpty())
-	{
-		auto bytes = path.toUtf8();
-		Settings::set_last_directory(String(bytes.constData(), bytes.size()));
-	}
+	phonometrica::setLastDirectory(path);
 }
 
 
@@ -1201,8 +1189,8 @@ void MainWindow::updateFindReplaceState()
 
 void MainWindow::updateSaveActions()
 {
-	auto *project = Project::get();
-	bool empty = !project || project->empty();
+	// auto *project = Project::get();
+	// bool empty = !project || project->empty();
 	// Always enable save actions
 	// m_save_action->setEnabled(!empty && project->modified());
 	// m_save_as_action->setEnabled(!empty);
@@ -2043,7 +2031,7 @@ void MainWindow::setShellFunctions()
 
 	auto open_file_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
 		auto &msg = cast<String>(args[0]);
-		auto path = QFileDialog::getOpenFileName(this,
+		auto path = getOpenFileName(this,
 			QString::fromUtf8(msg.data(), (int) msg.size()));
 		if (path.isEmpty()) return Variant();
 		return String(path.toUtf8().constData());
@@ -2051,7 +2039,7 @@ void MainWindow::setShellFunctions()
 
 	auto open_files_dialog = [this](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &msg = cast<String>(args[0]);
-		auto paths = QFileDialog::getOpenFileNames(this,
+		auto paths = getOpenFileNames(this,
 			QString::fromUtf8(msg.data(), (int) msg.size()));
 		if (paths.isEmpty()) return Variant();
 		Array<Variant> result;
@@ -2064,7 +2052,7 @@ void MainWindow::setShellFunctions()
 
 	auto open_directory_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
 		auto &msg = cast<String>(args[0]);
-		auto path = QFileDialog::getExistingDirectory(this,
+		auto path = getExistingDirectory(this,
 			QString::fromUtf8(msg.data(), (int) msg.size()));
 		if (path.isEmpty()) return Variant();
 		return String(path.toUtf8().constData());
@@ -2072,7 +2060,7 @@ void MainWindow::setShellFunctions()
 
 	auto save_file_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
 		auto &msg = cast<String>(args[0]);
-		auto path = QFileDialog::getSaveFileName(this,
+		auto path = getSaveFileName(this,
 			QString::fromUtf8(msg.data(), (int) msg.size()));
 		if (path.isEmpty()) return Variant();
 		return String(path.toUtf8().constData());

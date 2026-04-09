@@ -24,7 +24,7 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <phon/gui/user_dialog.hpp>
 
 namespace phonometrica {
@@ -46,9 +46,9 @@ FilePicker::FilePicker(const QString &title, const QString &filter, bool save, Q
 	connect(btn, &QPushButton::clicked, this, [this]() {
 		QString path;
 		if (m_save) {
-			path = QFileDialog::getSaveFileName(this, m_title, QString(), m_filter);
+			path = getSaveFileName(this, m_title, m_filter);
 		} else {
-			path = QFileDialog::getOpenFileName(this, m_title, QString(), m_filter);
+			path = getOpenFileName(this, m_title, m_filter);
 		}
 		if (!path.isEmpty()) {
 			m_edit->setText(path);

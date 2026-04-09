@@ -24,7 +24,7 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QMessageBox>
-#include <QFileDialog>
+#include <phon/gui/file_dialog.hpp>
 #include <QSplitter>
 #include <QProgressDialog>
 #include <QToolButton>
@@ -473,8 +473,8 @@ void ProtocolQueryEditor::onSave()
 
 void ProtocolQueryEditor::onSaveAs()
 {
-	auto path = QFileDialog::getSaveFileName(this, tr("Save query..."),
-		QString(), tr("Phonometrica query (*.phon-query)"));
+	auto path = getSaveFileName(this, tr("Save query..."),
+		tr("Phonometrica query (*.phon-query)"));
 	if (path.isEmpty()) return;
 
 	bool is_new = m_query->path().empty();
