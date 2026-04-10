@@ -33,6 +33,7 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 #include <cppad/cppad.hpp>
 #include <boost/math/distributions/normal.hpp>
@@ -1371,7 +1372,9 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
                                    const Eigen::Map<Vector<double>> &ym,
                                    const GroupLayout &lay,
                                    intptr_t n, intptr_t p,
-                                   const Eigen::VectorXd &beta_init)
+                                   const Eigen::VectorXd &beta_init,
+                                   const Eigen::VectorXd &u_init = Eigen::VectorXd(),
+                                   bool verbose = false)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1379,9 +1382,9 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 	intptr_t sdim = p + J;   // Henderson system dimension
 
 	res.beta = beta_init;
-	res.u = Eigen::VectorXd::Zero(J);
+	res.u = (u_init.size() == J) ? u_init : Eigen::VectorXd::Zero(J);
 
-	for (int pirls_iter = 0; pirls_iter < 30; pirls_iter++)
+	for (int pirls_iter = 0; pirls_iter < 100; pirls_iter++)
 	{
 		// ── η = Xβ + Zu ──────────────────────────────────────
 		Eigen::VectorXd eta = Xm * res.beta;
@@ -1528,7 +1531,11 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 		res.beta = beta_new;
 		res.u = u_new;
 
-		if (max_change < 1e-8) break;
+		if (max_change < 1e-8) {
+			if (verbose) fprintf(stderr, "[PIRLS] Converged in %d iterations (max_change=%.2e)\n", pirls_iter + 1, max_change);
+			break;
+		}
+		if (pirls_iter == 99) fprintf(stderr, "[PIRLS] WARNING: did not converge in 100 iterations (max_change=%.2e)\n", max_change);
 	}
 
 	// ── Final η, μ ──────────────────────────────────────────────────
@@ -1552,6 +1559,8 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	// Prior: Σ_g Σ_j [ u_{gj}' D_g⁻¹ u_{gj} / 2 + q_g/2 log(2π) + 1/2 log|D_g| ]
 	double prior_nll = 0;
+	double prior_quad = 0;   // just the quadratic part (for diagnostics)
+	double prior_const = 0;  // just the normalizing constant (for diagnostics)
 	for (intptr_t g = 0; g < G; g++)
 	{
 		intptr_t qg = lay.q[g];
@@ -1566,9 +1575,12 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 				}
 			}
 			prior_nll += quad / 2.0;
+			prior_quad += quad / 2.0;
 		}
 		// log-normalizing constant: J_g × [q_g/2 log(2π) + 1/2 log|D_g|]
-		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
+		double nc = lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
+		prior_nll += nc;
+		prior_const += nc;
 	}
 
 	// Laplace correction: 1/2 log|H_uu| - J_total/2 log(2π)
@@ -1584,6 +1596,40 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
+
+	if (verbose)
+	{
+		fprintf(stderr, "\n[PIRLS Laplace NLL diagnostics]\n");
+		fprintf(stderr, "  n=%ld  p=%ld  G=%ld  J_total=%ld\n", (long)n, (long)p, (long)G, (long)J);
+		fprintf(stderr, "  cond_nll          = %.15f\n", cond_nll);
+		fprintf(stderr, "  prior_quad (u'D⁻¹u/2) = %.15f\n", prior_quad);
+		fprintf(stderr, "  prior_const       = %.15f\n", prior_const);
+		fprintf(stderr, "  prior_nll (total) = %.15f\n", prior_nll);
+		fprintf(stderr, "  log|H_uu|         = %.15f\n", log_det_Huu);
+		fprintf(stderr, "  -J/2*log(2π)      = %.15f\n", -0.5 * J * std::log(2.0 * M_PI));
+		fprintf(stderr, "  laplace_nll       = %.15f\n", res.laplace_nll);
+		fprintf(stderr, "  logLik            = %.15f\n", -res.laplace_nll);
+		fprintf(stderr, "  β̂: ");
+		for (intptr_t i = 0; i < p; i++) fprintf(stderr, "%.10f ", res.beta[i]);
+		fprintf(stderr, "\n");
+		for (intptr_t g = 0; g < G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			double sigma2 = 1.0 / D_inv[g](0, 0); // for random intercept
+			fprintf(stderr, "  Group %ld: J=%ld q=%ld σ²=%.10f log|D|=%.10f\n",
+			        (long)g, (long)lay.J[g], (long)qg, sigma2, log_det_Dg[g]);
+			fprintf(stderr, "    û (first 5): ");
+			intptr_t show = std::min(lay.J[g] * qg, (intptr_t)5);
+			for (intptr_t k = 0; k < show; k++)
+				fprintf(stderr, "%.8f ", res.u[lay.offset[g] + k]);
+			fprintf(stderr, "\n");
+		}
+		fprintf(stderr, "  w (first 5): ");
+		for (intptr_t i = 0; i < std::min(n, (intptr_t)5); i++)
+			fprintf(stderr, "%.8f ", w_final[i]);
+		fprintf(stderr, "\n\n");
+	}
+
 	return res;
 }
 
@@ -1631,8 +1677,15 @@ struct PirlsObjective
 	Eigen::VectorXd beta_init;
 	intptr_t n_chol;  // total Cholesky params = Σ q_g(q_g+1)/2
 
+	// Warm-start: cache the random effects from the last PIRLS solve
+	// so consecutive evaluations at nearby θ start close to the mode.
+	mutable Eigen::VectorXd last_u;
+	mutable int eval_count = 0;
+
 	double eval(const Eigen::VectorXd &theta) const
 	{
+		eval_count++;
+
 		// Unpack Cholesky parameters → D_inv and log|D| for each group
 		std::vector<Eigen::MatrixXd> D_inv(lay.G);
 		std::vector<double> log_det_Dg(lay.G);
@@ -1648,15 +1701,27 @@ struct PirlsObjective
 			chol_pos += np;
 		}
 
+		ProfiledResult res;
+
 		// For NB, the element after the Cholesky params is log(θ_nb).
 		if (fam.name == "negbin")
 		{
 			double theta_nb = std::exp(theta[n_chol]);
 			auto fam_nb = Family::negbin(theta_nb);
-			return solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init).laplace_nll;
+			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u);
+		}
+		else
+		{
+			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u);
 		}
 
-		return solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init).laplace_nll;
+		// Print outer optimization trace
+		double sigma2_0 = 1.0 / D_inv[0](0, 0);
+		fprintf(stderr, "[PirlsObj] eval #%d: theta[0]=%.8f σ²=%.8f nll=%.10f β[0]=%.8f\n",
+		        eval_count, theta[0], sigma2_0, res.laplace_nll, res.beta[0]);
+
+		last_u = std::move(res.u);
+		return res.laplace_nll;
 	}
 };
 
@@ -1687,7 +1752,8 @@ static NewtonResult newton_optimize(const Objective &obj,
                                      Eigen::VectorXd theta,
                                      int max_iter = 200,
                                      double grad_tol = 1e-8,
-                                     FittingCallback progress = nullptr)
+                                     FittingCallback progress = nullptr,
+                                     double h_scale_hint = 0)
 {
 	intptr_t dim = theta.size();
 	NewtonResult res;
@@ -1695,13 +1761,12 @@ static NewtonResult newton_optimize(const Objective &obj,
 	res.fx = obj.eval(theta);
 	int stall_count = 0;
 
-	// Finite-difference step scale.  For low-dimensional problems (random
-	// intercepts, dim ≤ 3) the fine step 1e-4 gives accurate Hessians and
-	// fast convergence.  For higher-dimensional problems (random slopes,
-	// dim ≥ 4) the surface often has ridges where 1e-4 is too narrow to
-	// capture the curvature; 1e-3 samples a wider range and produces Newton
-	// directions that track the valley floor.
-	double h_scale = (dim <= 3) ? 1e-4 : 1e-3;
+	// Finite-difference step scale.  When h_scale_hint > 0, use it directly
+	// (the caller knows the noise floor of the objective).  Otherwise, use
+	// dimension-dependent defaults for objectives with negligible noise
+	// (e.g. Gaussian Henderson, which is solved exactly).
+	double h_scale = (h_scale_hint > 0) ? h_scale_hint
+	               : (dim <= 3) ? 1e-4 : 1e-3;
 
 	for (int iter = 0; iter < max_iter; iter++)
 	{
@@ -1819,16 +1884,14 @@ static NewtonResult newton_optimize(const Objective &obj,
 		}
 
 		// ── Function-value stall detection ───────────────────────
-		// If the nll hasn't changed meaningfully in 3 consecutive
-		// iterations, declare convergence.  The 1e-5 relative tolerance
-		// catches models with near-boundary variance components where
-		// the surface is flat and per-iteration progress is tiny but
-		// nonzero.  For loglik ≈ −1000, this triggers when improvement
-		// drops below ~0.01 per iteration (< 0.02 AIC — negligible).
-		if (std::abs(res.fx - f0) < 1e-5 * (1.0 + std::abs(f0)))
+		// If the nll hasn't changed meaningfully in 5 consecutive
+		// iterations, declare convergence.  The 1e-8 relative tolerance
+		// matches the gradient tolerance and ensures the optimizer
+		// continues refining as long as meaningful progress is possible.
+		if (std::abs(res.fx - f0) < 1e-8 * (1.0 + std::abs(f0)))
 		{
 			stall_count++;
-			if (stall_count >= 3)
+			if (stall_count >= 5)
 			{
 				res.converged = true;
 				res.theta = theta;
@@ -2162,9 +2225,53 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 
 		// Create PirlsObjective after beta_init is finalized
+
+		// ── DIAGNOSTIC: evaluate PIRLS at glmer's σ² ──────────────
+		{
+			double sigma2_test = 1.7065;
+			std::vector<Eigen::MatrixXd> D_inv_test(lay.G);
+			std::vector<double> log_det_test(lay.G);
+			for (intptr_t g = 0; g < lay.G; g++) {
+				intptr_t qg = lay.q[g];
+				D_inv_test[g] = Eigen::MatrixXd::Identity(qg, qg) / sigma2_test;
+				log_det_test[g] = qg * std::log(sigma2_test);
+			}
+			auto test = solve_pirls(D_inv_test, log_det_test, fam, Xm, ym, lay, n, p,
+			                        beta_init, Eigen::VectorXd(), true);
+			fprintf(stderr, "\n[DIAGNOSTIC A] From GLM β: nll=%.15f β̂[0]=%.10f\n",
+			        test.laplace_nll, test.beta[0]);
+
+			// Test B: start from glmer's converged β̂
+			if (p == 4) {
+				Eigen::VectorXd beta_glmer(4);
+				beta_glmer << 1.3757942091, -1.0310499203, -1.9956723050, -1.0046228344;
+				auto test2 = solve_pirls(D_inv_test, log_det_test, fam, Xm, ym, lay, n, p,
+				                         beta_glmer, Eigen::VectorXd(), true);
+				fprintf(stderr, "\n[DIAGNOSTIC B] From glmer β: nll=%.15f β̂[0]=%.10f\n\n",
+				        test2.laplace_nll, test2.beta[0]);
+			}
+
+			// Print data encoding for verification
+			fprintf(stderr, "[DATA CHECK] First 10 observations:\n");
+			fprintf(stderr, "  %4s", "i");
+			for (intptr_t j = 0; j < p; j++) fprintf(stderr, " %12s", (j == 0) ? "X_intercept" : "X_col");
+			fprintf(stderr, "  %8s  %6s\n", "y", "grp_id");
+			for (intptr_t i = 0; i < std::min(n, (intptr_t)10); i++)
+			{
+				fprintf(stderr, "  %4ld", (long)i);
+				for (intptr_t j = 0; j < p; j++) fprintf(stderr, " %12.6f", Xm(i, j));
+				fprintf(stderr, "  %8.4f", ym[i]);
+				for (intptr_t g = 0; g < lay.G; g++)
+					fprintf(stderr, "  grp%ld=%ld", (long)g, (long)(*lay.group_indices[g])[i]);
+				fprintf(stderr, "\n");
+			}
+			fprintf(stderr, "\n");
+		}
+		// ── END DIAGNOSTIC ───────────────────────────────────────
+
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol};
 
-		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress);
+		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -2225,7 +2332,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	else
 	{
 		auto pirls_final = solve_pirls(D_inv_final, log_det_Dg_final, fam_used,
-		                                Xm, ym, lay, n, p, beta_hat);
+		                                Xm, ym, lay, n, p, beta_hat,
+		                                Eigen::VectorXd(), true);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
