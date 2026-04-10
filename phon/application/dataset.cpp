@@ -74,7 +74,7 @@ void Dataset::load()
 
 	auto ext = filesystem::ext(m_path, true);
 
-	if (ext == ".csv")
+	if (ext == ".csv" || ext == ".tsv")
 	{
 		read_from_csv(m_separator.view());
 	}

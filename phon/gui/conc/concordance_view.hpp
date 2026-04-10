@@ -99,6 +99,7 @@ private:
 	void onContextMenu(const QPoint &pos);
 	void onRecodeColumn(int section);
 	void onTransformColumn(int section);
+	void onConvertToText(int section);
 
 	void onToggleMatchInfo(bool visible);
 	void onToggleContext(bool visible);

@@ -88,6 +88,7 @@ private slots:
 	void onRenameColumn(int section);
 	void onRecodeColumn(int section);
 	void onTransformColumn(int section);
+	void onConvertToText(int section);
 	void onDuplicateColumn(int section);
 	void onMoveColumn(int section);
 

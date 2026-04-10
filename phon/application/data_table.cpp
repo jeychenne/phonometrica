@@ -23,6 +23,7 @@
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/regex.hpp>
 #include <phon/application/project.hpp>
+#include <phon/analysis/model_comparison.hpp>
 #include <phon/application/data_table.hpp>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
@@ -518,7 +519,9 @@ void DataTable::initialize(Runtime &rt)
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		data.open();
-		return make_handle<stats::Model>(stats::fit(data, stats::Formula::parse(formula_str), "gaussian"));
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian");
+		model.compute_pseudo_r2();
+		return make_handle<stats::Model>(std::move(model));
 	};
 
 	auto fit3 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -526,7 +529,9 @@ void DataTable::initialize(Runtime &rt)
 		auto &data = cast<DataTable>(args[1]);
 		auto &family_str = cast<String>(args[2]);
 		data.open();
-		return make_handle<stats::Model>(stats::fit(data, stats::Formula::parse(formula_str), family_str));
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str);
+		model.compute_pseudo_r2();
+		return make_handle<stats::Model>(std::move(model));
 	};
 
 	auto summarize_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -575,6 +580,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "deviance") return model.deviance;
 		if (key == "r2") return model.r2;
 		if (key == "adj_r2") return model.adj_r2;
+		if (key == "r2_marginal") return model.r2_marginal;
+		if (key == "r2_conditional") return model.r2_conditional;
 		if (key == "rse") return model.rse;
 		if (key == "df") return model.df_residual;
 		if (key == "theta") return model.theta;
@@ -627,6 +634,45 @@ void DataTable::initialize(Runtime &rt)
 		throw error("[Index error] Concordance type has no member named \"%\"", key);
 	};
 
+	auto compare_models = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &m1 = cast<stats::Model>(args[0]);
+		auto &m2 = cast<stats::Model>(args[1]);
+		std::vector<const stats::Model *> models = { &m1, &m2 };
+		auto result = stats::anova_compare(models);
+
+		// Print warnings if any.
+		for (auto &w : result.warnings) {
+			rt.printf("Warning: %s\n", w.data());
+		}
+
+		// Print information criteria table.
+		rt.printf("\n%-8s %6s %12s %12s %12s %12s\n", "Model", "npar", "logLik", "AIC", "BIC", "deviance");
+		for (size_t i = 0; i < result.rows.size(); i++) {
+			auto &r = result.rows[i];
+			rt.printf("%-8d %6ld %12.4f %12.4f %12.4f %12.4f\n",
+			          r.original_index + 1, (long)r.npar, r.loglik, r.aic, r.bic, r.deviance);
+		}
+
+		// Print pairwise LRT results.
+		rt.printf("\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
+		for (auto &p : result.pairs) {
+			char pbuf[16];
+			if (std::isnan(p.p_value)) snprintf(pbuf, sizeof(pbuf), "NA");
+			else if (p.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
+			else snprintf(pbuf, sizeof(pbuf), "%.6f", p.p_value);
+
+			char label[32];
+			snprintf(label, sizeof(label), "%d vs %d",
+			         result.rows[p.index_a].original_index + 1,
+			         result.rows[p.index_b].original_index + 1);
+			rt.printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
+			          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
+		}
+		rt.printf("\n");
+
+		return Variant();
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
@@ -642,6 +688,7 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("loglik", loglik_model, { CLS(stats::Model) });
 	rt.add_global("fitted", fitted_model, { CLS(stats::Model) });
 	rt.add_global("residuals", residuals_model, { CLS(stats::Model) });
+	rt.add_global("compare", compare_models, { CLS(stats::Model), CLS(stats::Model) });
 
 	auto model_cls = CLS(stats::Model);
 	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });

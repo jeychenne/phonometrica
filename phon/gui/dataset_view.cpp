@@ -32,6 +32,7 @@
 #include <phon/gui/dataset_commands.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
+#include <phon/gui/convert_to_text_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/column_metrics.hpp>
@@ -286,6 +287,9 @@ void DatasetView::setupUi()
 			menu.addSeparator();
 			menu.addAction(tr("Transform..."), this, [this, section]() {
 				onTransformColumn(section);
+			});
+			menu.addAction(tr("Convert to text..."), this, [this, section]() {
+				onConvertToText(section);
 			});
 		}
 
@@ -1137,6 +1141,56 @@ void DatasetView::onTransformColumn(int section)
 				tr("%1 value(s) produced NaN (non-positive input, division by zero, etc.).")
 					.arg(nan_count));
 		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void DatasetView::onConvertToText(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	auto col_name_str = m_ds->get_header(col);
+	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
+
+	// Collect sample values for the preview (first 8 rows, formatted as strings).
+	QStringList samples;
+	intptr_t sample_count = std::min(m_ds->row_count(), (intptr_t)8);
+	for (intptr_t i = 1; i <= sample_count; i++)
+	{
+		auto cell = m_ds->get_cell(i, col);
+		samples.append(QString::fromUtf8(cell.data(), (int) cell.size()));
+	}
+
+	ConvertToTextDialog dlg(col_name, samples, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	auto tmpl = dlg.templateString();
+
+	try
+	{
+		std::vector<String> result(m_ds->row_count());
+
+		for (intptr_t i = 1; i <= m_ds->row_count(); i++)
+		{
+			auto cell = m_ds->get_cell(i, col);
+			auto cell_q = QString::fromUtf8(cell.data(), (int) cell.size());
+			auto text = ConvertToTextDialog::applyTemplate(tmpl, cell_q);
+			result[i - 1] = String(text.toUtf8().constData());
+		}
+
+		m_ds->add_text_column(String(new_col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		record(std::make_unique<AddDatasetColumnCommand>(this));
 	}
 	catch (std::exception &e)
 	{

@@ -36,6 +36,7 @@
 #include <phon/application/spectrum.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/application/analysis.hpp>
+#include <phon/application/func_document.hpp>
 
 namespace phonometrica {
 
@@ -958,7 +959,7 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		vfile = recast<Document>(conc);
 		p->append(vfile);
 	}
-	else if (ext == ".csv")
+	else if (ext == ".csv" || ext == ".tsv")
 	{
 		Directory *p = m_data.get();
 
@@ -1430,6 +1431,11 @@ void Project::initialize(Runtime &rt)
 	proj->define(&rt, "is_empty", is_empty, { });
 	auto &phon = cast<Module>(rt["phon"]);
 	phon.define("project", std::move(proj));
+
+	// Generic document access: load() imports or retrieves any file by path.
+	auto doc_class = Class::get<Document>();
+	doc_class->add_method(rt.get_field_string, document_get_field, {CLS(Document), CLS(String)});
+	rt.add_global("load", load_file, { CLS(String) });
 #undef CLS
 }
 
