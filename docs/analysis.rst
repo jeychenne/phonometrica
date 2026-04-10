@@ -277,16 +277,87 @@ menu lets you choose between four plot types:
   around zero; patterns (e.g. a funnel shape) suggest violated assumptions.
 - **Normal Q-Q**: compares residual quantiles to theoretical normal quantiles. Points close
   to the diagonal indicate normally distributed residuals.
-- **Scaled Residuals vs Fitted**: uses simulation-based (DHARMa-style) scaled residuals, which
+- **Scaled Residuals vs Fitted**: uses simulation-based scaled residuals (see below), which
   should be uniformly distributed between 0 and 1 regardless of the model family.
 - **Scaled Residuals Q-Q**: a Q-Q plot of the scaled residuals against the uniform distribution.
+
+
+Scaled residuals
+~~~~~~~~~~~~~~~~
+
+Traditional residuals (e.g. Pearson or deviance residuals) are difficult to interpret for
+non-Gaussian models: their expected distribution depends on the response family and the
+fitted values, so it is hard to tell whether an unusual pattern reflects a genuine model
+problem or is simply an artefact of the distributional shape. Simulation-based *scaled
+residuals* solve this problem by comparing each observed value to a set of values simulated
+from the fitted model. Under a correctly specified model, the scaled residuals are uniformly
+distributed between 0 and 1 regardless of the family, which makes them easy to interpret
+visually and with formal tests.
+
+Phonometrica computes scaled residuals using a procedure inspired by the DHARMa package in R
+(Hartig, 2020). The steps are as follows:
+
+1. For each of 1000 replicates, a new response vector is simulated from the fitted model.
+   For mixed-effects models, the simulation is *conditional* on the estimated random effects
+   (BLUPs), meaning that the per-observation fitted values — which already include the
+   random effects — are used as the mean for the simulation. Only the residual noise is
+   re-drawn.
+2. For each observation, the observed value is ranked among its 1000 simulated counterparts.
+   An observation that falls in the middle of the simulated range receives a residual near
+   0.5; one that falls near the edge receives a residual close to 0 or 1.
+3. For discrete response families (Binomial, Poisson, Negative binomial), a small random
+   jitter is applied to break ties, following the *randomized quantile residuals* approach
+   of Dunn & Smyth (1996). This ensures that the residuals are continuous and uniformly
+   distributed even for discrete data.
 
 When a scaled residual plot is shown, a **Residual tests** panel appears below the plot with
 three formal tests:
 
-- **Kolmogorov–Smirnov test**: tests whether the scaled residuals are uniformly distributed.
-- **Dispersion test**: checks for over- or underdispersion.
-- **Outlier test**: detects observations with extreme residual values.
+- **Kolmogorov–Smirnov test**: tests whether the scaled residuals follow a uniform
+  distribution. A significant result (small *p*-value) suggests that the model does not
+  adequately describe the data.
+- **Dispersion test**: compares the observed variance of the residuals to the theoretical
+  variance of a uniform distribution (1/12). Values greater than 1 suggest overdispersion
+  (more variability than the model predicts), while values less than 1 suggest
+  underdispersion.
+- **Outlier test**: counts how many residuals fall in the extreme tails (below 1/1001 or
+  above 1000/1001 for 1000 simulations). Under a correct model, the expected number of outliers
+  is approximately *n* × 2/1001, where *n* is the number of observations. A significant
+  excess of outliers may indicate influential observations or model misfit.
+
+.. note::
+
+   **Interpreting the tests.** Because the residuals are based on only 1000 simulation
+   replicates, the tests have limited precision and their *p*-values may fluctuate across
+   runs. A single borderline-significant result should not be cause for concern. Instead,
+   look at the overall picture: do all three tests agree? Does the Q-Q plot show a clear
+   pattern? A well-specified model will typically show non-significant results on all three
+   tests, a dispersion ratio close to 1, and a Q-Q plot with points falling along the
+   diagonal.
+
+.. note::
+
+   **Comparison with R.** Phonometrica's scaled residuals use conditional simulation for
+   mixed-effects models: the random effects are held fixed at their estimated values (BLUPs),
+   and only the residual noise is re-simulated. In R, the DHARMa package computes scaled
+   residuals via ``simulateResiduals()``, which calls the model's ``simulate()`` method.
+   The default behaviour depends on the package used to fit the model:
+
+   - **lme4** (``lmer``/``glmer``): by default, ``simulate()`` draws *new* random effects
+     from the estimated distribution (unconditional simulation). To match Phonometrica's
+     conditional approach, pass ``re.form = NULL``::
+
+        sim <- simulateResiduals(model, re.form = NULL)
+
+   - **glmmTMB**: ``simulate()`` always draws new random effects. Conditional simulation
+     is not currently supported (as of glmmTMB 1.1.x). Diagnostic values may therefore
+     differ from those reported by Phonometrica, though both approaches should agree on
+     whether the model is well-specified.
+
+   Because of differences in random number generators and the limited number of simulation
+   replicates, individual test statistics and *p*-values are not expected to match exactly
+   between Phonometrica and R. They should, however, lead to the same qualitative
+   conclusions.
 
 The **Export** button saves the current diagnostic plot to a file (PNG, PDF, or SVG).
 
@@ -380,6 +451,10 @@ References
 
 - Bates, D., Mächler, M., Bolker, B. & Walker, S. (2015). Fitting linear mixed-effects
   models using lme4. *Journal of Statistical Software*, 67(1), 1–48.
+- Dunn, P.K. & Smyth, G.K. (1996). Randomized quantile residuals. *Journal of
+  Computational and Graphical Statistics*, 5(3), 236–244.
+- Hartig, F. (2020). DHARMa: Residual diagnostics for hierarchical (multi-level / mixed)
+  regression models. R package. https://CRAN.R-project.org/package=DHARMa
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure.
   *Scandinavian Journal of Statistics*, 6(2), 65–70.
 - Lenth, R.V. (2016). Least-squares means: the R package lsmeans.
