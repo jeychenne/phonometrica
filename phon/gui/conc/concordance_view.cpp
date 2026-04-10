@@ -39,6 +39,7 @@
 #include <phon/gui/conc/concordance_commands.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
+#include <phon/gui/convert_to_text_dialog.hpp>
 #include <phon/gui/outlier_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/font_helpers.hpp>
@@ -529,6 +530,9 @@ void ConcordanceView::setupUi()
 			menu.addSeparator();
 			menu.addAction(tr("Transform..."), this, [this, section]() {
 				onTransformColumn(section);
+			});
+			menu.addAction(tr("Convert to text..."), this, [this, section]() {
+				onConvertToText(section);
 			});
 		}
 
@@ -1412,6 +1416,58 @@ void ConcordanceView::onTransformColumn(int section)
 				tr("%1 value(s) produced NaN (non-positive input, division by zero, etc.).")
 					.arg(nan_count));
 		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+void ConcordanceView::onConvertToText(int section)
+{
+	intptr_t col = section + 1; // 1-based
+	intptr_t nrows = m_conc->row_count();
+	auto col_hdr = m_conc->get_header(col);
+	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
+
+	// Collect sample values for the preview (first 8 rows, as strings).
+	QStringList samples;
+	intptr_t sample_count = std::min(nrows, (intptr_t)8);
+	for (intptr_t i = 1; i <= sample_count; i++)
+	{
+		auto cell = m_conc->get_cell(i, col);
+		samples.append(QString::fromUtf8(cell.data(), (int) cell.size()));
+	}
+
+	ConvertToTextDialog dlg(col_name, samples, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	auto new_col_name = dlg.newColumnName();
+	if (new_col_name.isEmpty()) return;
+
+	auto tmpl = dlg.templateString();
+
+	try
+	{
+		std::vector<String> result(nrows);
+
+		for (intptr_t i = 1; i <= nrows; i++)
+		{
+			auto cell = m_conc->get_cell(i, col);
+			auto cell_q = QString::fromUtf8(cell.data(), (int) cell.size());
+			auto text = ConvertToTextDialog::applyTemplate(tmpl, cell_q);
+			result[i - 1] = String(text.toUtf8().constData());
+		}
+
+		m_conc->add_text_column(String(new_col_name.toUtf8().constData()), result);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		updateColumnVisibility();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		record(std::make_unique<AddConcAuxColumnCommand>(this));
 	}
 	catch (std::exception &e)
 	{

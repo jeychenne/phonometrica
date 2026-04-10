@@ -656,7 +656,7 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 		if (ds->has_path())
 		{
 			auto ext = filesystem::ext(ds->path(), true);
-			if (ext == ".csv")
+			if (ext == ".csv" || ext == ".tsv")
 			{
 				auto *sepMenu = menu.addMenu(tr("Separator"));
 

@@ -102,9 +102,11 @@ void OutputPanel::appendResult(const QString &heading, const QString &body)
 
 void OutputPanel::appendText(const QString &text)
 {
-	m_text->appendPlainText(text);
-
 	auto cursor = m_text->textCursor();
+	cursor.movePosition(QTextCursor::End);
+	cursor.insertText(text);
+
+	cursor = m_text->textCursor();
 	cursor.movePosition(QTextCursor::End);
 	m_text->setTextCursor(cursor);
 	m_text->ensureCursorVisible();
