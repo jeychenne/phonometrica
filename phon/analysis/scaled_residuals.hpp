@@ -19,16 +19,22 @@
  *                                                                                                                     *
  * All models use simulation-based PIT (the approach used by DHARMa):                                                  *
  *   - For each of N replicates, a response is simulated from the fitted model.                                        *
- *   - For mixed models with Z info, fresh random effects are drawn from N(0, D).                                      *
+ *   - Simulation is CONDITIONAL on estimated random effects (BLUPs), matching                                         *
+ *     DHARMa's default behavior with glmmTMB (re.form = NULL / simulate with                                          *
+ *     conditional modes).                                                                                             *
  *   - The observed y_i is ranked among its simulated values, yielding a PIT value                                     *
- *     via the empirical CDF.                                                                                          *
+ *     via the empirical CDF.  For discrete families (binomial, Poisson, NB),                                          *
+ *     randomized PIT is used (uniform jitter within the tied range) to ensure                                         *
+ *     uniformity under the correct model.  For continuous families (Gaussian),                                        *
+ *     the midpoint is used since ties are negligible.                                                                 *
  *                                                                                                                     *
  * Under the correct model, scaled residuals are uniformly distributed on (0, 1).                                      *
  * Diagnostics include:                                                                                                *
  *   - Kolmogorov-Smirnov test for uniformity                                                                          *
  *   - Dispersion test (variance ratio vs 1/12)                                                                        *
- *   - Outlier test: binomial test for excess observations falling outside                                              *
- *     the simulated range                                                                                             *
+ *   - Outlier test: binomial test for observations whose scaled residual                                                *
+ *     falls below 1/(nsim+1) or above 1-1/(nsim+1), matching DHARMa's                                                *
+ *     testOutliers(type = "binomial") threshold definition.                                                           *
  *                                                                                                                     *
  * References:                                                                                                         *
  *   - Dunn, P.K. & Smyth, G.K. (1996). Randomized quantile residuals. JCGS 5(3), 236-244.                           *
@@ -68,9 +74,9 @@ struct ScaledResidualResult
 };
 
 // Compute DHARMa-style simulation-based scaled residuals for a fitted model.
-// For mixed models with Z info available, fresh random effects are drawn each replicate.
-// For all other models (fixed-effects, or deserialized mixed without Z), simulates
-// from the conditional fitted values.
+// Simulation is conditional on estimated random effects (BLUPs), matching
+// DHARMa's default behavior.  For discrete families (binomial, Poisson, NB),
+// randomized PIT is used; for continuous families (Gaussian), midpoint PIT.
 ScaledResidualResult compute_scaled_residuals(const Model &m);
 
 } // namespace phonometrica::stats

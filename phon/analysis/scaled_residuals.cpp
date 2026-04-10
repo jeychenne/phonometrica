@@ -149,117 +149,41 @@ static void run_diagnostics(ScaledResidualResult &result, intptr_t n)
 // Simulation engine
 // =====================================================================
 
-static constexpr int NSIM = 250;
+static constexpr int NSIM = 1000;
 static constexpr unsigned int SEED = 42;
-
-
-static Eigen::MatrixXd unpack_cholesky(const Array<double> &packed, intptr_t q)
-{
-	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(q, q);
-	intptr_t idx = 1; // 1-based Array
-	for (intptr_t r = 0; r < q; r++) {
-		for (intptr_t c = 0; c <= r; c++) {
-			L(r, c) = packed[idx++];
-		}
-	}
-	return L;
-}
-
-static bool has_z_info(const Model &m)
-{
-	for (intptr_t g = 1; g <= m.random_effects.size(); g++)
-	{
-		auto &re = m.random_effects[g];
-		if (re.indices.empty() || re.Z_design.empty())
-			return false;
-	}
-	return true;
-}
 
 
 static ScaledResidualResult compute_simulation(const Model &m)
 {
 	intptr_t n = m.nobs;
-	intptr_t G = m.random_effects.size();
 
-	// Use full random-effects simulation only if we have Z info.
-	bool mixed = (G > 0) && has_z_info(m);
+	// Simulation strategy: CONDITIONAL on estimated random effects (BLUPs).
+	// This matches DHARMa's default behavior with glmmTMB (re.form = NULL),
+	// where simulate() conditions on the estimated random effects rather
+	// than drawing fresh ones from N(0, Σ).  The conditional approach tests
+	// whether the residuals, given the random effects, follow the assumed
+	// distribution.  With fresh RE draws the simulated range per observation
+	// becomes much wider, suppressing outlier detection and inflating the
+	// marginal variance — producing systematically wrong diagnostics.
+	//
+	// The conditional path simply uses model.fitted (which already includes
+	// the BLUPs for mixed models) as the mean for simulation.
 
 	Family fam = Family::from_name(m.family);
 	if (m.family == "negbin") {
 		fam = Family::negbin(m.theta);
 	}
 
-	// For mixed models: compute X*beta and unpack Cholesky factors once.
-	Vector<double> Xbeta;
-	std::vector<Eigen::MatrixXd> L_factors;
-
-	if (mixed)
-	{
-		intptr_t p = m.nfixed;
-		Eigen::Map<const Matrix<double>> Xm(m.X.data(), n, p);
-		Eigen::Map<const Vector<double>> bm(m.beta.data(), p);
-		Xbeta = Xm * bm;
-
-		L_factors.resize(G);
-		for (intptr_t g = 0; g < G; g++)
-		{
-			auto &re = m.random_effects[g + 1];
-			L_factors[g] = unpack_cholesky(re.cov_chol, re.nterms);
-		}
-	}
-
 	std::vector<double> sim_y(n * NSIM);
 
 	std::mt19937 rng(SEED);
-	std::normal_distribution<double> std_normal(0.0, 1.0);
 
 	for (int s = 0; s < NSIM; s++)
 	{
-		Vector<double> mu(n);
-
-		if (mixed)
-		{
-			Vector<double> eta = Xbeta;
-
-			for (intptr_t g = 0; g < G; g++)
-			{
-				auto &re = m.random_effects[g + 1];
-				intptr_t q = re.nterms;
-				intptr_t J = re.nlevels;
-
-				std::vector<double> b(J * q);
-				for (intptr_t j = 0; j < J; j++)
-				{
-					Eigen::VectorXd z(q);
-					for (intptr_t t = 0; t < q; t++)
-						z(t) = std_normal(rng);
-
-					Eigen::VectorXd b_j = L_factors[g] * z;
-					for (intptr_t t = 0; t < q; t++)
-						b[j * q + t] = b_j(t);
-				}
-
-				for (intptr_t i = 0; i < n; i++)
-				{
-					intptr_t j = re.indices[i];
-					for (intptr_t t = 0; t < q; t++)
-						eta[i] += re.Z_design[i * q + t] * b[j * q + t];
-				}
-			}
-
-			mu = fam.linkinv(eta);
-		}
-		else
-		{
-			for (intptr_t i = 0; i < n; i++)
-				mu[i] = m.fitted[i + 1];
-		}
-
-		// Draw y_sim ~ Family(mu)
+		// Draw y_sim ~ Family(mu) where mu = conditional fitted values (including BLUPs).
 		for (intptr_t i = 0; i < n; i++)
 		{
-			double mu_i = mu[i];
+			double mu_i = m.fitted[i + 1];
 			double y_sim;
 
 			if (m.family == "gaussian")
@@ -302,6 +226,12 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	ScaledResidualResult result;
 	result.residuals.resize(n);
 
+	bool is_discrete = (m.family != "gaussian");
+
+	// DHARMa outlier thresholds: residuals in the extreme tails of U(0,1).
+	// Under H0, P(U < lo) + P(U > hi) = 2/(nsim+1) per observation.
+	const double outlier_lo = 1.0 / (NSIM + 1);
+	const double outlier_hi = 1.0 - outlier_lo;
 	int n_outliers = 0;
 
 	for (intptr_t i = 0; i < n; i++)
@@ -319,12 +249,19 @@ static ScaledResidualResult compute_simulation(const Model &m)
 				count_equal++;
 		}
 
-		// Outlier: y_obs falls entirely outside the simulated range.
-		if ((count_below == 0 && count_equal == 0) || count_below == NSIM)
-			n_outliers++;
+		// For continuous families (Gaussian), use midpoint PIT (ties are negligible).
+		// For discrete families (binomial, Poisson, NB), use randomized PIT
+		// to ensure uniformity under the correct model (DHARMa convention).
+		double jitter = is_discrete ? std::uniform_real_distribution<double>(0.0, 1.0)(rng) : 0.5;
+		double pit = ((double)count_below + jitter * (double)count_equal) / (double)NSIM;
+		pit = std::clamp(pit, 1e-10, 1.0 - 1e-10);
+		result.residuals[i + 1] = pit;
 
-		double pit = ((double)count_below + 0.5 * (double)count_equal) / (double)NSIM;
-		result.residuals[i + 1] = std::clamp(pit, 1e-10, 1.0 - 1e-10);
+		// Outlier: scaled residual in the extreme tails.
+		// This matches DHARMa's testOutliers(type = "binomial"):
+		//   outliers = sum(u < 1/(nSim+1)) + sum(u > 1 - 1/(nSim+1))
+		if (pit < outlier_lo || pit > outlier_hi)
+			n_outliers++;
 	}
 
 	result.n_outliers = n_outliers;
