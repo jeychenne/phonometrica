@@ -33,7 +33,6 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
-#include <cstdio>
 #include <algorithm>
 #include <cppad/cppad.hpp>
 #include <boost/math/distributions/normal.hpp>
@@ -1373,8 +1372,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
                                    const GroupLayout &lay,
                                    intptr_t n, intptr_t p,
                                    const Eigen::VectorXd &beta_init,
-                                   const Eigen::VectorXd &u_init = Eigen::VectorXd(),
-                                   bool verbose = false)
+                                   const Eigen::VectorXd &u_init = Eigen::VectorXd())
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1531,11 +1529,8 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 		res.beta = beta_new;
 		res.u = u_new;
 
-		if (max_change < 1e-8) {
-			if (verbose) fprintf(stderr, "[PIRLS] Converged in %d iterations (max_change=%.2e)\n", pirls_iter + 1, max_change);
-			break;
-		}
-		if (pirls_iter == 99) fprintf(stderr, "[PIRLS] WARNING: did not converge in 100 iterations (max_change=%.2e)\n", max_change);
+		if (max_change < 1e-8) break;
+		if (pirls_iter == 99) break;
 	}
 
 	// ── Final η, μ ──────────────────────────────────────────────────
@@ -1559,15 +1554,12 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	// Prior: Σ_g Σ_j [ u_{gj}' D_g⁻¹ u_{gj} / 2 + q_g/2 log(2π) + 1/2 log|D_g| ]
 	double prior_nll = 0;
-	double prior_quad = 0;   // just the quadratic part (for diagnostics)
-	double prior_const = 0;  // just the normalizing constant (for diagnostics)
 	for (intptr_t g = 0; g < G; g++)
 	{
 		intptr_t qg = lay.q[g];
 		for (intptr_t j = 0; j < lay.J[g]; j++)
 		{
 			intptr_t base = lay.offset[g] + j * qg;
-			// u_{gj}' D_g⁻¹ u_{gj}
 			double quad = 0;
 			for (intptr_t t1 = 0; t1 < qg; t1++) {
 				for (intptr_t t2 = 0; t2 < qg; t2++) {
@@ -1575,12 +1567,8 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 				}
 			}
 			prior_nll += quad / 2.0;
-			prior_quad += quad / 2.0;
 		}
-		// log-normalizing constant: J_g × [q_g/2 log(2π) + 1/2 log|D_g|]
-		double nc = lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
-		prior_nll += nc;
-		prior_const += nc;
+		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
 	}
 
 	// Laplace correction: 1/2 log|H_uu| - J_total/2 log(2π)
@@ -1596,39 +1584,6 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
-
-	if (verbose)
-	{
-		fprintf(stderr, "\n[PIRLS Laplace NLL diagnostics]\n");
-		fprintf(stderr, "  n=%ld  p=%ld  G=%ld  J_total=%ld\n", (long)n, (long)p, (long)G, (long)J);
-		fprintf(stderr, "  cond_nll          = %.15f\n", cond_nll);
-		fprintf(stderr, "  prior_quad (u'D⁻¹u/2) = %.15f\n", prior_quad);
-		fprintf(stderr, "  prior_const       = %.15f\n", prior_const);
-		fprintf(stderr, "  prior_nll (total) = %.15f\n", prior_nll);
-		fprintf(stderr, "  log|H_uu|         = %.15f\n", log_det_Huu);
-		fprintf(stderr, "  -J/2*log(2π)      = %.15f\n", -0.5 * J * std::log(2.0 * M_PI));
-		fprintf(stderr, "  laplace_nll       = %.15f\n", res.laplace_nll);
-		fprintf(stderr, "  logLik            = %.15f\n", -res.laplace_nll);
-		fprintf(stderr, "  β̂: ");
-		for (intptr_t i = 0; i < p; i++) fprintf(stderr, "%.10f ", res.beta[i]);
-		fprintf(stderr, "\n");
-		for (intptr_t g = 0; g < G; g++)
-		{
-			intptr_t qg = lay.q[g];
-			double sigma2 = 1.0 / D_inv[g](0, 0); // for random intercept
-			fprintf(stderr, "  Group %ld: J=%ld q=%ld σ²=%.10f log|D|=%.10f\n",
-			        (long)g, (long)lay.J[g], (long)qg, sigma2, log_det_Dg[g]);
-			fprintf(stderr, "    û (first 5): ");
-			intptr_t show = std::min(lay.J[g] * qg, (intptr_t)5);
-			for (intptr_t k = 0; k < show; k++)
-				fprintf(stderr, "%.8f ", res.u[lay.offset[g] + k]);
-			fprintf(stderr, "\n");
-		}
-		fprintf(stderr, "  w (first 5): ");
-		for (intptr_t i = 0; i < std::min(n, (intptr_t)5); i++)
-			fprintf(stderr, "%.8f ", w_final[i]);
-		fprintf(stderr, "\n\n");
-	}
 
 	return res;
 }
@@ -1651,6 +1606,234 @@ static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
 		log_det_Dg[g] = qg * std::log(sigma2_u[g]);
 	}
 	return solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init);
+}
+
+
+// =====================================================================
+// u-only IRLS solver (β fixed) — used by Phase 2 joint optimization
+// =====================================================================
+//
+// Much cheaper than full PIRLS: no β solve, and for random intercepts
+// the u-update is diagonal (no matrix factorization).
+
+static ProfiledResult solve_u_given_beta(
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const std::vector<double> &log_det_Dg,
+    const Family &fam,
+    const Eigen::Map<Matrix<double>> &Xm,
+    const Eigen::Map<Vector<double>> &ym,
+    const GroupLayout &lay,
+    intptr_t n, intptr_t p,
+    const Eigen::VectorXd &beta,
+    const Eigen::VectorXd &u_init = Eigen::VectorXd())
+{
+	ProfiledResult res;
+	intptr_t G = lay.G;
+	intptr_t J = lay.J_total;
+
+	res.beta = beta;  // fixed — not updated
+	res.u = (u_init.size() == J) ? u_init : Eigen::VectorXd::Zero(J);
+
+	Eigen::VectorXd Xbeta = Xm * beta;
+
+	for (int iter = 0; iter < 100; iter++)
+	{
+		// ── η = Xβ + Zu ──
+		Eigen::VectorXd eta = Xbeta;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			auto &idx = *lay.group_indices[g];
+			intptr_t qg = lay.q[g];
+			for (intptr_t i = 0; i < n; i++)
+			{
+				intptr_t base = lay.offset[g] + idx[i] * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					eta[i] += lay.Z(g, i, t) * res.u[base + t];
+			}
+		}
+
+		Eigen::VectorXd mu = fam.linkinv(eta.cwiseMax(-30.0).cwiseMin(30.0));
+		Eigen::VectorXd V = fam.variance(mu);
+		Eigen::VectorXd me = fam.mu_eta(mu);
+
+		// Working weights and residual r = z - Xβ
+		Eigen::VectorXd w(n), r(n);
+		bool bad = false;
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double v = std::max(V[i], 1e-10);
+			double d = std::max(me[i], 1e-10);
+			w[i] = d * d / v;
+			r[i] = eta[i] - Xbeta[i] + (ym[i] - mu[i]) / d;
+			if (!std::isfinite(r[i]) || !std::isfinite(w[i])) bad = true;
+		}
+		if (bad) break;
+
+		Eigen::VectorXd u_new(J);
+
+		if (G == 1)
+		{
+			// ── Single group: block-diagonal solve (exact) ──
+			intptr_t qg = lay.q[0];
+			intptr_t Jg = lay.J[0];
+			auto &idx = *lay.group_indices[0];
+
+			std::vector<Eigen::MatrixXd> blocks(Jg, D_inv[0]);
+			std::vector<Eigen::VectorXd> rhs_v(Jg, Eigen::VectorXd::Zero(qg));
+
+			for (intptr_t i = 0; i < n; i++)
+			{
+				intptr_t j = idx[i];
+				for (intptr_t t1 = 0; t1 < qg; t1++)
+				{
+					double wz1 = w[i] * lay.Z(0, i, t1);
+					rhs_v[j][t1] += wz1 * r[i];
+					for (intptr_t t2 = t1; t2 < qg; t2++)
+					{
+						double val = wz1 * lay.Z(0, i, t2);
+						blocks[j](t1, t2) += val;
+						if (t1 != t2) blocks[j](t2, t1) += val;
+					}
+				}
+			}
+
+			for (intptr_t j = 0; j < Jg; j++)
+			{
+				intptr_t base = lay.offset[0] + j * qg;
+				if (qg == 1) {
+					u_new[base] = rhs_v[j][0] / blocks[j](0, 0);
+				} else {
+					u_new.segment(base, qg) = blocks[j].ldlt().solve(rhs_v[j]);
+				}
+			}
+		}
+		else
+		{
+			// ── Crossed groups: full J × J system ──
+			// (Z'WZ + D⁻¹) u = Z'W r
+			Eigen::MatrixXd H = Eigen::MatrixXd::Zero(J, J);
+			Eigen::VectorXd rhs = Eigen::VectorXd::Zero(J);
+
+			// D⁻¹ blocks on diagonal
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				for (intptr_t j = 0; j < lay.J[g]; j++)
+				{
+					intptr_t base = lay.offset[g] + j * qg;
+					for (intptr_t t1 = 0; t1 < qg; t1++)
+						for (intptr_t t2 = 0; t2 < qg; t2++)
+							H(base + t1, base + t2) = D_inv[g](t1, t2);
+				}
+			}
+
+			// Data contributions: Z'WZ and Z'Wr
+			for (intptr_t i = 0; i < n; i++)
+			{
+				for (intptr_t g1 = 0; g1 < G; g1++)
+				{
+					intptr_t j1 = (*lay.group_indices[g1])[i];
+					intptr_t q1 = lay.q[g1];
+					intptr_t base1 = lay.offset[g1] + j1 * q1;
+
+					for (intptr_t t = 0; t < q1; t++)
+						rhs[base1 + t] += w[i] * lay.Z(g1, i, t) * r[i];
+
+					// Within-group Z'WZ
+					for (intptr_t t1 = 0; t1 < q1; t1++)
+					{
+						double wz1 = w[i] * lay.Z(g1, i, t1);
+						for (intptr_t t2 = t1; t2 < q1; t2++)
+						{
+							double val = wz1 * lay.Z(g1, i, t2);
+							H(base1 + t1, base1 + t2) += val;
+							if (t1 != t2) H(base1 + t2, base1 + t1) += val;
+						}
+					}
+
+					// Cross-group Z'WZ
+					for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+					{
+						intptr_t j2 = (*lay.group_indices[g2])[i];
+						intptr_t q2 = lay.q[g2];
+						intptr_t base2 = lay.offset[g2] + j2 * q2;
+
+						for (intptr_t t1 = 0; t1 < q1; t1++)
+						{
+							double wz1 = w[i] * lay.Z(g1, i, t1);
+							for (intptr_t t2 = 0; t2 < q2; t2++)
+							{
+								double val = wz1 * lay.Z(g2, i, t2);
+								H(base1 + t1, base2 + t2) += val;
+								H(base2 + t2, base1 + t1) += val;
+							}
+						}
+					}
+				}
+			}
+
+			// Solve
+			u_new = Eigen::LDLT<Eigen::MatrixXd>(H).solve(rhs);
+		}
+
+		double max_change = (u_new - res.u).cwiseAbs().maxCoeff();
+		res.u = u_new;
+		if (!std::isfinite(max_change)) break;
+		if (max_change < 1e-10) break;
+	}
+
+	// ── Final η, μ ──
+	Eigen::VectorXd eta_f = Xbeta;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &idx = *lay.group_indices[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++)
+				eta_f[i] += lay.Z(g, i, t) * res.u[base + t];
+		}
+	}
+	res.mu = fam.linkinv(eta_f.cwiseMax(-30.0).cwiseMin(30.0));
+
+	// ── Laplace NLL ──
+	double cond_nll = -fam.loglik(ym, res.mu);
+	if (!std::isfinite(cond_nll)) {
+		res.laplace_nll = 1e30;
+		return res;
+	}
+
+	double prior_nll = 0;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++)
+				for (intptr_t t2 = 0; t2 < qg; t2++)
+					quad += res.u[base + t1] * D_inv[g](t1, t2) * res.u[base + t2];
+			prior_nll += quad / 2.0;
+		}
+		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
+	}
+
+	Eigen::VectorXd V_f = fam.variance(res.mu);
+	Eigen::VectorXd me_f = fam.mu_eta(res.mu);
+	Eigen::VectorXd w_f(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double v = std::max(V_f[i], 1e-10);
+		double d = std::max(me_f[i], 1e-10);
+		w_f[i] = d * d / v;
+	}
+	double log_det_Huu = full_log_det_H(w_f, D_inv, lay, n);
+
+	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
+	                  - 0.5 * J * std::log(2.0 * M_PI);
+	return res;
 }
 
 
@@ -1680,11 +1863,9 @@ struct PirlsObjective
 	// Warm-start: cache the random effects from the last PIRLS solve
 	// so consecutive evaluations at nearby θ start close to the mode.
 	mutable Eigen::VectorXd last_u;
-	mutable int eval_count = 0;
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
-		eval_count++;
 
 		// Unpack Cholesky parameters → D_inv and log|D| for each group
 		std::vector<Eigen::MatrixXd> D_inv(lay.G);
@@ -1715,12 +1896,65 @@ struct PirlsObjective
 			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u);
 		}
 
-		// Print outer optimization trace
-		double sigma2_0 = 1.0 / D_inv[0](0, 0);
-		fprintf(stderr, "[PirlsObj] eval #%d: theta[0]=%.8f σ²=%.8f nll=%.10f β[0]=%.8f\n",
-		        eval_count, theta[0], sigma2_0, res.laplace_nll, res.beta[0]);
-
 		last_u = std::move(res.u);
+		return res.laplace_nll;
+	}
+};
+
+
+// =====================================================================
+// Phase 2 joint (β, θ) objective for non-Gaussian GLMMs
+// =====================================================================
+//
+// After Phase 1 converges (PIRLS profiles β out, Newton over θ only),
+// Phase 2 re-optimizes (β, θ) jointly with u profiled out via u-only
+// IRLS. This matches the joint optimization done by lme4/glmmTMB.
+// Phase 2 is only needed for non-Gaussian families (for Gaussian,
+// the working weights are constant and ∂log|H|/∂β = 0).
+//
+// Outer parameter vector: phi = [β (p), θ_chol (n_chol), log(θ_nb)?]
+
+struct LaplaceJointObjective
+{
+	const Family &fam;
+	const Eigen::Map<Matrix<double>> &Xm;
+	const Eigen::Map<Vector<double>> &ym;
+	const GroupLayout &lay;
+	intptr_t n, p, n_chol;
+
+	mutable Eigen::VectorXd last_u;
+
+	double eval(const Eigen::VectorXd &phi) const
+	{
+		Eigen::VectorXd beta = phi.head(p);
+
+		// Unpack Cholesky → D_inv, log_det_Dg
+		std::vector<Eigen::MatrixXd> D_inv(lay.G);
+		std::vector<double> log_det_Dg(lay.G);
+		intptr_t chol_pos = 0;
+		for (intptr_t g = 0; g < lay.G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			intptr_t np = n_chol_params(qg);
+			Eigen::MatrixXd L = unpack_cholesky(phi.data() + p + chol_pos, qg);
+			D_inv[g] = cholesky_to_precision(L);
+			log_det_Dg[g] = log_det_D(phi.data() + p + chol_pos, qg);
+			chol_pos += np;
+		}
+
+		Family fam_used = fam;
+		if (fam.name == "negbin")
+		{
+			double theta_nb = std::exp(phi[p + n_chol]);
+			fam_used = Family::negbin(theta_nb);
+		}
+
+		auto res = solve_u_given_beta(D_inv, log_det_Dg, fam_used,
+		                               Xm, ym, lay, n, p, beta, last_u);
+		if (std::isfinite(res.laplace_nll))
+			last_u = std::move(res.u);
+		else
+			res.laplace_nll = 1e30;  // reject this step
 		return res.laplace_nll;
 	}
 };
@@ -2226,55 +2460,57 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		// Create PirlsObjective after beta_init is finalized
 
-		// ── DIAGNOSTIC: evaluate PIRLS at glmer's σ² ──────────────
-		{
-			double sigma2_test = 1.7065;
-			std::vector<Eigen::MatrixXd> D_inv_test(lay.G);
-			std::vector<double> log_det_test(lay.G);
-			for (intptr_t g = 0; g < lay.G; g++) {
-				intptr_t qg = lay.q[g];
-				D_inv_test[g] = Eigen::MatrixXd::Identity(qg, qg) / sigma2_test;
-				log_det_test[g] = qg * std::log(sigma2_test);
-			}
-			auto test = solve_pirls(D_inv_test, log_det_test, fam, Xm, ym, lay, n, p,
-			                        beta_init, Eigen::VectorXd(), true);
-			fprintf(stderr, "\n[DIAGNOSTIC A] From GLM β: nll=%.15f β̂[0]=%.10f\n",
-			        test.laplace_nll, test.beta[0]);
-
-			// Test B: start from glmer's converged β̂
-			if (p == 4) {
-				Eigen::VectorXd beta_glmer(4);
-				beta_glmer << 1.3757942091, -1.0310499203, -1.9956723050, -1.0046228344;
-				auto test2 = solve_pirls(D_inv_test, log_det_test, fam, Xm, ym, lay, n, p,
-				                         beta_glmer, Eigen::VectorXd(), true);
-				fprintf(stderr, "\n[DIAGNOSTIC B] From glmer β: nll=%.15f β̂[0]=%.10f\n\n",
-				        test2.laplace_nll, test2.beta[0]);
-			}
-
-			// Print data encoding for verification
-			fprintf(stderr, "[DATA CHECK] First 10 observations:\n");
-			fprintf(stderr, "  %4s", "i");
-			for (intptr_t j = 0; j < p; j++) fprintf(stderr, " %12s", (j == 0) ? "X_intercept" : "X_col");
-			fprintf(stderr, "  %8s  %6s\n", "y", "grp_id");
-			for (intptr_t i = 0; i < std::min(n, (intptr_t)10); i++)
-			{
-				fprintf(stderr, "  %4ld", (long)i);
-				for (intptr_t j = 0; j < p; j++) fprintf(stderr, " %12.6f", Xm(i, j));
-				fprintf(stderr, "  %8.4f", ym[i]);
-				for (intptr_t g = 0; g < lay.G; g++)
-					fprintf(stderr, "  grp%ld=%ld", (long)g, (long)(*lay.group_indices[g])[i]);
-				fprintf(stderr, "\n");
-			}
-			fprintf(stderr, "\n");
-		}
-		// ── END DIAGNOSTIC ───────────────────────────────────────
-
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol};
 
 		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
+
+		// ── Phase 2: joint (β, θ) optimization ─────────────────
+		// For non-Gaussian, the Laplace log-det depends on β through
+		// the working weights W = μ(1−μ). Phase 1 PIRLS profiles β
+		// out ignoring ∂log|H|/∂β; Phase 2 re-optimizes (β, θ)
+		// jointly with u profiled out, matching lme4/glmmTMB.
+		{
+			// Get Phase 1 β̂ via one PIRLS call at converged θ
+			std::vector<Eigen::MatrixXd> D_inv_p1(G);
+			std::vector<double> log_det_p1(G);
+			intptr_t cp = 0;
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				intptr_t np = n_chol_params(qg);
+				Eigen::MatrixXd L = unpack_cholesky(theta.data() + cp, qg);
+				D_inv_p1[g] = cholesky_to_precision(L);
+				log_det_p1[g] = log_det_D(theta.data() + cp, qg);
+				cp += np;
+			}
+
+			Family fam_p1 = fam;
+			if (is_nb)
+				fam_p1 = Family::negbin(std::exp(theta[n_chol]));
+
+			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
+			                             Xm, ym, lay, n, p, beta_init);
+
+			// Build Phase 2 parameter vector: [β, θ]
+			intptr_t outer_dim2 = p + (intptr_t)theta.size();
+			Eigen::VectorXd phi2(outer_dim2);
+			phi2.head(p) = p1_pirls.beta;
+			phi2.tail(theta.size()) = theta;
+
+			LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol};
+			joint_obj.last_u = std::move(p1_pirls.u);
+
+			auto res2 = newton_optimize(joint_obj, phi2, 200, 1e-8, progress, 1e-2);
+
+			// Update β and θ from Phase 2
+			beta_hat = res2.theta.head(p);
+			theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
+			niter += res2.niter;
+			converged = res2.converged;
+		}
 
 		// ── Unpack converged Cholesky → D_inv, sigma2_u, log_det_Dg ──
 		D_inv_final.resize(G);
@@ -2301,9 +2537,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			fam_used = Family::negbin(theta_nb);
 		}
 
-		auto final_pirls = solve_pirls(D_inv_final, log_det_Dg_final, fam_used,
-		                                Xm, ym, lay, n, p, beta_init);
-		beta_hat = final_pirls.beta;
+		// beta_hat already set by Phase 2
 
 		// Assemble full φ = (β̂, θ̂) for SE computation
 		phi.resize(outer_dim);
@@ -2331,9 +2565,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		auto pirls_final = solve_pirls(D_inv_final, log_det_Dg_final, fam_used,
-		                                Xm, ym, lay, n, p, beta_hat,
-		                                Eigen::VectorXd(), true);
+		// Use solve_u_given_beta to ensure β̂ from Phase 2 is not modified
+		auto pirls_final = solve_u_given_beta(D_inv_final, log_det_Dg_final, fam_used,
+		                                       Xm, ym, lay, n, p, beta_hat);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
