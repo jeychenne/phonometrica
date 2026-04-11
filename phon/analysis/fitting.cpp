@@ -762,64 +762,34 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		for (intptr_t si = 1; si <= formula.smooth.size(); si++)
 		{
 			auto &st = formula.smooth[si];
-
-			// Find column and extract numeric values for complete rows.
 			intptr_t scol = find_column(data, st.variable);
-			if (!is_numeric_column(data, scol, rows)) {
-				throw error("Smooth variable '%' must be numeric", st.variable);
-			}
-			auto x_vals = extract_numeric(data, scol, rows);
 
-			// Build the spline basis (shared knots for all levels).
-			auto basis = build_cr_basis(x_vals, st.k);
-
-			if (st.has_by())
+			if (st.basis == "re")
 			{
-				// Factor by-variable: create one masked slice per level.
-				intptr_t bcol = find_column(data, st.by);
-				if (is_numeric_column(data, bcol, rows)) {
-					throw error("By-variable '%' in s(%,by=%) must be categorical (got numeric)",
-					            st.by, st.variable, st.by);
-				}
-				auto levels = extract_levels(data, bcol, rows,
-				                              lookup_reference(st.by, reference_levels));
-
-				// Extract by-variable values for all complete rows.
-				std::vector<String> by_vals;
-				by_vals.reserve(rows.size());
-				for (intptr_t row : rows) {
-					by_vals.push_back(data.get_cell(row, bcol));
+				// ── Random-effect basis ──────────────────────────────
+				// Variable must be categorical (grouping factor).
+				if (is_numeric_column(data, scol, rows)) {
+					throw error("Random-effect smooth s(%, bs=re) requires a categorical variable "
+					            "(got numeric)", st.variable);
 				}
 
-				for (intptr_t lv = 1; lv <= levels.size(); lv++)
+				auto levels = extract_levels(data, scol, rows,
+				                              lookup_reference(st.variable, reference_levels));
+
+				// Build per-observation level index (0-based).
+				std::vector<intptr_t> indices;
+				indices.reserve(rows.size());
+				for (intptr_t row : rows)
 				{
-					SmoothSlice slice;
-					// Create a zero-masked copy of the basis for this level.
-					slice.basis = basis; // copy (shares knots, F_deriv2, Z_absorb)
-					slice.basis.B = Array<double>(dm.nobs, basis.k_eff, 0.0);
-					for (intptr_t j = 1; j <= basis.k_eff; j++) {
-						for (intptr_t i = 0; i < (intptr_t)rows.size(); i++) {
-							if (by_vals[i] == levels[lv]) {
-								slice.basis.B(i + 1, j) = basis.B(i + 1, j);
-							}
-							// else: already 0
-						}
+					auto val = data.get_cell(row, scol);
+					for (intptr_t lv = 1; lv <= levels.size(); lv++) {
+						if (val == levels[lv]) { indices.push_back(lv - 1); break; }
 					}
-
-					intptr_t aug_col = n_parametric;
-					for (auto &prev : smooth_slices) {
-						aug_col += prev.col_count;
-					}
-					slice.col_start = aug_col;
-					slice.col_count = basis.k_eff;
-					slice.smooth_index = si;
-					slice.level = levels[lv];
-					smooth_slices.push_back(std::move(slice));
 				}
-			}
-			else
-			{
-				// Plain smooth: one slice.
+
+				auto basis = build_re_basis(levels, indices, (intptr_t)rows.size());
+				basis.variable = st.variable;
+
 				intptr_t aug_col = n_parametric;
 				for (auto &prev : smooth_slices) {
 					aug_col += prev.col_count;
@@ -831,6 +801,78 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 				slice.smooth_index = si;
 				slice.basis = std::move(basis);
 				smooth_slices.push_back(std::move(slice));
+			}
+			else
+			{
+				// ── Spline basis (cr) ────────────────────────────────
+				// Find column and extract numeric values for complete rows.
+				if (!is_numeric_column(data, scol, rows)) {
+					throw error("Smooth variable '%' must be numeric", st.variable);
+				}
+				auto x_vals = extract_numeric(data, scol, rows);
+
+				// Build the spline basis (shared knots for all levels).
+				auto basis = build_cr_basis(x_vals, st.k);
+
+				if (st.has_by())
+				{
+					// Factor by-variable: create one masked slice per level.
+					intptr_t bcol = find_column(data, st.by);
+					if (is_numeric_column(data, bcol, rows)) {
+						throw error("By-variable '%' in s(%,by=%) must be categorical (got numeric)",
+						            st.by, st.variable, st.by);
+					}
+					auto levels = extract_levels(data, bcol, rows,
+					                              lookup_reference(st.by, reference_levels));
+
+					// Extract by-variable values for all complete rows.
+					std::vector<String> by_vals;
+					by_vals.reserve(rows.size());
+					for (intptr_t row : rows) {
+						by_vals.push_back(data.get_cell(row, bcol));
+					}
+
+					for (intptr_t lv = 1; lv <= levels.size(); lv++)
+					{
+						SmoothSlice slice;
+						// Create a zero-masked copy of the basis for this level.
+						slice.basis = basis; // copy (shares knots, F_deriv2, Z_absorb)
+						slice.basis.B = Array<double>(dm.nobs, basis.k_eff, 0.0);
+						for (intptr_t j = 1; j <= basis.k_eff; j++) {
+							for (intptr_t i = 0; i < (intptr_t)rows.size(); i++) {
+								if (by_vals[i] == levels[lv]) {
+									slice.basis.B(i + 1, j) = basis.B(i + 1, j);
+								}
+								// else: already 0
+							}
+						}
+
+						intptr_t aug_col = n_parametric;
+						for (auto &prev : smooth_slices) {
+							aug_col += prev.col_count;
+						}
+						slice.col_start = aug_col;
+						slice.col_count = basis.k_eff;
+						slice.smooth_index = si;
+						slice.level = levels[lv];
+						smooth_slices.push_back(std::move(slice));
+					}
+				}
+				else
+				{
+					// Plain smooth: one slice.
+					intptr_t aug_col = n_parametric;
+					for (auto &prev : smooth_slices) {
+						aug_col += prev.col_count;
+					}
+
+					SmoothSlice slice;
+					slice.col_start = aug_col;
+					slice.col_count = basis.k_eff;
+					slice.smooth_index = si;
+					slice.basis = std::move(basis);
+					smooth_slices.push_back(std::move(slice));
+				}
 			}
 		}
 
@@ -907,8 +949,9 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 
 	if (formula.has_smooth_terms() && formula.has_random_effects())
 	{
-		throw error("Models with both smooth terms and random effects (GAMMs) are not yet supported. "
-		            "Fit the smooth terms without random effects, or use random effects without smooth terms.");
+		throw error("Models with both smooth terms and (1|group) random effects are not yet supported. "
+		            "To account for grouping structure in a GAM, use s(group, bs=re) instead of (1|group). "
+		            "For example: F1 ~ vowel + s(duration) + s(speaker, bs=re)");
 	}
 
 	if (formula.has_smooth_terms())

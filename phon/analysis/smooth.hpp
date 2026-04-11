@@ -111,6 +111,30 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k = 10);
 // SmoothBasis build_ps_basis(const std::vector<double> &x, intptr_t k = 10, int m = 3, int d = 2);
 // TODO: implement after cr is validated.
 
+
+// Construct a random-effect ("re") basis for a categorical grouping factor.
+//
+// This implements the equivalent of mgcv's bs="re": a penalized indicator matrix
+// with identity penalty, suitable for modelling random intercepts within the
+// penalized regression (GAM) framework.
+//
+//   B = n × J indicator matrix (B[i,j] = 1 if observation i belongs to level j)
+//   S = I  (J × J identity penalty)
+//
+// The smoothing parameter λ selected by GCV maps to a variance component:
+//   σ²_u = σ²_ε / λ
+//
+// No identifiability constraint is applied: the penalty shrinks random intercepts
+// toward zero, and the fixed intercept captures the population mean.
+//
+// \param levels   sorted unique levels (1-based Array of Strings)
+// \param indices  per-observation level index (0-based, length n)
+// \param nobs     number of observations
+// \return a SmoothBasis with type="re", k_eff=J, penalty_rank=J, null_dim=0.
+SmoothBasis build_re_basis(const Array<String> &levels,
+                           const std::vector<intptr_t> &indices,
+                           intptr_t nobs);
+
 } // namespace phonometrica::stats
 
 #endif // PHONOMETRICA_SMOOTH_HPP

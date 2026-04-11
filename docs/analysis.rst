@@ -42,9 +42,48 @@ Fixed effects
 Smooth terms (GAM)
 ~~~~~~~~~~~~~~~~~~
 
+Smooth terms fit penalized regression splines, which capture nonlinear relationships without
+requiring you to specify the shape of the curve in advance. They are useful when a predictor's
+effect on the response is not a straight line — for instance, formant values that change
+nonlinearly over the course of a vowel.
+
 - ``y ~ s(x)``: penalized regression spline of the numeric variable *x* (default: 10 knots, cubic regression spline basis)
-- ``y ~ s(x, k=15)``: spline with 15 knots
+- ``y ~ s(x, k=15)``: spline with 15 knots (increase *k* if you expect a highly wiggly pattern)
 - ``y ~ s(x, by=group)``: a separate smooth for each level of the factor *group*
+- ``y ~ s(speaker, bs=re)``: random intercept for *speaker*, estimated as a penalized smooth term
+
+The ``bs=re`` basis type deserves special attention. It is the recommended way to account for
+**speaker** or **item** grouping structure in a GAM. It is mathematically equivalent to a
+random intercept in a mixed model: each level of the grouping variable (e.g. each speaker)
+gets its own adjustment, and these adjustments are shrunk toward zero to prevent overfitting.
+The degree of shrinkage is estimated automatically from the data.
+
+You can include multiple ``bs=re`` terms, for example to account for both speakers and items::
+
+   F1 ~ vowel + s(duration) + s(speaker, bs=re) + s(item, bs=re)
+
+.. note::
+
+   **When to use** ``bs=re`` **vs** ``(1|group)``. Both express random intercepts, but they
+   go through different estimation paths:
+
+   - ``s(speaker, bs=re)`` is estimated in the **penalized regression** (GAM) framework via GCV.
+     Use this when your model already includes smooth terms like ``s(duration)``.
+   - ``(1|speaker)`` is estimated in the **mixed model** framework via Laplace approximation.
+     Use this when your model has only parametric fixed effects (no smooth terms).
+
+   Combining ``s()`` smooth terms with ``(1|group)`` random effects in the same formula is not
+   currently supported. If you need both a nonlinear smooth and grouping structure, use
+   ``bs=re`` for the grouping.
+
+.. note::
+
+   **Choosing** *k* **for spline smooths.** The default of *k* = 10 works well in most
+   situations. If you suspect the relationship is very wiggly (e.g. a formant contour with
+   multiple turning points), increase *k* to 15 or 20. Setting *k* too high is not harmful —
+   the penalty will prevent overfitting — but it makes computation slower. Setting *k* too low
+   can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
+   reported in the summary is close to *k* − 1, consider increasing *k*.
 
 Random effects
 ~~~~~~~~~~~~~~
@@ -53,7 +92,8 @@ Random effects
 - ``y ~ a + (1 + a | speaker)``: random intercept and correlated random slope for *a*
 - ``y ~ a + (0 + a | speaker)``: random slope only (no random intercept)
 
-You can combine any number of fixed, smooth, and random terms in a single formula.
+You can combine fixed effects with smooth terms, or fixed effects with random effects.
+To combine smooth terms with grouping structure, use ``s(group, bs=re)`` (see above).
 
 
 Columns panel
@@ -71,7 +111,9 @@ The left panel lists all the columns available in the source data.
   - *Add interaction only with...*: create an ``a:b`` interaction term without adding main effects.
   - *Add as smooth*: (numeric columns only) add a smooth term ``s(x)`` with preset or custom *k*.
     A submenu offers *with by variable* to create ``s(x, by=factor)`` terms.
-  - *Add as grouping factor*: add a random intercept ``(1 | group)``.
+  - *Add as grouping factor*: add a random intercept ``(1 | group)`` for mixed-effects models.
+  - *Add smooth for grouping*: (categorical columns only) add a penalized random intercept
+    ``s(group, bs=re)`` for use in GAM models.
   - *Add correlated slope in...*: add this variable as a random slope inside an existing random term
     (e.g. ``(1 + a | speaker)``).
   - *Add independent slope in...*: add this variable as a random slope in a new random term
@@ -419,9 +461,11 @@ Phonometrica's statistical engine supports the following model families:
 - **Poisson** (log link): Poisson regression and Poisson mixed models.
 - **Negative binomial** (log link, NB2 parameterization): for overdispersed count data.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
-  smooths and per-smooth significance tests.
+  smooths, per-smooth significance tests, and random intercepts via ``bs=re`` to account for
+  speaker/item grouping.
 
 All model types support random intercepts and random slopes (mixed-effects models).
+GAM models support grouping structure through ``s(group, bs=re)`` smooth terms.
 
 
 Tips
@@ -436,6 +480,10 @@ Tips
   may need a different family, additional predictors, or data transformation.
 - For vowel formant plots, use the **Formant chart** checkbox in the EDA tab to reverse
   both axes.
+- When fitting a GAM with speaker or item effects, use ``s(speaker, bs=re)`` rather than
+  a fixed effect for the grouping variable. This estimates the between-group variance and
+  shrinks group estimates toward the population mean, reducing overfitting — especially
+  when some groups have few observations.
 - After fitting a model with a categorical predictor, switch to the **Post-hoc** tab to
   see which levels differ from each other. The Holm adjustment (default) controls the
   family-wise error rate while being more powerful than Bonferroni.
@@ -465,6 +513,8 @@ References
 - Searle, S.R., Speed, F.M. & Milliken, G.A. (1980). Population marginal means in the
   linear model: an alternative to least squares means. *The American Statistician*,
   34(4), 216–221.
+- Wood, S.N. (2017). *Generalized Additive Models: An Introduction with R* (2nd ed.).
+  CRC Press.
 
 
 .. |help| image:: ../icons/circle-help.svg

@@ -770,11 +770,15 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	MatrixXd Minv_XtX = llt.solve(XtX);
 	double edf_total = Minv_XtX.trace();
 
-	// Bayesian covariance: Vβ = σ² (X'X + S)⁻¹ X'X (X'X + S)⁻¹
+	// Bayesian posterior covariance: Vp = σ² (X'X + S)⁻¹
+	// This is the default in mgcv (Wood, 2017 §6.10). It gives correct coverage
+	// for parametric terms when penalized smooth/random-effect terms are present,
+	// because the off-diagonal blocks of (X'X + S)⁻¹ propagate the smooth
+	// uncertainty into the parametric SEs.
 	double sigma2 = rss / ((double)n - edf_total);
 	if (sigma2 <= 0) sigma2 = 1e-10;
 	MatrixXd Minv = llt.solve(MatrixXd::Identity(p, p));
-	MatrixXd Vb = sigma2 * Minv * XtX * Minv;
+	MatrixXd Vb = sigma2 * Minv;
 
 	// ── Build Model ──────────────────────────────────────────────
 
@@ -823,7 +827,9 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
 			sm.edf += Minv_XtX(j, j);
 		}
-		sm.ref_df = sm.edf;
+		// For random-effect smooths (bs="re"), the reference df for the F-test
+		// is the basis dimension (number of levels), not the shrunken edf.
+		sm.ref_df = (sr.basis == "re") ? (double)sr.col_count : sm.edf;
 
 		if (sm.edf > 0.001)
 		{
@@ -1007,8 +1013,9 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	MatrixXd Minv_XtWX = ldlt.solve(XtWX);
 	double edf_total = Minv_XtWX.trace();
 
-	// Bayesian covariance
-	MatrixXd Vb = Minv * XtWX * Minv;
+	// Bayesian posterior covariance: Vp = (X'WX + λS)⁻¹
+	// Matches mgcv's default. See penalized_lm for rationale.
+	MatrixXd Vb = Minv;
 
 	// ── Per-smooth EDF and F-test ────────────────────────────────
 
@@ -1027,7 +1034,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
 			sm.edf += Minv_XtWX(j, j);
 		}
-		sm.ref_df = sm.edf;
+		sm.ref_df = (sr.basis == "re") ? (double)sr.col_count : sm.edf;
 
 		if (sm.edf > 0.001)
 		{
