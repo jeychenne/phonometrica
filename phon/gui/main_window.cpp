@@ -35,6 +35,7 @@
 #include <QCloseEvent>
 #include <QLabel>
 #include <QSettings>
+#include <QProcess>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/view.hpp>
@@ -59,6 +60,7 @@
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/praat.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/zip.hpp>
 #include <phon/utils/helpers.hpp>
@@ -835,7 +837,8 @@ void MainWindow::onExportAnnotations()
 void MainWindow::onEditPreferences()
 {
 	PreferencesDialog dlg(this);
-	dlg.exec();
+	if (dlg.exec() == QDialog::Accepted && dlg.praatPathChanged())
+		setupPraat();
 }
 
 void MainWindow::onCloseCurrentView()
@@ -2338,6 +2341,58 @@ void MainWindow::setShellFunctions()
 
 
 // ---------------------------------------------------------
+//  Praat integration
+// ---------------------------------------------------------
+
+void MainWindow::setupPraat()
+{
+	String praat_path;
+	try {
+		praat_path = Settings::get_string("praat_path");
+	} catch (...) {}
+
+	// If no path is configured, try the platform default.
+	if (praat_path.empty())
+	{
+#if defined(Q_OS_WIN)
+		String default_path("C:\\Program Files\\Praat.exe");
+#elif defined(Q_OS_MAC)
+		String default_path("/Applications/Praat.app/Contents/MacOS/Praat");
+#else
+		String default_path("/usr/bin/praat");
+#endif
+		if (filesystem::exists(default_path))
+		{
+			praat_path = default_path;
+			Settings::set_value("praat_path", praat_path);
+		}
+	}
+
+	if (praat_path.empty())
+	{
+		praat::send_script = nullptr;
+		praat::open_files = nullptr;
+		return;
+	}
+
+	auto qpath = QString::fromUtf8(praat_path.data(), (int) praat_path.size());
+
+	praat::send_script = [qpath](const String &script_path) {
+		auto qscript = QString::fromUtf8(script_path.data(), (int) script_path.size());
+		QProcess::startDetached(qpath, {QStringLiteral("--send"), qscript});
+	};
+
+	praat::open_files = [qpath](const std::vector<String> &paths) {
+		QStringList args;
+		args << QStringLiteral("--open");
+		for (auto &p : paths)
+			args << QString::fromUtf8(p.data(), (int) p.size());
+		QProcess::startDetached(qpath, args);
+	};
+}
+
+
+// ---------------------------------------------------------
 //  Plugin support
 // ---------------------------------------------------------
 
@@ -2346,6 +2401,9 @@ void MainWindow::postInitialize()
 	// Register scripting functions before loading plugins, so plugin
 	// scripts can call GUI functions like info(), warning(), etc.
 	setShellFunctions();
+
+	// Set up Praat integration (praat --send / praat --open).
+	setupPraat();
 
 	// Load system plugins/scripts first, then user plugins/scripts.
 	auto resources_dir = Settings::resources_directory();

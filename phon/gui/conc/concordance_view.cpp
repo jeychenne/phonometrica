@@ -46,6 +46,7 @@
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/praat.hpp>
 #include <phon/analysis/column_metrics.hpp>
 #include <phon/analysis/formula_engine.hpp>
 
@@ -1558,6 +1559,25 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	if (match.annotation()->has_sound())
 		menu.addAction(QIcon(":/icons/play.svg"), tr("Play match"), this, &ConcordanceView::onPlay);
+
+	if (praat::available() && match.annotation()->is_textgrid())
+	{
+		int target = m_target_spin->value();
+		auto layer = match.get_layer(target);
+		auto start = match.get_start_time(target);
+		auto end = match.get_end_time(target);
+		auto annot = match.annotation();
+
+		menu.addAction(tr("Open in Praat"), this, [annot, layer, start, end]() {
+			try {
+				String snd_path;
+				if (annot->has_sound())
+					snd_path = annot->sound()->path();
+				praat::open_at_time(layer, start, end, annot->path(), snd_path);
+			}
+			catch (...) {}
+		});
+	}
 
 	menu.addSeparator();
 
