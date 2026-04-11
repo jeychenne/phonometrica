@@ -47,6 +47,7 @@ The dataset view provides the same filtering capabilities as the concordance vie
 - |clearfilter| **Clear filters**: remove all filter rules.
 - |subset| **Subset**: create a new dataset from the visible (filtered) rows.
 - |sigma| **Metric column**: compute a distance metric (z-score, modified z-score, etc.) on a numeric column for outlier detection.
+- |normvowel| **Normalize vowels**: apply vowel normalization to formant columns (see :ref:`vowel-normalization`).
 
 For details on filter rules, see :ref:`concordance-view`.
 
@@ -140,5 +141,9 @@ Tips
     :width: 16px
 
 .. |merge| image:: ../icons/layers.svg
+    :height: 16px
+    :width: 16px
+
+.. |normvowel| image:: ../icons/scales.svg
     :height: 16px
     :width: 16px

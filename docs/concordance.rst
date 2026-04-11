@@ -76,6 +76,14 @@ optionally grouped by a categorical variable. The available metrics are:
 The computed metric is added as a new column. You can optionally create an automatic filter rule (e.g. keep only
 rows where the absolute z-score is less than 3) to identify and exclude outliers.
 
+Vowel normalization
+~~~~~~~~~~~~~~~~~~~
+
+The |normvowel| **Normalize vowels** button opens a dialog for applying speaker-intrinsic vowel normalization
+to formant columns. Four methods are available: Lobanov, Nearey 1 (per-formant), Nearey 2 (uniform), and
+Watt & Fabricius. See :ref:`vowel-normalization` for a detailed description of each method and usage
+instructions.
+
 Analyze
 ~~~~~~~
 
@@ -228,5 +236,9 @@ Keyboard shortcuts
     :width: 16px
 
 .. |scales| image:: ../icons/ruler.svg
+    :height: 16px
+    :width: 16px
+
+.. |normvowel| image:: ../icons/scales.svg
     :height: 16px
     :width: 16px

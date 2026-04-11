@@ -402,6 +402,7 @@ if(WITH_GUI)
         icons/italic.svg
         icons/list-ordered.svg
         icons/list.svg
+        icons/vowel-space.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

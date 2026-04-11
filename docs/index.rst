@@ -75,6 +75,7 @@ Topics
    query
    concordance
    dataset
+   vowel_normalization
    analysis
    transform
    notes

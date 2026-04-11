@@ -94,6 +94,7 @@ private:
 	void onClearFilters();
 	void onCreateSubset();
 	void onAddMetricColumn();
+	void onNormalizeVowels();
 
 	void onDoubleClick(const QModelIndex &index);
 	void onContextMenu(const QPoint &pos);
