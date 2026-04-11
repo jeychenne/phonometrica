@@ -166,7 +166,7 @@ private:
 
 	bool m_show_match_info = true;
 	bool m_show_context = true;
-	bool m_show_metadata = false;
+	bool m_show_metadata = true;
 	bool m_open_in_split = true;
 };
 
