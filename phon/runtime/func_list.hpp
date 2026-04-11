@@ -65,7 +65,6 @@ static Variant list_get_field(Runtime &rt, std::span<Variant> args)
 
 static Variant list_set_item(Runtime &, std::span<Variant> args)
 {
-	// TODO: no unshare in set_item!!!
 	auto &lst = cast<List>(args[0]).items();
 	intptr_t i = cast<intptr_t>(args[1]);
 	lst.at(i) = std::move(args[2].resolve());
