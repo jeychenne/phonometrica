@@ -1287,9 +1287,14 @@ void AnalysisView::setResponse(const QString &name)
 	QString text = m_formula_edit->text().trimmed();
 	int tilde = text.indexOf('~');
 	if (tilde >= 0) {
-		m_formula_edit->setText(quoted + QStringLiteral(" ") + text.mid(tilde));
+		// Keep the existing RHS, but if it's empty put an explicit intercept.
+		QString rhs = text.mid(tilde + 1).trimmed();
+		if (rhs.isEmpty())
+			m_formula_edit->setText(quoted + QStringLiteral(" ~ 1"));
+		else
+			m_formula_edit->setText(quoted + QStringLiteral(" ~ ") + rhs);
 	} else {
-		m_formula_edit->setText(quoted + QStringLiteral(" ~ "));
+		m_formula_edit->setText(quoted + QStringLiteral(" ~ 1"));
 	}
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
@@ -1300,15 +1305,19 @@ void AnalysisView::addPredictor(const QString &name)
 	QString quoted = quoteIfNeeded(name);
 	QString text = m_formula_edit->text().trimmed();
 	if (text.isEmpty()) {
-		m_formula_edit->setText(quoted + QStringLiteral(" ~ "));
+		// No formula yet: set as response with explicit intercept.
+		m_formula_edit->setText(quoted + QStringLiteral(" ~ 1"));
 	} else if (!text.contains('~')) {
 		m_formula_edit->setText(text + QStringLiteral(" ~ ") + quoted);
 	} else {
 		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
-		if (rhs.isEmpty())
-			m_formula_edit->setText(text + QStringLiteral(" ") + quoted);
-		else
+		if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+			// Replace intercept-only placeholder with the predictor.
+			QString lhs = text.left(text.indexOf('~') + 1);
+			m_formula_edit->setText(lhs + QStringLiteral(" ") + quoted);
+		} else {
 			m_formula_edit->setText(text + QStringLiteral(" + ") + quoted);
+		}
 	}
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
@@ -1333,10 +1342,12 @@ void AnalysisView::addSmoothTerm(const QString &name, int k, const QString &by)
 		m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
 	} else {
 		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
-		if (rhs.isEmpty())
-			m_formula_edit->setText(text + QStringLiteral(" ") + term);
-		else
+		if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+			QString lhs = text.left(text.indexOf('~') + 1);
+			m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+		} else {
 			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+		}
 	}
 	m_formula_edit->setFocus();
 	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
@@ -1359,10 +1370,12 @@ void AnalysisView::addRandomIntercept(const QString &name)
 	else
 	{
 		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
-		if (rhs.isEmpty())
-			m_formula_edit->setText(text + QStringLiteral(" ") + term);
-		else
+		if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+			QString lhs = text.left(text.indexOf('~') + 1);
+			m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+		} else {
 			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+		}
 	}
 
 	m_formula_edit->setFocus();
@@ -1456,10 +1469,12 @@ void AnalysisView::addInteraction(const QString &name, const QString &other, boo
 		else
 		{
 			QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
-			if (rhs.isEmpty())
-				m_formula_edit->setText(text + QStringLiteral(" ") + term);
-			else
+			if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+				QString lhs = text.left(text.indexOf('~') + 1);
+				m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+			} else {
 				m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+			}
 		}
 
 		m_formula_edit->setFocus();
@@ -1843,10 +1858,13 @@ void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 		.arg(sr.dispersion_ratio, 0, 'f', 4)
 		.arg(format_p(sr.dispersion_pvalue));
 
-	if (sr.dispersion_ratio > 1.0)
-		text += QStringLiteral("  (potential overdispersion)");
-	else if (sr.dispersion_ratio < 1.0)
-		text += QStringLiteral("  (potential underdispersion)");
+	if (sr.dispersion_pvalue < 0.05)
+	{
+		if (sr.dispersion_ratio > 1.0)
+			text += QStringLiteral("  (potential overdispersion)");
+		else if (sr.dispersion_ratio < 1.0)
+			text += QStringLiteral("  (potential underdispersion)");
+	}
 
 	text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
 		.arg(sr.n_outliers)
