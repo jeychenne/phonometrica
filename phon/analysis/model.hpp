@@ -137,6 +137,7 @@ struct Model
 	struct SmoothResult
 	{
 		String variable;       // covariate name, e.g. "duration"
+		String by;             // by-variable name (empty for plain smooth/intercept)
 		String basis;          // basis type, e.g. "cr"
 		intptr_t k = 0;        // original basis dimension
 		double edf = 0;        // effective degrees of freedom

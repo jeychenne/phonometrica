@@ -101,6 +101,11 @@ public:
 	void setDensityCurve(std::vector<double> curve_x, std::vector<double> curve_y);
 	void clearDensityCurve();
 
+	/// Set fixed Y-axis tick positions (overrides auto-computed ticks).
+	/// Used for scaled residual plots where ticks should be at 0, 0.25, 0.50, 0.75, 1.
+	void setFixedYTicks(std::vector<double> ticks);
+	void clearFixedYTicks();
+
 	void clear();
 	bool hasData() const;
 
@@ -225,6 +230,9 @@ private:
 	bool m_show_density = false;
 	std::vector<double> m_density_x;
 	std::vector<double> m_density_y;
+
+	// Fixed Y-axis ticks (empty = auto-compute via nice_tick)
+	std::vector<double> m_fixed_y_ticks;
 
 	// Bar chart data
 	std::vector<QString> m_bar_labels;

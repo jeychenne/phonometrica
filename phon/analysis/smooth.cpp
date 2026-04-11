@@ -438,30 +438,74 @@ Array<double> SmoothBasis::predict(const std::vector<double> &x_new) const
 
 SmoothBasis build_re_basis(const Array<String> &levels,
                            const std::vector<intptr_t> &indices,
-                           intptr_t nobs)
+                           intptr_t nobs,
+                           const std::vector<double> &slope_values)
 {
+	using namespace Eigen;
+
 	intptr_t J = levels.size();
+	bool has_slope = !slope_values.empty();
+
+	// Build raw B: n × J matrix.
+	// For random intercepts: B[i,j] = 1 if obs i belongs to level j.
+	// For random slopes:     B[i,j] = x_i if obs i belongs to level j.
+	Matrix<double> B_raw = Matrix<double>::Zero(nobs, J);
+	for (intptr_t i = 0; i < nobs; i++)
+	{
+		double val = has_slope ? slope_values[i] : 1.0;
+		B_raw(i, indices[i]) = val;
+	}
+
+	// S_raw: J × J identity penalty.
+	Matrix<double> S_raw = Matrix<double>::Identity(J, J);
 
 	SmoothBasis sb;
 	sb.type = "re";
 	sb.variable = "";    // set by caller after construction
-	sb.k = J;
-	sb.k_eff = J;        // no identifiability constraint for re
-	sb.penalty_rank = J;  // full-rank penalty
-	sb.null_dim = 0;
 
-	// B: n × J indicator matrix.
-	sb.B = Array<double>(nobs, J, 0.0);
-	for (intptr_t i = 0; i < nobs; i++)
+	if (has_slope)
 	{
-		sb.B(i + 1, indices[i] + 1) = 1.0;
+		// For random slopes, apply a sum-to-zero constraint (matching mgcv):
+		// the average random slope is forced to zero, absorbing one column.
+		auto absorbed = absorb_constraint(B_raw, S_raw);
+
+		sb.k = J;
+		sb.k_eff = J - 1;
+		sb.penalty_rank = J - 1;
+		sb.null_dim = 0;
+
+		sb.B = Array<double>(nobs, sb.k_eff, 0.0);
+		for (intptr_t j = 0; j < sb.k_eff; j++) {
+			for (intptr_t i = 0; i < nobs; i++) {
+				sb.B(i + 1, j + 1) = absorbed.B(i, j);
+			}
+		}
+
+		sb.S = Array<double>(sb.k_eff, sb.k_eff, 0.0);
+		for (intptr_t j = 0; j < sb.k_eff; j++) {
+			for (intptr_t i = 0; i < sb.k_eff; i++) {
+				sb.S(i + 1, j + 1) = absorbed.S(i, j);
+			}
+		}
 	}
-
-	// S: J × J identity penalty.
-	sb.S = Array<double>(J, J, 0.0);
-	for (intptr_t j = 1; j <= J; j++)
+	else
 	{
-		sb.S(j, j) = 1.0;
+		// Random intercepts: no constraint. The penalty shrinks intercepts
+		// toward zero; the fixed intercept captures the population mean.
+		sb.k = J;
+		sb.k_eff = J;
+		sb.penalty_rank = J;
+		sb.null_dim = 0;
+
+		sb.B = Array<double>(nobs, J, 0.0);
+		for (intptr_t i = 0; i < nobs; i++) {
+			sb.B(i + 1, indices[i] + 1) = 1.0;
+		}
+
+		sb.S = Array<double>(J, J, 0.0);
+		for (intptr_t j = 1; j <= J; j++) {
+			sb.S(j, j) = 1.0;
+		}
 	}
 
 	// Knots, F_deriv2, Z_absorb: not applicable for re basis (left empty).

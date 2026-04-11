@@ -689,13 +689,6 @@ private:
 		expect(TokenType::RParen, "Expected ')' to close s()");
 		advance();
 
-		// Validate: bs='re' does not support by= (random slopes not yet implemented).
-		if (st.basis == "re" && !st.by.empty())
-		{
-			throw error("s(%, by=%, bs=re) is not supported. "
-			            "Random slopes in GAMs are not yet implemented", st.variable, st.by);
-		}
-
 		// Check for duplicate smooth on the same variable+by+basis combination.
 		for (intptr_t i = 1; i <= f.smooth.size(); i++)
 		{

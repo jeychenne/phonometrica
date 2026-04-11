@@ -346,6 +346,20 @@ void PlotWidget::clearDensityCurve()
 	update();
 }
 
+void PlotWidget::setFixedYTicks(std::vector<double> ticks)
+{
+	m_fixed_y_ticks = std::move(ticks);
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::clearFixedYTicks()
+{
+	m_fixed_y_ticks.clear();
+	m_cache_valid = false;
+	update();
+}
+
 void PlotWidget::clear()
 {
 	m_mode = Mode::Empty;
@@ -369,6 +383,7 @@ void PlotWidget::clear()
 	m_reverse_y = false;
 	m_density_x.clear();
 	m_density_y.clear();
+	m_fixed_y_ticks.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -732,18 +747,31 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	{ int tw = fm.horizontalAdvance(m_x_label); p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, m_x_label); }
 
 	// Y grid + ticks
-	double ytick = nice_tick(yrange);
-	double y0 = std::ceil(ylo / ytick) * ytick;
+	std::vector<double> y_tick_values;
+	if (!m_fixed_y_ticks.empty())
+	{
+		for (double v : m_fixed_y_ticks) {
+			if (v >= ylo && v <= yhi) y_tick_values.push_back(v);
+		}
+	}
+	else
+	{
+		double ytick = nice_tick(yrange);
+		double y0 = std::ceil(ylo / ytick) * ytick;
+		for (double v = y0; v <= yhi; v += ytick) {
+			y_tick_values.push_back(v);
+		}
+	}
 
 	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
-	for (double v = y0; v <= yhi; v += ytick) {
+	for (double v : y_tick_values) {
 		double y = dataToY(v);
 		if (y > top + 1 && y < bottom - 1)
 			p.drawLine(QPointF(left, y), QPointF(right, y));
 	}
 
 	p.setPen(QPen(AXIS_COLOR, 1));
-	for (double v = y0; v <= yhi; v += ytick) {
+	for (double v : y_tick_values) {
 		double y = dataToY(v);
 		if (y < top - 2 || y > bottom + 2) continue;
 		p.drawLine(QPointF(left - 4, y), QPointF(left, y));

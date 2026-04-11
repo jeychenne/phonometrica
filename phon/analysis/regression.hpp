@@ -83,6 +83,7 @@ struct SmoothColumnRange
 	intptr_t col_start;   // 0-based starting column in X
 	intptr_t col_count;   // number of columns (k_eff)
 	String variable;      // covariate name
+	String by;            // by-variable name (empty for plain smooth/intercept)
 	String basis;         // basis type ("cr")
 	intptr_t k;           // original basis dimension
 };

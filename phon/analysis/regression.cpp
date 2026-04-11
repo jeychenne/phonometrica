@@ -818,6 +818,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	{
 		Model::SmoothResult sm;
 		sm.variable = sr.variable;
+		sm.by = sr.by;
 		sm.basis = sr.basis;
 		sm.k = sr.k;
 		sm.col_start = sr.col_start;
@@ -878,7 +879,11 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	model.nobs = n;
 	model.nfixed = p;
 
-	model.loglik = -0.5 * n * (std::log(2.0 * M_PI) + std::log(sigma2) + 1.0);
+	// Log-likelihood uses the ML scale estimate (RSS/n), not the unbiased estimate
+	// (RSS/(n-edf)) which is used for standard errors. This matches mgcv's convention.
+	double sigma2_ml = rss / (double)n;
+	if (sigma2_ml <= 0) sigma2_ml = 1e-10;
+	model.loglik = -0.5 * n * (std::log(2.0 * M_PI) + std::log(sigma2_ml) + 1.0);
 	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
 	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
 	model.deviance = rss;
@@ -1025,6 +1030,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	{
 		Model::SmoothResult sm;
 		sm.variable = sr.variable;
+		sm.by = sr.by;
 		sm.basis = sr.basis;
 		sm.k = sr.k;
 		sm.col_start = sr.col_start;

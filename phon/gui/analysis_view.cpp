@@ -280,7 +280,7 @@ void AnalysisView::setupUi()
 
 	auto *copy_action = summary_toolbar->addAction(QIcon(":/icons/clipboard-copy.svg"), tr("Copy to clipboard"));
 	auto *save_txt_action = summary_toolbar->addAction(QIcon(":/icons/save.svg"), tr("Save as text..."));
-	auto *save_latex_action = summary_toolbar->addAction(QIcon(":/icons/file-spreadsheet.svg"), tr("Save as LaTeX table..."));
+	auto *save_latex_action = summary_toolbar->addAction(QIcon(":/icons/tex.svg"), tr("Save as LaTeX table..."));
 
 	summary_toolbar->addSeparator();
 	m_blup_check = new QCheckBox(tr("Show random effects"));
@@ -1138,9 +1138,36 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 
 	// Penalized random intercept (GAM): available for categorical columns.
 	QAction *re_smooth_action = nullptr;
+	QMenu *re_slope_menu = nullptr;
 	if (m_analysis->has_source() && !isColumnNumeric(String(name.toUtf8().constData())))
 	{
 		re_smooth_action = menu.addAction(QStringLiteral("Add smooth for grouping: s(%1, bs=re)").arg(name));
+
+		// Penalized random slope (GAM): submenu listing numeric columns as slope variables.
+		re_slope_menu = menu.addMenu(tr("Add smooth for random slope in %1").arg(name));
+		auto *dt = m_analysis->data();
+		if (dt)
+		{
+			auto name_s = String(name.toUtf8().constData());
+			intptr_t nc = dt->column_count();
+			bool has_numeric = false;
+			for (intptr_t j = 1; j <= nc; j++)
+			{
+				auto col_name = dt->get_header(j);
+				if (col_name == name_s) continue;
+				if (!isColumnNumeric(col_name)) continue;
+
+				auto col_q = QString::fromUtf8(col_name.data(), (int)col_name.size());
+				auto *action = re_slope_menu->addAction(
+					QStringLiteral("s(%1, by=%2, bs=re)").arg(name, col_q));
+				action->setData(col_q);
+				has_numeric = true;
+			}
+			if (!has_numeric) {
+				auto *placeholder = re_slope_menu->addAction(tr("(no numeric variables)"));
+				placeholder->setEnabled(false);
+			}
+		}
 	}
 
 	auto *corr_slope_menu = menu.addMenu(tr("Add correlated slope in..."));
@@ -1271,6 +1298,28 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		// Insert s(name, bs=re) — penalized random intercept for GAM.
 		QString quoted = quoteIfNeeded(name);
 		QString term = QStringLiteral("s(") + quoted + QStringLiteral(", bs=re)");
+		QString text = m_formula_edit->text().trimmed();
+		if (text.isEmpty()) {
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		} else if (!text.contains('~')) {
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+		} else {
+			QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+			if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+				QString lhs = text.left(text.indexOf('~') + 1);
+				m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+			} else {
+				m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+			}
+		}
+		m_formula_edit->setFocus();
+		m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+	}
+	else if (re_slope_menu && chosen->parent() == re_slope_menu) {
+		// Insert s(name, by=slope_var, bs=re) — penalized random slope for GAM.
+		QString quoted = quoteIfNeeded(name);
+		QString by_var = quoteIfNeeded(chosen->data().toString());
+		QString term = QStringLiteral("s(") + quoted + QStringLiteral(", by=") + by_var + QStringLiteral(", bs=re)");
 		QString text = m_formula_edit->text().trimmed();
 		if (text.isEmpty()) {
 			m_formula_edit->setText(QStringLiteral("~ ") + term);
@@ -1607,10 +1656,16 @@ void AnalysisView::removeFromFormula(const QString &name)
 		}
 	}
 
-	// Remove smooth terms referencing this variable.
+	// Remove smooth terms referencing this variable (as main covariate or by-variable).
 	for (intptr_t i = parsed->smooth.size(); i >= 1; i--)
 	{
 		if (parsed->smooth[i].variable == name_s) {
+			parsed->smooth.remove_at(i);
+		}
+		else if (parsed->smooth[i].by == name_s) {
+			// The by-variable is being removed: drop the entire term.
+			// For bs=re slopes, the intercept term s(group, bs=re) remains.
+			// For bs=cr by-factor, the plain smooth s(x) may already exist.
 			parsed->smooth.remove_at(i);
 		}
 	}
@@ -1837,6 +1892,7 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 	                tr("Fitted values"), tr("Scaled residual"),
 	                tr("Scaled Residuals vs Fitted"),
 	                PlotWidget::RefLine::HorizontalAtHalf);
+	m_plot->setFixedYTicks({0.0, 0.25, 0.50, 0.75, 1.0});
 
 	updateTestResults(*sr);
 }
@@ -1867,6 +1923,7 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 	                tr("Theoretical (Uniform)"), tr("Sample"),
 	                tr("Scaled Residuals Q-Q"),
 	                PlotWidget::RefLine::Diagonal);
+	m_plot->setFixedYTicks({0.0, 0.25, 0.50, 0.75, 1.0});
 
 	updateTestResults(*sr);
 }
@@ -3295,10 +3352,16 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 			auto &sm = m.smooth_terms[i];
 			QString var_q = QString::fromUtf8(sm.variable.data(), (int)sm.variable.size());
 			QString label;
-			if (sm.basis == "re")
-				label = QStringLiteral("s(%1, bs=re)").arg(var_q);
-			else
+			if (sm.basis == "re") {
+				if (!sm.by.empty()) {
+					QString by_q = QString::fromUtf8(sm.by.data(), (int)sm.by.size());
+					label = QStringLiteral("s(%1):%2").arg(var_q, by_q);
+				} else {
+					label = QStringLiteral("s(%1, bs=re)").arg(var_q);
+				}
+			} else {
 				label = QStringLiteral("s(%1)").arg(var_q);
+			}
 			label.replace('_', QStringLiteral("\\_"));
 
 			QString pval;
@@ -3552,9 +3615,15 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			String label("s(");
 			label.append(sm.variable);
 			if (sm.basis == "re") {
-				label.append(", bs=re");
+				if (!sm.by.empty()) {
+					label.append("):");
+					label.append(sm.by);
+				} else {
+					label.append(", bs=re)");
+				}
+			} else {
+				label.append(")");
 			}
-			label.append(")");
 
 			char pbuf[16];
 			if (sm.p_value < 0.001)
