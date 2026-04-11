@@ -392,6 +392,12 @@ void Analysis::write()
 			add_data_node(mn, "Vcov", doubles_to_string(m.vcov));
 		}
 
+		// Column means of design matrix (for EMMs after reload)
+		if (m.has_col_means())
+		{
+			add_data_node(mn, "ColMeans", doubles_to_string(m.col_means));
+		}
+
 		// Variable metadata for post-hoc analysis
 		if (m.has_variable_info())
 		{
@@ -565,6 +571,17 @@ void Analysis::load()
 							m.vcov = Array<double>(m.nfixed, m.nfixed, 0.0);
 							for (intptr_t k = 1; k <= flat.size(); k++) {
 								m.vcov.data()[k - 1] = flat[k];
+							}
+						}
+					}
+					else if (name == "ColMeans")
+					{
+						auto flat = parse_doubles(text);
+						if (m.nfixed > 0 && flat.size() == m.nfixed)
+						{
+							m.col_means = Array<double>(m.nfixed, 0.0);
+							for (intptr_t k = 1; k <= flat.size(); k++) {
+								m.col_means[k] = flat[k];
 							}
 						}
 					}

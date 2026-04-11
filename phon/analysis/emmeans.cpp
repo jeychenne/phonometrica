@@ -104,9 +104,27 @@ static const Model::VariableInfo *find_var_info(const Model &model, const std::s
 }
 
 
-// Compute column means for the first p columns of model.X.
-static std::vector<double> compute_column_means(const Model &model, intptr_t p)
+// Get column means for the first p columns of the design matrix.
+// Uses precomputed col_means if available (e.g. after loading a saved analysis),
+// otherwise computes from model.X.
+static std::vector<double> get_column_means(const Model &model, intptr_t p)
 {
+	// Use stored column means if available (survives save/load).
+	if (model.has_col_means() && model.col_means.size() >= p)
+	{
+		std::vector<double> means(p);
+		for (intptr_t j = 0; j < p; j++) {
+			means[j] = model.col_means[j + 1];
+		}
+		return means;
+	}
+
+	// Fall back to computing from the design matrix.
+	if (model.X.empty()) {
+		throw error("Model has no design matrix or stored column means (required for EMMs). "
+		            "Please re-fit the model.");
+	}
+
 	intptr_t n = model.nobs;
 	std::vector<double> means(p, 0.0);
 
@@ -171,54 +189,26 @@ static intptr_t find_numeric_main_column(const std::vector<ParsedCoef> &parsed,
 	return -1;
 }
 
-} // anonymous namespace
 
+// ── Core L-matrix builder for EMMs ──────────────────────────────────
+//
+// Builds a K × p L-matrix for the target factor, with an optional "by" factor
+// fixed to a specific level. When by_factor_key is non-empty, that factor
+// gets indicator treatment (fixed to by_level) instead of balanced weights.
+//
+// This is the shared core of emmeans() and emmeans_by().
 
-// =====================================================================
-// emmeans()
-// =====================================================================
-
-EMMResult emmeans(const Model &model, const String &factor, double conf_level)
+static Eigen::MatrixXd build_emm_L_matrix(
+	const Model &model,
+	const std::string &factor_key,
+	const Model::VariableInfo *target_info,
+	intptr_t K,
+	intptr_t p,
+	const std::vector<ParsedCoef> &parsed,
+	const std::vector<double> &col_means,
+	const std::string &by_factor_key = {},
+	const std::string &by_level = {})
 {
-	if (!model.has_vcov()) {
-		throw error("Model has no variance-covariance matrix (required for EMMs)");
-	}
-	if (!model.has_variable_info()) {
-		throw error("Model has no variable metadata (required for EMMs)");
-	}
-
-	// Find the target factor in variable_info.
-	std::string factor_key(factor.data(), factor.size());
-	const Model::VariableInfo *target_info = find_var_info(model, factor_key);
-
-	if (!target_info) {
-		throw error("Variable '%' not found in model", factor);
-	}
-	if (target_info->numeric) {
-		throw error("Variable '%' is numeric; EMMs require a categorical factor", factor);
-	}
-	if (target_info->levels.size() < 2) {
-		throw error("Variable '%' has fewer than 2 levels", factor);
-	}
-
-	intptr_t K = target_info->levels.size();  // total levels including reference
-	intptr_t p = model.nfixed;                // parametric coefficients only
-
-	// Precompute column means (for numeric covariates).
-	auto col_means = compute_column_means(model, p);
-
-	// Preparse coefficient names.
-	auto parsed = preparse_coefs(model, p);
-
-	// ── Build the L matrix: K rows × p columns ──────────────────────
-	//
-	// For each level of the target factor, each coefficient column contributes:
-	//   - Intercept: 1
-	//   - Main effect of target factor: indicator (1 if level matches, 0 otherwise)
-	//   - Main effect of other categorical factor: 1/K_other (balanced average)
-	//   - Main effect of numeric covariate: its column mean
-	//   - Interaction: product of the component contributions above
-
 	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(K, p);
 
 	for (intptr_t lv = 0; lv < K; lv++)
@@ -256,10 +246,21 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 						value *= col_means[j];
 					}
 				}
+				else if (!by_factor_key.empty() && comp.variable == by_factor_key)
+				{
+					// By-factor: fix to the specified level (indicator, not balanced).
+					if (comp.is_categorical())
+					{
+						value *= (comp.level == by_level) ? 1.0 : 0.0;
+					}
+					else
+					{
+						value *= col_means[j];
+					}
+				}
 				else if (comp.is_categorical())
 				{
 					// Other categorical factor: balanced average over its levels.
-					// Each dummy column gets weight 1/K_other.
 					auto *other_info = find_var_info(model, comp.variable);
 					if (other_info && !other_info->numeric) {
 						value *= 1.0 / other_info->levels.size();
@@ -287,17 +288,31 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 		}
 	}
 
-	// ── Compute EMMs on link scale ──────────────────────────────────
+	return L;
+}
 
+
+// ── Core EMM computation from an L-matrix ───────────────────────────
+//
+// Given an L-matrix, model, and target info, compute the EMMResult.
+// Shared by emmeans() and emmeans_by().
+
+static EMMResult compute_emm_from_L(
+	const Model &model,
+	const String &factor,
+	const Model::VariableInfo *target_info,
+	const Eigen::MatrixXd &L,
+	intptr_t K,
+	intptr_t p,
+	double conf_level)
+{
+	// Compute EMMs on link scale.
 	Eigen::Map<const Vector<double>> beta(model.beta.data(), p);
-
 	Eigen::VectorXd emm_link = L * beta;
 
 	// V_eta = L V L'  (covariance of link-scale EMMs)
-	// Use the top-left p×p block of model.vcov (column-major Array).
 	Eigen::Map<const Matrix<double>> V_full(model.vcov.data(), model.vcov.nrow(), model.vcov.ncol());
 	auto V = V_full.topLeftCorner(p, p);
-
 	Eigen::MatrixXd V_eta = L * V * L.transpose();
 
 	Eigen::VectorXd se_link(K);
@@ -305,8 +320,7 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 		se_link[i] = std::sqrt(std::max(V_eta(i, i), 0.0));
 	}
 
-	// ── Degrees of freedom and critical value ───────────────────────
-
+	// Degrees of freedom and critical value.
 	double df = std::numeric_limits<double>::infinity();
 	if (model.is_gaussian() && !model.has_random_effects()) {
 		df = model.df_residual;
@@ -323,8 +337,7 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 		crit = boost::math::quantile(ndist, 1.0 - alpha / 2.0);
 	}
 
-	// ── Populate result ─────────────────────────────────────────────
-
+	// Populate result.
 	EMMResult result;
 	result.factor = factor;
 	result.df = df;
@@ -373,14 +386,6 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 		{
 			// Response scale via the delta method for SE,
 			// and endpoint back-transformation for CI.
-			//
-			//   μ̂ = g⁻¹(η̂)
-			//   SE_μ ≈ |dμ/dη| × SE_η
-			//   CI_μ = [g⁻¹(η̂ − z·SE_η), g⁻¹(η̂ + z·SE_η)]
-			//
-			// Endpoint transformation is more accurate than the delta method
-			// for CIs, especially for binomial/Poisson models far from the mean.
-
 			Eigen::VectorXd eta_vec(1);
 			eta_vec[0] = emm_link[i];
 			Eigen::VectorXd mu_vec = fam.linkinv(eta_vec);
@@ -401,22 +406,23 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 	return result;
 }
 
+} // anonymous namespace
+
 
 // =====================================================================
-// emtrends()
+// emmeans()
 // =====================================================================
 
-EMMResult emtrends(const Model &model, const String &factor, const String &var,
-                   double conf_level)
+EMMResult emmeans(const Model &model, const String &factor, double conf_level)
 {
 	if (!model.has_vcov()) {
-		throw error("Model has no variance-covariance matrix (required for emtrends)");
+		throw error("Model has no variance-covariance matrix (required for EMMs)");
 	}
 	if (!model.has_variable_info()) {
-		throw error("Model has no variable metadata (required for emtrends)");
+		throw error("Model has no variable metadata (required for EMMs)");
 	}
 
-	// Validate the factor (must be categorical).
+	// Find the target factor in variable_info.
 	std::string factor_key(factor.data(), factor.size());
 	const Model::VariableInfo *target_info = find_var_info(model, factor_key);
 
@@ -424,188 +430,104 @@ EMMResult emtrends(const Model &model, const String &factor, const String &var,
 		throw error("Variable '%' not found in model", factor);
 	}
 	if (target_info->numeric) {
-		throw error("Variable '%' is numeric; emtrends requires a categorical factor", factor);
+		throw error("Variable '%' is numeric; EMMs require a categorical factor", factor);
 	}
 	if (target_info->levels.size() < 2) {
 		throw error("Variable '%' has fewer than 2 levels", factor);
 	}
 
-	// Validate the trend variable (must be numeric).
-	std::string var_key(var.data(), var.size());
-	const Model::VariableInfo *var_info = find_var_info(model, var_key);
+	intptr_t K = target_info->levels.size();  // total levels including reference
+	intptr_t p = model.nfixed;                // parametric coefficients only
 
-	if (!var_info) {
-		throw error("Variable '%' not found in model", var);
+	// Precompute column means (for numeric covariates).
+	auto col_means = get_column_means(model, p);
+
+	// Preparse coefficient names.
+	auto parsed = preparse_coefs(model, p);
+
+	// Build L-matrix (no by-factor).
+	auto L = build_emm_L_matrix(model, factor_key, target_info, K, p,
+	                            parsed, col_means);
+
+	// Compute EMMs.
+	return compute_emm_from_L(model, factor, target_info, L, K, p, conf_level);
+}
+
+
+// =====================================================================
+// emmeans_by()
+// =====================================================================
+
+ByEMMResult emmeans_by(const Model &model, const String &factor, const String &by_factor,
+                       const String &adjustment, double conf_level)
+{
+	if (!model.has_vcov()) {
+		throw error("Model has no variance-covariance matrix (required for EMMs)");
 	}
-	if (!var_info->numeric) {
-		throw error("Variable '%' is categorical; emtrends requires a numeric trend variable", var);
+	if (!model.has_variable_info()) {
+		throw error("Model has no variable metadata (required for EMMs)");
+	}
+
+	// Validate target factor.
+	std::string factor_key(factor.data(), factor.size());
+	const Model::VariableInfo *target_info = find_var_info(model, factor_key);
+
+	if (!target_info) {
+		throw error("Variable '%' not found in model", factor);
+	}
+	if (target_info->numeric) {
+		throw error("Variable '%' is numeric; EMMs require a categorical factor", factor);
+	}
+	if (target_info->levels.size() < 2) {
+		throw error("Variable '%' has fewer than 2 levels", factor);
+	}
+
+	// Validate by-factor.
+	std::string by_key(by_factor.data(), by_factor.size());
+	const Model::VariableInfo *by_info = find_var_info(model, by_key);
+
+	if (!by_info) {
+		throw error("Variable '%' not found in model", by_factor);
+	}
+	if (by_info->numeric) {
+		throw error("By-variable '%' is numeric; it must be categorical", by_factor);
+	}
+	if (by_info->levels.size() < 2) {
+		throw error("By-variable '%' has fewer than 2 levels", by_factor);
+	}
+	if (by_key == factor_key) {
+		throw error("Factor and by-factor must be different variables");
 	}
 
 	intptr_t K = target_info->levels.size();
 	intptr_t p = model.nfixed;
+	intptr_t B = by_info->levels.size();
 
-	auto col_means = compute_column_means(model, p);
+	auto col_means = get_column_means(model, p);
 	auto parsed = preparse_coefs(model, p);
 
-	// ── Build the L matrix for slopes (dη/d(var)) ───────────────────
-	//
-	// For each level of the target factor, each coefficient column contributes:
-	//   - Intercept: 0  (constant w.r.t. the trend variable)
-	//   - Column NOT involving the trend variable: 0
-	//   - Main effect of the trend variable: 1
-	//   - Interaction involving the trend variable:
-	//       For the trend variable component: 1 (derivative)
-	//       For the target factor component: indicator for current level
-	//       For other categorical components: 1/K_other (balanced)
-	//       For other numeric components: column mean
-
-	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(K, p);
-
-	for (intptr_t lv = 0; lv < K; lv++)
-	{
-		std::string target_level(target_info->levels[lv + 1].data(),
-		                         target_info->levels[lv + 1].size());
-
-		for (intptr_t j = 0; j < p; j++)
-		{
-			auto &pc = parsed[j];
-
-			// Intercept: always 0 for trends.
-			if (pc.is_intercept) continue;
-			if (pc.components.empty()) continue;
-
-			// Check if this column involves the trend variable.
-			bool involves_trend = false;
-			for (auto &comp : pc.components) {
-				if (comp.variable == var_key) {
-					involves_trend = true;
-					break;
-				}
-			}
-
-			// Columns that don't involve the trend variable contribute 0.
-			if (!involves_trend) continue;
-
-			// This column involves the trend variable.
-			// Compute the product of contributions from all NON-trend components.
-			// The trend variable's own contribution is 1 (derivative).
-			double value = 1.0;
-
-			for (auto &comp : pc.components)
-			{
-				if (comp.variable == var_key)
-				{
-					// Trend variable itself: derivative = 1.
-					// (value *= 1.0, no-op)
-					continue;
-				}
-
-				if (comp.variable == factor_key)
-				{
-					// Target factor: indicator for this level.
-					if (comp.is_categorical()) {
-						value *= (comp.level == target_level) ? 1.0 : 0.0;
-					}
-				}
-				else if (comp.is_categorical())
-				{
-					// Other categorical factor: balanced average.
-					auto *other_info = find_var_info(model, comp.variable);
-					if (other_info && !other_info->numeric) {
-						value *= 1.0 / other_info->levels.size();
-					} else {
-						value *= col_means[j];
-					}
-				}
-				else
-				{
-					// Other numeric covariate: use its main-effect column mean.
-					intptr_t main_col = find_numeric_main_column(parsed, comp.variable, p);
-					if (main_col >= 0) {
-						value *= col_means[main_col];
-					} else {
-						value *= col_means[j];
-					}
-				}
-			}
-
-			L(lv, j) = value;
-		}
-	}
-
-	// ── Compute slopes and SEs on the link scale ────────────────────
-
-	Eigen::Map<const Vector<double>> beta(model.beta.data(), p);
-	Eigen::VectorXd trends = L * beta;
-
-	Eigen::Map<const Matrix<double>> V_full(model.vcov.data(), model.vcov.nrow(), model.vcov.ncol());
-	auto V = V_full.topLeftCorner(p, p);
-	Eigen::MatrixXd V_eta = L * V * L.transpose();
-
-	Eigen::VectorXd se(K);
-	for (intptr_t i = 0; i < K; i++) {
-		se[i] = std::sqrt(std::max(V_eta(i, i), 0.0));
-	}
-
-	// ── Degrees of freedom and critical value ───────────────────────
-
-	double df = std::numeric_limits<double>::infinity();
-	if (model.is_gaussian() && !model.has_random_effects()) {
-		df = model.df_residual;
-	}
-
-	double alpha = 1.0 - conf_level;
-	double crit;
-	if (std::isfinite(df) && df > 0) {
-		boost::math::students_t_distribution<double> tdist(df);
-		crit = boost::math::quantile(tdist, 1.0 - alpha / 2.0);
-	}
-	else {
-		boost::math::normal_distribution<double> ndist;
-		crit = boost::math::quantile(ndist, 1.0 - alpha / 2.0);
-	}
-
-	// ── Populate result ─────────────────────────────────────────────
-	//
-	// Trends are always on the link scale. For identity link, this IS the
-	// response scale. For non-identity links, these are slopes of the linear
-	// predictor (e.g. change in log-odds per unit x for logit).
-	// We do not back-transform trends, following R's emtrends() convention.
-
-	EMMResult result;
+	ByEMMResult result;
 	result.factor = factor;
-	result.df = df;
-	result.levels = target_info->levels;
+	result.by_factor = by_factor;
+	result.by_levels = by_info->levels;
+	result.emms = Array<EMMResult>(B, EMMResult());
+	result.contrasts = Array<ContrastResult>(B, ContrastResult());
 
-	result.emmean_link = Array<double>(K, 0.0);
-	result.se_link     = Array<double>(K, 0.0);
-	result.lower_link  = Array<double>(K, 0.0);
-	result.upper_link  = Array<double>(K, 0.0);
-	result.emmean      = Array<double>(K, 0.0);
-	result.se          = Array<double>(K, 0.0);
-	result.lower_ci    = Array<double>(K, 0.0);
-	result.upper_ci    = Array<double>(K, 0.0);
-
-	// Store link-scale covariance for pairwise_contrasts().
-	result.cov_link = Array<double>(K, K, 0.0);
-	for (intptr_t i = 0; i < K; i++) {
-		for (intptr_t j = 0; j < K; j++) {
-			result.cov_link(i + 1, j + 1) = V_eta(i, j);
-		}
-	}
-
-	for (intptr_t i = 0; i < K; i++)
+	for (intptr_t b = 0; b < B; b++)
 	{
-		result.emmean_link[i + 1] = trends[i];
-		result.se_link[i + 1]     = se[i];
-		result.lower_link[i + 1]  = trends[i] - crit * se[i];
-		result.upper_link[i + 1]  = trends[i] + crit * se[i];
+		std::string by_level(by_info->levels[b + 1].data(),
+		                     by_info->levels[b + 1].size());
 
-		// No back-transformation for trends.
-		result.emmean[i + 1]    = trends[i];
-		result.se[i + 1]        = se[i];
-		result.lower_ci[i + 1]  = result.lower_link[i + 1];
-		result.upper_ci[i + 1]  = result.upper_link[i + 1];
+		// Build L-matrix with by-factor fixed to this level.
+		auto L = build_emm_L_matrix(model, factor_key, target_info, K, p,
+		                            parsed, col_means, by_key, by_level);
+
+		// Compute EMMs and contrasts.
+		auto emm = compute_emm_from_L(model, factor, target_info, L, K, p, conf_level);
+		auto con = pairwise_contrasts(emm, model, adjustment);
+
+		result.emms[b + 1] = std::move(emm);
+		result.contrasts[b + 1] = std::move(con);
 	}
 
 	return result;
@@ -737,5 +659,220 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 
 	return result;
 }
+
+
+// =====================================================================
+// emtrends()
+// =====================================================================
+
+EMMResult emtrends(const Model &model, const String &factor, const String &var,
+                   double conf_level)
+{
+	if (!model.has_vcov()) {
+		throw error("Model has no variance-covariance matrix (required for emtrends)");
+	}
+	if (!model.has_variable_info()) {
+		throw error("Model has no variable metadata (required for emtrends)");
+	}
+
+	// Validate the factor (must be categorical).
+	std::string factor_key(factor.data(), factor.size());
+	const Model::VariableInfo *target_info = find_var_info(model, factor_key);
+
+	if (!target_info) {
+		throw error("Variable '%' not found in model", factor);
+	}
+	if (target_info->numeric) {
+		throw error("Variable '%' is numeric; emtrends requires a categorical factor", factor);
+	}
+	if (target_info->levels.size() < 2) {
+		throw error("Variable '%' has fewer than 2 levels", factor);
+	}
+
+	// Validate the trend variable (must be numeric).
+	std::string var_key(var.data(), var.size());
+	const Model::VariableInfo *var_info = find_var_info(model, var_key);
+
+	if (!var_info) {
+		throw error("Variable '%' not found in model", var);
+	}
+	if (!var_info->numeric) {
+		throw error("Variable '%' is categorical; emtrends requires a numeric variable", var);
+	}
+
+	intptr_t K = target_info->levels.size();
+	intptr_t p = model.nfixed;
+
+	auto col_means = get_column_means(model, p);
+	auto parsed = preparse_coefs(model, p);
+
+	// ── Build the L matrix for slopes ───────────────────────────────
+	//
+	// The L matrix for emtrends is constructed by differentiating the linear
+	// predictor η with respect to the trend variable x:
+	//   dη/dx = sum_j (dX_j/dx) * β_j
+	//
+	// For each coefficient column j:
+	//   - If j does not involve the trend variable: dX_j/dx = 0.
+	//   - If j involves the trend variable:
+	//     * The trend variable's own contribution is 1 (derivative of x w.r.t. x).
+	//     * Other components in the interaction contribute as in emmeans:
+	//       indicators for the target factor, balanced weights for other factors,
+	//       and column means for other numeric variables.
+
+	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(K, p);
+
+	for (intptr_t lv = 0; lv < K; lv++)
+	{
+		std::string target_level(target_info->levels[lv + 1].data(),
+		                         target_info->levels[lv + 1].size());
+
+		for (intptr_t j = 0; j < p; j++)
+		{
+			auto &pc = parsed[j];
+
+			if (pc.is_intercept || pc.components.empty()) {
+				continue; // Intercept: dη/dx = 0
+			}
+
+			// Check whether this column involves the trend variable.
+			bool involves_trend = false;
+			for (auto &comp : pc.components)
+			{
+				if (comp.variable == var_key && !comp.is_categorical()) {
+					involves_trend = true;
+					break;
+				}
+			}
+
+			if (!involves_trend) {
+				continue; // Column does not involve the trend variable.
+			}
+
+			// This column involves the trend variable.
+			// Compute the product of contributions from all NON-trend components.
+			// The trend variable's own contribution is 1 (derivative).
+			double value = 1.0;
+
+			for (auto &comp : pc.components)
+			{
+				if (comp.variable == var_key)
+				{
+					// Trend variable itself: derivative = 1.
+					// (value *= 1.0, no-op)
+					continue;
+				}
+
+				if (comp.variable == factor_key)
+				{
+					// Target factor: indicator for this level.
+					if (comp.is_categorical()) {
+						value *= (comp.level == target_level) ? 1.0 : 0.0;
+					}
+				}
+				else if (comp.is_categorical())
+				{
+					// Other categorical factor: balanced average.
+					auto *other_info = find_var_info(model, comp.variable);
+					if (other_info && !other_info->numeric) {
+						value *= 1.0 / other_info->levels.size();
+					} else {
+						value *= col_means[j];
+					}
+				}
+				else
+				{
+					// Other numeric covariate: use its main-effect column mean.
+					intptr_t main_col = find_numeric_main_column(parsed, comp.variable, p);
+					if (main_col >= 0) {
+						value *= col_means[main_col];
+					} else {
+						value *= col_means[j];
+					}
+				}
+			}
+
+			L(lv, j) = value;
+		}
+	}
+
+	// ── Compute slopes and SEs on the link scale ────────────────────
+
+	Eigen::Map<const Vector<double>> beta(model.beta.data(), p);
+	Eigen::VectorXd trends = L * beta;
+
+	Eigen::Map<const Matrix<double>> V_full(model.vcov.data(), model.vcov.nrow(), model.vcov.ncol());
+	auto V = V_full.topLeftCorner(p, p);
+	Eigen::MatrixXd V_eta = L * V * L.transpose();
+
+	Eigen::VectorXd se(K);
+	for (intptr_t i = 0; i < K; i++) {
+		se[i] = std::sqrt(std::max(V_eta(i, i), 0.0));
+	}
+
+	// ── Degrees of freedom and critical value ───────────────────────
+
+	double df = std::numeric_limits<double>::infinity();
+	if (model.is_gaussian() && !model.has_random_effects()) {
+		df = model.df_residual;
+	}
+
+	double alpha = 1.0 - conf_level;
+	double crit;
+	if (std::isfinite(df) && df > 0) {
+		boost::math::students_t_distribution<double> tdist(df);
+		crit = boost::math::quantile(tdist, 1.0 - alpha / 2.0);
+	}
+	else {
+		boost::math::normal_distribution<double> ndist;
+		crit = boost::math::quantile(ndist, 1.0 - alpha / 2.0);
+	}
+
+	// ── Populate result ─────────────────────────────────────────────
+	//
+	// Trends are always on the link scale. For identity link, this IS the
+	// response scale. For non-identity links, these are slopes of the linear
+	// predictor (e.g. change in log-odds per unit x for logit).
+	// We do not back-transform trends, following R's emtrends() convention.
+
+	EMMResult result;
+	result.factor = factor;
+	result.df = df;
+	result.levels = target_info->levels;
+
+	result.emmean_link = Array<double>(K, 0.0);
+	result.se_link     = Array<double>(K, 0.0);
+	result.lower_link  = Array<double>(K, 0.0);
+	result.upper_link  = Array<double>(K, 0.0);
+	result.emmean      = Array<double>(K, 0.0);
+	result.se          = Array<double>(K, 0.0);
+	result.lower_ci    = Array<double>(K, 0.0);
+	result.upper_ci    = Array<double>(K, 0.0);
+
+	// Store link-scale covariance for pairwise_contrasts().
+	result.cov_link = Array<double>(K, K, 0.0);
+	for (intptr_t i = 0; i < K; i++) {
+		for (intptr_t j = 0; j < K; j++) {
+			result.cov_link(i + 1, j + 1) = V_eta(i, j);
+		}
+	}
+
+	for (intptr_t i = 0; i < K; i++)
+	{
+		result.emmean_link[i + 1] = trends[i];
+		result.se_link[i + 1]     = se[i];
+		result.lower_link[i + 1]  = trends[i] - crit * se[i];
+		result.upper_link[i + 1]  = trends[i] + crit * se[i];
+
+		// No back-transformation for trends.
+		result.emmean[i + 1]    = trends[i];
+		result.se[i + 1]        = se[i];
+		result.lower_ci[i + 1]  = result.lower_link[i + 1];
+		result.upper_ci[i + 1]  = result.upper_link[i + 1];
+	}
+
+	return result;
+}
+
 
 } // namespace phonometrica::stats

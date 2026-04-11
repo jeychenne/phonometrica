@@ -86,6 +86,7 @@ private slots:
 	void onReattachEdaPlot();
 	void onPostHocChanged();
 	void onExportPostHoc();
+	void onExportPostHocLatex();
 
 private:
 
@@ -190,6 +191,7 @@ private:
 
 	// Post-hoc tab
 	QComboBox *m_posthoc_factor_combo = nullptr;
+	QComboBox *m_posthoc_by_combo = nullptr;
 	QComboBox *m_posthoc_trend_combo = nullptr;
 	QComboBox *m_posthoc_adj_combo = nullptr;
 	QDoubleSpinBox *m_posthoc_conf_spin = nullptr;
