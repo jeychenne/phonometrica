@@ -84,6 +84,11 @@ struct Model
 	// without vcov or constructed directly.
 	Array<double> vcov;
 
+	// ---- Column means of the fixed-effects design matrix ----
+	// Stored at fit time for use by EMMs when the design matrix X is not available
+	// (e.g. after loading a saved analysis). Length = nfixed (1D Array, 1-indexed).
+	Array<double> col_means;
+
 	// ---- Variable metadata (for post-hoc analysis, e.g. estimated marginal means) ----
 	// One entry per unique predictor variable in the formula's fixed effects.
 	// Records whether the variable is numeric or categorical, and for categoricals,
@@ -164,6 +169,7 @@ struct Model
 	bool has_smooth_terms() const { return !smooth_terms.empty(); }
 
 	bool has_vcov() const { return !vcov.empty(); }
+	bool has_col_means() const { return !col_means.empty(); }
 
 	bool has_variable_info() const { return !variable_info.empty(); }
 

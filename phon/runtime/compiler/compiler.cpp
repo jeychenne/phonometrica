@@ -206,11 +206,11 @@ void Compiler::visit_binary(BinaryExpression *node)
 	}
 	if (node->op == Lexeme::Tilde)
 	{
-		THROW("[Syntax Error] Formula not supported yet");
+		THROW("[Syntax Error] Formulas must be enclosed within quotes");
 	}
 	if (node->op == Lexeme::Pipe)
 	{
-		THROW("[Syntax Error] Formula not supported yet");
+		THROW("[Syntax Error] Formulas must be enclosed within quotes");
 	}
 	if (node->op == Lexeme::Dot)
 	{

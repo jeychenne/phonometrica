@@ -1046,6 +1046,21 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	model.response_levels = std::move(dm.response_levels);
 	model.variable_info = std::move(dm.variable_info);
 
+	// Precompute column means of the design matrix for EMMs (so they survive save/load).
+	{
+		intptr_t p = model.nfixed;
+		intptr_t n = model.nobs;
+		model.col_means = Array<double>(p, 0.0);
+		for (intptr_t j = 0; j < p; j++)
+		{
+			double sum = 0.0;
+			for (intptr_t i = 1; i <= n; i++) {
+				sum += model.X(i, j + 1);
+			}
+			model.col_means[j + 1] = sum / n;
+		}
+	}
+
 	// For GAMs, set nfixed to the number of parametric terms only.
 	// Smooth basis coefficients are reported separately via smooth_terms.
 	if (formula.has_smooth_terms()) {

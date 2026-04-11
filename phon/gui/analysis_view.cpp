@@ -311,6 +311,13 @@ void AnalysisView::setupUi()
 	m_posthoc_factor_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 	posthoc_top->addWidget(m_posthoc_factor_combo);
 	posthoc_top->addSpacing(12);
+	posthoc_top->addWidget(new QLabel(tr("By:")));
+	m_posthoc_by_combo = new QComboBox;
+	m_posthoc_by_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_posthoc_by_combo->setToolTip(tr("Condition pairwise contrasts on each level of this factor.\n"
+	                                  "Leave as \"(None)\" to marginalize over all other factors."));
+	posthoc_top->addWidget(m_posthoc_by_combo);
+	posthoc_top->addSpacing(12);
 	posthoc_top->addWidget(new QLabel(tr("Trend:")));
 	m_posthoc_trend_combo = new QComboBox;
 	m_posthoc_trend_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -337,6 +344,9 @@ void AnalysisView::setupUi()
 	auto *posthoc_copy_button = new QPushButton(QIcon(":/icons/clipboard-copy.svg"), tr("Copy"));
 	posthoc_copy_button->setToolTip(tr("Copy post-hoc results to clipboard"));
 	posthoc_top->addWidget(posthoc_copy_button);
+	auto *posthoc_latex_button = new QPushButton(QIcon(":/icons/tex.svg"), tr("LaTeX"));
+	posthoc_latex_button->setToolTip(tr("Copy post-hoc results as LaTeX tables to clipboard"));
+	posthoc_top->addWidget(posthoc_latex_button);
 	posthoc_layout->addLayout(posthoc_top);
 
 	auto *emm_group = new QGroupBox(tr("Estimated Marginal Means"));
@@ -652,10 +662,12 @@ void AnalysisView::setupUi()
 	connect(detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
 	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
 	connect(m_posthoc_factor_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
+	connect(m_posthoc_by_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_trend_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_adj_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_conf_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &AnalysisView::onPostHocChanged);
 	connect(posthoc_copy_button, &QPushButton::clicked, this, &AnalysisView::onExportPostHoc);
+	connect(posthoc_latex_button, &QPushButton::clicked, this, &AnalysisView::onExportPostHocLatex);
 }
 
 
@@ -875,6 +887,7 @@ void AnalysisView::onDeleteModel()
 		clearTestResults();
 		m_blup_check->setEnabled(false);
 		m_posthoc_factor_combo->clear();
+		m_posthoc_by_combo->clear();
 		m_posthoc_trend_combo->clear();
 		m_posthoc_emm_table->clear();
 		m_posthoc_emm_table->setRowCount(0);
@@ -3790,14 +3803,18 @@ static QString formatSignificance(double p)
 void AnalysisView::populatePostHocFactors()
 {
 	m_posthoc_factor_combo->blockSignals(true);
+	m_posthoc_by_combo->blockSignals(true);
 	m_posthoc_trend_combo->blockSignals(true);
 	m_posthoc_factor_combo->clear();
+	m_posthoc_by_combo->clear();
+	m_posthoc_by_combo->addItem(tr("(None)"));
 	m_posthoc_trend_combo->clear();
 	m_posthoc_trend_combo->addItem(tr("(None)"));
 
 	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
 	{
 		m_posthoc_factor_combo->blockSignals(false);
+		m_posthoc_by_combo->blockSignals(false);
 		m_posthoc_trend_combo->blockSignals(false);
 		return;
 	}
@@ -3807,6 +3824,7 @@ void AnalysisView::populatePostHocFactors()
 	if (!m.has_variable_info())
 	{
 		m_posthoc_factor_combo->blockSignals(false);
+		m_posthoc_by_combo->blockSignals(false);
 		m_posthoc_trend_combo->blockSignals(false);
 		return;
 	}
@@ -3818,6 +3836,7 @@ void AnalysisView::populatePostHocFactors()
 
 		if (!vi.numeric && vi.levels.size() >= 2) {
 			m_posthoc_factor_combo->addItem(qname);
+			m_posthoc_by_combo->addItem(qname);
 		}
 		if (vi.numeric) {
 			m_posthoc_trend_combo->addItem(qname);
@@ -3825,6 +3844,7 @@ void AnalysisView::populatePostHocFactors()
 	}
 
 	m_posthoc_factor_combo->blockSignals(false);
+	m_posthoc_by_combo->blockSignals(false);
 	m_posthoc_trend_combo->blockSignals(false);
 
 	if (m_posthoc_factor_combo->count() > 0) {
@@ -3883,138 +3903,219 @@ void AnalysisView::updatePostHoc()
 		trend_var_qstr = m_posthoc_trend_combo->currentText();
 	}
 
+	// Determine whether we have a by-factor.
+	bool by_mode = (m_posthoc_by_combo->currentIndex() > 0);
+	QString by_qstr;
+	if (by_mode) {
+		by_qstr = m_posthoc_by_combo->currentText();
+		// If the by-factor is the same as the target factor, ignore it.
+		if (by_qstr == factor_qstr) {
+			by_mode = false;
+		}
+	}
+
 	try
 	{
-		stats::EMMResult emm;
-		if (trend_mode) {
-			String trend_var(trend_var_qstr.toUtf8().constData());
-			emm = stats::emtrends(model, factor, trend_var, conf_level);
-		}
-		else {
-			emm = stats::emmeans(model, factor, conf_level);
-		}
-
-		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
-
-		// ── Populate EMM / trends table ─────────────────────────────
-
-		intptr_t K = emm.levels.size();
-
-		// Column headers change depending on mode.
-		QString value_header = trend_mode
-			? tr("Slope") : tr("EMM");
-		QString value_link_header = trend_mode
-			? tr("Slope (link)") : tr("EMM (link)");
+		// Column headers for EMM table.
+		QString value_header = trend_mode ? tr("Slope") : tr("EMM");
+		QString value_link_header = trend_mode ? tr("Slope (link)") : tr("EMM (link)");
+		bool show_link_cols = !is_identity && !trend_mode;
 
 		QStringList emm_headers;
+		if (by_mode) {
+			emm_headers << by_qstr;
+		}
 		emm_headers << tr("Level") << value_header << tr("SE")
 		            << tr("Lower CI") << tr("Upper CI");
-		if (!is_identity && !trend_mode) {
+		if (show_link_cols) {
 			emm_headers << value_link_header << tr("SE (link)");
 		}
 
-		m_posthoc_emm_table->setColumnCount(emm_headers.size());
-		m_posthoc_emm_table->setHorizontalHeaderLabels(emm_headers);
-		m_posthoc_emm_table->setRowCount((int)K);
+		// Column headers for contrast table.
+		QString stat_header;
 
-		for (intptr_t i = 0; i < K; i++)
+		QStringList con_headers;
+		if (by_mode) {
+			con_headers << by_qstr;
+		}
+		con_headers << tr("Contrast") << tr("Estimate") << tr("SE");
+		int stat_header_col = con_headers.size();
+		con_headers << QString() << tr("p value") << QString();
+
+		// ── Helper lambda to populate one EMMResult + ContrastResult ──
+
+		auto appendResults = [&](const stats::EMMResult &emm, const stats::ContrastResult &contrasts,
+		                         int emm_row0, int con_row0, const QString &by_label)
 		{
-			int row = (int)i;
-			m_posthoc_emm_table->setItem(row, 0,
-				new QTableWidgetItem(QString::fromUtf8(emm.levels[i + 1].data(),
-				                                       (int)emm.levels[i + 1].size())));
+			intptr_t K = emm.levels.size();
+			int by_offset = by_mode ? 1 : 0;
 
-			auto *emm_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean[i + 1]));
-			emm_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_emm_table->setItem(row, 1, emm_item);
-
-			auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se[i + 1]));
-			se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_emm_table->setItem(row, 2, se_item);
-
-			auto *lo_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.lower_ci[i + 1]));
-			lo_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_emm_table->setItem(row, 3, lo_item);
-
-			auto *hi_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.upper_ci[i + 1]));
-			hi_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_emm_table->setItem(row, 4, hi_item);
-
-			if (!is_identity && !trend_mode)
+			for (intptr_t i = 0; i < K; i++)
 			{
-				auto *emm_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean_link[i + 1]));
-				emm_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_posthoc_emm_table->setItem(row, 5, emm_link_item);
+				int row = emm_row0 + (int)i;
 
-				auto *se_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se_link[i + 1]));
-				se_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_posthoc_emm_table->setItem(row, 6, se_link_item);
+				if (by_mode) {
+					m_posthoc_emm_table->setItem(row, 0, new QTableWidgetItem(by_label));
+				}
+
+				m_posthoc_emm_table->setItem(row, by_offset + 0,
+					new QTableWidgetItem(QString::fromUtf8(emm.levels[i + 1].data(),
+					                                       (int)emm.levels[i + 1].size())));
+
+				auto *emm_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean[i + 1]));
+				emm_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, by_offset + 1, emm_item);
+
+				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se[i + 1]));
+				se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, by_offset + 2, se_item);
+
+				auto *lo_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.lower_ci[i + 1]));
+				lo_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, by_offset + 3, lo_item);
+
+				auto *hi_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.upper_ci[i + 1]));
+				hi_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_emm_table->setItem(row, by_offset + 4, hi_item);
+
+				if (show_link_cols)
+				{
+					auto *emm_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean_link[i + 1]));
+					emm_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+					m_posthoc_emm_table->setItem(row, by_offset + 5, emm_link_item);
+
+					auto *se_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se_link[i + 1]));
+					se_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+					m_posthoc_emm_table->setItem(row, by_offset + 6, se_link_item);
+				}
 			}
+
+			intptr_t npairs = contrasts.label.size();
+			for (intptr_t i = 0; i < npairs; i++)
+			{
+				int row = con_row0 + (int)i;
+				double pval = contrasts.p_value[i + 1];
+				bool sig = (pval < 0.05);
+
+				if (by_mode) {
+					m_posthoc_contrast_table->setItem(row, 0, new QTableWidgetItem(by_label));
+				}
+
+				m_posthoc_contrast_table->setItem(row, by_offset + 0,
+					new QTableWidgetItem(QString::fromUtf8(contrasts.label[i + 1].data(),
+					                                       (int)contrasts.label[i + 1].size())));
+
+				auto *est_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.estimate[i + 1]));
+				est_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_contrast_table->setItem(row, by_offset + 1, est_item);
+
+				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.se[i + 1]));
+				se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_contrast_table->setItem(row, by_offset + 2, se_item);
+
+				auto *stat_item = new QTableWidgetItem(QString::asprintf("%.3f", contrasts.stat[i + 1]));
+				stat_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_contrast_table->setItem(row, by_offset + 3, stat_item);
+
+				auto *p_item = new QTableWidgetItem(formatPValue(pval));
+				p_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_posthoc_contrast_table->setItem(row, by_offset + 4, p_item);
+
+				auto *sig_item = new QTableWidgetItem(formatSignificance(pval));
+				sig_item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+				m_posthoc_contrast_table->setItem(row, by_offset + 5, sig_item);
+
+				if (sig) {
+					QFont bold = m_posthoc_contrast_table->font();
+					bold.setBold(true);
+					for (int c = 0; c < m_posthoc_contrast_table->columnCount(); c++) {
+						if (auto *item = m_posthoc_contrast_table->item(row, c))
+							item->setFont(bold);
+					}
+				}
+			}
+		};
+
+		if (by_mode)
+		{
+			// ── By-factor mode: EMMs at each level of by-factor ──
+			String by_factor(by_qstr.toUtf8().constData());
+			auto by_result = stats::emmeans_by(model, factor, by_factor, adjustment, conf_level);
+
+			intptr_t B = by_result.by_levels.size();
+
+			int total_emm_rows = 0;
+			int total_con_rows = 0;
+			for (intptr_t b = 1; b <= B; b++) {
+				total_emm_rows += (int)by_result.emms[b].levels.size();
+				total_con_rows += (int)by_result.contrasts[b].label.size();
+			}
+
+			if (B > 0) {
+				stat_header = (std::isfinite(by_result.contrasts[1].df) && by_result.contrasts[1].df > 0)
+				              ? tr("t value") : tr("z value");
+				con_headers[stat_header_col] = stat_header;
+			}
+
+			m_posthoc_emm_table->setColumnCount(emm_headers.size());
+			m_posthoc_emm_table->setHorizontalHeaderLabels(emm_headers);
+			m_posthoc_emm_table->setRowCount(total_emm_rows);
+
+			m_posthoc_contrast_table->setColumnCount(con_headers.size());
+			m_posthoc_contrast_table->setHorizontalHeaderLabels(con_headers);
+			m_posthoc_contrast_table->setRowCount(total_con_rows);
+
+			int emm_row = 0;
+			int con_row = 0;
+			for (intptr_t b = 1; b <= B; b++)
+			{
+				auto &emm = by_result.emms[b];
+				auto &con = by_result.contrasts[b];
+				QString by_label = QString::fromUtf8(by_result.by_levels[b].data(),
+				                                      (int)by_result.by_levels[b].size());
+
+				appendResults(emm, con, emm_row, con_row, by_label);
+				emm_row += (int)emm.levels.size();
+				con_row += (int)con.label.size();
+			}
+		}
+		else
+		{
+			// ── Standard mode (no by-factor) ──
+			stats::EMMResult emm;
+			if (trend_mode) {
+				String trend_var(trend_var_qstr.toUtf8().constData());
+				emm = stats::emtrends(model, factor, trend_var, conf_level);
+			}
+			else {
+				emm = stats::emmeans(model, factor, conf_level);
+			}
+
+			auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
+
+			stat_header = (std::isfinite(contrasts.df) && contrasts.df > 0)
+			              ? tr("t value") : tr("z value");
+			con_headers[stat_header_col] = stat_header;
+
+			intptr_t K = emm.levels.size();
+			intptr_t npairs = contrasts.label.size();
+
+			m_posthoc_emm_table->setColumnCount(emm_headers.size());
+			m_posthoc_emm_table->setHorizontalHeaderLabels(emm_headers);
+			m_posthoc_emm_table->setRowCount((int)K);
+
+			m_posthoc_contrast_table->setColumnCount(con_headers.size());
+			m_posthoc_contrast_table->setHorizontalHeaderLabels(con_headers);
+			m_posthoc_contrast_table->setRowCount((int)npairs);
+
+			appendResults(emm, contrasts, 0, 0, QString());
 		}
 
 		m_posthoc_emm_table->resizeColumnsToContents();
-
-		// ── Populate contrast table ─────────────────────────────────
-
-		intptr_t npairs = contrasts.label.size();
-
-		QString stat_header = (std::isfinite(contrasts.df) && contrasts.df > 0)
-		                      ? tr("t value") : tr("z value");
-
-		QStringList con_headers;
-		con_headers << tr("Contrast") << tr("Estimate") << tr("SE")
-		            << stat_header << tr("p value") << QString();
-
-		m_posthoc_contrast_table->setColumnCount(con_headers.size());
-		m_posthoc_contrast_table->setHorizontalHeaderLabels(con_headers);
-		m_posthoc_contrast_table->setRowCount((int)npairs);
-
-		for (intptr_t i = 0; i < npairs; i++)
-		{
-			int row = (int)i;
-			double pval = contrasts.p_value[i + 1];
-			bool sig = (pval < 0.05);
-
-			m_posthoc_contrast_table->setItem(row, 0,
-				new QTableWidgetItem(QString::fromUtf8(contrasts.label[i + 1].data(),
-				                                       (int)contrasts.label[i + 1].size())));
-
-			auto *est_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.estimate[i + 1]));
-			est_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_contrast_table->setItem(row, 1, est_item);
-
-			auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.se[i + 1]));
-			se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_contrast_table->setItem(row, 2, se_item);
-
-			auto *stat_item = new QTableWidgetItem(QString::asprintf("%.3f", contrasts.stat[i + 1]));
-			stat_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_contrast_table->setItem(row, 3, stat_item);
-
-			auto *p_item = new QTableWidgetItem(formatPValue(pval));
-			p_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_posthoc_contrast_table->setItem(row, 4, p_item);
-
-			auto *sig_item = new QTableWidgetItem(formatSignificance(pval));
-			sig_item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-			m_posthoc_contrast_table->setItem(row, 5, sig_item);
-
-			// Bold significant rows.
-			if (sig) {
-				QFont bold = m_posthoc_contrast_table->font();
-				bold.setBold(true);
-				for (int c = 0; c < con_headers.size(); c++) {
-					if (auto *item = m_posthoc_contrast_table->item(row, c))
-						item->setFont(bold);
-				}
-			}
-		}
-
 		m_posthoc_contrast_table->resizeColumnsToContents();
 	}
 	catch (std::exception &e)
 	{
-		// Show the error in the EMM table as a single-cell message.
 		m_posthoc_emm_table->setColumnCount(1);
 		m_posthoc_emm_table->setRowCount(1);
 		m_posthoc_emm_table->setHorizontalHeaderLabels({tr("Error")});
@@ -4070,6 +4171,80 @@ void AnalysisView::onExportPostHoc()
 	auto *main_win = qobject_cast<QMainWindow *>(window());
 	if (main_win && main_win->statusBar()) {
 		main_win->statusBar()->showMessage(tr("Post-hoc results copied to clipboard"), 2000);
+	}
+}
+
+
+static QString latexEscape(const QString &s)
+{
+	QString out = s;
+	out.replace(QStringLiteral("_"), QStringLiteral("\\_"));
+	out.replace(QStringLiteral("&"), QStringLiteral("\\&"));
+	out.replace(QStringLiteral("%"), QStringLiteral("\\%"));
+	out.replace(QStringLiteral("#"), QStringLiteral("\\#"));
+	out.replace(QStringLiteral("<"), QStringLiteral("$<$"));
+	return out;
+}
+
+
+static QString tableToLatex(QTableWidget *table, const QString &caption)
+{
+	int ncols = table->columnCount();
+	int nrows = table->rowCount();
+	if (ncols == 0 || nrows == 0) return {};
+
+	QString tex;
+	tex += QStringLiteral("\\begin{table}[htbp]\n\\centering\n");
+	tex += QStringLiteral("\\caption{") + latexEscape(caption) + QStringLiteral("}\n");
+
+	// Column alignment: first column left, rest right.
+	QString align = QStringLiteral("l");
+	for (int c = 1; c < ncols; c++) {
+		align += QStringLiteral("r");
+	}
+	tex += QStringLiteral("\\begin{tabular}{") + align + QStringLiteral("}\n");
+	tex += QStringLiteral("\\hline\n");
+
+	// Header row.
+	for (int c = 0; c < ncols; c++) {
+		if (c > 0) tex += QStringLiteral(" & ");
+		auto *hdr = table->horizontalHeaderItem(c);
+		tex += latexEscape(hdr ? hdr->text() : QString());
+	}
+	tex += QStringLiteral(" \\\\\n\\hline\n");
+
+	// Data rows.
+	for (int r = 0; r < nrows; r++) {
+		for (int c = 0; c < ncols; c++) {
+			if (c > 0) tex += QStringLiteral(" & ");
+			auto *item = table->item(r, c);
+			tex += latexEscape(item ? item->text() : QString());
+		}
+		tex += QStringLiteral(" \\\\\n");
+	}
+
+	tex += QStringLiteral("\\hline\n\\end{tabular}\n\\end{table}\n");
+	return tex;
+}
+
+
+void AnalysisView::onExportPostHocLatex()
+{
+	if (m_posthoc_emm_table->rowCount() == 0) return;
+
+	QString text;
+	text += tableToLatex(m_posthoc_emm_table, tr("Estimated Marginal Means"));
+
+	if (m_posthoc_contrast_table->rowCount() > 0) {
+		text += QStringLiteral("\n");
+		text += tableToLatex(m_posthoc_contrast_table, tr("Pairwise Contrasts"));
+	}
+
+	QApplication::clipboard()->setText(text);
+
+	auto *main_win = qobject_cast<QMainWindow *>(window());
+	if (main_win && main_win->statusBar()) {
+		main_win->statusBar()->showMessage(tr("Post-hoc LaTeX tables copied to clipboard"), 2000);
 	}
 }
 

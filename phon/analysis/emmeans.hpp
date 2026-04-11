@@ -80,6 +80,19 @@ struct ContrastResult
 };
 
 
+// Result of emmeans_by(): EMMs and contrasts for each level of a conditioning factor.
+struct ByEMMResult
+{
+	String factor;               // target factor, e.g. "Voyelle"
+	String by_factor;            // conditioning factor, e.g. "Condition"
+	Array<String> by_levels;     // levels of the by-factor in order
+
+	// One EMMResult and one ContrastResult per by-level (1-indexed).
+	Array<EMMResult> emms;
+	Array<ContrastResult> contrasts;
+};
+
+
 //! Compute estimated marginal means for a single categorical factor.
 //!
 //! The EMMs are population-averaged predictions at each level of the target factor,
@@ -120,6 +133,24 @@ EMMResult emmeans(const Model &model, const String &factor, double conf_level = 
 //! \return            a ContrastResult with all pairwise differences, SEs, and adjusted p-values.
 ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
                                   const String &adjustment = "holm");
+
+
+//! Compute EMMs and pairwise contrasts for a target factor at each level of a
+//! conditioning ("by") factor.
+//!
+//! This is equivalent to R's emmeans(model, pairwise ~ factor | by_factor).
+//! For each level of by_factor, EMMs are computed with by_factor fixed to that level
+//! (indicator) and all other factors balanced. Pairwise contrasts are computed within
+//! each by-level.
+//!
+//! \param model       a fitted model.
+//! \param factor      target categorical factor for pairwise comparisons.
+//! \param by_factor   conditioning factor (each level produces a separate set of EMMs).
+//! \param adjustment  p-value adjustment method (default "holm").
+//! \param conf_level  confidence level for intervals (default 0.95).
+//! \return            a ByEMMResult with per-by-level EMMs and contrasts.
+ByEMMResult emmeans_by(const Model &model, const String &factor, const String &by_factor,
+                       const String &adjustment = "holm", double conf_level = 0.95);
 
 
 //! Estimate the slope (trend) of a continuous variable at each level of a categorical factor.
