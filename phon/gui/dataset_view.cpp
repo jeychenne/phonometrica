@@ -37,6 +37,8 @@
 #include <phon/application/project.hpp>
 #include <phon/analysis/column_metrics.hpp>
 #include <phon/analysis/formula_engine.hpp>
+#include <phon/gui/vowel_normalization_dialog.hpp>
+#include <phon/application/vowel_normalizer.hpp>
 
 namespace phonometrica {
 
@@ -89,6 +91,9 @@ void DatasetView::setupUi()
 
 	auto *metric_action = m_toolbar->addAction(QIcon(":/icons/sigma.svg"), tr("Metric column"));
 	metric_action->setToolTip(tr("Compute a distance metric (z-score, etc.) for outlier detection"));
+
+	auto *norm_action = m_toolbar->addAction(QIcon(":/icons/vowel-space.svg"), tr("Normalize vowels"));
+	norm_action->setToolTip(tr("Apply vowel normalization (Lobanov, Nearey, Watt & Fabricius)"));
 
 	m_toolbar->addSeparator();
 
@@ -203,6 +208,7 @@ void DatasetView::setupUi()
 	connect(m_clear_filter_action, &QAction::triggered, this, &DatasetView::onClearFilters);
 	connect(m_subset_action, &QAction::triggered, this, &DatasetView::onCreateSubset);
 	connect(metric_action, &QAction::triggered, this, &DatasetView::onAddMetricColumn);
+	connect(norm_action, &QAction::triggered, this, &DatasetView::onNormalizeVowels);
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_ds);
 	});
@@ -1019,6 +1025,109 @@ void DatasetView::onAddMetricColumn()
 }
 
 // ── Column rename / recode / transform ─────────────────
+
+void DatasetView::onNormalizeVowels()
+{
+	// Collect numeric and text columns.
+	QStringList num_names, text_names;
+	QVector<int> num_indices, text_indices;
+	QVector<QStringList> vowel_levels;
+
+	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+		auto h = m_ds->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+		if (m_ds->is_numeric(j)) {
+			num_names << qh;
+			num_indices << (int) j;
+		}
+		else if (m_ds->is_text(j)) {
+			text_names << qh;
+			text_indices << (int) j;
+			auto levels = m_ds->get_levels(j);
+			QStringList ql;
+			for (intptr_t k = 1; k <= levels.size(); k++)
+				ql << QString::fromUtf8(levels[k].data(), (int) levels[k].size());
+			vowel_levels << ql;
+		}
+	}
+
+	if (num_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No numeric columns available."));
+		return;
+	}
+	if (text_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No text columns available (need at least a speaker column)."));
+		return;
+	}
+
+	VowelNormalizationDialog dlg(num_names, num_indices, text_names, text_indices, vowel_levels, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	try
+	{
+		auto method = dlg.selectedMethod();
+		auto formant_cols = dlg.selectedFormantColumns();
+		int spk_col = dlg.speakerColumn();
+
+		// Build formant spans and speaker vector.
+		std::vector<std::span<const double>> formants;
+		for (int c : formant_cols) {
+			formants.push_back(m_ds->numeric_column(c));
+		}
+
+		auto spk_span = m_ds->text_column(spk_col);
+		std::vector<std::string> speakers(spk_span.size());
+		for (size_t i = 0; i < spk_span.size(); i++) {
+			speakers[i].assign(spk_span[i].data(), spk_span[i].size());
+		}
+
+		std::vector<std::vector<double>> result;
+
+		switch (method) {
+			case VowelNormMethod::Lobanov:
+				result = VowelNormalizer::lobanov(formants, speakers);
+				break;
+			case VowelNormMethod::Nearey1:
+				result = VowelNormalizer::nearey1(formants, speakers);
+				break;
+			case VowelNormMethod::Nearey2:
+				result = VowelNormalizer::nearey2(formants, speakers);
+				break;
+			case VowelNormMethod::WattFabricius: {
+				int vow_col = dlg.vowelColumn();
+				auto vow_span = m_ds->text_column(vow_col);
+				std::vector<std::string> vowels(vow_span.size());
+				for (size_t i = 0; i < vow_span.size(); i++) {
+					vowels[i].assign(vow_span[i].data(), vow_span[i].size());
+				}
+				auto li = dlg.labelI().toStdString();
+				auto la = dlg.labelA().toStdString();
+				auto lu = dlg.labelU().toStdString();
+				result = VowelNormalizer::watt_fabricius(formants, speakers, vowels, li, la, lu);
+				break;
+			}
+		}
+
+		// Append result columns.
+		auto names = dlg.outputColumnNames();
+		for (int f = 0; f < (int) result.size(); f++) {
+			m_ds->add_numeric_column(String(names[f].toUtf8().constData()), result[f]);
+			record(std::make_unique<AddDatasetColumnCommand>(this));
+		}
+
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
 
 void DatasetView::onRenameColumn(int section)
 {

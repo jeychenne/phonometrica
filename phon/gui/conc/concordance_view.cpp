@@ -43,6 +43,8 @@
 #include <phon/gui/outlier_dialog.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/gui/font_helpers.hpp>
+#include <phon/gui/vowel_normalization_dialog.hpp>
+#include <phon/application/vowel_normalizer.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
@@ -149,6 +151,9 @@ void ConcordanceView::setupUi()
 
 	auto *metric_action = m_toolbar->addAction(QIcon(":/icons/sigma.svg"), tr("Metric column"));
 	metric_action->setToolTip(tr("Compute a distance metric (z-score, etc.) for outlier detection"));
+
+	auto *norm_action = m_toolbar->addAction(QIcon(":/icons/vowel-space.svg"), tr("Normalize vowels"));
+	norm_action->setToolTip(tr("Apply vowel normalization (Lobanov, Nearey, Watt & Fabricius)"));
 
 	m_toolbar->addSeparator();
 
@@ -408,6 +413,7 @@ void ConcordanceView::setupUi()
 	connect(m_clear_filter_action, &QAction::triggered, this, &ConcordanceView::onClearFilters);
 	connect(m_subset_action, &QAction::triggered, this, &ConcordanceView::onCreateSubset);
 	connect(metric_action, &QAction::triggered, this, &ConcordanceView::onAddMetricColumn);
+	connect(norm_action, &QAction::triggered, this, &ConcordanceView::onNormalizeVowels);
 	connect(m_table, &QTableView::doubleClicked, this, &ConcordanceView::onDoubleClick);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &ConcordanceView::onContextMenu);
 
@@ -1982,6 +1988,169 @@ void ConcordanceView::onAddMetricColumn()
 			m_filter_action->setChecked(true);
 			m_filter_bar->rebuild();
 		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+
+void ConcordanceView::onNormalizeVowels()
+{
+	auto nrows = m_conc->row_count();
+	auto ncols = m_conc->column_count();
+
+	if (nrows == 0) {
+		QMessageBox::information(this, tr("Information"), tr("The concordance is empty."));
+		return;
+	}
+
+	// ── Detect numeric and text columns by sampling cells ──
+	QStringList num_names, text_names;
+	QVector<int> num_indices, text_indices;
+	QVector<QStringList> vowel_levels;
+
+	intptr_t sample_limit = std::min(nrows, (intptr_t)20);
+
+	for (intptr_t j = 1; j <= ncols; j++)
+	{
+		auto h = m_conc->get_header(j);
+		auto qh = QString::fromUtf8(h.data(), (int) h.size());
+
+		bool all_numeric = true;
+		bool found_any = false;
+
+		for (intptr_t i = 1; i <= sample_limit; i++) {
+			auto cell = m_conc->get_cell(i, j);
+			if (cell.empty() || cell == "nan") continue;
+			found_any = true;
+			bool ok;
+			cell.to_float(&ok);
+			if (!ok) {
+				all_numeric = false;
+				break;
+			}
+		}
+
+		if (found_any && all_numeric) {
+			num_names << qh;
+			num_indices << (int) j;
+		}
+		else if (found_any) {
+			text_names << qh;
+			text_indices << (int) j;
+			// Collect unique levels for this text column.
+			QSet<QString> seen;
+			QStringList levels;
+			for (intptr_t i = 1; i <= nrows; i++) {
+				auto cell = m_conc->get_cell(i, j);
+				auto qs = QString::fromUtf8(cell.data(), (int) cell.size());
+				if (!qs.isEmpty() && !seen.contains(qs)) {
+					seen.insert(qs);
+					levels << qs;
+				}
+			}
+			levels.sort();
+			vowel_levels << levels;
+		}
+	}
+
+	if (num_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No numeric columns detected."));
+		return;
+	}
+	if (text_names.isEmpty()) {
+		QMessageBox::information(this, tr("Information"),
+			tr("No text columns available (need at least a speaker column)."));
+		return;
+	}
+
+	VowelNormalizationDialog dlg(num_names, num_indices, text_names, text_indices, vowel_levels, this);
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	try
+	{
+		auto method = dlg.selectedMethod();
+		auto formant_cols = dlg.selectedFormantColumns();
+		int spk_col = dlg.speakerColumn();
+
+		// Helper: extract a numeric column by parsing cells (1-based column index).
+		auto extract_numeric = [&](int col_1based) -> std::vector<double> {
+			std::vector<double> vals(nrows);
+			for (intptr_t i = 1; i <= nrows; i++) {
+				auto cell = m_conc->get_cell(i, col_1based);
+				if (cell.empty() || cell == "nan") {
+					vals[i - 1] = std::nan("");
+				}
+				else {
+					bool ok;
+					double v = cell.to_float(&ok);
+					vals[i - 1] = ok ? v : std::nan("");
+				}
+			}
+			return vals;
+		};
+
+		// Helper: extract a text column (1-based column index).
+		auto extract_text = [&](int col_1based) -> std::vector<std::string> {
+			std::vector<std::string> vals(nrows);
+			for (intptr_t i = 1; i <= nrows; i++) {
+				auto cell = m_conc->get_cell(i, col_1based);
+				vals[i - 1].assign(cell.data(), cell.size());
+			}
+			return vals;
+		};
+
+		// Build formant data and spans.
+		std::vector<std::vector<double>> formant_data;
+		for (int c : formant_cols) {
+			formant_data.push_back(extract_numeric(c));
+		}
+		std::vector<std::span<const double>> formant_spans;
+		for (auto &fd : formant_data) {
+			formant_spans.emplace_back(fd);
+		}
+
+		auto speakers = extract_text(spk_col);
+
+		std::vector<std::vector<double>> result;
+
+		switch (method) {
+			case VowelNormMethod::Lobanov:
+				result = VowelNormalizer::lobanov(formant_spans, speakers);
+				break;
+			case VowelNormMethod::Nearey1:
+				result = VowelNormalizer::nearey1(formant_spans, speakers);
+				break;
+			case VowelNormMethod::Nearey2:
+				result = VowelNormalizer::nearey2(formant_spans, speakers);
+				break;
+			case VowelNormMethod::WattFabricius: {
+				int vow_col = dlg.vowelColumn();
+				auto vowels = extract_text(vow_col);
+				auto li = dlg.labelI().toStdString();
+				auto la = dlg.labelA().toStdString();
+				auto lu = dlg.labelU().toStdString();
+				result = VowelNormalizer::watt_fabricius(formant_spans, speakers, vowels, li, la, lu);
+				break;
+			}
+		}
+
+		// Append result columns.
+		auto names = dlg.outputColumnNames();
+		for (int f = 0; f < (int) result.size(); f++) {
+			m_conc->add_numeric_column(String(names[f].toUtf8().constData()), result[f]);
+			record(std::make_unique<AddConcAuxColumnCommand>(this));
+		}
+
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		updateColumnVisibility();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
 	}
 	catch (std::exception &e)
 	{
