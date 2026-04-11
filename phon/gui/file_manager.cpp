@@ -35,6 +35,7 @@
 #include <phon/application/dataset.hpp>
 #include <phon/application/annotation.hpp>
 #include <phon/application/script.hpp>
+#include <phon/application/praat.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
@@ -643,6 +644,176 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 	});
 
 	auto *doc = dynamic_cast<Document *>(m_model->elementFromIndex(sourceIndex));
+
+	// ── Open in Praat ────────────────────────────────────────────────────
+	if (praat::available() && doc && doc->has_path())
+	{
+		if (auto *snd = dynamic_cast<Sound *>(doc))
+		{
+			menu.addAction(tr("Open in Praat"), [snd]() {
+				try { praat::open_sound(snd->path()); }
+				catch (...) {}
+			});
+		}
+		else if (auto *annot = dynamic_cast<Annotation *>(doc))
+		{
+			if (annot->is_textgrid())
+			{
+				menu.addAction(tr("Open in Praat"), [annot]() {
+					try {
+						String snd_path;
+						if (annot->has_sound())
+							snd_path = annot->sound()->path();
+						praat::open_textgrid(annot->path(), snd_path);
+					}
+					catch (...) {}
+				});
+			}
+		}
+	}
+
+	// ── Export native annotation to TextGrid ──────────────────────────────
+	if (auto *annot = dynamic_cast<Annotation *>(doc))
+	{
+		if (annot->is_native() && annot->has_path())
+		{
+			menu.addAction(tr("Export to Praat TextGrid..."), [this, annot]() {
+				// Build a default filename: same base name with .TextGrid extension.
+				auto base = filesystem::strip_ext(filesystem::base_name(annot->path()));
+				auto default_name = QString::fromUtf8(base.data(), (int) base.size())
+				                    + QStringLiteral(".TextGrid");
+
+				auto qpath = getSaveFileName(this, tr("Export to TextGrid"),
+				                             tr("Praat TextGrid (*.TextGrid)"), default_name);
+				if (qpath.isEmpty())
+					return;
+
+				auto bytes = qpath.toUtf8();
+				auto export_path = String(bytes.constData(), bytes.size());
+
+				try {
+					// write_as_textgrid resets m_modified — preserve the original flag.
+					bool was_modified = annot->graph_modified();
+					annot->write_as_textgrid(export_path);
+					if (was_modified)
+						annot->set_graph_modified(true);
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Export failed"), QString::fromUtf8(e.what()));
+					return;
+				}
+
+				// Ask whether to import the exported TextGrid into the project.
+				auto answer = QMessageBox::question(this, tr("Import TextGrid"),
+					tr("The annotation was exported successfully.\n\n"
+					   "Do you want to import the TextGrid into the project?"));
+
+				if (answer != QMessageBox::Yes)
+					return;
+
+				auto *parent_dir = annot->parent();
+				auto parent_handle = Handle<Directory>(parent_dir);
+
+				// Keep a copy of the path before add_file moves it.
+				String lookup_path = export_path;
+				m_project->add_file(std::move(export_path), parent_handle, FileType::CorpusFile, true);
+
+				// Find the newly imported annotation and copy metadata from the original.
+				auto &files = m_project->files();
+				auto it = files.find(lookup_path);
+				if (it != files.end())
+				{
+					auto new_annot = dynamic_cast<Annotation *>(it->second.get());
+					if (new_annot)
+					{
+						// Copy properties.
+						for (auto &prop : annot->properties())
+							new_annot->add_property(prop, false);
+
+						// Copy description.
+						if (!annot->description().empty())
+							new_annot->set_description(annot->description(), false);
+
+						// Bind to the same sound.
+						if (annot->has_sound())
+							new_annot->set_sound(annot->sound(), false);
+					}
+				}
+
+				m_project->modify();
+				refresh();
+			});
+		}
+	}
+
+	// ── Export TextGrid annotation to native format ───────────────────────
+	if (auto *annot = dynamic_cast<Annotation *>(doc))
+	{
+		if (annot->is_textgrid() && annot->has_path())
+		{
+			menu.addAction(tr("Export to Phonometrica annotation..."), [this, annot]() {
+				auto base = filesystem::strip_ext(filesystem::base_name(annot->path()));
+				auto default_name = QString::fromUtf8(base.data(), (int) base.size())
+				                    + QStringLiteral(".phon-annot");
+
+				auto qpath = getSaveFileName(this, tr("Export to Phonometrica annotation"),
+				                             tr("Phonometrica annotation (*.phon-annot)"), default_name);
+				if (qpath.isEmpty())
+					return;
+
+				auto bytes = qpath.toUtf8();
+				auto export_path = String(bytes.constData(), bytes.size());
+
+				try {
+					bool was_modified = annot->graph_modified();
+					annot->write_as_native(export_path);
+					if (was_modified)
+						annot->set_graph_modified(true);
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Export failed"), QString::fromUtf8(e.what()));
+					return;
+				}
+
+				auto answer = QMessageBox::question(this, tr("Import annotation"),
+					tr("The annotation was exported successfully.\n\n"
+					   "Do you want to import it into the project?"));
+
+				if (answer != QMessageBox::Yes)
+					return;
+
+				auto *parent_dir = annot->parent();
+				auto parent_handle = Handle<Directory>(parent_dir);
+
+				String lookup_path = export_path;
+				m_project->add_file(std::move(export_path), parent_handle, FileType::CorpusFile, true);
+
+				// The native format embeds metadata, but TextGrid annotations
+				// store metadata externally — copy it to the new annotation
+				// so it is available immediately without re-opening.
+				auto &files = m_project->files();
+				auto it = files.find(lookup_path);
+				if (it != files.end())
+				{
+					auto new_annot = dynamic_cast<Annotation *>(it->second.get());
+					if (new_annot)
+					{
+						for (auto &prop : annot->properties())
+							new_annot->add_property(prop, false);
+
+						if (!annot->description().empty())
+							new_annot->set_description(annot->description(), false);
+
+						if (annot->has_sound())
+							new_annot->set_sound(annot->sound(), false);
+					}
+				}
+
+				m_project->modify();
+				refresh();
+			});
+		}
+	}
 
 	if (auto *script = dynamic_cast<Script *>(doc))
 	{

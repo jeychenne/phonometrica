@@ -201,6 +201,9 @@ private:
 	// Scripting shell functions (expose GUI dialogs to the scripting engine).
 	void setShellFunctions();
 
+	// Set up Praat integration callbacks based on the configured path.
+	void setupPraat();
+
 	Runtime &m_runtime;
 
 	QMenu *m_recent_menu = nullptr;

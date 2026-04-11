@@ -354,7 +354,7 @@ void InfoPanel::showSingleFilePage(Document *doc)
 	clearInfoArea();
 
 	addHeading(tr("File name:"));
-	addValue(doc->label(), doc->path());
+	addValue(doc->browser_label(), doc->path());
 
 	bool show_sound_row = false;
 
@@ -372,7 +372,7 @@ void InfoPanel::showSingleFilePage(Document *doc)
 	{
 		show_sound_row = true;
 		if (annot->has_sound())
-			m_sound_label->setText(annot->sound()->label());
+			m_sound_label->setText(annot->sound()->browser_label());
 		else
 			m_sound_label->setText(tr("None"));
 		addHeading(tr("Sound file:"));
@@ -897,7 +897,7 @@ void InfoPanel::onBindSound()
 		if (sound)
 		{
 			annot->set_sound(sound);
-			m_sound_label->setText(sound->label());
+			m_sound_label->setText(sound->browser_label());
 		}
 		else
 		{

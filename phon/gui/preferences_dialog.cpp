@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QMessageBox>
+#include <phon/gui/file_dialog.hpp>
 #include <phon/gui/preferences_dialog.hpp>
 #include <phon/gui/font_helpers.hpp>
 #include <phon/application/settings.hpp>
@@ -90,6 +91,37 @@ QWidget *PreferencesDialog::createGeneralPage()
 	layout->addWidget(m_autosave);
 	layout->addWidget(m_autohints);
 	layout->addWidget(m_discard_empty);
+
+	// ── Praat path ────────────────────────────────────────────────────────
+	layout->addSpacing(12);
+	layout->addWidget(new QLabel(tr("<b>Praat integration</b>")));
+
+	auto *praat_row = new QHBoxLayout;
+	praat_row->addWidget(new QLabel(tr("Path to Praat:")));
+
+	m_praat_path = new QLineEdit;
+	m_praat_path->setPlaceholderText(tr("(not configured)"));
+	try {
+		auto p = Settings::get_string("praat_path");
+		m_praat_path->setText(QString::fromUtf8(p.data(), (int) p.size()));
+	} catch (...) {}
+	m_initial_praat_path = m_praat_path->text();
+
+	auto *browse_btn = new QPushButton(tr("Browse..."));
+	connect(browse_btn, &QPushButton::clicked, this, [this]() {
+#ifdef Q_OS_WIN
+		QString filter = tr("Praat (Praat.exe);;All files (*.*)");
+#else
+		QString filter = tr("All files (*)");
+#endif
+		auto path = QFileDialog::getOpenFileName(this, tr("Select Praat executable"), m_praat_path->text(), filter);
+		if (!path.isEmpty())
+			m_praat_path->setText(path);
+	});
+
+	praat_row->addWidget(m_praat_path, 1);
+	praat_row->addWidget(browse_btn);
+	layout->addLayout(praat_row);
 
 	layout->addStretch();
 
@@ -222,6 +254,11 @@ void PreferencesDialog::accept()
 	Settings::set_value("restore_views", m_restore_views->isChecked());
 	Settings::set_value("concordance", "discard_empty", m_discard_empty->isChecked());
 
+	// Praat path
+	auto praat_text = m_praat_path->text().trimmed();
+	Settings::set_value("praat_path", String(praat_text.toUtf8().constData()));
+	m_praat_path_changed = (praat_text != m_initial_praat_path);
+
 	// Measurement — default query context
 	if (m_ctx_none->isChecked())
 		Settings::set_value("concordance", "default_context", String("none"));
@@ -259,6 +296,7 @@ void PreferencesDialog::reset()
 	m_autosave->setChecked(false);
 	m_autohints->setChecked(true);
 	m_discard_empty->setChecked(true);
+	m_praat_path->clear();
 
 	// Measurement
 	m_ctx_kwic->setChecked(true);

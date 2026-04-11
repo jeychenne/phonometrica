@@ -25,6 +25,7 @@
 #include <QDialog>
 #include <QCheckBox>
 #include <QFontComboBox>
+#include <QLineEdit>
 #include <QRadioButton>
 #include <QSpinBox>
 
@@ -37,6 +38,9 @@ class PreferencesDialog : public QDialog
 public:
 
 	explicit PreferencesDialog(QWidget *parent = nullptr);
+
+	// Returns true if the Praat path was changed (caller may need to rewire callbacks).
+	bool praatPathChanged() const { return m_praat_path_changed; }
 
 private:
 
@@ -53,6 +57,7 @@ private:
 	QCheckBox *m_autosave = nullptr;
 	QCheckBox *m_autohints = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
+	QLineEdit *m_praat_path = nullptr;
 
 	// Measurement — display
 	QSpinBox *m_hz_decimals = nullptr;
@@ -70,6 +75,10 @@ private:
 	// Track initial font state to avoid spurious "font changed" messages.
 	QString m_initial_font_name;
 	int m_initial_font_size = 0;
+
+	// Track initial Praat path to detect changes.
+	QString m_initial_praat_path;
+	bool m_praat_path_changed = false;
 };
 
 } // namespace phonometrica

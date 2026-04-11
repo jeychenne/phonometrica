@@ -47,6 +47,8 @@ phon.settings = {
 
 	"enable_mouse_tracking": true,
 
+	"praat_path": "",
+
 	"concordance": {
 	    "discard_empty": true,
 	    "context_length": 40
@@ -95,6 +97,5 @@ phon.settings = {
 		"max_bandwidth": 400
 	}
 }
-
 
 
