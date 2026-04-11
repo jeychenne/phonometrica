@@ -1136,6 +1136,13 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	// ── Random effects ───────────────────────────────────────────────
 	menu.addAction(tr("Add as grouping factor"));
 
+	// Penalized random intercept (GAM): available for categorical columns.
+	QAction *re_smooth_action = nullptr;
+	if (m_analysis->has_source() && !isColumnNumeric(String(name.toUtf8().constData())))
+	{
+		re_smooth_action = menu.addAction(QStringLiteral("Add smooth for grouping: s(%1, bs=re)").arg(name));
+	}
+
 	auto *corr_slope_menu = menu.addMenu(tr("Add correlated slope in..."));
 	auto *indep_slope_menu = menu.addMenu(tr("Add independent slope in..."));
 
@@ -1259,6 +1266,27 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	}
 	else if (action_text == tr("Add as grouping factor")) {
 		addRandomIntercept(name);
+	}
+	else if (re_smooth_action && chosen == re_smooth_action) {
+		// Insert s(name, bs=re) — penalized random intercept for GAM.
+		QString quoted = quoteIfNeeded(name);
+		QString term = QStringLiteral("s(") + quoted + QStringLiteral(", bs=re)");
+		QString text = m_formula_edit->text().trimmed();
+		if (text.isEmpty()) {
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		} else if (!text.contains('~')) {
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+		} else {
+			QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+			if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+				QString lhs = text.left(text.indexOf('~') + 1);
+				m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+			} else {
+				m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+			}
+		}
+		m_formula_edit->setFocus();
+		m_formula_edit->setCursorPosition(m_formula_edit->text().length());
 	}
 	else if (chosen->parent() == interaction_menu) {
 		addInteraction(name, chosen->text(), true);
@@ -3265,8 +3293,12 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
 		{
 			auto &sm = m.smooth_terms[i];
-			QString label = QStringLiteral("s(%1)").arg(
-				QString::fromUtf8(sm.variable.data(), (int)sm.variable.size()));
+			QString var_q = QString::fromUtf8(sm.variable.data(), (int)sm.variable.size());
+			QString label;
+			if (sm.basis == "re")
+				label = QStringLiteral("s(%1, bs=re)").arg(var_q);
+			else
+				label = QStringLiteral("s(%1)").arg(var_q);
 			label.replace('_', QStringLiteral("\\_"));
 
 			QString pval;
@@ -3519,6 +3551,9 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			auto &sm = m.smooth_terms[i];
 			String label("s(");
 			label.append(sm.variable);
+			if (sm.basis == "re") {
+				label.append(", bs=re");
+			}
 			label.append(")");
 
 			char pbuf[16];

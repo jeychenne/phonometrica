@@ -86,6 +86,11 @@ String SmoothTerm::to_string() const
 		result.append(", by=");
 		result.append(quote_name(by));
 	}
+	if (basis != "cr")
+	{
+		result.append(", bs=");
+		result.append(basis);
+	}
 	if (k != 10)
 	{
 		result.append(", k=");
@@ -295,12 +300,13 @@ public:
 				break;
 			}
 
-			// Quoted name: 'name with spaces'
-			if (c == '\'')
+			// Quoted name: 'name with spaces' or "name with spaces"
+			if (c == '\'' || c == '"')
 			{
+				char quote = c;
 				m_pos++; // skip opening quote
 				const char *start = m_pos;
-				while (m_pos < m_end && *m_pos != '\'') {
+				while (m_pos < m_end && *m_pos != quote) {
 					m_pos++;
 				}
 				if (m_pos >= m_end) {
@@ -616,12 +622,13 @@ private:
 	}
 
 	// smooth_term := 's' '(' name [',' option]* ')'
-	// option := 'k' '=' number | 'by' '=' name
+	// option := 'k' '=' number | 'by' '=' name | 'bs' '=' name
 	//
 	// Examples:
 	//   s(duration)                → SmoothTerm{"duration", "", "cr", 10}
 	//   s(duration, k=15)          → SmoothTerm{"duration", "", "cr", 15}
 	//   s(duration, by=speaker)    → SmoothTerm{"duration", "speaker", "cr", 10}
+	//   s(speaker, bs=re)          → SmoothTerm{"speaker", "", "re", 10}
 	//   s(duration, by=speaker, k=15)
 	//
 	// Precondition: "s" has been consumed as a Name, current token is LParen.
@@ -636,12 +643,12 @@ private:
 		st.variable = m_current.text;
 		advance();
 
-		// Optional arguments: , k=N , by=name
+		// Optional arguments: , k=N , by=name , bs=type
 		while (m_current.type == TokenType::Comma)
 		{
 			advance(); // skip comma
 
-			expect(TokenType::Name, "Expected option name (e.g. 'k', 'by') inside s()");
+			expect(TokenType::Name, "Expected option name (e.g. 'k', 'by', 'bs') inside s()");
 			String option = m_current.text;
 			advance();
 
@@ -663,9 +670,18 @@ private:
 				st.by = m_current.text;
 				advance();
 			}
+			else if (option == "bs")
+			{
+				expect(TokenType::Name, "Expected basis type for bs= inside s()");
+				st.basis = m_current.text;
+				if (st.basis != "cr" && st.basis != "re") {
+					throw error("Unknown basis type '%' (supported: cr, re)", st.basis);
+				}
+				advance();
+			}
 			else
 			{
-				throw error("Unknown smooth term option '%' (supported: k, by)", option);
+				throw error("Unknown smooth term option '%' (supported: k, by, bs)", option);
 			}
 		}
 
@@ -673,10 +689,19 @@ private:
 		expect(TokenType::RParen, "Expected ')' to close s()");
 		advance();
 
-		// Check for duplicate smooth on the same variable+by combination.
+		// Validate: bs='re' does not support by= (random slopes not yet implemented).
+		if (st.basis == "re" && !st.by.empty())
+		{
+			throw error("s(%, by=%, bs=re) is not supported. "
+			            "Random slopes in GAMs are not yet implemented", st.variable, st.by);
+		}
+
+		// Check for duplicate smooth on the same variable+by+basis combination.
 		for (intptr_t i = 1; i <= f.smooth.size(); i++)
 		{
-			if (f.smooth[i].variable == st.variable && f.smooth[i].by == st.by) {
+			if (f.smooth[i].variable == st.variable && f.smooth[i].by == st.by
+			    && f.smooth[i].basis == st.basis)
+			{
 				throw error("Duplicate smooth term for variable '%'", st.variable);
 			}
 		}
