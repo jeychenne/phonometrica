@@ -57,6 +57,11 @@ String Dataset::label() const
 	return m_label.empty() ? Document::label() : m_label;
 }
 
+String Dataset::browser_label() const
+{
+	return m_label.empty() ? Document::browser_label() : m_label;
+}
+
 void Dataset::set_label(String value, bool mutate)
 {
 	m_label = std::move(value);

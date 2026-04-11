@@ -57,6 +57,8 @@ public:
 
 	String label() const override;
 
+	String browser_label() const override;
+
 	void set_label(String value, bool mutate);
 
 	void set_selection(Array<Handle<Annotation>> files);

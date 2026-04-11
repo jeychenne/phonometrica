@@ -90,6 +90,11 @@ String Query::label() const
 	return m_label;
 }
 
+String Query::browser_label() const
+{
+	return m_label;
+}
+
 void Query::set_label(String value, bool mutate)
 {
 	m_label = std::move(value);

@@ -181,6 +181,10 @@ private:
 	// Close one tab by index, prompting to save if modified. Returns false if cancelled.
 	bool closeTab(int index);
 
+	// Close all views and clear project-specific state (for project switch/close).
+	// Returns false if user cancelled.
+	bool clearForProjectSwitch();
+
 	// Prompt to save the project if modified. Returns false if user cancelled.
 	bool promptSaveProject();
 

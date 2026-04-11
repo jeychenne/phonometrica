@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <QVBoxLayout>
+#include <QTimer>
 #include <phon/gui/file_dialog.hpp>
 #include <QTextList>
 #include <QTextBlock>
@@ -42,6 +43,7 @@ NoteView::NoteView(const Handle<Note> &note, QWidget *parent) :
 		auto &content = m_note->content();
 		auto html = QString::fromUtf8(content.data(), (int) content.size());
 		m_editor->setHtml(html);
+		m_editor->moveCursor(QTextCursor::Start);
 	}
 
 	connect(m_editor->document(), &QTextDocument::contentsChanged, this, &NoteView::onModification);
@@ -51,6 +53,8 @@ NoteView::NoteView(const Handle<Note> &note, QWidget *parent) :
 	// The document starts clean after loading.
 	m_editor->document()->setModified(false);
 	m_save_action->setEnabled(false);
+
+	QTimer::singleShot(0, m_editor, [this]() { m_editor->setFocus(); });
 }
 
 void NoteView::setupUi()
@@ -65,11 +69,8 @@ void NoteView::setupUi()
 	m_toolbar->setIconSize(QSize(18, 18));
 
 	m_save_action = m_toolbar->addAction(QIcon(QStringLiteral(":/icons/save.svg")), tr("Save"));
-	m_save_action->setShortcut(QKeySequence::Save);
-	m_save_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
 	m_save_action->setEnabled(false);
 	connect(m_save_action, &QAction::triggered, this, &NoteView::save);
-	addAction(m_save_action);
 
 	m_toolbar->addSeparator();
 
@@ -214,9 +215,14 @@ void NoteView::redo()
 
 void NoteView::onModification()
 {
-	m_save_action->setEnabled(true);
-	m_note->set_pending_modifications();
-	emit titleChanged(label());
+	// Only mark the note as modified when the document truly has unsaved content.
+	// This avoids spurious modifications (e.g. from setModified(false) during save).
+	if (m_editor->document()->isModified() && !m_note->modified())
+	{
+		m_note->set_pending_modifications();
+		m_save_action->setEnabled(true);
+		emit titleChanged(label());
+	}
 }
 
 void NoteView::onBold()

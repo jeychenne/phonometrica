@@ -116,9 +116,9 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
 	case Qt::DisplayRole:
 	case Qt::EditRole:
 	{
-		auto label = elem->label();
-		auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
 		auto *doc = dynamic_cast<Document *>(elem);
+		auto label = doc ? doc->browser_label() : elem->label();
+		auto qlabel = QString::fromUtf8(label.data(), (int) label.size());
 		if (doc && doc->modified())
 			qlabel += QStringLiteral(" *");
 		return qlabel;

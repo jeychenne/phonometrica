@@ -62,6 +62,12 @@ String Note::label() const
 	return m_path.empty() ? "Untitled note" : split_ext(base_name(m_path)).first;
 }
 
+String Note::browser_label() const
+{
+	using namespace filesystem;
+	return m_path.empty() ? "Untitled note" : base_name(m_path);
+}
+
 void Note::initialize(Runtime &rt)
 {
 
