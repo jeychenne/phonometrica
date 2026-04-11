@@ -981,7 +981,16 @@ void Concordance::load()
 	}
 
 	// Clear existing data so load() is idempotent on reload.
+	m_label.clear();
 	m_matches.clear();
+
+	// Restore label from file if present.
+	{
+		auto lattr = root.attribute("label");
+		if (lattr && lattr.value()[0] != '\0') {
+			m_label = lattr.value();
+		}
+	}
 	m_context.clear();
 	m_extra_headers.clear();
 	m_measurement_points.clear();
@@ -1767,6 +1776,11 @@ int Concordance::context_column_count() const
 String Concordance::label() const
 {
 	return m_label.empty() ? Document::label() : m_label;
+}
+
+String Concordance::browser_label() const
+{
+	return m_label.empty() ? Document::browser_label() : m_label;
 }
 
 void Concordance::set_label(String value, bool mutate)

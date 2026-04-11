@@ -106,6 +106,9 @@ signals:
 	// Emitted when the user requests to create a new note in a directory.
 	void noteRequested(Directory *dir);
 
+	// Emitted when the user requests to run a script from the context menu.
+	void scriptRunRequested(const QString &path);
+
 protected:
 
 	bool eventFilter(QObject *obj, QEvent *event) override;

@@ -193,6 +193,9 @@ public:
 
 	String label() const override;
 
+	// Label for the file browser (with extension when no custom label).
+	virtual String browser_label() const;
+
 	bool has_path() const;
 
 	const String &path() const;

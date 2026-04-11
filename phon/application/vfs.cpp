@@ -312,6 +312,11 @@ Document::Document(Class *klass, Directory *parent, String path) :
 
 String Document::label() const
 {
+	return m_path.empty() ? "Untitled" : filesystem::split_ext(filesystem::base_name(m_path)).first;
+}
+
+String Document::browser_label() const
+{
 	return m_path.empty() ? "Untitled" : filesystem::base_name(m_path);
 }
 

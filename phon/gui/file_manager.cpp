@@ -34,6 +34,7 @@
 #include <phon/application/data_table.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/annotation.hpp>
+#include <phon/application/script.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
@@ -643,6 +644,17 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 
 	auto *doc = dynamic_cast<Document *>(m_model->elementFromIndex(sourceIndex));
 
+	if (auto *script = dynamic_cast<Script *>(doc))
+	{
+		if (script->has_path())
+		{
+			menu.addAction(tr("Run"), [this, script]() {
+				auto &p = script->path();
+				emit scriptRunRequested(QString::fromUtf8(p.data(), (int) p.size()));
+			});
+		}
+	}
+
 	if (auto *dt = dynamic_cast<DataTable *>(doc))
 	{
 		menu.addAction(tr("Analyze"), [this, dt]() {
@@ -697,7 +709,7 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 		if (!doc)
 			return;
 
-		auto label = QString::fromUtf8(doc->label().data(), (int) doc->label().size());
+		auto label = QString::fromUtf8(doc->browser_label().data(), (int) doc->browser_label().size());
 		auto answer = QMessageBox::question(this, tr("Remove file"),
 			tr("Remove \"%1\" from the project?\n(The file on disk is not affected.)").arg(label));
 

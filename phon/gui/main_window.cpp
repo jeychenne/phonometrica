@@ -151,6 +151,7 @@ QMenu *MainWindow::createFileMenu()
 		{
 			auto &lst = Settings::get_list("recent_projects");
 			if (lst.empty()) return;
+			if (!clearForProjectSwitch()) return;
 			auto path = cast<String>(lst[1]);
 			Project::get()->open(path);
 			m_file_manager->refresh();
@@ -419,6 +420,10 @@ void MainWindow::createDockWidgets()
 		}
 	});
 
+	connect(m_file_manager, &FileManager::scriptRunRequested, this, [this](const QString &path) {
+		m_console->runScript(path);
+	});
+
 	m_project_dock->setWidget(m_file_manager);
 	addDockWidget(Qt::LeftDockWidgetArea, m_project_dock);
 
@@ -554,6 +559,7 @@ void MainWindow::rebuildRecentMenu()
 			m_recent_menu->addAction(qpath, [this, path]() {
 				try
 				{
+					if (!clearForProjectSwitch()) return;
 					Project::get()->open(path);
 					m_file_manager->refresh();
 					updateRecentProjects(path);
@@ -629,6 +635,10 @@ void MainWindow::onOpenProject()
 		return;
 
 	setLastDirectory(path);
+
+	// Close all existing views and clear state before switching projects.
+	if (!clearForProjectSwitch())
+		return;
 
 	try
 	{
@@ -726,6 +736,9 @@ void MainWindow::onCloseProject()
 			}
 		}
 	}
+
+	if (!clearForProjectSwitch())
+		return;
 
 	Project::close();
 	m_file_manager->refresh();
@@ -928,6 +941,26 @@ bool MainWindow::closeTab(int index)
 	m_viewer->removeTab(index);
 	updateWindowTitle();
 	m_file_manager->refresh();
+	return true;
+}
+
+bool MainWindow::clearForProjectSwitch()
+{
+	// Close all tabs from last to first, preserving the Welcome tab (a plain QLabel).
+	for (int i = m_viewer->count() - 1; i >= 0; i--)
+	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel)
+			continue; // keep non-ViewPanel tabs (Welcome)
+
+		if (!closeTab(i))
+			return false; // user cancelled
+	}
+
+	// Clear project-specific state.
+	m_last_query = {};
+	m_info_panel->onSelectionChanged({});
+
 	return true;
 }
 

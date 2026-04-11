@@ -44,6 +44,8 @@ public:
 
 	String label() const override;
 
+	String browser_label() const override;
+
     static void initialize(Runtime &rt);
 
 private:
