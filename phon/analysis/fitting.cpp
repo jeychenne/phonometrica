@@ -787,7 +787,21 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 					}
 				}
 
-				auto basis = build_re_basis(levels, indices, (intptr_t)rows.size());
+				// For random slopes: extract numeric by-variable values.
+				std::vector<double> slope_values;
+				if (st.has_by())
+				{
+					intptr_t by_col = find_column(data, st.by);
+					if (!is_numeric_column(data, by_col, rows)) {
+						throw error("Random-slope by-variable '%' must be numeric", st.by);
+					}
+					slope_values.reserve(rows.size());
+					for (intptr_t row : rows) {
+						slope_values.push_back(data.get_cell(row, by_col).to_float());
+					}
+				}
+
+				auto basis = build_re_basis(levels, indices, (intptr_t)rows.size(), slope_values);
 				basis.variable = st.variable;
 
 				intptr_t aug_col = n_parametric;
@@ -978,6 +992,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 			scr.col_start = sl.col_start;
 			scr.col_count = sl.col_count;
 			scr.variable = st.variable;
+			scr.by = st.by;
 			if (!sl.level.empty()) {
 				// Label: "F1:speaker_level" for by-factor
 				scr.variable.append(":");

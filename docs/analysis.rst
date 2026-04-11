@@ -47,18 +47,75 @@ requiring you to specify the shape of the curve in advance. They are useful when
 effect on the response is not a straight line — for instance, formant values that change
 nonlinearly over the course of a vowel.
 
+Basic syntax:
+
 - ``y ~ s(x)``: penalized regression spline of the numeric variable *x* (default: 10 knots, cubic regression spline basis)
 - ``y ~ s(x, k=15)``: spline with 15 knots (increase *k* if you expect a highly wiggly pattern)
 - ``y ~ s(x, by=group)``: a separate smooth for each level of the factor *group*
-- ``y ~ s(speaker, bs=re)``: random intercept for *speaker*, estimated as a penalized smooth term
 
-The ``bs=re`` basis type deserves special attention. It is the recommended way to account for
-**speaker** or **item** grouping structure in a GAM. It is mathematically equivalent to a
-random intercept in a mixed model: each level of the grouping variable (e.g. each speaker)
-gets its own adjustment, and these adjustments are shrunk toward zero to prevent overfitting.
-The degree of shrinkage is estimated automatically from the data.
+Basis types
+^^^^^^^^^^^
 
-You can include multiple ``bs=re`` terms, for example to account for both speakers and items::
+Phonometrica supports two basis types, selected with the ``bs`` argument:
+
+**Cubic regression splines** (``bs=cr``, the default). A ``bs=cr`` smooth models a nonlinear
+relationship between a numeric covariate and the response. The basis consists of natural
+cubic spline functions evaluated at *k* knots placed at quantiles of the covariate. The
+penalty is the integrated squared second derivative of the curve, which measures
+*wiggliness*: higher smoothing parameters produce smoother curves, and in the limit the
+smooth reduces to a straight line. The penalty has rank *k* − 2, because the penalty null
+space — the set of functions with zero second derivative — is the family of straight lines
+(intercept + slope), which are left unpenalized. An identifiability constraint (sum-to-zero
+across the data) is absorbed into the basis, reducing the effective dimension from *k* to
+*k* − 1. This ensures the smooth is identifiable in the presence of a model intercept.
+
+For example::
+
+   F1 ~ vowel + s(duration)
+   F1 ~ vowel + s(duration, k=20)
+
+**Random effects** (``bs=re``). A ``bs=re`` smooth models group-level deviations for a
+categorical factor. The basis is an indicator matrix (one column per level), and the
+penalty is the identity matrix, which shrinks all group adjustments toward zero. This is
+mathematically equivalent to a random effect with variance σ²_u = σ²_ε / λ, where λ is
+the smoothing parameter estimated by GCV (Generalized Cross-Validation, an efficient
+approximation to leave-one-out cross-validation that selects the degree of smoothing by
+minimizing prediction error). The key difference from ``bs=cr`` is that
+``bs=re`` does not model a smooth curve — it models a set of discrete group-level
+adjustments.
+
+Random intercepts and random slopes
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The ``bs=re`` basis supports two kinds of random effects:
+
+**Random intercepts**: ``s(speaker, bs=re)`` gives each speaker a constant adjustment to the
+response. This is the GAM equivalent of ``(1|speaker)`` in a mixed model.
+
+**Random slopes**: ``s(speaker, by=duration, bs=re)`` gives each speaker a different slope
+for the numeric variable *duration*. This is the GAM equivalent of ``(0 + duration | speaker)``
+in a mixed model. Note that the ``by`` argument has a different meaning here than for
+``bs=cr``: for ``bs=cr``, ``by=factor`` fits a separate smooth per factor level; for
+``bs=re``, ``by=numeric`` scales the group indicators by the covariate value.
+
+To model both random intercepts and random slopes for the same grouping variable, include
+two separate ``bs=re`` terms. This gives **uncorrelated** random effects (each with its own
+smoothing parameter)::
+
+   F1 ~ vowel + s(duration) + s(speaker, bs=re) + s(speaker, by=duration, bs=re)
+
+.. note::
+
+   **Why two terms instead of one?** Unlike the mixed-model syntax where
+   ``(1 + duration | speaker)`` bundles intercept and slope into a single term, the GAM
+   framework requires separate smooth terms because each one has its own smoothing parameter
+   (and therefore its own variance component), estimated independently by GCV. The formula
+   ``s(speaker, bs=re) + s(speaker, by=duration, bs=re)`` is the standard way to express
+   this in mgcv and in Phonometrica. Removing the slope variable from the formula (e.g.
+   right-clicking *duration* and choosing *Remove from formula*) will remove the slope term
+   while leaving the random intercept in place.
+
+You can also cross grouping factors::
 
    F1 ~ vowel + s(duration) + s(speaker, bs=re) + s(item, bs=re)
 
@@ -75,6 +132,15 @@ You can include multiple ``bs=re`` terms, for example to account for both speake
    Combining ``s()`` smooth terms with ``(1|group)`` random effects in the same formula is not
    currently supported. If you need both a nonlinear smooth and grouping structure, use
    ``bs=re`` for the grouping.
+
+.. note::
+
+   **Correlated vs uncorrelated random effects.** Two separate ``bs=re`` terms for the same
+   group (one for intercepts, one for slopes) produce uncorrelated random effects — the
+   correlation between a speaker's intercept adjustment and slope adjustment is assumed to be
+   zero. This is analogous to fitting two separate ``(0 + ... | group)`` terms in lme4. If
+   you need correlated random intercepts and slopes, use the mixed-model syntax
+   ``(1 + x | group)`` with parametric fixed effects instead of smooth terms.
 
 .. note::
 
@@ -114,6 +180,9 @@ The left panel lists all the columns available in the source data.
   - *Add as grouping factor*: add a random intercept ``(1 | group)`` for mixed-effects models.
   - *Add smooth for grouping*: (categorical columns only) add a penalized random intercept
     ``s(group, bs=re)`` for use in GAM models.
+  - *Add smooth for random slope in...*: (categorical columns only) add a penalized random
+    slope ``s(group, by=numeric, bs=re)`` for use in GAM models. A submenu lists the
+    available numeric columns as slope variables.
   - *Add correlated slope in...*: add this variable as a random slope inside an existing random term
     (e.g. ``(1 + a | speaker)``).
   - *Add independent slope in...*: add this variable as a random slope in a new random term
@@ -461,11 +530,12 @@ Phonometrica's statistical engine supports the following model families:
 - **Poisson** (log link): Poisson regression and Poisson mixed models.
 - **Negative binomial** (log link, NB2 parameterization): for overdispersed count data.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
-  smooths, per-smooth significance tests, and random intercepts via ``bs=re`` to account for
-  speaker/item grouping.
+  smooths, per-smooth significance tests, and random intercepts and random slopes via ``bs=re``
+  to account for speaker/item grouping.
 
 All model types support random intercepts and random slopes (mixed-effects models).
-GAM models support grouping structure through ``s(group, bs=re)`` smooth terms.
+GAM models support grouping structure through ``s(group, bs=re)`` smooth terms (random
+intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
 
 
 Tips
@@ -483,7 +553,8 @@ Tips
 - When fitting a GAM with speaker or item effects, use ``s(speaker, bs=re)`` rather than
   a fixed effect for the grouping variable. This estimates the between-group variance and
   shrinks group estimates toward the population mean, reducing overfitting — especially
-  when some groups have few observations.
+  when some groups have few observations. If the effect of a covariate varies by speaker,
+  add a random slope: ``s(speaker, by=duration, bs=re)``.
 - After fitting a model with a categorical predictor, switch to the **Post-hoc** tab to
   see which levels differ from each other. The Holm adjustment (default) controls the
   family-wise error rate while being more powerful than Bonferroni.

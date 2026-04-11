@@ -373,6 +373,8 @@ void Analysis::write()
 				auto &sm = m.smooth_terms[i];
 				auto sn = sm_node.append_child("Smooth");
 				add_data_node(sn, "Variable", sm.variable);
+				if (!sm.by.empty())
+					add_data_node(sn, "By", sm.by);
 				add_data_node(sn, "Basis", sm.basis);
 				add_data_node(sn, "K", String::convert(sm.k));
 				add_data_node(sn, "Edf", String::format("%.17g", sm.edf));
@@ -540,6 +542,7 @@ void Analysis::load()
 								auto sft = sf.text().get();
 
 								if (sfn == "Variable")       sm.variable = sft;
+								else if (sfn == "By")        sm.by = sft;
 								else if (sfn == "Basis")     sm.basis = sft;
 								else if (sfn == "K")         sm.k = String(sft).to_int();
 								else if (sfn == "Edf")       sm.edf = parse_double_safe(sft);
