@@ -1499,6 +1499,23 @@ void ConcordanceView::updateColumnVisibility()
 {
 	int ncol = m_model->columnCount();
 
+	// Check if all annotations have empty descriptions (computed once).
+	bool hide_description = false;
+	if (m_show_metadata)
+	{
+		hide_description = true;
+		intptr_t nrows = m_conc->row_count();
+		for (intptr_t r = 1; r <= nrows; r++)
+		{
+			if (!m_conc->get_match(r).annotation()->description().empty()) {
+				hide_description = false;
+				break;
+			}
+		}
+	}
+
+	intptr_t desc_col = m_conc->column_count(); // 1-based index of description column
+
 	// First, show all columns to clear stale hidden states from before
 	// a model reset (column indices may have shifted after adding/removing ERB/Bark).
 	for (int j = 0; j < ncol; j++)
@@ -1519,7 +1536,12 @@ void ConcordanceView::updateColumnVisibility()
 		}
 		else if (m_conc->is_metadata_column(col))
 		{
-			m_table->setColumnHidden(j, !m_show_metadata);
+			bool hidden = !m_show_metadata;
+			// Hide description column if all descriptions are empty.
+			if (!hidden && hide_description && col == desc_col) {
+				hidden = true;
+			}
+			m_table->setColumnHidden(j, hidden);
 		}
 		// Target and measurement columns are always visible.
 	}
