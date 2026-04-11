@@ -19,7 +19,6 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <cctype>
 #include <cstdlib>
 #include <string>
 #include <phon/analysis/formula.hpp>
@@ -44,10 +43,12 @@ bool FixedTerm::operator==(const FixedTerm &other) const
 static String quote_name(const String &name)
 {
 	bool needs_quoting = false;
-	for (auto c = name.begin(); c != name.end(); ++c)
+	auto it = name.begin();
+	auto end = name.end();
+	while (it < end)
 	{
-		unsigned char ch = static_cast<unsigned char>(*c);
-		if (ch == ' ' || ch == '\t') {
+		char32_t cp = name.next_codepoint(it);
+		if (cp == U' ' || cp == U'\t') {
 			needs_quoting = true;
 			break;
 		}
@@ -136,6 +137,15 @@ String Formula::to_string() const
 	String result = quote_name(response);
 	result.append(" ~ ");
 
+	bool has_terms = !fixed.empty() || !smooth.empty() || !random.empty();
+
+	if (!has_terms)
+	{
+		// Intercept-only model: emit explicit "1" (or "0" if intercept was removed).
+		result.append(intercept ? "1" : "0");
+		return result;
+	}
+
 	if (!intercept)
 	{
 		result.append("0 + ");
@@ -213,7 +223,7 @@ Array<String> Formula::all_variables() const
 
 
 // =====================================================================
-// Tokenizer
+// Tokenizer (Unicode-aware via String::next_codepoint / is_letter)
 // =====================================================================
 
 namespace {
@@ -248,7 +258,7 @@ class Tokenizer
 public:
 
 	explicit Tokenizer(const String &input)
-		: m_input(input.data()), m_pos(input.data()), m_end(input.data() + input.size())
+		: m_input(input), m_pos(input.begin()), m_end(input.end())
 	{
 	}
 
@@ -260,102 +270,142 @@ public:
 			return { TokenType::End, "", 0 };
 		}
 
-		char c = *m_pos;
+		// Peek at the leading byte. All operator tokens and digits are ASCII,
+		// so a single-byte check is safe: UTF-8 continuation bytes are always >= 0x80,
+		// and multi-byte leading bytes are also >= 0x80.
+		unsigned char lead = static_cast<unsigned char>(*m_pos);
 
-		switch (c)
+		if (lead < 0x80)
 		{
-		case '~': m_pos++; return { TokenType::Tilde, "~", 0 };
-		case '+': m_pos++; return { TokenType::Plus, "+", 0 };
-		case '-': m_pos++; return { TokenType::Minus, "-", 0 };
-		case '*': m_pos++; return { TokenType::Star, "*", 0 };
-		case ':': m_pos++; return { TokenType::Colon, ":", 0 };
-		case '|': m_pos++; return { TokenType::Pipe, "|", 0 };
-		case '(': m_pos++; return { TokenType::LParen, "(", 0 };
-		case ')': m_pos++; return { TokenType::RParen, ")", 0 };
-		case ',': m_pos++; return { TokenType::Comma, ",", 0 };
-		case '=': m_pos++; return { TokenType::Equals, "=", 0 };
-		default:
-			break;
+			char c = static_cast<char>(lead);
+
+			switch (c)
+			{
+			case '~': m_pos++; return { TokenType::Tilde, "~", 0 };
+			case '+': m_pos++; return { TokenType::Plus, "+", 0 };
+			case '-': m_pos++; return { TokenType::Minus, "-", 0 };
+			case '*': m_pos++; return { TokenType::Star, "*", 0 };
+			case ':': m_pos++; return { TokenType::Colon, ":", 0 };
+			case '|': m_pos++; return { TokenType::Pipe, "|", 0 };
+			case '(': m_pos++; return { TokenType::LParen, "(", 0 };
+			case ')': m_pos++; return { TokenType::RParen, ")", 0 };
+			case ',': m_pos++; return { TokenType::Comma, ",", 0 };
+			case '=': m_pos++; return { TokenType::Equals, "=", 0 };
+			default:
+				break;
+			}
+
+			// Quoted name: 'name with spaces'
+			if (c == '\'')
+			{
+				m_pos++; // skip opening quote
+				const char *start = m_pos;
+				while (m_pos < m_end && *m_pos != '\'') {
+					m_pos++;
+				}
+				if (m_pos >= m_end) {
+					throw error("Unterminated quoted name in formula");
+				}
+				String name(start, m_pos - start);
+				m_pos++; // skip closing quote
+				return { TokenType::Name, std::move(name), 0 };
+			}
+
+			// Integer: one or more ASCII digits.
+			if (c >= '0' && c <= '9')
+			{
+				const char *start = m_pos;
+				while (m_pos < m_end && *m_pos >= '0' && *m_pos <= '9') {
+					m_pos++;
+				}
+				String num_str(start, m_pos - start);
+				int value = std::atoi(std::string(start, m_pos - start).c_str());
+				return { TokenType::Number, std::move(num_str), value };
+			}
+
+			// ASCII letter or underscore: start of a name.
+			if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_')
+			{
+				return scan_name();
+			}
+
+			// Unrecognized ASCII character.
+			throw error("Unexpected character '%' in formula", String(m_pos, 1));
 		}
 
-		// Quoted name: 'name with spaces'
-		if (c == '\'')
+		// Non-ASCII leading byte: must be the start of a Unicode letter for a name.
+		// Decode the codepoint to check.
+		auto saved = m_pos;
+		char32_t cp = m_input.next_codepoint(m_pos);
+
+		if (String::is_letter(cp))
 		{
-			m_pos++; // skip opening quote
-			const char *start = m_pos;
-			while (m_pos < m_end && *m_pos != '\'') {
-				m_pos++;
-			}
-			if (m_pos >= m_end) {
-				throw error("Unterminated quoted name in formula");
-			}
-			String name(start, m_pos - start);
-			m_pos++; // skip closing quote
-			return { TokenType::Name, std::move(name), 0 };
+			// Put the iterator back and let scan_name() handle the whole name.
+			m_pos = saved;
+			return scan_name();
 		}
 
-		// Integer: one or more digits.
-		// Single 0 or 1 followed by a non-digit is used for intercept control.
-		// Multi-digit integers are used for k= in smooth terms.
-		if (std::isdigit(static_cast<unsigned char>(c)))
-		{
-			const char *start = m_pos;
-			while (m_pos < m_end && std::isdigit(static_cast<unsigned char>(*m_pos))) {
-				m_pos++;
-			}
-			String num_str(start, m_pos - start);
-			int value = std::atoi(std::string(start, m_pos - start).c_str());
-			return { TokenType::Number, std::move(num_str), value };
-		}
-
-		// Name: [a-zA-Z_][a-zA-Z0-9_.]* 
-		if (is_name_start(c))
-		{
-			const char *start = m_pos;
-			while (m_pos < m_end && is_name_char(*m_pos)) {
-				m_pos++;
-			}
-			return { TokenType::Name, String(start, m_pos - start), 0 };
-		}
-
-		throw error("Unexpected character '%' in formula", String(&c, 1));
-	}
-
-	// Peek at the next token without consuming it.
-	Token peek_token()
-	{
-		const char *saved = m_pos;
-		Token tok = next();
+		// Not a letter — error.
 		m_pos = saved;
-		return tok;
+		String bad_char(cp, 1);
+		throw error("Unexpected character '%' in formula", bad_char);
 	}
 
 private:
 
+	// Scan a name token. The caller has verified that the current position
+	// starts with a valid name-start character (Unicode letter, ASCII letter, or '_').
+	// Name characters: Unicode letters, ASCII digits, '_', '.'
+	Token scan_name()
+	{
+		const char *start = m_pos;
+
+		while (m_pos < m_end)
+		{
+			auto before = m_pos;
+			unsigned char lead = static_cast<unsigned char>(*m_pos);
+
+			if (lead < 0x80)
+			{
+				// ASCII range: allow [a-zA-Z0-9_.]
+				char c = static_cast<char>(lead);
+				if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+				    (c >= '0' && c <= '9') || c == '_' || c == '.')
+				{
+					m_pos++;
+					continue;
+				}
+				break; // ASCII but not a name character
+			}
+			else
+			{
+				// Multi-byte: decode and check if it's a Unicode letter.
+				char32_t cp = m_input.next_codepoint(m_pos);
+				if (String::is_letter(cp)) {
+					continue; // m_pos already advanced by next_codepoint
+				}
+				m_pos = before; // not a letter, put back
+				break;
+			}
+		}
+
+		return { TokenType::Name, String(start, m_pos - start), 0 };
+	}
+
 	void skip_whitespace()
 	{
-		while (m_pos < m_end && std::isspace(static_cast<unsigned char>(*m_pos))) {
-			m_pos++;
+		while (m_pos < m_end)
+		{
+			unsigned char ch = static_cast<unsigned char>(*m_pos);
+			if (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r') {
+				m_pos++;
+			} else {
+				break;
+			}
 		}
 	}
 
-	char peek(int offset) const
-	{
-		const char *p = m_pos + offset;
-		return (p < m_end) ? *p : '\0';
-	}
-
-	static bool is_name_start(char c)
-	{
-		return std::isalpha(static_cast<unsigned char>(c)) || c == '_';
-	}
-
-	static bool is_name_char(char c)
-	{
-		return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.';
-	}
-
-	const char *m_input;
+	const String &m_input;
 	const char *m_pos;
 	const char *m_end;
 };
@@ -645,8 +695,6 @@ private:
 		RandomTerm rt;
 		rt.intercept = true;
 
-		bool explicit_intercept = false;
-
 		// Parse inner elements: "1 + vowel" or "0 + vowel" or just "1"
 		while (m_current.type != TokenType::Pipe)
 		{
@@ -655,7 +703,6 @@ private:
 				if (m_current.value == 0) {
 					rt.intercept = false;
 				}
-				explicit_intercept = true;
 				advance();
 			}
 			else if (m_current.type == TokenType::Name)
