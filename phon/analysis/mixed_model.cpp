@@ -1682,7 +1682,9 @@ static ProfiledResult solve_u_given_beta(
 			}
 		}
 
-		Eigen::VectorXd mu = fam.linkinv(eta.cwiseMax(-30.0).cwiseMin(30.0));
+		Eigen::VectorXd mu = (fam.link_name == "identity")
+		    ? fam.linkinv(eta)
+		    : fam.linkinv(eta.cwiseMax(-30.0).cwiseMin(30.0));
 
 		// Working weights and residual r = z - Xβ
 		Eigen::VectorXd w(n), r(n);
@@ -1840,7 +1842,9 @@ static ProfiledResult solve_u_given_beta(
 				eta_f[i] += lay.Z(g, i, t) * res.u[base + t];
 		}
 	}
-	res.mu = fam.linkinv(eta_f.cwiseMax(-30.0).cwiseMin(30.0));
+	res.mu = (fam.link_name == "identity")
+	    ? fam.linkinv(eta_f)
+	    : fam.linkinv(eta_f.cwiseMax(-30.0).cwiseMin(30.0));
 
 	// ── Laplace NLL ──
 	double cond_nll = -fam.loglik(ym, res.mu);
@@ -1952,7 +1956,7 @@ struct PirlsObjective
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t = std::exp(theta[n_chol + 1]);
+			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 			auto fam_t = Family::student(sigma_t, nu_t);
 			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u);
 		}
@@ -2021,7 +2025,7 @@ struct LaplaceJointObjective
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(phi[p + n_chol]);
-			double nu_t = std::exp(phi[p + n_chol + 1]);
+			double nu_t = std::clamp(std::exp(phi[p + n_chol + 1]), 2.0, 200.0);
 			fam_used = Family::student(sigma_t, nu_t);
 		}
 
@@ -2557,8 +2561,31 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		else if (is_student)
 		{
-			// Initialize σ from OLS residual standard error.
-			double sigma_init = std::max(fe.rse, 0.01);
+			// Initialize σ from a MAD-based robust scale estimate of the OLS
+			// residuals. The OLS RSE is inflated by outliers (the very thing
+			// t-regression is meant to handle) and by random-effects variance,
+			// leading to weights that are too flat to detect heavy tails.
+			// MAD * 1.4826 is a consistent estimator of σ for normal data,
+			// and is much less inflated by outliers from t-distributed errors.
+			Eigen::VectorXd ols_resid(n);
+			for (intptr_t i = 0; i < n; i++) {
+				ols_resid[i] = fe.residuals[i + 1];
+			}
+			// Compute median of |residuals - median(residuals)|
+			std::vector<double> abs_dev(n);
+			std::nth_element(ols_resid.data(), ols_resid.data() + n / 2, ols_resid.data() + n);
+			double median_r = ols_resid[n / 2];
+			for (intptr_t i = 0; i < n; i++) {
+				abs_dev[i] = std::abs(ols_resid[i] - median_r);
+			}
+			std::nth_element(abs_dev.data(), abs_dev.data() + n / 2, abs_dev.data() + n);
+			double mad = abs_dev[n / 2];
+			double sigma_init = std::max(mad * 1.4826, 0.01);
+			// For mixed models, the MAD includes random-effects variance.
+			// Halve it as a heuristic to separate σ from σ_u.
+			if (G > 0) {
+				sigma_init *= 0.5;
+			}
 			theta[n_chol] = std::log(sigma_init);
 			// Initialize ν = 5 (moderately heavy tails; ν → ∞ is Gaussian).
 			theta[n_chol + 1] = std::log(5.0);
@@ -2578,6 +2605,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// the working weights W = μ(1−μ). Phase 1 PIRLS profiles β
 		// out ignoring ∂log|H|/∂β; Phase 2 re-optimizes (β, θ)
 		// jointly with u profiled out, matching lme4/glmmTMB.
+		//
+		// For Student t, Phase 2 is skipped: the σ–ν correlation
+		// makes the joint (β, σ, ν) Hessian ill-conditioned, and
+		// Phase 1 PIRLS profiling already gives accurate β̂.
 		{
 			// Get Phase 1 β̂ via one PIRLS call at converged θ
 			std::vector<Eigen::MatrixXd> D_inv_p1(G);
@@ -2599,27 +2630,35 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			else if (is_beta)
 				fam_p1 = Family::beta(std::exp(theta[n_chol]));
 			else if (is_student)
-				fam_p1 = Family::student(std::exp(theta[n_chol]), std::exp(theta[n_chol + 1]));
+				fam_p1 = Family::student(std::exp(theta[n_chol]), std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0));
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
 			                             Xm, ym, lay, n, p, beta_init);
 
-			// Build Phase 2 parameter vector: [β, θ]
-			intptr_t outer_dim2 = p + (intptr_t)theta.size();
-			Eigen::VectorXd phi2(outer_dim2);
-			phi2.head(p) = p1_pirls.beta;
-			phi2.tail(theta.size()) = theta;
+			if (is_student)
+			{
+				// Student t: use Phase 1 β̂ directly (no Phase 2).
+				beta_hat = p1_pirls.beta;
+			}
+			else
+			{
+				// Build Phase 2 parameter vector: [β, θ]
+				intptr_t outer_dim2 = p + (intptr_t)theta.size();
+				Eigen::VectorXd phi2(outer_dim2);
+				phi2.head(p) = p1_pirls.beta;
+				phi2.tail(theta.size()) = theta;
 
-			LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol};
-			joint_obj.last_u = std::move(p1_pirls.u);
+				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol};
+				joint_obj.last_u = std::move(p1_pirls.u);
 
-			auto res2 = newton_optimize(joint_obj, phi2, 200, 1e-8, progress, 1e-2);
+				auto res2 = newton_optimize(joint_obj, phi2, 200, 1e-8, progress, 1e-2);
 
-			// Update β and θ from Phase 2
-			beta_hat = res2.theta.head(p);
-			theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
-			niter += res2.niter;
-			converged = res2.converged;
+				// Update β and θ from Phase 2
+				beta_hat = res2.theta.head(p);
+				theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
+				niter += res2.niter;
+				converged = res2.converged;
+			}
 		}
 
 		// ── Unpack converged Cholesky → D_inv, sigma2_u, log_det_Dg ──
@@ -2654,7 +2693,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// For Student t, update the Family with the converged σ and ν
 		else if (is_student) {
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t = std::exp(theta[n_chol + 1]);
+			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 			fam_used = Family::student(sigma_t, nu_t);
 		}
 

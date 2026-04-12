@@ -234,3 +234,31 @@ compare(s1, s2)
 print ""
 print "--- Model comparison: M2 vs M3 ---"
 compare(s2, s3)
+
+
+# ── 6b. STUDENT T MILD ───────────────────────────────────
+
+print ""
+print "======================================================================"
+print " STUDENT T MILD (nu=10)"
+print "======================================================================"
+
+let dm = load(root & "student_f1_mild.csv")
+
+print ""
+print "--- M1: f1 ~ vowel + gender ---"
+t1 = fit("f1 ~ vowel + gender", dm, "student")
+summarize(t1)
+print "sigma = " & t1.sigma
+print "nu    = " & t1.nu
+
+print ""
+print "--- M2: f1 ~ vowel + gender + (1|speaker) ---"
+t2 = fit("f1 ~ vowel + gender + (1|speaker)", dm, "student")
+summarize(t2)
+print "sigma = " & t2.sigma
+print "nu    = " & t2.nu
+
+print ""
+print "--- Model comparison: M1 vs M2 ---"
+compare(t1, t2)

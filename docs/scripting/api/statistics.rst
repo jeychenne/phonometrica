@@ -67,11 +67,17 @@ Supported families:
 * ``"poisson"``: Poisson regression / Poisson GLMM (log link)
 * ``"negbin"``: negative binomial regression / NB GLMM (log link)
 * ``"beta"``: beta regression / beta GLMM (logit link), for proportions in (0, 1)
+* ``"student"``: Student *t* regression / *t* mixed model (identity link), for continuous
+  outcomes with heavy-tailed residuals (e.g. formant measurements with tracking errors).
+  The scale parameter σ and the degrees-of-freedom parameter ν are estimated jointly
+  with the regression coefficients. Observations with large residuals are automatically
+  down-weighted, making the estimates robust to outliers. When ν → ∞, the model reduces
+  to Gaussian regression.
 
 Returns a Model object with the following fields:
 
 * ``formula``: the formula string
-* ``family``: the family name (e.g. ``"gaussian"``, ``"beta"``)
+* ``family``: the family name (e.g. ``"gaussian"``, ``"beta"``, ``"student"``)
 * ``link``: the link function name (e.g. ``"identity"``, ``"logit"``, ``"log"``)
 * ``nobs``: number of observations
 * ``aic``: Akaike Information Criterion
@@ -86,6 +92,8 @@ Returns a Model object with the following fields:
 * ``df``: residual degrees of freedom
 * ``theta``: overdispersion parameter (negative binomial only; 0 otherwise)
 * ``phi``: precision parameter (beta only; 0 otherwise)
+* ``sigma``: scale parameter (Student *t* only; 0 otherwise)
+* ``nu``: degrees of freedom (Student *t* only; 0 otherwise)
 * ``converged``: Boolean indicating whether the optimizer converged
 * ``niter``: number of iterations (0 for OLS)
 
@@ -99,6 +107,11 @@ Example::
    let m2 = fit("voicing ~ consonant + position + (1|speaker)", ds, "beta")
    summarize m2
    print "phi = " & m2.phi
+
+   let m3 = fit("f1 ~ vowel + gender + (1|speaker)", ds, "student")
+   summarize m3
+   print "sigma = " & m3.sigma
+   print "nu    = " & m3.nu
 
 ------------
 
