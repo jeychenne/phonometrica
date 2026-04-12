@@ -25,6 +25,7 @@
 #include <cmath>
 #include <functional>
 #include <stdexcept>
+#include <boost/math/special_functions/digamma.hpp>
 #include <phon/string.hpp>
 #include <phon/utils/matrix.hpp>
 
@@ -43,7 +44,7 @@ namespace phonometrica::stats {
 
 struct Family
 {
-	String name;      // "gaussian", "binomial", "poisson", "negbin", "beta"
+	String name;      // "gaussian", "binomial", "poisson", "negbin", "beta", "student"
 	String link_name; // "identity", "logit", "log"
 
 	// Overdispersion parameter for negative binomial (θ > 0).
@@ -53,6 +54,15 @@ struct Family
 	// Precision parameter for beta regression (φ > 0).
 	// Unused (0) for other families.
 	double phi = 0;
+
+	// Scale parameter for Student t regression (σ > 0).
+	// Unused (0) for other families.
+	double sigma = 0;
+
+	// Degrees-of-freedom parameter for Student t regression (ν > 0).
+	// Controls tail heaviness; ν → ∞ reduces to Gaussian.
+	// Unused (0) for other families.
+	double nu = 0;
 
 	// Inverse link: μ = g⁻¹(η)
 	// Maps the linear predictor to the mean of the response.
@@ -69,7 +79,8 @@ struct Family
 	// Variance function: V(μ)
 	// Returns a vector of per-observation variances as a function of the mean.
 	// For Gaussian: V(μ) = 1; for Binomial: V(μ) = μ(1-μ); for Poisson: V(μ) = μ;
-	// for NB: V(μ) = μ + μ²/θ; for Beta: V(μ) = μ(1-μ)/(1+φ).
+	// for NB: V(μ) = μ + μ²/θ; for Beta: V(μ) = μ(1-μ)/(1+φ);
+	// for Student: V(μ) = 1 (identity link, weights handled via custom_weights).
 	std::function<Vector<double>(const Vector<double> &mu)> variance;
 
 	// Derivative of inverse link: dμ/dη.
@@ -81,22 +92,38 @@ struct Family
 	// Returns the vector of signed deviance residuals.
 	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu)> deviance_residuals;
 
+	// Optional custom IWLS weights for non-standard families (e.g. Student t).
+	// Takes (y, mu) and returns per-observation weights.  When set, replaces
+	// the standard (dμ/dη)² / V(μ) weight computation in PIRLS.
+	// Student t:  w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²).
+	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu)> custom_weights;
+
 	// Factory methods for supported families.
 	static Family gaussian();
 	static Family binomial();
 	static Family poisson();
 	static Family negbin(double theta);
 	static Family beta(double phi);
+	static Family student(double sigma, double nu);
 
 	// Look up a family by name. Throws if not found.
 	// For "negbin", creates with theta=1 (caller should set theta afterwards).
 	// For "beta", creates with phi=1 (caller should set phi afterwards).
+	// For "student", creates with sigma=1, nu=5 (caller should update).
 	static Family from_name(const String &name);
 
-	// Returns true if this family has an extra dispersion/precision parameter
-	// that must be estimated (i.e. negbin θ or beta φ). Used by the mixed-model
-	// engine to decide whether to append an extra outer parameter.
-	bool has_dispersion_param() const { return name == "negbin" || name == "beta"; }
+	// Returns true if this family has extra parameters that must be estimated
+	// beyond the standard fixed-effects coefficients and variance components.
+	bool has_dispersion_param() const { return name == "negbin" || name == "beta" || name == "student"; }
+
+	// Number of extra dispersion/scale parameters to append to the outer
+	// optimization vector:  0 for standard families, 1 for NB/beta, 2 for Student t.
+	int n_dispersion_params() const
+	{
+		if (name == "negbin" || name == "beta") return 1;
+		if (name == "student") return 2;
+		return 0;
+	}
 };
 
 // ---------------------------------------------------------------------------
@@ -381,6 +408,79 @@ inline Vector<double> beta_deviance_residuals(const Vector<double> &y, const Vec
 	return dr;
 }
 
+// --- Student t (identity link, location-scale regression) ---
+//
+// y ~ t(μ, σ, ν)  where μ is the location (mean for ν > 1),
+// σ > 0 is the scale, and ν > 0 is the degrees of freedom.
+//
+// E[Y] = μ (for ν > 1),  Var(Y) = σ² ν/(ν−2) (for ν > 2)
+//
+// log f(y|μ,σ,ν) = lgamma((ν+1)/2) - lgamma(ν/2) - ½ log(νπσ²)
+//                - (ν+1)/2 · log(1 + (y−μ)²/(νσ²))
+//
+// Identity link (η = μ): same as Gaussian.
+//
+// IWLS weights (Fisher scoring for the location parameter):
+//   w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²)
+//
+// These are observation-dependent and downweight outliers: when ν → ∞,
+// w_i → 1/σ² (Gaussian); when ν is small, large residuals get much
+// lower weight.  This is what makes t-regression robust.
+//
+// Mathematical reference:
+//   Lange, K. L., Little, R. J. A. & Taylor, J. M. G. (1989). Robust
+//   statistical modeling using the t distribution. JASA, 84(408), 881–896.
+
+// Link and inverse link are the same as Gaussian (identity).
+
+inline double student_loglik(const Vector<double> &y, const Vector<double> &mu,
+                              double sigma, double nu)
+{
+	intptr_t n = y.size();
+	double ll = 0;
+	double log_const = std::lgamma(0.5 * (nu + 1.0)) - std::lgamma(0.5 * nu)
+	                   - 0.5 * std::log(nu * M_PI * sigma * sigma);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double r = y[i] - mu[i];
+		ll += log_const - 0.5 * (nu + 1.0) * std::log(1.0 + r * r / (nu * sigma * sigma));
+	}
+	return ll;
+}
+
+inline Vector<double> student_weights(const Vector<double> &y, const Vector<double> &mu,
+                                       double sigma, double nu)
+{
+	// w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²)
+	intptr_t n = y.size();
+	double nu_sigma2 = nu * sigma * sigma;
+	Vector<double> w(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double r = y[i] - mu[i];
+		w[i] = (nu + 1.0) / (nu_sigma2 + r * r);
+	}
+	return w;
+}
+
+inline Vector<double> student_deviance_residuals(const Vector<double> &y, const Vector<double> &mu,
+                                                  double sigma, double nu)
+{
+	// Signed deviance residuals: d_i = sign(y_i − μ_i) · sqrt(2 (ll_sat − ll_fit))
+	// The saturated model has μ = y (ll_sat_i = log_const, since log(1 + 0) = 0).
+	intptr_t n = y.size();
+	Vector<double> dr(n);
+	double sigma2 = sigma * sigma;
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double r = y[i] - mu[i];
+		// ll_sat_i - ll_fit_i = (ν+1)/2 · log(1 + r²/(νσ²))
+		double d = (nu + 1.0) * std::log(1.0 + r * r / (nu * sigma2));
+		dr[i] = (r >= 0 ? 1.0 : -1.0) * std::sqrt(std::max(d, 0.0));
+	}
+	return dr;
+}
+
 } // namespace detail
 
 // ---------------------------------------------------------------------------
@@ -480,13 +580,43 @@ inline Family Family::beta(double phi)
 	return f;
 }
 
+inline Family Family::student(double sigma, double nu)
+{
+	Family f;
+	f.name = "student";
+	f.link_name = "identity";
+	f.sigma = sigma;
+	f.nu = nu;
+
+	// Identity link: same as Gaussian.
+	f.linkinv = detail::gaussian_linkinv;
+	f.link = detail::gaussian_link;
+	f.mu_eta = detail::gaussian_mu_eta;
+
+	// V(μ) = 1 for IWLS fallback (not used when custom_weights is set).
+	f.variance = detail::gaussian_variance;
+
+	// Capture σ and ν by value in lambdas.
+	f.loglik = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+		return detail::student_loglik(y, mu, sigma, nu);
+	};
+	f.deviance_residuals = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+		return detail::student_deviance_residuals(y, mu, sigma, nu);
+	};
+	f.custom_weights = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+		return detail::student_weights(y, mu, sigma, nu);
+	};
+	return f;
+}
+
 inline Family Family::from_name(const String &name)
 {
 	if (name == "gaussian") return gaussian();
 	if (name == "binomial") return binomial();
 	if (name == "poisson")  return poisson();
-	if (name == "negbin")   return negbin(1.0); // default θ; caller should update
-	if (name == "beta")     return beta(1.0);   // default φ; caller should update
+	if (name == "negbin")   return negbin(1.0);      // default θ; caller should update
+	if (name == "beta")     return beta(1.0);         // default φ; caller should update
+	if (name == "student")  return student(1.0, 5.0); // default σ, ν; caller should update
 	throw error("Unknown family: \"%\"", name);
 }
 

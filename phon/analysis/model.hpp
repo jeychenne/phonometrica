@@ -133,6 +133,10 @@ struct Model
 	// ---- Beta regression specific ----
 	double phi = 0;            // Beta precision parameter (φ > 0); 0 for other families
 
+	// ---- Student t regression specific ----
+	double sigma = 0;          // Student t scale parameter (σ > 0); 0 for other families
+	double nu = 0;             // Student t degrees of freedom (ν > 0); 0 for other families
+
 	// ---- Convergence (iterative methods) ----
 	int niter = 0;             // number of iterations (0 for OLS)
 	bool converged = true;     // whether the optimizer converged
@@ -183,6 +187,8 @@ struct Model
 
 	bool is_beta() const { return family == "beta"; }
 
+	bool is_student() const { return family == "student"; }
+
 	// Number of estimated parameters (for AIC/BIC).
 	// Fixed-effects parameters + dispersion (if Gaussian, NB, or Beta) + variance components.
 	intptr_t nparams() const
@@ -191,6 +197,7 @@ struct Model
 		if (is_gaussian()) k += 1; // residual variance
 		if (is_negbin()) k += 1;   // overdispersion θ
 		if (is_beta()) k += 1;     // precision φ
+		if (is_student()) k += 2;  // scale σ and degrees of freedom ν
 		for (intptr_t i = 1; i <= random_effects.size(); i++)
 		{
 			auto &g = random_effects[i];
@@ -314,6 +321,14 @@ struct Model
 			mu_bar = std::clamp(mu_bar, 1e-6, 1.0 - 1e-6);
 			double phi_val = std::max(phi, 1e-10);
 			var_d = boost::math::trigamma(mu_bar * phi_val) + boost::math::trigamma((1.0 - mu_bar) * phi_val);
+		}
+		else if (is_student())
+		{
+			// Student t with identity link: use σ² directly.
+			// Defensible since the t distribution is a scale mixture of normals.
+			// For ν > 2, Var(Y) = σ² ν/(ν−2), but using σ² is the natural
+			// analogue of the Gaussian case (where var_d = σ²_resid).
+			var_d = sigma * sigma;
 		}
 		else
 		{

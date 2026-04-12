@@ -205,15 +205,17 @@ void AnalysisView::setupUi()
 
 	m_family_combo = new QComboBox;
 	m_family_combo->addItem(tr("Continuous"), QStringLiteral("gaussian"));
+	m_family_combo->addItem(tr("Continuous (robust)"), QStringLiteral("student"));
 	m_family_combo->addItem(tr("Binary"), QStringLiteral("binomial"));
 	m_family_combo->addItem(tr("Count"), QStringLiteral("poisson"));
 	m_family_combo->addItem(tr("Overdispersed count"), QStringLiteral("negbin"));
 	m_family_combo->addItem(tr("Proportion"), QStringLiteral("beta"));
 	m_family_combo->setItemData(0, tr("Gaussian family, identity link — for continuous measurements (F1, duration, VOT…)"), Qt::ToolTipRole);
-	m_family_combo->setItemData(1, tr("Binomial family, logit link — for binary outcomes (present/absent, correct/incorrect)"), Qt::ToolTipRole);
-	m_family_combo->setItemData(2, tr("Poisson family, log link — for count data (number of occurrences)"), Qt::ToolTipRole);
-	m_family_combo->setItemData(3, tr("Negative binomial family, log link — for count data with extra variability"), Qt::ToolTipRole);
-	m_family_combo->setItemData(4, tr("Beta family, logit link — for proportions strictly between 0 and 1"), Qt::ToolTipRole);
+	m_family_combo->setItemData(1, tr("Student t family, identity link — robust regression that downweights outliers (formants with tracking errors…)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(2, tr("Binomial family, logit link — for binary outcomes (present/absent, correct/incorrect)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(3, tr("Poisson family, log link — for count data (number of occurrences)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(4, tr("Negative binomial family, log link — for count data with extra variability"), Qt::ToolTipRole);
+	m_family_combo->setItemData(5, tr("Beta family, logit link — for proportions strictly between 0 and 1"), Qt::ToolTipRole);
 	m_family_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_family_combo);
 
@@ -3222,7 +3224,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	tex += QStringLiteral("\\begin{tabular}{lrrrr}\n");
 	tex += QStringLiteral("\\hline\n");
 
-	const char *stat_label = m.is_gaussian() ? "$t$" : "$z$";
+	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "$t$" : "$z$";
 	tex += QStringLiteral(" & Estimate & Std.~Error & %1 & $p$ \\\\\n")
 		.arg(QString::fromUtf8(stat_label));
 	tex += QStringLiteral("\\hline\n");
@@ -3406,6 +3408,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	QString family_display_tex = QString::fromUtf8(m.family.data(), (int)m.family.size());
 	if (m.is_negbin()) family_display_tex = QStringLiteral("Negative binomial");
 	if (m.is_beta()) family_display_tex = QStringLiteral("Beta");
+	if (m.is_student()) family_display_tex = QStringLiteral("Student $t$ (robust)");
 
 	tex += QStringLiteral("Family: %1 (%2); $N$ = %3")
 		.arg(family_display_tex)
@@ -3427,6 +3430,9 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	}
 	if (m.is_beta()) {
 		tex += QStringLiteral("; $\\varphi$ = %1").arg(m.phi, 0, 'f', 4);
+	}
+	if (m.is_student()) {
+		tex += QStringLiteral("; $\\sigma$ = %1; $\\nu$ = %2").arg(m.sigma, 0, 'f', 4).arg(m.nu, 0, 'f', 4);
 	}
 
 	tex += QStringLiteral("\\\\\n");
@@ -3578,6 +3584,11 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 		var_d = boost::math::trigamma(mu_bar * phi_val)
 		        + boost::math::trigamma((1.0 - mu_bar) * phi_val);
 	}
+	else if (m.is_student())
+	{
+		// Student t with identity link: use σ² directly (scale mixture of normals).
+		var_d = m.sigma * m.sigma;
+	}
 	else
 	{
 		return std::nullopt; // unsupported family
@@ -3599,6 +3610,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	QString family_display = QString::fromUtf8(m.family.data(), (int)m.family.size());
 	if (m.is_negbin()) family_display = QStringLiteral("Negative binomial");
 	if (m.is_beta()) family_display = QStringLiteral("Beta");
+	if (m.is_student()) family_display = QStringLiteral("Student t (robust)");
 
 	text += QStringLiteral("Family: %1 (%2)\n")
 		.arg(family_display)
@@ -3609,11 +3621,15 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	if (m.is_beta()) {
 		text += QString::asprintf("Phi (precision): %.4f\n", m.phi);
 	}
+	if (m.is_student()) {
+		text += QString::asprintf("Sigma (scale): %.4f\n", m.sigma);
+		text += QString::asprintf("Nu (df): %.4f\n", m.nu);
+	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
 	text += QStringLiteral("Observations: %1\n\n").arg(m.nobs);
 
-	const char *stat_label = m.is_gaussian() ? "t value" : "z value";
+	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
 	text += QStringLiteral("Fixed effects:\n");
 	text += QString::asprintf("%-24s %12s %12s %12s %12s\n",
 	                           "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");

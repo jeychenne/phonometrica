@@ -176,6 +176,9 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	if (m.family == "beta") {
 		fam = Family::beta(m.phi);
 	}
+	if (m.family == "student") {
+		fam = Family::student(m.sigma, m.nu);
+	}
 
 	std::vector<double> sim_y(n * NSIM);
 
@@ -232,6 +235,15 @@ static ScaledResidualResult compute_simulation(const Model &m)
 				y_sim = v1 / (v1 + v2);
 				y_sim = std::clamp(y_sim, 1e-10, 1.0 - 1e-10);
 			}
+			else if (m.family == "student")
+			{
+				// t(μ, σ, ν): location-scale t distribution.
+				// Draw t ~ t(ν), then y = μ + σ * t.
+				double sigma_val = std::max(m.sigma, 1e-10);
+				double nu_val = std::max(m.nu, 1.01);
+				std::student_t_distribution<double> dist(nu_val);
+				y_sim = mu_i + sigma_val * dist(rng);
+			}
 			else
 			{
 				y_sim = mu_i;
@@ -245,7 +257,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	ScaledResidualResult result;
 	result.residuals.resize(n);
 
-	bool is_discrete = (m.family != "gaussian" && m.family != "beta");
+	bool is_discrete = (m.family != "gaussian" && m.family != "beta" && m.family != "student");
 
 	// DHARMa outlier thresholds: residuals in the extreme tails of U(0,1).
 	// Under H0, P(U < lo) + P(U > hi) = 2/(nsim+1) per observation.
