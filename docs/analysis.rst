@@ -19,7 +19,8 @@ The top bar contains the following elements:
   (e.g. ``F1 ~ vowel + context``). Press Enter or click **Fit** to fit the model.
 - **Family**: a drop-down menu to select the distributional family for the response variable:
   Gaussian (for continuous data), Binomial (for binary outcomes), Poisson (for count data),
-  or Negative binomial (for overdispersed counts).
+  Negative binomial (for overdispersed counts), or Beta (for proportions in the open interval
+  (0, 1)).
 - **Fit**: fits the model described by the current formula and family. The fitted model is
   added to the model list.
 - **Help** (|help|): opens this documentation page.
@@ -529,6 +530,10 @@ Phonometrica's statistical engine supports the following model families:
 - **Binomial** (logit link): logistic regression and logistic mixed models.
 - **Poisson** (log link): Poisson regression and Poisson mixed models.
 - **Negative binomial** (log link, NB2 parameterization): for overdispersed count data.
+- **Beta** (logit link): for response variables that are proportions strictly between 0 and 1,
+  such as voicing ratios, vowel-to-vowel coarticulation indices, or any measure expressed as a
+  rate or proportion. The precision parameter φ is estimated jointly with the regression
+  coefficients; higher φ indicates less variability around the mean proportion.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
   smooths, per-smooth significance tests, and random intercepts and random slopes via ``bs=re``
   to account for speaker/item grouping.
@@ -537,13 +542,35 @@ All model types support random intercepts and random slopes (mixed-effects model
 GAM models support grouping structure through ``s(group, bs=re)`` smooth terms (random
 intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
 
+.. note::
+
+   **Unified estimation via the Laplace approximation.** Phonometrica uses the Laplace
+   approximation as a unified estimation framework for all models with random effects or
+   dispersion parameters. In mixed-effects models, the random effects (speaker adjustments,
+   item adjustments, etc.) are high-dimensional latent variables that must be integrated out
+   of the likelihood. The Laplace approximation finds the most likely configuration of these
+   latent variables and approximates the integral with a Gaussian centered at that peak. For
+   Gaussian models, this approximation is exact; for non-Gaussian families, it is highly
+   accurate in practice.
+
+   Families with an additional dispersion parameter — negative binomial (θ) and beta (φ) —
+   are always fitted through this unified engine, even without random effects. This ensures
+   that the log-likelihoods of models with and without random effects are computed via the
+   same optimization path, making AIC, BIC, and likelihood-ratio tests directly comparable.
+   This follows the approach of `glmmTMB <https://CRAN.R-project.org/package=glmmTMB>`_ in R,
+   where all models are fitted through the Template Model Builder regardless of whether
+   random effects are present.
+
 
 Tips
 ----
 
 - Use the **Family** dropdown to match your response variable: Gaussian for continuous
   measurements (e.g. formant frequencies, durations), Binomial for binary outcomes (e.g.
-  correct/incorrect), Poisson or Negative binomial for count data.
+  correct/incorrect), Poisson or Negative binomial for count data, or Beta for proportions
+  (e.g. voicing ratios, coarticulation indices, rates of realization). If your proportion
+  data include exact 0s or 1s, consider a small adjustment (e.g. squeezing toward 0.5 by
+  a tiny amount) before fitting, or use Binomial regression as an alternative.
 - Start with a simple model and build up complexity. Use **Compare** to test whether
   additional terms improve the fit.
 - Check the **Diagnostics** tab after fitting. Poor residual patterns suggest the model
@@ -570,12 +597,20 @@ References
 
 - Bates, D., Mächler, M., Bolker, B. & Walker, S. (2015). Fitting linear mixed-effects
   models using lme4. *Journal of Statistical Software*, 67(1), 1–48.
+- Brooks, M.E., Kristensen, K., van Benthem, K.J., Magnusson, A., Berg, C.W., Nielsen, A.,
+  Skaug, H.J., Mächler, M. & Bolker, B.M. (2017). glmmTMB balances speed and flexibility
+  among packages for zero-inflated generalized linear mixed modeling. *The R Journal*, 9(2),
+  378–400.
 - Dunn, P.K. & Smyth, G.K. (1996). Randomized quantile residuals. *Journal of
   Computational and Graphical Statistics*, 5(3), 236–244.
+- Ferrari, S.L.P. & Cribari-Neto, F. (2004). Beta regression for modelling rates and
+  proportions. *Journal of Applied Statistics*, 31(7), 799–815.
 - Hartig, F. (2020). DHARMa: Residual diagnostics for hierarchical (multi-level / mixed)
   regression models. R package. https://CRAN.R-project.org/package=DHARMa
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure.
   *Scandinavian Journal of Statistics*, 6(2), 65–70.
+- Kristensen, K., Nielsen, A., Berg, C.W., Skaug, H. & Bell, B.M. (2016). TMB: Automatic
+  differentiation and Laplace approximation. *Journal of Statistical Software*, 70(5), 1–21.
 - Lenth, R.V. (2016). Least-squares means: the R package lsmeans.
   *Journal of Statistical Software*, 69(1), 1–33.
 - Nakagawa, S. & Schielzeth, H. (2013). A general and simple method for obtaining

@@ -267,6 +267,9 @@ static double full_log_det_H(const Eigen::VectorXd &w,
 {
 	intptr_t J = lay.J_total;
 
+	// No random effects: log det of empty matrix = 0.
+	if (J == 0) return 0.0;
+
 	// Single grouping factor: block-diagonal fast path.
 	// Each level j has a q×q block: D_inv + Σ_{i: idx[i]=j} w[i] z_i z_i'.
 	if (lay.G == 1)
@@ -1524,7 +1527,9 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 		// ── Convergence ─────────────────────────────────────────
 		double max_change = (beta_new - res.beta).cwiseAbs().maxCoeff();
-		max_change = std::max(max_change, (u_new - res.u).cwiseAbs().maxCoeff());
+		if (J > 0) {
+			max_change = std::max(max_change, (u_new - res.u).cwiseAbs().maxCoeff());
+		}
 
 		res.beta = beta_new;
 		res.u = u_new;
@@ -1636,6 +1641,9 @@ static ProfiledResult solve_u_given_beta(
 
 	Eigen::VectorXd Xbeta = Xm * beta;
 
+	// When there are no random effects (G=0, J=0), skip the u-update loop entirely.
+	if (J > 0)
+	{
 	for (int iter = 0; iter < 100; iter++)
 	{
 		// ── η = Xβ + Zu ──
@@ -1781,6 +1789,7 @@ static ProfiledResult solve_u_given_beta(
 		if (!std::isfinite(max_change)) break;
 		if (max_change < 1e-10) break;
 	}
+	} // if (J > 0)
 
 	// ── Final η, μ ──
 	Eigen::VectorXd eta_f = Xbeta;
@@ -2182,13 +2191,17 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	if (X.nrow() != y.size()) {
 		throw error("Inconsistent number of observations in y and X");
 	}
-	if (groups.empty()) {
-		throw error("At least one grouping factor is required");
-	}
-
 	intptr_t n = y.size();
 	intptr_t p = X.ncol();
 	bool is_gaussian = (fam.name == "gaussian");
+
+	// Gaussian and standard GLMs (binomial, Poisson) without random effects
+	// should be fitted via lm()/glm(); only families with a dispersion
+	// parameter (NB, beta) are accepted with empty groups so that the
+	// Laplace engine provides a unified optimization path.
+	if (groups.empty() && !fam.has_dispersion_param()) {
+		throw error("At least one grouping factor is required for family '%'", fam.name);
+	}
 
 	for (auto &g : groups)
 	{
@@ -2395,17 +2408,14 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// ── Initialize Cholesky parameters ────────────────────────────
 		Eigen::VectorXd theta(outer_dim_pirls);
 
-		// For NB with random slopes, the ANOVA-based initialization puts
-		// the slope variances far from the NB optimum (the NB overdispersion
-		// absorbs variance that Poisson attributes to random effects).
-		// A much better starting point: fit a Poisson mixed model with the
-		// same random structure and use its converged Cholesky parameters.
-		bool has_slopes = false;
-		for (intptr_t g = 0; g < G; g++) {
-			if (lay.q[g] > 1) { has_slopes = true; break; }
-		}
+		// For NB, the ANOVA-based initialization of variance components is
+		// poor because NB overdispersion absorbs variance that Poisson
+		// attributes to random effects.  A much better starting point is
+		// to fit a Poisson mixed model with the same random structure and
+		// use its converged Cholesky parameters.  This applies to all NB
+		// mixed models (intercepts and/or slopes), not just slope models.
 
-		if (is_nb && has_slopes)
+		if (is_nb && G > 0)
 		{
 			auto pois_model = mixed_model(y, X, groups, Family::poisson());
 

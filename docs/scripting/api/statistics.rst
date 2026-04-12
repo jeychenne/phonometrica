@@ -51,6 +51,126 @@ This function returns an object with the following fields:
 
 ------------
 
+.. function:: fit(formula, data [, family])
+
+Fits a statistical model from a formula string and a data table (concordance or dataset). This is the main entry
+point for model fitting in Phonometrica.
+
+``formula`` is an R-style formula string (e.g. ``"f1 ~ vowel + gender + (1|speaker)"``). ``data`` is a
+:doc:`DataTable <table>` object (a concordance or dataset). ``family`` is an optional string specifying the
+distributional family; the default is ``"gaussian"``.
+
+Supported families:
+
+* ``"gaussian"``: linear regression / LMM (identity link)
+* ``"binomial"``: logistic regression / logistic GLMM (logit link)
+* ``"poisson"``: Poisson regression / Poisson GLMM (log link)
+* ``"negbin"``: negative binomial regression / NB GLMM (log link)
+* ``"beta"``: beta regression / beta GLMM (logit link), for proportions in (0, 1)
+
+Returns a Model object with the following fields:
+
+* ``formula``: the formula string
+* ``family``: the family name (e.g. ``"gaussian"``, ``"beta"``)
+* ``link``: the link function name (e.g. ``"identity"``, ``"logit"``, ``"log"``)
+* ``nobs``: number of observations
+* ``aic``: Akaike Information Criterion
+* ``bic``: Bayesian Information Criterion
+* ``loglik``: log-likelihood at convergence
+* ``deviance``: residual deviance
+* ``r2``: R² (Gaussian fixed-effects models only)
+* ``adj_r2``: adjusted R² (Gaussian fixed-effects models only)
+* ``r2_marginal``: Nakagawa marginal R² (mixed models only)
+* ``r2_conditional``: Nakagawa conditional R² (mixed models only)
+* ``rse``: residual standard error (Gaussian only)
+* ``df``: residual degrees of freedom
+* ``theta``: overdispersion parameter (negative binomial only; 0 otherwise)
+* ``phi``: precision parameter (beta only; 0 otherwise)
+* ``converged``: Boolean indicating whether the optimizer converged
+* ``niter``: number of iterations (0 for OLS)
+
+Example::
+
+   let ds = get_dataset("my_data")
+   let m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   summarize m
+   print "AIC = " & m.aic
+
+   let m2 = fit("voicing ~ consonant + position + (1|speaker)", ds, "beta")
+   summarize m2
+   print "phi = " & m2.phi
+
+------------
+
+.. function:: summarize(model)
+
+Prints a summary of a fitted Model object, including fixed-effects coefficients (estimates,
+standard errors, z/t-values, and p-values), random-effects variance components (if present),
+and overall fit statistics (AIC, BIC, log-likelihood).
+
+Example::
+
+   let m = fit("f1 ~ vowel + (1|speaker)", ds)
+   summarize m
+
+------------
+
+.. function:: compare(model1, model2)
+
+Compares two fitted models using a likelihood-ratio test (LRT). Prints a table of information
+criteria (AIC, BIC, log-likelihood, deviance) and the LRT chi-squared statistic with p-value.
+The models should be nested (one should be a special case of the other).
+
+Example::
+
+   let m1 = fit("f1 ~ vowel + (1|speaker)", ds)
+   let m2 = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   compare m1 m2
+
+------------
+
+.. function:: coef(model)
+
+Returns the array of estimated fixed-effects coefficients from a fitted model.
+
+------------
+
+.. function:: nobs(model)
+
+Returns the number of observations used to fit the model.
+
+------------
+
+.. function:: aic(model)
+
+Returns the Akaike Information Criterion of a fitted model.
+
+------------
+
+.. function:: bic(model)
+
+Returns the Bayesian Information Criterion of a fitted model.
+
+------------
+
+.. function:: loglik(model)
+
+Returns the log-likelihood at convergence of a fitted model.
+
+------------
+
+.. function:: fitted(model)
+
+Returns the array of fitted values from a model.
+
+------------
+
+.. function:: residuals(model)
+
+Returns the array of response residuals (observed − fitted) from a model.
+
+------------
+
 .. function:: lm(y, X)
 
 Fits a linear regression model. ``y`` is a set of N observations for a continuous outcome, and ``X`` is an N by M matrix for a model with M regression

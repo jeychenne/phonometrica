@@ -741,6 +741,19 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		throw error("Not enough complete observations (% rows, % parameters)", dm.nobs, dm.ncol);
 	}
 
+	// Validate response range for beta regression.
+	if (family == "beta")
+	{
+		for (intptr_t i = 1; i <= dm.nobs; i++)
+		{
+			double yi = dm.y[i];
+			if (yi <= 0.0 || yi >= 1.0) {
+				throw error("Beta regression requires response values strictly in (0, 1); "
+				            "found y = % at observation %", yi, i);
+			}
+		}
+	}
+
 	// ── Build smooth bases and augment design matrix ──────────────
 
 	intptr_t n_parametric = dm.ncol; // number of purely parametric columns
@@ -1029,13 +1042,13 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	{
 		model = lm(dm.y, dm.X);
 	}
-	else if (family == "negbin")
+	else if (family == "negbin" || family == "beta")
 	{
-		model = negbin(dm.y, dm.X);
-	}
-	else if (family == "beta")
-	{
-		model = beta_regression(dm.y, dm.X);
+		// Route through the Laplace engine with empty groups for unified
+		// optimization, ensuring comparable log-likelihoods with mixed models.
+		std::vector<GroupingInfo> groups;
+		auto fam = Family::from_name(family);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress);
 	}
 	else
 	{
