@@ -17,11 +17,12 @@ The top bar contains the following elements:
 
 - **Formula**: an editable text field where you enter your model formula using R-style syntax
   (e.g. ``F1 ~ vowel + context``). Press Enter or click **Fit** to fit the model.
-- **Family**: a drop-down menu to select the distributional family for the response variable:
-  Gaussian (for continuous data), Binomial (for binary outcomes), Poisson (for count data),
-  Negative binomial (for overdispersed counts), or Beta (for proportions in the open interval
-  (0, 1)).
-- **Fit**: fits the model described by the current formula and family. The fitted model is
+- **Outcome**: a drop-down menu to select the type of response variable: Continuous (for
+  measurements such as formant frequencies or durations), Binary (for binary outcomes such as
+  present/absent), Count (for count data), Overdispersed count (for count data with extra
+  variability), or Proportion (for values strictly between 0 and 1). Hover over each option
+  to see the corresponding statistical family and link function.
+- **Fit**: fits the model described by the current formula and outcome type. The fitted model is
   added to the model list.
 - **Help** (|help|): opens this documentation page.
 
@@ -565,16 +566,16 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
 Tips
 ----
 
-- Use the **Family** dropdown to match your response variable: Gaussian for continuous
-  measurements (e.g. formant frequencies, durations), Binomial for binary outcomes (e.g.
-  correct/incorrect), Poisson or Negative binomial for count data, or Beta for proportions
+- Use the **Outcome** dropdown to match your response variable: Continuous for measurements
+  (e.g. formant frequencies, durations), Binary for binary outcomes (e.g. correct/incorrect),
+  Count or Overdispersed count for count data, or Proportion for values between 0 and 1
   (e.g. voicing ratios, coarticulation indices, rates of realization). If your proportion
   data include exact 0s or 1s, consider a small adjustment (e.g. squeezing toward 0.5 by
-  a tiny amount) before fitting, or use Binomial regression as an alternative.
+  a tiny amount) before fitting, or use Binary as an alternative.
 - Start with a simple model and build up complexity. Use **Compare** to test whether
   additional terms improve the fit.
 - Check the **Diagnostics** tab after fitting. Poor residual patterns suggest the model
-  may need a different family, additional predictors, or data transformation.
+  may need a different outcome type, additional predictors, or data transformation.
 - For vowel formant plots, use the **Formant chart** checkbox in the EDA tab to reverse
   both axes.
 - When fitting a GAM with speaker or item effects, use ``s(speaker, bs=re)`` rather than

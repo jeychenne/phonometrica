@@ -201,14 +201,19 @@ void AnalysisView::setupUi()
 	m_formula_edit->setClearButtonEnabled(true);
 	top_bar->addWidget(m_formula_edit, 1);
 
-	top_bar->addWidget(new QLabel(tr("Family:")));
+	top_bar->addWidget(new QLabel(tr("Outcome:")));
 
 	m_family_combo = new QComboBox;
-	m_family_combo->addItem(tr("Gaussian"), QStringLiteral("gaussian"));
-	m_family_combo->addItem(tr("Binomial"), QStringLiteral("binomial"));
-	m_family_combo->addItem(tr("Poisson"), QStringLiteral("poisson"));
-	m_family_combo->addItem(tr("Negative binomial"), QStringLiteral("negbin"));
-	m_family_combo->addItem(tr("Beta"), QStringLiteral("beta"));
+	m_family_combo->addItem(tr("Continuous"), QStringLiteral("gaussian"));
+	m_family_combo->addItem(tr("Binary"), QStringLiteral("binomial"));
+	m_family_combo->addItem(tr("Count"), QStringLiteral("poisson"));
+	m_family_combo->addItem(tr("Overdispersed count"), QStringLiteral("negbin"));
+	m_family_combo->addItem(tr("Proportion"), QStringLiteral("beta"));
+	m_family_combo->setItemData(0, tr("Gaussian family, identity link — for continuous measurements (F1, duration, VOT…)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(1, tr("Binomial family, logit link — for binary outcomes (present/absent, correct/incorrect)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(2, tr("Poisson family, log link — for count data (number of occurrences)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(3, tr("Negative binomial family, log link — for count data with extra variability"), Qt::ToolTipRole);
+	m_family_combo->setItemData(4, tr("Beta family, logit link — for proportions strictly between 0 and 1"), Qt::ToolTipRole);
 	m_family_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_family_combo);
 
