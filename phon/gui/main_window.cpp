@@ -37,6 +37,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <phon/gui/main_window.hpp>
+#include <phon/gui/start_view.hpp>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/view.hpp>
 #include <phon/gui/view_panel.hpp>
@@ -390,10 +391,31 @@ void MainWindow::createCentralWidget()
 
 	connect(m_viewer, &QTabWidget::currentChanged, this, &MainWindow::onActiveTabChanged);
 
-	auto *welcome = new QLabel(tr("<h2>Welcome to Phonometrica</h2>"
-	                              "<p>Open a project or add files to get started.</p>"));
-	welcome->setAlignment(Qt::AlignCenter);
-	m_viewer->addTab(welcome, tr("Welcome"));
+	auto *start_view = new StartView(this);
+	m_viewer->addTab(start_view, tr("Start"));
+
+	connect(start_view, &StartView::openProjectRequested,    this, &MainWindow::onOpenProject);
+	connect(start_view, &StartView::addFilesRequested,       this, &MainWindow::onAddFiles);
+	connect(start_view, &StartView::newScriptRequested,      this, &MainWindow::onNewScript);
+	connect(start_view, &StartView::newAnnotationRequested,  this, &MainWindow::onNewAnnotation);
+	connect(start_view, &StartView::documentationRequested,  this, [this]() {
+		HelpBrowser::showPage({}, this);
+	});
+	connect(start_view, &StartView::recentProjectRequested,  this, [this](const String &path) {
+		try
+		{
+			if (!clearForProjectSwitch()) return;
+			Project::get()->open(path);
+			m_file_manager->refresh();
+			updateRecentProjects(path);
+			updateWindowTitle();
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Error"),
+				tr("Could not open project: %1").arg(e.what()));
+		}
+	});
 
 	setCentralWidget(m_viewer);
 }
