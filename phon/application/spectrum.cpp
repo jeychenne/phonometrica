@@ -26,6 +26,7 @@
 #include <phon/runtime.hpp>
 #include <phon/application/spectrum.hpp>
 #include <phon/application/resampler.hpp>
+#include <phon/application/spectral_moments.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
 
@@ -605,6 +606,44 @@ void Spectrum::initialize(Runtime &rt)
 #define CLS(T) phonometrica::get_class<T>()
 	auto cls = CLS(Spectrum);
 	cls->add_method(rt.get_field_string, spectrum_get_field, { CLS(Spectrum), CLS(String) });
+
+	// ── Spectrum creation from Sound ────────────────────────────
+
+	auto get_spectrum = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound = cast<Sound>(args[0]);
+		auto channel = (int) cast<intptr_t>(args[1]);
+		auto t1 = args[2].resolve().get_number();
+		auto t2 = args[3].resolve().get_number();
+		sound.open();
+		return make_handle<Spectrum>(nullptr, Handle<Sound>(&sound), channel, t1, t2);
+	};
+
+	rt.add_global("get_spectrum", get_spectrum, { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number) });
+
+	// ── Spectral moments ────────────────────────────────────────
+
+	auto get_spectral_moments_func = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &sound = cast<Sound>(args[0]);
+		auto channel = (int) cast<intptr_t>(args[1]);
+		auto time = args[2].resolve().get_number();
+		auto window_duration = args[3].resolve().get_number();
+		auto min_freq = args[4].resolve().get_number();
+		auto max_freq = args[5].resolve().get_number();
+		sound.open();
+		auto m = compute_spectral_moments_at(
+			Handle<Sound>(&sound), channel, time, window_duration,
+			speech::WindowType::Gaussian, min_freq, max_freq, 50.0);
+		auto result = make_handle<Table>(&rt);
+		result->map()[Variant(String("cog"))] = Variant(m.cog);
+		result->map()[Variant(String("spread"))] = Variant(m.spread);
+		result->map()[Variant(String("skewness"))] = Variant(m.skewness);
+		result->map()[Variant(String("kurtosis"))] = Variant(m.kurtosis);
+		return result;
+	};
+
+	rt.add_global("get_spectral_moments", get_spectral_moments_func,
+	              { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
+
 #undef CLS
 }
 

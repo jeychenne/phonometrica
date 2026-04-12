@@ -12,9 +12,22 @@ Functions
 .. class:: Document
 
 
+.. function:: load(path as String)
+
+Imports the file at ``path`` into the current project (if not already present) and returns it as a ``Document``.
+The returned object can be used as an ``Annotation``, ``Sound``, ``Dataset``, etc. depending on the file type.
+
+Example::
+
+   let ds = load("my_data.csv")
+   print ds.nrow
+
+
+------------
+
 .. function:: add_property(file as Document, category as String, value as Object)
 
-Adds a property to the annotation. ``category`` must be a string and ``value`` can be a string, a number or a Boolean.
+Adds a property to the document. ``category`` must be a string and ``value`` can be a string, a number or a Boolean.
 If the file already has a property with the same category, the value will be replaced with the new one.
 
 
@@ -22,14 +35,23 @@ If the file already has a property with the same category, the value will be rep
 
 .. function:: remove_property(file as Document, category as String)
 
-Removes the property whose category is ``category`` from the annotation. If there is no such category, this method 
+Removes the property whose category is ``category`` from the document. If there is no such category, this method 
 does nothing.
 
 ------------
 
-.. function:: remove_property(file as Document, category)
+.. function:: get_property(file as Document, category as String)
 
-Gets the property whose category is ``category`` from the annotation, or ``null`` if there is no such category.
+Gets the value of the property whose category is ``category`` from the document, or ``null`` if there is no such category.
 
-------------
 
+Fields
+------
+
+.. attribute:: path
+
+Returns the path of the file.
+
+.. attribute:: label
+
+Returns the label of the file.

@@ -4,52 +4,50 @@ Statistical functions
 This page describes the statistical functions that are available in Phonometrica.
 
 
-Global functions
+Array statistics
 ----------------
 
-.. function:: chi2_test(X)
+.. function:: mean(x [, dim])
 
-Computes Pearson's chi-squared (:math:`\chi^2`) test on ``X``, which must be a two-dimensional array. The *m* rows in the array represent
-the *m* levels of a categorical variable, and the *n* columns represent the *n* levels of another categorical variable.
-Each cell represents the unnormalized frequency count for the combination of the two variables. This test evaluates the
-null hypothesis that the two variables are independent.
+Returns the mean of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
+represents the mean over the given dimension in a two-dimensional array. If ``dim`` is equal to 1, the calculation is performed
+over rows. If it is equal to 2, it is performed over columns.
 
-This function returns an object with the following fields:
-
-* ``chi2``: the :math:`\chi^2` value
-* ``df``: the number of degrees of freedom
-* ``p``: the p-value
-
-See also: :func:`report_chi2`
+See also: :func:`std`, :func:`sum`, :func:`vrc`
 
 ------------
 
-.. function:: corr(x, y)
+.. function:: std(x [, dim])
 
-Calculates Pearson's correlation coefficient between samples ``x`` and ``y``, which must be one-dimensional arrays with the same size.
+Returns the standard deviation of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
+represents the standard deviation over the given dimension in a two-dimensional array. If ``dim`` is equal to 1, the calculation is performed
+over rows. If it is equal to 2, it is performed over columns.
 
-------------
-
-.. function:: cov(x, y)
-
-Calculates the covariance between samples ``x`` and ``y``, which must be one-dimensional arrays with the same size.
+See also: :func:`vrc`, :func:`mean`
 
 ------------
 
-.. function:: f_test(x, y [, alternative])
+.. function:: sum(x [, dim])
 
-Computes the F-test on ``x`` and ``y`` which must be one-dimensional arrays. This test evaluates the null hypothesis that samples
-``x`` and ``y`` have the same variance.
-
-If ``alternative`` is specified, it must be one of the following strings: ``"two-tailed"`` performs a two-tailed test (default), ``"less"`` performs a lef-tailed
-test and ``"greater"`` performs a right-tailed test.
-This function returns an object with the following fields:
-
-* ``f``: the *F* statistic, which is the ratio between the variance of ``x`` and the variance of ``y``
-* ``df``: the number of degrees of freedom
-* ``p``: the p-value
+Returns the sum of the elements in the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
+represents the sum over the given dimension in a two-dimensional array. If ``dim`` is equal to 1, the summation is performed
+over rows. If it is equal to 2, summation is performed over columns.
 
 ------------
+
+.. function:: vrc(x [, dim])
+
+Returns the sample variance of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
+represents the variance over the given dimension in a two-dimensional array. If ``dim`` is equal to 1, the calculation is performed
+over rows. If it is equal to 2, it is performed over columns.
+
+See also: :func:`std`
+
+------------
+
+
+Model fitting
+-------------
 
 .. function:: fit(formula, data [, family])
 
@@ -57,7 +55,7 @@ Fits a statistical model from a formula string and a data table (concordance or 
 point for model fitting in Phonometrica.
 
 ``formula`` is an R-style formula string (e.g. ``"f1 ~ vowel + gender + (1|speaker)"``). ``data`` is a
-:doc:`DataTable <table>` object (a concordance or dataset). ``family`` is an optional string specifying the
+``DataTable`` object (a concordance or dataset). ``family`` is an optional string specifying the
 distributional family; the default is ``"gaussian"``.
 
 Supported families:
@@ -74,42 +72,20 @@ Supported families:
   down-weighted, making the estimates robust to outliers. When ν → ∞, the model reduces
   to Gaussian regression.
 
-Returns a Model object with the following fields:
-
-* ``formula``: the formula string
-* ``family``: the family name (e.g. ``"gaussian"``, ``"beta"``, ``"student"``)
-* ``link``: the link function name (e.g. ``"identity"``, ``"logit"``, ``"log"``)
-* ``nobs``: number of observations
-* ``aic``: Akaike Information Criterion
-* ``bic``: Bayesian Information Criterion
-* ``loglik``: log-likelihood at convergence
-* ``deviance``: residual deviance
-* ``r2``: R² (Gaussian fixed-effects models only)
-* ``adj_r2``: adjusted R² (Gaussian fixed-effects models only)
-* ``r2_marginal``: Nakagawa marginal R² (mixed models only)
-* ``r2_conditional``: Nakagawa conditional R² (mixed models only)
-* ``rse``: residual standard error (Gaussian only)
-* ``df``: residual degrees of freedom
-* ``theta``: overdispersion parameter (negative binomial only; 0 otherwise)
-* ``phi``: precision parameter (beta only; 0 otherwise)
-* ``sigma``: scale parameter (Student *t* only; 0 otherwise)
-* ``nu``: degrees of freedom (Student *t* only; 0 otherwise)
-* ``converged``: Boolean indicating whether the optimizer converged
-* ``niter``: number of iterations (0 for OLS)
+Returns a ``Model`` object (see Model fields below).
 
 Example::
 
-   let ds = get_dataset("my_data")
+   let ds = load("my_data.csv")
    let m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
-   summarize m
+   summarize(m)
    print "AIC = " & m.aic
 
    let m2 = fit("voicing ~ consonant + position + (1|speaker)", ds, "beta")
-   summarize m2
-   print "phi = " & m2.phi
+   summarize(m2)
 
    let m3 = fit("f1 ~ vowel + gender + (1|speaker)", ds, "student")
-   summarize m3
+   summarize(m3)
    print "sigma = " & m3.sigma
    print "nu    = " & m3.nu
 
@@ -117,14 +93,21 @@ Example::
 
 .. function:: summarize(model)
 
-Prints a summary of a fitted Model object, including fixed-effects coefficients (estimates,
+Prints a summary of a fitted ``Model`` object, including fixed-effects coefficients (estimates,
 standard errors, z/t-values, and p-values), random-effects variance components (if present),
 and overall fit statistics (AIC, BIC, log-likelihood).
 
 Example::
 
    let m = fit("f1 ~ vowel + (1|speaker)", ds)
-   summarize m
+   summarize(m)
+
+------------
+
+.. function:: get_coef(model)
+
+Prints a formatted table of the estimated fixed-effects coefficients and returns the coefficient
+array from a fitted model.
 
 ------------
 
@@ -138,195 +121,164 @@ Example::
 
    let m1 = fit("f1 ~ vowel + (1|speaker)", ds)
    let m2 = fit("f1 ~ vowel + gender + (1|speaker)", ds)
-   compare m1 m2
+   compare(m1, m2)
 
 ------------
 
-.. function:: coef(model)
+.. function:: filter(table as DataTable, expression as String [, label as String])
 
-Returns the array of estimated fixed-effects coefficients from a fitted model.
+Returns a new dataset containing only the rows that match the filter expression.
+If ``label`` is provided, the resulting dataset will have the given label.
 
-------------
+Example::
 
-.. function:: nobs(model)
+   let ds = load("data.csv")
+   let females = filter(ds, "gender == 'F'")
 
-Returns the number of observations used to fit the model.
 
-------------
+Post-hoc analysis
+-----------------
 
-.. function:: aic(model)
+.. function:: emmeans(model, factor [, adjustment])
 
-Returns the Akaike Information Criterion of a fitted model.
+Computes and prints estimated marginal means (EMMs) for the given categorical factor.
+EMMs are population-averaged predictions at each level of the factor, with other categorical
+factors balanced and numeric covariates held at their observed means.
 
-------------
+If ``adjustment`` is provided (``"holm"``, ``"bonferroni"``, or ``"none"``), pairwise contrasts
+between all levels of the factor are computed and printed as well.
 
-.. function:: bic(model)
+Example::
 
-Returns the Bayesian Information Criterion of a fitted model.
-
-------------
-
-.. function:: loglik(model)
-
-Returns the log-likelihood at convergence of a fitted model.
-
-------------
-
-.. function:: fitted(model)
-
-Returns the array of fitted values from a model.
+   let m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   emmeans(m, "vowel", "holm")
 
 ------------
 
-.. function:: residuals(model)
+.. function:: emtrends(model, factor, variable [, adjustment])
 
-Returns the array of response residuals (observed − fitted) from a model.
+Estimates the slope (trend) of a continuous variable at each level of a categorical factor. This is
+useful when the model includes an interaction between a numeric covariate and a factor (e.g.
+``f2 ~ frequency * group``).
 
+Results are reported on the link scale. If ``adjustment`` is provided, pairwise contrasts
+of the slopes across factor levels are computed and printed.
+
+Example::
+
+   let m = fit("f2 ~ frequency * group + (1|speaker)", ds)
+   emtrends(m, "group", "frequency", "holm")
+
+
+Diagnostics
+-----------
+
+.. function:: dharma(model)
+
+Computes DHARMa-style simulation-based residual diagnostics and prints the results. Three tests
+are performed:
+
+* **Uniformity test** (Kolmogorov-Smirnov): tests whether the scaled residuals follow a uniform
+  distribution, as expected if the model is correctly specified.
+* **Dispersion test**: checks for over- or under-dispersion by comparing the observed variance
+  of the scaled residuals to its expected value.
+* **Outlier test**: counts observations whose response falls entirely outside the simulated range.
+
+Example::
+
+   let m = fit("count ~ condition + (1|subject)", ds, "poisson")
+   dharma(m)
+
+
+Model fields
 ------------
 
-.. function:: lm(y, X)
+A ``Model`` object returned by :func:`fit` has the following fields:
 
-Fits a linear regression model. ``y`` is a set of N observations for a continuous outcome, and ``X`` is an N by M matrix for a model with M regression
-coefficients, including the intercept which must be the first coefficient. (In general, it should be a column of 1's.)
+.. attribute:: formula
 
-This function returns an object with the following fields:
+The formula string used to fit the model.
 
-* ``beta``: an array of estimates for the regression coefficients. The first entry is the intercept
-* ``se``: an array representing the standard errors of the regression coefficients
-* ``t``: an array of t-values for the regression coefficients (``t[i]`` is the t-value for ``beta[i]``)
-* ``p``: an array of p-values for a t-test which evaluates the null hypothesis that each regression coefficient is equal to 0 (``p[i]`` is the p-value for ``beta[i]``)
-* ``r2``: the :math:`R^2` value, which is the proportion of variance explained by the model
-* ``adj_r2``: the adjusted :math:`R^2` value, which takes into account the number of predictors in the model.
+.. attribute:: family
 
-Note: the model is estimated by minimizing the sum of squared errors. It is fitted analytically using Singular Value Decomposition.
+The family name (e.g. ``"gaussian"``, ``"binomial"``, ``"poisson"``, ``"negbin"``, ``"beta"``, ``"student"``).
 
-See also: :func:`logit`, :func:`poisson`
+.. attribute:: link
 
-------------
+The link function name (e.g. ``"identity"``, ``"logit"``, ``"log"``).
 
-.. function:: logit(y, X [, max_iter])
+.. attribute:: nobs
 
-Fits a logistic regression model. ``y`` is a set of N binary observations (either 0 or 1), and ``X`` is an N by M matrix for a model with M regression
-coefficients, including the intercept which must be the first coefficient. (In general, it should be a column of 1's.)
-If ``max_iter`` is provided, it indicates the maximum number of iterations that the solver should perform to estimate the coefficients (200 by default).
+Number of observations.
 
-This function returns an object with the following fields:
+.. attribute:: aic
 
-* ``beta``: an array of estimates for the regression coefficients. The first entry is the intercept
-* ``se``: an array representing the standard errors of the regression coefficients
-* ``z``: an array of z-values for the regression coefficients (``z[i]`` is the z-value for ``beta[i]``)
-* ``p``: an array of p-values for a Wald test which evaluates the null hypothesis that each regression coefficient is equal to 0 (``p[i]`` is the p-value for ``beta[i]``)
-* ``niter``: the number of iterations performed by the numerical solver
-* ``converged``: a Boolean value indicating whether the solver has converged to a solution. It is ``true`` if ``niter < max_iter``
+Akaike Information Criterion.
 
-Note: the model is fitted numerically using the Limited-memory Broyden–Fletcher–Goldfarb–Shanno (L-BFGS) approximation method.
+.. attribute:: bic
 
-See also: :func:`lm`, :func:`poisson`
+Bayesian Information Criterion.
 
-------------
+.. attribute:: loglik
 
-.. function:: mean(x [, dim])
+Log-likelihood at convergence.
 
-Returns the mean of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
-represents the mean over the given dimension in a two dimension array. If dim is equal to 1, the calculation is performed
-over rows. If it is equal to 2, it is performed over columns.
+.. attribute:: deviance
 
-------------
+Residual deviance.
 
-.. function:: poisson(y, X [, robust [, max_iter]])
+.. attribute:: r2
 
-Fits a Poisson regression model. ``y`` is a set of N observations which represent count data (i.e. non-negative integers), and ``X`` is an N by M matrix for a model with M regression
-coefficients, including the intercept which must be the first coefficient. (In general, it should be a column of 1's.) If ``robust`` is
-``true`` (it is ``false`` by default), Phonometrica will use the so-called "robust variance sandwich estimator" to adjust the standard errors for mild violations of the assumption that the mean is equal to the variance.
-If ``max_iter`` is provided, it indicates the maximum number of iterations that the solver should perform to estimate the coefficients (200 by default).
+R² (Gaussian fixed-effects models only).
 
-This function returns an object with the following fields:
+.. attribute:: adj_r2
 
-* ``beta``: an array of estimates for the regression coefficients. The first entry is the intercept
-* ``se``: an array representing the standard errors of the regression coefficients
-* ``z``: an array of z-values for the regression coefficients (``z[i]`` is the z-value for ``beta[i]``)
-* ``p``: an array of p-values for a Wald test which evaluates the null hypothesis that each regression coefficient is equal to 0 (``p[i]`` is the p-value for ``beta[i]``)
-* ``niter``: the number of iterations performed by the numerical solver
-* ``converged``: a Boolean value indicating whether the solver has converged to a solution. It is ``true`` if ``niter < max_iter``
+Adjusted R² (Gaussian fixed-effects models only).
 
-Note: the model is fitted numerically using the Limited-memory Broyden–Fletcher–Goldfarb–Shanno (L-BFGS) approximation method.
+.. attribute:: r2_marginal
 
-See also: :func:`lm`, :func:`logit`
+Nakagawa marginal R² (mixed models only).
 
-------------
+.. attribute:: r2_conditional
 
-.. function:: report_chi2(X)
+Nakagawa conditional R² (mixed models only).
 
-Computes and reports Pearson's chi-squared test on ``X``, which must be a two-dimensional array. This is a convenience wrapper
-over ``chi2_test()``.
+.. attribute:: rse
 
-See also: :func:`chi2_test`
+Residual standard error (Gaussian only).
 
-------------
+.. attribute:: df
 
-.. function:: std(x [, dim])
+Residual degrees of freedom.
 
-Returns the standard deviation of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
-represents the standard deviation over the given dimension in a two dimension array. If dim is equal to 1, the calculation is performed
-over rows. If it is equal to 2, it is performed over columns.
+.. attribute:: theta
 
-See also: :func:`vrc`, :func:`mean`
+Overdispersion parameter (negative binomial only; 0 otherwise).
 
-------------
+.. attribute:: phi
 
-.. function:: sum(x [, dim])
+Precision parameter (beta only; 0 otherwise).
 
-Returns the sum of the elements in the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
-represents the sum over the given dimension in a two dimension array. If dim is equal to 1, the summation is performed
-over rows. If it is equal to 2, summation is performed over columns.
+.. attribute:: sigma
 
-------------
+Scale parameter (Student *t* only; 0 otherwise).
 
-.. function:: t_test(x, y [, equal_variance, [, alternative]])
+.. attribute:: nu
 
-Computes a two-sample independent t-test for the mean between the samples ``x`` and ``y``, which must be one-dimensional
-arrays. This test evaluates the null hypothesis that samples ``x`` and ``y`` have equal means.
+Degrees of freedom (Student *t* only; 0 otherwise).
 
-If ``equal_variance`` is true, the variance of the two samples is assumed to be equal and Student's t-test is calculated,
-using the pooled standard error. If ``equal_variance`` is false (default), Welch's t-test is used instead.
+.. attribute:: converged
 
-If ``alternative`` is specified, it must be one of the following strings: ``"two-tailed"`` performs a two-tailed test (default),
-``"less"`` performs a lef-tailed test and ``"greater"`` performs a right-tailed test.
-This function returns an object with the following fields:
+Boolean indicating whether the optimizer converged.
 
-* ``t``: the *t* statistic
-* ``df1``: the number of degrees of freedom of ``x``
-* ``df2``: the number of degrees of freedom of ``y``
-* ``p``: the p-value
+.. attribute:: niter
 
+Number of iterations (0 for OLS).
 
-See also: :func:`t_test1`
+.. attribute:: fitted
 
-------------
+Array of fitted values from the model.
 
-.. function:: t_test1(x, mu [, alternative])
+.. attribute:: residuals
 
-Computes a one-sample t-test for the sample ``x``, which must be a one-dimensional array. This test evaluates the null
- hypothesis that the mean of sample ``x`` is equal to the theoretical mean ``mu``.
-
-If ``alternative`` is specified, it must be one of the following strings: ``"two-tailed"`` performs a two-tailed test (default),
-``"less"`` performs a lef-tailed test and ``"greater"`` performs a right-tailed test.
-This function returns an object with the following fields:
-
-* ``t``: the *t* statistic
-* ``df``: the number of degrees of freedom
-* ``p``: the p-value
-
-See also: :func:`t_test`
-
-------------
-
-.. function:: vrc(x [, dim])
-
-Returns the sample variance of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
-represents the variance over the given dimension in a two dimension array. If dim is equal to 1, the calculation is performed
-over rows. If it is equal to 2, it is performed over columns.
-
-See also: :func:`std`
-
-------------
+Array of response residuals (observed − fitted) from the model.

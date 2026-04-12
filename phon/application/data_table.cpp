@@ -28,6 +28,9 @@
 #include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/analysis/fitting.hpp>
+#include <phon/analysis/emmeans.hpp>
+#include <phon/analysis/scaled_residuals.hpp>
+#include <phon/analysis/statistics.hpp>
 
 namespace phonometrica {
 
@@ -552,30 +555,6 @@ void DataTable::initialize(Runtime &rt)
 		return make_handle<Array<double>>(cast<stats::Model>(args[0]).beta);
 	};
 
-	auto nobs_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return cast<stats::Model>(args[0]).nobs;
-	};
-
-	auto aic_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return cast<stats::Model>(args[0]).aic;
-	};
-
-	auto bic_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return cast<stats::Model>(args[0]).bic;
-	};
-
-	auto loglik_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return cast<stats::Model>(args[0]).loglik;
-	};
-
-	auto fitted_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return make_handle<Array<double>>(cast<stats::Model>(args[0]).fitted);
-	};
-
-	auto residuals_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return make_handle<Array<double>>(cast<stats::Model>(args[0]).residuals);
-	};
-
 	auto model_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &model = cast<stats::Model>(args[0]);
 		auto &key = cast<String>(args[1]);
@@ -599,6 +578,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "nu") return model.nu;
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
+		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
+		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		throw error("[Index error] Model type has no member named \"%\"", key);
 	};
 
@@ -685,6 +666,254 @@ void DataTable::initialize(Runtime &rt)
 		return Variant();
 	};
 
+	// ── Cell and column access ──────────────────────────────────
+
+	auto get_cell = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto i = cast<intptr_t>(args[1]);
+		auto j = cast<intptr_t>(args[2]);
+		table.open();
+		if (i < 1 || i > table.row_count() || j < 1 || j > table.column_count()) {
+			throw error("Cell index (%, %) is out of range", i, j);
+		}
+		return table.get_cell(i, j);
+	};
+
+	auto set_cell_func = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto i = cast<intptr_t>(args[1]);
+		auto j = cast<intptr_t>(args[2]);
+		auto &value = cast<String>(args[3]);
+		table.open();
+		if (i < 1 || i > table.row_count() || j < 1 || j > table.column_count()) {
+			throw error("Cell index (%, %) is out of range", i, j);
+		}
+		table.set_cell(i, j, value);
+		return Variant();
+	};
+
+	auto get_header = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto j = cast<intptr_t>(args[1]);
+		table.open();
+		if (j < 1 || j > table.column_count()) {
+			throw error("Column index % is out of range", j);
+		}
+		return table.get_header(j);
+	};
+
+	auto get_column = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &ds = cast<Dataset>(args[0]);
+		auto j = cast<intptr_t>(args[1]);
+		ds.open();
+		if (j < 1 || j > ds.column_count()) {
+			throw error("Column index % is out of range", j);
+		}
+		if (ds.is_numeric(j)) {
+			auto span = ds.numeric_column(j);
+			Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
+			for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++) {
+				result[i + 1] = span[i];
+			}
+			return make_handle<Array<double>>(std::move(result));
+		}
+		else {
+			// Text or boolean: return as List of strings.
+			Array<Variant> items;
+			for (intptr_t i = 1; i <= ds.row_count(); i++) {
+				items.append(ds.get_cell(i, j));
+			}
+			return make_handle<List>(&rt, std::move(items));
+		}
+	};
+
+	auto column_type_func = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &ds = cast<Dataset>(args[0]);
+		auto j = cast<intptr_t>(args[1]);
+		ds.open();
+		if (j < 1 || j > ds.column_count()) {
+			throw error("Column index % is out of range", j);
+		}
+		auto ct = ds.column_type(j);
+		switch (ct) {
+			case Dataset::ColumnType::Numeric: return String("numeric");
+			case Dataset::ColumnType::Text:    return String("text");
+			case Dataset::ColumnType::Boolean: return String("boolean");
+		}
+		return String("unknown");
+	};
+
+	// ── CSV export ──────────────────────────────────────────────
+
+	auto to_csv2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto &path = cast<String>(args[1]);
+		table.open();
+		table.to_csv(path, ",");
+		return Variant();
+	};
+
+	auto to_csv3 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto &path = cast<String>(args[1]);
+		auto &sep = cast<String>(args[2]);
+		table.open();
+		table.to_csv(path, sep);
+		return Variant();
+	};
+
+	// ── Estimated marginal means ────────────────────────────────
+
+	// Helper: format a p-value for display.
+	auto format_p = [](double p) -> std::string {
+		if (std::isnan(p)) return "NA";
+		if (p < 0.001)     return "< 0.001";
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%.4f", p);
+		return buf;
+	};
+
+	auto emmeans2 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto &factor = cast<String>(args[1]);
+		auto emm = stats::emmeans(model, factor);
+
+		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
+		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
+		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
+			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
+			          emm.lower_ci[i], emm.upper_ci[i]);
+		}
+		rt.printf("\n");
+		return Variant();
+	};
+
+	auto emmeans3 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto &factor = cast<String>(args[1]);
+		auto &adjustment = cast<String>(args[2]);
+		auto emm = stats::emmeans(model, factor);
+
+		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
+		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
+		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
+			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
+			          emm.lower_ci[i], emm.upper_ci[i]);
+		}
+		rt.printf("\n");
+
+		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
+		rt.printf("Pairwise contrasts (p-value adjustment: %s):\n\n", adjustment.data());
+		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
+		for (intptr_t i = 1; i <= contrasts.label.size(); i++) {
+			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
+			          contrasts.label[i].data(), contrasts.estimate[i], contrasts.se[i],
+			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());
+		}
+		rt.printf("\n");
+		return Variant();
+	};
+
+	auto emtrends3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto &factor = cast<String>(args[1]);
+		auto &var = cast<String>(args[2]);
+		auto emm = stats::emtrends(model, factor, var);
+
+		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
+		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
+		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
+			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
+			          emm.lower_ci[i], emm.upper_ci[i]);
+		}
+		rt.printf("\n");
+		return Variant();
+	};
+
+	auto emtrends4 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto &factor = cast<String>(args[1]);
+		auto &var = cast<String>(args[2]);
+		auto &adjustment = cast<String>(args[3]);
+		auto emm = stats::emtrends(model, factor, var);
+
+		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
+		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
+		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
+			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
+			          emm.lower_ci[i], emm.upper_ci[i]);
+		}
+		rt.printf("\n");
+
+		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
+		rt.printf("Pairwise contrasts of trends (p-value adjustment: %s):\n\n", adjustment.data());
+		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
+		for (intptr_t i = 1; i <= contrasts.label.size(); i++) {
+			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
+			          contrasts.label[i].data(), contrasts.estimate[i], contrasts.se[i],
+			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());
+		}
+		rt.printf("\n");
+		return Variant();
+	};
+
+	// ── DHARMa-style diagnostics ────────────────────────────────
+
+	auto dharma_func = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto result = stats::compute_scaled_residuals(model);
+
+		rt.printf("\nDHARMa-style simulation-based residual diagnostics\n");
+		rt.printf("==================================================\n\n");
+		rt.printf("Uniformity test (KS test against U(0,1)):\n");
+		rt.printf("  statistic = %.4f,  p-value = %s\n\n",
+		          result.ks_statistic, format_p(result.ks_pvalue).c_str());
+		rt.printf("Dispersion test:\n");
+		rt.printf("  ratio = %.4f,  p-value = %s\n\n",
+		          result.dispersion_ratio, format_p(result.dispersion_pvalue).c_str());
+		rt.printf("Outlier test:\n");
+		rt.printf("  n = %d,  p-value = %s\n\n",
+		          result.n_outliers, format_p(result.outlier_pvalue).c_str());
+		return Variant();
+	};
+
+	// ── Array statistics ────────────────────────────────────────
+
+	auto array_mean1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		return stats::mean(cast<Array<double>>(args[0]));
+	};
+
+	auto array_mean2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto dim = (int) cast<intptr_t>(args[1]);
+		return make_handle<Array<double>>(stats::mean(cast<Array<double>>(args[0]), dim));
+	};
+
+	auto array_std1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		return stats::stdev(cast<Array<double>>(args[0]));
+	};
+
+	auto array_std2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto dim = (int) cast<intptr_t>(args[1]);
+		return make_handle<Array<double>>(stats::stdev(cast<Array<double>>(args[0]), dim));
+	};
+
+	auto array_sum1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		return stats::sum(cast<Array<double>>(args[0]));
+	};
+
+	auto array_sum2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto dim = cast<intptr_t>(args[1]);
+		return make_handle<Array<double>>(stats::sum(cast<Array<double>>(args[0]), dim));
+	};
+
+	auto array_vrc = [](Runtime &, std::span<Variant> args) -> Variant {
+		return stats::sample_variance(cast<Array<double>>(args[0]));
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
@@ -693,14 +922,37 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("filter", filter3, { CLS(DataTable), CLS(String), CLS(String) });
 
 	rt.add_global("summarize", summarize_model, { CLS(stats::Model) });
-	rt.add_global("coef", coef_model, { CLS(stats::Model) });
-	rt.add_global("nobs", nobs_model, { CLS(stats::Model) });
-	rt.add_global("aic", aic_model, { CLS(stats::Model) });
-	rt.add_global("bic", bic_model, { CLS(stats::Model) });
-	rt.add_global("loglik", loglik_model, { CLS(stats::Model) });
-	rt.add_global("fitted", fitted_model, { CLS(stats::Model) });
-	rt.add_global("residuals", residuals_model, { CLS(stats::Model) });
+	rt.add_global("get_coef", coef_model, { CLS(stats::Model) });
 	rt.add_global("compare", compare_models, { CLS(stats::Model), CLS(stats::Model) });
+
+	// Cell / column access
+	rt.add_global("get_cell", get_cell, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t) });
+	rt.add_global("set_cell", set_cell_func, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t), CLS(String) });
+	rt.add_global("get_header", get_header, { CLS(DataTable), CLS(intptr_t) });
+	rt.add_global("get_column", get_column, { CLS(Dataset), CLS(intptr_t) });
+	rt.add_global("get_column_type", column_type_func, { CLS(Dataset), CLS(intptr_t) });
+
+	// CSV export
+	rt.add_global("to_csv", to_csv2, { CLS(DataTable), CLS(String) });
+	rt.add_global("to_csv", to_csv3, { CLS(DataTable), CLS(String), CLS(String) });
+
+	// EMMs and contrasts
+	rt.add_global("emmeans", emmeans2, { CLS(stats::Model), CLS(String) });
+	rt.add_global("emmeans", emmeans3, { CLS(stats::Model), CLS(String), CLS(String) });
+	rt.add_global("emtrends", emtrends3, { CLS(stats::Model), CLS(String), CLS(String) });
+	rt.add_global("emtrends", emtrends4, { CLS(stats::Model), CLS(String), CLS(String), CLS(String) });
+
+	// Array statistics
+	rt.add_global("mean", array_mean1, { CLS(Array<double>) });
+	rt.add_global("mean", array_mean2, { CLS(Array<double>), CLS(intptr_t) });
+	rt.add_global("std", array_std1, { CLS(Array<double>) });
+	rt.add_global("std", array_std2, { CLS(Array<double>), CLS(intptr_t) });
+	rt.add_global("sum", array_sum1, { CLS(Array<double>) });
+	rt.add_global("sum", array_sum2, { CLS(Array<double>), CLS(intptr_t) });
+	rt.add_global("vrc", array_vrc, { CLS(Array<double>) });
+
+	// Diagnostics
+	rt.add_global("dharma", dharma_func, { CLS(stats::Model) });
 
 	auto model_cls = CLS(stats::Model);
 	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });

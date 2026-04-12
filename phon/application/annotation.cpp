@@ -360,6 +360,88 @@ void Annotation::initialize(Runtime &rt)
 		return Variant();
 	};
 
+	// ── Layer management ────────────────────────────────────────
+
+	auto create_layer = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto index = cast<intptr_t>(args[1]);
+		auto &name = cast<String>(args[2]);
+		auto has_instants = cast<bool>(args[3]);
+		annot.open();
+		annot.create_layer(index, name, has_instants);
+		return Variant();
+	};
+
+	auto remove_layer = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto index = cast<intptr_t>(args[1]);
+		annot.open();
+		annot.remove_layer(index);
+		return Variant();
+	};
+
+	auto clear_layer = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto index = cast<intptr_t>(args[1]);
+		annot.open();
+		annot.clear_layer(index);
+		return Variant();
+	};
+
+	auto duplicate_layer = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto index = cast<intptr_t>(args[1]);
+		auto new_index = cast<intptr_t>(args[2]);
+		annot.open();
+		annot.duplicate_layer(index, new_index);
+		return Variant();
+	};
+
+	auto layer_has_instants = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto index = cast<intptr_t>(args[1]);
+		annot.open();
+		return annot.layer_has_instants(index);
+	};
+
+	// ── Annotation I/O ──────────────────────────────────────────
+
+	auto save_annot = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		annot.write();
+		return Variant();
+	};
+
+	auto write_native1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		annot.open();
+		annot.write_as_native();
+		return Variant();
+	};
+
+	auto write_native2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto &path = cast<String>(args[1]);
+		annot.open();
+		annot.write_as_native(path);
+		return Variant();
+	};
+
+	auto write_textgrid1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		annot.open();
+		annot.write_as_textgrid();
+		return Variant();
+	};
+
+	auto write_textgrid2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto &path = cast<String>(args[1]);
+		annot.open();
+		annot.write_as_textgrid(path);
+		return Variant();
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 	auto cls = CLS(Annotation);
 	cls->add_method(rt.get_field_string, annot_get_field, { CLS(Annotation), CLS(String) });
@@ -377,6 +459,16 @@ void Annotation::initialize(Runtime &rt)
 	rt.add_global("add_instant", add_instant,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(String) });
 	rt.add_global("remove_interval", remove_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number) });
 	rt.add_global("remove_events", remove_events,  { CLS(Annotation), CLS(intptr_t) });
+	rt.add_global("create_layer", create_layer,  { CLS(Annotation), CLS(intptr_t), CLS(String), CLS(bool) });
+	rt.add_global("remove_layer", remove_layer,  { CLS(Annotation), CLS(intptr_t) });
+	rt.add_global("clear_layer", clear_layer,  { CLS(Annotation), CLS(intptr_t) });
+	rt.add_global("duplicate_layer", duplicate_layer,  { CLS(Annotation), CLS(intptr_t), CLS(intptr_t) });
+	rt.add_global("layer_has_instants", layer_has_instants,  { CLS(Annotation), CLS(intptr_t) });
+	rt.add_global("save", save_annot,  { CLS(Annotation) });
+	rt.add_global("write_as_native", write_native1,  { CLS(Annotation) });
+	rt.add_global("write_as_native", write_native2,  { CLS(Annotation), CLS(String) });
+	rt.add_global("write_as_textgrid", write_textgrid1,  { CLS(Annotation) });
+	rt.add_global("write_as_textgrid", write_textgrid2,  { CLS(Annotation), CLS(String) });
 #undef CLS
 }
 
