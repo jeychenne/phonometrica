@@ -155,3 +155,72 @@ print_summary(m)
 print_header("BETA", "M4: voicing ~ consonant + (1 + position|speaker)")
 m <- glmmTMB(voicing ~ consonant + (1 + position|speaker), family = beta_family(), data = d)
 print_summary(m)
+
+# =====================================================================
+# 6. STUDENT T (ROBUST) — F1 values with tracking errors
+# =====================================================================
+#
+# glmmTMB's t_family() parameterises the Student t distribution as:
+#   y ~ t(μ, σ, ν)
+# where σ = sigma(m) and ν = exp(dispersion intercept).
+#
+# The t_family() can have convergence difficulties.  We provide starting
+# values for log(ν) via the dispformula/start mechanism and use
+# tryCatch so the rest of the suite continues if a model fails.
+
+d <- read.delim(file.path(datadir, "student_f1_robust.csv"))
+d$vowel  <- factor(d$vowel,  levels = c("a", "i", "u"))
+d$gender <- factor(d$gender, levels = c("F", "M"))
+
+# Helper: safely extract sigma and nu from a glmmTMB t_family model.
+print_t_params <- function(m) {
+    tryCatch({
+        cat(sprintf("sigma = %.4f\n", sigma(m)))
+        s <- summary(m)
+        if (!is.null(s$coefficients$disp)) {
+            nu <- exp(s$coefficients$disp[1, "Estimate"])
+            cat(sprintf("nu    = %.4f\n", nu))
+        }
+    }, error = function(e) {
+        cat("(could not extract sigma/nu:", conditionMessage(e), ")\n")
+    })
+}
+
+# glmmTMB control with more iterations and starting log(nu) = log(5).
+ctrl <- glmmTMBControl(optCtrl = list(iter.max = 500, eval.max = 1000))
+
+print_header("STUDENT", "M1: f1 ~ vowel + gender")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + gender, family = t_family(),
+                 dispformula = ~1, start = list(psi = log(5)),
+                 control = ctrl, data = d)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
+
+print_header("STUDENT", "M2: f1 ~ vowel + gender + (1|speaker)")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + gender + (1|speaker), family = t_family(),
+                 dispformula = ~1, start = list(psi = log(5)),
+                 control = ctrl, data = d)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
+
+print_header("STUDENT", "M3: f1 ~ vowel + gender + (1|speaker) + (1|word)")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + gender + (1|speaker) + (1|word), family = t_family(),
+                 dispformula = ~1, start = list(psi = log(5)),
+                 control = ctrl, data = d)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
+
+print_header("STUDENT", "M4: f1 ~ vowel + (1 + gender|speaker)")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + (1 + gender|speaker), family = t_family(),
+                 dispformula = ~1, start = list(psi = log(5)),
+                 control = ctrl, data = d)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
