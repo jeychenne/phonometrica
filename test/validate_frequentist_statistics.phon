@@ -190,3 +190,47 @@ compare(t1, t2)
 print ""
 print "--- Model comparison: M2 vs M3 ---"
 compare(t2, t3)
+
+# ── 6. STUDENT T (ROBUST) ─────────────────────────────────
+
+print "======================================================================"
+print " STUDENT T (ROBUST)"
+print "======================================================================"
+
+let ds = load(root & "student_f1_robust.csv")
+
+print ""
+print "--- M1: f1 ~ vowel + gender ---"
+let s1 = fit("f1 ~ vowel + gender", ds, "student")
+summarize(s1)
+print "sigma = " & s1.sigma
+print "nu    = " & s1.nu
+
+print ""
+print "--- M2: f1 ~ vowel + gender + (1|speaker) ---"
+let s2 = fit("f1 ~ vowel + gender + (1|speaker)", ds, "student")
+summarize(s2)
+print "sigma = " & s2.sigma
+print "nu    = " & s2.nu
+
+print ""
+print "--- M3: f1 ~ vowel + gender + (1|speaker) + (1|word) ---"
+let s3 = fit("f1 ~ vowel + gender + (1|speaker) + (1|word)", ds, "student")
+summarize(s3)
+print "sigma = " & s3.sigma
+print "nu    = " & s3.nu
+
+print ""
+print "--- M4: f1 ~ vowel + (1 + gender|speaker) ---"
+let s4 = fit("f1 ~ vowel + (1 + gender|speaker)", ds, "student")
+summarize(s4)
+print "sigma = " & s4.sigma
+print "nu    = " & s4.nu
+
+print ""
+print "--- Model comparison: M1 vs M2 ---"
+compare(s1, s2)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(s2, s3)
