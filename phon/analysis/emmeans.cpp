@@ -367,6 +367,9 @@ static EMMResult compute_emm_from_L(
 	if (model.is_negbin()) {
 		fam = Family::negbin(model.theta);
 	}
+	if (model.is_beta()) {
+		fam = Family::beta(model.phi);
+	}
 
 	for (intptr_t i = 0; i < K; i++)
 	{

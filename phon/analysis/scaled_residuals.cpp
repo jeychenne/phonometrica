@@ -173,6 +173,9 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	if (m.family == "negbin") {
 		fam = Family::negbin(m.theta);
 	}
+	if (m.family == "beta") {
+		fam = Family::beta(m.phi);
+	}
 
 	std::vector<double> sim_y(n * NSIM);
 
@@ -213,6 +216,22 @@ static ScaledResidualResult compute_simulation(const Model &m)
 				std::poisson_distribution<int> pois_dist(std::max(g, 1e-10));
 				y_sim = (double)pois_dist(rng);
 			}
+			else if (m.family == "beta")
+			{
+				// Beta(a, b) where a = μφ, b = (1-μ)φ.
+				// Simulate via two independent gamma variates:
+				//   G1 ~ Gamma(a, 1), G2 ~ Gamma(b, 1), Y = G1/(G1+G2).
+				mu_i = std::clamp(mu_i, 1e-10, 1.0 - 1e-10);
+				double phi_val = std::max(m.phi, 1e-10);
+				double a = mu_i * phi_val;
+				double b = (1.0 - mu_i) * phi_val;
+				std::gamma_distribution<double> g1(a, 1.0);
+				std::gamma_distribution<double> g2(b, 1.0);
+				double v1 = g1(rng);
+				double v2 = g2(rng);
+				y_sim = v1 / (v1 + v2);
+				y_sim = std::clamp(y_sim, 1e-10, 1.0 - 1e-10);
+			}
 			else
 			{
 				y_sim = mu_i;
@@ -226,7 +245,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	ScaledResidualResult result;
 	result.residuals.resize(n);
 
-	bool is_discrete = (m.family != "gaussian");
+	bool is_discrete = (m.family != "gaussian" && m.family != "beta");
 
 	// DHARMa outlier thresholds: residuals in the extreme tails of U(0,1).
 	// Under H0, P(U < lo) + P(U > hi) = 2/(nsim+1) per observation.

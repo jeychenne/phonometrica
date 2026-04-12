@@ -39,16 +39,20 @@ namespace phonometrica::stats {
 //   - mu_eta:   derivative of inverse link dμ/dη, needed for generalized IWLS weights
 //
 // std::function is used rather than plain function pointers so that families with
-// extra parameters (e.g. negative binomial θ) can capture them via lambdas.
+// extra parameters (e.g. negative binomial θ, beta φ) can capture them via lambdas.
 
 struct Family
 {
-	String name;      // "gaussian", "binomial", "poisson", "negbin"
+	String name;      // "gaussian", "binomial", "poisson", "negbin", "beta"
 	String link_name; // "identity", "logit", "log"
 
 	// Overdispersion parameter for negative binomial (θ > 0).
 	// Unused (0) for other families.
 	double theta = 0;
+
+	// Precision parameter for beta regression (φ > 0).
+	// Unused (0) for other families.
+	double phi = 0;
 
 	// Inverse link: μ = g⁻¹(η)
 	// Maps the linear predictor to the mean of the response.
@@ -65,7 +69,7 @@ struct Family
 	// Variance function: V(μ)
 	// Returns a vector of per-observation variances as a function of the mean.
 	// For Gaussian: V(μ) = 1; for Binomial: V(μ) = μ(1-μ); for Poisson: V(μ) = μ;
-	// for NB: V(μ) = μ + μ²/θ.
+	// for NB: V(μ) = μ + μ²/θ; for Beta: V(μ) = μ(1-μ)/(1+φ).
 	std::function<Vector<double>(const Vector<double> &mu)> variance;
 
 	// Derivative of inverse link: dμ/dη.
@@ -82,10 +86,17 @@ struct Family
 	static Family binomial();
 	static Family poisson();
 	static Family negbin(double theta);
+	static Family beta(double phi);
 
 	// Look up a family by name. Throws if not found.
 	// For "negbin", creates with theta=1 (caller should set theta afterwards).
+	// For "beta", creates with phi=1 (caller should set phi afterwards).
 	static Family from_name(const String &name);
+
+	// Returns true if this family has an extra dispersion/precision parameter
+	// that must be estimated (i.e. negbin θ or beta φ). Used by the mixed-model
+	// engine to decide whether to append an extra outer parameter.
+	bool has_dispersion_param() const { return name == "negbin" || name == "beta"; }
 };
 
 // ---------------------------------------------------------------------------
@@ -299,6 +310,77 @@ inline Vector<double> negbin_deviance_residuals(const Vector<double> &y, const V
 	return dr;
 }
 
+// --- Beta (logit link, Ferrari & Cribari-Neto 2004 parameterisation) ---
+//
+// y ~ Beta(μφ, (1-μ)φ)  where φ > 0 is the precision parameter.
+//
+// E[Y] = μ,  Var(Y) = μ(1-μ) / (1+φ)
+//
+// log f(y|μ,φ) = lgamma(φ) - lgamma(μφ) - lgamma((1-μ)φ)
+//              + (μφ - 1) log(y) + ((1-μ)φ - 1) log(1 - y)
+//
+// The logit link (η = log(μ/(1-μ))) is the standard link for beta regression.
+// dμ/dη = μ(1-μ), same as binomial logit.
+//
+// IWLS working weights: w_i = (dμ/dη)² / V(μ) = μ(1-μ)(1+φ) = φ · μ(1-μ).
+// (Since V(μ) = μ(1-μ)/(1+φ) and (dμ/dη)² = [μ(1-μ)]².)
+//
+// Mathematical reference:
+//   Ferrari, S. L. P. & Cribari-Neto, F. (2004). Beta regression for modelling
+//   rates and proportions. Journal of Applied Statistics, 31(7), 799–815.
+
+// Link and inverse link are the same as binomial logit.
+
+inline double beta_loglik(const Vector<double> &y, const Vector<double> &mu, double phi)
+{
+	intptr_t n = y.size();
+	double ll = 0;
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
+		double yi = std::clamp(y[i], 1e-10, 1.0 - 1e-10);
+		double a = mi * phi;           // shape1
+		double b = (1.0 - mi) * phi;   // shape2
+		ll += std::lgamma(phi) - std::lgamma(a) - std::lgamma(b)
+		      + (a - 1.0) * std::log(yi) + (b - 1.0) * std::log(1.0 - yi);
+	}
+	return ll;
+}
+
+inline Vector<double> beta_variance(const Vector<double> &mu, double phi)
+{
+	// V(μ) = μ(1-μ) / (1+φ)
+	return (mu.array() * (1.0 - mu.array()) / (1.0 + phi)).matrix();
+}
+
+inline Vector<double> beta_deviance_residuals(const Vector<double> &y, const Vector<double> &mu, double phi)
+{
+	// Signed deviance residuals:
+	//   d_i = sign(y_i - μ_i) * sqrt(2 * [loglik_sat_i - loglik_i])
+	// where the saturated model has μ = y.
+	intptr_t n = y.size();
+	Vector<double> dr(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
+		double yi = std::clamp(y[i], 1e-10, 1.0 - 1e-10);
+
+		// Saturated: μ = y
+		double a_sat = yi * phi, b_sat = (1.0 - yi) * phi;
+		double ll_sat = std::lgamma(phi) - std::lgamma(a_sat) - std::lgamma(b_sat)
+		                + (a_sat - 1.0) * std::log(yi) + (b_sat - 1.0) * std::log(1.0 - yi);
+
+		// Fitted
+		double a_fit = mi * phi, b_fit = (1.0 - mi) * phi;
+		double ll_fit = std::lgamma(phi) - std::lgamma(a_fit) - std::lgamma(b_fit)
+		                + (a_fit - 1.0) * std::log(yi) + (b_fit - 1.0) * std::log(1.0 - yi);
+
+		double d = 2.0 * (ll_sat - ll_fit);
+		dr[i] = (yi >= mi ? 1.0 : -1.0) * std::sqrt(std::max(d, 0.0));
+	}
+	return dr;
+}
+
 } // namespace detail
 
 // ---------------------------------------------------------------------------
@@ -373,12 +455,38 @@ inline Family Family::negbin(double theta)
 	return f;
 }
 
+inline Family Family::beta(double phi)
+{
+	Family f;
+	f.name = "beta";
+	f.link_name = "logit";
+	f.phi = phi;
+
+	// Link and inverse link are the same as binomial logit.
+	f.linkinv = detail::binomial_linkinv;
+	f.link = detail::binomial_link;
+	f.mu_eta = detail::binomial_mu_eta;
+
+	// Capture φ by value in lambdas.
+	f.loglik = [phi](const Vector<double> &y, const Vector<double> &mu) {
+		return detail::beta_loglik(y, mu, phi);
+	};
+	f.variance = [phi](const Vector<double> &mu) {
+		return detail::beta_variance(mu, phi);
+	};
+	f.deviance_residuals = [phi](const Vector<double> &y, const Vector<double> &mu) {
+		return detail::beta_deviance_residuals(y, mu, phi);
+	};
+	return f;
+}
+
 inline Family Family::from_name(const String &name)
 {
 	if (name == "gaussian") return gaussian();
 	if (name == "binomial") return binomial();
 	if (name == "poisson")  return poisson();
 	if (name == "negbin")   return negbin(1.0); // default θ; caller should update
+	if (name == "beta")     return beta(1.0);   // default φ; caller should update
 	throw error("Unknown family: \"%\"", name);
 }
 

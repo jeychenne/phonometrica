@@ -559,6 +559,237 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 
 
 // =====================================================================
+// Beta regression (IWLS + alternating φ profile)
+// =====================================================================
+//
+// Algorithm (following betareg, Ferrari & Cribari-Neto 2004):
+//   1. Initialize φ from method-of-moments: Var(y) = μ̄(1-μ̄)/(1+φ)
+//   2. Outer loop:
+//      a. Given φ, fit β via IWLS with beta working weights
+//      b. Given μ = logistic(Xβ), update φ by Newton on the profile log-likelihood
+//   3. Converge when both β and φ stabilise
+//
+// The logit link gives the same inverse link / dμ/dη as binomial:
+//   w_i = μ_i(1-μ_i)(1+φ) = φ · μ_i(1-μ_i)
+//   z_i = η_i + (y_i − μ_i) / [μ_i(1 − μ_i)]
+//
+// Mathematical references:
+//   Ferrari, S. L. P. & Cribari-Neto, F. (2004). Beta regression for modelling
+//   rates and proportions. J. Applied Statistics, 31(7), 799–815.
+//   Smithson, M. & Verkuilen, J. (2006). A better lemon squeezer? Maximum-
+//   likelihood regression with beta-distributed dependent variables.
+//   Psychological Methods, 11(1), 54–71.
+
+Model beta_regression(const Array<double> &y, const Array<double> &X, int max_iter)
+{
+	validate_inputs(y, X);
+
+	intptr_t n = X.nrow();
+	intptr_t p = X.ncol();
+
+	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
+	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+
+	// ── Validate response ────────────────────────────────────────────
+	for (intptr_t i = 0; i < n; i++)
+	{
+		if (ym[i] <= 0.0 || ym[i] >= 1.0) {
+			throw error("Beta regression requires response values strictly in (0, 1); "
+			            "found y = % at observation %", ym[i], i + 1);
+		}
+	}
+
+	// ── Initial φ from method-of-moments ─────────────────────────────
+	//
+	// E[Y] = μ, Var(Y) = μ(1-μ) / (1+φ)  →  φ = μ(1-μ) / Var(Y) - 1
+
+	double ybar = ym.mean();
+	double yvar = (ym.array() - ybar).square().sum() / (n - 1);
+	double phi;
+	if (yvar > 0 && yvar < ybar * (1.0 - ybar)) {
+		phi = ybar * (1.0 - ybar) / yvar - 1.0;
+	} else {
+		phi = 10.0; // conservative fallback
+	}
+	phi = std::clamp(phi, 0.1, 1e6);
+
+	// ── Initial β from logistic regression on the proportion data ─────
+	//
+	// We treat y as a continuous proportion and fit via L-BFGS with
+	// binomial family. This gives a quick starting point for the
+	// logit-scale linear predictor.
+
+	Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
+	{
+		auto logit_fit = glm(y, X, Family::binomial(), false, 50);
+		for (intptr_t j = 0; j < p; j++) {
+			beta[j] = logit_fit.beta[j + 1];
+		}
+	}
+
+	// ── Outer loop: alternate IWLS for β and Newton for φ ────────────
+
+	int outer_iter = 0;
+	bool converged = false;
+
+	for (int iter = 0; iter < max_iter; iter++)
+	{
+		Eigen::VectorXd beta_old = beta;
+		double phi_old = phi;
+
+		// ── (a) IWLS for β given φ ───────────────────────────────────
+		//
+		// Working weights: w_i = (dμ/dη)² / V(μ)
+		//   = [μ_i(1-μ_i)]² / [μ_i(1-μ_i)/(1+φ)]
+		//   = μ_i(1-μ_i)(1+φ)
+		// Working response:
+		//   z_i = η_i + (y_i − μ_i) / [μ_i(1 − μ_i)]
+
+		for (int iwls = 0; iwls < 50; iwls++)
+		{
+			Eigen::VectorXd eta = Xm * beta;
+			// μ = logistic(η)
+			Eigen::VectorXd mu = (1.0 / (1.0 + (-eta.array()).exp())).matrix();
+
+			Eigen::VectorXd w(n), z(n);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
+				double mu1m = mi * (1.0 - mi);
+				w[i] = mu1m * (1.0 + phi);
+				z[i] = eta[i] + (ym[i] - mi) / mu1m;
+			}
+
+			// Solve (X'WX) β = X'Wz
+			Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+			Eigen::VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
+
+			Eigen::LDLT<Eigen::MatrixXd> ldlt(XtWX);
+			Eigen::VectorXd beta_new = ldlt.solve(XtWz);
+
+			double max_change = (beta_new - beta).cwiseAbs().maxCoeff();
+			beta = beta_new;
+
+			if (max_change < 1e-8) break;
+		}
+
+		// ── (b) Update φ given β (1D Newton on profile log-likelihood) ──
+		//
+		// ℓ(φ) = Σ [lgamma(φ) - lgamma(μ_iφ) - lgamma((1-μ_i)φ)
+		//         + (μ_iφ-1)log(y_i) + ((1-μ_i)φ-1)log(1-y_i)]
+		//
+		// Score (dℓ/dφ):
+		//   Σ [digamma(φ) - μ_i·digamma(μ_iφ) - (1-μ_i)·digamma((1-μ_i)φ)
+		//     + μ_i·log(y_i) + (1-μ_i)·log(1-y_i)]
+		//
+		// Fisher info (−d²ℓ/dφ²):
+		//   Σ [−trigamma(φ) + μ_i²·trigamma(μ_iφ) + (1-μ_i)²·trigamma((1-μ_i)φ)]
+
+		Eigen::VectorXd eta = Xm * beta;
+		Eigen::VectorXd mu = (1.0 / (1.0 + (-eta.array()).exp())).matrix();
+
+		for (int newton = 0; newton < 30; newton++)
+		{
+			double score = 0, info = 0;
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
+				double yi = std::clamp(ym[i], 1e-10, 1.0 - 1e-10);
+				double a = mi * phi;           // shape1
+				double b = (1.0 - mi) * phi;   // shape2
+
+				score += boost::math::digamma(phi) - mi * boost::math::digamma(a)
+				         - (1.0 - mi) * boost::math::digamma(b)
+				         + mi * std::log(yi) + (1.0 - mi) * std::log(1.0 - yi);
+
+				info += -boost::math::trigamma(phi) + mi * mi * boost::math::trigamma(a)
+				        + (1.0 - mi) * (1.0 - mi) * boost::math::trigamma(b);
+			}
+
+			// Newton step: Δφ = score / info  (info = −d²ℓ/dφ²)
+			if (std::abs(info) < 1e-15) break;
+			double step = score / info;
+			step = std::clamp(step, -phi * 0.5, phi * 2.0);
+			double phi_new = phi + step;
+			phi_new = std::max(phi_new, 0.01);
+			phi = phi_new;
+
+			if (std::abs(step) < 1e-6 * phi) break;
+		}
+
+		outer_iter = iter + 1;
+
+		// ── Convergence check ────────────────────────────────────────
+		double beta_change = (beta - beta_old).cwiseAbs().maxCoeff();
+		double phi_change = std::abs(phi - phi_old);
+
+		if (beta_change < 1e-6 && phi_change < 1e-6 * phi)
+		{
+			converged = true;
+			break;
+		}
+	}
+
+	// ── Build the model ──────────────────────────────────────────────
+
+	auto fam = Family::beta(phi);
+
+	Model model;
+	model.family = "beta";
+	model.link = "logit";
+	model.phi = phi;
+	store_matrices(model, y, X);
+
+	model.beta = Array<double>(p, 0.0);
+	for (intptr_t j = 0; j < p; j++) {
+		model.beta[j + 1] = beta[j];
+	}
+
+	// Fitted values
+	model.compute_fitted(fam.linkinv);
+
+	// Log-likelihood
+	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	model.loglik = fam.loglik(ym, mu_eig);
+	model.compute_information_criteria();
+
+	// Covariance: (X'WX)⁻¹ with beta working weights
+	{
+		Eigen::VectorXd mu_vec = (1.0 / (1.0 + (-(Xm * beta)).array().exp())).matrix();
+		Eigen::VectorXd w(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mi = std::clamp(mu_vec[i], 1e-10, 1.0 - 1e-10);
+			w[i] = mi * (1.0 - mi) * (1.0 + phi);
+		}
+		Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+		Eigen::MatrixXd cov = XtWX.inverse();
+
+		// Store full variance-covariance matrix
+		store_vcov(model, cov);
+
+		model.se = Array<double>(p, 0.0);
+		model.stat = Array<double>(p, 0.0);
+		model.p = Array<double>(p, 0.0);
+
+		boost::math::chi_squared dist(1);
+		for (intptr_t i = 1; i <= p; i++)
+		{
+			model.se[i] = std::sqrt(std::max(cov(i - 1, i - 1), 0.0));
+			model.stat[i] = (model.se[i] > 0) ? model.beta[i] / model.se[i] : 0.0;
+			double wald = model.stat[i] * model.stat[i];
+			model.p[i] = 1.0 - boost::math::cdf(dist, wald);
+		}
+	}
+
+	model.niter = outer_iter;
+	model.converged = converged;
+
+	return model;
+}
+
+
+// =====================================================================
 // Penalized linear model (Gaussian GAM) with GCV
 // =====================================================================
 

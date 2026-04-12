@@ -25,6 +25,7 @@
 #include <cmath>
 #include <limits>
 #include <vector>
+#include <boost/math/special_functions/trigamma.hpp>
 #include <phon/string.hpp>
 #include <phon/array.hpp>
 #include <phon/utils/matrix.hpp>
@@ -64,7 +65,7 @@ struct Model
 {
 	// ---- Metadata ----
 	String formula;     // the formula string, e.g. "f1 ~ vowel + (1|speaker)"
-	String family;      // "gaussian", "binomial", "poisson", "negbin"
+	String family;      // "gaussian", "binomial", "poisson", "negbin", "beta"
 	String link;        // "identity", "logit", "log"
 	intptr_t nobs = 0;  // number of observations
 	intptr_t nfixed = 0; // number of fixed-effects parameters (including intercept)
@@ -129,6 +130,9 @@ struct Model
 	// ---- Negative binomial specific ----
 	double theta = 0;          // NB overdispersion parameter (θ > 0); 0 for other families
 
+	// ---- Beta regression specific ----
+	double phi = 0;            // Beta precision parameter (φ > 0); 0 for other families
+
 	// ---- Convergence (iterative methods) ----
 	int niter = 0;             // number of iterations (0 for OLS)
 	bool converged = true;     // whether the optimizer converged
@@ -177,13 +181,16 @@ struct Model
 
 	bool is_negbin() const { return family == "negbin"; }
 
+	bool is_beta() const { return family == "beta"; }
+
 	// Number of estimated parameters (for AIC/BIC).
-	// Fixed-effects parameters + dispersion (if Gaussian or NB) + variance components.
+	// Fixed-effects parameters + dispersion (if Gaussian, NB, or Beta) + variance components.
 	intptr_t nparams() const
 	{
 		intptr_t k = nfixed;
 		if (is_gaussian()) k += 1; // residual variance
 		if (is_negbin()) k += 1;   // overdispersion θ
+		if (is_beta()) k += 1;     // precision φ
 		for (intptr_t i = 1; i <= random_effects.size(); i++)
 		{
 			auto &g = random_effects[i];
@@ -296,6 +303,17 @@ struct Model
 		{
 			double lambda = std::exp(mean_eta + (var_f + var_r) / 2.0);
 			var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10) + 1.0 / std::max(theta, 1e-10));
+		}
+		else if (is_beta())
+		{
+			// Beta with logit link: distribution-specific variance uses the
+			// trigamma-based formula from Nakagawa et al. (2017).
+			// σ²_d = trigamma(μ̄φ) + trigamma((1-μ̄)φ)
+			// where μ̄ = logistic(mean(η)) is the mean predicted proportion.
+			double mu_bar = 1.0 / (1.0 + std::exp(-mean_eta));
+			mu_bar = std::clamp(mu_bar, 1e-6, 1.0 - 1e-6);
+			double phi_val = std::max(phi, 1e-10);
+			var_d = boost::math::trigamma(mu_bar * phi_val) + boost::math::trigamma((1.0 - mu_bar) * phi_val);
 		}
 		else
 		{

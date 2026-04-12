@@ -49,6 +49,7 @@
 #include <QStyledItemDelegate>
 #include <QTextEdit>
 #include <boost/math/distributions/normal.hpp>
+#include <boost/math/special_functions/trigamma.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/gui/font_helpers.hpp>
 #include <phon/gui/help_browser.hpp>
@@ -207,6 +208,7 @@ void AnalysisView::setupUi()
 	m_family_combo->addItem(tr("Binomial"), QStringLiteral("binomial"));
 	m_family_combo->addItem(tr("Poisson"), QStringLiteral("poisson"));
 	m_family_combo->addItem(tr("Negative binomial"), QStringLiteral("negbin"));
+	m_family_combo->addItem(tr("Beta"), QStringLiteral("beta"));
 	m_family_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_family_combo);
 
@@ -3398,6 +3400,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	tex += QStringLiteral("\\footnotesize\n");
 	QString family_display_tex = QString::fromUtf8(m.family.data(), (int)m.family.size());
 	if (m.is_negbin()) family_display_tex = QStringLiteral("Negative binomial");
+	if (m.is_beta()) family_display_tex = QStringLiteral("Beta");
 
 	tex += QStringLiteral("Family: %1 (%2); $N$ = %3")
 		.arg(family_display_tex)
@@ -3416,6 +3419,9 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	}
 	if (m.is_negbin()) {
 		tex += QStringLiteral("; $\\theta$ = %1").arg(m.theta, 0, 'f', 4);
+	}
+	if (m.is_beta()) {
+		tex += QStringLiteral("; $\\varphi$ = %1").arg(m.phi, 0, 'f', 4);
 	}
 
 	tex += QStringLiteral("\\\\\n");
@@ -3557,6 +3563,16 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 		double theta = std::max(m.theta, 1e-10);
 		var_d = std::log(1.0 + 1.0 / std::max(lambda, 1e-10) + 1.0 / theta);
 	}
+	else if (m.is_beta())
+	{
+		// Beta with logit link: trigamma-based formula (Nakagawa et al. 2017).
+		// σ²_d = trigamma(μ̄φ) + trigamma((1-μ̄)φ)
+		double mu_bar = 1.0 / (1.0 + std::exp(-mean_eta));
+		mu_bar = std::clamp(mu_bar, 1e-6, 1.0 - 1e-6);
+		double phi_val = std::max(m.phi, 1e-10);
+		var_d = boost::math::trigamma(mu_bar * phi_val)
+		        + boost::math::trigamma((1.0 - mu_bar) * phi_val);
+	}
 	else
 	{
 		return std::nullopt; // unsupported family
@@ -3577,12 +3593,16 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	QString family_display = QString::fromUtf8(m.family.data(), (int)m.family.size());
 	if (m.is_negbin()) family_display = QStringLiteral("Negative binomial");
+	if (m.is_beta()) family_display = QStringLiteral("Beta");
 
 	text += QStringLiteral("Family: %1 (%2)\n")
 		.arg(family_display)
 		.arg(QString::fromUtf8(m.link.data(), (int)m.link.size()));
 	if (m.is_negbin()) {
 		text += QString::asprintf("Theta (overdispersion): %.4f\n", m.theta);
+	}
+	if (m.is_beta()) {
+		text += QString::asprintf("Phi (precision): %.4f\n", m.phi);
 	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));

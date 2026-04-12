@@ -240,10 +240,14 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 {
 	const char *family_display = m.family.data();
 	if (m.is_negbin()) family_display = "Negative binomial";
+	if (m.is_beta()) family_display = "Beta";
 
 	rt.printf("\nFamily: %s (%s)\n", family_display, m.link.data());
 	if (m.is_negbin()) {
 		rt.printf("Theta (overdispersion): %.4f\n", m.theta);
+	}
+	if (m.is_beta()) {
+		rt.printf("Phi (precision): %.4f\n", m.phi);
 	}
 	rt.printf("Formula: %s\n", m.formula.data());
 	rt.printf("Observations: %ld\n", (long)m.nobs);
@@ -585,6 +589,7 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "rse") return model.rse;
 		if (key == "df") return model.df_residual;
 		if (key == "theta") return model.theta;
+		if (key == "phi") return model.phi;
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
 		throw error("[Index error] Model type has no member named \"%\"", key);
