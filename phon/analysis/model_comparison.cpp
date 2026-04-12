@@ -139,6 +139,18 @@ AnovaResult anova_compare(const std::vector<const Model *> &models,
 
 	if (models.size() < 2) return result;
 
+	// Reject mixing Bayesian and frequentist models.
+	for (size_t i = 1; i < models.size(); i++)
+	{
+		if (models[i]->estimation != models[0]->estimation)
+			throw error("Cannot compare models with different estimation methods (frequentist vs Bayesian)");
+	}
+
+	// Bayesian models cannot be compared by LRT.
+	if (models[0]->is_bayesian())
+		throw error("Bayesian model comparison (WAIC/LOO-IC) is not yet implemented. "
+		            "Use compare() on frequentist models for likelihood ratio tests");
+
 	// Build 1-based display labels for each model.
 	std::vector<int> lbl(models.size());
 	if (labels.size() == models.size())

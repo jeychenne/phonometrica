@@ -417,6 +417,26 @@ void Analysis::write()
 				}
 			}
 		}
+
+		// Estimation method and Bayesian posterior
+		if (m.is_bayesian())
+		{
+			add_data_node(mn, "Estimation", "Bayesian");
+			add_data_node(mn, "PosteriorMean", doubles_to_string(m.posterior_mean));
+			add_data_node(mn, "PosteriorSd", doubles_to_string(m.posterior_sd));
+			add_data_node(mn, "CiLower", doubles_to_string(m.ci_lower));
+			add_data_node(mn, "CiUpper", doubles_to_string(m.ci_upper));
+			add_data_node(mn, "Pd", doubles_to_string(m.pd));
+
+			if (!m.hyper_names.empty())
+			{
+				add_data_node(mn, "HyperNames", strings_to_csv(m.hyper_names));
+				add_data_node(mn, "HyperPosteriorMean", doubles_to_string(m.hyper_posterior_mean));
+				add_data_node(mn, "HyperPosteriorSd", doubles_to_string(m.hyper_posterior_sd));
+				add_data_node(mn, "HyperCiLower", doubles_to_string(m.hyper_ci_lower));
+				add_data_node(mn, "HyperCiUpper", doubles_to_string(m.hyper_ci_upper));
+			}
+		}
 	}
 
 	write_xml(doc, m_path);
@@ -612,6 +632,21 @@ void Analysis::load()
 							m.variable_info.append(std::move(vi));
 						}
 					}
+					else if (name == "Estimation")
+					{
+						if (str(text) == str("Bayesian"))
+							m.estimation = stats::Estimation::Bayesian;
+					}
+					else if (name == "PosteriorMean")   m.posterior_mean = parse_doubles(text);
+					else if (name == "PosteriorSd")     m.posterior_sd = parse_doubles(text);
+					else if (name == "CiLower")         m.ci_lower = parse_doubles(text);
+					else if (name == "CiUpper")         m.ci_upper = parse_doubles(text);
+					else if (name == "Pd")              m.pd = parse_doubles(text);
+					else if (name == "HyperNames")      m.hyper_names = parse_csv_strings(text);
+					else if (name == "HyperPosteriorMean") m.hyper_posterior_mean = parse_doubles(text);
+					else if (name == "HyperPosteriorSd")   m.hyper_posterior_sd = parse_doubles(text);
+					else if (name == "HyperCiLower")       m.hyper_ci_lower = parse_doubles(text);
+					else if (name == "HyperCiUpper")       m.hyper_ci_upper = parse_doubles(text);
 				}
 
 				m_models.push_back(std::move(m));
