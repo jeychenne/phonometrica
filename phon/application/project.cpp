@@ -33,6 +33,7 @@
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/conc/intensity_query.hpp>
+#include <phon/application/conc/spectral_moments_query.hpp>
 #include <phon/application/spectrum.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/application/analysis.hpp>
@@ -428,6 +429,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 	static const std::string_view formant_query_tag("FormantQuery");
 	static const std::string_view pitch_query_tag("PitchQuery");
 	static const std::string_view intensity_query_tag("IntensityQuery");
+	static const std::string_view spectral_moments_query_tag("SpectralMomentsQuery");
 
 	for (auto node = root.first_child(); node; node = node.next_sibling())
 	{
@@ -502,6 +504,18 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				else if (cls == intensity_query_tag)
 				{
 					auto query = make_handle<IntensityQuery>(folder, std::move(path));
+
+					auto meta_child = node.child("Metadata");
+					if (meta_child) {
+						query->metadata_from_xml(meta_child);
+					}
+
+					folder->append(query, false);
+					register_file(query->path(), query);
+				}
+				else if (cls == spectral_moments_query_tag)
+				{
+					auto query = make_handle<SpectralMomentsQuery>(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -931,6 +945,10 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		else if (query_type == Query::Type::Intensity)
 		{
 			query = make_handle<IntensityQuery>(p, std::move(path));
+		}
+		else if (query_type == Query::Type::SpectralMoments)
+		{
+			query = make_handle<SpectralMomentsQuery>(p, std::move(path));
 		}
 		else
 		{
@@ -1822,6 +1840,7 @@ void Project::preinitialize(Runtime &rt)
 	rt.add_standard_type<FormantQuery>("FormantQuery", doc_type.get());
 	rt.add_standard_type<PitchQuery>("PitchQuery", doc_type.get());
 	rt.add_standard_type<IntensityQuery>("IntensityQuery", doc_type.get());
+	rt.add_standard_type<SpectralMomentsQuery>("SpectralMomentsQuery", doc_type.get());
 	auto bookmark_type = rt.add_standard_type<Bookmark>("Bookmark", elem_type.get());
 	rt.add_standard_type<TimeStamp>("TimeStamp", bookmark_type.get());
 	rt.add_standard_type<stats::Model>("Model");
@@ -1864,6 +1883,8 @@ Query::Type Project::get_query_type(const String &path)
 		return Query::Type::Formant;
 	else if (klass == "IntensityQuery")
 		return Query::Type::Intensity;
+	else if (klass == "SpectralMomentsQuery")
+		return Query::Type::SpectralMoments;
 	else if (klass == "PitchQuery")
 		return Query::Type::Pitch;
 	else if (klass == "DurationQuery")

@@ -20,6 +20,7 @@ This is a major release. Phonometrica has gained substantial new functionality f
 **Sound visualization**
 
 - Spectral slice (power spectrum): view the FFT and/or LPC spectral envelope at the cursor position; export to PNG, PDF, or SVG.
+- Spectral moments: compute centre of gravity, spread, skewness, and kurtosis at the cursor position or within a selection.
 - Plot export improvements: waveforms, spectrograms, pitch tracks, and other plots can be exported with Retina-quality rendering.
 
 **Queries**
@@ -28,6 +29,7 @@ This is a major release. Phonometrica has gained substantial new functionality f
 - **Formant queries**: extract formant measurements (F1–F5 and bandwidths) at the midpoint or as n-point averages; automatic formant selection using Weenink's method; on-the-fly ERB and Bark conversion.
 - **Pitch queries**: extract pitch (F0) measurements using SWIPE or Praat algorithms; semitone and ERB conversion.
 - **Intensity queries**: extract intensity (dB) measurements at the midpoint or as n-point averages.
+- **Spectral moments queries**: extract centre of gravity, spread, skewness, and kurtosis from the power spectrum; configurable window duration, window type, frequency range, and pre-emphasis.
 
 **Concordance views**
 

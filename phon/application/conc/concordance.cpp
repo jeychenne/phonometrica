@@ -82,6 +82,12 @@ Concordance::Concordance(const Concordance &other) :
 
 	m_is_intensity = other.m_is_intensity;
 
+	m_is_spectral_moments = other.m_is_spectral_moments;
+	m_sm_cog = other.m_sm_cog;
+	m_sm_spread = other.m_sm_spread;
+	m_sm_skewness = other.m_sm_skewness;
+	m_sm_kurtosis = other.m_sm_kurtosis;
+
 	m_has_duration = other.m_has_duration;
 	m_duration_in_ms = other.m_duration_in_ms;
 	m_highlight_targets = other.m_highlight_targets;
@@ -167,9 +173,26 @@ void Concordance::set_intensity_meta()
 	m_is_intensity = true;
 }
 
+void Concordance::set_spectral_moments_meta(bool cog, bool spread, bool skewness, bool kurtosis)
+{
+	m_is_spectral_moments = true;
+	m_sm_cog = cog;
+	m_sm_spread = spread;
+	m_sm_skewness = skewness;
+	m_sm_kurtosis = kurtosis;
+}
+
 int Concordance::stored_fields_per_point() const
 {
 	if (m_is_pitch || m_is_intensity) return 1;
+	if (m_is_spectral_moments) {
+		int n = 0;
+		if (m_sm_cog) ++n;
+		if (m_sm_spread) ++n;
+		if (m_sm_skewness) ++n;
+		if (m_sm_kurtosis) ++n;
+		return (n > 0) ? n : 4;
+	}
 	return m_nformant + (m_has_bandwidth ? m_nformant : 0);
 }
 
@@ -181,6 +204,10 @@ int Concordance::display_fields_per_point() const
 	{
 		if (m_has_semitones) n++;
 		if (m_has_pitch_erb) n++;
+	}
+	else if (m_is_spectral_moments || m_is_intensity)
+	{
+		// No derived columns for spectral moments or intensity.
 	}
 	else
 	{
@@ -194,6 +221,42 @@ void Concordance::rebuild_extra_headers()
 {
 	m_extra_headers.clear();
 	m_base_headers.clear();
+
+	if (m_is_spectral_moments)
+	{
+		// ── Spectral moments headers ─────────────────────────────────────
+		auto emit_sm_group = [&](Array<String> &headers, const char *suffix)
+		{
+			if (m_sm_cog)      headers.append(String::format("COG%s", suffix));
+			if (m_sm_spread)   headers.append(String::format("Spread%s", suffix));
+			if (m_sm_skewness) headers.append(String::format("Skewness%s", suffix));
+			if (m_sm_kurtosis) headers.append(String::format("Kurtosis%s", suffix));
+		};
+
+		emit_sm_group(m_base_headers, "");
+
+		if (!has_measurement_data())
+		{
+			emit_sm_group(m_extra_headers, "");
+		}
+		else
+		{
+			if (m_has_series)
+			{
+				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				{
+					char suffix[16];
+					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					emit_sm_group(m_extra_headers, suffix);
+				}
+			}
+			if (m_has_average)
+			{
+				emit_sm_group(m_extra_headers, "(avg)");
+			}
+		}
+		return;
+	}
 
 	if (m_is_intensity)
 	{
@@ -481,6 +544,14 @@ double Concordance::resolve_group_value(const std::vector<double> &meas, int sto
 		return std::nan("");
 	}
 
+	if (m_is_spectral_moments)
+	{
+		// Spectral moments: N stored values (COG, Spread, Skewness, Kurtosis), no computed columns.
+		intptr_t idx = stored_base + within_group;
+		if (idx < (intptr_t)meas.size()) return meas[idx];
+		return std::nan("");
+	}
+
 	if (m_is_pitch)
 	{
 		// Pitch: 1 stored value (F0 in Hz), then optional semitones and ERB computed on the fly.
@@ -568,6 +639,15 @@ String Concordance::format_measurement(double val, int within_group) const
 	{
 		// Intensity in dB — 1 decimal place
 		return String::format("%.1f", val);
+	}
+
+	if (m_is_spectral_moments)
+	{
+		// COG and Spread in Hz — 1 decimal place; Skewness and Kurtosis — 4 decimal places.
+		// Since we don't track which moment is at which within_group position here,
+		// use a heuristic: values > 10 are likely Hz, others are dimensionless.
+		if (std::abs(val) > 10.0) return String::format("%.1f", val);
+		return String::format("%.4f", val);
 	}
 
 	if (m_is_pitch)
@@ -686,7 +766,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				// Wide mode (or midpoint): direct mapping
 				int d0 = (int)(j - 1); // 0-based within extra columns
 
-				if (m_is_pitch || m_is_intensity)
+				if (m_is_pitch || m_is_intensity || m_is_spectral_moments)
 				{
 					int dfpp = display_fields_per_point();
 					int sfpp = stored_fields_per_point();
@@ -787,7 +867,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) const
 {
-	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity) return -1;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments) return -1;
 
 	int sfpp = stored_fields_per_point();
 	int dfpp = display_fields_per_point();
@@ -856,7 +936,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 bool Concordance::is_editable_measurement(intptr_t col) const
 {
-	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity) return false;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments) return false;
 	if (!is_measurement_column(col)) return false;
 
 	// Compute extra column index
@@ -1009,6 +1089,11 @@ void Concordance::load()
 	m_semitone_ref = 100;
 	m_has_pitch_erb = false;
 	m_is_intensity = false;
+	m_is_spectral_moments = false;
+	m_sm_cog = true;
+	m_sm_spread = true;
+	m_sm_skewness = true;
+	m_sm_kurtosis = true;
 	m_has_duration = false;
 	m_duration_in_ms = false;
 	m_highlight_targets = true;
@@ -1125,6 +1210,23 @@ void Concordance::load()
 					m_has_series = child.text().as_bool(true);
 			}
 		}
+		else if (node.name() == str("SpectralMomentsMeta"))
+		{
+			m_is_spectral_moments = true;
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if (child.name() == str("HasCOG"))
+					m_sm_cog = child.text().as_bool(true);
+				else if (child.name() == str("HasSpread"))
+					m_sm_spread = child.text().as_bool(true);
+				else if (child.name() == str("HasSkewness"))
+					m_sm_skewness = child.text().as_bool(true);
+				else if (child.name() == str("HasKurtosis"))
+					m_sm_kurtosis = child.text().as_bool(true);
+				else if (child.name() == str("HasSeries"))
+					m_has_series = child.text().as_bool(true);
+			}
+		}
 		else if (node.name() == str("ColumnAliases"))
 		{
 			for (auto child = node.first_child(); child; child = child.next_sibling())
@@ -1217,6 +1319,13 @@ void Concordance::normalize_after_load()
 	if (m_is_intensity)
 	{
 		// Intensity metadata was loaded from XML. Just rebuild display headers.
+		rebuild_extra_headers();
+		return;
+	}
+
+	if (m_is_spectral_moments)
+	{
+		// Spectral moments metadata was loaded from XML. Just rebuild display headers.
 		rebuild_extra_headers();
 		return;
 	}
@@ -1579,6 +1688,22 @@ void Concordance::write()
 			.set_value(m_has_series ? "true" : "false");
 	}
 
+	// ── Spectral moments metadata ────────────────────────────────────────
+	if (m_is_spectral_moments)
+	{
+		auto sm = root.append_child("SpectralMomentsMeta");
+		sm.append_child("HasCOG").append_child(node_pcdata)
+			.set_value(m_sm_cog ? "true" : "false");
+		sm.append_child("HasSpread").append_child(node_pcdata)
+			.set_value(m_sm_spread ? "true" : "false");
+		sm.append_child("HasSkewness").append_child(node_pcdata)
+			.set_value(m_sm_skewness ? "true" : "false");
+		sm.append_child("HasKurtosis").append_child(node_pcdata)
+			.set_value(m_sm_kurtosis ? "true" : "false");
+		sm.append_child("HasSeries").append_child(node_pcdata)
+			.set_value(m_has_series ? "true" : "false");
+	}
+
 	// ── Measurement metadata for wide/long toggle ─────────────────────────
 	if (has_measurement_data())
 	{
@@ -1834,6 +1959,9 @@ void Concordance::copy_metadata_to(Concordance &target) const
 	}
 	if (m_is_intensity) {
 		target.set_intensity_meta();
+	}
+	if (m_is_spectral_moments) {
+		target.set_spectral_moments_meta(m_sm_cog, m_sm_spread, m_sm_skewness, m_sm_kurtosis);
 	}
 	if (has_measurement_data()) {
 		target.set_measurement_info(m_measurement_points, m_has_average);

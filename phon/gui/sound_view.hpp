@@ -117,6 +117,7 @@ private slots:
 	void onToggleSpectrogram(bool checked);
 	void onSpectrogramSettings();
 	void onViewSpectralSlice(SpectrumDisplayMode mode);
+	void onViewSpectralMoments();
 	void onToggleIntensity(bool checked);
 	void onIntensitySettings();
 	void onToggleFormants(bool checked);

@@ -139,7 +139,8 @@ public:
 	void set_has_bark(bool b);
 
 	/// Number of raw fields stored per measurement point.
-	/// Formant: nformant + (has_bandwidth ? nformant : 0). Pitch: 1.
+	/// Formant: nformant + (has_bandwidth ? nformant : 0). Pitch/Intensity: 1.
+	/// Spectral moments: number of enabled moments.
 	int stored_fields_per_point() const;
 
 	/// Number of display fields per measurement point: stored + computed (ERB, Bark, semitones).
@@ -174,6 +175,14 @@ public:
 
 	/// Set intensity metadata. Called by IntensityQuery::execute().
 	void set_intensity_meta();
+
+	// ── Spectral moments metadata ────────────────────────────────────────
+	// COG, Spread, Skewness, Kurtosis are stored per match. No computed columns.
+
+	bool is_spectral_moments() const { return m_is_spectral_moments; }
+
+	/// Set spectral moments metadata. Called by SpectralMomentsQuery::execute().
+	void set_spectral_moments_meta(bool cog, bool spread, bool skewness, bool kurtosis);
 
 	// ── Duration metadata ───────────────────────────────────────────────
 
@@ -416,6 +425,14 @@ protected:
 	// ── Intensity metadata ──────────────────────────────────────────────
 
 	bool m_is_intensity = false;      // true if this concordance holds intensity data
+
+	// ── Spectral moments metadata ────────────────────────────────────────
+
+	bool m_is_spectral_moments = false;   // true if this concordance holds spectral moments data
+	bool m_sm_cog = true;                 // COG column enabled
+	bool m_sm_spread = true;              // Spread column enabled
+	bool m_sm_skewness = true;            // Skewness column enabled
+	bool m_sm_kurtosis = true;            // Kurtosis column enabled
 
 	// ── Duration metadata ───────────────────────────────────────────────
 
