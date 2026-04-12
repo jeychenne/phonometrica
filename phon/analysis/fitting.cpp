@@ -1033,6 +1033,10 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	{
 		model = negbin(dm.y, dm.X);
 	}
+	else if (family == "beta")
+	{
+		model = beta_regression(dm.y, dm.X);
+	}
 	else
 	{
 		auto fam = Family::from_name(family);

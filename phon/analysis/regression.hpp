@@ -65,9 +65,19 @@ Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int m
 Model negbin(const Array<double> &y, const Array<double> &X, int max_iter = 50);
 
 
+//! Fits a beta regression model via IWLS with alternating profile likelihood
+//! for the precision parameter φ (Ferrari & Cribari-Neto, 2004).
+//! Response y must be strictly in (0, 1).
+//! \param y a proportion response vector in (0, 1).
+//! \param X an N by M design matrix (first column is the intercept).
+//! \param max_iter maximum number of outer iterations.
+//! \return a Model with beta family diagnostics (phi stored in Model::phi).
+Model beta_regression(const Array<double> &y, const Array<double> &X, int max_iter = 50);
+
+
 //! Generic GLM fitting via L-BFGS with a specified family.
 //! This is the unified entry point that logit() and poisson() delegate to.
-//! Not suitable for negative binomial (use negbin() instead).
+//! Not suitable for negative binomial or beta (use negbin()/beta_regression() instead).
 //! \param y response vector.
 //! \param X design matrix.
 //! \param fam the GLM family (binomial, poisson, etc.).

@@ -1891,6 +1891,12 @@ struct PirlsObjective
 			auto fam_nb = Family::negbin(theta_nb);
 			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u);
 		}
+		else if (fam.name == "beta")
+		{
+			double phi_beta = std::exp(theta[n_chol]);
+			auto fam_beta = Family::beta(phi_beta);
+			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u);
+		}
 		else
 		{
 			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u);
@@ -1947,6 +1953,11 @@ struct LaplaceJointObjective
 		{
 			double theta_nb = std::exp(phi[p + n_chol]);
 			fam_used = Family::negbin(theta_nb);
+		}
+		else if (fam.name == "beta")
+		{
+			double phi_beta = std::exp(phi[p + n_chol]);
+			fam_used = Family::beta(phi_beta);
 		}
 
 		auto res = solve_u_given_beta(D_inv, log_det_Dg, fam_used,
@@ -2219,6 +2230,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// For NB, use Poisson as starting fit (glm() uses canonical-link
 		// gradient which is incorrect for NB's non-canonical log link).
 		fe = glm(y, X, Family::poisson());
+	} else if (fam.name == "beta") {
+		// For beta, use binomial as starting fit (same logit link).
+		fe = glm(y, X, Family::binomial());
 	} else {
 		fe = glm(y, X, fam);
 	}
@@ -2367,12 +2381,14 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		// Non-Gaussian: PIRLS profiling — Newton over θ = (chol_1, ..., chol_G, [log θ_nb]).
+		// Non-Gaussian: PIRLS profiling — Newton over θ = (chol_1, ..., chol_G, [log disp]).
 		// β is concentrated out via PIRLS at each θ evaluation.
-		// Outer dimension: Σ q_g(q_g+1)/2 + (1 if NB).
+		// Outer dimension: Σ q_g(q_g+1)/2 + (1 if NB or Beta).
 		bool is_nb = (fam.name == "negbin");
+		bool is_beta = (fam.name == "beta");
+		bool has_disp = (is_nb || is_beta);
 		intptr_t n_chol = total_chol_params(lay);
-		intptr_t outer_dim_pirls = is_nb ? (n_chol + 1) : n_chol;
+		intptr_t outer_dim_pirls = has_disp ? (n_chol + 1) : n_chol;
 
 		Eigen::VectorXd beta_init = phi.head(p);
 
@@ -2457,6 +2473,18 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			theta_nb_init = std::clamp(theta_nb_init, 0.01, 1e6);
 			theta[n_chol] = std::log(theta_nb_init);
 		}
+		else if (is_beta)
+		{
+			// Initialize φ from method-of-moments: φ = μ̄(1-μ̄)/Var(y) - 1
+			double ybar = ym.mean();
+			double yvar = (ym.array() - ybar).square().sum() / std::max(n - 1, (intptr_t)1);
+			double phi_init = 10.0;
+			if (yvar > 0 && yvar < ybar * (1.0 - ybar)) {
+				phi_init = ybar * (1.0 - ybar) / yvar - 1.0;
+			}
+			phi_init = std::clamp(phi_init, 0.1, 1e6);
+			theta[n_chol] = std::log(phi_init);
+		}
 
 		// Create PirlsObjective after beta_init is finalized
 
@@ -2490,6 +2518,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			Family fam_p1 = fam;
 			if (is_nb)
 				fam_p1 = Family::negbin(std::exp(theta[n_chol]));
+			else if (is_beta)
+				fam_p1 = Family::beta(std::exp(theta[n_chol]));
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
 			                             Xm, ym, lay, n, p, beta_init);
@@ -2535,6 +2565,11 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		if (is_nb) {
 			double theta_nb = std::exp(theta[n_chol]);
 			fam_used = Family::negbin(theta_nb);
+		}
+		// For beta, update the Family with the converged φ
+		else if (is_beta) {
+			double phi_beta = std::exp(theta[n_chol]);
+			fam_used = Family::beta(phi_beta);
 		}
 
 		// beta_hat already set by Phase 2
@@ -2707,6 +2742,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.family = fam.name;
 	model.link = fam.link_name;
 	model.theta = fam_used.theta;
+	model.phi = fam_used.phi;
 	model.nobs = n;
 	model.nfixed = p;
 	model.y = y;

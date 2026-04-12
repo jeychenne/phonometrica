@@ -337,6 +337,7 @@ void Analysis::write()
 		add_data_node(mn, "R2Marginal", String::format("%.17g", m.r2_marginal));
 		add_data_node(mn, "R2Conditional", String::format("%.17g", m.r2_conditional));
 		add_data_node(mn, "Theta", String::format("%.17g", m.theta));
+		add_data_node(mn, "Phi", String::format("%.17g", m.phi));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
 
@@ -506,6 +507,7 @@ void Analysis::load()
 					else if (name == "R2Marginal")     m.r2_marginal = parse_double_safe(text);
 					else if (name == "R2Conditional")   m.r2_conditional = parse_double_safe(text);
 					else if (name == "Theta")    m.theta = parse_double_safe(text);
+					else if (name == "Phi")      m.phi = parse_double_safe(text);
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
 					else if (name == "ResponseLevels") m.response_levels = parse_csv_strings(text);
