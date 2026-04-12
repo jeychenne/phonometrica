@@ -1,0 +1,192 @@
+# ============================================================
+# Phonometrica validation suite — all regression families
+#
+# Each family is tested with four model structures:
+#   M1: fixed effects only
+#   M2: one random intercept (speaker)
+#   M3: two crossed random intercepts (speaker + word)
+#   M4: random slope (slope_var | speaker)
+#
+# Import the five .txt files from test_data/ as datasets before
+# running this script. Label them:
+#   gaussian_f1, binomial_schwa, poisson_disfluency,
+#   negbin_hesitation, beta_voicing
+# ============================================================
+
+let root = "/home/julien/Devel/phonometrica/test/data/"
+
+# ── 1. GAUSSIAN ──────────────────────────────────────────────
+
+print "======================================================================"
+print " GAUSSIAN"
+print "======================================================================"
+
+let dg = load(root & "gaussian_f1.csv")
+
+print ""
+print "--- M1: f1 ~ vowel + gender ---"
+let g1 = fit("f1 ~ vowel + gender", dg)
+summarize(g1)
+
+print ""
+print "--- M2: f1 ~ vowel + gender + (1|speaker) ---"
+let g2 = fit("f1 ~ vowel + gender + (1|speaker)", dg)
+summarize(g2)
+
+print ""
+print "--- M3: f1 ~ vowel + gender + (1|speaker) + (1|word) ---"
+let g3 = fit("f1 ~ vowel + gender + (1|speaker) + (1|word)", dg)
+summarize(g3)
+
+print ""
+print "--- M4: f1 ~ vowel + (1 + gender|speaker) ---"
+let g4 = fit("f1 ~ vowel + (1 + gender|speaker)", dg)
+summarize(g4)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(g2, g3)
+
+# ── 2. BINOMIAL ──────────────────────────────────────────────
+
+print "======================================================================"
+print " BINOMIAL"
+print "======================================================================"
+
+let db = load(root & "binomial_schwa.csv")
+
+print ""
+print "--- M1: realized ~ position + style ---"
+let b1 = fit("realized ~ position + style", db, "binomial")
+summarize(b1)
+
+print ""
+print "--- M2: realized ~ position + style + (1|speaker) ---"
+let b2 = fit("realized ~ position + style + (1|speaker)", db, "binomial")
+summarize(b2)
+
+print ""
+print "--- M3: realized ~ position + style + (1|speaker) + (1|word) ---"
+let b3 = fit("realized ~ position + style + (1|speaker) + (1|word)", db, "binomial")
+summarize(b3)
+
+print ""
+print "--- M4: realized ~ position + (1 + style|speaker) ---"
+let b4 = fit("realized ~ position + (1 + style|speaker)", db, "binomial")
+summarize(b4)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(b2, b3)
+
+# ── 3. POISSON ───────────────────────────────────────────────
+
+print "======================================================================"
+print " POISSON"
+print "======================================================================"
+
+let dp = load(root & "poisson_disfluency.csv")
+
+print ""
+print "--- M1: count ~ task + age ---"
+let p1 = fit("count ~ task + age", dp, "poisson")
+summarize(p1)
+
+print ""
+print "--- M2: count ~ task + age + (1|speaker) ---"
+let p2 = fit("count ~ task + age + (1|speaker)", dp, "poisson")
+summarize(p2)
+
+print ""
+print "--- M3: count ~ task + age + (1|speaker) + (1|word) ---"
+let p3 = fit("count ~ task + age + (1|speaker) + (1|word)", dp, "poisson")
+summarize(p3)
+
+print ""
+print "--- M4: count ~ task + (1 + age|speaker) ---"
+let p4 = fit("count ~ task + (1 + age|speaker)", dp, "poisson")
+summarize(p4)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(p2, p3)
+
+# ── 4. NEGATIVE BINOMIAL ─────────────────────────────────────
+
+print "======================================================================"
+print " NEGATIVE BINOMIAL"
+print "======================================================================"
+
+let dn = load(root & "negbin_hesitation.csv")
+
+print ""
+print "--- M1: hesitations ~ complexity + stress ---"
+let n1 = fit("hesitations ~ complexity + stress", dn, "negbin")
+summarize(n1)
+print "theta = " & n1.theta
+
+print ""
+print "--- M2: hesitations ~ complexity + stress + (1|speaker) ---"
+let n2 = fit("hesitations ~ complexity + stress + (1|speaker)", dn, "negbin")
+summarize(n2)
+print "theta = " & n2.theta
+
+print ""
+print "--- M3: hesitations ~ complexity + stress + (1|speaker) + (1|word) ---"
+let n3 = fit("hesitations ~ complexity + stress + (1|speaker) + (1|word)", dn, "negbin")
+summarize(n3)
+print "theta = " & n3.theta
+
+print ""
+print "--- M4: hesitations ~ complexity + (1 + stress|speaker) ---"
+let n4 = fit("hesitations ~ complexity + (1 + stress|speaker)", dn, "negbin")
+summarize(n4)
+print "theta = " & n4.theta
+
+print ""
+print "--- Model comparison: M1 vs M2 ---"
+compare(n1, n2)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(n2, n3)
+
+# ── 5. BETA ──────────────────────────────────────────────────
+
+print "======================================================================"
+print " BETA"
+print "======================================================================"
+
+let dbeta = load(root & "beta_voicing.csv")
+
+print ""
+print "--- M1: voicing ~ consonant + position ---"
+let t1 = fit("voicing ~ consonant + position", dbeta, "beta")
+summarize(t1)
+print "phi = " & t1.phi
+
+print ""
+print "--- M2: voicing ~ consonant + position + (1|speaker) ---"
+let t2 = fit("voicing ~ consonant + position + (1|speaker)", dbeta, "beta")
+summarize(t2)
+print "phi = " & t2.phi
+
+print ""
+print "--- M3: voicing ~ consonant + position + (1|speaker) + (1|word) ---"
+let t3 = fit("voicing ~ consonant + position + (1|speaker) + (1|word)", dbeta, "beta")
+summarize(t3)
+print "phi = " & t3.phi
+
+print ""
+print "--- M4: voicing ~ consonant + (1 + position|speaker) ---"
+let t4 = fit("voicing ~ consonant + (1 + position|speaker)", dbeta, "beta")
+summarize(t4)
+print "phi = " & t4.phi
+
+print ""
+print "--- Model comparison: M1 vs M2 ---"
+compare(t1, t2)
+
+print ""
+print "--- Model comparison: M2 vs M3 ---"
+compare(t2, t3)
