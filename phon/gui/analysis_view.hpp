@@ -59,6 +59,9 @@ public:
 	// Open a new analysis from a data source (no path yet).
 	explicit AnalysisView(Handle<Analysis> analysis, QWidget *parent = nullptr);
 
+	// Switch the right-panel tab widget (0=Summary, 1=Post-hoc, 2=Diagnostics, 3=EDA).
+	void setActiveTab(int index);
+
 	QString label() const override;
 	String path() const override;
 	bool isModified() const override;

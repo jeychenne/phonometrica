@@ -140,8 +140,11 @@ QMenu *MainWindow::createFileMenu()
 {
 	auto *menu = new QMenu(tr("&File"), this);
 
-	menu->addAction(tr("New script"), QKeySequence::New, this, &MainWindow::onNewScript);
-	menu->addAction(tr("New note"), this, &MainWindow::onNewNote);
+	auto *new_menu = menu->addMenu(tr("New"));
+	new_menu->addAction(tr("New annotation..."), this, &MainWindow::onNewAnnotation);
+	new_menu->addSeparator();
+	new_menu->addAction(tr("New script"), QKeySequence::New, this, &MainWindow::onNewScript);
+	new_menu->addAction(tr("New note"), this, &MainWindow::onNewNote);
 	menu->addSeparator();
 
 	menu->addAction(tr("Open project..."), QKeySequence(tr("Ctrl+O")), this, &MainWindow::onOpenProject);
@@ -265,6 +268,11 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+L")),
 	this, &MainWindow::onEditLastQuery);
+
+	menu->addSeparator();
+
+	menu->addAction(tr("Analyze data..."), this, &MainWindow::onAnalyzeData);
+	menu->addAction(tr("Visualize data..."), this, &MainWindow::onVisualizeData);
 
 	return menu;
 }
@@ -631,6 +639,47 @@ void MainWindow::onNewNote()
 	statusBar()->showMessage(tr("New note"), 2000);
 }
 
+void MainWindow::onNewAnnotation()
+{
+	auto sounds = Project::get()->get_sounds();
+	if (sounds.empty())
+	{
+		QMessageBox::warning(this, tr("New annotation"),
+			tr("There are no sound files in the project. Please add a sound file first."));
+		return;
+	}
+
+	QStringList items;
+	for (auto &snd : sounds)
+	{
+		auto lbl = snd->browser_label();
+		items << QString::fromUtf8(lbl.data(), (int) lbl.size());
+	}
+
+	bool ok = false;
+	auto chosen = QInputDialog::getItem(this, tr("New annotation"),
+		tr("Select a sound file:"), items, 0, false, &ok);
+
+	if (!ok || chosen.isEmpty())
+		return;
+
+	int index = items.indexOf(chosen);
+	if (index < 0)
+		return;
+
+	auto &sound = sounds[index + 1]; // 1-based Array
+
+	auto annot = make_handle<Annotation>();
+	annot->set_sound(sound);
+	annot->create_layer(1, "default", false);
+
+	auto *view = createAnnotationView(annot);
+	if (view)
+		addViewTab(view);
+
+	statusBar()->showMessage(tr("New annotation"), 2000);
+}
+
 void MainWindow::onOpenProject()
 {
 	auto path = QFileDialog::getOpenFileName(this, tr("Open project"),
@@ -853,29 +902,26 @@ void MainWindow::onCloseCurrentView()
 
 void MainWindow::onCloseAllViews()
 {
-	// ── Collect unsaved concordances vs other unsaved tabs ──
+	// ── Collect all unsaved tabs ──
 	struct TabInfo { QWidget *widget; QString label; bool preCheck; };
-	QList<TabInfo> conc_tabs;
+	QList<TabInfo> unsaved;
 
 	for (int i = 0; i < m_viewer->count(); i++)
 	{
 		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
 		if (!panel || !panel->isModified()) continue;
 
-		auto *conc_view = qobject_cast<ConcordanceView *>(panel->primaryView());
-		if (conc_view) {
-			bool pre = !conc_view->path().empty();
-			conc_tabs.append({m_viewer->widget(i), panel->label(), pre});
-		}
+		bool pre = true;
+		unsaved.append({m_viewer->widget(i), panel->label(), pre});
 	}
 
-	// ── Batch dialog for 2+ unsaved concordances ──
+	// ── Batch dialog for 2+ unsaved tabs ──
 	QSet<QWidget *> handled;
-	if (conc_tabs.size() >= 2)
+	if (unsaved.size() >= 2)
 	{
 		QStringList labels;
 		QList<bool> preChecked;
-		for (auto &t : conc_tabs) {
+		for (auto &t : unsaved) {
 			labels << t.label;
 			preChecked << t.preCheck;
 		}
@@ -884,9 +930,9 @@ void MainWindow::onCloseAllViews()
 		if (dlg.exec() == QDialog::Rejected) return;
 
 		auto checked = dlg.checkedItems();
-		for (int k = 0; k < conc_tabs.size(); k++)
+		for (int k = 0; k < unsaved.size(); k++)
 		{
-			auto *panel = qobject_cast<ViewPanel *>(conc_tabs[k].widget);
+			auto *panel = qobject_cast<ViewPanel *>(unsaved[k].widget);
 			if (!panel) continue;
 
 			if (dlg.action() == BatchSaveDialog::SaveSelected && checked[k]) {
@@ -896,12 +942,12 @@ void MainWindow::onCloseAllViews()
 				for (auto *v : panel->views())
 					v->discardChanges();
 			}
-			handled.insert(conc_tabs[k].widget);
+			handled.insert(unsaved[k].widget);
 		}
 	}
 
 	// ── Close from last to first ──
-	// Concordances handled above are closed without prompting.
+	// Tabs handled above are closed without prompting.
 	while (m_viewer->count() > 0)
 	{
 		int idx = m_viewer->count() - 1;
@@ -952,20 +998,25 @@ bool MainWindow::closeTab(int index)
 
 bool MainWindow::clearForProjectSwitch()
 {
-	// Close all tabs from last to first, preserving the Welcome tab (a plain QLabel).
+	// Handle all unsaved tabs in one batch dialog (or single prompt).
+	if (!promptSaveUnsavedTabs())
+		return false; // user cancelled
+
+	// Close all tabs from last to first (changes already saved/discarded above).
 	for (int i = m_viewer->count() - 1; i >= 0; i--)
 	{
 		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
 		if (!panel)
 			continue; // keep non-ViewPanel tabs (Welcome)
 
-		if (!closeTab(i))
-			return false; // user cancelled
+		m_viewer->removeTab(i);
 	}
 
 	// Clear project-specific state.
 	m_last_query = {};
 	m_info_panel->onSelectionChanged({});
+	updateWindowTitle();
+	m_file_manager->refresh();
 
 	return true;
 }
@@ -1070,10 +1121,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
 
 bool MainWindow::promptSaveUnsavedTabs()
 {
-	// ── Collect unsaved concordances vs other unsaved tabs ──
+	// ── Collect all unsaved tabs ──
 	struct TabInfo { int index; QString label; bool preCheck; };
-	QList<TabInfo> conc_tabs;
-	QList<int> other_modified;
+	QList<TabInfo> unsaved;
 
 	for (int i = 0; i < m_viewer->count(); i++)
 	{
@@ -1081,24 +1131,20 @@ bool MainWindow::promptSaveUnsavedTabs()
 		if (!panel || !panel->isModified())
 			continue;
 
-		auto *conc_view = qobject_cast<ConcordanceView *>(panel->primaryView());
-		if (conc_view) {
-			// Pre-check concordances that were previously saved (user invested effort).
-			bool pre = !conc_view->path().empty();
-			conc_tabs.append({i, panel->label(), pre});
-		}
-		else {
-			other_modified.append(i);
-		}
+		// Pre-check all items by default.
+		bool pre = true;
+		unsaved.append({i, panel->label(), pre});
 	}
 
-	// ── Batch dialog for 2+ unsaved concordances ──
-	QSet<int> handled;
-	if (conc_tabs.size() >= 2)
+	if (unsaved.isEmpty())
+		return true;
+
+	// ── Batch dialog for 2+ unsaved tabs ──
+	if (unsaved.size() >= 2)
 	{
 		QStringList labels;
 		QList<bool> preChecked;
-		for (auto &t : conc_tabs) {
+		for (auto &t : unsaved) {
 			labels << t.label;
 			preChecked << t.preCheck;
 		}
@@ -1107,9 +1153,9 @@ bool MainWindow::promptSaveUnsavedTabs()
 		if (dlg.exec() == QDialog::Rejected) return false;
 
 		auto checked = dlg.checkedItems();
-		for (int k = 0; k < conc_tabs.size(); k++)
+		for (int k = 0; k < unsaved.size(); k++)
 		{
-			int idx = conc_tabs[k].index;
+			int idx = unsaved[k].index;
 			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(idx));
 			if (!panel) continue;
 
@@ -1121,39 +1167,34 @@ bool MainWindow::promptSaveUnsavedTabs()
 				for (auto *v : panel->views())
 					v->discardChanges();
 			}
-			handled.insert(idx);
 		}
+		return true;
 	}
 
-	// ── Prompt individually for non-concordances (and any single concordance) ──
-	for (int i = 0; i < m_viewer->count(); i++)
+	// ── Single unsaved tab: prompt individually ──
+	int i = unsaved.first().index;
+	auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+	if (!panel)
+		return true;
+
+	m_viewer->setCurrentIndex(i);
+
+	auto answer = QMessageBox::question(this, tr("Unsaved changes"),
+		tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
+		QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+
+	if (answer == QMessageBox::Cancel)
+		return false;
+
+	if (answer == QMessageBox::Save)
 	{
-		if (handled.contains(i)) continue;
-
-		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
-		if (!panel || !panel->isModified())
-			continue;
-
-		// Bring the tab into view so the user knows which one we're asking about.
-		m_viewer->setCurrentIndex(i);
-
-		auto answer = QMessageBox::question(this, tr("Unsaved changes"),
-			tr("The tab \"%1\" has unsaved changes. Save before closing?").arg(panel->label()),
-			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-
-		if (answer == QMessageBox::Cancel)
+		if (!panel->saveAll())
 			return false;
-
-		if (answer == QMessageBox::Save)
-		{
-			if (!panel->saveAll())
-				return false; // Save was cancelled (e.g. user dismissed the file dialog).
-		}
-		else
-		{
-			for (auto *v : panel->views())
-				v->discardChanges();
-		}
+	}
+	else
+	{
+		for (auto *v : panel->views())
+			v->discardChanges();
 	}
 
 	return true;
@@ -1470,6 +1511,76 @@ void MainWindow::onEditLastQuery()
 			}
 		}
 	}
+}
+
+
+Handle<DataTable> MainWindow::selectDataTable()
+{
+	auto concordances = Project::get()->get_concordances();
+	auto datasets = Project::get()->get_datasets();
+
+	if (concordances.empty() && datasets.empty())
+	{
+		QMessageBox::warning(this, tr("No data"),
+			tr("There are no data tables in the project. You must first create a concordance or import a CSV dataset."));
+		return {};
+	}
+
+	QStringList items;
+	// Collect all data tables in order: concordances first, then datasets.
+	Array<Handle<DataTable>> tables;
+
+	for (auto &c : concordances)
+	{
+		tables.append(recast<DataTable>(c));
+		auto lbl = c->browser_label();
+		items << QString::fromUtf8(lbl.data(), (int) lbl.size());
+	}
+	for (auto &d : datasets)
+	{
+		tables.append(recast<DataTable>(d));
+		auto lbl = d->browser_label();
+		items << QString::fromUtf8(lbl.data(), (int) lbl.size());
+	}
+
+	bool ok = false;
+	auto chosen = QInputDialog::getItem(this, tr("Select data"),
+		tr("Select a data table:"), items, 0, false, &ok);
+
+	if (!ok || chosen.isEmpty())
+		return {};
+
+	int index = items.indexOf(chosen);
+	if (index < 0)
+		return {};
+
+	return tables[index + 1]; // 1-based Array
+}
+
+void MainWindow::onAnalyzeData()
+{
+	auto dt = selectDataTable();
+	if (!dt)
+		return;
+
+	auto analysis = make_handle<Analysis>(nullptr, std::move(dt));
+	auto *view = new AnalysisView(std::move(analysis));
+	view->setActiveTab(0); // Summary
+	addViewTab(view);
+	statusBar()->showMessage(tr("Analyze data"), 2000);
+}
+
+void MainWindow::onVisualizeData()
+{
+	auto dt = selectDataTable();
+	if (!dt)
+		return;
+
+	auto analysis = make_handle<Analysis>(nullptr, std::move(dt));
+	auto *view = new AnalysisView(std::move(analysis));
+	view->setActiveTab(3); // EDA
+	addViewTab(view);
+	statusBar()->showMessage(tr("Visualize data"), 2000);
 }
 
 
