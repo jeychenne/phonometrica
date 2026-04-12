@@ -211,7 +211,7 @@ void AnalysisView::setupUi()
 	m_family_combo->addItem(tr("Overdispersed count"), QStringLiteral("negbin"));
 	m_family_combo->addItem(tr("Proportion"), QStringLiteral("beta"));
 	m_family_combo->setItemData(0, tr("Gaussian family, identity link — for continuous measurements (F1, duration, VOT…)"), Qt::ToolTipRole);
-	m_family_combo->setItemData(1, tr("Student t family, identity link — robust regression that downweights outliers (formants with tracking errors…)"), Qt::ToolTipRole);
+	m_family_combo->setItemData(1, tr("Student t family, identity link — robust regression for continuous measurements that downweights extreme values"), Qt::ToolTipRole);
 	m_family_combo->setItemData(2, tr("Binomial family, logit link — for binary outcomes (present/absent, correct/incorrect)"), Qt::ToolTipRole);
 	m_family_combo->setItemData(3, tr("Poisson family, log link — for count data (number of occurrences)"), Qt::ToolTipRole);
 	m_family_combo->setItemData(4, tr("Negative binomial family, log link — for count data with extra variability"), Qt::ToolTipRole);

@@ -224,3 +224,32 @@ tryCatch({
     print_summary(m)
     print_t_params(m)
 }, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
+
+
+# 6b. STUDENT T (MILD) — same design, milder tails (nu=10, sigma=60)
+# =====================================================================
+# True: beta = (500, -150, -200, -50), sigma = 60, nu = 10, sigma_speaker = 50
+# 30 speakers x 5 words x 3 vowels = 450 obs.
+# This dataset is designed to be tractable for glmmTMB's t_family().
+
+d2 <- read.delim(file.path(datadir, "student_f1_mild.csv"))
+d2$vowel  <- factor(d2$vowel,  levels = c("a", "i", "u"))
+d2$gender <- factor(d2$gender, levels = c("F", "M"))
+
+print_header("STUDENT MILD", "M1: f1 ~ vowel + gender")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + gender, family = t_family(),
+                 dispformula = ~1, start = list(psi = log(10)),
+                 control = ctrl, data = d2)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))
+
+print_header("STUDENT MILD", "M2: f1 ~ vowel + gender + (1|speaker)")
+tryCatch({
+    m <- glmmTMB(f1 ~ vowel + gender + (1|speaker), family = t_family(),
+                 dispformula = ~1, start = list(psi = log(10)),
+                 control = ctrl, data = d2)
+    print_summary(m)
+    print_t_params(m)
+}, error = function(e) cat("FAILED:", conditionMessage(e), "\n"))

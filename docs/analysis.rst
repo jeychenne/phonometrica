@@ -18,7 +18,9 @@ The top bar contains the following elements:
 - **Formula**: an editable text field where you enter your model formula using R-style syntax
   (e.g. ``F1 ~ vowel + context``). Press Enter or click **Fit** to fit the model.
 - **Outcome**: a drop-down menu to select the type of response variable: Continuous (for
-  measurements such as formant frequencies or durations), Binary (for binary outcomes such as
+  measurements such as formant frequencies or durations), Continuous (robust) (for continuous
+  measurements that may contain outliers, such as formant values with tracking errors),
+  Binary (for binary outcomes such as
   present/absent), Count (for count data), Overdispersed count (for count data with extra
   variability), or Proportion (for values strictly between 0 and 1). Hover over each option
   to see the corresponding statistical family and link function.
@@ -223,8 +225,8 @@ The Summary tab displays detailed results for the selected model:
 - **Pseudo R²** (mixed models): Nakagawa & Schielzeth (2013) marginal and conditional R².
   The marginal R² measures the proportion of variance explained by fixed effects alone;
   the conditional R² measures the proportion explained by both fixed and random effects.
-  Computed for all families (Gaussian, Binomial, Poisson, Negative binomial) using the
-  appropriate distribution-specific variance.
+  Computed for all families (Gaussian, Binomial, Poisson, Negative binomial, Student *t*)
+  using the appropriate distribution-specific variance.
 
 The toolbar above the summary provides:
 
@@ -535,6 +537,15 @@ Phonometrica's statistical engine supports the following model families:
   such as voicing ratios, vowel-to-vowel coarticulation indices, or any measure expressed as a
   rate or proportion. The precision parameter φ is estimated jointly with the regression
   coefficients; higher φ indicates less variability around the mean proportion.
+- **Student t** (identity link): robust regression and robust mixed models for continuous
+  outcomes with heavy-tailed residuals. Useful when automatic measurements (e.g. formant
+  tracking) produce occasional large errors that would unduly influence a Gaussian model.
+  The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
+  parameter ν that controls the tail heaviness. Observations with large residuals receive lower
+  weight, so the fixed-effects estimates are robust to outliers. As ν → ∞ the model reduces to
+  Gaussian regression; in practice, ν < 10 indicates meaningful departure from normality. Select
+  **Continuous (robust)** in the Outcome dropdown to use this family, or pass ``"student"`` to
+  the ``fit()`` scripting function.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
   smooths, per-smooth significance tests, and random intercepts and random slopes via ``bs=re``
   to account for speaker/item grouping.
@@ -554,8 +565,9 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    Gaussian models, this approximation is exact; for non-Gaussian families, it is highly
    accurate in practice.
 
-   Families with an additional dispersion parameter — negative binomial (θ) and beta (φ) —
-   are always fitted through this unified engine, even without random effects. This ensures
+   Families with an additional dispersion parameter — negative binomial (θ), beta (φ),
+   and Student *t* (σ, ν) — are always fitted through this unified engine, even without
+   random effects. This ensures
    that the log-likelihoods of models with and without random effects are computed via the
    same optimization path, making AIC, BIC, and likelihood-ratio tests directly comparable.
    This follows the approach of `glmmTMB <https://CRAN.R-project.org/package=glmmTMB>`_ in R,
@@ -567,7 +579,8 @@ Tips
 ----
 
 - Use the **Outcome** dropdown to match your response variable: Continuous for measurements
-  (e.g. formant frequencies, durations), Binary for binary outcomes (e.g. correct/incorrect),
+  (e.g. formant frequencies, durations), Continuous (robust) for measurements that may contain
+  outliers or tracking errors, Binary for binary outcomes (e.g. correct/incorrect),
   Count or Overdispersed count for count data, or Proportion for values between 0 and 1
   (e.g. voicing ratios, coarticulation indices, rates of realization). If your proportion
   data include exact 0s or 1s, consider a small adjustment (e.g. squeezing toward 0.5 by
@@ -612,6 +625,8 @@ References
   *Scandinavian Journal of Statistics*, 6(2), 65–70.
 - Kristensen, K., Nielsen, A., Berg, C.W., Skaug, H. & Bell, B.M. (2016). TMB: Automatic
   differentiation and Laplace approximation. *Journal of Statistical Software*, 70(5), 1–21.
+- Lange, K.L., Little, R.J.A. & Taylor, J.M.G. (1989). Robust statistical modeling using
+  the *t* distribution. *Journal of the American Statistical Association*, 84(408), 881–896.
 - Lenth, R.V. (2016). Least-squares means: the R package lsmeans.
   *Journal of Statistical Software*, 69(1), 1–33.
 - Nakagawa, S. & Schielzeth, H. (2013). A general and simple method for obtaining
