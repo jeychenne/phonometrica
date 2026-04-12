@@ -75,6 +75,7 @@ private slots:
 	// File menu
 	void onNewScript();
 	void onNewNote();
+	void onNewAnnotation();
 	void onOpenProject();
 	void onAddFiles();
 	void onAddFolder();
@@ -96,6 +97,10 @@ private slots:
 	void onMeasureIntensity();
 	void onMeasureSpectralMoments();
 	void onEditLastQuery();
+
+	// Analysis menu (data analysis / visualization)
+	void onAnalyzeData();
+	void onVisualizeData();
 
 	// File menu (import/export)
 	void onImportMetadata();
@@ -163,6 +168,10 @@ private:
 
 	void openAnalysis(Handle<DataTable> source);
 	void openAnalysis(Handle<Analysis> analysis);
+
+	// Show a dialog to pick a concordance or dataset from the project.
+	// Returns a null handle if the user cancels or there are no data tables.
+	Handle<DataTable> selectDataTable();
 
 	// Create an AnnotationView with progress feedback. Returns nullptr on failure.
 	AnnotationView *createAnnotationView(const Handle<Annotation> &annot);

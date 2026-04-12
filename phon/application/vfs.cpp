@@ -667,6 +667,7 @@ void Document::initialize(Runtime &rt)
 			throw error("Invalid property type: %", args[2].class_name());
 		}
 		doc.add_property(Property(category, std::move(value)));
+		Document::file_modified();
 
 		return Variant();
 	};
@@ -675,6 +676,7 @@ void Document::initialize(Runtime &rt)
 		auto &doc = cast<Document>(args[0]);
 		auto &category = cast<String>(args[1]);
 		doc.remove_property(category);
+		Document::file_modified();
 		return Variant();
 	};
 

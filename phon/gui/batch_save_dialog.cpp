@@ -30,12 +30,12 @@ namespace phonometrica {
 BatchSaveDialog::BatchSaveDialog(const QStringList &labels, const QList<bool> &pre_checked, QWidget *parent) :
 	QDialog(parent)
 {
-	setWindowTitle(tr("Unsaved concordances"));
+	setWindowTitle(tr("Unsaved changes"));
 	setMinimumWidth(400);
 
 	auto *layout = new QVBoxLayout(this);
 
-	auto *message = new QLabel(tr("The following concordances have unsaved changes.\n"
+	auto *message = new QLabel(tr("The following items have unsaved changes.\n"
 	                               "Select which ones to save:"));
 	layout->addWidget(message);
 

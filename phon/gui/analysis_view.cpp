@@ -138,6 +138,12 @@ bool AnalysisView::isModified() const
 	return m_analysis->modified();
 }
 
+void AnalysisView::setActiveTab(int index)
+{
+	if (m_right_tabs && index >= 0 && index < m_right_tabs->count())
+		m_right_tabs->setCurrentIndex(index);
+}
+
 bool AnalysisView::save()
 {
 	bool firstSave = !m_analysis->has_path();

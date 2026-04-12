@@ -15,7 +15,7 @@
  *                                                                                                                     *
  * Created: 29/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Dialog for batch-saving multiple unsaved concordances. Shows a checkbox list so users can cherry-pick      *
+ * Purpose: Dialog for batch-saving multiple unsaved views. Shows a checkbox list so users can cherry-pick            *
  *          which ones to save and which to discard, instead of prompting one by one.                                  *
  *                                                                                                                     *
  ***********************************************************************************************************************/
