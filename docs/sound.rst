@@ -149,6 +149,7 @@ Once a persistent cursor is visible, you can perform acoustic measurements by us
 * The ``Get pitch`` command in the pitch menu |pitch| prints the pitch under the cursor.
 * The ``Get intensity`` command in the intensity menu |intensity| prints the intensity under the cursor.
 * The ``Get formants`` command in the formants menu |formants| prints the value of the visible formants, as well as their respective bandwidth, under the cursor.
+* The ``Get spectral moments`` command in the spectrogram menu |spectrogram| prints the centre of gravity, spread, skewness, and kurtosis at the cursor position (see :ref:`spectral-moments`).
 
 Note that for these commands to work, the corresponding plot must be visible (e.g. the pitch plot must be visible if you want to measure pitch).
 
@@ -171,6 +172,33 @@ supports three display modes:
 
 You can hover over the plot to read frequency and power values at the cursor position. The spectral slice
 can be exported to **PNG**, **PDF**, or **SVG** using the toolbar buttons in the spectrum window.
+
+
+.. _spectral-moments:
+
+Spectral moments
+~~~~~~~~~~~~~~~~
+
+Phonometrica can compute **spectral moments** (centre of gravity, spread, skewness, and kurtosis) at the
+current cursor position or within a selected time span. These four moments characterize the shape of the
+spectral energy distribution and are commonly used in phonetics for the analysis of fricatives and other
+obstruents.
+
+To compute spectral moments, place a persistent cursor on the sound (or select a portion of the signal)
+and choose ``Get spectral moments`` from the spectrogram menu |spectrogram| in the toolbar. If a time span
+is selected, the entire selection is used as the analysis window. If only a cursor is placed, Phonometrica
+prompts you for a window duration (default: 25 ms) and centres the window around the cursor.
+
+The analysis uses the spectrogram settings for the window type, pre-emphasis, and frequency range. The
+results are printed in the output panel:
+
+- **COG** (centre of gravity): the mean frequency in Hz.
+- **Spread**: the standard deviation of the spectral distribution in Hz.
+- **Skewness**: the asymmetry of the distribution (dimensionless).
+- **Kurtosis**: the peakedness relative to a Gaussian (excess kurtosis, dimensionless).
+
+To extract spectral moments systematically from a corpus, use a spectral moments query
+(see :ref:`acoustic-queries`).
 
 
 References

@@ -34,7 +34,7 @@ Constraint::Constraint(const Constraint &other) :
 		regex = std::make_unique<Regex>(other.regex->pattern(), other.regex->flags());
 	}
 	if (other.layer_regex) {
-		layer_regex = std::make_unique<Regex>(other.layer_regex->pattern(), other.regex->flags());
+		layer_regex = std::make_unique<Regex>(other.layer_regex->pattern(), other.layer_regex->flags());
 	}
 }
 
@@ -162,11 +162,13 @@ void Constraint::compile()
 		else {
 			regex = std::make_unique<Regex>(target, Regex::Caseless);
 		}
+	}
 
-		if (!use_index() && !layer_regex)
-		{
-			layer_regex = std::make_unique<Regex>(layer_pattern);
-		}
+	// layer_regex is needed whenever the user specified a layer name pattern
+	// (layer_index == -1), regardless of the target operator.
+	if (!use_index() && !layer_regex)
+	{
+		layer_regex = std::make_unique<Regex>(layer_pattern);
 	}
 }
 

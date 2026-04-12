@@ -94,6 +94,7 @@ private slots:
 	void onMeasureFormants();
 	void onMeasurePitch();
 	void onMeasureIntensity();
+	void onMeasureSpectralMoments();
 	void onEditLastQuery();
 
 	// File menu (import/export)

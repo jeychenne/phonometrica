@@ -53,6 +53,7 @@
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/conc/pitch_query_editor.hpp>
 #include <phon/gui/conc/intensity_query_editor.hpp>
+#include <phon/gui/conc/spectral_moments_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
@@ -257,6 +258,8 @@ QMenu *MainWindow::createAnalysisMenu()
 	menu->addAction(tr("Measure pitch..."), this, &MainWindow::onMeasurePitch);
 
 	menu->addAction(tr("Measure intensity..."), this, &MainWindow::onMeasureIntensity);
+
+	menu->addAction(tr("Measure spectral moments..."), this, &MainWindow::onMeasureSpectralMoments);
 
 	menu->addSeparator();
 
@@ -1325,6 +1328,28 @@ void MainWindow::onMeasureIntensity()
 	}
 }
 
+void MainWindow::onMeasureSpectralMoments()
+{
+	SpectralMomentsQueryEditor editor(this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
 void MainWindow::onEditLastQuery()
 {
 	if (!m_last_query)
@@ -1384,6 +1409,28 @@ void MainWindow::onEditLastQuery()
 	{
 		auto iq = recast<IntensityQuery>(copy);
 		IntensityQueryEditor editor(iq, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+	}
+	else if (m_last_query->is_spectral_moments_query())
+	{
+		auto sq = recast<SpectralMomentsQuery>(copy);
+		SpectralMomentsQueryEditor editor(sq, this);
 
 		if (editor.exec() == QDialog::Accepted)
 		{
@@ -1589,6 +1636,28 @@ void MainWindow::onDocumentRequested(Document *doc)
 		{
 			auto iq = recast<IntensityQuery>(Handle<Query>(query_doc));
 			IntensityQueryEditor editor(iq, this);
+
+			if (editor.exec() == QDialog::Accepted)
+			{
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
+			}
+		}
+		else if (query_doc->is_spectral_moments_query())
+		{
+			auto sq = recast<SpectralMomentsQuery>(Handle<Query>(query_doc));
+			SpectralMomentsQueryEditor editor(sq, this);
 
 			if (editor.exec() == QDialog::Accepted)
 			{

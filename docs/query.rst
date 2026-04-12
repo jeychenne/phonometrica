@@ -224,6 +224,42 @@ settings for:
 Intensity can be measured at the midpoint or as an n-point average.
 
 
+Spectral moments queries
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Spectral moments** characterize the shape of the spectral distribution and are widely used in phonetics
+for the analysis of fricatives and other obstruents. To run a spectral moments query, click on
+``Analysis > Measure spectral moments...``.
+
+Phonometrica computes four spectral moments from the power spectrum, treating the spectrum as a
+probability distribution over frequency:
+
+- **Centre of gravity** (COG, 1st moment): the mean frequency, weighted by spectral power.
+- **Spread** (2nd moment): the standard deviation of the distribution, reflecting how dispersed
+  the energy is around the COG.
+- **Skewness** (3rd moment): the asymmetry of the distribution. Positive skewness indicates more
+  energy below the COG; negative skewness indicates more energy above it.
+- **Kurtosis** (4th moment, excess): the peakedness of the distribution relative to a Gaussian.
+  Positive kurtosis indicates a sharper spectral peak; negative kurtosis indicates a flatter distribution.
+
+The spectral moments query editor extends the text query editor with a panel for analysis settings:
+
+- **Window duration**: the length of the analysis window (in seconds). The default is 25 ms, which
+  is typical for fricative analysis.
+- **Window type**: the shape of the window function applied before the FFT (Gaussian by default).
+- **Min frequency** and **Max frequency**: the frequency range over which the moments are computed.
+  By default, the full range from 0 Hz to the Nyquist frequency is used. You can restrict the range
+  to focus on a particular spectral region (e.g. 1000–11025 Hz to exclude low-frequency voicing energy).
+- **Pre-emphasis**: a 6 dB/octave high-pass filter that compensates for the spectral tilt of voiced
+  sounds. Enabled by default with a threshold of 50 Hz.
+- **Output**: checkboxes let you select which of the four moments to include in the concordance.
+  All four are enabled by default.
+
+Like other acoustic queries, spectral moments can be measured at the **midpoint** of the matched event
+or as an **n-point** measurement at user-specified percentages. When n-point measurement is selected,
+the result concordance can be toggled between wide and long format.
+
+
 References
 ----------
 

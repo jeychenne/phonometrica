@@ -30,6 +30,7 @@
 #include <QDialogButtonBox>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/spectrum_view.hpp>
+#include <phon/application/spectral_moments.hpp>
 #include <phon/gui/time_axis_widget.hpp>
 #include <phon/gui/y_axis_widget.hpp>
 #include <phon/gui/waveform_widget.hpp>
@@ -375,6 +376,11 @@ void SoundView::createToolBar()
 	auto *view_both_action = spectrum_menu->addAction(tr("View FFT && LPC spectrum"));
 	connect(view_both_action, &QAction::triggered, this,
 		[this]() { onViewSpectralSlice(SpectrumDisplayMode::Both); });
+
+	auto *view_moments_action = spectrum_menu->addAction(tr("Get spectral moments"));
+	connect(view_moments_action, &QAction::triggered, this,
+		[this]() { onViewSpectralMoments(); });
+
 	spectrum_menu->addSeparator();
 
 	auto *spectrogram_settings_action = spectrum_menu->addAction(tr("Spectrogram settings..."));
@@ -822,10 +828,8 @@ void SoundView::onViewSpectralSlice(SpectrumDisplayMode mode)
 		// Cursor at a single time point: ask the user for an analysis window duration.
 		double cursor = m_model->selectionStart();
 
-		// Default to the spectrogram window length.
-		double default_dur = 0.005;
-		try { default_dur = Settings::get_number("spectrogram", "window_size"); }
-		catch (...) {}
+		// Default to 25 ms for spectral analysis (longer than the spectrogram window).
+		double default_dur = 0.025;
 
 		QDialog dlg(this);
 		dlg.setWindowTitle(tr("FFT window duration"));
@@ -1423,6 +1427,120 @@ void SoundView::onGetMeanIntensity()
 			else
 				body += tr("  Channel %1: %2\n").arg(ch).arg(value);
 		}
+
+		writeToOutput(heading, body);
+	}
+	catch (std::exception &e)
+	{
+		writeError(this, QString::fromUtf8(e.what()));
+	}
+}
+
+void SoundView::onViewSpectralMoments()
+{
+	using namespace speech;
+
+	if (!m_model->hasSelection())
+	{
+		QMessageBox::warning(this, tr("Spectral moments"),
+			tr("Please select a portion of the signal or place the cursor first."));
+		return;
+	}
+
+	double t1, t2;
+
+	if (m_model->hasSpanSelection())
+	{
+		t1 = m_model->selectionStart();
+		t2 = m_model->selectionEnd();
+	}
+	else
+	{
+		double cursor = m_model->selectionStart();
+
+		double default_dur = 0.025;
+
+		QDialog dlg(this);
+		dlg.setWindowTitle(tr("Spectral moments — window duration"));
+		dlg.setMinimumWidth(280);
+
+		auto *layout = new QVBoxLayout(&dlg);
+		layout->addWidget(new QLabel(
+			tr("Window duration (seconds), centered at %1 s:").arg(cursor, 0, 'f', 4)));
+		auto *edit = new QLineEdit(QString::number(default_dur, 'f', 4), &dlg);
+		layout->addWidget(edit);
+		layout->addStretch();
+		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
+		layout->addWidget(buttons);
+		connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+		connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+		connect(edit, &QLineEdit::returnPressed, &dlg, &QDialog::accept);
+
+		if (dlg.exec() != QDialog::Accepted)
+			return;
+
+		bool ok;
+		double dur = edit->text().toDouble(&ok);
+		if (!ok || dur <= 0)
+		{
+			QMessageBox::critical(this, tr("Spectral moments"),
+				tr("Invalid window duration."));
+			return;
+		}
+
+		double half = dur / 2.0;
+		t1 = cursor - half;
+		t2 = cursor + half;
+
+		if (t1 < 0) { t2 -= t1; t1 = 0; }
+		if (t2 > m_sound->duration()) { t1 -= (t2 - m_sound->duration()); t2 = m_sound->duration(); }
+		if (t1 < 0) t1 = 0;
+	}
+
+	// Read pre-emphasis from spectrogram settings.
+	double preemph = 50.0;
+	WindowType window_type = WindowType::Hamming;
+	double max_freq = 0.0;
+
+	try
+	{
+		String category("spectrogram");
+		preemph = Settings::get_number(category, "preemphasis_threshold");
+		max_freq = Settings::get_number(category, "frequency_range");
+
+		String win = Settings::get_string(category, "window_type");
+		if (win == "Bartlett")        window_type = WindowType::Bartlett;
+		else if (win == "Blackman")   window_type = WindowType::Blackman;
+		else if (win == "Gaussian")   window_type = WindowType::Gaussian;
+		else if (win == "Hamming")    window_type = WindowType::Hamming;
+		else if (win == "Hann")       window_type = WindowType::Hann;
+		else if (win == "Rectangular") window_type = WindowType::Rectangular;
+	}
+	catch (...) {}
+
+	int channel = 0;
+	if (!m_show_average && !m_visible_channels.empty())
+		channel = m_visible_channels.front();
+
+	try
+	{
+		double duration = t2 - t1;
+		double center = (t1 + t2) / 2.0;
+		auto sm = compute_spectral_moments_at(m_sound, channel, center,
+			duration, window_type, 0.0, max_freq, preemph);
+
+		QString heading = tr("Spectral moments at %1 s (window %2 s)")
+			.arg(center, 0, 'f', 4).arg(duration, 0, 'f', 4);
+		QString body;
+
+		if (std::isfinite(sm.cog))
+			body += tr("  COG:      %1 Hz\n").arg(sm.cog, 0, 'f', 1);
+		if (std::isfinite(sm.spread))
+			body += tr("  Spread:   %1 Hz\n").arg(sm.spread, 0, 'f', 1);
+		if (std::isfinite(sm.skewness))
+			body += tr("  Skewness: %1\n").arg(sm.skewness, 0, 'f', 4);
+		if (std::isfinite(sm.kurtosis))
+			body += tr("  Kurtosis: %1\n").arg(sm.kurtosis, 0, 'f', 4);
 
 		writeToOutput(heading, body);
 	}
