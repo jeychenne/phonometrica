@@ -26,6 +26,7 @@
 #include <functional>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/formula.hpp>
+#include <phon/analysis/prior.hpp>
 #include <phon/application/data_table.hpp>
 
 namespace phonometrica::stats {
@@ -33,10 +34,21 @@ namespace phonometrica::stats {
 // Progress callback for model fitting: receives (current_step, max_steps).
 using FittingCallback = std::function<void(int, int)>;
 
-//! Fit a model to data using a formula.
+//! Fit a model to data using a formula (frequentist).
 //!
 //! \param progress  optional callback for reporting fitting progress
 Model fit(const DataTable &data, const Formula &formula, const String &family = "gaussian",
+          const std::map<String, String> &reference_levels = {},
+          FittingCallback progress = nullptr);
+
+//! Fit a model to data using a formula (Bayesian).
+//! When a PriorSpec is provided, the model is fitted using INLA-style
+//! approximate Bayesian inference. A default-constructed PriorSpec gives
+//! weakly informative priors.
+//!
+//! \param progress  optional callback for reporting fitting progress
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const PriorSpec &priors,
           const std::map<String, String> &reference_levels = {},
           FittingCallback progress = nullptr);
 

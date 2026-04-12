@@ -29,6 +29,7 @@
 #include <phon/string.hpp>
 #include <phon/array.hpp>
 #include <phon/utils/matrix.hpp>
+#include <phon/analysis/prior.hpp>
 
 namespace phonometrica::stats {
 
@@ -70,6 +71,8 @@ struct Model
 	intptr_t nobs = 0;  // number of observations
 	intptr_t nfixed = 0; // number of fixed-effects parameters (including intercept)
 	Array<String> response_levels; // for binary text response: [reference(0), success(1)] (empty if numeric)
+	Estimation estimation = Estimation::Frequentist;
+	PriorSpec priors;   // prior specification (only meaningful when estimation == Bayesian)
 
 	// ---- Fixed effects ----
 	Array<String> coef_names;  // coefficient names: "(Intercept)", "vowel[i]", etc.
@@ -77,6 +80,21 @@ struct Model
 	Array<double> se;          // standard errors
 	Array<double> stat;        // test statistics (t-values for Gaussian, z-values for GLM)
 	Array<double> p;           // p-values
+
+	// ---- Bayesian posterior (populated only when estimation == Bayesian) ----
+	// For fixed effects: posterior summaries from the (mixture-of-)Gaussian(s) approximation.
+	Array<double> posterior_mean;   // posterior mean for each fixed-effect coefficient
+	Array<double> posterior_sd;     // posterior standard deviation
+	Array<double> ci_lower;        // lower bound of 95% credible interval
+	Array<double> ci_upper;        // upper bound of 95% credible interval
+	Array<double> pd;              // probability of direction: max(P(β>0), P(β<0))
+
+	// For hyperparameters (variance component SDs, dispersion, etc.)
+	Array<String> hyper_names;
+	Array<double> hyper_posterior_mean;
+	Array<double> hyper_posterior_sd;
+	Array<double> hyper_ci_lower;
+	Array<double> hyper_ci_upper;
 
 	// ---- Variance-covariance matrix of fixed-effect coefficients ----
 	// nfixed × nfixed matrix (2D Array). For OLS: σ²(X'X)⁻¹; for GLMs: (X'WX)⁻¹;
@@ -188,6 +206,10 @@ struct Model
 	bool is_beta() const { return family == "beta"; }
 
 	bool is_student() const { return family == "student"; }
+
+	bool is_bayesian() const { return estimation == Estimation::Bayesian; }
+
+	bool is_frequentist() const { return estimation == Estimation::Frequentist; }
 
 	// Number of estimated parameters (for AIC/BIC).
 	// Fixed-effects parameters + dispersion (if Gaussian, NB, or Beta) + variance components.

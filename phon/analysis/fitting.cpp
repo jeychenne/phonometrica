@@ -27,6 +27,7 @@
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/smooth.hpp>
+#include <phon/analysis/bayesian.hpp>
 
 namespace phonometrica::stats {
 
@@ -1083,6 +1084,25 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	if (formula.has_smooth_terms()) {
 		model.nfixed = n_parametric;
 	}
+
+	return model;
+}
+
+
+// =====================================================================
+// Bayesian fit (Phase 1: Gaussian approximation at posterior mode)
+// =====================================================================
+
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const PriorSpec &priors,
+          const std::map<String, String> &reference_levels,
+          FittingCallback progress)
+{
+	// Fit the frequentist model first (reuses all existing code).
+	Model model = fit(data, formula, family, reference_levels, progress);
+
+	// Apply Bayesian posterior adjustment.
+	bayesian_adjust(model, priors);
 
 	return model;
 }

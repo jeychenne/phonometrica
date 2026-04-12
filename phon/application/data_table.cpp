@@ -258,6 +258,9 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		rt.printf("Nu (df): %.4f\n", m.nu);
 	}
 	rt.printf("Formula: %s\n", m.formula.data());
+	if (m.is_bayesian()) {
+		rt.printf("Estimation: Bayesian (Gaussian approximation)\n");
+	}
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
 	if (!m.response_levels.empty())
@@ -268,29 +271,78 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 	rt.printf("\n");
 
-	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
-	rt.printf("Fixed effects:\n");
-	rt.printf("%-24s %12s %12s %12s %12s\n", "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
-
-	for (intptr_t i = 1; i <= m.nfixed; i++)
+	if (m.is_bayesian())
 	{
-		const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
-		char pbuf[16];
-		if (m.p[i] < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
-		else snprintf(pbuf, sizeof(pbuf), "%.4f", m.p[i]);
+		// ── Bayesian summary ────────────────────────────────────
+		rt.printf("Fixed effects (posterior):\n");
+		rt.printf("%-24s %12s %12s %12s %12s %8s\n",
+		          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper", "pd");
 
-		const char *stars = "";
-		if (m.p[i] < 0.001) stars = " ***";
-		else if (m.p[i] < 0.01) stars = " **";
-		else if (m.p[i] < 0.05) stars = " *";
-		else if (m.p[i] < 0.1) stars = " .";
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
 
-		rt.printf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
-		          name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
+			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+			char pdbuf[16];
+			snprintf(pdbuf, sizeof(pdbuf), "%.4f", pd_val);
+
+			const char *stars = "";
+			if (pd_val > 0.999) stars = " ***";
+			else if (pd_val > 0.99) stars = " **";
+			else if (pd_val > 0.975) stars = " *";
+			else if (pd_val > 0.95) stars = " .";
+
+			rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %8s%s\n",
+			          name,
+			          m.posterior_mean[i], m.posterior_sd[i],
+			          m.ci_lower[i], m.ci_upper[i],
+			          pdbuf, stars);
+		}
+
+		rt.printf("---\n");
+		rt.printf("pd thresholds: 0.999 '***' 0.99 '**' 0.975 '*' 0.95 '.' (two-sided equivalents)\n\n");
+
+		// Hyperparameters
+		if (!m.hyper_names.empty())
+		{
+			rt.printf("Hyperparameters (posterior):\n");
+			rt.printf("%-30s %12s\n", "", "Post.Mean");
+
+			for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+			{
+				rt.printf("%-30s %12.4f\n",
+				          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
+			}
+			rt.printf("\n");
+		}
 	}
+	else
+	{
+		// ── Frequentist summary ─────────────────────────────────
+		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
+		rt.printf("Fixed effects:\n");
+		rt.printf("%-24s %12s %12s %12s %12s\n", "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
 
-	rt.printf("---\n");
-	rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			char pbuf[16];
+			if (m.p[i] < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
+			else snprintf(pbuf, sizeof(pbuf), "%.4f", m.p[i]);
+
+			const char *stars = "";
+			if (m.p[i] < 0.001) stars = " ***";
+			else if (m.p[i] < 0.01) stars = " **";
+			else if (m.p[i] < 0.05) stars = " *";
+			else if (m.p[i] < 0.1) stars = " .";
+
+			rt.printf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
+			          name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
+		}
+
+		rt.printf("---\n");
+		rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+	}
 
 	if (m.has_random_effects())
 	{
@@ -313,13 +365,20 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		if (m.is_gaussian()) rt.printf("%-20s %12.4f %12.4f\n", "Residual", m.rse * m.rse, m.rse);
 		rt.printf("\n");
 	}
-	else if (m.is_gaussian())
+	else if (m.is_gaussian() && !m.is_bayesian())
 	{
 		rt.printf("Residual standard error: %.4f on %ld degrees of freedom\n", m.rse, (long)m.df_residual);
 		rt.printf("R-squared: %.4f, Adjusted R-squared: %.4f\n", m.r2, m.adj_r2);
 	}
 
-	rt.printf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
+	if (!m.is_bayesian())
+	{
+		rt.printf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
+	}
+	else
+	{
+		rt.printf("Log-marginal likelihood: %.1f\n", m.loglik);
+	}
 
 	if (m.niter > 0)
 	{
@@ -580,6 +639,12 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "niter") return intptr_t(model.niter);
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
+		if (key == "estimation") return String(stats::estimation_name(model.estimation));
+		if (key == "posterior_mean") return make_handle<Array<double>>(model.posterior_mean);
+		if (key == "posterior_sd") return make_handle<Array<double>>(model.posterior_sd);
+		if (key == "ci_lower") return make_handle<Array<double>>(model.ci_lower);
+		if (key == "ci_upper") return make_handle<Array<double>>(model.ci_upper);
+		if (key == "pd") return make_handle<Array<double>>(model.pd);
 		throw error("[Index error] Model type has no member named \"%\"", key);
 	};
 
@@ -914,10 +979,122 @@ void DataTable::initialize(Runtime &rt)
 		return stats::sample_variance(cast<Array<double>>(args[0]));
 	};
 
+	// ── Prior construction and configuration ────────────────────
+
+	auto prior_init = [](Runtime &, std::span<Variant>) -> Variant {
+		return make_handle<stats::PriorSpec>(stats::PriorSpec::default_spec());
+	};
+
+	// set_fixed(prior, mean, sd) — default prior for all fixed effects
+	auto set_fixed3 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		prior.fixed_effects.mean = args[1].to_float();
+		prior.fixed_effects.sd = args[2].to_float();
+		return Variant();
+	};
+
+	// set_fixed(prior, name, mean, sd) — per-coefficient override
+	auto set_fixed4 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		auto &name = cast<String>(args[1]);
+		stats::NormalPrior np;
+		np.mean = args[2].to_float();
+		np.sd = args[3].to_float();
+		prior.coefficient_priors[name] = np;
+		return Variant();
+	};
+
+	// Helper to parse a variance prior type string.
+	auto parse_variance_type = [](const String &s) -> stats::VariancePriorType {
+		if (s == "pc") return stats::VariancePriorType::PC;
+		if (s == "half_cauchy") return stats::VariancePriorType::HalfCauchy;
+		if (s == "half_normal") return stats::VariancePriorType::HalfNormal;
+		throw error("Unknown variance prior type: \"%\". Expected \"pc\", \"half_cauchy\", or \"half_normal\"", s);
+	};
+
+	// set_variance(prior, type, param1, param2) — variance components prior
+	auto set_variance4 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		auto &type_str = cast<String>(args[1]);
+		prior.variance_components.type = parse_variance_type(type_str);
+		prior.variance_components.param1 = args[2].to_float();
+		prior.variance_components.param2 = args[3].to_float();
+		return Variant();
+	};
+
+	// set_variance(prior, type, param1) — for HalfCauchy/HalfNormal (single param)
+	auto set_variance3 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		auto &type_str = cast<String>(args[1]);
+		prior.variance_components.type = parse_variance_type(type_str);
+		prior.variance_components.param1 = args[2].to_float();
+		return Variant();
+	};
+
+	// set_residual(prior, type, param1, param2)
+	auto set_residual4 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		auto &type_str = cast<String>(args[1]);
+		prior.residual.type = parse_variance_type(type_str);
+		prior.residual.param1 = args[2].to_float();
+		prior.residual.param2 = args[3].to_float();
+		return Variant();
+	};
+
+	// set_residual(prior, type, param1)
+	auto set_residual3 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		auto &type_str = cast<String>(args[1]);
+		prior.residual.type = parse_variance_type(type_str);
+		prior.residual.param1 = args[2].to_float();
+		return Variant();
+	};
+
+	// set_negbin_theta(prior, shape, rate)
+	auto set_negbin_theta = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		prior.negbin_theta.shape = args[1].to_float();
+		prior.negbin_theta.rate = args[2].to_float();
+		return Variant();
+	};
+
+	// set_beta_phi(prior, shape, rate)
+	auto set_beta_phi = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		prior.beta_phi.shape = args[1].to_float();
+		prior.beta_phi.rate = args[2].to_float();
+		return Variant();
+	};
+
+	// Bayesian fit: fit(formula, data, prior) — Gaussian
+	auto fit_bayes2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &formula_str = cast<String>(args[0]);
+		auto &data = cast<DataTable>(args[1]);
+		auto &priors = cast<stats::PriorSpec>(args[2]);
+		data.open();
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", priors);
+		model.compute_pseudo_r2();
+		return make_handle<stats::Model>(std::move(model));
+	};
+
+	// Bayesian fit: fit(formula, data, family, prior)
+	auto fit_bayes3 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &formula_str = cast<String>(args[0]);
+		auto &data = cast<DataTable>(args[1]);
+		auto &family_str = cast<String>(args[2]);
+		auto &priors = cast<stats::PriorSpec>(args[3]);
+		data.open();
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str, priors);
+		model.compute_pseudo_r2();
+		return make_handle<stats::Model>(std::move(model));
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
 	rt.add_global("fit", fit3, { CLS(String), CLS(DataTable), CLS(String) });
+	rt.add_global("fit", fit_bayes2, { CLS(String), CLS(DataTable), CLS(stats::PriorSpec) });
+	rt.add_global("fit", fit_bayes3, { CLS(String), CLS(DataTable), CLS(String), CLS(stats::PriorSpec) });
 	rt.add_global("filter", filter2, { CLS(DataTable), CLS(String) });
 	rt.add_global("filter", filter3, { CLS(DataTable), CLS(String), CLS(String) });
 
@@ -953,6 +1130,19 @@ void DataTable::initialize(Runtime &rt)
 
 	// Diagnostics
 	rt.add_global("dharma", dharma_func, { CLS(stats::Model) });
+
+	// Prior construction and configuration
+	auto prior_cls = CLS(stats::PriorSpec);
+	prior_cls->add_constructor(prior_init, {});
+
+	rt.add_global("set_fixed", set_fixed3, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
+	rt.add_global("set_fixed", set_fixed4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
+	rt.add_global("set_variance", set_variance3, { CLS(stats::PriorSpec), CLS(String), CLS(Number) });
+	rt.add_global("set_variance", set_variance4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
+	rt.add_global("set_residual", set_residual3, { CLS(stats::PriorSpec), CLS(String), CLS(Number) });
+	rt.add_global("set_residual", set_residual4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
+	rt.add_global("set_negbin_theta", set_negbin_theta, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
+	rt.add_global("set_beta_phi", set_beta_phi, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
 
 	auto model_cls = CLS(stats::Model);
 	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });

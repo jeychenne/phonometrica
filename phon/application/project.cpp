@@ -1844,6 +1844,7 @@ void Project::preinitialize(Runtime &rt)
 	auto bookmark_type = rt.add_standard_type<Bookmark>("Bookmark", elem_type.get());
 	rt.add_standard_type<TimeStamp>("TimeStamp", bookmark_type.get());
 	rt.add_standard_type<stats::Model>("Model");
+	rt.add_standard_type<stats::PriorSpec>("Prior");
 	rt.add_standard_type<Analysis>("Analysis", doc_type.get());
 }
 
