@@ -1042,7 +1042,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	{
 		model = lm(dm.y, dm.X);
 	}
-	else if (family == "negbin" || family == "beta")
+	else if (family == "negbin" || family == "beta" || family == "student")
 	{
 		// Route through the Laplace engine with empty groups for unified
 		// optimization, ensuring comparable log-likelihoods with mixed models.

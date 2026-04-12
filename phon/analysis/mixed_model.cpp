@@ -1405,15 +1405,30 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 		// ── Working weights and response ────────────────────────
 		// General GLM: w_i = (dμ/dη)² / V(μ),  z_i = η_i + (y_i − μ_i) / (dμ/dη)
-		Eigen::VectorXd V = fam.variance(mu);
-		Eigen::VectorXd me = fam.mu_eta(mu);
+		// Student t:   w_i from custom_weights (observation-dependent),
+		//              z_i = η_i + (y_i − μ_i) / (dμ/dη) = y_i (identity link)
 		Eigen::VectorXd w(n), z(n);
-		for (intptr_t i = 0; i < n; i++)
+		if (fam.custom_weights)
 		{
-			double v = std::max(V[i], 1e-10);
-			double d = std::max(me[i], 1e-10);
-			w[i] = d * d / v;  // generalized IWLS weight
-			z[i] = eta[i] + (ym[i] - mu[i]) / d;
+			w = fam.custom_weights(ym, mu);
+			Eigen::VectorXd me = fam.mu_eta(mu);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double d = std::max(me[i], 1e-10);
+				z[i] = eta[i] + (ym[i] - mu[i]) / d;
+			}
+		}
+		else
+		{
+			Eigen::VectorXd V = fam.variance(mu);
+			Eigen::VectorXd me = fam.mu_eta(mu);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double v = std::max(V[i], 1e-10);
+				double d = std::max(me[i], 1e-10);
+				w[i] = d * d / v;  // generalized IWLS weight
+				z[i] = eta[i] + (ym[i] - mu[i]) / d;
+			}
 		}
 
 		// ── Henderson system ────────────────────────────────────
@@ -1577,13 +1592,20 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 	}
 
 	// Laplace correction: 1/2 log|H_uu| - J_total/2 log(2π)
-	Eigen::VectorXd V_final = fam.variance(res.mu);
-	Eigen::VectorXd me_final = fam.mu_eta(res.mu);
 	Eigen::VectorXd w_final(n);
-	for (intptr_t i = 0; i < n; i++) {
-		double v = std::max(V_final[i], 1e-10);
-		double d = std::max(me_final[i], 1e-10);
-		w_final[i] = d * d / v;
+	if (fam.custom_weights)
+	{
+		w_final = fam.custom_weights(ym, res.mu);
+	}
+	else
+	{
+		Eigen::VectorXd V_final = fam.variance(res.mu);
+		Eigen::VectorXd me_final = fam.mu_eta(res.mu);
+		for (intptr_t i = 0; i < n; i++) {
+			double v = std::max(V_final[i], 1e-10);
+			double d = std::max(me_final[i], 1e-10);
+			w_final[i] = d * d / v;
+		}
 	}
 	double log_det_Huu = full_log_det_H(w_final, D_inv, lay, n);
 
@@ -1661,19 +1683,33 @@ static ProfiledResult solve_u_given_beta(
 		}
 
 		Eigen::VectorXd mu = fam.linkinv(eta.cwiseMax(-30.0).cwiseMin(30.0));
-		Eigen::VectorXd V = fam.variance(mu);
-		Eigen::VectorXd me = fam.mu_eta(mu);
 
 		// Working weights and residual r = z - Xβ
 		Eigen::VectorXd w(n), r(n);
 		bool bad = false;
-		for (intptr_t i = 0; i < n; i++)
+		if (fam.custom_weights)
 		{
-			double v = std::max(V[i], 1e-10);
-			double d = std::max(me[i], 1e-10);
-			w[i] = d * d / v;
-			r[i] = eta[i] - Xbeta[i] + (ym[i] - mu[i]) / d;
-			if (!std::isfinite(r[i]) || !std::isfinite(w[i])) bad = true;
+			w = fam.custom_weights(ym, mu);
+			Eigen::VectorXd me = fam.mu_eta(mu);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double d = std::max(me[i], 1e-10);
+				r[i] = eta[i] - Xbeta[i] + (ym[i] - mu[i]) / d;
+				if (!std::isfinite(r[i]) || !std::isfinite(w[i])) bad = true;
+			}
+		}
+		else
+		{
+			Eigen::VectorXd V = fam.variance(mu);
+			Eigen::VectorXd me = fam.mu_eta(mu);
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double v = std::max(V[i], 1e-10);
+				double d = std::max(me[i], 1e-10);
+				w[i] = d * d / v;
+				r[i] = eta[i] - Xbeta[i] + (ym[i] - mu[i]) / d;
+				if (!std::isfinite(r[i]) || !std::isfinite(w[i])) bad = true;
+			}
 		}
 		if (bad) break;
 
@@ -1829,14 +1865,21 @@ static ProfiledResult solve_u_given_beta(
 		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
 	}
 
-	Eigen::VectorXd V_f = fam.variance(res.mu);
-	Eigen::VectorXd me_f = fam.mu_eta(res.mu);
 	Eigen::VectorXd w_f(n);
-	for (intptr_t i = 0; i < n; i++)
+	if (fam.custom_weights)
 	{
-		double v = std::max(V_f[i], 1e-10);
-		double d = std::max(me_f[i], 1e-10);
-		w_f[i] = d * d / v;
+		w_f = fam.custom_weights(ym, res.mu);
+	}
+	else
+	{
+		Eigen::VectorXd V_f = fam.variance(res.mu);
+		Eigen::VectorXd me_f = fam.mu_eta(res.mu);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double v = std::max(V_f[i], 1e-10);
+			double d = std::max(me_f[i], 1e-10);
+			w_f[i] = d * d / v;
+		}
 	}
 	double log_det_Huu = full_log_det_H(w_f, D_inv, lay, n);
 
@@ -1851,11 +1894,11 @@ static ProfiledResult solve_u_given_beta(
 // =====================================================================
 //
 // Outer parameters:
-//   θ = (chol_1, ..., chol_G, [log θ_nb])
+//   θ = (chol_1, ..., chol_G, [log θ_nb | log φ | log σ, log ν])
 // where chol_g is the packed lower Cholesky factor for group g
 // (q_g(q_g+1)/2 elements, diagonal on log scale).
 //
-// Total dim = Σ q_g(q_g+1)/2 + (1 if NB).
+// Total dim = Σ q_g(q_g+1)/2 + n_dispersion_params().
 //
 // β and u are concentrated out via PIRLS at each θ evaluation.
 
@@ -1906,6 +1949,13 @@ struct PirlsObjective
 			auto fam_beta = Family::beta(phi_beta);
 			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u);
 		}
+		else if (fam.name == "student")
+		{
+			double sigma_t = std::exp(theta[n_chol]);
+			double nu_t = std::exp(theta[n_chol + 1]);
+			auto fam_t = Family::student(sigma_t, nu_t);
+			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u);
+		}
 		else
 		{
 			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u);
@@ -1927,7 +1977,7 @@ struct PirlsObjective
 // Phase 2 is only needed for non-Gaussian families (for Gaussian,
 // the working weights are constant and ∂log|H|/∂β = 0).
 //
-// Outer parameter vector: phi = [β (p), θ_chol (n_chol), log(θ_nb)?]
+// Outer parameter vector: phi = [β (p), θ_chol (n_chol), log(disp)...]
 
 struct LaplaceJointObjective
 {
@@ -1967,6 +2017,12 @@ struct LaplaceJointObjective
 		{
 			double phi_beta = std::exp(phi[p + n_chol]);
 			fam_used = Family::beta(phi_beta);
+		}
+		else if (fam.name == "student")
+		{
+			double sigma_t = std::exp(phi[p + n_chol]);
+			double nu_t = std::exp(phi[p + n_chol + 1]);
+			fam_used = Family::student(sigma_t, nu_t);
 		}
 
 		auto res = solve_u_given_beta(D_inv, log_det_Dg, fam_used,
@@ -2246,6 +2302,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	} else if (fam.name == "beta") {
 		// For beta, use binomial as starting fit (same logit link).
 		fe = glm(y, X, Family::binomial());
+	} else if (fam.name == "student") {
+		// For Student t, use OLS as starting fit (identity link).
+		fe = lm(y, X);
 	} else {
 		fe = glm(y, X, fam);
 	}
@@ -2394,14 +2453,15 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		// Non-Gaussian: PIRLS profiling — Newton over θ = (chol_1, ..., chol_G, [log disp]).
+		// Non-Gaussian: PIRLS profiling — Newton over θ = (chol_1, ..., chol_G, [log disp...]).
 		// β is concentrated out via PIRLS at each θ evaluation.
-		// Outer dimension: Σ q_g(q_g+1)/2 + (1 if NB or Beta).
+		// Outer dimension: Σ q_g(q_g+1)/2 + n_dispersion_params.
 		bool is_nb = (fam.name == "negbin");
 		bool is_beta = (fam.name == "beta");
-		bool has_disp = (is_nb || is_beta);
+		bool is_student = (fam.name == "student");
 		intptr_t n_chol = total_chol_params(lay);
-		intptr_t outer_dim_pirls = has_disp ? (n_chol + 1) : n_chol;
+		intptr_t n_disp = fam.n_dispersion_params();
+		intptr_t outer_dim_pirls = n_chol + n_disp;
 
 		Eigen::VectorXd beta_init = phi.head(p);
 
@@ -2495,6 +2555,14 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			phi_init = std::clamp(phi_init, 0.1, 1e6);
 			theta[n_chol] = std::log(phi_init);
 		}
+		else if (is_student)
+		{
+			// Initialize σ from OLS residual standard error.
+			double sigma_init = std::max(fe.rse, 0.01);
+			theta[n_chol] = std::log(sigma_init);
+			// Initialize ν = 5 (moderately heavy tails; ν → ∞ is Gaussian).
+			theta[n_chol + 1] = std::log(5.0);
+		}
 
 		// Create PirlsObjective after beta_init is finalized
 
@@ -2530,6 +2598,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				fam_p1 = Family::negbin(std::exp(theta[n_chol]));
 			else if (is_beta)
 				fam_p1 = Family::beta(std::exp(theta[n_chol]));
+			else if (is_student)
+				fam_p1 = Family::student(std::exp(theta[n_chol]), std::exp(theta[n_chol + 1]));
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
 			                             Xm, ym, lay, n, p, beta_init);
@@ -2581,6 +2651,12 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			double phi_beta = std::exp(theta[n_chol]);
 			fam_used = Family::beta(phi_beta);
 		}
+		// For Student t, update the Family with the converged σ and ν
+		else if (is_student) {
+			double sigma_t = std::exp(theta[n_chol]);
+			double nu_t = std::exp(theta[n_chol + 1]);
+			fam_used = Family::student(sigma_t, nu_t);
+		}
 
 		// beta_hat already set by Phase 2
 
@@ -2624,6 +2700,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	//   C = [X'WX     X'WZ       ]
 	//       [Z'WX   Z'WZ + D⁻¹   ]
 	// For Gaussian: W = (1/σ²)I.
+	// For Student t: W = diag(w_i) with custom IWLS weights.
 	// For non-Gaussian: W = diag(w_i) with w_i = (dμ/dη)²/V(μ).
 	// The top-left p×p block of C⁻¹ is the conditional covariance
 	// of β̂.  This is what lme4/glmmTMB report.
@@ -2635,6 +2712,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		if (is_gaussian)
 		{
 			w_se.setConstant(1.0 / sigma2);
+		}
+		else if (fam_used.custom_weights)
+		{
+			w_se = fam_used.custom_weights(ym, final_inner.mu);
 		}
 		else
 		{
@@ -2753,6 +2834,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.link = fam.link_name;
 	model.theta = fam_used.theta;
 	model.phi = fam_used.phi;
+	model.sigma = fam_used.sigma;
+	model.nu = fam_used.nu;
 	model.nobs = n;
 	model.nfixed = p;
 	model.y = y;

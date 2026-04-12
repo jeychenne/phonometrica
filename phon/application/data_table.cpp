@@ -241,6 +241,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	const char *family_display = m.family.data();
 	if (m.is_negbin()) family_display = "Negative binomial";
 	if (m.is_beta()) family_display = "Beta";
+	if (m.is_student()) family_display = "Student t (robust)";
 
 	rt.printf("\nFamily: %s (%s)\n", family_display, m.link.data());
 	if (m.is_negbin()) {
@@ -248,6 +249,10 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	}
 	if (m.is_beta()) {
 		rt.printf("Phi (precision): %.4f\n", m.phi);
+	}
+	if (m.is_student()) {
+		rt.printf("Sigma (scale): %.4f\n", m.sigma);
+		rt.printf("Nu (df): %.4f\n", m.nu);
 	}
 	rt.printf("Formula: %s\n", m.formula.data());
 	rt.printf("Observations: %ld\n", (long)m.nobs);
@@ -260,7 +265,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 	rt.printf("\n");
 
-	const char *stat_label = m.is_gaussian() ? "t value" : "z value";
+	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
 	rt.printf("Fixed effects:\n");
 	rt.printf("%-24s %12s %12s %12s %12s\n", "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
 
@@ -590,6 +595,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "df") return model.df_residual;
 		if (key == "theta") return model.theta;
 		if (key == "phi") return model.phi;
+		if (key == "sigma") return model.sigma;
+		if (key == "nu") return model.nu;
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
 		throw error("[Index error] Model type has no member named \"%\"", key);
