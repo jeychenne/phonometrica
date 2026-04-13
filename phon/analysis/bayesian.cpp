@@ -19,10 +19,13 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
 #include <cmath>
+#include <random>
 #include <boost/math/distributions/normal.hpp>
 #include <Eigen/Dense>
 #include <phon/analysis/bayesian.hpp>
+#include <phon/analysis/waic.hpp>
 
 namespace phonometrica::stats {
 
@@ -226,7 +229,63 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		                   - 0.5 * log_det_H;
 	}
 
-	// ── 7. Set estimation method and store priors ───────────────────
+	// ── 7. WAIC ─────────────────────────────────────────────────────────
+	//
+	// Draw S posterior samples of β from N(β_post, Σ_post), compute
+	// pointwise log-likelihoods, and call compute_waic_from_loglik.
+	// No random effects in this path, so μ_i = linkinv(x_i' β^(s)).
+
+	if (!model.X.empty() && !model.y.empty())
+	{
+		constexpr int S = 1000;
+		constexpr unsigned int SEED = 12345;
+
+		intptr_t n = model.nobs;
+
+		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+
+		// Cholesky of posterior covariance for correlated draws.
+		Eigen::LLT<Eigen::MatrixXd> chol_post(Sigma_post);
+
+		// Scalar inverse link.
+		std::function<double(double)> linkinv_fn;
+		if (model.family == "binomial" || model.family == "beta") {
+			linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+		} else if (model.family == "poisson" || model.family == "negbin") {
+			linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+		} else {
+			// Gaussian, Student: identity link
+			linkinv_fn = [](double eta) { return eta; };
+		}
+
+		std::vector<double> loglik_matrix(n * S);
+		std::mt19937 rng(SEED);
+		std::normal_distribution<double> std_normal(0.0, 1.0);
+
+		for (int s = 0; s < S; s++)
+		{
+			// Draw β^(s) ~ N(β_post, Σ_post)
+			Eigen::VectorXd z(p);
+			for (intptr_t j = 0; j < p; j++)
+				z[j] = std_normal(rng);
+
+			Eigen::VectorXd beta_s = beta_post + chol_post.matrixL() * z;
+
+			// η = X β^(s)
+			Eigen::VectorXd eta = Xm * beta_s;
+
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mu_i = linkinv_fn(eta[i]);
+				loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+			}
+		}
+
+		compute_waic_from_loglik(model, loglik_matrix, n, S);
+	}
+
+	// ── 8. Set estimation method and store priors ───────────────────
 
 	model.estimation = Estimation::Bayesian;
 	model.priors = priors;

@@ -337,6 +337,10 @@ void Analysis::write()
 		add_data_node(mn, "BIC", String::format("%.17g", m.bic));
 		add_data_node(mn, "Deviance", String::format("%.17g", m.deviance));
 		add_data_node(mn, "LogMarginal", String::format("%.17g", m.log_marginal));
+		add_data_node(mn, "WAIC", String::format("%.17g", m.waic));
+		add_data_node(mn, "PWAIC", String::format("%.17g", m.p_waic));
+		add_data_node(mn, "LPPD", String::format("%.17g", m.lppd));
+		add_data_node(mn, "SEWAIC", String::format("%.17g", m.se_waic));
 		add_data_node(mn, "RSE", String::format("%.17g", m.rse));
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
 		add_data_node(mn, "R2", String::format("%.17g", m.r2));
@@ -553,6 +557,10 @@ void Analysis::load()
 					else if (name == "BIC")      m.bic = parse_double_safe(text);
 					else if (name == "Deviance") m.deviance = parse_double_safe(text);
 					else if (name == "LogMarginal") m.log_marginal = parse_double_safe(text);
+					else if (name == "WAIC")     m.waic = parse_double_safe(text);
+					else if (name == "PWAIC")    m.p_waic = parse_double_safe(text);
+					else if (name == "LPPD")     m.lppd = parse_double_safe(text);
+					else if (name == "SEWAIC")   m.se_waic = parse_double_safe(text);
 					else if (name == "RSE")      m.rse = parse_double_safe(text);
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
 					else if (name == "R2")       m.r2 = parse_double_safe(text);

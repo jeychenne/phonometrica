@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <random>
 #include <vector>
 #include <map>
 #include <boost/math/distributions/normal.hpp>
@@ -29,6 +30,7 @@
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/smooth.hpp>
 #include <phon/analysis/bayesian.hpp>
+#include <phon/analysis/waic.hpp>
 
 namespace phonometrica::stats {
 
@@ -1299,6 +1301,64 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 	// (w.r.t. θ) which is not available after the optimization completes.
 	// This path is only reached for NB/beta/Student without random effects;
 	// the grid integration paths and bayesian_adjust cover the common cases.
+
+	// ── WAIC ────────────────────────────────────────────────────────────
+	//
+	// Draw from N(β_post, Σ_post) where β_post = model.beta and Σ_post = model.vcov
+	// (both are posterior quantities from the Laplace/prior-adjusted Henderson solve).
+
+	if (!model.X.empty() && !model.y.empty() && model.has_vcov())
+	{
+		constexpr int S = 1000;
+		constexpr unsigned int SEED = 12345;
+
+		intptr_t n = model.nobs;
+		intptr_t p = model.nfixed;
+
+		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+
+		// Posterior mean and covariance.
+		Eigen::VectorXd beta_post(p);
+		for (intptr_t j = 0; j < p; j++)
+			beta_post[j] = model.beta[j + 1];
+
+		Eigen::Map<Matrix<double>> vcov_m(const_cast<double *>(model.vcov.data()), p, p);
+		Eigen::LLT<Eigen::MatrixXd> chol_post(vcov_m);
+
+		// Scalar inverse link.
+		std::function<double(double)> linkinv_fn;
+		if (model.family == "beta") {
+			linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+		} else if (model.family == "negbin") {
+			linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+		} else {
+			// Student: identity link
+			linkinv_fn = [](double eta) { return eta; };
+		}
+
+		std::vector<double> loglik_matrix(n * S);
+		std::mt19937 rng(SEED);
+		std::normal_distribution<double> std_normal(0.0, 1.0);
+
+		for (int s = 0; s < S; s++)
+		{
+			Eigen::VectorXd z(p);
+			for (intptr_t j = 0; j < p; j++)
+				z[j] = std_normal(rng);
+
+			Eigen::VectorXd beta_s = beta_post + chol_post.matrixL() * z;
+			Eigen::VectorXd eta = Xm * beta_s;
+
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mu_i = linkinv_fn(eta[i]);
+				loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+			}
+		}
+
+		compute_waic_from_loglik(model, loglik_matrix, n, S);
+	}
 
 	model.estimation = Estimation::Bayesian;
 	model.priors = priors;

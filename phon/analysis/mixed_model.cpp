@@ -34,10 +34,12 @@
 
 #include <cmath>
 #include <algorithm>
+#include <random>
 #include <cppad/cppad.hpp>
 #include <boost/math/distributions/normal.hpp>
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/regression.hpp>
+#include <phon/analysis/waic.hpp>
 #include <phon/utils/matrix.hpp>
 
 namespace phonometrica::stats {
@@ -2837,6 +2839,169 @@ static GridPointResult eval_pirls_grid_point(
 }
 
 
+// =====================================================================
+// WAIC helpers for grid-integrated models
+// =====================================================================
+
+// Number of WAIC posterior draws.
+static constexpr int WAIC_S = 1000;
+static constexpr unsigned int WAIC_SEED = 12345;
+
+// Compute the random-effects offset zu_i = Σ_g Σ_t Z_g(i,t) * u_hat[g, level_g(i), t]
+// from the Model's conditional modes (BLUPs at the mode θ*).
+// Returns a vector of length n.
+static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
+{
+	std::vector<double> zu(n, 0.0);
+
+	for (intptr_t gi = 1; gi <= model.random_effects.size(); gi++)
+	{
+		auto &re = model.random_effects[gi];
+		intptr_t q = re.nterms;
+
+		if (re.Z_design.empty() || re.conditional_modes.empty() || re.indices.empty())
+			continue;
+
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t j = re.indices[i];   // level index for observation i
+			for (intptr_t t = 0; t < q; t++)
+			{
+				double z_val = re.Z_design[i * q + t];
+				double u_val = re.conditional_modes[j * q + t + 1]; // 1-based Array
+				zu[i] += z_val * u_val;
+			}
+		}
+	}
+
+	return zu;
+}
+
+
+// Populate GridSummary and compute WAIC for a grid-integrated model.
+//
+// This function:
+//   1. Stores the per-grid-point results in model.grid_summary (for PPC later)
+//   2. Draws S posterior samples of (β, θ) from the mixture
+//   3. Computes μ_i^(s) = linkinv(x_i' β^(s) + zu_i)  [zu_i from BLUPs at mode]
+//   4. Evaluates pointwise log-likelihood using dispersion params from θ^(s)
+//   5. Calls compute_waic_from_loglik to populate model.waic/p_waic/lppd/se_waic
+//
+// Parameters:
+//   results, w: the per-grid-point β̂/Σ and normalised weights
+//   theta_star, T, z_points: for reconstructing θ_k = θ* + T z_k
+//   n_chol: number of Cholesky parameters (needed to find dispersion in θ)
+//   linkinv_scalar: scalar inverse link function (identity for Gaussian, exp for log, etc.)
+//   disp_from_theta: extracts dispersion params from a θ vector (family-dependent)
+//
+static void compute_grid_waic(
+	Model &model,
+	const std::vector<GridPointResult> &results,
+	const std::vector<double> &w,
+	const std::vector<Eigen::VectorXd> &z_points,
+	const Eigen::VectorXd &theta_star,
+	const Eigen::MatrixXd &T,
+	const Eigen::Map<Matrix<double>> &Xm,
+	const Eigen::Map<Vector<double>> &ym,
+	intptr_t n, intptr_t p,
+	intptr_t n_chol,
+	std::function<double(double)> linkinv_scalar,
+	std::function<void(const Eigen::VectorXd &theta, double *disp)> disp_from_theta)
+{
+	intptr_t n_grid = (intptr_t)results.size();
+	intptr_t d = theta_star.size();
+
+	// ── 1. Populate GridSummary ──────────────────────────────────────
+
+	GridSummary gs;
+	gs.n_points = (int)n_grid;
+	gs.n_beta   = (int)p;
+	gs.n_theta  = (int)d;
+	gs.weights.resize(n_grid);
+	gs.beta.resize(n_grid * p);
+	gs.vcov_diag.resize(n_grid * p);
+	gs.theta.resize(n_grid * d);
+
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		gs.weights[k] = w[k];
+
+		for (intptr_t j = 0; j < p; j++)
+		{
+			gs.beta[k * p + j] = results[k].beta[j];
+			gs.vcov_diag[k * p + j] = results[k].vcov_beta(j, j);
+		}
+
+		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+		for (intptr_t j = 0; j < d; j++)
+			gs.theta[k * d + j] = theta_k[j];
+	}
+
+	model.grid_summary = std::move(gs);
+
+	// ── 2. Precompute RE offset from BLUPs at mode θ* ───────────────
+
+	std::vector<double> zu = compute_re_offset(model, n);
+
+	// ── 3. Precompute Cholesky factors of Σ_k for correlated draws ──
+
+	std::vector<Eigen::LLT<Eigen::MatrixXd>> chol_vcov(n_grid);
+	for (intptr_t k = 0; k < n_grid; k++)
+		chol_vcov[k].compute(results[k].vcov_beta);
+
+	// ── 4. Build cumulative weight distribution for grid sampling ────
+
+	std::vector<double> cdf(n_grid);
+	cdf[0] = w[0];
+	for (intptr_t k = 1; k < n_grid; k++)
+		cdf[k] = cdf[k - 1] + w[k];
+
+	// ── 5. Draw S posterior samples and compute pointwise log-lik ────
+
+	std::vector<double> loglik_matrix(n * WAIC_S);
+	std::mt19937 rng(WAIC_SEED);
+	std::uniform_real_distribution<double> unif(0.0, 1.0);
+	std::normal_distribution<double> std_normal(0.0, 1.0);
+
+	for (int s = 0; s < WAIC_S; s++)
+	{
+		// Sample grid point k with probability w_k.
+		double u = unif(rng);
+		intptr_t k = (intptr_t)(std::lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin());
+		k = std::min(k, n_grid - 1);
+
+		// Draw β^(s) ~ N(β̂_k, Σ_k)
+		Eigen::VectorXd z(p);
+		for (intptr_t j = 0; j < p; j++)
+			z[j] = std_normal(rng);
+
+		Eigen::VectorXd beta_s = results[k].beta + chol_vcov[k].matrixL() * z;
+
+		// Dispersion parameters from θ_k.
+		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+		double disp[2] = {0.0, 0.0};
+		disp_from_theta(theta_k, disp);
+
+		// Compute pointwise log-likelihoods.
+		for (intptr_t i = 0; i < n; i++)
+		{
+			// η_i = x_i' β^(s) + zu_i
+			double eta_i = zu[i];
+			for (intptr_t j = 0; j < p; j++)
+				eta_i += Xm(i, j) * beta_s[j];
+
+			double mu_i = linkinv_scalar(eta_i);
+			loglik_matrix[i * WAIC_S + s] = pointwise_loglik(ym[i], mu_i,
+			                                                   model.family, disp);
+		}
+	}
+
+	// ── 6. Compute WAIC ─────────────────────────────────────────────
+
+	compute_waic_from_loglik(model, loglik_matrix, n, WAIC_S);
+}
+
+
 // Main INLA grid integration for Gaussian LMMs.
 // Populates the Model's posterior fields with mixture-based estimates.
 static void inla_grid_integrate_gaussian(
@@ -3113,10 +3278,18 @@ static void inla_grid_integrate_gaussian(
 		                   + 0.5 * d * log_2pi
 		                   - 0.5 * sum_log_eig;
 	}
+
+	// ── 10. WAIC (computed at fit time while X, y, grid results in scope) ──
+
+	compute_grid_waic(model, results, w, z_points, theta_star, T,
+	                   Xm, ym, n, p, n_chol,
+	                   // Gaussian: identity link
+	                   [](double eta) { return eta; },
+	                   // Gaussian: σ = exp(θ[n_chol])
+	                   [n_chol](const Eigen::VectorXd &theta, double *disp) {
+	                       disp[0] = std::exp(theta[n_chol]);
+	                   });
 }
-
-
-// Main INLA grid integration for non-Gaussian GLMMs.
 // Populates the Model's posterior fields with mixture-based estimates.
 //
 // Outer θ layout: (chol_1, ..., chol_G, [log disp...])
@@ -3430,6 +3603,43 @@ static void inla_grid_integrate_pirls(
 		                   + 0.5 * d * log_2pi
 		                   - 0.5 * sum_log_eig;
 	}
+
+	// ── 10. WAIC ────────────────────────────────────────────────────
+
+	// Inverse link function (scalar).
+	std::function<double(double)> linkinv_fn;
+	if (model.family == "binomial" || model.family == "beta") {
+		linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+	} else if (model.family == "student") {
+		linkinv_fn = [](double eta) { return eta; };
+	} else {
+		// Poisson, NB: log link → exp
+		linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+	}
+
+	// Extract dispersion from θ_k.
+	std::function<void(const Eigen::VectorXd &, double *)> disp_fn;
+	if (model.family == "negbin") {
+		disp_fn = [n_chol](const Eigen::VectorXd &theta, double *disp) {
+			disp[0] = std::exp(theta[n_chol]);  // θ_nb
+		};
+	} else if (model.family == "beta") {
+		disp_fn = [n_chol](const Eigen::VectorXd &theta, double *disp) {
+			disp[0] = std::exp(theta[n_chol]);  // φ
+		};
+	} else if (model.family == "student") {
+		disp_fn = [n_chol](const Eigen::VectorXd &theta, double *disp) {
+			disp[0] = std::exp(theta[n_chol]);                             // σ
+			disp[1] = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0); // ν
+		};
+	} else {
+		// Binomial, Poisson: no dispersion parameter
+		disp_fn = [](const Eigen::VectorXd &, double *) {};
+	}
+
+	compute_grid_waic(model, results, w, z_points, theta_star, T,
+	                   Xm, ym, n, p, n_chol,
+	                   linkinv_fn, disp_fn);
 }
 
 

@@ -24,6 +24,7 @@
 
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/string.hpp>
@@ -57,6 +58,21 @@ struct RandomEffectGroup
 	intptr_t nterms = 1;                    // q_g: number of random terms per level
 	std::vector<intptr_t> indices;           // n_obs: per-observation level index [0, nlevels)
 	std::vector<double> Z_design;            // n_obs × nterms, row-major
+};
+
+
+// Summary of grid integration results for posterior draws (PPC, WAIC).
+// Populated at fit time by inla_grid_integrate_gaussian / inla_grid_integrate_pirls.
+// Not serialised — used only during the fitting session.
+struct GridSummary
+{
+	int n_points = 0;                 // number of CCD grid points
+	int n_beta = 0;                   // number of fixed-effect coefficients (p)
+	int n_theta = 0;                  // dimension of outer θ vector
+	std::vector<double> weights;      // n_points (normalised)
+	std::vector<double> beta;         // n_points × n_beta (row-major): β̂_k
+	std::vector<double> vcov_diag;    // n_points × n_beta: diag(Σ_k) [for PPC independent draws]
+	std::vector<double> theta;        // n_points × n_theta: θ_k values
 };
 
 
@@ -138,6 +154,18 @@ struct Model
 	// Laplace-approximated log marginal likelihood: log p(y | M).
 	// NaN for frequentist models. Used for Bayes factor computation.
 	double log_marginal = std::numeric_limits<double>::quiet_NaN();
+
+	// WAIC (Watanabe-Akaike / Widely Applicable Information Criterion).
+	// Computed at fit time for Bayesian models. NaN for frequentist models.
+	// Reference: Gelman, Hwang & Vehtari (2014), Statistics and Computing.
+	double waic    = std::numeric_limits<double>::quiet_NaN();
+	double p_waic  = std::numeric_limits<double>::quiet_NaN();  // effective number of parameters
+	double lppd    = std::numeric_limits<double>::quiet_NaN();  // log pointwise predictive density
+	double se_waic = std::numeric_limits<double>::quiet_NaN();  // standard error of WAIC
+
+	// ---- Grid integration summary (not serialised) ----
+	// Populated by inla_grid_integrate_* for later use by PPC.
+	std::optional<GridSummary> grid_summary;
 
 	// ---- Linear model specific ----
 	double rse = 0;            // residual standard error (Gaussian only)
