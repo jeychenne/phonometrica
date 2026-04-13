@@ -55,7 +55,7 @@ public:
 	// Returns the index (0-based) of the newly fitted model.
 	// Throws if source is unavailable.
 	int fit(const String &formula_str, const String &family = "gaussian",
-	        stats::FittingCallback progress = nullptr);
+	        stats::FittingCallback progress = nullptr, bool bayesian = false);
 
 	// Number of fitted models.
 	int model_count() const { return (int)m_models.size(); }

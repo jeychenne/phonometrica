@@ -225,6 +225,18 @@ void AnalysisView::setupUi()
 	m_family_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_family_combo);
 
+	top_bar->addWidget(new QLabel(tr("Estimation:")));
+
+	m_estimation_combo = new QComboBox;
+	m_estimation_combo->addItem(tr("Frequentist"), QStringLiteral("frequentist"));
+	m_estimation_combo->addItem(tr("Bayesian"), QStringLiteral("bayesian"));
+	m_estimation_combo->setItemData(0, tr("Maximum likelihood estimation with Wald-based p-values"), Qt::ToolTipRole);
+	m_estimation_combo->setItemData(1, tr("INLA-style approximate Bayesian inference with weakly\n"
+	                                      "informative default priors. Reports posterior means,\n"
+	                                      "credible intervals, and probability of direction (pd)."), Qt::ToolTipRole);
+	m_estimation_combo->setCurrentIndex(0);
+	top_bar->addWidget(m_estimation_combo);
+
 	m_fit_button = new QPushButton(tr("Fit"));
 	m_fit_button->setDefault(true);
 	top_bar->addWidget(m_fit_button);
@@ -725,9 +737,9 @@ void AnalysisView::populateModelList()
 	for (int i = 0; i < m_analysis->model_count(); i++)
 	{
 		auto &m = m_analysis->model(i);
-		QString item_text = QStringLiteral("Model %1: %2")
-			.arg(i + 1)
-			.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
+		QString prefix = m.is_bayesian() ? QStringLiteral("Model %1 (B): ") : QStringLiteral("Model %1: ");
+		QString item_text = prefix.arg(i + 1)
+			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size());
 		m_model_list->addItem(item_text);
 	}
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
@@ -744,6 +756,7 @@ void AnalysisView::updateFitEnabled()
 	m_fit_button->setEnabled(enabled);
 	m_formula_edit->setEnabled(enabled);
 	m_family_combo->setEnabled(enabled);
+	m_estimation_combo->setEnabled(enabled);
 
 	if (!enabled)
 	{
@@ -795,17 +808,18 @@ void AnalysisView::onFit()
 	{
 		String formula(formula_text.toUtf8().constData());
 		String family(m_family_combo->currentData().toString().toUtf8().constData());
+		bool bayesian = (m_estimation_combo->currentData().toString() == QStringLiteral("bayesian"));
 
-		int index = m_analysis->fit(formula, family, cb);
+		int index = m_analysis->fit(formula, family, cb, bayesian);
 		auto &m = m_analysis->model(index);
 
 		QApplication::restoreOverrideCursor();
 		if (progress) progress->setVisible(false);
 		if (status) status->showMessage(tr("Model fitted"), 2000);
 
-		QString item_text = QStringLiteral("Model %1: %2")
-			.arg(index + 1)
-			.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
+		QString prefix = m.is_bayesian() ? QStringLiteral("Model %1 (B): ") : QStringLiteral("Model %1: ");
+		QString item_text = prefix.arg(index + 1)
+			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size());
 		m_model_list->addItem(item_text);
 		m_model_list->setCurrentRow(m_model_list->count() - 1);
 
@@ -847,6 +861,9 @@ void AnalysisView::onModelSelected(int row)
 		QString family = QString::fromUtf8(m.family.data(), (int)m.family.size());
 		int idx = m_family_combo->findData(family);
 		if (idx >= 0) m_family_combo->setCurrentIndex(idx);
+
+		// Update the Bayesian checkbox to match.
+		m_estimation_combo->setCurrentIndex(m.is_bayesian() ? 1 : 0);
 	}
 }
 
@@ -3227,32 +3244,64 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	formula.replace('~', QStringLiteral("$\\sim$"));
 
 	tex += QStringLiteral("\\caption{%1}\n").arg(formula);
-	tex += QStringLiteral("\\begin{tabular}{lrrrr}\n");
-	tex += QStringLiteral("\\hline\n");
 
-	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "$t$" : "$z$";
-	tex += QStringLiteral(" & Estimate & Std.~Error & %1 & $p$ \\\\\n")
-		.arg(QString::fromUtf8(stat_label));
-	tex += QStringLiteral("\\hline\n");
-
-	for (intptr_t i = 1; i <= m.nfixed; i++)
+	if (m.is_bayesian() && !m.posterior_mean.empty())
 	{
-		QString name = QString::fromUtf8(m.coef_names[i].data(), (int)m.coef_names[i].size());
-		name.replace('_', QStringLiteral("\\_"));
-		name.replace('&', QStringLiteral("\\&"));
+		tex += QStringLiteral("\\begin{tabular}{lrrrrr}\n");
+		tex += QStringLiteral("\\hline\n");
+		tex += QStringLiteral(" & Post.~Mean & Post.~SD & CI$_{2.5}$ & CI$_{97.5}$ & pd \\\\\n");
+		tex += QStringLiteral("\\hline\n");
 
-		QString pval;
-		if (m.p[i] < 0.001)
-			pval = QStringLiteral("$<$\\,0.001");
-		else
-			pval = QString::number(m.p[i], 'f', 4);
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			QString name = QString::fromUtf8(m.coef_names[i].data(), (int)m.coef_names[i].size());
+			name.replace('_', QStringLiteral("\\_"));
+			name.replace('&', QStringLiteral("\\&"));
 
-		tex += QStringLiteral("%1 & %2 & %3 & %4 & %5 \\\\\n")
-			.arg(name)
-			.arg(m.beta[i], 0, 'f', 4)
-			.arg(m.se[i], 0, 'f', 4)
-			.arg(m.stat[i], 0, 'f', 3)
-			.arg(pval);
+			double post_mean = (i <= m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
+			double post_sd = (i <= m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
+			double ci_lo = (i <= m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
+			double ci_hi = (i <= m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
+			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+
+			tex += QStringLiteral("%1 & %2 & %3 & %4 & %5 & %6 \\\\\n")
+				.arg(name)
+				.arg(post_mean, 0, 'f', 4)
+				.arg(post_sd, 0, 'f', 4)
+				.arg(ci_lo, 0, 'f', 4)
+				.arg(ci_hi, 0, 'f', 4)
+				.arg(pd_val, 0, 'f', 4);
+		}
+	}
+	else
+	{
+		tex += QStringLiteral("\\begin{tabular}{lrrrr}\n");
+		tex += QStringLiteral("\\hline\n");
+
+		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "$t$" : "$z$";
+		tex += QStringLiteral(" & Estimate & Std.~Error & %1 & $p$ \\\\\n")
+			.arg(QString::fromUtf8(stat_label));
+		tex += QStringLiteral("\\hline\n");
+
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			QString name = QString::fromUtf8(m.coef_names[i].data(), (int)m.coef_names[i].size());
+			name.replace('_', QStringLiteral("\\_"));
+			name.replace('&', QStringLiteral("\\&"));
+
+			QString pval;
+			if (m.p[i] < 0.001)
+				pval = QStringLiteral("$<$\\,0.001");
+			else
+				pval = QString::number(m.p[i], 'f', 4);
+
+			tex += QStringLiteral("%1 & %2 & %3 & %4 & %5 \\\\\n")
+				.arg(name)
+				.arg(m.beta[i], 0, 'f', 4)
+				.arg(m.se[i], 0, 'f', 4)
+				.arg(m.stat[i], 0, 'f', 3)
+				.arg(pval);
+		}
 	}
 
 	tex += QStringLiteral("\\hline\n");
@@ -3442,10 +3491,15 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	}
 
 	tex += QStringLiteral("\\\\\n");
-	tex += QStringLiteral("AIC = %1; BIC = %2; log-lik.\\ = %3\n")
-		.arg(m.aic, 0, 'f', 1)
-		.arg(m.bic, 0, 'f', 1)
-		.arg(m.loglik, 0, 'f', 1);
+	if (m.is_bayesian()) {
+		tex += QStringLiteral("Log-marginal likelihood = %1\n")
+			.arg(m.loglik, 0, 'f', 1);
+	} else {
+		tex += QStringLiteral("AIC = %1; BIC = %2; log-lik.\\ = %3\n")
+			.arg(m.aic, 0, 'f', 1)
+			.arg(m.bic, 0, 'f', 1)
+			.arg(m.loglik, 0, 'f', 1);
+	}
 
 	tex += QStringLiteral("\\end{table}\n");
 
@@ -3633,36 +3687,107 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
+	if (m.is_bayesian()) {
+		text += QStringLiteral("Estimation: Bayesian (INLA grid integration)\n");
+	}
 	text += QStringLiteral("Observations: %1\n\n").arg(m.nobs);
 
-	const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
-	text += QStringLiteral("Fixed effects:\n");
-	text += QString::asprintf("%-24s %12s %12s %12s %12s\n",
-	                           "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
+	// ── Fixed effects ──────────────────────────────────────────────
 
-	for (intptr_t i = 1; i <= m.nfixed; i++)
+	if (m.is_bayesian() && !m.posterior_mean.empty())
 	{
-		const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
-		char pbuf[16];
-		if (m.p[i] < 0.001)
-			snprintf(pbuf, sizeof(pbuf), "< 0.001");
-		else
-			snprintf(pbuf, sizeof(pbuf), "%.4f", m.p[i]);
+		text += QStringLiteral("Fixed effects (posterior):\n");
+		text += QString::asprintf("%-24s %12s %12s %12s %12s %12s %12s %10s\n",
+		                           "", "Post.Mean", "Post.Mode", "Post.Median",
+		                           "Post.SD", "CI.lower", "CI.upper", "pd");
 
-		const char *stars = "";
-		if (m.p[i] < 0.001) stars = " ***";
-		else if (m.p[i] < 0.01) stars = " **";
-		else if (m.p[i] < 0.05) stars = " *";
-		else if (m.p[i] < 0.1) stars = " .";
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
 
-		text += QString::asprintf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
-		                           name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
+			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+
+			const char *stars = "";
+			if (pd_val >= 0.999) stars = " ***";
+			else if (pd_val >= 0.99) stars = " **";
+			else if (pd_val >= 0.975) stars = " *";
+			else if (pd_val >= 0.95) stars = " .";
+
+			char pd_buf[16];
+			if (pd_val >= 0.99995)
+				snprintf(pd_buf, sizeof(pd_buf), "1.0000");
+			else
+				snprintf(pd_buf, sizeof(pd_buf), "%.4f", pd_val);
+
+			double post_mean = (i <= m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
+			double post_mode = (i <= m.posterior_mode.size()) ? m.posterior_mode[i] : m.beta[i];
+			double post_median = (i <= m.posterior_median.size()) ? m.posterior_median[i] : m.beta[i];
+			double post_sd = (i <= m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
+			double ci_lo = (i <= m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
+			double ci_hi = (i <= m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
+
+			text += QString::asprintf("%-24s %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %10s%s\n",
+			                           name, post_mean, post_mode, post_median,
+			                           post_sd, ci_lo, ci_hi, pd_buf, stars);
+		}
+
+		text += QStringLiteral("---\n");
+		text += QStringLiteral("pd thresholds: 0.999 '***' 0.99 '**' 0.975 '*' 0.95 '.' (two-sided equivalents)\n\n");
+	}
+	else
+	{
+		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
+		text += QStringLiteral("Fixed effects:\n");
+		text += QString::asprintf("%-24s %12s %12s %12s %12s\n",
+		                           "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
+
+		for (intptr_t i = 1; i <= m.nfixed; i++)
+		{
+			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			char pbuf[16];
+			if (m.p[i] < 0.001)
+				snprintf(pbuf, sizeof(pbuf), "< 0.001");
+			else
+				snprintf(pbuf, sizeof(pbuf), "%.4f", m.p[i]);
+
+			const char *stars = "";
+			if (m.p[i] < 0.001) stars = " ***";
+			else if (m.p[i] < 0.01) stars = " **";
+			else if (m.p[i] < 0.05) stars = " *";
+			else if (m.p[i] < 0.1) stars = " .";
+
+			text += QString::asprintf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
+			                           name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
+		}
+
+		text += QStringLiteral("---\n");
+		text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 	}
 
-	text += QStringLiteral("---\n");
-	text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+	// ── Hyperparameter posteriors (Bayesian only) ───────────────────
 
-	// Smooth terms
+	if (m.is_bayesian() && !m.hyper_names.empty())
+	{
+		text += QStringLiteral("Hyperparameters (posterior):\n");
+		text += QString::asprintf("%-36s %12s %12s %12s %12s\n",
+		                           "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
+
+		for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+		{
+			const char *name = m.hyper_names[i].data();
+			double mean = (i <= m.hyper_posterior_mean.size()) ? m.hyper_posterior_mean[i] : 0.0;
+			double sd = (i <= m.hyper_posterior_sd.size()) ? m.hyper_posterior_sd[i] : 0.0;
+			double lo = (i <= m.hyper_ci_lower.size()) ? m.hyper_ci_lower[i] : 0.0;
+			double hi = (i <= m.hyper_ci_upper.size()) ? m.hyper_ci_upper[i] : 0.0;
+
+			text += QString::asprintf("%-36s %12.4f %12.4f %12.4f %12.4f\n",
+			                           name, mean, sd, lo, hi);
+		}
+		text += QStringLiteral("\n");
+	}
+
+	// ── Smooth terms ───────────────────────────────────────────────
+
 	if (m.has_smooth_terms())
 	{
 		text += QStringLiteral("Approximate significance of smooth terms:\n");
@@ -3705,7 +3830,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		text += QStringLiteral("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 	}
 
-	// Random effects
+	// ── Random effects ─────────────────────────────────────────────
+
 	if (m.has_random_effects())
 	{
 		text += QStringLiteral("Random effects:\n");
@@ -3812,7 +3938,13 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		text += QString::asprintf("R-squared: %.4f, Adjusted R-squared: %.4f\n", m.r2, m.adj_r2);
 	}
 
-	text += QString::asprintf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
+	// ── Goodness of fit ────────────────────────────────────────────
+
+	if (m.is_bayesian()) {
+		text += QString::asprintf("Log-marginal likelihood: %.1f\n", m.loglik);
+	} else {
+		text += QString::asprintf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
+	}
 
 	if (m.niter > 0) {
 		if (m.converged)
