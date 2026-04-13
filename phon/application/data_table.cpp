@@ -275,8 +275,21 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	{
 		// ── Bayesian summary ────────────────────────────────────
 		rt.printf("Fixed effects (posterior):\n");
-		rt.printf("%-24s %12s %12s %12s %12s %8s\n",
-		          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper", "pd");
+
+		bool has_mode = !m.posterior_mode.empty();
+		bool has_median = !m.posterior_median.empty();
+
+		if (has_mode && has_median)
+		{
+			rt.printf("%-24s %12s %12s %12s %12s %12s %12s %8s\n",
+			          "", "Post.Mean", "Post.Mode", "Post.Median",
+			          "Post.SD", "CI.lower", "CI.upper", "pd");
+		}
+		else
+		{
+			rt.printf("%-24s %12s %12s %12s %12s %8s\n",
+			          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper", "pd");
+		}
 
 		for (intptr_t i = 1; i <= m.nfixed; i++)
 		{
@@ -292,11 +305,23 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			else if (pd_val > 0.975) stars = " *";
 			else if (pd_val > 0.95) stars = " .";
 
-			rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %8s%s\n",
-			          name,
-			          m.posterior_mean[i], m.posterior_sd[i],
-			          m.ci_lower[i], m.ci_upper[i],
-			          pdbuf, stars);
+			if (has_mode && has_median)
+			{
+				rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %8s%s\n",
+				          name,
+				          m.posterior_mean[i], m.posterior_mode[i], m.posterior_median[i],
+				          m.posterior_sd[i],
+				          m.ci_lower[i], m.ci_upper[i],
+				          pdbuf, stars);
+			}
+			else
+			{
+				rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %8s%s\n",
+				          name,
+				          m.posterior_mean[i], m.posterior_sd[i],
+				          m.ci_lower[i], m.ci_upper[i],
+				          pdbuf, stars);
+			}
 		}
 
 		rt.printf("---\n");
@@ -305,13 +330,34 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		// Hyperparameters
 		if (!m.hyper_names.empty())
 		{
-			rt.printf("Hyperparameters (posterior):\n");
-			rt.printf("%-30s %12s\n", "", "Post.Mean");
+			bool has_hyper_sd = !m.hyper_posterior_sd.empty()
+			                 && m.hyper_posterior_sd.size() == m.hyper_names.size()
+			                 && !std::isnan(m.hyper_posterior_sd[1]);
 
-			for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+			if (has_hyper_sd)
 			{
-				rt.printf("%-30s %12.4f\n",
-				          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
+				rt.printf("Hyperparameters (posterior):\n");
+				rt.printf("%-30s %12s %12s %12s %12s\n",
+				          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
+
+				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+				{
+					rt.printf("%-30s %12.4f %12.4f %12.4f %12.4f\n",
+					          m.hyper_names[i].data(),
+					          m.hyper_posterior_mean[i], m.hyper_posterior_sd[i],
+					          m.hyper_ci_lower[i], m.hyper_ci_upper[i]);
+				}
+			}
+			else
+			{
+				rt.printf("Hyperparameters (posterior):\n");
+				rt.printf("%-30s %12s\n", "", "Post.Mean");
+
+				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+				{
+					rt.printf("%-30s %12.4f\n",
+					          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
+				}
 			}
 			rt.printf("\n");
 		}
@@ -641,6 +687,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
 		if (key == "posterior_mean") return make_handle<Array<double>>(model.posterior_mean);
+		if (key == "posterior_mode") return make_handle<Array<double>>(model.posterior_mode);
+		if (key == "posterior_median") return make_handle<Array<double>>(model.posterior_median);
 		if (key == "posterior_sd") return make_handle<Array<double>>(model.posterior_sd);
 		if (key == "ci_lower") return make_handle<Array<double>>(model.ci_lower);
 		if (key == "ci_upper") return make_handle<Array<double>>(model.ci_upper);

@@ -902,7 +902,6 @@ static ADdouble laplace_nll_ad(const std::vector<ADdouble> &a_phi,
 	{
 		// Single grouping factor: H is truly diagonal — fast path.
 		std::vector<ADdouble> h_u(lay.J_total);
-		intptr_t off = lay.offset[0];
 		for (intptr_t j = 0; j < lay.J[0]; j++) {
 			h_u[j] = inv_sigma2_u[0];
 		}
@@ -2381,6 +2380,519 @@ static NewtonResult newton_optimize(const Objective &obj,
 }
 
 
+// =====================================================================
+// INLA grid integration over hyperparameters
+// =====================================================================
+//
+// After the outer Newton finds the posterior mode θ*, we:
+//   1. Compute the Hessian H of the neg-log-posterior at θ*
+//   2. Eigendecompose H = V Λ V' to define the integration coordinate system
+//   3. Construct a Central Composite Design (CCD) in standardized z-space
+//   4. Map each grid point to θ-space: θ_k = θ* + V Λ^{-1/2} z_k
+//   5. At each θ_k, solve the inner problem → β̂(θ_k), Σ_β(θ_k), log p(θ_k|y)
+//   6. Compute integration weights: w_k ∝ p(θ_k|y) / q_Gauss(θ_k)
+//   7. Mixture posterior: E[β] = Σ w_k β̂_k
+//                         Var[β] = Σ w_k [Σ_k + (β̂_k − E[β])(β̂_k − E[β])']
+//
+// This is the core INLA algorithm (Rue, Martino & Chopin 2009, §2.1–2.3).
+// For d hyperparameters, the CCD has 1 + 2d + 2^d points.
+
+struct GridPointResult
+{
+	Eigen::VectorXd beta;        // conditional mode β̂(θ)
+	Eigen::MatrixXd vcov_beta;   // conditional Var(β|θ), p × p
+	double neg_log_posterior;     // neg-log-posterior at θ
+};
+
+
+// Finite-difference Hessian of an objective at a given point.
+template<typename Objective>
+static Eigen::MatrixXd compute_fd_hessian(const Objective &obj,
+                                            const Eigen::VectorXd &theta,
+                                            double h_scale = 1e-4)
+{
+	intptr_t dim = theta.size();
+	double f0 = obj.eval(theta);
+
+	std::vector<double> h(dim), fp(dim), fm(dim);
+	for (intptr_t j = 0; j < dim; j++)
+	{
+		h[j] = h_scale * std::max(std::abs(theta[j]), 1.0);
+		Eigen::VectorXd tp = theta, tm = theta;
+		tp[j] += h[j];
+		tm[j] -= h[j];
+		fp[j] = obj.eval(tp);
+		fm[j] = obj.eval(tm);
+	}
+
+	Eigen::MatrixXd H(dim, dim);
+	for (intptr_t j = 0; j < dim; j++) {
+		H(j, j) = (fp[j] - 2.0 * f0 + fm[j]) / (h[j] * h[j]);
+	}
+
+	for (intptr_t j = 0; j < dim; j++)
+	{
+		for (intptr_t k = j + 1; k < dim; k++)
+		{
+			Eigen::VectorXd tpp = theta, tpm = theta, tmp = theta, tmm = theta;
+			tpp[j] += h[j]; tpp[k] += h[k];
+			tpm[j] += h[j]; tpm[k] -= h[k];
+			tmp[j] -= h[j]; tmp[k] += h[k];
+			tmm[j] -= h[j]; tmm[k] -= h[k];
+
+			double val = (obj.eval(tpp) - obj.eval(tpm)
+			              - obj.eval(tmp) + obj.eval(tmm))
+			             / (4.0 * h[j] * h[k]);
+			H(j, k) = val;
+			H(k, j) = val;
+		}
+	}
+	return H;
+}
+
+
+// Construct CCD grid points in standardized z-space.
+// Returns a matrix where each row is a grid point (d-dimensional).
+// CCD(d) = center (1) + axial (2d) + corners (2^d).
+// delta = axial distance in standardized units.
+static std::vector<Eigen::VectorXd> build_ccd_points(intptr_t d, double delta = 3.0)
+{
+	std::vector<Eigen::VectorXd> points;
+
+	// Center point
+	points.push_back(Eigen::VectorXd::Zero(d));
+
+	// Axial points: ±δ along each axis
+	for (intptr_t j = 0; j < d; j++)
+	{
+		Eigen::VectorXd z_plus = Eigen::VectorXd::Zero(d);
+		Eigen::VectorXd z_minus = Eigen::VectorXd::Zero(d);
+		z_plus[j] = delta;
+		z_minus[j] = -delta;
+		points.push_back(z_plus);
+		points.push_back(z_minus);
+	}
+
+	// Corner points: ±(δ/√d) in all dimensions (2^d combinations).
+	// Skip if d > 6 to avoid exponential blowup (64 corners).
+	if (d <= 6)
+	{
+		double corner_val = delta / std::sqrt((double)d);
+		intptr_t n_corners = 1 << d;  // 2^d
+		for (intptr_t mask = 0; mask < n_corners; mask++)
+		{
+			Eigen::VectorXd z(d);
+			for (intptr_t j = 0; j < d; j++) {
+				z[j] = (mask & (1 << j)) ? corner_val : -corner_val;
+			}
+			points.push_back(z);
+		}
+	}
+
+	return points;
+}
+
+
+// Evaluate a Gaussian LMM at a single grid point θ:
+// returns β̂(θ), Σ_β(θ), and the neg-log-posterior.
+static GridPointResult eval_gaussian_grid_point(
+	const Eigen::VectorXd &theta,
+	const GaussianCholObjective &obj,
+	const Eigen::Map<Matrix<double>> &Xm,
+	const Eigen::Map<Vector<double>> &ym,
+	const GroupLayout &lay,
+	intptr_t n, intptr_t p, intptr_t n_chol,
+	const PriorSpec *priors,
+	const Array<String> *coef_names)
+{
+	GridPointResult gpr;
+
+	// ── Unpack θ → D_inv, sigma2 ─────────────────────────────────
+	std::vector<Eigen::MatrixXd> D_inv(lay.G);
+	std::vector<double> log_det_Dg(lay.G);
+	intptr_t chol_pos = 0;
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		Eigen::MatrixXd L = unpack_cholesky(theta.data() + chol_pos, qg);
+		D_inv[g] = cholesky_to_precision(L);
+		log_det_Dg[g] = log_det_D(theta.data() + chol_pos, qg);
+		chol_pos += n_chol_params(qg);
+	}
+	double sigma2 = std::exp(2.0 * theta[n_chol]);
+
+	// ── Solve Henderson → β̂, û ───────────────────────────────────
+	auto inner = solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
+	                                       Xm, ym, lay, n, p,
+	                                       priors, coef_names);
+	gpr.beta = inner.beta;
+
+	// ── Neg-log-posterior (reuse objective which includes all prior terms) ──
+	gpr.neg_log_posterior = obj.eval(theta);
+
+	// ── Conditional Var(β|θ) from Henderson inverse ──────────────
+	intptr_t G = lay.G;
+	intptr_t J = lay.J_total;
+	intptr_t sdim = p + J;
+	double inv_sigma2 = 1.0 / sigma2;
+
+	Eigen::MatrixXd C = Eigen::MatrixXd::Zero(sdim, sdim);
+
+	// X'WX (Gaussian: W = (1/σ²)I)
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t j1 = 0; j1 < p; j1++)
+		{
+			double wx = Xm(i, j1) * inv_sigma2;
+			for (intptr_t j2 = j1; j2 < p; j2++)
+				C(j1, j2) += wx * Xm(i, j2);
+		}
+	}
+	for (intptr_t j1 = 0; j1 < p; j1++)
+		for (intptr_t j2 = j1 + 1; j2 < p; j2++)
+			C(j2, j1) = C(j1, j2);
+
+	// Prior precision on fixed effects
+	if (priors && coef_names)
+	{
+		for (intptr_t j = 0; j < p; j++)
+		{
+			const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+			C(j, j) += 1.0 / (pr.sd * pr.sd);
+		}
+	}
+
+	// D⁻¹ blocks
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = p + lay.offset[g] + j * qg;
+			for (intptr_t t1 = 0; t1 < qg; t1++)
+				for (intptr_t t2 = 0; t2 < qg; t2++)
+					C(base + t1, base + t2) += D_inv[g](t1, t2);
+		}
+	}
+
+	// X'WZ, Z'WX, Z'WZ
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t g1 = 0; g1 < G; g1++)
+		{
+			intptr_t j1 = (*lay.group_indices[g1])[i];
+			intptr_t q1 = lay.q[g1];
+			intptr_t base1 = p + lay.offset[g1] + j1 * q1;
+
+			for (intptr_t t = 0; t < q1; t++)
+			{
+				double wz = inv_sigma2 * lay.Z(g1, i, t);
+				for (intptr_t j = 0; j < p; j++) {
+					double val = Xm(i, j) * wz;
+					C(j, base1 + t) += val;
+					C(base1 + t, j) += val;
+				}
+			}
+
+			for (intptr_t t1 = 0; t1 < q1; t1++)
+			{
+				double wz1 = inv_sigma2 * lay.Z(g1, i, t1);
+				for (intptr_t t2 = t1; t2 < q1; t2++) {
+					double val = wz1 * lay.Z(g1, i, t2);
+					C(base1 + t1, base1 + t2) += val;
+					if (t1 != t2) C(base1 + t2, base1 + t1) += val;
+				}
+			}
+
+			for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+			{
+				intptr_t j2 = (*lay.group_indices[g2])[i];
+				intptr_t q2 = lay.q[g2];
+				intptr_t base2 = p + lay.offset[g2] + j2 * q2;
+
+				for (intptr_t t1 = 0; t1 < q1; t1++)
+				{
+					double wz1 = inv_sigma2 * lay.Z(g1, i, t1);
+					for (intptr_t t2 = 0; t2 < q2; t2++) {
+						double val = wz1 * lay.Z(g2, i, t2);
+						C(base1 + t1, base2 + t2) += val;
+						C(base2 + t2, base1 + t1) += val;
+					}
+				}
+			}
+		}
+	}
+
+	Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
+	Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
+	gpr.vcov_beta = Cinv.topLeftCorner(p, p);
+
+	return gpr;
+}
+
+
+// Main INLA grid integration for Gaussian LMMs.
+// Populates the Model's posterior fields with mixture-based estimates.
+static void inla_grid_integrate_gaussian(
+	Model &model,
+	const GaussianCholObjective &obj,
+	const Eigen::VectorXd &theta_star,
+	const Eigen::Map<Matrix<double>> &Xm,
+	const Eigen::Map<Vector<double>> &ym,
+	const GroupLayout &lay,
+	intptr_t n, intptr_t p, intptr_t n_chol,
+	const PriorSpec *priors,
+	const Array<String> *coef_names)
+{
+	intptr_t d = theta_star.size();
+
+	// ── 1. Hessian at the mode ───────────────────────────────────
+	Eigen::MatrixXd H = compute_fd_hessian(obj, theta_star);
+
+	// ── 2. Eigendecomposition H = V Λ V' ─────────────────────────
+	Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(H);
+	Eigen::VectorXd eigenvalues = eig.eigenvalues();
+	Eigen::MatrixXd V = eig.eigenvectors();
+
+	// Clamp eigenvalues to positive (Hessian should be PD at the mode,
+	// but FD noise or near-boundary effects may produce small negatives).
+	for (intptr_t j = 0; j < d; j++) {
+		eigenvalues[j] = std::max(eigenvalues[j], 1e-6);
+	}
+
+	// Transform matrix: θ_k = θ* + V Λ^{-1/2} z_k
+	Eigen::VectorXd inv_sqrt_lambda = eigenvalues.array().rsqrt().matrix();
+	Eigen::MatrixXd T = V * inv_sqrt_lambda.asDiagonal();
+
+	// ── 3. CCD grid points in z-space ────────────────────────────
+	auto z_points = build_ccd_points(d, 3.0);
+	intptr_t n_grid = (intptr_t)z_points.size();
+
+	// ── 4. Evaluate at each grid point ───────────────────────────
+	std::vector<GridPointResult> results(n_grid);
+	std::vector<double> log_posterior(n_grid);
+
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+		results[k] = eval_gaussian_grid_point(theta_k, obj, Xm, ym, lay,
+		                                       n, p, n_chol, priors, coef_names);
+
+		log_posterior[k] = -results[k].neg_log_posterior;
+	}
+
+	// ── 5. Integration weights ───────────────────────────────────
+	//
+	// For deterministic CCD integration, weights are proportional to the
+	// unnormalized posterior density at each grid point (not the p/q
+	// importance ratio, which gives equal weights for a Gaussian posterior
+	// and produces over-dispersed mixtures).
+	//
+	// w_k ∝ p̃(θ_k | y) = exp(-neg_log_posterior_k)
+	//
+	// Log-sum-exp trick for numerical stability.
+
+	std::vector<double> log_w(n_grid);
+	double max_log_w = -1e300;
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		log_w[k] = log_posterior[k];  // = -neg_log_posterior_k
+		max_log_w = std::max(max_log_w, log_w[k]);
+	}
+
+	double sum_w = 0;
+	std::vector<double> w(n_grid);
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		w[k] = std::exp(log_w[k] - max_log_w);
+		sum_w += w[k];
+	}
+	for (intptr_t k = 0; k < n_grid; k++) {
+		w[k] /= sum_w;
+	}
+
+	// ── 6. Mixture posterior for β ───────────────────────────────
+	//
+	// E[β] = Σ_k w_k β̂_k
+	// Var[β] = Σ_k w_k [Σ_k + (β̂_k − E[β])(β̂_k − E[β])']
+
+	Eigen::VectorXd mix_mean = Eigen::VectorXd::Zero(p);
+	for (intptr_t k = 0; k < n_grid; k++) {
+		mix_mean += w[k] * results[k].beta;
+	}
+
+	Eigen::MatrixXd mix_var = Eigen::MatrixXd::Zero(p, p);
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		Eigen::VectorXd diff = results[k].beta - mix_mean;
+		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
+	}
+
+	// ── 7. Mixture CDF, quantiles, and posterior summaries ──────
+
+	boost::math::normal_distribution<double> normal;
+	double z_975 = boost::math::quantile(normal, 0.975);
+
+	// Mixture CDF for coefficient j at value x:
+	//   F_j(x) = Σ_k w_k Φ((x − β̂_k[j]) / σ_k[j])
+	auto mix_cdf = [&](intptr_t j, double x) -> double
+	{
+		double cdf = 0;
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			double mu_k = results[k].beta[j];
+			double sd_k = std::sqrt(std::max(results[k].vcov_beta(j, j), 1e-20));
+			cdf += w[k] * boost::math::cdf(normal, (x - mu_k) / sd_k);
+		}
+		return cdf;
+	};
+
+	// Quantile of the mixture CDF for coefficient j via bisection.
+	auto mix_quantile = [&](intptr_t j, double q) -> double
+	{
+		// Initial bracket: mean ± 10 × sd
+		double sd_j = std::sqrt(std::max(mix_var(j, j), 1e-20));
+		double lo = mix_mean[j] - 10.0 * sd_j;
+		double hi = mix_mean[j] + 10.0 * sd_j;
+
+		for (int iter = 0; iter < 60; iter++)
+		{
+			double mid = 0.5 * (lo + hi);
+			if (mix_cdf(j, mid) < q)
+				lo = mid;
+			else
+				hi = mid;
+		}
+		return 0.5 * (lo + hi);
+	};
+
+	// Save the mode: β̂(θ*) — already in model.beta before we overwrite it.
+	model.posterior_mode = Array<double>(p, 0.0);
+	for (intptr_t j = 0; j < p; j++) {
+		model.posterior_mode[j + 1] = model.beta[j + 1];
+	}
+
+	model.posterior_mean = Array<double>(p, 0.0);
+	model.posterior_median = Array<double>(p, 0.0);
+	model.posterior_sd = Array<double>(p, 0.0);
+	model.ci_lower = Array<double>(p, 0.0);
+	model.ci_upper = Array<double>(p, 0.0);
+	model.pd = Array<double>(p, 0.0);
+
+	for (intptr_t j = 0; j < p; j++)
+	{
+		double mean = mix_mean[j];
+		double var = mix_var(j, j);
+		double sd = (var > 0) ? std::sqrt(var) : 0.0;
+
+		model.posterior_mean[j + 1] = mean;
+		model.posterior_sd[j + 1] = sd;
+
+		// Quantile-based CI and median from the mixture CDF.
+		model.ci_lower[j + 1] = mix_quantile(j, 0.025);
+		model.ci_upper[j + 1] = mix_quantile(j, 0.975);
+		model.posterior_median[j + 1] = mix_quantile(j, 0.5);
+
+		// pd from the mixture CDF: P(sign(β) = sign(E[β]))
+		double p_positive = 1.0 - mix_cdf(j, 0.0);
+		model.pd[j + 1] = (mean >= 0) ? p_positive : (1.0 - p_positive);
+	}
+
+	// Update beta/se/stat for compatibility with display code.
+	for (intptr_t j = 0; j < p; j++)
+	{
+		model.beta[j + 1] = mix_mean[j];
+		model.se[j + 1] = model.posterior_sd[j + 1];
+		model.stat[j + 1] = (model.se[j + 1] > 0) ? model.beta[j + 1] / model.se[j + 1] : 0.0;
+		model.p[j + 1] = std::numeric_limits<double>::quiet_NaN();
+	}
+
+	// Update vcov to the mixture posterior covariance.
+	for (intptr_t i = 0; i < p; i++) {
+		for (intptr_t j = 0; j < p; j++) {
+			model.vcov(i + 1, j + 1) = mix_var(i, j);
+		}
+	}
+
+	// ── 8. Hyperparameter posteriors ─────────────────────────────
+	//
+	// From the grid weights, compute marginal posterior mean and SD
+	// for each variance component SD and the residual SD.
+
+	intptr_t n_hyper = 0;
+	for (intptr_t g = 0; g < lay.G; g++)
+		n_hyper += lay.q[g];
+	n_hyper += 1;  // residual SD (Gaussian)
+
+	model.hyper_names = Array<String>(n_hyper, String());
+	model.hyper_posterior_mean = Array<double>(n_hyper, 0.0);
+	model.hyper_posterior_sd = Array<double>(n_hyper, 0.0);
+	model.hyper_ci_lower = Array<double>(n_hyper, 0.0);
+	model.hyper_ci_upper = Array<double>(n_hyper, 0.0);
+
+	{
+		// For each grid point, extract the SDs from θ_k.
+		// Build hyper names from the model's random_effects (already populated).
+		intptr_t idx = 1;
+		intptr_t chol_pos_base = 0;
+
+		for (intptr_t g = 0; g < lay.G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			auto &re = model.random_effects[g + 1]; // 1-based Array
+			for (intptr_t t = 0; t < qg; t++)
+			{
+				// Name: "sd(term|group)"
+				std::string name = "sd(" + std::string(re.term_names[t + 1].data(), re.term_names[t + 1].size())
+				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
+				model.hyper_names[idx] = String(name);
+
+				// Marginal posterior of σ_{g,t}
+				double mean_sd = 0, mean_sd2 = 0;
+				for (intptr_t k = 0; k < n_grid; k++)
+				{
+					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+					Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + chol_pos_base, qg);
+					Eigen::MatrixXd D = cholesky_to_cov(L);
+					double sd_val = std::sqrt(std::max(D(t, t), 0.0));
+					mean_sd += w[k] * sd_val;
+					mean_sd2 += w[k] * sd_val * sd_val;
+				}
+				double var_sd = mean_sd2 - mean_sd * mean_sd;
+				double sd_sd = (var_sd > 0) ? std::sqrt(var_sd) : 0.0;
+
+				model.hyper_posterior_mean[idx] = mean_sd;
+				model.hyper_posterior_sd[idx] = sd_sd;
+				model.hyper_ci_lower[idx] = std::max(0.0, mean_sd - z_975 * sd_sd);
+				model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
+				idx++;
+			}
+			chol_pos_base += n_chol_params(qg);
+		}
+
+		// Residual SD
+		model.hyper_names[idx] = "sd(residual)";
+		{
+			double mean_sd = 0, mean_sd2 = 0;
+			for (intptr_t k = 0; k < n_grid; k++)
+			{
+				Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+				double sd_val = std::exp(theta_k[n_chol]);
+				mean_sd += w[k] * sd_val;
+				mean_sd2 += w[k] * sd_val * sd_val;
+			}
+			double var_sd = mean_sd2 - mean_sd * mean_sd;
+			double sd_sd = (var_sd > 0) ? std::sqrt(var_sd) : 0.0;
+
+			model.hyper_posterior_mean[idx] = mean_sd;
+			model.hyper_posterior_sd[idx] = sd_sd;
+			model.hyper_ci_lower[idx] = std::max(0.0, mean_sd - z_975 * sd_sd);
+			model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
+		}
+	}
+}
+
+
 } // anonymous namespace
 
 
@@ -2546,6 +3058,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	int niter = 0;
 	bool converged = true;
 	Family fam_used = fam;  // mutable copy; updated with fitted θ_nb for negative binomial
+	Eigen::VectorXd saved_theta;   // saved for INLA grid integration
+	intptr_t saved_n_chol = 0;
 
 	if (is_gaussian)
 	{
@@ -2608,6 +3122,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		                                             Xm, ym, lay, n, p,
 		                                             priors, coef_names);
 		beta_hat = final_gauss.beta;
+
+		// Save for INLA grid integration (after Model is built).
+		saved_theta = theta;
+		saved_n_chol = n_chol;
 	}
 	else
 	{
@@ -3149,18 +3667,28 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.niter = niter;
 	model.converged = converged;
 
-	// ── Bayesian metadata ───────────────────────────────────────────
+	// ── Bayesian posterior ──────────────────────────────────────────
 	//
-	// When priors are supplied, mark the model as Bayesian and store
-	// the prior specification. The posterior summaries for fixed effects
-	// are computed by bayesian_adjust() in fitting.cpp after coef_names
-	// are attached. The hyperparameter posteriors (variance-component
-	// SDs) are set here since we have the converged estimates.
+	// When priors are supplied:
+	//   - For Gaussian LMMs: run INLA grid integration over the
+	//     hyperparameters to get mixture-of-Gaussians posteriors for β
+	//     and marginal posteriors for variance components.
+	//   - For non-Gaussian: grid integration is not yet implemented;
+	//     posterior summaries are computed from the mode by fitting.cpp.
 
 	if (priors)
 	{
 		model.estimation = Estimation::Bayesian;
 		model.priors = *priors;
+
+		if (is_gaussian && saved_theta.size() > 0 && G > 0)
+		{
+			GaussianCholObjective gauss_obj{Xm, ym, lay, n, p,
+			                                 saved_n_chol, priors, coef_names};
+			inla_grid_integrate_gaussian(model, gauss_obj, saved_theta,
+			                              Xm, ym, lay, n, p, saved_n_chol,
+			                              priors, coef_names);
+		}
 	}
 
 	return model;

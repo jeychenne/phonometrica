@@ -91,6 +91,8 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	double z_975 = boost::math::quantile(normal, 0.975); // ≈ 1.96
 
 	model.posterior_mean = Array<double>(p, 0.0);
+	model.posterior_mode = Array<double>(p, 0.0);
+	model.posterior_median = Array<double>(p, 0.0);
 	model.posterior_sd = Array<double>(p, 0.0);
 	model.ci_lower = Array<double>(p, 0.0);
 	model.ci_upper = Array<double>(p, 0.0);
@@ -103,6 +105,8 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
 		model.posterior_mean[j + 1] = mean;
+		model.posterior_mode[j + 1] = mean;    // Gaussian: mode = mean
+		model.posterior_median[j + 1] = mean;  // Gaussian: median = mean
 		model.posterior_sd[j + 1] = sd;
 		model.ci_lower[j + 1] = mean - z_975 * sd;
 		model.ci_upper[j + 1] = mean + z_975 * sd;
@@ -161,7 +165,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 			n_hyper += 1;
 		}
 
-		model.hyper_names = Array<String>(n_hyper);
+		model.hyper_names = Array<String>(n_hyper, String());
 		model.hyper_posterior_mean = Array<double>(n_hyper, 0.0);
 		model.hyper_posterior_sd = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 		model.hyper_ci_lower = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());

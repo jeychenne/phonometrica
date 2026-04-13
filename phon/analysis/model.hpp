@@ -84,6 +84,8 @@ struct Model
 	// ---- Bayesian posterior (populated only when estimation == Bayesian) ----
 	// For fixed effects: posterior summaries from the (mixture-of-)Gaussian(s) approximation.
 	Array<double> posterior_mean;   // posterior mean for each fixed-effect coefficient
+	Array<double> posterior_mode;   // posterior mode (MAP estimate at θ*)
+	Array<double> posterior_median; // posterior median (0.5 quantile of mixture)
 	Array<double> posterior_sd;     // posterior standard deviation
 	Array<double> ci_lower;        // lower bound of 95% credible interval
 	Array<double> ci_upper;        // upper bound of 95% credible interval
