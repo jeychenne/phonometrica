@@ -232,9 +232,10 @@ void AnalysisView::setupUi()
 	m_estimation_combo->addItem(tr("Frequentist"), QStringLiteral("frequentist"));
 	m_estimation_combo->addItem(tr("Bayesian"), QStringLiteral("bayesian"));
 	m_estimation_combo->setItemData(0, tr("Maximum likelihood estimation with Wald-based p-values"), Qt::ToolTipRole);
-	m_estimation_combo->setItemData(1, tr("INLA-style approximate Bayesian inference with weakly\n"
-	                                      "informative default priors. Reports posterior means,\n"
-	                                      "credible intervals, and probability of direction (pd)."), Qt::ToolTipRole);
+	m_estimation_combo->setItemData(1, tr("Approximate Bayesian inference with weakly\n"
+	                                      "informative default priors. Reports posterior\n"
+	                                      "means, credible intervals, and probability\n"
+	                                      "of direction (pd)."), Qt::ToolTipRole);
 	m_estimation_combo->setCurrentIndex(0);
 	top_bar->addWidget(m_estimation_combo);
 
@@ -4061,7 +4062,9 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
 	if (m.is_bayesian()) {
-		text += QStringLiteral("Estimation: Bayesian (INLA grid integration)\n");
+		text += QStringLiteral("Estimation: Bayesian (approximate posterior)\n");
+	} else {
+		text += QStringLiteral("Estimation: Frequentist (maximum likelihood)\n");
 	}
 	text += QStringLiteral("Observations: %1\n\n").arg(m.nobs);
 
