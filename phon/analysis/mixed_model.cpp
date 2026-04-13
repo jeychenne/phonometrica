@@ -249,6 +249,82 @@ static double anova_variance_component(const Eigen::VectorXd &resid,
 
 
 // =====================================================================
+// Prior contribution helpers (Bayesian posterior mode optimization)
+// =====================================================================
+//
+// When a PriorSpec is supplied, the Laplace engine minimizes the negative
+// log-posterior instead of the negative log-likelihood:
+//
+//   NLP(θ) = laplace_nll(θ, β̂(θ))  -  log p(β̂(θ))
+//            - Σ_g Σ_t [log p_var(σ_{g,t}) + log σ_{g,t}]
+//            - [log p_res(σ) + log σ]   (Gaussian only)
+//
+// The prior on β is incorporated into the Henderson system (shifting β̂
+// toward the prior mean). The Jacobian terms (+ log σ) arise from the
+// change of variables log σ → σ in the outer parameterization.
+
+// Add Normal prior precision to the Henderson system's X'WX block.
+// This shifts β̂ toward the prior mean, giving the MAP estimate.
+static void add_fixed_prior_to_henderson(Eigen::MatrixXd &H, Eigen::VectorXd &rhs,
+                                          const PriorSpec &priors,
+                                          const Array<String> &coef_names,
+                                          intptr_t p)
+{
+	for (intptr_t j = 0; j < p; j++)
+	{
+		const auto &pr = priors.prior_for(coef_names[j + 1]);
+		double lambda = 1.0 / (pr.sd * pr.sd);
+		H(j, j) += lambda;
+		rhs[j] += lambda * pr.mean;
+	}
+}
+
+// Compute -log p(β) for the fixed-effect Normal priors.
+static double fixed_prior_nll(const Eigen::VectorXd &beta,
+                               const PriorSpec &priors,
+                               const Array<String> &coef_names,
+                               intptr_t p)
+{
+	double nll = 0;
+	for (intptr_t j = 0; j < p; j++)
+	{
+		const auto &pr = priors.prior_for(coef_names[j + 1]);
+		double z = (beta[j] - pr.mean) / pr.sd;
+		nll += 0.5 * std::log(2.0 * M_PI) + std::log(pr.sd) + 0.5 * z * z;
+	}
+	return nll;
+}
+
+// Compute the variance-component prior contribution (log-density + Jacobian).
+// Returns a value to be SUBTRACTED from the negative log-posterior.
+// D_cov[g] is the q_g × q_g covariance matrix for group g.
+static double variance_prior_log_density(const std::vector<Eigen::MatrixXd> &D_cov,
+                                          const PriorSpec &priors,
+                                          const GroupLayout &lay)
+{
+	double lp = 0;
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t t = 0; t < qg; t++)
+		{
+			double sd = std::sqrt(std::max(D_cov[g](t, t), 1e-20));
+			// Prior on SD + Jacobian for the exp transform (log σ → σ).
+			lp += priors.variance_components.log_density(sd) + std::log(sd);
+		}
+	}
+	return lp;
+}
+
+// Compute the residual SD prior contribution (Gaussian only).
+// Returns a value to be SUBTRACTED from the negative log-posterior.
+static double residual_prior_log_density(double sigma, const PriorSpec &priors)
+{
+	return priors.residual.log_density(sigma) + std::log(sigma);
+}
+
+
+// =====================================================================
 // Full log-determinant of the random-effects Hessian
 // =====================================================================
 //
@@ -1154,7 +1230,9 @@ static ProfiledResult solve_gaussian_henderson(
 	const Eigen::Map<Matrix<double>> &Xm,
 	const Eigen::Map<Vector<double>> &ym,
 	const GroupLayout &lay,
-	intptr_t n, intptr_t p)
+	intptr_t n, intptr_t p,
+	const PriorSpec *priors = nullptr,
+	const Array<String> *coef_names = nullptr)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1261,6 +1339,10 @@ static ProfiledResult solve_gaussian_henderson(
 		}
 	}
 
+	// ── Fixed-effect prior (Bayesian mode) ──────────────────────────
+	if (priors && coef_names)
+		add_fixed_prior_to_henderson(H, rhs, *priors, *coef_names, p);
+
 	// Solve
 	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 	Eigen::VectorXd sol = ldlt.solve(rhs);
@@ -1311,6 +1393,11 @@ static ProfiledResult solve_gaussian_henderson(
 
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
+
+	// Add -log p(β̂) for Bayesian posterior mode.
+	if (priors && coef_names)
+		res.laplace_nll += fixed_prior_nll(res.beta, *priors, *coef_names, p);
+
 	return res;
 }
 
@@ -1329,6 +1416,8 @@ struct GaussianCholObjective
 	const GroupLayout &lay;
 	intptr_t n, p;
 	intptr_t n_chol;
+	const PriorSpec *priors;
+	const Array<String> *coef_names;
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
@@ -1346,8 +1435,24 @@ struct GaussianCholObjective
 		}
 		double sigma2 = std::exp(2.0 * theta[n_chol]);
 
-		return solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
-		                                 Xm, ym, lay, n, p).laplace_nll;
+		// Henderson includes the fixed-effect prior (shifts β̂ to MAP).
+		double nll = solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
+		                                       Xm, ym, lay, n, p,
+		                                       priors, coef_names).laplace_nll;
+
+		// Variance-component and residual priors.
+		if (priors)
+		{
+			// D_cov[g] = D_inv[g]⁻¹ (small matrix, at most q×q).
+			std::vector<Eigen::MatrixXd> D_cov(lay.G);
+			for (intptr_t g = 0; g < lay.G; g++)
+				D_cov[g] = D_inv[g].inverse();
+
+			nll -= variance_prior_log_density(D_cov, *priors, lay);
+			nll -= residual_prior_log_density(std::sqrt(sigma2), *priors);
+		}
+
+		return nll;
 	}
 };
 
@@ -1375,7 +1480,9 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
                                    const GroupLayout &lay,
                                    intptr_t n, intptr_t p,
                                    const Eigen::VectorXd &beta_init,
-                                   const Eigen::VectorXd &u_init = Eigen::VectorXd())
+                                   const Eigen::VectorXd &u_init = Eigen::VectorXd(),
+                                   const PriorSpec *priors = nullptr,
+                                   const Array<String> *coef_names = nullptr)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1533,6 +1640,10 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 			}
 		}
 
+		// ── Fixed-effect prior (Bayesian mode) ──────────────────
+		if (priors && coef_names)
+			add_fixed_prior_to_henderson(H, rhs, *priors, *coef_names, p);
+
 		// ── Solve ───────────────────────────────────────────────
 		Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 		Eigen::VectorXd sol = ldlt.solve(rhs);
@@ -1611,6 +1722,10 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
+
+	// Add -log p(β̂) for Bayesian posterior mode.
+	if (priors && coef_names)
+		res.laplace_nll += fixed_prior_nll(res.beta, *priors, *coef_names, p);
 
 	return res;
 }
@@ -1915,6 +2030,8 @@ struct PirlsObjective
 	intptr_t n, p;
 	Eigen::VectorXd beta_init;
 	intptr_t n_chol;  // total Cholesky params = Σ q_g(q_g+1)/2
+	const PriorSpec *priors;
+	const Array<String> *coef_names;
 
 	// Warm-start: cache the random effects from the last PIRLS solve
 	// so consecutive evaluations at nearby θ start close to the mode.
@@ -1945,28 +2062,40 @@ struct PirlsObjective
 		{
 			double theta_nb = std::exp(theta[n_chol]);
 			auto fam_nb = Family::negbin(theta_nb);
-			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u);
+			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
 		}
 		else if (fam.name == "beta")
 		{
 			double phi_beta = std::exp(theta[n_chol]);
 			auto fam_beta = Family::beta(phi_beta);
-			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u);
+			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
 		}
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(theta[n_chol]);
 			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 			auto fam_t = Family::student(sigma_t, nu_t);
-			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u);
+			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
 		}
 		else
 		{
-			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u);
+			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
+		}
+
+		double nll = res.laplace_nll;
+
+		// Variance-component priors.
+		if (priors)
+		{
+			std::vector<Eigen::MatrixXd> D_cov(lay.G);
+			for (intptr_t g = 0; g < lay.G; g++)
+				D_cov[g] = D_inv[g].inverse();
+
+			nll -= variance_prior_log_density(D_cov, *priors, lay);
 		}
 
 		last_u = std::move(res.u);
-		return res.laplace_nll;
+		return nll;
 	}
 };
 
@@ -1990,6 +2119,8 @@ struct LaplaceJointObjective
 	const Eigen::Map<Vector<double>> &ym;
 	const GroupLayout &lay;
 	intptr_t n, p, n_chol;
+	const PriorSpec *priors;
+	const Array<String> *coef_names;
 
 	mutable Eigen::VectorXd last_u;
 
@@ -2031,11 +2162,31 @@ struct LaplaceJointObjective
 
 		auto res = solve_u_given_beta(D_inv, log_det_Dg, fam_used,
 		                               Xm, ym, lay, n, p, beta, last_u);
+		double nll;
 		if (std::isfinite(res.laplace_nll))
+		{
 			last_u = std::move(res.u);
+			nll = res.laplace_nll;
+		}
 		else
-			res.laplace_nll = 1e30;  // reject this step
-		return res.laplace_nll;
+		{
+			return 1e30;  // reject this step
+		}
+
+		// Prior contributions (β is an explicit outer parameter here).
+		if (priors)
+		{
+			if (coef_names)
+				nll += fixed_prior_nll(beta, *priors, *coef_names, p);
+
+			std::vector<Eigen::MatrixXd> D_cov(lay.G);
+			for (intptr_t g = 0; g < lay.G; g++)
+				D_cov[g] = D_inv[g].inverse();
+
+			nll -= variance_prior_log_density(D_cov, *priors, lay);
+		}
+
+		return nll;
 	}
 };
 
@@ -2239,7 +2390,9 @@ static NewtonResult newton_optimize(const Objective &obj,
 
 Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const std::vector<GroupingInfo> &groups, const Family &fam,
-                  FittingCallback progress)
+                  FittingCallback progress,
+                  const PriorSpec *priors,
+                  const Array<String> *coef_names)
 {
 
 	if (y.ndim() != 1) {
@@ -2399,7 +2552,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		intptr_t n_chol = total_chol_params(lay);
 		intptr_t outer_dim_gauss = n_chol + 1; // Cholesky params + log σ
 
-		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol};
+		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names};
 
 		// ── Initialize Cholesky from ANOVA variance estimates ──
 		Eigen::VectorXd theta(outer_dim_gauss);
@@ -2452,7 +2605,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		sigma2 = std::exp(2.0 * theta[n_chol]);
 
 		auto final_gauss = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
-		                                             Xm, ym, lay, n, p);
+		                                             Xm, ym, lay, n, p,
+		                                             priors, coef_names);
 		beta_hat = final_gauss.beta;
 	}
 	else
@@ -2593,7 +2747,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		// Create PirlsObjective after beta_init is finalized
 
-		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol};
+		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names};
 
 		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
@@ -2633,7 +2787,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				fam_p1 = Family::student(std::exp(theta[n_chol]), std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0));
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
-			                             Xm, ym, lay, n, p, beta_init);
+			                             Xm, ym, lay, n, p, beta_init,
+			                             Eigen::VectorXd(), priors, coef_names);
 
 			if (is_student)
 			{
@@ -2648,7 +2803,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				phi2.head(p) = p1_pirls.beta;
 				phi2.tail(theta.size()) = theta;
 
-				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol};
+				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names};
 				joint_obj.last_u = std::move(p1_pirls.u);
 
 				auto res2 = newton_optimize(joint_obj, phi2, 200, 1e-8, progress, 1e-2);
@@ -2718,7 +2873,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	if (is_gaussian)
 	{
 		auto gauss_final = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
-		                                            Xm, ym, lay, n, p);
+		                                            Xm, ym, lay, n, p,
+		                                            priors, coef_names);
 		final_inner.u = std::move(gauss_final.u);
 		final_inner.mu = std::move(gauss_final.mu);
 		final_inner.laplace_nll = gauss_final.laplace_nll;
@@ -2786,6 +2942,16 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		for (intptr_t j1 = 0; j1 < p; j1++) {
 			for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
 				C(j2, j1) = C(j1, j2);
+			}
+		}
+
+		// Prior precision on fixed effects (Bayesian posterior covariance).
+		if (priors && coef_names)
+		{
+			for (intptr_t j = 0; j < p; j++)
+			{
+				const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+				C(j, j) += 1.0 / (pr.sd * pr.sd);
 			}
 		}
 
@@ -2982,6 +3148,20 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	model.niter = niter;
 	model.converged = converged;
+
+	// ── Bayesian metadata ───────────────────────────────────────────
+	//
+	// When priors are supplied, mark the model as Bayesian and store
+	// the prior specification. The posterior summaries for fixed effects
+	// are computed by bayesian_adjust() in fitting.cpp after coef_names
+	// are attached. The hyperparameter posteriors (variance-component
+	// SDs) are set here since we have the converged estimates.
+
+	if (priors)
+	{
+		model.estimation = Estimation::Bayesian;
+		model.priors = *priors;
+	}
 
 	return model;
 }
