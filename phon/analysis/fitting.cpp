@@ -1221,6 +1221,8 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 	double z_975 = boost::math::quantile(normal, 0.975);
 
 	model.posterior_mean = Array<double>(p, 0.0);
+	model.posterior_mode = Array<double>(p, 0.0);
+	model.posterior_median = Array<double>(p, 0.0);
 	model.posterior_sd = Array<double>(p, 0.0);
 	model.ci_lower = Array<double>(p, 0.0);
 	model.ci_upper = Array<double>(p, 0.0);
@@ -1233,6 +1235,8 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
 		model.posterior_mean[j] = mean;
+		model.posterior_mode[j] = mean;    // Gaussian: mode = mean
+		model.posterior_median[j] = mean;  // Gaussian: median = mean
 		model.posterior_sd[j] = sd;
 		model.ci_lower[j] = mean - z_975 * sd;
 		model.ci_upper[j] = mean + z_975 * sd;
@@ -1263,7 +1267,7 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 			n_hyper += 1;
 		}
 
-		model.hyper_names = Array<String>(n_hyper);
+		model.hyper_names = Array<String>(n_hyper, String());
 		model.hyper_posterior_mean = Array<double>(n_hyper, 0.0);
 		model.hyper_posterior_sd = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 		model.hyper_ci_lower = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
@@ -1316,8 +1320,10 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 
 	if (uses_laplace)
 	{
-		// Posterior mode and covariance are already correct; just extract summaries.
-		bayesian_summaries(model, scaled_priors);
+		// If INLA grid integration already populated the posterior fields
+		// (Gaussian LMMs), skip. Otherwise, extract summaries from the mode.
+		if (model.posterior_mean.empty())
+			bayesian_summaries(model, scaled_priors);
 	}
 	else
 	{
