@@ -1321,7 +1321,8 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	if (uses_laplace)
 	{
 		// If INLA grid integration already populated the posterior fields
-		// (Gaussian LMMs), skip. Otherwise, extract summaries from the mode.
+		// (Gaussian LMMs and non-Gaussian GLMMs with random effects),
+		// skip. Otherwise, extract summaries from the mode.
 		if (model.posterior_mean.empty())
 			bayesian_summaries(model, scaled_priors);
 	}
