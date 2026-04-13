@@ -2484,25 +2484,62 @@ void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 	};
 
 	QString text;
-	text += QStringLiteral("Kolmogorov\u2013Smirnov test for uniformity (H\u2080: residuals ~ U(0,1)):  D = %1,  p = %2\n")
-		.arg(sr.ks_statistic, 0, 'f', 4)
-		.arg(format_p(sr.ks_pvalue));
 
-	text += QStringLiteral("Dispersion test:  ratio = %1,  p = %2")
-		.arg(sr.dispersion_ratio, 0, 'f', 4)
-		.arg(format_p(sr.dispersion_pvalue));
-
-	if (sr.dispersion_pvalue < 0.05)
+	if (sr.is_ppc)
 	{
-		if (sr.dispersion_ratio > 1.0)
-			text += QStringLiteral("  (potential overdispersion)");
-		else if (sr.dispersion_ratio < 1.0)
-			text += QStringLiteral("  (potential underdispersion)");
-	}
+		// ── Posterior predictive checks ──────────────────────────
+		auto ppc_label = [](double pp) -> const char * {
+			return (pp < 0.05) ? "check model" : "good";
+		};
 
-	text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
-		.arg(sr.n_outliers)
-		.arg(format_p(sr.outlier_pvalue));
+		text += QStringLiteral("Posterior predictive checks\n\n");
+
+		text += QStringLiteral("Uniformity:    KS D = %1  (Bayesian p-value = %2, %3)\n")
+			.arg(sr.ks_statistic, 0, 'f', 4)
+			.arg(format_p(sr.ks_pvalue))
+			.arg(QString::fromUtf8(ppc_label(sr.ks_pvalue)));
+
+		text += QStringLiteral("Dispersion:    ratio = %1  (Bayesian p-value = %2, %3)")
+			.arg(sr.dispersion_ratio, 0, 'f', 4)
+			.arg(format_p(sr.dispersion_pvalue))
+			.arg(QString::fromUtf8(ppc_label(sr.dispersion_pvalue)));
+
+		if (sr.dispersion_pvalue < 0.05)
+		{
+			if (sr.dispersion_ratio > 1.0)
+				text += QStringLiteral("  \u2014 overdispersion");
+			else if (sr.dispersion_ratio < 1.0)
+				text += QStringLiteral("  \u2014 underdispersion");
+		}
+
+		text += QStringLiteral("\nOutlier test:  %1 outlier(s)  (Bayesian p-value = %2, %3)")
+			.arg(sr.n_outliers)
+			.arg(format_p(sr.outlier_pvalue))
+			.arg(QString::fromUtf8(ppc_label(sr.outlier_pvalue)));
+	}
+	else
+	{
+		// ── Frequentist tests (existing display) ────────────────
+		text += QStringLiteral("Kolmogorov\u2013Smirnov test for uniformity (H\u2080: residuals ~ U(0,1)):  D = %1,  p = %2\n")
+			.arg(sr.ks_statistic, 0, 'f', 4)
+			.arg(format_p(sr.ks_pvalue));
+
+		text += QStringLiteral("Dispersion test:  ratio = %1,  p = %2")
+			.arg(sr.dispersion_ratio, 0, 'f', 4)
+			.arg(format_p(sr.dispersion_pvalue));
+
+		if (sr.dispersion_pvalue < 0.05)
+		{
+			if (sr.dispersion_ratio > 1.0)
+				text += QStringLiteral("  (potential overdispersion)");
+			else if (sr.dispersion_ratio < 1.0)
+				text += QStringLiteral("  (potential underdispersion)");
+		}
+
+		text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
+			.arg(sr.n_outliers)
+			.arg(format_p(sr.outlier_pvalue));
+	}
 
 	m_test_results_text->setPlainText(text);
 	m_test_results_group->setVisible(true);

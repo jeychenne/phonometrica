@@ -231,9 +231,14 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 
 	// ── 7. WAIC ─────────────────────────────────────────────────────────
 	//
-	// Draw S posterior samples of β from N(β_post, Σ_post), compute
+	// Draw S posterior samples of β from the full posterior, compute
 	// pointwise log-likelihoods, and call compute_waic_from_loglik.
-	// No random effects in this path, so μ_i = linkinv(x_i' β^(s)).
+	//
+	// For GAMs, model.beta and model.vcov include smooth basis coefficients
+	// (the parametric block has been updated above; the smooth block retains
+	// the penalized MLE, which IS the posterior under the implicit smoothing
+	// prior).  We draw the full coefficient vector so that smooth uncertainty
+	// is properly reflected in WAIC.
 
 	if (!model.X.empty() && !model.y.empty())
 	{
@@ -242,47 +247,62 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 
 		intptr_t n = model.nobs;
 
-		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+		// Total coefficients: parametric + smooth basis (for GAMs).
+		// For non-GAMs, p_draw == nfixed.
+		intptr_t p_draw = model.beta.size();
+		if (model.X.ndim() == 2 && model.X.ncol() != p_draw)
+			p_draw = p;  // fallback to parametric-only
+
+		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p_draw);
 		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
 
-		// Cholesky of posterior covariance for correlated draws.
-		Eigen::LLT<Eigen::MatrixXd> chol_post(Sigma_post);
+		// Full posterior mean and covariance (parametric block adjusted,
+		// smooth block unchanged from penalized MLE).
+		Eigen::Map<Vector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
+		Eigen::Map<Matrix<double>> vcov_full(const_cast<double *>(model.vcov.data()), p_draw, p_draw);
 
-		// Scalar inverse link.
-		std::function<double(double)> linkinv_fn;
-		if (model.family == "binomial" || model.family == "beta") {
-			linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
-		} else if (model.family == "poisson" || model.family == "negbin") {
-			linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
-		} else {
-			// Gaussian, Student: identity link
-			linkinv_fn = [](double eta) { return eta; };
-		}
+		// Cholesky of full posterior covariance for correlated draws.
+		Eigen::LLT<Eigen::MatrixXd> chol_full(vcov_full);
 
-		std::vector<double> loglik_matrix(n * S);
-		std::mt19937 rng(SEED);
-		std::normal_distribution<double> std_normal(0.0, 1.0);
-
-		for (int s = 0; s < S; s++)
+		if (chol_full.info() == Eigen::Success)
 		{
-			// Draw β^(s) ~ N(β_post, Σ_post)
-			Eigen::VectorXd z(p);
-			for (intptr_t j = 0; j < p; j++)
-				z[j] = std_normal(rng);
-
-			Eigen::VectorXd beta_s = beta_post + chol_post.matrixL() * z;
-
-			// η = X β^(s)
-			Eigen::VectorXd eta = Xm * beta_s;
-
-			for (intptr_t i = 0; i < n; i++)
-			{
-				double mu_i = linkinv_fn(eta[i]);
-				loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+			// Scalar inverse link.
+			std::function<double(double)> linkinv_fn;
+			if (model.family == "binomial" || model.family == "beta") {
+				linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+			} else if (model.family == "poisson" || model.family == "negbin") {
+				linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+			} else {
+				// Gaussian, Student: identity link
+				linkinv_fn = [](double eta) { return eta; };
 			}
-		}
 
-		compute_waic_from_loglik(model, loglik_matrix, n, S);
+			std::vector<double> loglik_matrix(n * S);
+			std::mt19937 rng(SEED);
+			std::normal_distribution<double> std_normal(0.0, 1.0);
+
+			for (int s = 0; s < S; s++)
+			{
+				// Draw β^(s) ~ N(β_full, Σ_full)
+				Eigen::VectorXd z(p_draw);
+				for (intptr_t j = 0; j < p_draw; j++)
+					z[j] = std_normal(rng);
+
+				Eigen::VectorXd beta_s = beta_full + chol_full.matrixL() * z;
+
+				// η = X β^(s)
+				Eigen::VectorXd eta = Xm * beta_s;
+
+				for (intptr_t i = 0; i < n; i++)
+				{
+					double mu_i = linkinv_fn(eta[i]);
+					loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+				}
+			}
+
+			compute_waic_from_loglik(model, loglik_matrix, n, S);
+		}
+		// If Cholesky fails (ill-conditioned penalty matrix), WAIC is skipped.
 	}
 
 	// ── 8. Set estimation method and store priors ───────────────────
