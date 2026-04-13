@@ -23,6 +23,7 @@
 #include <cmath>
 #include <vector>
 #include <map>
+#include <boost/math/distributions/normal.hpp>
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/mixed_model.hpp>
@@ -597,9 +598,10 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 // Public fit() entry point
 // =====================================================================
 
-Model fit(const DataTable &data, const Formula &formula, const String &family,
-          const std::map<String, String> &reference_levels,
-          FittingCallback progress)
+static Model fit_impl(const DataTable &data, const Formula &formula, const String &family,
+                       const std::map<String, String> &reference_levels,
+                       FittingCallback progress,
+                       const PriorSpec *priors)
 {
 	if (formula.response.empty()) {
 		throw error("Formula has no response variable");
@@ -1037,7 +1039,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, groups, fam, progress);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names);
 	}
 	else if (family == "gaussian")
 	{
@@ -1049,7 +1051,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		// optimization, ensuring comparable log-likelihoods with mixed models.
 		std::vector<GroupingInfo> groups;
 		auto fam = Family::from_name(family);
-		model = mixed_model(dm.y, dm.X, groups, fam, progress);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names);
 	}
 	else
 	{
@@ -1090,19 +1092,238 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 
 
 // =====================================================================
-// Bayesian fit (Phase 1: Gaussian approximation at posterior mode)
+// Data-dependent default priors (à la brms)
 // =====================================================================
+//
+// When auto-scale flags are set (the user didn't override that prior),
+// replace the constructor defaults with priors scaled to the response.
+//
+// Following brms (Bürkner 2017):
+//   Fixed effects:
+//     Intercept: N(mean(y), 2.5 × sd(y_link))
+//     Slopes:    N(0,       2.5 × sd(y_link))
+//   Variance components: PC(2.5 × sd(y_link), 0.05)
+//   Residual SD:         PC(2.5 × sd(y_link), 0.05)
+//
+// The 2.5× multiplier produces priors that are genuinely weakly
+// informative at any measurement scale (Hz, bark, semitones, etc.).
+
+static void scale_default_priors(PriorSpec &priors,
+                                  const DataTable &data,
+                                  const Formula &formula,
+                                  const String &family)
+{
+	// Find response column.
+	intptr_t resp_col = find_column(data, formula.response);
+	if (resp_col == 0) return;  // response not found; fit() will error later
+
+	intptr_t n = data.row_count();
+	if (n < 2) return;
+
+	// Accumulate mean and SD on the link scale.
+	double sum = 0, sum2 = 0;
+	intptr_t count = 0;
+
+	for (intptr_t i = 1; i <= n; i++)
+	{
+		double v = 0;
+		if (!try_parse_double(data.get_cell(i, resp_col), &v))
+			continue;
+
+		double lv = v;
+		if (family == "binomial" || family == "beta")
+		{
+			// Logit link.
+			v = std::clamp(v, 0.001, 0.999);
+			lv = std::log(v / (1.0 - v));
+		}
+		else if (family == "poisson" || family == "negbin")
+		{
+			// Log link.
+			lv = std::log(v + 0.5);
+		}
+		// else: identity link (gaussian, student) — use raw v.
+
+		sum += lv;
+		sum2 += lv * lv;
+		count++;
+	}
+
+	if (count < 2) return;
+
+	double y_mean = sum / count;
+	double y_var = (sum2 - sum * sum / count) / (count - 1);
+	double y_sd = std::sqrt(std::max(y_var, 1e-10));
+
+	// Scale factor: 2.5 × sd(y_link), with a floor of 2.5.
+	double scale = std::max(2.5, 2.5 * y_sd);
+
+	if (priors.fixed_auto)
+	{
+		// Slopes: N(0, scale).
+		priors.fixed_effects.mean = 0.0;
+		priors.fixed_effects.sd = scale;
+
+		// Intercept: N(mean(y_link), scale).
+		// Added as a per-coefficient override so it doesn't affect slopes.
+		NormalPrior intercept_prior;
+		intercept_prior.mean = y_mean;
+		intercept_prior.sd = scale;
+		priors.coefficient_priors[String("(Intercept)")] = intercept_prior;
+	}
+
+	if (priors.variance_auto)
+	{
+		priors.variance_components.type = VariancePriorType::PC;
+		priors.variance_components.param1 = scale;   // u
+		priors.variance_components.param2 = 0.05;    // alpha
+	}
+
+	if (priors.residual_auto)
+	{
+		priors.residual.type = VariancePriorType::PC;
+		priors.residual.param1 = scale;   // u
+		priors.residual.param2 = 0.05;    // alpha
+	}
+}
+
+
+// =====================================================================
+// Public frequentist fit (delegates to fit_impl)
+// =====================================================================
+
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const std::map<String, String> &reference_levels,
+          FittingCallback progress)
+{
+	return fit_impl(data, formula, family, reference_levels, progress, nullptr);
+}
+
+
+// =====================================================================
+// Bayesian fit (INLA-style approximate Bayesian inference)
+// =====================================================================
+//
+// For mixed models: fit_impl passes priors to mixed_model(), which
+// optimizes the negative log-posterior directly. The returned model
+// already has β at the posterior mode and vcov = posterior covariance
+// (Henderson with prior precision). We just extract summaries.
+//
+// For fixed-effects-only models: fit_impl produces the MLE, then
+// bayesian_adjust() applies the post-hoc Gaussian approximation.
+
+static void bayesian_summaries(Model &model, const PriorSpec &priors)
+{
+	intptr_t p = model.nfixed;
+	if (p <= 0) return;
+
+	boost::math::normal_distribution<double> normal;
+	double z_975 = boost::math::quantile(normal, 0.975);
+
+	model.posterior_mean = Array<double>(p, 0.0);
+	model.posterior_sd = Array<double>(p, 0.0);
+	model.ci_lower = Array<double>(p, 0.0);
+	model.ci_upper = Array<double>(p, 0.0);
+	model.pd = Array<double>(p, 0.0);
+
+	for (intptr_t j = 1; j <= p; j++)
+	{
+		double mean = model.beta[j];
+		double var = model.vcov(j, j);
+		double sd = (var > 0) ? std::sqrt(var) : 0.0;
+
+		model.posterior_mean[j] = mean;
+		model.posterior_sd[j] = sd;
+		model.ci_lower[j] = mean - z_975 * sd;
+		model.ci_upper[j] = mean + z_975 * sd;
+
+		if (sd > 0) {
+			model.pd[j] = boost::math::cdf(normal, std::abs(mean) / sd);
+		} else {
+			model.pd[j] = 1.0;
+		}
+	}
+
+	// Update se/stat for compatibility with existing display code.
+	for (intptr_t j = 1; j <= p; j++)
+	{
+		model.se[j] = model.posterior_sd[j];
+		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
+		model.p[j] = std::numeric_limits<double>::quiet_NaN();
+	}
+
+	// Hyperparameter posteriors (variance-component SDs).
+	if (model.has_random_effects())
+	{
+		intptr_t n_hyper = 0;
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			n_hyper += model.random_effects[g].term_names.size();
+		}
+		if (model.is_gaussian()) {
+			n_hyper += 1;
+		}
+
+		model.hyper_names = Array<String>(n_hyper);
+		model.hyper_posterior_mean = Array<double>(n_hyper, 0.0);
+		model.hyper_posterior_sd = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
+		model.hyper_ci_lower = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
+		model.hyper_ci_upper = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
+
+		intptr_t idx = 1;
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+		{
+			auto &re = model.random_effects[g];
+			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			{
+				std::string name = "sd(" + std::string(re.term_names[t].data(), re.term_names[t].size())
+				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
+				model.hyper_names[idx] = String(name);
+				model.hyper_posterior_mean[idx] = std::sqrt(std::max(re.variance[t], 0.0));
+				idx++;
+			}
+		}
+
+		if (model.is_gaussian())
+		{
+			model.hyper_names[idx] = "sd(residual)";
+			model.hyper_posterior_mean[idx] = model.rse;
+			idx++;
+		}
+	}
+
+	model.estimation = Estimation::Bayesian;
+	model.priors = priors;
+}
+
 
 Model fit(const DataTable &data, const Formula &formula, const String &family,
           const PriorSpec &priors,
           const std::map<String, String> &reference_levels,
           FittingCallback progress)
 {
-	// Fit the frequentist model first (reuses all existing code).
-	Model model = fit(data, formula, family, reference_levels, progress);
+	// Auto-scale any prior fields the user didn't set explicitly.
+	PriorSpec scaled_priors = priors;
+	scale_default_priors(scaled_priors, data, formula, family);
 
-	// Apply Bayesian posterior adjustment.
-	bayesian_adjust(model, priors);
+	// For mixed models and Laplace-routed families (NB, beta, Student t):
+	// fit_impl passes priors to mixed_model(), which optimizes the
+	// negative log-posterior. The model already has the posterior mode.
+	bool uses_laplace = formula.has_random_effects()
+	                 || family == "negbin" || family == "beta" || family == "student";
+
+	Model model = fit_impl(data, formula, family, reference_levels, progress,
+	                         uses_laplace ? &scaled_priors : nullptr);
+
+	if (uses_laplace)
+	{
+		// Posterior mode and covariance are already correct; just extract summaries.
+		bayesian_summaries(model, scaled_priors);
+	}
+	else
+	{
+		// Fixed-effects LM/GLM: post-hoc adjustment (exact for Gaussian, approximate for GLM).
+		bayesian_adjust(model, scaled_priors);
+	}
 
 	return model;
 }

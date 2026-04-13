@@ -227,6 +227,14 @@ struct PriorSpec
 	// Beta φ (precision): Gamma prior.
 	GammaPrior beta_phi;
 
+	// ---- Auto-scaling flags ----
+	// When true, the corresponding prior is replaced at fit time by a
+	// data-scaled weakly informative default (à la brms). User calls to
+	// set_fixed() / set_variance() / set_residual() clear the flag.
+	bool fixed_auto = true;
+	bool variance_auto = true;
+	bool residual_auto = true;
+
 	// ---- Convenience ----
 
 	// Return the prior for a given fixed-effect coefficient.

@@ -95,7 +95,9 @@ struct GroupingInfo
 //! \return a fitted Model with random_effects populated (one RandomEffectGroup per grouping factor)
 Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const std::vector<GroupingInfo> &groups, const Family &fam,
-                  FittingCallback progress = nullptr);
+                  FittingCallback progress = nullptr,
+                  const PriorSpec *priors = nullptr,
+                  const Array<String> *coef_names = nullptr);
 
 } // namespace phonometrica::stats
 

@@ -990,6 +990,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &prior = cast<stats::PriorSpec>(args[0]);
 		prior.fixed_effects.mean = args[1].to_float();
 		prior.fixed_effects.sd = args[2].to_float();
+		prior.fixed_auto = false;
 		return Variant();
 	};
 
@@ -1019,6 +1020,7 @@ void DataTable::initialize(Runtime &rt)
 		prior.variance_components.type = parse_variance_type(type_str);
 		prior.variance_components.param1 = args[2].to_float();
 		prior.variance_components.param2 = args[3].to_float();
+		prior.variance_auto = false;
 		return Variant();
 	};
 
@@ -1028,6 +1030,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &type_str = cast<String>(args[1]);
 		prior.variance_components.type = parse_variance_type(type_str);
 		prior.variance_components.param1 = args[2].to_float();
+		prior.variance_auto = false;
 		return Variant();
 	};
 
@@ -1038,6 +1041,7 @@ void DataTable::initialize(Runtime &rt)
 		prior.residual.type = parse_variance_type(type_str);
 		prior.residual.param1 = args[2].to_float();
 		prior.residual.param2 = args[3].to_float();
+		prior.residual_auto = false;
 		return Variant();
 	};
 
@@ -1047,6 +1051,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &type_str = cast<String>(args[1]);
 		prior.residual.type = parse_variance_type(type_str);
 		prior.residual.param1 = args[2].to_float();
+		prior.residual_auto = false;
 		return Variant();
 	};
 
