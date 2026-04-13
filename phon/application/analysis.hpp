@@ -53,9 +53,11 @@ public:
 
 	// Fit a model using the given formula and family. Adds it to the model list.
 	// Returns the index (0-based) of the newly fitted model.
+	// If priors is non-null, Bayesian estimation is used; null means frequentist.
 	// Throws if source is unavailable.
 	int fit(const String &formula_str, const String &family = "gaussian",
-	        stats::FittingCallback progress = nullptr, bool bayesian = false);
+	        stats::FittingCallback progress = nullptr,
+	        const stats::PriorSpec *priors = nullptr);
 
 	// Number of fitted models.
 	int model_count() const { return (int)m_models.size(); }

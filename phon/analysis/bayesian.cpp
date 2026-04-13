@@ -194,7 +194,39 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		}
 	}
 
-	// ── 6. Set estimation method and store priors ───────────────────
+	// ── 6. Laplace log marginal likelihood ───────────────────────────
+	//
+	// log p(y) ≈ log f(β̂_post) + (p/2) log(2π) - 0.5 log det(H_post)
+	//
+	// where f(β̂_post) = p(y|β̂_post) × π(β̂_post).
+	{
+		static const double log_2pi = std::log(2.0 * M_PI);
+
+		// Log-likelihood at the posterior mode (quadratic approx from MLE).
+		Eigen::VectorXd shift = beta_post - beta_mle;
+		double loglik_post = model.loglik - 0.5 * shift.dot(H_lik * shift);
+
+		// Log-prior at the posterior mode.
+		double log_prior = 0;
+		for (intptr_t j = 0; j < p; j++)
+		{
+			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
+			double z = (beta_post[j] - pr.mean) / pr.sd;
+			log_prior += -0.5 * log_2pi - std::log(pr.sd) - 0.5 * z * z;
+		}
+
+		// log det(H_post) from the LDLT decomposition.
+		double log_det_H = 0;
+		Eigen::VectorXd diag_D = post_ldlt.vectorD();
+		for (intptr_t j = 0; j < p; j++)
+			log_det_H += std::log(std::max(diag_D[j], 1e-30));
+
+		model.log_marginal = loglik_post + log_prior
+		                   + 0.5 * p * log_2pi
+		                   - 0.5 * log_det_H;
+	}
+
+	// ── 7. Set estimation method and store priors ───────────────────
 
 	model.estimation = Estimation::Bayesian;
 	model.priors = priors;

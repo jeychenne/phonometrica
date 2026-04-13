@@ -57,7 +57,7 @@ Analysis::Analysis(Directory *parent, const String &path) :
 // Fitting
 // =====================================================================
 
-int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, bool bayesian)
+int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, const stats::PriorSpec *priors)
 {
 	if (!m_source) {
 		throw error("Cannot fit model: source data is not available");
@@ -65,8 +65,8 @@ int Analysis::fit(const String &formula_str, const String &family, stats::Fittin
 
 	auto formula = stats::Formula::parse(formula_str);
 	stats::Model model;
-	if (bayesian) {
-		model = stats::fit(*m_source, formula, family, stats::PriorSpec{},
+	if (priors) {
+		model = stats::fit(*m_source, formula, family, *priors,
 		                    m_reference_levels, std::move(progress));
 	} else {
 		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
@@ -336,6 +336,7 @@ void Analysis::write()
 		add_data_node(mn, "AIC", String::format("%.17g", m.aic));
 		add_data_node(mn, "BIC", String::format("%.17g", m.bic));
 		add_data_node(mn, "Deviance", String::format("%.17g", m.deviance));
+		add_data_node(mn, "LogMarginal", String::format("%.17g", m.log_marginal));
 		add_data_node(mn, "RSE", String::format("%.17g", m.rse));
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
 		add_data_node(mn, "R2", String::format("%.17g", m.r2));
@@ -442,6 +443,29 @@ void Analysis::write()
 				add_data_node(mn, "HyperCiLower", doubles_to_string(m.hyper_ci_lower));
 				add_data_node(mn, "HyperCiUpper", doubles_to_string(m.hyper_ci_upper));
 			}
+
+			// Prior specification (the auto-scaled values actually used)
+			{
+				auto pr_node = mn.append_child("Priors");
+				auto &pr = m.priors;
+
+				auto fe_node = pr_node.append_child("FixedEffects");
+				add_data_node(fe_node, "Mean", String::format("%.17g", pr.fixed_effects.mean));
+				add_data_node(fe_node, "Sd", String::format("%.17g", pr.fixed_effects.sd));
+				add_data_node(fe_node, "Auto", pr.fixed_auto ? "true" : "false");
+
+				auto vc_node = pr_node.append_child("VarianceComponents");
+				add_data_node(vc_node, "Type", stats::variance_prior_type_name(pr.variance_components.type));
+				add_data_node(vc_node, "Param1", String::format("%.17g", pr.variance_components.param1));
+				add_data_node(vc_node, "Param2", String::format("%.17g", pr.variance_components.param2));
+				add_data_node(vc_node, "Auto", pr.variance_auto ? "true" : "false");
+
+				auto res_node = pr_node.append_child("Residual");
+				add_data_node(res_node, "Type", stats::variance_prior_type_name(pr.residual.type));
+				add_data_node(res_node, "Param1", String::format("%.17g", pr.residual.param1));
+				add_data_node(res_node, "Param2", String::format("%.17g", pr.residual.param2));
+				add_data_node(res_node, "Auto", pr.residual_auto ? "true" : "false");
+			}
 		}
 	}
 
@@ -528,6 +552,7 @@ void Analysis::load()
 					else if (name == "AIC")      m.aic = parse_double_safe(text);
 					else if (name == "BIC")      m.bic = parse_double_safe(text);
 					else if (name == "Deviance") m.deviance = parse_double_safe(text);
+					else if (name == "LogMarginal") m.log_marginal = parse_double_safe(text);
 					else if (name == "RSE")      m.rse = parse_double_safe(text);
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
 					else if (name == "R2")       m.r2 = parse_double_safe(text);
@@ -653,6 +678,56 @@ void Analysis::load()
 					else if (name == "HyperPosteriorSd")   m.hyper_posterior_sd = parse_doubles(text);
 					else if (name == "HyperCiLower")       m.hyper_ci_lower = parse_doubles(text);
 					else if (name == "HyperCiUpper")       m.hyper_ci_upper = parse_doubles(text);
+					else if (name == "Priors")
+					{
+						auto parse_var_type = [](const char *t) -> stats::VariancePriorType {
+							std::string_view s(t);
+							if (s == "Half-Cauchy") return stats::VariancePriorType::HalfCauchy;
+							if (s == "Half-Normal") return stats::VariancePriorType::HalfNormal;
+							return stats::VariancePriorType::PC;
+						};
+
+						for (auto pr_child = field.first_child(); pr_child; pr_child = pr_child.next_sibling())
+						{
+							auto pr_name = str(pr_child.name());
+
+							if (pr_name == "FixedEffects")
+							{
+								for (auto fe = pr_child.first_child(); fe; fe = fe.next_sibling())
+								{
+									auto fen = str(fe.name());
+									auto fet = fe.text().get();
+									if (fen == "Mean")       m.priors.fixed_effects.mean = parse_double_safe(fet);
+									else if (fen == "Sd")    m.priors.fixed_effects.sd = parse_double_safe(fet);
+									else if (fen == "Auto")  m.priors.fixed_auto = (str(fet) == str("true"));
+								}
+							}
+							else if (pr_name == "VarianceComponents")
+							{
+								for (auto vc = pr_child.first_child(); vc; vc = vc.next_sibling())
+								{
+									auto vcn = str(vc.name());
+									auto vct = vc.text().get();
+									if (vcn == "Type")       m.priors.variance_components.type = parse_var_type(vct);
+									else if (vcn == "Param1") m.priors.variance_components.param1 = parse_double_safe(vct);
+									else if (vcn == "Param2") m.priors.variance_components.param2 = parse_double_safe(vct);
+									else if (vcn == "Auto")   m.priors.variance_auto = (str(vct) == str("true"));
+								}
+							}
+							else if (pr_name == "Residual")
+							{
+								for (auto rs = pr_child.first_child(); rs; rs = rs.next_sibling())
+								{
+									auto rsn = str(rs.name());
+									auto rst = rs.text().get();
+									if (rsn == "Type")       m.priors.residual.type = parse_var_type(rst);
+									else if (rsn == "Param1") m.priors.residual.param1 = parse_double_safe(rst);
+									else if (rsn == "Param2") m.priors.residual.param2 = parse_double_safe(rst);
+									else if (rsn == "Auto")   m.priors.residual_auto = (str(rst) == str("true"));
+								}
+							}
+						}
+					}
 				}
 
 				m_models.push_back(std::move(m));
