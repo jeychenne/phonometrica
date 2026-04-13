@@ -57,14 +57,20 @@ Analysis::Analysis(Directory *parent, const String &path) :
 // Fitting
 // =====================================================================
 
-int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress)
+int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, bool bayesian)
 {
 	if (!m_source) {
 		throw error("Cannot fit model: source data is not available");
 	}
 
 	auto formula = stats::Formula::parse(formula_str);
-	auto model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
+	stats::Model model;
+	if (bayesian) {
+		model = stats::fit(*m_source, formula, family, stats::PriorSpec{},
+		                    m_reference_levels, std::move(progress));
+	} else {
+		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
+	}
 	model.formula = formula.to_string();
 	model.compute_pseudo_r2();
 	m_models.push_back(std::move(model));

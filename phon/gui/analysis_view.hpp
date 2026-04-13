@@ -142,6 +142,7 @@ private:
 	// Top bar
 	QLineEdit *m_formula_edit = nullptr;
 	QComboBox *m_family_combo = nullptr;
+	QComboBox *m_estimation_combo = nullptr;
 	QPushButton *m_fit_button = nullptr;
 
 	// Left panel
