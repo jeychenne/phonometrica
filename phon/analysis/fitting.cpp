@@ -1304,8 +1304,8 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 
 	// ── WAIC ────────────────────────────────────────────────────────────
 	//
-	// Draw from N(β_post, Σ_post) where β_post = model.beta and Σ_post = model.vcov
-	// (both are posterior quantities from the Laplace/prior-adjusted Henderson solve).
+	// Draw from the full posterior. model.beta and model.vcov may include
+	// smooth basis coefficients for GAMs — use the full dimensions.
 
 	if (!model.X.empty() && !model.y.empty() && model.has_vcov())
 	{
@@ -1313,51 +1313,54 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 		constexpr unsigned int SEED = 12345;
 
 		intptr_t n = model.nobs;
-		intptr_t p = model.nfixed;
 
-		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+		// Total coefficients (parametric + smooth basis for GAMs).
+		intptr_t p_draw = model.beta.size();
+		if (model.X.ndim() == 2 && model.X.ncol() != p_draw)
+			p_draw = model.nfixed;  // fallback
+
+		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p_draw);
 		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
 
-		// Posterior mean and covariance.
-		Eigen::VectorXd beta_post(p);
-		for (intptr_t j = 0; j < p; j++)
-			beta_post[j] = model.beta[j + 1];
+		Eigen::Map<Vector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
+		Eigen::Map<Matrix<double>> vcov_full(const_cast<double *>(model.vcov.data()), p_draw, p_draw);
+		Eigen::LLT<Eigen::MatrixXd> chol_post(vcov_full);
 
-		Eigen::Map<Matrix<double>> vcov_m(const_cast<double *>(model.vcov.data()), p, p);
-		Eigen::LLT<Eigen::MatrixXd> chol_post(vcov_m);
-
-		// Scalar inverse link.
-		std::function<double(double)> linkinv_fn;
-		if (model.family == "beta") {
-			linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
-		} else if (model.family == "negbin") {
-			linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
-		} else {
-			// Student: identity link
-			linkinv_fn = [](double eta) { return eta; };
-		}
-
-		std::vector<double> loglik_matrix(n * S);
-		std::mt19937 rng(SEED);
-		std::normal_distribution<double> std_normal(0.0, 1.0);
-
-		for (int s = 0; s < S; s++)
+		if (chol_post.info() == Eigen::Success)
 		{
-			Eigen::VectorXd z(p);
-			for (intptr_t j = 0; j < p; j++)
-				z[j] = std_normal(rng);
-
-			Eigen::VectorXd beta_s = beta_post + chol_post.matrixL() * z;
-			Eigen::VectorXd eta = Xm * beta_s;
-
-			for (intptr_t i = 0; i < n; i++)
-			{
-				double mu_i = linkinv_fn(eta[i]);
-				loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+			// Scalar inverse link.
+			std::function<double(double)> linkinv_fn;
+			if (model.family == "beta") {
+				linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+			} else if (model.family == "negbin") {
+				linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+			} else {
+				// Student: identity link
+				linkinv_fn = [](double eta) { return eta; };
 			}
-		}
 
-		compute_waic_from_loglik(model, loglik_matrix, n, S);
+			std::vector<double> loglik_matrix(n * S);
+			std::mt19937 rng(SEED);
+			std::normal_distribution<double> std_normal(0.0, 1.0);
+
+			for (int s = 0; s < S; s++)
+			{
+				Eigen::VectorXd z(p_draw);
+				for (intptr_t j = 0; j < p_draw; j++)
+					z[j] = std_normal(rng);
+
+				Eigen::VectorXd beta_s = beta_full + chol_post.matrixL() * z;
+				Eigen::VectorXd eta = Xm * beta_s;
+
+				for (intptr_t i = 0; i < n; i++)
+				{
+					double mu_i = linkinv_fn(eta[i]);
+					loglik_matrix[i * S + s] = pointwise_loglik(ym[i], mu_i, model);
+				}
+			}
+
+			compute_waic_from_loglik(model, loglik_matrix, n, S);
+		}
 	}
 
 	model.estimation = Estimation::Bayesian;
