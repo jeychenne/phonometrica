@@ -28,6 +28,7 @@
 #include <QComboBox>
 #include <QCheckBox>
 #include <QPushButton>
+#include <QToolButton>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QSplitter>
@@ -131,6 +132,10 @@ private:
 	bool isColumnNumeric(const String &col_name) const;
 	void updatePostHoc();
 	void populatePostHocFactors();
+	stats::PriorSpec buildPriorSpec() const;
+	void resetPriorPanel();
+	void updatePriorDefaultsLabel();
+	void updatePriorResidualVisibility();
 
 	Handle<Analysis> m_analysis;
 	int m_current_model = -1;
@@ -144,6 +149,22 @@ private:
 	QComboBox *m_family_combo = nullptr;
 	QComboBox *m_estimation_combo = nullptr;
 	QPushButton *m_fit_button = nullptr;
+
+	// Prior customization panel (visible only when Bayesian is selected)
+	QToolButton *m_prior_toggle = nullptr;
+	QWidget *m_prior_panel = nullptr;
+	QLabel *m_prior_defaults_label = nullptr;
+	QCheckBox *m_prior_fixed_auto = nullptr;
+	QDoubleSpinBox *m_prior_fixed_mean = nullptr;
+	QDoubleSpinBox *m_prior_fixed_sd = nullptr;
+	QCheckBox *m_prior_variance_auto = nullptr;
+	QComboBox *m_prior_variance_type = nullptr;
+	QDoubleSpinBox *m_prior_variance_scale = nullptr;
+	QCheckBox *m_prior_residual_auto = nullptr;
+	QComboBox *m_prior_residual_type = nullptr;
+	QDoubleSpinBox *m_prior_residual_scale = nullptr;
+	QList<QWidget *> m_prior_residual_widgets; // all widgets in the residual grid row
+	QPushButton *m_prior_reset_button = nullptr;
 
 	// Left panel
 	QListWidget *m_column_list = nullptr;

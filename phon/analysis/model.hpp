@@ -134,6 +134,11 @@ struct Model
 	double bic = 0;            // Bayesian information criterion
 	double deviance = 0;       // residual deviance (-2 * loglik for GLMs)
 
+	// ---- Bayesian model comparison ----
+	// Laplace-approximated log marginal likelihood: log p(y | M).
+	// NaN for frequentist models. Used for Bayes factor computation.
+	double log_marginal = std::numeric_limits<double>::quiet_NaN();
+
 	// ---- Linear model specific ----
 	double rse = 0;            // residual standard error (Gaussian only)
 	intptr_t df_residual = 0;  // residual degrees of freedom

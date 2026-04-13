@@ -26,6 +26,7 @@
 #include <tuple>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
+#include <QGridLayout>
 #include <QLabel>
 #include <QFont>
 #include <QMenu>
@@ -249,6 +250,198 @@ void AnalysisView::setupUi()
 	top_bar->addWidget(help_button);
 
 	main_layout->addLayout(top_bar);
+
+	// ── Bayesian prior panel (collapsible, hidden by default) ───
+
+	auto *prior_header = new QHBoxLayout;
+	prior_header->setSpacing(4);
+
+	m_prior_toggle = new QToolButton;
+	m_prior_toggle->setArrowType(Qt::RightArrow);
+	m_prior_toggle->setCheckable(true);
+	m_prior_toggle->setChecked(false);
+	m_prior_toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	m_prior_toggle->setText(tr("Priors"));
+	m_prior_toggle->setToolTip(tr("Show or hide prior customization"));
+	m_prior_toggle->setStyleSheet(QStringLiteral("QToolButton { border: none; }"));
+	prior_header->addWidget(m_prior_toggle);
+
+	m_prior_defaults_label = new QLabel;
+	m_prior_defaults_label->setStyleSheet(QStringLiteral("color: gray; font-style: italic;"));
+	prior_header->addWidget(m_prior_defaults_label, 1);
+
+	auto *prior_header_widget = new QWidget;
+	prior_header_widget->setLayout(prior_header);
+	prior_header_widget->setVisible(false);
+	main_layout->addWidget(prior_header_widget);
+
+	m_prior_panel = new QWidget;
+	m_prior_panel->setVisible(false);
+	auto *prior_grid = new QGridLayout(m_prior_panel);
+	prior_grid->setContentsMargins(24, 0, 0, 4);
+	prior_grid->setHorizontalSpacing(6);
+	prior_grid->setVerticalSpacing(4);
+
+	// ── Row 0: Fixed effects ──
+	int row = 0;
+	auto *fixed_label = new QLabel(tr("Fixed effects:"));
+	fixed_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	prior_grid->addWidget(fixed_label, row, 0);
+
+	m_prior_fixed_auto = new QCheckBox(tr("Auto"));
+	m_prior_fixed_auto->setChecked(true);
+	m_prior_fixed_auto->setToolTip(tr("When checked, priors are scaled from the data at fit time.\n"
+	                                   "Intercept: N(mean(y), scale), Slopes: N(0, scale)\n"
+	                                   "where scale = max(2.5, 2.5 \u00d7 sd(y))."));
+	prior_grid->addWidget(m_prior_fixed_auto, row, 1);
+
+	auto *fixed_detail = new QWidget;
+	auto *fixed_hl = new QHBoxLayout(fixed_detail);
+	fixed_hl->setContentsMargins(0, 0, 0, 0);
+	fixed_hl->setSpacing(4);
+	fixed_hl->addWidget(new QLabel(tr("N(")));
+	m_prior_fixed_mean = new QDoubleSpinBox;
+	m_prior_fixed_mean->setRange(-1e6, 1e6);
+	m_prior_fixed_mean->setValue(0.0);
+	m_prior_fixed_mean->setDecimals(2);
+	m_prior_fixed_mean->setToolTip(tr("Prior mean for fixed-effect coefficients"));
+	fixed_hl->addWidget(m_prior_fixed_mean);
+	fixed_hl->addWidget(new QLabel(tr(",")));
+	m_prior_fixed_sd = new QDoubleSpinBox;
+	m_prior_fixed_sd->setRange(0.01, 1e6);
+	m_prior_fixed_sd->setValue(10.0);
+	m_prior_fixed_sd->setDecimals(2);
+	m_prior_fixed_sd->setToolTip(tr("Prior standard deviation for fixed-effect coefficients"));
+	fixed_hl->addWidget(m_prior_fixed_sd);
+	fixed_hl->addWidget(new QLabel(tr(")")));
+	fixed_hl->addStretch();
+	fixed_detail->setEnabled(false); // auto is on by default
+	prior_grid->addWidget(fixed_detail, row, 2);
+
+	// ── Row 1: Variance components ──
+	row = 1;
+	auto *var_label = new QLabel(tr("Variance components:"));
+	var_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	prior_grid->addWidget(var_label, row, 0);
+
+	m_prior_variance_auto = new QCheckBox(tr("Auto"));
+	m_prior_variance_auto->setChecked(true);
+	m_prior_variance_auto->setToolTip(tr("When checked, the scale parameter is set from the data at fit time:\n"
+	                                      "PC(u = max(2.5, 2.5 \u00d7 sd(y)), \u03b1 = 0.05)."));
+	prior_grid->addWidget(m_prior_variance_auto, row, 1);
+
+	auto *var_detail = new QWidget;
+	auto *var_hl = new QHBoxLayout(var_detail);
+	var_hl->setContentsMargins(0, 0, 0, 0);
+	var_hl->setSpacing(4);
+	m_prior_variance_type = new QComboBox;
+	m_prior_variance_type->addItem(tr("PC"), QStringLiteral("pc"));
+	m_prior_variance_type->addItem(tr("Half-Cauchy"), QStringLiteral("halfcauchy"));
+	m_prior_variance_type->addItem(tr("Half-Normal"), QStringLiteral("halfnormal"));
+	m_prior_variance_type->setToolTip(tr("Prior family for random-effect standard deviations"));
+	var_hl->addWidget(m_prior_variance_type);
+	var_hl->addWidget(new QLabel(tr("scale:")));
+	m_prior_variance_scale = new QDoubleSpinBox;
+	m_prior_variance_scale->setRange(0.01, 1e6);
+	m_prior_variance_scale->setValue(1.0);
+	m_prior_variance_scale->setDecimals(2);
+	m_prior_variance_scale->setToolTip(tr("Scale parameter (u for PC prior, scale for Half-Cauchy/Half-Normal)"));
+	var_hl->addWidget(m_prior_variance_scale);
+	var_hl->addStretch();
+	var_detail->setEnabled(false); // auto is on by default
+	prior_grid->addWidget(var_detail, row, 2);
+
+	// ── Row 2: Residual SD (Gaussian only) ──
+	row = 2;
+	auto *res_label = new QLabel(tr("Residual SD:"));
+	res_label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+	prior_grid->addWidget(res_label, row, 0);
+
+	m_prior_residual_auto = new QCheckBox(tr("Auto"));
+	m_prior_residual_auto->setChecked(true);
+	m_prior_residual_auto->setToolTip(tr("When checked, the scale parameter is set from the data at fit time:\n"
+	                                      "PC(u = max(2.5, 2.5 \u00d7 sd(y)), \u03b1 = 0.05)."));
+	prior_grid->addWidget(m_prior_residual_auto, row, 1);
+
+	auto *res_detail = new QWidget;
+	auto *res_hl = new QHBoxLayout(res_detail);
+	res_hl->setContentsMargins(0, 0, 0, 0);
+	res_hl->setSpacing(4);
+	m_prior_residual_type = new QComboBox;
+	m_prior_residual_type->addItem(tr("PC"), QStringLiteral("pc"));
+	m_prior_residual_type->addItem(tr("Half-Cauchy"), QStringLiteral("halfcauchy"));
+	m_prior_residual_type->addItem(tr("Half-Normal"), QStringLiteral("halfnormal"));
+	m_prior_residual_type->setToolTip(tr("Prior family for the residual standard deviation"));
+	res_hl->addWidget(m_prior_residual_type);
+	res_hl->addWidget(new QLabel(tr("scale:")));
+	m_prior_residual_scale = new QDoubleSpinBox;
+	m_prior_residual_scale->setRange(0.01, 1e6);
+	m_prior_residual_scale->setValue(1.0);
+	m_prior_residual_scale->setDecimals(2);
+	m_prior_residual_scale->setToolTip(tr("Scale parameter for the residual SD prior"));
+	res_hl->addWidget(m_prior_residual_scale);
+	res_hl->addStretch();
+	res_detail->setEnabled(false); // auto is on by default
+	prior_grid->addWidget(res_detail, row, 2);
+
+	// Track all residual row widgets for visibility toggling.
+	m_prior_residual_widgets = { res_label, m_prior_residual_auto, res_detail };
+
+	// ── Row 3: Reset button ──
+	row = 3;
+	m_prior_reset_button = new QPushButton(tr("Reset to defaults"));
+	m_prior_reset_button->setToolTip(tr("Restore all priors to their default weakly informative values"));
+	prior_grid->addWidget(m_prior_reset_button, row, 0, 1, 2);
+
+	// Column stretch: let column 2 (details) expand.
+	prior_grid->setColumnStretch(2, 1);
+
+	main_layout->addWidget(m_prior_panel);
+
+	// Prior panel connections
+	connect(m_prior_toggle, &QToolButton::toggled, this, [this](bool checked) {
+		m_prior_toggle->setArrowType(checked ? Qt::DownArrow : Qt::RightArrow);
+		m_prior_panel->setVisible(checked);
+	});
+	connect(m_estimation_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this, prior_header_widget](int idx) {
+		bool bayesian = (idx == 1);
+		prior_header_widget->setVisible(bayesian);
+		if (!bayesian) {
+			m_prior_toggle->setChecked(false);
+			m_prior_panel->setVisible(false);
+		}
+		updatePriorDefaultsLabel();
+	});
+	connect(m_family_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+		updatePriorResidualVisibility();
+		updatePriorDefaultsLabel();
+	});
+	connect(m_prior_reset_button, &QPushButton::clicked, this, &AnalysisView::resetPriorPanel);
+
+	// Auto checkbox toggling: enable/disable the detail widgets.
+	connect(m_prior_fixed_auto, &QCheckBox::toggled, this, [this, fixed_detail](bool checked) {
+		fixed_detail->setEnabled(!checked);
+		updatePriorDefaultsLabel();
+	});
+	connect(m_prior_variance_auto, &QCheckBox::toggled, this, [this, var_detail](bool checked) {
+		var_detail->setEnabled(!checked);
+		updatePriorDefaultsLabel();
+	});
+	connect(m_prior_residual_auto, &QCheckBox::toggled, this, [this, res_detail](bool checked) {
+		res_detail->setEnabled(!checked);
+		updatePriorDefaultsLabel();
+	});
+
+	// Update the summary label when any value changes.
+	connect(m_prior_fixed_mean, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+	connect(m_prior_fixed_sd, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+	connect(m_prior_variance_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorDefaultsLabel(); });
+	connect(m_prior_variance_scale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+	connect(m_prior_residual_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorDefaultsLabel(); });
+	connect(m_prior_residual_scale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+
+	updatePriorResidualVisibility();
+	updatePriorDefaultsLabel();
 
 	// ── Main content ────────────────────────────────────────────────
 
@@ -810,7 +1003,14 @@ void AnalysisView::onFit()
 		String family(m_family_combo->currentData().toString().toUtf8().constData());
 		bool bayesian = (m_estimation_combo->currentData().toString() == QStringLiteral("bayesian"));
 
-		int index = m_analysis->fit(formula, family, cb, bayesian);
+		const stats::PriorSpec *priors_ptr = nullptr;
+		stats::PriorSpec priors;
+		if (bayesian) {
+			priors = buildPriorSpec();
+			priors_ptr = &priors;
+		}
+
+		int index = m_analysis->fit(formula, family, cb, priors_ptr);
 		auto &m = m_analysis->model(index);
 
 		QApplication::restoreOverrideCursor();
@@ -821,6 +1021,9 @@ void AnalysisView::onFit()
 		QString item_text = prefix.arg(index + 1)
 			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size());
 		m_model_list->addItem(item_text);
+
+		// Select only the newly fitted model.
+		m_model_list->clearSelection();
 		m_model_list->setCurrentRow(m_model_list->count() - 1);
 
 		m_delete_button->setEnabled(true);
@@ -862,8 +1065,36 @@ void AnalysisView::onModelSelected(int row)
 		int idx = m_family_combo->findData(family);
 		if (idx >= 0) m_family_combo->setCurrentIndex(idx);
 
-		// Update the Bayesian checkbox to match.
+		// Update the estimation combo to match.
 		m_estimation_combo->setCurrentIndex(m.is_bayesian() ? 1 : 0);
+
+		// Restore prior panel widgets from the model's stored priors.
+		if (m.is_bayesian())
+		{
+			auto &pr = m.priors;
+
+			m_prior_fixed_auto->setChecked(pr.fixed_auto);
+			m_prior_fixed_mean->setValue(pr.fixed_effects.mean);
+			m_prior_fixed_sd->setValue(pr.fixed_effects.sd);
+
+			m_prior_variance_auto->setChecked(pr.variance_auto);
+			switch (pr.variance_components.type)
+			{
+			case stats::VariancePriorType::PC:         m_prior_variance_type->setCurrentIndex(0); break;
+			case stats::VariancePriorType::HalfCauchy:  m_prior_variance_type->setCurrentIndex(1); break;
+			case stats::VariancePriorType::HalfNormal:  m_prior_variance_type->setCurrentIndex(2); break;
+			}
+			m_prior_variance_scale->setValue(pr.variance_components.param1);
+
+			m_prior_residual_auto->setChecked(pr.residual_auto);
+			switch (pr.residual.type)
+			{
+			case stats::VariancePriorType::PC:         m_prior_residual_type->setCurrentIndex(0); break;
+			case stats::VariancePriorType::HalfCauchy:  m_prior_residual_type->setCurrentIndex(1); break;
+			case stats::VariancePriorType::HalfNormal:  m_prior_residual_type->setCurrentIndex(2); break;
+			}
+			m_prior_residual_scale->setValue(pr.residual.param1);
+		}
 	}
 }
 
@@ -953,6 +1184,146 @@ void AnalysisView::onCompareModels()
 	}
 
 	if ((int)indices.size() < 2) return;
+
+	// ── Guard: check that all models share the same estimation method ──
+
+	bool has_freq = false, has_bayes = false;
+	for (int i : indices)
+	{
+		if (m_analysis->model(i).is_bayesian())
+			has_bayes = true;
+		else
+			has_freq = true;
+	}
+
+	if (has_freq && has_bayes)
+	{
+		QMessageBox::warning(this, tr("Compare models"),
+			tr("The selected models mix frequentist and Bayesian estimation. "
+			   "These use different criteria and cannot be directly compared.\n\n"
+			   "Please select only frequentist or only Bayesian models."));
+		return;
+	}
+
+	// ── Bayesian comparison (log marginal likelihoods + Bayes factors) ──
+
+	if (has_bayes)
+	{
+		// Check whether all selected models have a log marginal likelihood.
+		bool all_have_marginal = true;
+		for (int i : indices) {
+			if (std::isnan(m_analysis->model(i).log_marginal))
+				all_have_marginal = false;
+		}
+
+		QString text;
+		text += QStringLiteral("Bayesian model comparison\n");
+		text += QStringLiteral("=========================\n\n");
+
+		if (!all_have_marginal)
+		{
+			text += QStringLiteral("Note: Some models do not have a log marginal likelihood\n");
+			text += QStringLiteral("(e.g. NB/beta/Student without random effects). Showing\n");
+			text += QStringLiteral("log-likelihoods instead; Bayes factors are unavailable.\n\n");
+		}
+
+		// ── Summary table ────────────────────────────────────────────
+
+		if (all_have_marginal)
+		{
+			text += QString::asprintf("%-8s %-40s %6s %12s %14s\n",
+			                           "", "Formula", "npar", "logLik", "log p(y|M)");
+			text += QStringLiteral("--------------------------------------------------------------------------------------------\n");
+
+			for (int i : indices)
+			{
+				auto &m = m_analysis->model(i);
+				QString mlabel = QStringLiteral("Model %1").arg(i + 1);
+				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
+				if (formula.length() > 40)
+					formula = formula.left(37) + QStringLiteral("...");
+				text += QString::asprintf("%-8s %-40s %6ld %12.1f %14.2f\n",
+				                           mlabel.toUtf8().constData(),
+				                           formula.toUtf8().constData(),
+				                           (long)m.nfixed,
+				                           m.loglik, m.log_marginal);
+			}
+
+			// ── Pairwise log Bayes factors ───────────────────────────
+
+			text += QStringLiteral("\n\nPairwise log Bayes factors\n");
+			text += QStringLiteral("==========================\n\n");
+			text += QStringLiteral("log BF_ij = log p(y|M_i) - log p(y|M_j)\n");
+			text += QStringLiteral("Positive values favour model i.\n\n");
+
+			text += QString::asprintf("%-18s %12s   %s\n", "", "log BF", "Evidence (Kass & Raftery 1995)");
+			text += QStringLiteral("----------------------------------------------------------------------\n");
+
+			// Kass & Raftery (1995) interpretive scale for 2 × log BF:
+			//   0–2:   not worth more than a bare mention
+			//   2–6:   positive
+			//   6–10:  strong
+			//   >10:   very strong
+			auto bayes_label = [](double log_bf) -> const char * {
+				double twice = 2.0 * std::abs(log_bf);
+				if (twice < 2)  return "negligible";
+				if (twice < 6)  return "positive";
+				if (twice < 10) return "strong";
+				return "very strong";
+			};
+
+			for (size_t a = 0; a < indices.size(); a++)
+			{
+				for (size_t b = a + 1; b < indices.size(); b++)
+				{
+					auto &ma = m_analysis->model(indices[a]);
+					auto &mb = m_analysis->model(indices[b]);
+					double log_bf = ma.log_marginal - mb.log_marginal;
+					QString plabel = QStringLiteral("%1 vs %2").arg(indices[a] + 1).arg(indices[b] + 1);
+
+					const char *label = bayes_label(log_bf);
+					QString direction = (log_bf > 0)
+						? QStringLiteral("favours %1").arg(indices[a] + 1)
+						: (log_bf < 0)
+							? QStringLiteral("favours %1").arg(indices[b] + 1)
+							: QStringLiteral("--");
+
+					text += QString::asprintf("%-18s %12.2f   %s (%s)\n",
+					                           plabel.toUtf8().constData(),
+					                           log_bf,
+					                           label,
+					                           direction.toUtf8().constData());
+				}
+			}
+		}
+		else
+		{
+			// Fallback: show log-likelihoods only.
+			text += QString::asprintf("%-8s %-40s %6s %12s\n",
+			                           "", "Formula", "npar", "logLik");
+			text += QStringLiteral("----------------------------------------------------------------------\n");
+
+			for (int i : indices)
+			{
+				auto &m = m_analysis->model(i);
+				QString mlabel = QStringLiteral("Model %1").arg(i + 1);
+				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
+				if (formula.length() > 40)
+					formula = formula.left(37) + QStringLiteral("...");
+				text += QString::asprintf("%-8s %-40s %6ld %12.1f\n",
+				                           mlabel.toUtf8().constData(),
+				                           formula.toUtf8().constData(),
+				                           (long)m.nfixed,
+				                           m.loglik);
+			}
+		}
+
+		m_summary->setPlainText(text);
+		m_right_tabs->setCurrentIndex(0);
+		return;
+	}
+
+	// ── Frequentist comparison (existing LRT machinery) ─────────────
 
 	// Collect model pointers.
 	std::vector<const stats::Model *> models;
@@ -1843,6 +2214,7 @@ void AnalysisView::plotResidualsVsFitted(const stats::Model &m)
 	                tr("Fitted values"), tr("Residuals"),
 	                tr("Residuals vs Fitted"),
 	                PlotWidget::RefLine::HorizontalAtZero);
+	m_plot->clearFixedYTicks();
 }
 
 void AnalysisView::plotQQ(const stats::Model &m)
@@ -1891,6 +2263,7 @@ void AnalysisView::plotQQ(const stats::Model &m)
 	                tr("Theoretical Quantiles"), tr("Sample Quantiles"),
 	                tr("Normal Q-Q"),
 	                PlotWidget::RefLine::Diagonal);
+	m_plot->clearFixedYTicks();
 }
 
 const stats::ScaledResidualResult *AnalysisView::ensureScaledResiduals(const stats::Model &m)
@@ -4425,6 +4798,118 @@ void AnalysisView::onExportPostHocLatex()
 	if (main_win && main_win->statusBar()) {
 		main_win->statusBar()->showMessage(tr("Post-hoc LaTeX tables copied to clipboard"), 2000);
 	}
+}
+
+
+// =====================================================================
+// Prior panel helpers
+// =====================================================================
+
+stats::PriorSpec AnalysisView::buildPriorSpec() const
+{
+	stats::PriorSpec spec;
+
+	// Fixed effects
+	spec.fixed_auto = m_prior_fixed_auto->isChecked();
+	spec.fixed_effects.mean = m_prior_fixed_mean->value();
+	spec.fixed_effects.sd = m_prior_fixed_sd->value();
+
+	// Variance components
+	spec.variance_auto = m_prior_variance_auto->isChecked();
+	auto var_type = m_prior_variance_type->currentData().toString();
+	if (var_type == QStringLiteral("pc")) {
+		spec.variance_components.type = stats::VariancePriorType::PC;
+		spec.variance_components.param1 = m_prior_variance_scale->value();
+		spec.variance_components.param2 = 0.05;
+	} else if (var_type == QStringLiteral("halfcauchy")) {
+		spec.variance_components.type = stats::VariancePriorType::HalfCauchy;
+		spec.variance_components.param1 = m_prior_variance_scale->value();
+	} else {
+		spec.variance_components.type = stats::VariancePriorType::HalfNormal;
+		spec.variance_components.param1 = m_prior_variance_scale->value();
+	}
+
+	// Residual SD
+	spec.residual_auto = m_prior_residual_auto->isChecked();
+	auto res_type = m_prior_residual_type->currentData().toString();
+	if (res_type == QStringLiteral("pc")) {
+		spec.residual.type = stats::VariancePriorType::PC;
+		spec.residual.param1 = m_prior_residual_scale->value();
+		spec.residual.param2 = 0.05;
+	} else if (res_type == QStringLiteral("halfcauchy")) {
+		spec.residual.type = stats::VariancePriorType::HalfCauchy;
+		spec.residual.param1 = m_prior_residual_scale->value();
+	} else {
+		spec.residual.type = stats::VariancePriorType::HalfNormal;
+		spec.residual.param1 = m_prior_residual_scale->value();
+	}
+
+	return spec;
+}
+
+void AnalysisView::resetPriorPanel()
+{
+	m_prior_fixed_auto->setChecked(true);
+	m_prior_fixed_mean->setValue(0.0);
+	m_prior_fixed_sd->setValue(10.0);
+	m_prior_variance_auto->setChecked(true);
+	m_prior_variance_type->setCurrentIndex(0); // PC
+	m_prior_variance_scale->setValue(1.0);
+	m_prior_residual_auto->setChecked(true);
+	m_prior_residual_type->setCurrentIndex(0); // PC
+	m_prior_residual_scale->setValue(1.0);
+}
+
+void AnalysisView::updatePriorDefaultsLabel()
+{
+	bool bayesian = (m_estimation_combo->currentIndex() == 1);
+	if (!bayesian) {
+		m_prior_defaults_label->clear();
+		return;
+	}
+
+	// Build a one-line summary of the current prior settings.
+	QString fixed_str;
+	if (m_prior_fixed_auto->isChecked()) {
+		fixed_str = QStringLiteral("Fixed: auto");
+	} else {
+		fixed_str = QStringLiteral("Fixed: N(%1, %2)")
+			.arg(m_prior_fixed_mean->value(), 0, 'g', 4)
+			.arg(m_prior_fixed_sd->value(), 0, 'g', 4);
+	}
+
+	QString var_str;
+	if (m_prior_variance_auto->isChecked()) {
+		var_str = QStringLiteral("Variance: auto");
+	} else {
+		var_str = QStringLiteral("Variance: %1(%2)")
+			.arg(m_prior_variance_type->currentText())
+			.arg(m_prior_variance_scale->value(), 0, 'g', 4);
+	}
+
+	QString family_data = m_family_combo->currentData().toString();
+	bool is_gaussian = (family_data == QStringLiteral("gaussian") || family_data == QStringLiteral("student"));
+
+	QString summary = fixed_str + QStringLiteral("  |  ") + var_str;
+	if (is_gaussian) {
+		if (m_prior_residual_auto->isChecked()) {
+			summary += QStringLiteral("  |  Residual: auto");
+		} else {
+			summary += QStringLiteral("  |  Residual: %1(%2)")
+				.arg(m_prior_residual_type->currentText())
+				.arg(m_prior_residual_scale->value(), 0, 'g', 4);
+		}
+	}
+
+	m_prior_defaults_label->setText(summary);
+}
+
+void AnalysisView::updatePriorResidualVisibility()
+{
+	QString family_data = m_family_combo->currentData().toString();
+	bool is_gaussian = (family_data == QStringLiteral("gaussian") || family_data == QStringLiteral("student"));
+	for (auto *w : m_prior_residual_widgets)
+		w->setVisible(is_gaussian);
 }
 
 } // namespace phonometrica

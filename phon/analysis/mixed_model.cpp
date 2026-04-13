@@ -3096,6 +3096,23 @@ static void inla_grid_integrate_gaussian(
 			model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
 		}
 	}
+
+	// ── 9. Laplace-approximated log marginal likelihood ─────────
+	//
+	// log p(y) ≈ -f(θ*) + (d/2) log(2π) - 0.5 Σ_j log(λ_j)
+	//
+	// where f(θ*) is the neg-log-posterior at the mode and λ_j are
+	// the eigenvalues of the Hessian of f at θ*.
+	{
+		static const double log_2pi = std::log(2.0 * M_PI);
+		double sum_log_eig = 0;
+		for (intptr_t j = 0; j < d; j++)
+			sum_log_eig += std::log(eigenvalues[j]);
+
+		model.log_marginal = -results[0].neg_log_posterior
+		                   + 0.5 * d * log_2pi
+		                   - 0.5 * sum_log_eig;
+	}
 }
 
 
@@ -3400,6 +3417,18 @@ static void inla_grid_integrate_pirls(
 				model.hyper_ci_upper[idx] = mean_v + z_975 * sd_v;
 			}
 		}
+	}
+
+	// ── 9. Laplace-approximated log marginal likelihood ─────────
+	{
+		static const double log_2pi = std::log(2.0 * M_PI);
+		double sum_log_eig = 0;
+		for (intptr_t j = 0; j < d; j++)
+			sum_log_eig += std::log(eigenvalues[j]);
+
+		model.log_marginal = -results[0].neg_log_posterior
+		                   + 0.5 * d * log_2pi
+		                   - 0.5 * sum_log_eig;
 	}
 }
 
