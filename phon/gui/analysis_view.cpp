@@ -513,7 +513,7 @@ void AnalysisView::setupUi()
 
 	m_summary = new QPlainTextEdit;
 	m_summary->setReadOnly(true);
-	m_summary->setFont(defaultMonoFont(10));
+	m_summary->setFont(defaultMonoFont());
 	m_summary->setPlaceholderText(tr("Fit a model to see results here."));
 	summary_layout->addWidget(m_summary, 1);
 
