@@ -24,6 +24,7 @@
 
 #include <QDialog>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QFontComboBox>
 #include <QLineEdit>
 #include <QRadioButton>
@@ -58,6 +59,9 @@ private:
 	QCheckBox *m_autohints = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
 	QLineEdit *m_praat_path = nullptr;
+
+	// Statistics
+	QComboBox *m_estimation_combo = nullptr;
 
 	// Measurement — display
 	QSpinBox *m_hz_decimals = nullptr;

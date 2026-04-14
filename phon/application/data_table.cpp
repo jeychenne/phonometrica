@@ -263,6 +263,12 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	}
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
+	if (m.is_bayesian())
+	{
+		auto prior_str = stats::format_prior_summary(m.priors, m.family);
+		rt.printf("\n%s", prior_str.c_str());
+	}
+
 	if (!m.response_levels.empty())
 	{
 		rt.printf("Response levels: %s = 0, %s = 1\n",
@@ -423,7 +429,37 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	}
 	else
 	{
-		rt.printf("Log-marginal likelihood: %.1f\n", m.loglik);
+		if (!std::isnan(m.log_marginal))
+			rt.printf("Log-marginal likelihood: %.2f  logLik: %.1f\n", m.log_marginal, m.loglik);
+		else
+			rt.printf("logLik: %.1f\n", m.loglik);
+
+		if (!std::isnan(m.waic))
+			rt.printf("WAIC: %.1f  p_WAIC: %.1f\n", m.waic, m.p_waic);
+		if (!std::isnan(m.loo_ic))
+			rt.printf("LOO-IC: %.1f  p_LOO: %.1f\n", m.loo_ic, m.p_loo);
+
+		// Pareto k diagnostic summary.
+		if (!m.pareto_k.empty())
+		{
+			int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
+			for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+			{
+				double k = m.pareto_k[j];
+				if (k < 0.5)      n_good++;
+				else if (k < 0.7) n_ok++;
+				else if (k < 1.0) n_bad++;
+				else              n_verybad++;
+			}
+			if (n_bad == 0 && n_verybad == 0 && n_ok == 0)
+				rt.printf("Pareto k: all < 0.5 (good)\n");
+			else if (n_bad == 0 && n_verybad == 0)
+				rt.printf("Pareto k: %d/%ld > 0.5 (ok, LOO-IC reliable)\n",
+				          n_ok, (long)m.pareto_k.size());
+			else
+				rt.printf("Pareto k: %d/%ld > 0.7 (LOO-IC may be unreliable; consider WAIC)\n",
+				          n_bad + n_verybad, (long)m.pareto_k.size());
+		}
 	}
 
 	if (m.niter > 0)

@@ -34,7 +34,9 @@
 #define PHONOMETRICA_PRIOR_HPP
 
 #include <cmath>
+#include <cstdio>
 #include <map>
+#include <string>
 #include <phon/string.hpp>
 
 namespace phonometrica::stats {
@@ -316,6 +318,87 @@ inline const char *estimation_name(Estimation e)
 	case Estimation::Bayesian:    return "Bayesian";
 	}
 	return "Unknown";
+}
+
+
+// Format a human-readable summary of the prior specification.
+// family is needed to decide which dispersion prior to show.
+inline std::string format_prior_summary(const PriorSpec &p, const String &family)
+{
+	std::string s;
+
+	// Auto-scaling note.
+	bool any_auto = p.fixed_auto || p.variance_auto || p.residual_auto;
+	if (any_auto)
+		s += "Priors (data-scaled defaults marked with *):\n";
+	else
+		s += "Priors:\n";
+
+	// Fixed effects.
+	{
+		char buf[80];
+		snprintf(buf, sizeof(buf), "  Fixed effects:  N(%.4g, %.4g)%s\n",
+		         p.fixed_effects.mean, p.fixed_effects.sd,
+		         p.fixed_auto ? " *" : "");
+		s += buf;
+
+		// Per-coefficient overrides.
+		for (auto &[name, prior] : p.coefficient_priors)
+		{
+			std::string label(name.data(), name.size());
+			label += ":";
+			snprintf(buf, sizeof(buf), "    %-14s N(%.4g, %.4g)\n",
+			         label.c_str(), prior.mean, prior.sd);
+			s += buf;
+		}
+	}
+
+	// Variance components.
+	{
+		char buf[80];
+		auto &v = p.variance_components;
+		if (v.type == VariancePriorType::PC)
+			snprintf(buf, sizeof(buf), "  Variance (SD):  PC(%.4g, %.4g)%s\n",
+			         v.param1, v.param2, p.variance_auto ? " *" : "");
+		else
+			snprintf(buf, sizeof(buf), "  Variance (SD):  %s(%.4g)%s\n",
+			         variance_prior_type_name(v.type), v.param1,
+			         p.variance_auto ? " *" : "");
+		s += buf;
+	}
+
+	// Residual (Gaussian/Student only).
+	if (family == "gaussian" || family == "student")
+	{
+		char buf[80];
+		auto &r = p.residual;
+		if (r.type == VariancePriorType::PC)
+			snprintf(buf, sizeof(buf), "  Residual (SD):  PC(%.4g, %.4g)%s\n",
+			         r.param1, r.param2, p.residual_auto ? " *" : "");
+		else
+			snprintf(buf, sizeof(buf), "  Residual (SD):  %s(%.4g)%s\n",
+			         variance_prior_type_name(r.type), r.param1,
+			         p.residual_auto ? " *" : "");
+		s += buf;
+	}
+
+	// Dispersion priors.
+	if (family == "negbin")
+	{
+		char buf[80];
+		snprintf(buf, sizeof(buf), "  NB theta:       Gamma(%.4g, %.4g)\n",
+		         p.negbin_theta.shape, p.negbin_theta.rate);
+		s += buf;
+	}
+	if (family == "beta")
+	{
+		char buf[80];
+		snprintf(buf, sizeof(buf), "  Beta phi:       Gamma(%.4g, %.4g)\n",
+		         p.beta_phi.shape, p.beta_phi.rate);
+		s += buf;
+	}
+
+	return s;
 }
 
 } // namespace phonometrica::stats

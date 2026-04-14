@@ -49,6 +49,10 @@ phon.settings = {
 
 	"praat_path": "",
 
+	"statistics": { 
+		"estimation": "frequentist" 
+	},
+
 	"concordance": {
 	    "discard_empty": true,
 	    "context_length": 40

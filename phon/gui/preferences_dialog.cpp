@@ -123,6 +123,30 @@ QWidget *PreferencesDialog::createGeneralPage()
 	praat_row->addWidget(browse_btn);
 	layout->addLayout(praat_row);
 
+	// ── Statistics ────────────────────────────────────────────────────────
+	layout->addSpacing(12);
+	layout->addWidget(new QLabel(tr("<b>Statistics</b>")));
+
+	auto *est_row = new QHBoxLayout;
+	est_row->addWidget(new QLabel(tr("Default estimation method:")));
+
+	m_estimation_combo = new QComboBox;
+	m_estimation_combo->addItem(tr("Frequentist"), QStringLiteral("frequentist"));
+	m_estimation_combo->addItem(tr("Bayesian"), QStringLiteral("bayesian"));
+
+	QString current;
+	try {
+		auto s = Settings::get_string("statistics", "estimation");
+		current = QString::fromUtf8(s.data(), (int)s.size());
+	} catch (...) {
+		current = QStringLiteral("frequentist");
+	}
+	m_estimation_combo->setCurrentIndex(current == QStringLiteral("bayesian") ? 1 : 0);
+
+	est_row->addWidget(m_estimation_combo);
+	est_row->addStretch();
+	layout->addLayout(est_row);
+
 	layout->addStretch();
 
 	return page;
@@ -259,6 +283,10 @@ void PreferencesDialog::accept()
 	Settings::set_value("praat_path", String(praat_text.toUtf8().constData()));
 	m_praat_path_changed = (praat_text != m_initial_praat_path);
 
+	// Statistics
+	Settings::set_value("statistics", "estimation",
+	                     String(m_estimation_combo->currentData().toString().toUtf8().constData()));
+
 	// Measurement — default query context
 	if (m_ctx_none->isChecked())
 		Settings::set_value("concordance", "default_context", String("none"));
@@ -297,6 +325,9 @@ void PreferencesDialog::reset()
 	m_autohints->setChecked(true);
 	m_discard_empty->setChecked(true);
 	m_praat_path->clear();
+
+	// Statistics
+	m_estimation_combo->setCurrentIndex(0);  // Frequentist
 
 	// Measurement
 	m_ctx_kwic->setChecked(true);

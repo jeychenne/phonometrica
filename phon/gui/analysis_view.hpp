@@ -124,6 +124,7 @@ private:
 	void plotQQ(const stats::Model &m);
 	void plotScaledResidualsVsFitted(const stats::Model &m);
 	void plotScaledResidualQQ(const stats::Model &m);
+	void plotPosteriorDensities(const stats::Model &m);
 	const stats::ScaledResidualResult *ensureScaledResiduals(const stats::Model &m);
 	void updateTestResults(const stats::ScaledResidualResult &sr);
 	void clearTestResults();
