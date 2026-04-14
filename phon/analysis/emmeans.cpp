@@ -342,6 +342,7 @@ static EMMResult compute_emm_from_L(
 	result.factor = factor;
 	result.df = df;
 	result.levels = target_info->levels;
+	result.is_bayesian = model.is_bayesian();
 
 	result.emmean_link = Array<double>(K, 0.0);
 	result.se_link     = Array<double>(K, 0.0);
@@ -564,17 +565,23 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 	// Recover the link-scale covariance matrix.
 	Eigen::Map<const Matrix<double>> V_eta(emm.cov_link.data(), K, K);
 
-	double df = emm.df;
+	bool bayesian = emm.is_bayesian;
+
+	// Bayesian contrasts always use the Gaussian posterior (infinite df).
+	double df = bayesian ? std::numeric_limits<double>::infinity() : emm.df;
 
 	ContrastResult result;
-	result.adjustment = adjustment;
+	result.adjustment = bayesian ? "none" : adjustment;
 	result.df = df;
+	result.is_bayesian = bayesian;
 
 	result.label    = Array<String>(npairs, String());
 	result.estimate = Array<double>(npairs, 0.0);
 	result.se       = Array<double>(npairs, 0.0);
 	result.stat     = Array<double>(npairs, 0.0);
 	result.p_value  = Array<double>(npairs, 0.0);
+
+	boost::math::normal_distribution<double> ndist;
 
 	// Compute all pairwise contrasts: δ_ij = EMM_i − EMM_j (link scale).
 	intptr_t idx = 0;
@@ -600,68 +607,84 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 			double se = std::sqrt(std::max(var_delta, 0.0));
 			result.se[idx] = se;
 
-			// Test statistic.
+			// Test statistic (posterior z-score for Bayesian, t or z for frequentist).
 			double stat = (se > 0) ? delta / se : 0.0;
 			result.stat[idx] = stat;
 
-			// Raw p-value (two-sided).
-			double p_raw;
-			if (std::isfinite(df) && df > 0) {
-				boost::math::students_t_distribution<double> tdist(df);
-				p_raw = 2.0 * (1.0 - boost::math::cdf(tdist, std::abs(stat)));
+			if (bayesian)
+			{
+				// Probability of direction: pd = Φ(|δ/σ|).
+				// This is the posterior probability that the contrast has the same
+				// sign as the point estimate, ranging from 0.5 (no evidence) to 1.0.
+				double pd = boost::math::cdf(ndist, std::abs(stat));
+				result.p_value[idx] = pd;
 			}
-			else {
-				boost::math::normal_distribution<double> ndist;
-				p_raw = 2.0 * (1.0 - boost::math::cdf(ndist, std::abs(stat)));
+			else
+			{
+				// Raw p-value (two-sided).
+				double p_raw;
+				if (std::isfinite(df) && df > 0) {
+					boost::math::students_t_distribution<double> tdist(df);
+					p_raw = 2.0 * (1.0 - boost::math::cdf(tdist, std::abs(stat)));
+				}
+				else {
+					p_raw = 2.0 * (1.0 - boost::math::cdf(ndist, std::abs(stat)));
+				}
+				result.p_value[idx] = p_raw;
 			}
-			result.p_value[idx] = p_raw;
 		}
 	}
 
-	// ── P-value adjustment ──────────────────────────────────────────
+	// ── P-value adjustment (frequentist only) ──────────────────────
+	//
+	// Multiplicity adjustment does not apply to Bayesian pd values,
+	// which are posterior probabilities rather than error rates.
 
-	if (adj == "bonferroni")
+	if (!bayesian)
 	{
-		for (intptr_t i = 1; i <= npairs; i++) {
-			result.p_value[i] = std::min(result.p_value[i] * npairs, 1.0);
-		}
-	}
-	else if (adj == "holm")
-	{
-		// Holm's step-down procedure:
-		//   1. Sort p-values ascending.
-		//   2. Multiply p[k] by (m - k + 1) where m = npairs.
-		//   3. Enforce monotonicity (each adjusted p >= previous adjusted p).
-		//   4. Cap at 1.0.
-
-		// Build an index array sorted by raw p-value.
-		std::vector<intptr_t> order(npairs);
-		std::iota(order.begin(), order.end(), 1); // 1-based indices
-		std::sort(order.begin(), order.end(), [&](intptr_t a, intptr_t b) {
-			return result.p_value[a] < result.p_value[b];
-		});
-
-		// Adjust in sorted order.
-		std::vector<double> adjusted(npairs);
-		for (intptr_t k = 0; k < npairs; k++)
+		if (adj == "bonferroni")
 		{
-			adjusted[k] = result.p_value[order[k]] * (npairs - k);
-		}
-
-		// Enforce monotonicity: p_adj[k] = max(p_adj[k], p_adj[k-1])
-		for (intptr_t k = 1; k < npairs; k++)
-		{
-			if (adjusted[k] < adjusted[k - 1]) {
-				adjusted[k] = adjusted[k - 1];
+			for (intptr_t i = 1; i <= npairs; i++) {
+				result.p_value[i] = std::min(result.p_value[i] * npairs, 1.0);
 			}
 		}
+		else if (adj == "holm")
+		{
+			// Holm's step-down procedure:
+			//   1. Sort p-values ascending.
+			//   2. Multiply p[k] by (m - k + 1) where m = npairs.
+			//   3. Enforce monotonicity (each adjusted p >= previous adjusted p).
+			//   4. Cap at 1.0.
 
-		// Write back in original order, capping at 1.0.
-		for (intptr_t k = 0; k < npairs; k++) {
-			result.p_value[order[k]] = std::min(adjusted[k], 1.0);
+			// Build an index array sorted by raw p-value.
+			std::vector<intptr_t> order(npairs);
+			std::iota(order.begin(), order.end(), 1); // 1-based indices
+			std::sort(order.begin(), order.end(), [&](intptr_t a, intptr_t b) {
+				return result.p_value[a] < result.p_value[b];
+			});
+
+			// Adjust in sorted order.
+			std::vector<double> adjusted(npairs);
+			for (intptr_t k = 0; k < npairs; k++)
+			{
+				adjusted[k] = result.p_value[order[k]] * (npairs - k);
+			}
+
+			// Enforce monotonicity: p_adj[k] = max(p_adj[k], p_adj[k-1])
+			for (intptr_t k = 1; k < npairs; k++)
+			{
+				if (adjusted[k] < adjusted[k - 1]) {
+					adjusted[k] = adjusted[k - 1];
+				}
+			}
+
+			// Write back in original order, capping at 1.0.
+			for (intptr_t k = 0; k < npairs; k++) {
+				result.p_value[order[k]] = std::min(adjusted[k], 1.0);
+			}
 		}
+		// "none": no adjustment, raw p-values already in place.
 	}
-	// "none": no adjustment, raw p-values already in place.
 
 	return result;
 }
@@ -845,6 +868,7 @@ EMMResult emtrends(const Model &model, const String &factor, const String &var,
 	result.factor = factor;
 	result.df = df;
 	result.levels = target_info->levels;
+	result.is_bayesian = model.is_bayesian();
 
 	result.emmean_link = Array<double>(K, 0.0);
 	result.se_link     = Array<double>(K, 0.0);

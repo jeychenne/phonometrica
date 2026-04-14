@@ -64,6 +64,10 @@ struct EMMResult
 	// Degrees of freedom: finite for Gaussian fixed-effects models (residual df),
 	// infinite for GLMs and mixed models (Wald z-tests).
 	double df = std::numeric_limits<double>::infinity();
+
+	// True if the source model used Bayesian estimation.
+	// When set, CIs are credible intervals and contrasts report pd instead of p-values.
+	bool is_bayesian = false;
 };
 
 
@@ -74,9 +78,14 @@ struct ContrastResult
 	Array<double> estimate;      // contrast estimates (on link scale)
 	Array<double> se;            // standard errors
 	Array<double> stat;          // z or t statistics
-	Array<double> p_value;       // adjusted p-values
+	Array<double> p_value;       // adjusted p-values (frequentist) or pd (Bayesian)
 	String adjustment;           // adjustment method: "none", "bonferroni", "holm"
 	double df = std::numeric_limits<double>::infinity();
+
+	// True if the source model used Bayesian estimation.
+	// When set, p_value contains probability of direction (pd), not p-values,
+	// and no multiplicity adjustment is applied.
+	bool is_bayesian = false;
 };
 
 
