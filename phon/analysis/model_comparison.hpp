@@ -96,6 +96,72 @@ AnovaResult anova_compare(const std::vector<const Model *> &models,
 bool formulas_nested(const Formula &small, const Formula &large);
 
 
+// =====================================================================
+// Bayesian model comparison (WAIC + Bayes factors)
+// =====================================================================
+
+// Per-model summary row for Bayesian comparison.
+struct WaicRow
+{
+	int original_index;    // 0-based index into the caller's model vector
+	intptr_t npar;         // number of estimated parameters
+	double loglik;         // log-likelihood at mode
+	double log_marginal;   // log marginal likelihood (NaN if unavailable)
+	double waic;
+	double p_waic;
+	double lppd;
+	double loo_ic;         // PSIS-LOO IC (NaN if unavailable)
+	double p_loo;
+};
+
+
+// One pairwise comparison (WAIC and LOO).
+struct WaicPair
+{
+	int index_a;           // index into BayesianCompareResult::rows
+	int index_b;
+	double delta_waic;     // WAIC_a - WAIC_b; negative favours model a
+	double se_diff;        // SE from pointwise elpd differences (Vehtari et al. 2017)
+	double delta_loo;      // LOO-IC_a - LOO-IC_b (NaN if LOO unavailable)
+	double se_loo_diff;    // SE of ΔLOO-IC from pointwise elpd_loo differences
+	double log_bf;         // log Bayes factor (NaN if marginals unavailable)
+	bool se_is_approximate; // true if elpd_i was unavailable and SE is conservative
+	bool se_loo_is_approximate;
+};
+
+
+// Result of a Bayesian model comparison.
+struct BayesianCompareResult
+{
+	std::vector<WaicRow> rows;   // sorted by WAIC ascending (best first)
+	std::vector<WaicPair> pairs; // all pairwise comparisons
+	std::vector<String> warnings;
+	bool has_bayes_factors = false; // true if all models have log_marginal
+	bool has_loo = false;           // true if all models have LOO-IC
+
+	bool has_warnings() const { return !warnings.empty(); }
+};
+
+
+// Compare two or more Bayesian models using WAIC and (optionally) Bayes factors.
+//
+// Models are sorted by WAIC (smallest = best first). Every pair (i, j) with
+// i < j is compared. The SE of ΔWAIC is computed from per-observation elpd
+// differences (Vehtari, Gelman & Gabry 2017); falls back to conservative
+// sqrt(se_a² + se_b²) if elpd_i is empty (e.g. model loaded from older file).
+//
+// Bayes factors are reported when all models have a log marginal likelihood.
+//
+// Preconditions checked at runtime (violations produce warnings, not errors):
+//   - All models must be Bayesian.
+//   - All models must have the same number of observations.
+//   - All models must have WAIC available.
+//
+// The models vector must contain at least 2 entries.
+BayesianCompareResult bayesian_compare(const std::vector<const Model *> &models,
+                                       const std::vector<int> &labels = {});
+
+
 } // namespace phonometrica::stats
 
 #endif // PHONOMETRICA_MODEL_COMPARISON_HPP

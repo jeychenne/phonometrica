@@ -341,6 +341,15 @@ void Analysis::write()
 		add_data_node(mn, "PWAIC", String::format("%.17g", m.p_waic));
 		add_data_node(mn, "LPPD", String::format("%.17g", m.lppd));
 		add_data_node(mn, "SEWAIC", String::format("%.17g", m.se_waic));
+		if (!m.elpd_i.empty())
+			add_data_node(mn, "ElpdI", doubles_to_string(m.elpd_i));
+		add_data_node(mn, "LOOIC", String::format("%.17g", m.loo_ic));
+		add_data_node(mn, "PLOO", String::format("%.17g", m.p_loo));
+		add_data_node(mn, "SELOO", String::format("%.17g", m.se_loo));
+		if (!m.elpd_loo_i.empty())
+			add_data_node(mn, "ElpdLooI", doubles_to_string(m.elpd_loo_i));
+		if (!m.pareto_k.empty())
+			add_data_node(mn, "ParetoK", doubles_to_string(m.pareto_k));
 		add_data_node(mn, "RSE", String::format("%.17g", m.rse));
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
 		add_data_node(mn, "R2", String::format("%.17g", m.r2));
@@ -561,6 +570,12 @@ void Analysis::load()
 					else if (name == "PWAIC")    m.p_waic = parse_double_safe(text);
 					else if (name == "LPPD")     m.lppd = parse_double_safe(text);
 					else if (name == "SEWAIC")   m.se_waic = parse_double_safe(text);
+					else if (name == "ElpdI")    m.elpd_i = parse_doubles(text);
+					else if (name == "LOOIC")    m.loo_ic = parse_double_safe(text);
+					else if (name == "PLOO")     m.p_loo = parse_double_safe(text);
+					else if (name == "SELOO")    m.se_loo = parse_double_safe(text);
+					else if (name == "ElpdLooI") m.elpd_loo_i = parse_doubles(text);
+					else if (name == "ParetoK")  m.pareto_k = parse_doubles(text);
 					else if (name == "RSE")      m.rse = parse_double_safe(text);
 					else if (name == "DfResidual") m.df_residual = String(text).to_int();
 					else if (name == "R2")       m.r2 = parse_double_safe(text);

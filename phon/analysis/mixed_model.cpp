@@ -40,6 +40,7 @@
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/waic.hpp>
+#include <phon/analysis/psis.hpp>
 #include <phon/utils/matrix.hpp>
 
 namespace phonometrica::stats {
@@ -3096,6 +3097,10 @@ static void compute_grid_waic(
 	// ── 6. Compute WAIC ─────────────────────────────────────────────
 
 	compute_waic_from_loglik(model, loglik_matrix, n, WAIC_S);
+
+	// ── 7. Compute PSIS-LOO ─────────────────────────────────────────
+
+	compute_loo_from_loglik(model, loglik_matrix, n, WAIC_S);
 }
 
 

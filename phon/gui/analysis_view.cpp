@@ -1206,85 +1206,104 @@ void AnalysisView::onCompareModels()
 		return;
 	}
 
-	// ── Bayesian comparison (log marginal likelihoods + Bayes factors) ──
+	// ── Bayesian comparison ─────────────────────────────────────────
 
 	if (has_bayes)
 	{
-		// Check whether all selected models have a log marginal likelihood.
-		bool all_have_marginal = true;
-		for (int i : indices) {
-			if (std::isnan(m_analysis->model(i).log_marginal))
-				all_have_marginal = false;
+		// Collect model pointers.
+		std::vector<const stats::Model *> models;
+		models.reserve(indices.size());
+		for (int i : indices)
+			models.push_back(&m_analysis->model(i));
+
+		auto result = stats::bayesian_compare(models, indices);
+
+		// ── Determine layout flags ──────────────────────────────────
+		bool any_have_waic = false;
+		bool any_have_loo = false;
+		for (auto &row : result.rows)
+		{
+			if (!std::isnan(row.waic))   any_have_waic = true;
+			if (!std::isnan(row.loo_ic)) any_have_loo = true;
 		}
+		bool any_have_ic = any_have_waic || any_have_loo;
+
+		// ── Format output ───────────────────────────────────────────
 
 		QString text;
 		text += QStringLiteral("Bayesian model comparison\n");
 		text += QStringLiteral("=========================\n\n");
 
-		if (!all_have_marginal)
+		if (!result.has_bayes_factors)
 		{
 			text += QStringLiteral("Note: Some models do not have a log marginal likelihood\n");
 			text += QStringLiteral("(e.g. NB/beta/Student without random effects). Showing\n");
 			text += QStringLiteral("log-likelihoods instead; Bayes factors are unavailable.\n\n");
 		}
 
-		// ── Summary table ────────────────────────────────────────────
+		// ── Summary table ───────────────────────────────────────────
 
-		// Check whether any model has WAIC.
-		bool any_have_waic = false;
-		for (int i : indices) {
-			if (!std::isnan(m_analysis->model(i).waic))
-				any_have_waic = true;
+		// Helper to map a result row back to the Analysis model index.
+		auto model_idx = [&](int row_i) {
+			return indices[result.rows[row_i].original_index];
+		};
+
+		// Helper for NaN-safe formatted strings.
+		auto fmt_or_dash = [](double v, char f, int prec) -> QString {
+			return std::isnan(v) ? QStringLiteral("--") : QString::number(v, f, prec);
+		};
+
+		// ── Summary table: always show logLik; optionally log p(y|M), WAIC, LOO-IC ──
+		{
+			// Build header dynamically.
+			QString hdr = QString::asprintf("%-8s %-30s %6s %12s", "", "Formula", "npar", "logLik");
+			QString sep = QStringLiteral("------------------------------------------------------------");
+
+			if (result.has_bayes_factors) {
+				hdr += QString::asprintf(" %14s", "log p(y|M)");
+				sep += QStringLiteral("---------------");
+			}
+			if (any_have_waic) {
+				hdr += QString::asprintf(" %10s %8s", "WAIC", "p_WAIC");
+				sep += QStringLiteral("-------------------");
+			}
+			if (any_have_loo) {
+				hdr += QString::asprintf(" %10s %8s", "LOO-IC", "p_LOO");
+				sep += QStringLiteral("-------------------");
+			}
+			text += hdr + QStringLiteral("\n") + sep + QStringLiteral("\n");
+
+			for (size_t i = 0; i < result.rows.size(); i++)
+			{
+				auto &row = result.rows[i];
+				auto &m = m_analysis->model(model_idx((int)i));
+				QString mlabel = QStringLiteral("Model %1").arg(model_idx((int)i) + 1);
+				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
+				if (formula.length() > 30)
+					formula = formula.left(27) + QStringLiteral("...");
+
+				QString line = QString::asprintf("%-8s %-30s %6ld %12.1f",
+				                                  mlabel.toUtf8().constData(),
+				                                  formula.toUtf8().constData(),
+				                                  (long)row.npar, row.loglik);
+				if (result.has_bayes_factors)
+					line += QString::asprintf(" %14.2f", row.log_marginal);
+				if (any_have_waic)
+					line += QString::asprintf(" %10s %8s",
+					                           fmt_or_dash(row.waic, 'f', 1).toUtf8().constData(),
+					                           fmt_or_dash(row.p_waic, 'f', 1).toUtf8().constData());
+				if (any_have_loo)
+					line += QString::asprintf(" %10s %8s",
+					                           fmt_or_dash(row.loo_ic, 'f', 1).toUtf8().constData(),
+					                           fmt_or_dash(row.p_loo, 'f', 1).toUtf8().constData());
+				text += line + QStringLiteral("\n");
+			}
 		}
 
-		if (all_have_marginal)
+		// ── Pairwise log Bayes factors ──────────────────────────────
+
+		if (result.has_bayes_factors)
 		{
-			if (any_have_waic)
-			{
-				text += QString::asprintf("%-8s %-34s %6s %12s %14s %10s %8s\n",
-				                           "", "Formula", "npar", "logLik", "log p(y|M)", "WAIC", "p_WAIC");
-				text += QStringLiteral("------------------------------------------------------------------------------------------------------\n");
-			}
-			else
-			{
-				text += QString::asprintf("%-8s %-40s %6s %12s %14s\n",
-				                           "", "Formula", "npar", "logLik", "log p(y|M)");
-				text += QStringLiteral("--------------------------------------------------------------------------------------------\n");
-			}
-
-			for (int i : indices)
-			{
-				auto &m = m_analysis->model(i);
-				QString mlabel = QStringLiteral("Model %1").arg(i + 1);
-				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-				int flen = any_have_waic ? 34 : 40;
-				if (formula.length() > flen)
-					formula = formula.left(flen - 3) + QStringLiteral("...");
-
-				if (any_have_waic)
-				{
-					QString waic_str = std::isnan(m.waic) ? QStringLiteral("--") : QString::number(m.waic, 'f', 1);
-					QString pwaic_str = std::isnan(m.p_waic) ? QStringLiteral("--") : QString::number(m.p_waic, 'f', 1);
-					text += QString::asprintf("%-8s %-34s %6ld %12.1f %14.2f %10s %8s\n",
-					                           mlabel.toUtf8().constData(),
-					                           formula.toUtf8().constData(),
-					                           (long)m.nparams(),
-					                           m.loglik, m.log_marginal,
-					                           waic_str.toUtf8().constData(),
-					                           pwaic_str.toUtf8().constData());
-				}
-				else
-				{
-					text += QString::asprintf("%-8s %-40s %6ld %12.1f %14.2f\n",
-					                           mlabel.toUtf8().constData(),
-					                           formula.toUtf8().constData(),
-					                           (long)m.nparams(),
-					                           m.loglik, m.log_marginal);
-				}
-			}
-
-			// ── Pairwise log Bayes factors ───────────────────────────
-
 			text += QStringLiteral("\n\nPairwise log Bayes factors\n");
 			text += QStringLiteral("==========================\n\n");
 			text += QStringLiteral("log BF_ij = log p(y|M_i) - log p(y|M_j)\n");
@@ -1293,11 +1312,6 @@ void AnalysisView::onCompareModels()
 			text += QString::asprintf("%-18s %12s   %s\n", "", "log BF", "Evidence (Kass & Raftery 1995)");
 			text += QStringLiteral("----------------------------------------------------------------------\n");
 
-			// Kass & Raftery (1995) interpretive scale for 2 × log BF:
-			//   0–2:   not worth more than a bare mention
-			//   2–6:   positive
-			//   6–10:  strong
-			//   >10:   very strong
 			auto bayes_label = [](double log_bf) -> const char * {
 				double twice = 2.0 * std::abs(log_bf);
 				if (twice < 2)  return "negligible";
@@ -1306,147 +1320,133 @@ void AnalysisView::onCompareModels()
 				return "very strong";
 			};
 
-			for (size_t a = 0; a < indices.size(); a++)
+			for (auto &pair : result.pairs)
 			{
-				for (size_t b = a + 1; b < indices.size(); b++)
-				{
-					auto &ma = m_analysis->model(indices[a]);
-					auto &mb = m_analysis->model(indices[b]);
-					double log_bf = ma.log_marginal - mb.log_marginal;
-					QString plabel = QStringLiteral("%1 vs %2").arg(indices[a] + 1).arg(indices[b] + 1);
+				if (std::isnan(pair.log_bf)) continue;
 
-					const char *label = bayes_label(log_bf);
-					QString direction = (log_bf > 0)
-						? QStringLiteral("favours %1").arg(indices[a] + 1)
-						: (log_bf < 0)
-							? QStringLiteral("favours %1").arg(indices[b] + 1)
-							: QStringLiteral("--");
+				int idx_a = model_idx(pair.index_a);
+				int idx_b = model_idx(pair.index_b);
+				QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
 
-					text += QString::asprintf("%-18s %12.2f   %s (%s)\n",
-					                           plabel.toUtf8().constData(),
-					                           log_bf,
-					                           label,
-					                           direction.toUtf8().constData());
-				}
-			}
+				const char *label = bayes_label(pair.log_bf);
+				QString direction = (pair.log_bf > 0)
+					? QStringLiteral("favours %1").arg(idx_a + 1)
+					: (pair.log_bf < 0)
+						? QStringLiteral("favours %1").arg(idx_b + 1)
+						: QStringLiteral("--");
 
-			// ── Pairwise ΔWAIC ───────────────────────────────────────
-
-			if (any_have_waic && indices.size() >= 2)
-			{
-				text += QStringLiteral("\n\nPairwise \u0394WAIC\n");
-				text += QStringLiteral("===============\n\n");
-				text += QStringLiteral("\u0394WAIC = WAIC_i - WAIC_j.  Negative values favour model i.\n");
-				text += QStringLiteral("SE computed from pointwise contributions.\n\n");
-
-				text += QString::asprintf("%-18s %10s %10s\n", "", "\u0394WAIC", "SE");
-				text += QStringLiteral("----------------------------------------------\n");
-
-				for (size_t a = 0; a < indices.size(); a++)
-				{
-					for (size_t b = a + 1; b < indices.size(); b++)
-					{
-						auto &ma = m_analysis->model(indices[a]);
-						auto &mb = m_analysis->model(indices[b]);
-
-						if (std::isnan(ma.waic) || std::isnan(mb.waic))
-							continue;
-
-						double delta = ma.waic - mb.waic;
-						// SE of the difference: sqrt(se_a² + se_b²)
-						// (conservative; ignores correlation between pointwise terms)
-						double se_a = std::isnan(ma.se_waic) ? 0 : ma.se_waic;
-						double se_b = std::isnan(mb.se_waic) ? 0 : mb.se_waic;
-						double se_diff = std::sqrt(se_a * se_a + se_b * se_b);
-
-						QString plabel = QStringLiteral("%1 vs %2").arg(indices[a] + 1).arg(indices[b] + 1);
-						text += QString::asprintf("%-18s %10.1f %10.1f\n",
-						                           plabel.toUtf8().constData(),
-						                           delta, se_diff);
-					}
-				}
+				text += QString::asprintf("%-18s %12.2f   %s (%s)\n",
+				                           plabel.toUtf8().constData(),
+				                           pair.log_bf,
+				                           label,
+				                           direction.toUtf8().constData());
 			}
 		}
-		else
+
+		// ── Pairwise information criteria differences ────────────────
+
+		if (any_have_ic && result.pairs.size() >= 1)
 		{
-			// Fallback: show log-likelihoods (+ WAIC if available).
-			if (any_have_waic)
-			{
-				text += QString::asprintf("%-8s %-34s %6s %12s %10s %8s\n",
-				                           "", "Formula", "npar", "logLik", "WAIC", "p_WAIC");
-				text += QStringLiteral("-------------------------------------------------------------------------------------------\n");
-			}
-			else
-			{
-				text += QString::asprintf("%-8s %-40s %6s %12s\n",
-				                           "", "Formula", "npar", "logLik");
-				text += QStringLiteral("----------------------------------------------------------------------\n");
-			}
+			text += QStringLiteral("\n\nPairwise information criteria\n");
+			text += QStringLiteral("=============================\n\n");
+			text += QStringLiteral("Negative values favour model i.\n\n");
 
-			for (int i : indices)
-			{
-				auto &m = m_analysis->model(i);
-				QString mlabel = QStringLiteral("Model %1").arg(i + 1);
-				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-				int flen = any_have_waic ? 34 : 40;
-				if (formula.length() > flen)
-					formula = formula.left(flen - 3) + QStringLiteral("...");
+			// Build header based on available ICs.
+			QString hdr = QString::asprintf("%-18s", "");
+			QString sep;
+			if (any_have_waic) {
+				hdr += QString::asprintf(" %10s %10s", "\u0394WAIC", "SE");
+				sep += QStringLiteral("---------------------");
+			}
+			if (any_have_loo) {
+				hdr += QString::asprintf(" %10s %10s", "\u0394LOO-IC", "SE");
+				sep += QStringLiteral("---------------------");
+			}
+			text += hdr + QStringLiteral("\n");
+			text += QStringLiteral("------------------") + sep + QStringLiteral("\n");
 
+			for (auto &pair : result.pairs)
+			{
+				bool has_waic_pair = !std::isnan(pair.delta_waic);
+				bool has_loo_pair = !std::isnan(pair.delta_loo);
+				if (!has_waic_pair && !has_loo_pair) continue;
+
+				int idx_a = model_idx(pair.index_a);
+				int idx_b = model_idx(pair.index_b);
+				QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
+
+				QString line = QString::asprintf("%-18s", plabel.toUtf8().constData());
 				if (any_have_waic)
 				{
-					QString waic_str = std::isnan(m.waic) ? QStringLiteral("--") : QString::number(m.waic, 'f', 1);
-					QString pwaic_str = std::isnan(m.p_waic) ? QStringLiteral("--") : QString::number(m.p_waic, 'f', 1);
-					text += QString::asprintf("%-8s %-34s %6ld %12.1f %10s %8s\n",
-					                           mlabel.toUtf8().constData(),
-					                           formula.toUtf8().constData(),
-					                           (long)m.nparams(),
-					                           m.loglik,
-					                           waic_str.toUtf8().constData(),
-					                           pwaic_str.toUtf8().constData());
+					if (has_waic_pair)
+						line += QString::asprintf(" %10.1f %10.1f", pair.delta_waic, pair.se_diff);
+					else
+						line += QString::asprintf(" %10s %10s", "--", "--");
+				}
+				if (any_have_loo)
+				{
+					if (has_loo_pair)
+						line += QString::asprintf(" %10.1f %10.1f", pair.delta_loo, pair.se_loo_diff);
+					else
+						line += QString::asprintf(" %10s %10s", "--", "--");
+				}
+				text += line + QStringLiteral("\n");
+			}
+		}
+
+		// ── Pareto k diagnostic ─────────────────────────────────────
+
+		if (any_have_loo)
+		{
+			text += QStringLiteral("\n\nPareto k diagnostic\n");
+			text += QStringLiteral("===================\n\n");
+
+			for (size_t i = 0; i < result.rows.size(); i++)
+			{
+				auto &m = m_analysis->model(model_idx((int)i));
+				if (m.pareto_k.empty()) continue;
+
+				int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
+				for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+				{
+					double k = m.pareto_k[j];
+					if (k < 0.5)      n_good++;
+					else if (k < 0.7) n_ok++;
+					else if (k < 1.0) n_bad++;
+					else              n_verybad++;
+				}
+				intptr_t total = m.pareto_k.size();
+
+				text += QStringLiteral("Model %1: ").arg(model_idx((int)i) + 1);
+
+				if (n_bad == 0 && n_verybad == 0 && n_ok == 0)
+				{
+					text += QStringLiteral("all k < 0.5 (good)\n");
 				}
 				else
 				{
-					text += QString::asprintf("%-8s %-40s %6ld %12.1f\n",
-					                           mlabel.toUtf8().constData(),
-					                           formula.toUtf8().constData(),
-					                           (long)m.nparams(),
-					                           m.loglik);
+					auto pct = [&](int count) {
+						return QString::number(100.0 * count / total, 'f', 1) + QStringLiteral("%");
+					};
+					QStringList parts;
+					if (n_good > 0)    parts << pct(n_good) + QStringLiteral(" k < 0.5 (good)");
+					if (n_ok > 0)      parts << pct(n_ok) + QStringLiteral(" k 0.5\u20130.7 (ok)");
+					if (n_bad > 0)     parts << pct(n_bad) + QStringLiteral(" k 0.7\u20131.0 (bad)");
+					if (n_verybad > 0) parts << pct(n_verybad) + QStringLiteral(" k > 1.0 (very bad)");
+					text += parts.join(QStringLiteral(", ")) + QStringLiteral("\n");
 				}
 			}
 
-			// Pairwise ΔWAIC (same block as above).
-			if (any_have_waic && indices.size() >= 2)
-			{
-				text += QStringLiteral("\n\nPairwise \u0394WAIC\n");
-				text += QStringLiteral("===============\n\n");
-				text += QStringLiteral("\u0394WAIC = WAIC_i - WAIC_j.  Negative values favour model i.\n");
-				text += QStringLiteral("SE computed from pointwise contributions.\n\n");
+			text += QStringLiteral("\nk < 0.7: LOO-IC is reliable.  k > 0.7: consider WAIC or refit.\n");
+		}
 
-				text += QString::asprintf("%-18s %10s %10s\n", "", "\u0394WAIC", "SE");
-				text += QStringLiteral("----------------------------------------------\n");
+		// ── Warnings ────────────────────────────────────────────────
 
-				for (size_t a = 0; a < indices.size(); a++)
-				{
-					for (size_t b = a + 1; b < indices.size(); b++)
-					{
-						auto &ma = m_analysis->model(indices[a]);
-						auto &mb = m_analysis->model(indices[b]);
-
-						if (std::isnan(ma.waic) || std::isnan(mb.waic))
-							continue;
-
-						double delta = ma.waic - mb.waic;
-						double se_a = std::isnan(ma.se_waic) ? 0 : ma.se_waic;
-						double se_b = std::isnan(mb.se_waic) ? 0 : mb.se_waic;
-						double se_diff = std::sqrt(se_a * se_a + se_b * se_b);
-
-						QString plabel = QStringLiteral("%1 vs %2").arg(indices[a] + 1).arg(indices[b] + 1);
-						text += QString::asprintf("%-18s %10.1f %10.1f\n",
-						                           plabel.toUtf8().constData(),
-						                           delta, se_diff);
-					}
-				}
-			}
+		if (result.has_warnings())
+		{
+			text += QStringLiteral("\n\nWarnings:\n");
+			for (auto &w : result.warnings)
+				text += QStringLiteral("- ") + QString::fromUtf8(w.data(), (int)w.size()) + QStringLiteral("\n");
 		}
 
 		m_summary->setPlainText(text);

@@ -141,7 +141,7 @@ inline double pointwise_loglik(double y, double mu, const String &family,
 // loglik_matrix: n_obs × S row-major matrix, where
 //   loglik_matrix[i * S + s] = log p(y_i | theta^(s))
 //
-// Populates model.waic, model.p_waic, model.lppd, model.se_waic.
+// Populates model.waic, model.p_waic, model.lppd, model.se_waic, model.elpd_i.
 
 inline void compute_waic_from_loglik(Model &model, const std::vector<double> &loglik_matrix,
                                      intptr_t n, intptr_t S)
@@ -216,6 +216,11 @@ inline void compute_waic_from_loglik(Model &model, const std::vector<double> &lo
 	model.p_waic  = total_pwaic;
 	model.lppd    = total_lppd;
 	model.se_waic = std::sqrt(static_cast<double>(n) * var_elpd);
+
+	// Store per-observation elpd for proper SE(ΔWAIC) in model comparison.
+	model.elpd_i.resize(n);
+	for (intptr_t i = 0; i < n; i++)
+		model.elpd_i[i + 1] = lppd_i[i] - pwaic_i[i];
 }
 
 

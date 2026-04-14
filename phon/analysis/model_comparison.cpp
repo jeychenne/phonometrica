@@ -139,17 +139,14 @@ AnovaResult anova_compare(const std::vector<const Model *> &models,
 
 	if (models.size() < 2) return result;
 
-	// Reject mixing Bayesian and frequentist models.
-	for (size_t i = 1; i < models.size(); i++)
+	// All models must be frequentist (the scripting layer's generic compare()
+	// dispatches Bayesian models to bayesian_compare instead).
+	for (size_t i = 0; i < models.size(); i++)
 	{
-		if (models[i]->estimation != models[0]->estimation)
-			throw error("Cannot compare models with different estimation methods (frequentist vs Bayesian)");
+		if (models[i]->is_bayesian())
+			throw error("anova_compare() is for frequentist models. "
+			            "Use bayesian_compare() for Bayesian models");
 	}
-
-	// Bayesian models cannot be compared by LRT.
-	if (models[0]->is_bayesian())
-		throw error("Bayesian model comparison (WAIC/LOO-IC) is not yet implemented. "
-		            "Use compare() on frequentist models for likelihood ratio tests");
 
 	// Build 1-based display labels for each model.
 	std::vector<int> lbl(models.size());
@@ -296,6 +293,249 @@ AnovaResult anova_compare(const std::vector<const Model *> &models,
 			}
 
 			result.pairs.push_back(pair);
+		}
+	}
+
+	return result;
+}
+
+
+// =====================================================================
+// Bayesian model comparison
+// =====================================================================
+
+BayesianCompareResult bayesian_compare(const std::vector<const Model *> &models,
+                                       const std::vector<int> &labels)
+{
+	BayesianCompareResult result;
+
+	if (models.size() < 2) return result;
+
+	// All models must be Bayesian.
+	for (size_t i = 0; i < models.size(); i++)
+	{
+		if (!models[i]->is_bayesian())
+			throw error("bayesian_compare() requires all models to be Bayesian. "
+			            "Use anova_compare() for frequentist models");
+	}
+
+	// Build 1-based display labels.
+	std::vector<int> lbl(models.size());
+	if (labels.size() == models.size())
+	{
+		for (size_t i = 0; i < models.size(); i++)
+			lbl[i] = labels[i] + 1;
+	}
+	else
+	{
+		for (size_t i = 0; i < models.size(); i++)
+			lbl[i] = (int)i + 1;
+	}
+
+	// ── Pre-flight checks ────────────────────────────────────────────
+
+	const auto *first = models[0];
+
+	// Same number of observations?
+	for (size_t i = 1; i < models.size(); i++)
+	{
+		if (models[i]->nobs != first->nobs)
+		{
+			result.warnings.push_back(
+				"Models have different numbers of observations. "
+				"WAIC comparison requires all models to be fitted on the same data.");
+			break;
+		}
+	}
+
+	// All models need WAIC.
+	for (size_t i = 0; i < models.size(); i++)
+	{
+		if (std::isnan(models[i]->waic))
+		{
+			std::string msg = "Model " + std::to_string(lbl[i])
+				+ " does not have a WAIC value. "
+				  "WAIC is only available for Bayesian models fitted with grid integration.";
+			result.warnings.push_back(String(msg));
+		}
+	}
+
+	// Check Bayes factor availability.
+	result.has_bayes_factors = true;
+	for (size_t i = 0; i < models.size(); i++)
+	{
+		if (std::isnan(models[i]->log_marginal))
+		{
+			result.has_bayes_factors = false;
+			break;
+		}
+	}
+
+	// Check LOO-IC availability.
+	result.has_loo = true;
+	for (size_t i = 0; i < models.size(); i++)
+	{
+		if (std::isnan(models[i]->loo_ic))
+		{
+			result.has_loo = false;
+			break;
+		}
+	}
+
+	// ── Build index array sorted by WAIC ascending (best first) ──────
+
+	std::vector<int> order(models.size());
+	std::iota(order.begin(), order.end(), 0);
+	std::sort(order.begin(), order.end(), [&](int a, int b)
+	{
+		double wa = std::isnan(models[a]->waic) ? 1e300 : models[a]->waic;
+		double wb = std::isnan(models[b]->waic) ? 1e300 : models[b]->waic;
+		return wa < wb;
+	});
+
+	// ── Build per-model rows ─────────────────────────────────────────
+
+	result.rows.resize(order.size());
+
+	for (size_t i = 0; i < order.size(); i++)
+	{
+		const auto *m = models[order[i]];
+		auto &row = result.rows[i];
+
+		row.original_index = order[i];
+		row.npar = m->nparams();
+		row.loglik = m->loglik;
+		row.log_marginal = m->log_marginal;
+		row.waic = m->waic;
+		row.p_waic = m->p_waic;
+		row.lppd = m->lppd;
+		row.loo_ic = m->loo_ic;
+		row.p_loo = m->p_loo;
+	}
+
+	// ── Pairwise comparisons ─────────────────────────────────────────
+
+	intptr_t n = first->nobs;
+
+	for (size_t i = 0; i < order.size(); i++)
+	{
+		for (size_t j = i + 1; j < order.size(); j++)
+		{
+			const auto *ma = models[order[i]];
+			const auto *mb = models[order[j]];
+
+			WaicPair pair;
+			pair.index_a = (int)i;
+			pair.index_b = (int)j;
+
+			// ── ΔWAIC ──────────────────────────────────────────
+			if (!std::isnan(ma->waic) && !std::isnan(mb->waic))
+			{
+				pair.delta_waic = ma->waic - mb->waic;
+
+				// Proper SE from pointwise elpd differences.
+				if (ma->elpd_i.size() == n && mb->elpd_i.size() == n)
+				{
+					// SE(ΔWAIC) = 2 * sqrt(n * Var_i(elpd_a_i - elpd_b_i))
+					double mean_diff = 0;
+					for (intptr_t k = 1; k <= n; k++)
+						mean_diff += (ma->elpd_i[k] - mb->elpd_i[k]);
+					mean_diff /= n;
+
+					double var_diff = 0;
+					for (intptr_t k = 1; k <= n; k++)
+					{
+						double d = (ma->elpd_i[k] - mb->elpd_i[k]) - mean_diff;
+						var_diff += d * d;
+					}
+					var_diff /= (n - 1); // sample variance
+
+					pair.se_diff = 2.0 * std::sqrt(static_cast<double>(n) * var_diff);
+					pair.se_is_approximate = false;
+				}
+				else
+				{
+					// Fallback: conservative SE ignoring correlation.
+					double se_a = std::isnan(ma->se_waic) ? 0 : ma->se_waic;
+					double se_b = std::isnan(mb->se_waic) ? 0 : mb->se_waic;
+					pair.se_diff = std::sqrt(se_a * se_a + se_b * se_b);
+					pair.se_is_approximate = true;
+				}
+			}
+			else
+			{
+				pair.delta_waic = std::numeric_limits<double>::quiet_NaN();
+				pair.se_diff = std::numeric_limits<double>::quiet_NaN();
+				pair.se_is_approximate = false;
+			}
+
+			// ── Bayes factor ───────────────────────────────────
+			if (!std::isnan(ma->log_marginal) && !std::isnan(mb->log_marginal))
+				pair.log_bf = ma->log_marginal - mb->log_marginal;
+			else
+				pair.log_bf = std::numeric_limits<double>::quiet_NaN();
+
+			// ── ΔLOO-IC ────────────────────────────────────────
+			if (!std::isnan(ma->loo_ic) && !std::isnan(mb->loo_ic))
+			{
+				pair.delta_loo = ma->loo_ic - mb->loo_ic;
+
+				// Proper SE from pointwise elpd_loo differences.
+				if (ma->elpd_loo_i.size() == n && mb->elpd_loo_i.size() == n)
+				{
+					double mean_diff = 0;
+					for (intptr_t k = 1; k <= n; k++)
+						mean_diff += (ma->elpd_loo_i[k] - mb->elpd_loo_i[k]);
+					mean_diff /= n;
+
+					double var_diff = 0;
+					for (intptr_t k = 1; k <= n; k++)
+					{
+						double d = (ma->elpd_loo_i[k] - mb->elpd_loo_i[k]) - mean_diff;
+						var_diff += d * d;
+					}
+					var_diff /= (n - 1);
+
+					pair.se_loo_diff = 2.0 * std::sqrt(static_cast<double>(n) * var_diff);
+					pair.se_loo_is_approximate = false;
+				}
+				else
+				{
+					double se_a = std::isnan(ma->se_loo) ? 0 : ma->se_loo;
+					double se_b = std::isnan(mb->se_loo) ? 0 : mb->se_loo;
+					pair.se_loo_diff = std::sqrt(se_a * se_a + se_b * se_b);
+					pair.se_loo_is_approximate = true;
+				}
+			}
+			else
+			{
+				pair.delta_loo = std::numeric_limits<double>::quiet_NaN();
+				pair.se_loo_diff = std::numeric_limits<double>::quiet_NaN();
+				pair.se_loo_is_approximate = false;
+			}
+
+			result.pairs.push_back(pair);
+		}
+	}
+
+	// Warn if any pair used approximate SEs.
+	bool warned_waic = false, warned_loo = false;
+	for (auto &pair : result.pairs)
+	{
+		if (pair.se_is_approximate && !warned_waic)
+		{
+			result.warnings.push_back(
+				"Some models lack per-observation elpd values (e.g. loaded from an older file). "
+				"The SE of \u0394WAIC is approximate (conservative, ignoring correlation). "
+				"Refit these models to obtain the proper SE.");
+			warned_waic = true;
+		}
+		if (pair.se_loo_is_approximate && !warned_loo)
+		{
+			result.warnings.push_back(
+				"Some models lack per-observation LOO elpd values. "
+				"The SE of \u0394LOO-IC is approximate.");
+			warned_loo = true;
 		}
 	}
 
