@@ -686,6 +686,15 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
+		if (key == "log_marginal") return model.log_marginal;
+		if (key == "waic") return model.waic;
+		if (key == "p_waic") return model.p_waic;
+		if (key == "lppd") return model.lppd;
+		if (key == "se_waic") return model.se_waic;
+		if (key == "loo_ic") return model.loo_ic;
+		if (key == "p_loo") return model.p_loo;
+		if (key == "se_loo") return model.se_loo;
+		if (key == "pareto_k") return make_handle<Array<double>>(model.pareto_k);
 		if (key == "posterior_mean") return make_handle<Array<double>>(model.posterior_mean);
 		if (key == "posterior_mode") return make_handle<Array<double>>(model.posterior_mode);
 		if (key == "posterior_median") return make_handle<Array<double>>(model.posterior_median);
@@ -743,38 +752,115 @@ void DataTable::initialize(Runtime &rt)
 	auto compare_models = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &m1 = cast<stats::Model>(args[0]);
 		auto &m2 = cast<stats::Model>(args[1]);
+
+		// Both models must use the same estimation method.
+		if (m1.estimation != m2.estimation)
+		{
+			throw error("Cannot compare a % model with a % model. "
+			            "Both models must use the same estimation method.",
+			            stats::estimation_name(m1.estimation),
+			            stats::estimation_name(m2.estimation));
+		}
+
 		std::vector<const stats::Model *> models = { &m1, &m2 };
-		auto result = stats::anova_compare(models);
 
-		// Print warnings if any.
-		for (auto &w : result.warnings) {
-			rt.printf("Warning: %s\n", w.data());
+		if (m1.is_bayesian())
+		{
+			// ── Bayesian comparison ────────────────────────────────
+			auto result = stats::bayesian_compare(models);
+
+			for (auto &w : result.warnings)
+				rt.printf("Warning: %s\n", w.data());
+
+			// Summary table.
+			bool show_marginal = result.has_bayes_factors;
+			bool show_waic = !std::isnan(m1.waic) || !std::isnan(m2.waic);
+			bool show_loo = !std::isnan(m1.loo_ic) || !std::isnan(m2.loo_ic);
+
+			// Header.
+			rt.printf("\n%-8s %6s %12s", "Model", "npar", "logLik");
+			if (show_marginal) rt.printf(" %14s", "log p(y|M)");
+			if (show_waic)     rt.printf(" %10s %8s", "WAIC", "p_WAIC");
+			if (show_loo)      rt.printf(" %10s %8s", "LOO-IC", "p_LOO");
+			rt.printf("\n");
+
+			for (size_t i = 0; i < result.rows.size(); i++)
+			{
+				auto &r = result.rows[i];
+				rt.printf("%-8d %6ld %12.1f", (int)r.original_index + 1, (long)r.npar, r.loglik);
+				if (show_marginal)
+					rt.printf(" %14.2f", r.log_marginal);
+				if (show_waic) {
+					if (std::isnan(r.waic)) rt.printf(" %10s %8s", "--", "--");
+					else rt.printf(" %10.1f %8.1f", r.waic, r.p_waic);
+				}
+				if (show_loo) {
+					if (std::isnan(r.loo_ic)) rt.printf(" %10s %8s", "--", "--");
+					else rt.printf(" %10.1f %8.1f", r.loo_ic, r.p_loo);
+				}
+				rt.printf("\n");
+			}
+
+			// Bayes factors.
+			if (show_marginal)
+			{
+				rt.printf("\nPairwise log Bayes factors:\n");
+				for (auto &p : result.pairs)
+				{
+					if (std::isnan(p.log_bf)) continue;
+					rt.printf("  1 vs 2:  log BF = %.2f", p.log_bf);
+					if (p.log_bf > 0)      rt.printf("  (favours model 1)");
+					else if (p.log_bf < 0) rt.printf("  (favours model 2)");
+					rt.printf("\n");
+				}
+			}
+
+			// Pairwise IC differences.
+			if (show_waic || show_loo)
+			{
+				rt.printf("\nPairwise information criteria (negative favours model 1):\n");
+				for (auto &p : result.pairs)
+				{
+					if (show_waic && !std::isnan(p.delta_waic))
+						rt.printf("  WAIC:    delta = %10.1f  SE = %10.1f\n", p.delta_waic, p.se_diff);
+					if (show_loo && !std::isnan(p.delta_loo))
+						rt.printf("  LOO-IC:  delta = %10.1f  SE = %10.1f\n", p.delta_loo, p.se_loo_diff);
+				}
+			}
+
+			rt.printf("\n");
 		}
+		else
+		{
+			// ── Frequentist comparison ─────────────────────────────
+			auto result = stats::anova_compare(models);
 
-		// Print information criteria table.
-		rt.printf("\n%-8s %6s %12s %12s %12s %12s\n", "Model", "npar", "logLik", "AIC", "BIC", "deviance");
-		for (size_t i = 0; i < result.rows.size(); i++) {
-			auto &r = result.rows[i];
-			rt.printf("%-8d %6ld %12.4f %12.4f %12.4f %12.4f\n",
-			          r.original_index + 1, (long)r.npar, r.loglik, r.aic, r.bic, r.deviance);
+			for (auto &w : result.warnings)
+				rt.printf("Warning: %s\n", w.data());
+
+			rt.printf("\n%-8s %6s %12s %12s %12s %12s\n", "Model", "npar", "logLik", "AIC", "BIC", "deviance");
+			for (size_t i = 0; i < result.rows.size(); i++) {
+				auto &r = result.rows[i];
+				rt.printf("%-8d %6ld %12.4f %12.4f %12.4f %12.4f\n",
+				          r.original_index + 1, (long)r.npar, r.loglik, r.aic, r.bic, r.deviance);
+			}
+
+			rt.printf("\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
+			for (auto &p : result.pairs) {
+				char pbuf[16];
+				if (std::isnan(p.p_value)) snprintf(pbuf, sizeof(pbuf), "NA");
+				else if (p.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
+				else snprintf(pbuf, sizeof(pbuf), "%.6f", p.p_value);
+
+				char label[32];
+				snprintf(label, sizeof(label), "%d vs %d",
+				         result.rows[p.index_a].original_index + 1,
+				         result.rows[p.index_b].original_index + 1);
+				rt.printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
+				          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
+			}
+			rt.printf("\n");
 		}
-
-		// Print pairwise LRT results.
-		rt.printf("\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
-		for (auto &p : result.pairs) {
-			char pbuf[16];
-			if (std::isnan(p.p_value)) snprintf(pbuf, sizeof(pbuf), "NA");
-			else if (p.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
-			else snprintf(pbuf, sizeof(pbuf), "%.6f", p.p_value);
-
-			char label[32];
-			snprintf(label, sizeof(label), "%d vs %d",
-			         result.rows[p.index_a].original_index + 1,
-			         result.rows[p.index_b].original_index + 1);
-			rt.printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
-			          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
-		}
-		rt.printf("\n");
 
 		return Variant();
 	};
