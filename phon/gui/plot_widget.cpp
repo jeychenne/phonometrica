@@ -311,6 +311,29 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	update();
 }
 
+void PlotWidget::setLinePlotData(std::vector<LineCurve> curves,
+                                  const QString &x_label, const QString &y_label,
+                                  const QString &title)
+{
+	m_mode = Mode::LinePlot;
+	m_line_curves = std::move(curves);
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+	m_x.clear();
+	m_y.clear();
+	m_boxes.clear();
+	m_bins.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_show_regression = false;
+	m_cache_valid = false;
+	update();
+}
+
 void PlotWidget::setRegressionLine(double intercept, double slope, double r2)
 {
 	m_show_regression = true;
@@ -383,6 +406,7 @@ void PlotWidget::clear()
 	m_reverse_y = false;
 	m_density_x.clear();
 	m_density_y.clear();
+	m_line_curves.clear();
 	m_fixed_y_ticks.clear();
 	m_cache_valid = false;
 	update();
@@ -675,6 +699,7 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 	case Mode::BoxPlot:        renderBoxPlot(p, left, top, pw, ph); break;
 	case Mode::Histogram:      renderHistogram(p, left, top, pw, ph); break;
 	case Mode::BarChart:       renderBarChart(p, left, top, pw, ph); break;
+	case Mode::LinePlot:       renderLinePlot(p, left, top, pw, ph); break;
 	default: break;
 	}
 }
@@ -1599,6 +1624,184 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 		double cx = left + bar_area * (i + 0.5);
 		int lw = fm.horizontalAdvance(m_bar_labels[i]);
 		p.drawText(int(cx) - lw / 2, bottom + 4 + fm.ascent() + 2, m_bar_labels[i]);
+	}
+}
+
+
+void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_line_curves.empty()) return;
+
+	int bottom = top + ph;
+	int right  = left + pw;
+
+	// Compute global x/y range across all curves.
+	double xlo = 1e300, xhi = -1e300;
+	double ylo = 0, yhi = -1e300; // y starts at 0 for densities
+
+	for (auto &curve : m_line_curves)
+	{
+		for (double v : curve.x) { xlo = std::min(xlo, v); xhi = std::max(xhi, v); }
+		for (double v : curve.y) { yhi = std::max(yhi, v); }
+	}
+
+	if (xhi <= xlo) { xlo -= 1; xhi += 1; }
+	if (yhi <= ylo) { yhi = ylo + 1; }
+
+	// Add padding.
+	double xrange = xhi - xlo;
+	double yrange = yhi - ylo;
+	double xpad = xrange * 0.04;
+	double ypad = yrange * 0.08;
+	xlo -= xpad; xhi += xpad;
+	yhi += ypad;
+
+	xrange = xhi - xlo;
+	yrange = yhi - ylo;
+	if (xrange <= 0) xrange = 1;
+	if (yrange <= 0) yrange = 1;
+
+	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
+	auto dataToY = [&](double v) -> double { return bottom - ((v - ylo) / yrange) * ph; };
+
+	// Frame
+	p.setPen(QPen(AXIS_COLOR, 1));
+	p.drawRect(left, top, pw, ph);
+
+	// Axes
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	// X grid + ticks
+	double xtick = nice_tick(xrange);
+	double x0 = std::ceil(xlo / xtick) * xtick;
+
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = x0; v <= xhi; v += xtick) {
+		double x = dataToX(v);
+		if (x > left + 1 && x < right - 1)
+			p.drawLine(QPointF(x, top), QPointF(x, bottom));
+	}
+
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = x0; v <= xhi; v += xtick) {
+		double x = dataToX(v);
+		if (x < left - 2 || x > right + 2) continue;
+		p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, label);
+	}
+	{ int tw = fm.horizontalAdvance(m_x_label); p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, m_x_label); }
+
+	// Y grid + ticks
+	double ytick = nice_tick(yrange);
+	double y0 = std::ceil(ylo / ytick) * ytick;
+
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y > top + 1 && y < bottom - 1)
+			p.drawLine(QPointF(left, y), QPointF(right, y));
+	}
+
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y < top - 2 || y > bottom + 2) continue;
+		p.drawLine(QPointF(left - 4, y), QPointF(left, y));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(left - 6 - lw, int(y) + fm.ascent() / 2 - 1, label);
+	}
+	{ p.save(); p.translate(14, top + ph / 2); p.rotate(-90);
+	  int tw = fm.horizontalAdvance(m_y_label); p.drawText(-tw / 2, 0, m_y_label); p.restore(); }
+
+	// Title
+	renderTitle(p, left, pw, top);
+
+	// Draw curves
+	p.setClipRect(left, top, pw, ph);
+
+	int ncurves = (int)m_line_curves.size();
+	for (int c = 0; c < ncurves; c++)
+	{
+		auto &curve = m_line_curves[c];
+		if (curve.x.size() < 2) continue;
+
+		QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+		p.setPen(QPen(color, 2.0, Qt::SolidLine));
+		p.setBrush(Qt::NoBrush);
+
+		// Translucent fill under the curve.
+		QPainterPath path;
+		path.moveTo(dataToX(curve.x[0]), dataToY(0));
+		for (size_t i = 0; i < curve.x.size(); i++)
+			path.lineTo(dataToX(curve.x[i]), dataToY(curve.y[i]));
+		path.lineTo(dataToX(curve.x.back()), dataToY(0));
+		path.closeSubpath();
+
+		QColor fill_color = color;
+		fill_color.setAlpha(30);
+		p.setPen(Qt::NoPen);
+		p.setBrush(fill_color);
+		p.drawPath(path);
+
+		// Curve outline.
+		p.setBrush(Qt::NoBrush);
+		p.setPen(QPen(color, 2.0, Qt::SolidLine));
+		for (size_t i = 1; i < curve.x.size(); i++)
+			p.drawLine(QPointF(dataToX(curve.x[i-1]), dataToY(curve.y[i-1])),
+			           QPointF(dataToX(curve.x[i]), dataToY(curve.y[i])));
+	}
+
+	p.setClipping(false);
+
+	// Legend
+	if (ncurves > 1)
+	{
+		font.setPixelSize(10);
+		p.setFont(font);
+		QFontMetrics lfm(font);
+
+		int line_w = 18;
+		int spacing = 4;
+		int padding = 6;
+		int line_h = std::max(lfm.height(), 4) + 2;
+
+		int max_label_w = 0;
+		for (auto &curve : m_line_curves)
+			max_label_w = std::max(max_label_w, lfm.horizontalAdvance(curve.name));
+
+		int legend_w = padding + line_w + spacing + max_label_w + padding;
+		int legend_h = padding + ncurves * line_h + padding;
+
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+
+		QColor bg(255, 255, 255, 210);
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.setBrush(bg);
+		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+		for (int c = 0; c < ncurves; c++)
+		{
+			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+			int ey = ly + padding + c * line_h;
+			int cy = ey + line_h / 2;
+
+			// Colored line sample.
+			p.setPen(QPen(color, 2.0));
+			p.drawLine(lx + padding, cy, lx + padding + line_w, cy);
+
+			// Label.
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + line_w + spacing,
+			           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
+			           m_line_curves[c].name);
+		}
 	}
 }
 

@@ -406,6 +406,10 @@ void Settings::post_initialize()
 	{
 		reset_display();
 	}
+	if (!settings.contains("statistics"))
+	{
+		reset_statistics();
+	}
 
 	// Added in 0.9: default query context
 	try {
@@ -434,6 +438,7 @@ void Settings::reset()
 	reset_mouse_tracking();
 	reset_concordance();
 	reset_display();
+	reset_statistics();
 }
 
 void Settings::reset_waveform()
@@ -521,6 +526,14 @@ void Settings::reset_display()
 	auto &map = table->data();
 	map["hz_decimals"] = intptr_t(0); // 0 = round to nearest Hz
 	Settings::set_value("display", std::move(table));
+}
+
+void Settings::reset_statistics()
+{
+	auto table = make_handle<Table>(runtime);
+	auto &map = table->data();
+	map["estimation"] = String("frequentist");
+	Settings::set_value("statistics", std::move(table));
 }
 
 void Settings::reset_mouse_tracking()

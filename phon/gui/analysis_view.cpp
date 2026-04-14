@@ -56,6 +56,7 @@
 #include <phon/gui/help_browser.hpp>
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/settings.hpp>
 
 namespace phonometrica {
 
@@ -236,7 +237,15 @@ void AnalysisView::setupUi()
 	                                      "informative default priors. Reports posterior\n"
 	                                      "means, credible intervals, and probability\n"
 	                                      "of direction (pd)."), Qt::ToolTipRole);
-	m_estimation_combo->setCurrentIndex(0);
+
+	// Default to the estimation method from global settings.
+	int est_idx = 0; // frequentist
+	try {
+		auto s = Settings::get_string("statistics", "estimation");
+		if (s == "bayesian") est_idx = 1;
+	} catch (...) {}
+	m_estimation_combo->setCurrentIndex(est_idx);
+
 	top_bar->addWidget(m_estimation_combo);
 
 	m_fit_button = new QPushButton(tr("Fit"));
@@ -607,6 +616,7 @@ void AnalysisView::setupUi()
 	m_plot_type_combo->addItem(tr("Normal Q-Q"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals vs Fitted"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals Q-Q"));
+	m_plot_type_combo->addItem(tr("Posterior Densities"));
 	diag_top->addWidget(m_plot_type_combo);
 	diag_top->addStretch();
 	auto *export_button = new QPushButton(tr("Export..."));
@@ -2319,11 +2329,12 @@ void AnalysisView::updateDiagnosticPlot()
 	case 1:  plotQQ(m);                      break;
 	case 2:  plotScaledResidualsVsFitted(m); break;
 	case 3:  plotScaledResidualQQ(m);        break;
+	case 4:  plotPosteriorDensities(m);      break;
 	default: m_plot->clear();                break;
 	}
 
 	// Show test results only for scaled residual plots.
-	if (plot_type < 2)
+	if (plot_type < 2 || plot_type >= 4)
 		clearTestResults();
 }
 
@@ -2476,6 +2487,108 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 
 	updateTestResults(*sr);
 }
+
+
+void AnalysisView::plotPosteriorDensities(const stats::Model &m)
+{
+	if (!m.is_bayesian())
+	{
+		m_plot->clear();
+		QMessageBox::information(this, tr("Posterior Densities"),
+			tr("Posterior density plots are only available for Bayesian models.\n\n"
+			   "To fit a Bayesian model, select \"Bayesian\" in the Estimation dropdown\n"
+			   "before fitting, or pass a Prior object to fit() in a script."));
+		return;
+	}
+
+	if (m.posterior_mean.empty() || m.posterior_sd.empty())
+	{
+		m_plot->clear();
+		return;
+	}
+
+	static const double inv_sqrt_2pi = 1.0 / std::sqrt(2.0 * M_PI);
+	static const int N_POINTS = 200;
+
+	intptr_t ncoef = m.nfixed;
+	std::vector<PlotWidget::LineCurve> curves;
+	curves.reserve(ncoef);
+
+	// Check if we have a grid summary for mixture evaluation.
+	bool use_grid = m.grid_summary.has_value()
+	             && m.grid_summary->n_points > 0
+	             && !m.grid_summary->weights.empty()
+	             && !m.grid_summary->beta.empty()
+	             && !m.grid_summary->vcov_diag.empty()
+	             && m.grid_summary->n_beta == (int)ncoef;
+
+	for (intptr_t j = 0; j < ncoef; j++)
+	{
+		double mu_j = m.posterior_mean[j + 1];
+		double sd_j = m.posterior_sd[j + 1];
+		if (sd_j <= 0) continue;
+
+		// Determine evaluation range: ±4 SD from posterior mean.
+		double xlo = mu_j - 4.0 * sd_j;
+		double xhi = mu_j + 4.0 * sd_j;
+		double dx = (xhi - xlo) / (N_POINTS - 1);
+
+		PlotWidget::LineCurve curve;
+		curve.name = (j + 1 <= m.coef_names.size())
+			? QString::fromUtf8(m.coef_names[j + 1].data(), (int)m.coef_names[j + 1].size())
+			: QStringLiteral("coef %1").arg(j + 1);
+		curve.x.resize(N_POINTS);
+		curve.y.resize(N_POINTS);
+
+		for (int i = 0; i < N_POINTS; i++)
+		{
+			double x = xlo + i * dx;
+			curve.x[i] = x;
+
+			if (use_grid)
+			{
+				// Mixture density: f(x) = Σ_k w_k × N(x; β_k_j, σ_k_j)
+				auto &gs = *m.grid_summary;
+				int K = gs.n_points;
+				int p = gs.n_beta;
+				double density = 0;
+
+				for (int k = 0; k < K; k++)
+				{
+					double w_k = gs.weights[k];
+					double mu_k = gs.beta[k * p + j];
+					double var_k = gs.vcov_diag[k * p + j];
+					if (var_k <= 0) continue;
+					double sd_k = std::sqrt(var_k);
+					double z = (x - mu_k) / sd_k;
+					density += w_k * inv_sqrt_2pi / sd_k * std::exp(-0.5 * z * z);
+				}
+
+				curve.y[i] = density;
+			}
+			else
+			{
+				// Single Gaussian: N(x; posterior_mean, posterior_sd)
+				double z = (x - mu_j) / sd_j;
+				curve.y[i] = inv_sqrt_2pi / sd_j * std::exp(-0.5 * z * z);
+			}
+		}
+
+		curves.push_back(std::move(curve));
+	}
+
+	if (curves.empty())
+	{
+		m_plot->clear();
+		return;
+	}
+
+	m_plot->setLinePlotData(std::move(curves),
+	                         tr("Coefficient value"), tr("Density"),
+	                         tr("Posterior Densities"));
+	m_plot->clearFixedYTicks();
+}
+
 
 void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 {
@@ -4233,7 +4346,15 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	} else {
 		text += QStringLiteral("Estimation: Frequentist (maximum likelihood)\n");
 	}
-	text += QStringLiteral("Observations: %1\n\n").arg(m.nobs);
+	text += QStringLiteral("Observations: %1\n").arg(m.nobs);
+
+	if (m.is_bayesian())
+	{
+		auto prior_str = stats::format_prior_summary(m.priors, m.family);
+		text += QStringLiteral("\n") + QString::fromStdString(prior_str);
+	}
+
+	text += QStringLiteral("\n");
 
 	// ── Fixed effects ──────────────────────────────────────────────
 
@@ -4490,6 +4611,30 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			text += QString::asprintf("logLik: %.1f\n", m.loglik);
 		if (!std::isnan(m.waic))
 			text += QString::asprintf("WAIC: %.1f  p_WAIC: %.1f  lppd: %.1f\n", m.waic, m.p_waic, m.lppd);
+		if (!std::isnan(m.loo_ic))
+			text += QString::asprintf("LOO-IC: %.1f  p_LOO: %.1f\n", m.loo_ic, m.p_loo);
+
+		// Pareto k diagnostic summary.
+		if (!m.pareto_k.empty())
+		{
+			int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
+			for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+			{
+				double k = m.pareto_k[j];
+				if (k < 0.5)      n_good++;
+				else if (k < 0.7) n_ok++;
+				else if (k < 1.0) n_bad++;
+				else              n_verybad++;
+			}
+			if (n_bad == 0 && n_verybad == 0 && n_ok == 0)
+				text += QStringLiteral("Pareto k: all < 0.5 (good)\n");
+			else if (n_bad == 0 && n_verybad == 0)
+				text += QStringLiteral("Pareto k: %1/%2 > 0.5 (ok, LOO-IC reliable)\n")
+					.arg(n_ok).arg(m.pareto_k.size());
+			else
+				text += QStringLiteral("Pareto k: %1/%2 > 0.7 (LOO-IC may be unreliable; consider WAIC)\n")
+					.arg(n_bad + n_verybad).arg(m.pareto_k.size());
+		}
 	} else {
 		text += QString::asprintf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
 	}

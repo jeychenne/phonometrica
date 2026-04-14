@@ -90,6 +90,17 @@ public:
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
 
+	/// Line plot: multiple named curves on the same axes.
+	/// Used for posterior density plots and other multi-curve displays.
+	struct LineCurve {
+		QString name;
+		std::vector<double> x;
+		std::vector<double> y;
+	};
+	void setLinePlotData(std::vector<LineCurve> curves,
+	                     const QString &x_label, const QString &y_label,
+	                     const QString &title);
+
 	/// Set (or clear) an OLS regression line to overlay on scatter plots.
 	/// The line is y = intercept + slope * x, and r2 is displayed as an annotation.
 	void setRegressionLine(double intercept, double slope, double r2);
@@ -122,7 +133,7 @@ protected:
 
 private:
 
-	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart };
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot };
 
 	struct BoxStats
 	{
@@ -173,6 +184,7 @@ private:
 	void renderBoxPlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
 	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
+	void renderLinePlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderTitle(QPainter &p, int left, int pw, int top);
 	void renderLegend(QPainter &p, int left, int top, int pw, int ph);
 	void rebuildCache();
@@ -237,6 +249,9 @@ private:
 	// Bar chart data
 	std::vector<QString> m_bar_labels;
 	std::vector<int> m_bar_counts;
+
+	// Line plot data (multiple curves)
+	std::vector<LineCurve> m_line_curves;
 
 	// Shared
 	QString m_x_label;
