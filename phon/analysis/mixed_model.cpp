@@ -2404,7 +2404,73 @@ struct GridPointResult
 	Eigen::VectorXd beta;        // conditional mode β̂(θ)
 	Eigen::MatrixXd vcov_beta;   // conditional Var(β|θ), p × p
 	double neg_log_posterior;     // neg-log-posterior at θ
+	Eigen::VectorXd d3;          // SLA third-derivative correction per coefficient (size p)
+	                              // d3_j = Σ_i X³_{ij} ℓ'''(η̂_i)
 };
+
+
+// Check whether a grid point produced valid results.
+// Returns false if β, diag(Σ), or the neg-log-posterior contain NaN or Inf,
+// which can happen when the inner solve (Henderson or PIRLS) fails to converge
+// at an extreme hyperparameter configuration — e.g. a near-singular random-slope
+// covariance matrix pushed further by the CCD grid.
+static bool grid_point_valid(const GridPointResult &gpr, intptr_t p)
+{
+	if (!std::isfinite(gpr.neg_log_posterior))
+		return false;
+	if (gpr.beta.size() != p)
+		return false;
+	for (intptr_t j = 0; j < p; j++)
+	{
+		if (!std::isfinite(gpr.beta[j]))
+			return false;
+		if (gpr.vcov_beta.rows() > j && !std::isfinite(gpr.vcov_beta(j, j)))
+			return false;
+		if (gpr.vcov_beta.rows() > j && gpr.vcov_beta(j, j) < 0)
+			return false;
+	}
+	return true;
+}
+
+
+// Sanitise grid evaluation results: set invalid points to -∞ log-posterior
+// (zero weight) and zero out their beta/vcov_beta to prevent NaN propagation
+// (since 0 × NaN = NaN in IEEE 754).  Returns the number of valid points.
+// Throws a user-friendly error if no valid points remain.
+static intptr_t sanitise_grid_points(
+	std::vector<GridPointResult> &results,
+	std::vector<double> &log_posterior,
+	intptr_t n_grid, intptr_t p)
+{
+	intptr_t n_valid = 0;
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		if (grid_point_valid(results[k], p))
+		{
+			n_valid++;
+		}
+		else
+		{
+			log_posterior[k] = -std::numeric_limits<double>::infinity();
+			// Zero out results so that w[k] * beta[k] = 0 * 0 = 0, not 0 * NaN.
+			results[k].beta = Eigen::VectorXd::Zero(p);
+			results[k].vcov_beta = Eigen::MatrixXd::Zero(p, p);
+			results[k].d3 = Eigen::VectorXd::Zero(p);
+			results[k].neg_log_posterior = std::numeric_limits<double>::infinity();
+		}
+	}
+	if (n_valid == 0)
+	{
+		throw error(
+			"Bayesian grid integration failed: all %ld evaluation points produced "
+			"invalid results (NaN or non-finite values). This typically happens when "
+			"the model is too complex for the data — for example, a random-slope "
+			"specification whose variance cannot be estimated reliably. Consider "
+			"simplifying the random-effects structure (e.g. removing random slopes "
+			"or using a random-intercept-only model).", (long)n_grid);
+	}
+	return n_valid;
+}
 
 
 // Finite-difference Hessian of an objective at a given point.
@@ -2629,6 +2695,9 @@ static GridPointResult eval_gaussian_grid_point(
 	Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 	gpr.vcov_beta = Cinv.topLeftCorner(p, p);
 
+	// Gaussian ℓ'''(η) = 0 ⇒ no simplified Laplace correction.
+	gpr.d3 = Eigen::VectorXd::Zero(p);
+
 	return gpr;
 }
 
@@ -2834,6 +2903,34 @@ static GridPointResult eval_pirls_grid_point(
 	Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
 	Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 	gpr.vcov_beta = Cinv.topLeftCorner(p, p);
+
+	// ── Simplified Laplace correction: third derivative d₃ ──────
+	//
+	// d3_j = Σ_i X³_{ij} × ℓ'''(η̂_i)
+	//
+	// where ℓ'''(η) is the third derivative of the per-observation
+	// log-likelihood w.r.t. η.  For non-Gaussian families this is
+	// generally nonzero and captures the skewness of the posterior.
+	//
+	// Reference: Rue, Martino & Chopin (2009), Section 3.2.2.
+
+	gpr.d3 = Eigen::VectorXd::Zero(p);
+	if (fam_gp.loglik_d3)
+	{
+		// Compute η̂ = g(μ̂) via the link function.
+		Eigen::VectorXd eta_hat = fam_gp.link(res.mu);
+		Eigen::VectorXd ell3 = fam_gp.loglik_d3(ym, res.mu, eta_hat);
+
+		for (intptr_t j = 0; j < p; j++)
+		{
+			double sum = 0;
+			for (intptr_t i = 0; i < n; i++) {
+				double xij = Xm(i, j);
+				sum += xij * xij * xij * ell3[i];
+			}
+			gpr.d3[j] = sum;
+		}
+	}
 
 	return gpr;
 }
@@ -3052,6 +3149,9 @@ static void inla_grid_integrate_gaussian(
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
 
+	// ── 4b. Discard invalid grid points ──────────────────────────
+	sanitise_grid_points(results, log_posterior, n_grid, p);
+
 	// ── 5. Integration weights ───────────────────────────────────
 	//
 	// For deterministic CCD integration, weights are proportional to the
@@ -3082,20 +3182,40 @@ static void inla_grid_integrate_gaussian(
 		w[k] /= sum_w;
 	}
 
+	// ── 5b. SLA-corrected conditional means ─────────────────────
+	//
+	// For Gaussian LMMs, ℓ'''(η) = 0 for all observations, so d₃ = 0
+	// and sla_beta[k] == results[k].beta identically.  We include the
+	// same structure as the PIRLS path for code consistency.
+
+	std::vector<Eigen::VectorXd> sla_beta(n_grid);
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		sla_beta[k] = results[k].beta;
+		if (results[k].d3.size() == p)
+		{
+			for (intptr_t j = 0; j < p; j++)
+			{
+				double s2 = results[k].vcov_beta(j, j);
+				sla_beta[k][j] += 0.5 * results[k].d3[j] * s2 * s2;
+			}
+		}
+	}
+
 	// ── 6. Mixture posterior for β ───────────────────────────────
 	//
-	// E[β] = Σ_k w_k β̂_k
-	// Var[β] = Σ_k w_k [Σ_k + (β̂_k − E[β])(β̂_k − E[β])']
+	// E[β] = Σ_k w_k β̃_k
+	// Var[β] = Σ_k w_k [Σ_k + (β̃_k − E[β])(β̃_k − E[β])']
 
 	Eigen::VectorXd mix_mean = Eigen::VectorXd::Zero(p);
 	for (intptr_t k = 0; k < n_grid; k++) {
-		mix_mean += w[k] * results[k].beta;
+		mix_mean += w[k] * sla_beta[k];
 	}
 
 	Eigen::MatrixXd mix_var = Eigen::MatrixXd::Zero(p, p);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		Eigen::VectorXd diff = results[k].beta - mix_mean;
+		Eigen::VectorXd diff = sla_beta[k] - mix_mean;
 		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
 	}
 
@@ -3105,13 +3225,13 @@ static void inla_grid_integrate_gaussian(
 	double z_975 = boost::math::quantile(normal, 0.975);
 
 	// Mixture CDF for coefficient j at value x:
-	//   F_j(x) = Σ_k w_k Φ((x − β̂_k[j]) / σ_k[j])
+	//   F_j(x) = Σ_k w_k Φ((x − β̃_k[j]) / σ_k[j])
 	auto mix_cdf = [&](intptr_t j, double x) -> double
 	{
 		double cdf = 0;
 		for (intptr_t k = 0; k < n_grid; k++)
 		{
-			double mu_k = results[k].beta[j];
+			double mu_k = sla_beta[k][j];
 			double sd_k = std::sqrt(std::max(results[k].vcov_beta(j, j), 1e-20));
 			cdf += w[k] * boost::math::cdf(normal, (x - mu_k) / sd_k);
 		}
@@ -3341,6 +3461,9 @@ static void inla_grid_integrate_pirls(
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
 
+	// ── 4b. Discard invalid grid points ──────────────────────────
+	sanitise_grid_points(results, log_posterior, n_grid, p);
+
 	// ── 5. Integration weights ───────────────────────────────────
 	// w_k ∝ exp(-neg_log_posterior_k)
 	std::vector<double> log_w(n_grid);
@@ -3362,16 +3485,45 @@ static void inla_grid_integrate_pirls(
 		w[k] /= sum_w;
 	}
 
+	// ── 5b. SLA-corrected conditional means ─────────────────────
+	//
+	// Simplified Laplace correction (Rue, Martino & Chopin 2009 §3.2.2):
+	// The Gaussian approximation π̃_G(β_j | θ_k) = N(μ_j, σ²_j) is corrected
+	// by shifting the component mean to account for third-derivative skewness:
+	//
+	//   μ̃_j(θ_k) = μ_j(θ_k) + ½ d₃_j(θ_k) σ⁴_j(θ_k)
+	//
+	// For Gaussian families d₃ = 0, so no correction.  For non-Gaussian
+	// families (binomial, Poisson, NB, beta, Student), this captures the
+	// skewness of the log-full-conditional and matters for small-sample
+	// GLMMs with skewed variance-component posteriors.
+	//
+	// The variance correction is O(n⁻²) and is not applied.
+
+	std::vector<Eigen::VectorXd> sla_beta(n_grid);
+	for (intptr_t k = 0; k < n_grid; k++)
+	{
+		sla_beta[k] = results[k].beta;
+		if (results[k].d3.size() == p)
+		{
+			for (intptr_t j = 0; j < p; j++)
+			{
+				double s2 = results[k].vcov_beta(j, j);
+				sla_beta[k][j] += 0.5 * results[k].d3[j] * s2 * s2;
+			}
+		}
+	}
+
 	// ── 6. Mixture posterior for β ───────────────────────────────
 	Eigen::VectorXd mix_mean = Eigen::VectorXd::Zero(p);
 	for (intptr_t k = 0; k < n_grid; k++) {
-		mix_mean += w[k] * results[k].beta;
+		mix_mean += w[k] * sla_beta[k];
 	}
 
 	Eigen::MatrixXd mix_var = Eigen::MatrixXd::Zero(p, p);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		Eigen::VectorXd diff = results[k].beta - mix_mean;
+		Eigen::VectorXd diff = sla_beta[k] - mix_mean;
 		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
 	}
 
@@ -3385,7 +3537,7 @@ static void inla_grid_integrate_pirls(
 		double cdf = 0;
 		for (intptr_t k = 0; k < n_grid; k++)
 		{
-			double mu_k = results[k].beta[j];
+			double mu_k = sla_beta[k][j];
 			double sd_k = std::sqrt(std::max(results[k].vcov_beta(j, j), 1e-20));
 			cdf += w[k] * boost::math::cdf(normal, (x - mu_k) / sd_k);
 		}
