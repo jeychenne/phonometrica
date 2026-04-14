@@ -98,6 +98,17 @@ struct Family
 	// Student t:  w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²).
 	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu)> custom_weights;
 
+	// Third derivative of per-observation log-likelihood w.r.t. linear predictor η.
+	// Returns ℓ'''(η_i) for each observation.  Used by the simplified Laplace
+	// correction (Tierney-Kadane skewness adjustment) in INLA grid integration.
+	//
+	// For Gaussian: identically zero (no correction needed).
+	// For other families: captures the skewness of the log-likelihood surface.
+	//
+	// Reference: Rue, Martino & Chopin (2009), Section 3.2.2.
+	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu,
+	                             const Vector<double> &eta)> loglik_d3;
+
 	// Factory methods for supported families.
 	static Family gaussian();
 	static Family binomial();
@@ -484,6 +495,118 @@ inline Vector<double> student_deviance_residuals(const Vector<double> &y, const 
 } // namespace detail
 
 // ---------------------------------------------------------------------------
+// Third derivative of per-observation log-likelihood w.r.t. η.
+// Placed outside detail:: because some use lambdas capturing family params.
+// ---------------------------------------------------------------------------
+
+namespace d3_detail {
+
+// Gaussian (identity link): ℓ(η) = -(y-η)²/(2σ²) → ℓ'''(η) = 0 for all observations.
+inline Vector<double> gaussian_d3(const Vector<double> &y, const Vector<double> &mu,
+                                   const Vector<double> &eta)
+{
+	return Vector<double>::Zero(y.size());
+}
+
+// Poisson (log link): ℓ(η) = yη - exp(η) → ℓ'''(η) = -exp(η) = -μ.
+inline Vector<double> poisson_d3(const Vector<double> &y, const Vector<double> &mu,
+                                  const Vector<double> &eta)
+{
+	return -mu;
+}
+
+// Binomial (logit link): ℓ'''(η) = -μ(1-μ)(1-2μ).
+inline Vector<double> binomial_d3(const Vector<double> &y, const Vector<double> &mu,
+                                   const Vector<double> &eta)
+{
+	intptr_t n = y.size();
+	Vector<double> d3(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double m = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
+		d3[i] = -m * (1.0 - m) * (1.0 - 2.0 * m);
+	}
+	return d3;
+}
+
+// Negative binomial (log link):
+//   ℓ''(η)  = -θμ(θ+y) / (μ+θ)²
+//   ℓ'''(η) = -θμ(θ+y)(θ-μ) / (μ+θ)³
+// where μ = exp(η), θ = NB size parameter.
+inline Vector<double> negbin_d3(const Vector<double> &y, const Vector<double> &mu,
+                                 const Vector<double> &eta, double theta)
+{
+	intptr_t n = y.size();
+	Vector<double> d3(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double m = std::max(mu[i], 1e-10);
+		double mt = m + theta;
+		d3[i] = -theta * m * (theta + y[i]) * (theta - m) / (mt * mt * mt);
+	}
+	return d3;
+}
+
+// Beta (logit link): per-observation numerical third derivative via
+// central differences on the per-observation log-likelihood.
+//
+// ℓ_i(η) = lgamma(φ) − lgamma(μφ) − lgamma((1−μ)φ)
+//         + (μφ−1)log(y_i) + ((1−μ)φ−1)log(1−y_i)
+// where μ = 1/(1+exp(−η)).
+inline Vector<double> beta_d3(const Vector<double> &y, const Vector<double> &mu,
+                               const Vector<double> &eta, double phi)
+{
+	intptr_t n = y.size();
+	Vector<double> d3(n);
+	double h = 1e-4;
+	double inv_2h3 = 1.0 / (2.0 * h * h * h);
+
+	auto per_obs_ll = [phi](double yi, double eta_i) -> double
+	{
+		double mu_i = 1.0 / (1.0 + std::exp(-eta_i));
+		mu_i = std::clamp(mu_i, 1e-10, 1.0 - 1e-10);
+		yi = std::clamp(yi, 1e-10, 1.0 - 1e-10);
+		double a = mu_i * phi;
+		double b = (1.0 - mu_i) * phi;
+		return std::lgamma(phi) - std::lgamma(a) - std::lgamma(b)
+		       + (a - 1.0) * std::log(yi) + (b - 1.0) * std::log(1.0 - yi);
+	};
+
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double e = eta[i];
+		double f_p2 = per_obs_ll(y[i], e + 2.0 * h);
+		double f_p1 = per_obs_ll(y[i], e + h);
+		double f_m1 = per_obs_ll(y[i], e - h);
+		double f_m2 = per_obs_ll(y[i], e - 2.0 * h);
+		d3[i] = (f_p2 - 2.0 * f_p1 + 2.0 * f_m1 - f_m2) * inv_2h3;
+	}
+	return d3;
+}
+
+// Student t (identity link):
+//   ℓ_i(η) = const − (ν+1)/2 · log(1 + r²/(νσ²))   where r = y_i − η
+//   ℓ'''(η) = −2(ν+1) r (3νσ² − r²) / (νσ² + r²)³
+inline Vector<double> student_d3(const Vector<double> &y, const Vector<double> &mu,
+                                  const Vector<double> &eta, double sigma, double nu)
+{
+	intptr_t n = y.size();
+	Vector<double> d3(n);
+	double s2 = nu * sigma * sigma;
+
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double r = y[i] - mu[i]; // identity link: η = μ
+		double r2 = r * r;
+		double denom = s2 + r2;
+		d3[i] = -2.0 * (nu + 1.0) * r * (3.0 * s2 - r2) / (denom * denom * denom);
+	}
+	return d3;
+}
+
+} // namespace d3_detail
+
+// ---------------------------------------------------------------------------
 // Factory method implementations (inline for header-only convenience)
 // ---------------------------------------------------------------------------
 
@@ -499,6 +622,7 @@ inline Family Family::gaussian()
 	f.variance = detail::gaussian_variance;
 	f.mu_eta = detail::gaussian_mu_eta;
 	f.deviance_residuals = detail::gaussian_deviance_residuals;
+	f.loglik_d3 = d3_detail::gaussian_d3;
 	return f;
 }
 
@@ -514,6 +638,7 @@ inline Family Family::binomial()
 	f.variance = detail::binomial_variance;
 	f.mu_eta = detail::binomial_mu_eta;
 	f.deviance_residuals = detail::binomial_deviance_residuals;
+	f.loglik_d3 = d3_detail::binomial_d3;
 	return f;
 }
 
@@ -529,6 +654,7 @@ inline Family Family::poisson()
 	f.variance = detail::poisson_variance;
 	f.mu_eta = detail::poisson_mu_eta;
 	f.deviance_residuals = detail::poisson_deviance_residuals;
+	f.loglik_d3 = d3_detail::poisson_d3;
 	return f;
 }
 
@@ -551,6 +677,10 @@ inline Family Family::negbin(double theta)
 	};
 	f.deviance_residuals = [theta](const Vector<double> &y, const Vector<double> &mu) {
 		return detail::negbin_deviance_residuals(y, mu, theta);
+	};
+	f.loglik_d3 = [theta](const Vector<double> &y, const Vector<double> &mu,
+	                       const Vector<double> &eta) {
+		return d3_detail::negbin_d3(y, mu, eta, theta);
 	};
 	return f;
 }
@@ -576,6 +706,10 @@ inline Family Family::beta(double phi)
 	};
 	f.deviance_residuals = [phi](const Vector<double> &y, const Vector<double> &mu) {
 		return detail::beta_deviance_residuals(y, mu, phi);
+	};
+	f.loglik_d3 = [phi](const Vector<double> &y, const Vector<double> &mu,
+	                     const Vector<double> &eta) {
+		return d3_detail::beta_d3(y, mu, eta, phi);
 	};
 	return f;
 }
@@ -605,6 +739,10 @@ inline Family Family::student(double sigma, double nu)
 	};
 	f.custom_weights = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
 		return detail::student_weights(y, mu, sigma, nu);
+	};
+	f.loglik_d3 = [sigma, nu](const Vector<double> &y, const Vector<double> &mu,
+	                           const Vector<double> &eta) {
+		return d3_detail::student_d3(y, mu, eta, sigma, nu);
 	};
 	return f;
 }

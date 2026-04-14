@@ -26,6 +26,10 @@ The top bar contains the following elements:
   to see the corresponding statistical family and link function.
 - **Fit**: fits the model described by the current formula and outcome type. The fitted model is
   added to the model list.
+- **Estimation**: choose between **Frequentist** (maximum likelihood with Wald-based *p*-values,
+  the default) and **Bayesian** (approximate Bayesian inference with weakly informative priors,
+  reporting posterior means, credible intervals, and probability of direction). See
+  `Bayesian estimation`_ below.
 - **Help** (|help|): opens this documentation page.
 
 
@@ -575,6 +579,244 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    random effects are present.
 
 
+Bayesian estimation
+-------------------
+
+Phonometrica supports approximate Bayesian inference as an alternative to frequentist
+maximum-likelihood estimation. In Bayesian mode, the model reports posterior summaries
+(posterior mean, credible intervals, probability of direction) rather than frequentist
+*p*-values, and uses WAIC for model comparison instead of AIC/BIC.
+
+To switch to Bayesian estimation, select **Bayesian** in the **Estimation** dropdown in the
+top bar before clicking **Fit**. The model label in the Models panel will be marked with
+**(B)** to distinguish Bayesian from frequentist fits.
+
+
+When to use Bayesian estimation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Bayesian estimation can be useful in several situations:
+
+- When you want to make probability statements about the parameters directly ("the
+  probability that the effect of vowel height on F1 is positive is 0.997") rather than
+  reasoning about hypothetical repeated sampling (*p*-values).
+- When you have small samples or sparse grouping factors, where the regularization provided
+  by priors can stabilize estimation and reduce overfitting.
+- When *p*-values hover near conventional thresholds and you want a continuous measure of
+  evidence (the probability of direction).
+- When you want to compare non-nested models on a common information-theoretic scale (WAIC).
+
+For most phonetics and sociophonetics applications with reasonably sized corpora, frequentist
+and Bayesian estimates will agree closely. The Bayesian mode is most informative when the
+data are limited or when you want to avoid the dichotomous logic of null-hypothesis
+significance testing.
+
+
+Priors
+~~~~~~
+
+Bayesian estimation requires prior distributions for the model parameters. Phonometrica uses
+**data-dependent weakly informative defaults** following the approach of
+`brms <https://CRAN.R-project.org/package=brms>`_ (Bürkner, 2017). These defaults are scaled
+to the response variable so that they are genuinely weakly informative regardless of the
+measurement scale (Hz, bark, semitones, milliseconds, etc.):
+
+- **Fixed effects (slopes)**: Normal(0, *s*), where *s* = max(2.5, 2.5 × sd(*y*\ :sub:`link`)).
+- **Intercept**: Normal(mean(*y*\ :sub:`link`), *s*), centered on the response mean.
+- **Variance components** (random-effect SDs): Penalized complexity prior
+  PC(*s*, 0.05), meaning P(σ > *s*) = 0.05 (Simpson et al., 2017).
+- **Residual SD** (Gaussian family): PC(*s*, 0.05).
+- **Dispersion parameters**: Gamma(1, 0.01) for negative binomial θ and beta φ.
+
+Here *y*\ :sub:`link` denotes the response on the link scale (identity for Gaussian/Student,
+logit for binomial/beta, log for Poisson/NB). The priors are broad enough that they have
+minimal influence on the posterior when the data are informative, but they prevent the
+optimizer from wandering into implausible regions of the parameter space when the data are
+sparse.
+
+**Customizing priors.** When you select Bayesian estimation, a collapsible **Priors** panel
+appears below the top bar. Each prior has an **Auto** checkbox (checked by default). Uncheck
+it to enter custom values:
+
+- *Fixed effects*: set the mean and standard deviation of the Normal prior applied to all
+  slope coefficients. The intercept automatically receives a prior centered on the
+  response mean.
+- *Variance components*: choose among PC (penalized complexity), Half-Cauchy, or
+  Half-Normal priors for the random-effect standard deviations, and set the scale parameter.
+- *Residual*: same choices as variance components, for the residual SD (Gaussian only).
+
+When **Auto** is checked, the italic text next to the Priors header shows the computed scale
+value after fitting.
+
+
+Estimation method
+~~~~~~~~~~~~~~~~~
+
+Phonometrica uses INLA-style approximate Bayesian inference (Rue, Martino & Chopin, 2009),
+not Markov chain Monte Carlo (MCMC). This means that results are available in seconds rather
+than minutes or hours, with no convergence diagnostics to worry about.
+
+The estimation proceeds differently depending on the model structure:
+
+**Fixed-effects models** (no random effects, no dispersion parameter): the frequentist MLE
+is computed first, then a Gaussian posterior approximation is applied by combining the
+Fisher information with the prior precision. This is exact for Gaussian linear models and
+highly accurate for GLMs with moderate to large samples.
+
+**Mixed-effects models and dispersion families** (NB, beta, Student *t*): the negative
+log-posterior (likelihood × prior) is optimized directly, with the prior entering the
+objective function. For mixed-effects models, a two-phase optimization finds the joint
+posterior mode over fixed effects β and variance parameters θ.
+
+For mixed-effects models, the posterior is then refined via **grid integration** over the
+hyperparameters θ (variance component SDs, dispersion parameters). This follows the INLA
+strategy:
+
+1. A Hessian at the posterior mode defines a Gaussian approximation to the hyperparameter
+   posterior.
+2. A central composite design (CCD) grid of evaluation points is constructed in the
+   standardized eigenspace of this Gaussian.
+3. At each grid point θ\ :sub:`k`, the conditional posterior of the fixed effects β given
+   θ\ :sub:`k` is computed, yielding a conditional mean β̂(θ\ :sub:`k`) and covariance
+   Σ(θ\ :sub:`k`).
+4. The results are combined into a mixture-of-Gaussians posterior, with weights proportional
+   to the unnormalized posterior density at each grid point.
+
+This grid integration provides full marginal posteriors for both the fixed effects and the
+hyperparameters (variance component SDs, dispersion parameters, residual SD), capturing
+uncertainty from the hyperparameters that a simple plug-in estimate at the mode would miss.
+
+**Simplified Laplace correction.** For non-Gaussian families (binomial, Poisson, negative
+binomial, beta, Student *t*), the conditional posterior of each fixed effect β\ :sub:`j`
+given θ\ :sub:`k` is not exactly Gaussian — it has skewness arising from the nonlinear
+log-likelihood. Phonometrica applies the simplified Laplace correction (Rue et al., 2009,
+§3.2.2; Tierney & Kadane, 1986), which shifts the conditional mean by a term proportional to
+the third derivative of the log-likelihood:
+
+.. math::
+
+   \tilde{\mu}_j(\theta_k) = \hat{\mu}_j(\theta_k) + \tfrac{1}{2}\, d_{3,j}\, \sigma_j^4(\theta_k)
+
+where *d*\ :sub:`3,j` = Σ\ :sub:`i` *X*\ :sub:`ij`\ ³ ℓ‴(η̂\ :sub:`i`) is the third
+derivative of the log-full-conditional of β\ :sub:`j` at its conditional mode. For Gaussian
+models this correction is exactly zero (the log-likelihood is quadratic in η), so it only
+affects non-Gaussian families. The correction matters most for small-sample GLMMs with
+skewed variance-component posteriors; for typical phonetics datasets it is small but
+provides a more principled approximation.
+
+
+Summary tab (Bayesian mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a Bayesian model is selected, the Summary tab displays posterior summaries instead of
+frequentist test statistics:
+
+**Coefficient table columns:**
+
+- **Estimate**: the posterior mean of each coefficient.
+- **Est.Error**: the posterior standard deviation.
+- **l-95% CrI** / **u-95% CrI**: bounds of the 95% credible interval. Unlike frequentist
+  confidence intervals, a credible interval has a direct probabilistic interpretation: given
+  the data and the priors, there is a 95% probability that the parameter lies in this range.
+  For mixed-effects models, these are quantiles of the mixture posterior (accounting for
+  hyperparameter uncertainty), not of a single Gaussian.
+- **pd**: the probability of direction, defined as max(P(β > 0), P(β < 0)). This is the
+  Bayesian counterpart to the frequentist *p*-value. A pd of 0.975 means there is a 97.5%
+  posterior probability that the effect has the same sign as the estimate. Significance codes
+  are based on pd thresholds: \*\*\* (pd ≥ 0.999), \*\* (pd ≥ 0.99), \* (pd ≥ 0.975),
+  . (pd ≥ 0.95).
+
+**Goodness of fit:**
+
+- **WAIC** (Watanabe–Akaike information criterion): a Bayesian analogue of AIC that
+  estimates the out-of-sample predictive accuracy of the model (Watanabe, 2010; Gelman,
+  Hwang & Vehtari, 2014). Lower WAIC indicates better expected predictive performance.
+  WAIC is reported with its standard error (SE) and the effective number of parameters
+  (*p*\ :sub:`WAIC`), which measures model complexity on the posterior-predictive scale.
+  WAIC is computed from 1000 posterior draws at fit time.
+- **LPPD** (log pointwise predictive density): the sum of the log-predictive densities
+  at each observation, averaged over the posterior. WAIC = −2 × LPPD + 2 × *p*\ :sub:`WAIC`.
+- **Log-marginal likelihood**: the Laplace-approximated log p(*y* | *M*), which can be used
+  for Bayes factor computation between models.
+
+**Hyperparameter posteriors:**
+
+For mixed-effects models, the random-effects table reports posterior means and 95% credible
+intervals for each variance component SD (e.g. sd(Intercept|speaker), sd(residual)),
+obtained from the grid integration. For families with dispersion parameters, the table also
+includes the posterior of θ\ :sub:`NB`, φ\ :sub:`beta`, or σ and ν for Student *t*.
+
+.. note::
+
+   **Posterior mode, mean, and median.** For symmetric posteriors (typical with large
+   samples), these three coincide. For small samples or skewed posteriors, they may differ.
+   Phonometrica reports the posterior mean in the coefficient table (as does brms), but all
+   three are stored internally and available via the scripting API. The posterior mode
+   corresponds to the MAP (maximum *a posteriori*) estimate.
+
+
+Post-hoc tab (Bayesian mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When a Bayesian model is selected, the Post-hoc tab reports estimated marginal means and
+pairwise contrasts using posterior-based inference:
+
+- **CrI** (credible intervals) replace confidence intervals in the EMM table.
+- **pd** (probability of direction) replaces adjusted *p*-values in the contrast table.
+  For each pairwise contrast, pd = Φ(|δ̂/SE|), where δ̂ is the posterior mean of the contrast
+  and SE is its posterior standard deviation.
+- **No multiplicity adjustment** is applied, because pd is not a *p*-value and the
+  family-wise error rate framework does not apply in the Bayesian context. The Adjustment
+  dropdown is grayed out.
+
+
+Diagnostics tab (Bayesian mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The diagnostic plots work the same way in Bayesian mode, but the residual tests use
+**posterior predictive checking** (PPC) instead of frequentist simulation:
+
+1. For each of 200 replicates, a new coefficient vector β\ :sup:`(r)` is drawn from the
+   posterior (sampling a grid point with probability proportional to its weight, then drawing
+   from the conditional Gaussian at that grid point).
+2. A new response vector is simulated from the model using β\ :sup:`(r)` (plus the
+   conditional random-effects modes and dispersion parameters from the sampled grid point).
+3. The same KS, dispersion, and outlier test statistics are computed on the simulated data.
+4. The proportion of replicates where the simulated test statistic exceeds the observed value
+   is the **Bayesian p-value** — a measure of how well the model's predictions match the
+   observed data.
+
+A Bayesian p-value near 0.5 indicates good calibration; values near 0 or 1 indicate
+systematic discrepancy between the model and the data. Unlike frequentist *p*-values, these
+do not reject a null hypothesis; they measure predictive adequacy.
+
+
+Model comparison (Bayesian mode)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When comparing Bayesian models, the **Compare** button produces:
+
+- **WAIC table**: each model's WAIC, *p*\ :sub:`WAIC`, LPPD, and SE(WAIC), sorted from
+  best (lowest WAIC) to worst.
+- **ΔWAIC**: the difference in WAIC between each model and the best model, with its
+  standard error. A model whose ΔWAIC is within ~2 SE of zero is not meaningfully worse
+  than the best model.
+- **Log-marginal likelihood** and **Bayes factors**: for each pair of models, the log Bayes
+  factor is computed as the difference of the log-marginal likelihoods. A log BF > 3
+  (BF > 20) is conventionally considered strong evidence in favor of the better model.
+
+Frequentist and Bayesian models cannot be compared in the same operation — if you select a
+mix, Phonometrica will ask you to select only one type.
+
+.. note::
+
+   **Interpreting WAIC vs AIC.** WAIC and AIC are both information criteria that balance
+   fit against complexity, but they measure different things. AIC uses the maximum-likelihood
+   point estimate; WAIC averages over the posterior. For large samples with weak priors, WAIC
+   and AIC converge. For small samples or informative priors, WAIC is generally preferred
+   because it accounts for parameter uncertainty and prior regularization.
+
+
 Tips
 ----
 
@@ -615,10 +857,14 @@ References
   Skaug, H.J., Mächler, M. & Bolker, B.M. (2017). glmmTMB balances speed and flexibility
   among packages for zero-inflated generalized linear mixed modeling. *The R Journal*, 9(2),
   378–400.
+- Bürkner, P.-C. (2017). brms: An R package for Bayesian multilevel models using Stan.
+  *Journal of Statistical Software*, 80(1), 1–28.
 - Dunn, P.K. & Smyth, G.K. (1996). Randomized quantile residuals. *Journal of
   Computational and Graphical Statistics*, 5(3), 236–244.
 - Ferrari, S.L.P. & Cribari-Neto, F. (2004). Beta regression for modelling rates and
   proportions. *Journal of Applied Statistics*, 31(7), 799–815.
+- Gelman, A., Hwang, J. & Vehtari, A. (2014). Understanding predictive information criteria
+  for Bayesian models. *Statistics and Computing*, 24(6), 997–1016.
 - Hartig, F. (2020). DHARMa: Residual diagnostics for hierarchical (multi-level / mixed)
   regression models. R package. https://CRAN.R-project.org/package=DHARMa
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure.
@@ -632,9 +878,20 @@ References
 - Nakagawa, S. & Schielzeth, H. (2013). A general and simple method for obtaining
   R² from generalized linear mixed-effects models. *Methods in Ecology and Evolution*,
   4(2), 133–142.
+- Rue, H., Martino, S. & Chopin, N. (2009). Approximate Bayesian inference for latent
+  Gaussian models by using integrated nested Laplace approximations. *Journal of the Royal
+  Statistical Society: Series B*, 71(2), 319–392.
 - Searle, S.R., Speed, F.M. & Milliken, G.A. (1980). Population marginal means in the
   linear model: an alternative to least squares means. *The American Statistician*,
   34(4), 216–221.
+- Simpson, D., Rue, H., Riebler, A., Martino, T.G. & Sørbye, S.H. (2017). Penalising model
+  component complexity: a principled, practical approach to constructing priors. *Statistical
+  Science*, 32(1), 1–28.
+- Tierney, L. & Kadane, J.B. (1986). Accurate approximations for posterior moments and
+  marginal densities. *Journal of the American Statistical Association*, 81(393), 82–86.
+- Watanabe, S. (2010). Asymptotic equivalence of Bayes cross validation and widely
+  applicable information criterion in singular learning theory. *Journal of Machine Learning
+  Research*, 11, 3571–3594.
 - Wood, S.N. (2017). *Generalized Additive Models: An Introduction with R* (2nd ed.).
   CRC Press.
 
