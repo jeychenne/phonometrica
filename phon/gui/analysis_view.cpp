@@ -4527,6 +4527,24 @@ static QString formatSignificance(double p)
 	return QString();
 }
 
+// Format a probability of direction (pd) value for Bayesian contrasts.
+static QString formatPd(double pd)
+{
+	if (pd >= 0.99995)
+		return QStringLiteral("1.0000");
+	return QString::asprintf("%.4f", pd);
+}
+
+// Significance stars for pd, using the same thresholds as the model summary.
+static QString formatPdSignificance(double pd)
+{
+	if (pd >= 0.999)  return QStringLiteral("***");
+	if (pd >= 0.99)   return QStringLiteral("**");
+	if (pd >= 0.975)  return QStringLiteral("*");
+	if (pd >= 0.95)   return QStringLiteral(".");
+	return QString();
+}
+
 void AnalysisView::populatePostHocFactors()
 {
 	m_posthoc_factor_combo->blockSignals(true);
@@ -4622,6 +4640,22 @@ void AnalysisView::updatePostHoc()
 	double conf_level = m_posthoc_conf_spin->value();
 
 	bool is_identity = (model.link == "identity");
+	bool bayesian = model.is_bayesian();
+
+	// For Bayesian models, force adjustment to "none" (pd is a posterior
+	// probability, not an error rate — multiplicity adjustment does not apply).
+	if (bayesian) {
+		adjustment = "none";
+	}
+
+	// Disable the adjustment combo for Bayesian models (pd is a posterior
+	// probability — multiplicity adjustment does not apply).
+	m_posthoc_adj_combo->setEnabled(!bayesian);
+	if (bayesian) {
+		m_posthoc_adj_combo->blockSignals(true);
+		m_posthoc_adj_combo->setCurrentIndex(m_posthoc_adj_combo->findData(QStringLiteral("none")));
+		m_posthoc_adj_combo->blockSignals(false);
+	}
 
 	// Determine whether we are in emtrends mode.
 	bool trend_mode = (m_posthoc_trend_combo->currentIndex() > 0);
@@ -4648,18 +4682,23 @@ void AnalysisView::updatePostHoc()
 		QString value_link_header = trend_mode ? tr("Slope (link)") : tr("EMM (link)");
 		bool show_link_cols = !is_identity && !trend_mode;
 
+		// Use "CrI" (credible interval) for Bayesian, "CI" for frequentist.
+		QString ci_lower = bayesian ? tr("Lower CrI") : tr("Lower CI");
+		QString ci_upper = bayesian ? tr("Upper CrI") : tr("Upper CI");
+
 		QStringList emm_headers;
 		if (by_mode) {
 			emm_headers << by_qstr;
 		}
 		emm_headers << tr("Level") << value_header << tr("SE")
-		            << tr("Lower CI") << tr("Upper CI");
+		            << ci_lower << ci_upper;
 		if (show_link_cols) {
 			emm_headers << value_link_header << tr("SE (link)");
 		}
 
 		// Column headers for contrast table.
 		QString stat_header;
+		QString pval_header = bayesian ? tr("pd") : tr("p value");
 
 		QStringList con_headers;
 		if (by_mode) {
@@ -4667,7 +4706,7 @@ void AnalysisView::updatePostHoc()
 		}
 		con_headers << tr("Contrast") << tr("Estimate") << tr("SE");
 		int stat_header_col = con_headers.size();
-		con_headers << QString() << tr("p value") << QString();
+		con_headers << QString() << pval_header << QString();
 
 		// ── Helper lambda to populate one EMMResult + ContrastResult ──
 
@@ -4722,7 +4761,10 @@ void AnalysisView::updatePostHoc()
 			{
 				int row = con_row0 + (int)i;
 				double pval = contrasts.p_value[i + 1];
-				bool sig = (pval < 0.05);
+				bool is_bayesian_contrast = contrasts.is_bayesian;
+
+				// Highlight: for frequentist, p < 0.05; for Bayesian, pd >= 0.975 ("*" threshold).
+				bool sig = is_bayesian_contrast ? (pval >= 0.975) : (pval < 0.05);
 
 				if (by_mode) {
 					m_posthoc_contrast_table->setItem(row, 0, new QTableWidgetItem(by_label));
@@ -4744,11 +4786,13 @@ void AnalysisView::updatePostHoc()
 				stat_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 3, stat_item);
 
-				auto *p_item = new QTableWidgetItem(formatPValue(pval));
+				auto *p_item = new QTableWidgetItem(
+					is_bayesian_contrast ? formatPd(pval) : formatPValue(pval));
 				p_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 4, p_item);
 
-				auto *sig_item = new QTableWidgetItem(formatSignificance(pval));
+				auto *sig_item = new QTableWidgetItem(
+					is_bayesian_contrast ? formatPdSignificance(pval) : formatSignificance(pval));
 				sig_item->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 5, sig_item);
 
