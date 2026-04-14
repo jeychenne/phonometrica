@@ -650,8 +650,10 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 
 	// ── Statistical modeling ────────────────────────────────────
 	{ "fit",  {
-		"fit(formula as String, data as DataTable)\nFits a statistical model (linear, logistic, Poisson, etc.) to the data.\002",
-		"fit(formula as String, data as DataTable, family as String)\nFits a model with the specified family (\"gaussian\", \"binomial\", \"poisson\", \"negbin\").\001"
+		"fit(formula as String, data as DataTable)\nFits a frequentist statistical model (Gaussian family) to the data.\002",
+		"fit(formula as String, data as DataTable, family as String)\nFits a frequentist model with the specified family (\"gaussian\", \"binomial\", \"poisson\", \"negbin\").\002",
+		"fit(formula as String, data as DataTable, priors as Prior)\nFits a Bayesian model (Gaussian family) using INLA-style approximate inference.\002",
+		"fit(formula as String, data as DataTable, family as String, priors as Prior)\nFits a Bayesian model with the specified family using INLA-style approximate inference.\001"
 	}},
 	{ "summarize",  {
 		"summarize(model as Model)\nPrints a detailed summary of the fitted model."
@@ -660,7 +662,7 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"get_coef(model as Model)\nReturns the coefficient table of the fitted model as an Array."
 	}},
 	{ "compare",  {
-		"compare(model1 as Model, model2 as Model)\nCompares two models using a likelihood ratio test and prints the results."
+		"compare(model1 as Model, model2 as Model)\nCompares two models. Frequentist models are compared using a likelihood\nratio test; Bayesian models are compared using WAIC, LOO-IC and Bayes factors.\nBoth models must use the same estimation method."
 	}},
 	{ "emmeans",  {
 		"emmeans(model as Model, factor as String)\nComputes and prints estimated marginal means for the given factor.\002",
