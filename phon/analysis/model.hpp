@@ -81,6 +81,7 @@ struct GridSummary
 struct Model
 {
 	// ---- Metadata ----
+	String label;       // user-defined display label (empty → default "Model N")
 	String formula;     // the formula string, e.g. "f1 ~ vowel + (1|speaker)"
 	String family;      // "gaussian", "binomial", "poisson", "negbin", "beta"
 	String link;        // "identity", "logit", "log"

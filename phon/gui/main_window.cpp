@@ -396,8 +396,8 @@ void MainWindow::createCentralWidget()
 
 	connect(start_view, &StartView::openProjectRequested,    this, &MainWindow::onOpenProject);
 	connect(start_view, &StartView::addFilesRequested,       this, &MainWindow::onAddFiles);
-	connect(start_view, &StartView::newScriptRequested,      this, &MainWindow::onNewScript);
 	connect(start_view, &StartView::newAnnotationRequested,  this, &MainWindow::onNewAnnotation);
+	connect(start_view, &StartView::analyzeDataRequested,    this, &MainWindow::onQuickAnalyzeData);
 	connect(start_view, &StartView::documentationRequested,  this, [this]() {
 		HelpBrowser::showPage({}, this);
 	});
@@ -1590,6 +1590,46 @@ void MainWindow::onAnalyzeData()
 	view->setActiveTab(0); // Summary
 	addViewTab(view);
 	statusBar()->showMessage(tr("Analyze data"), 2000);
+}
+
+void MainWindow::onQuickAnalyzeData()
+{
+	auto *project = Project::get();
+	auto concordances = project->get_concordances();
+	auto datasets = project->get_datasets();
+
+	// If the project already has data tables, use the normal flow.
+	if (!concordances.empty() || !datasets.empty())
+	{
+		onAnalyzeData();
+		return;
+	}
+
+	// No data tables: offer to open a CSV/TSV file directly.
+	auto path = getOpenFileName(this, tr("Open a data file to analyze"),
+		tr("Data files (*.csv *.tsv);;All files (*)"));
+	if (path.isEmpty())
+		return;
+
+	try
+	{
+		auto phon_path = String(path.toUtf8().constData());
+		project->import_file(phon_path);
+		m_file_manager->refresh();
+
+		// Retrieve the freshly imported dataset and open it for analysis.
+		auto new_datasets = project->get_datasets();
+		if (!new_datasets.empty())
+		{
+			auto dt = recast<DataTable>(new_datasets[new_datasets.size()]);
+			openAnalysis(std::move(dt));
+			statusBar()->showMessage(tr("Analyze data"), 2000);
+		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), e.what());
+	}
 }
 
 void MainWindow::onVisualizeData()

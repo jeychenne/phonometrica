@@ -74,6 +74,7 @@ private slots:
 	void onFit();
 	void onModelSelected(int row);
 	void onDeleteModel();
+	void onRenameModel(QListWidgetItem *item);
 	void onCompareModels();
 	void onColumnDoubleClicked(QListWidgetItem *item);
 	void onColumnContextMenu(const QPoint &pos);
@@ -100,6 +101,11 @@ private:
 	void displayModel(int index);
 	QString formatSummary(const stats::Model &m) const;
 	QString formatLatex(const stats::Model &m) const;
+
+	// Returns the user label if set, otherwise "Model N" (1-based).
+	QString modelDisplayLabel(int index) const;
+	// Returns the full text for a model list item: "label: formula" or "label (B): formula".
+	QString modelListText(int index) const;
 	void updateDiagnosticPlot();
 	void updateFitEnabled();
 	bool eventFilter(QObject *obj, QEvent *event) override;

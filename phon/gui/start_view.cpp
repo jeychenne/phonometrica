@@ -129,21 +129,21 @@ StartView::StartView(QWidget *parent) : QWidget(parent)
 
 	auto *open_btn = makeActionButton(QStringLiteral(":/icons/database.svg"),    tr("Open Project..."),    container);
 	auto *add_btn  = makeActionButton(QStringLiteral(":/icons/circle-plus.svg"), tr("Add Files..."),       container);
-	auto *script_btn = makeActionButton(QStringLiteral(":/icons/square-terminal.svg"), tr("New Script"),   container);
 	auto *annot_btn  = makeActionButton(QStringLiteral(":/icons/waveform.svg"),  tr("New Annotation..."),  container);
+	auto *analyze_btn = makeActionButton(QStringLiteral(":/icons/statistics.svg"), tr("Analyze Data..."),  container);
 	auto *help_btn   = makeActionButton(QStringLiteral(":/icons/circle-help.svg"), tr("Documentation"),    container);
 
 	layout->addWidget(open_btn);
 	layout->addWidget(add_btn);
-	layout->addWidget(script_btn);
 	layout->addWidget(annot_btn);
+	layout->addWidget(analyze_btn);
 	layout->addWidget(help_btn);
 
-	connect(open_btn,   &QPushButton::clicked, this, &StartView::openProjectRequested);
-	connect(add_btn,    &QPushButton::clicked, this, &StartView::addFilesRequested);
-	connect(script_btn, &QPushButton::clicked, this, &StartView::newScriptRequested);
-	connect(annot_btn,  &QPushButton::clicked, this, &StartView::newAnnotationRequested);
-	connect(help_btn,   &QPushButton::clicked, this, &StartView::documentationRequested);
+	connect(open_btn,    &QPushButton::clicked, this, &StartView::openProjectRequested);
+	connect(add_btn,     &QPushButton::clicked, this, &StartView::addFilesRequested);
+	connect(annot_btn,   &QPushButton::clicked, this, &StartView::newAnnotationRequested);
+	connect(analyze_btn, &QPushButton::clicked, this, &StartView::analyzeDataRequested);
+	connect(help_btn,    &QPushButton::clicked, this, &StartView::documentationRequested);
 
 	// ── Recent projects section ────────────────────────────────────
 	m_recent_section = new QWidget(container);

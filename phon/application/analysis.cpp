@@ -318,6 +318,8 @@ void Analysis::write()
 		auto mn = models_node.append_child("Model");
 
 		add_data_node(mn, "Formula", m.formula);
+		if (!m.label.empty())
+			add_data_node(mn, "Label", m.label);
 		add_data_node(mn, "Family", m.family);
 		add_data_node(mn, "Link", m.link);
 		add_data_node(mn, "Nobs", String::convert(m.nobs));
@@ -549,6 +551,7 @@ void Analysis::load()
 					auto text = field.text().get();
 
 					if (name == "Formula")      m.formula = text;
+					else if (name == "Label")    m.label = text;
 					else if (name == "Family")   m.family = text;
 					else if (name == "Link")     m.link = text;
 					else if (name == "Nobs")     m.nobs = String(text).to_int();
