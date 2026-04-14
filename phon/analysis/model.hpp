@@ -163,6 +163,21 @@ struct Model
 	double lppd    = std::numeric_limits<double>::quiet_NaN();  // log pointwise predictive density
 	double se_waic = std::numeric_limits<double>::quiet_NaN();  // standard error of WAIC
 
+	// Per-observation expected log pointwise predictive density:
+	//   elpd_i[j] = lppd_j - pwaic_j  (1-indexed, length = nobs).
+	// Populated at fit time for Bayesian models. Used to compute the proper
+	// SE of ΔWAIC when comparing models (Vehtari, Gelman & Gabry 2017).
+	Array<double> elpd_i;
+
+	// PSIS-LOO (Pareto Smoothed Importance Sampling Leave-One-Out cross-validation).
+	// Computed at fit time for Bayesian models. NaN for frequentist models.
+	// Reference: Vehtari, Gelman & Gabry (2017), Statistics and Computing.
+	double loo_ic  = std::numeric_limits<double>::quiet_NaN();
+	double p_loo   = std::numeric_limits<double>::quiet_NaN();  // effective number of parameters
+	double se_loo  = std::numeric_limits<double>::quiet_NaN();  // standard error of LOO-IC
+	Array<double> elpd_loo_i;  // per-observation LOO elpd (for comparison SE)
+	Array<double> pareto_k;    // per-observation Pareto k diagnostic
+
 	// ---- Grid integration summary (not serialised) ----
 	// Populated by inla_grid_integrate_* for later use by PPC.
 	std::optional<GridSummary> grid_summary;

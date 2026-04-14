@@ -31,6 +31,7 @@
 #include <phon/analysis/smooth.hpp>
 #include <phon/analysis/bayesian.hpp>
 #include <phon/analysis/waic.hpp>
+#include <phon/analysis/psis.hpp>
 
 namespace phonometrica::stats {
 
@@ -1360,6 +1361,7 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 			}
 
 			compute_waic_from_loglik(model, loglik_matrix, n, S);
+			compute_loo_from_loglik(model, loglik_matrix, n, S);
 		}
 	}
 
