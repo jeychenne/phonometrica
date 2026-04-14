@@ -102,6 +102,9 @@ private slots:
 	void onAnalyzeData();
 	void onVisualizeData();
 
+	// Start view: analyze data with file import fallback
+	void onQuickAnalyzeData();
+
 	// File menu (import/export)
 	void onImportMetadata();
 	void onExportMetadata();

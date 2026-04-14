@@ -47,8 +47,8 @@ signals:
 
 	void openProjectRequested();
 	void addFilesRequested();
-	void newScriptRequested();
 	void newAnnotationRequested();
+	void analyzeDataRequested();
 	void documentationRequested();
 	void recentProjectRequested(const String &path);
 

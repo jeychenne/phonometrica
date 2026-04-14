@@ -852,6 +852,7 @@ void AnalysisView::setupUi()
 	});
 	connect(m_delete_button, &QPushButton::clicked, this, &AnalysisView::onDeleteModel);
 	connect(m_compare_button, &QPushButton::clicked, this, &AnalysisView::onCompareModels);
+	connect(m_model_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onRenameModel);
 	connect(m_column_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onColumnDoubleClicked);
 	connect(m_column_list, &QListWidget::customContextMenuRequested, this, &AnalysisView::onColumnContextMenu);
 	connect(m_plot_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPlotTypeChanged);
@@ -935,17 +936,30 @@ void AnalysisView::populateColumns()
 	updateColumnMarkers();
 }
 
+QString AnalysisView::modelDisplayLabel(int index) const
+{
+	auto &m = m_analysis->model(index);
+	if (!m.label.empty())
+		return QString::fromUtf8(m.label.data(), (int)m.label.size());
+	return QStringLiteral("Model %1").arg(index + 1);
+}
+
+QString AnalysisView::modelListText(int index) const
+{
+	auto &m = m_analysis->model(index);
+	QString lbl = modelDisplayLabel(index);
+	if (m.is_bayesian())
+		lbl += QStringLiteral(" (B)");
+	lbl += QStringLiteral(": ");
+	lbl += QString::fromUtf8(m.formula.data(), (int)m.formula.size());
+	return lbl;
+}
+
 void AnalysisView::populateModelList()
 {
 	m_model_list->clear();
 	for (int i = 0; i < m_analysis->model_count(); i++)
-	{
-		auto &m = m_analysis->model(i);
-		QString prefix = m.is_bayesian() ? QStringLiteral("Model %1 (B): ") : QStringLiteral("Model %1: ");
-		QString item_text = prefix.arg(i + 1)
-			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-		m_model_list->addItem(item_text);
-	}
+		m_model_list->addItem(modelListText(i));
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
 
@@ -1028,10 +1042,7 @@ void AnalysisView::onFit()
 		if (progress) progress->setVisible(false);
 		if (status) status->showMessage(tr("Model fitted"), 2000);
 
-		QString prefix = m.is_bayesian() ? QStringLiteral("Model %1 (B): ") : QStringLiteral("Model %1: ");
-		QString item_text = prefix.arg(index + 1)
-			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-		m_model_list->addItem(item_text);
+		m_model_list->addItem(modelListText(index));
 
 		// Select only the newly fitted model.
 		m_model_list->clearSelection();
@@ -1142,12 +1153,7 @@ void AnalysisView::onDeleteModel()
 
 	// Re-number remaining models.
 	for (int i = 0; i < m_model_list->count(); i++)
-	{
-		auto &m = m_analysis->model(i);
-		m_model_list->item(i)->setText(
-			QStringLiteral("Model %1: %2").arg(i + 1)
-				.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size())));
-	}
+		m_model_list->item(i)->setText(modelListText(i));
 
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
@@ -1171,6 +1177,27 @@ void AnalysisView::onDeleteModel()
 		m_posthoc_contrast_table->setColumnCount(0);
 	}
 
+	emit titleChanged(label());
+}
+
+void AnalysisView::onRenameModel(QListWidgetItem *item)
+{
+	int row = m_model_list->row(item);
+	if (row < 0 || row >= m_analysis->model_count()) return;
+
+	auto &m = m_analysis->model(row);
+	QString current = m.label.empty()
+		? QStringLiteral("Model %1").arg(row + 1)
+		: QString::fromUtf8(m.label.data(), (int)m.label.size());
+
+	bool ok = false;
+	QString newLabel = QInputDialog::getText(this, tr("Rename model"),
+		tr("Label:"), QLineEdit::Normal, current, &ok);
+	if (!ok || newLabel.isEmpty()) return;
+
+	auto bytes = newLabel.toUtf8();
+	m.label = String(bytes.constData(), bytes.size());
+	item->setText(modelListText(row));
 	emit titleChanged(label());
 }
 
@@ -1244,6 +1271,17 @@ void AnalysisView::onCompareModels()
 		text += QStringLiteral("Bayesian model comparison\n");
 		text += QStringLiteral("=========================\n\n");
 
+		// ── Model legend ───────────────────────────────────────────
+		for (size_t i = 0; i < indices.size(); i++)
+		{
+			int idx = indices[i];
+			auto &m = m_analysis->model(idx);
+			text += modelDisplayLabel(idx) + QStringLiteral(": ")
+				+ QString::fromUtf8(m.formula.data(), (int)m.formula.size())
+				+ QStringLiteral("\n");
+		}
+		text += QStringLiteral("\n");
+
 		if (!result.has_bayes_factors)
 		{
 			text += QStringLiteral("Note: Some models do not have a log marginal likelihood\n");
@@ -1263,11 +1301,20 @@ void AnalysisView::onCompareModels()
 			return std::isnan(v) ? QStringLiteral("--") : QString::number(v, f, prec);
 		};
 
+		// Compute label column width.
+		int lbl_width = 8;
+		for (int idx : indices)
+		{
+			int len = modelDisplayLabel(idx).toUtf8().size();
+			if (len + 2 > lbl_width) lbl_width = len + 2;
+		}
+		std::string lbl_fmt = "%-" + std::to_string(lbl_width) + "s";
+
 		// ── Summary table: always show logLik; optionally log p(y|M), WAIC, LOO-IC ──
 		{
 			// Build header dynamically.
-			QString hdr = QString::asprintf("%-8s %-30s %6s %12s", "", "Formula", "npar", "logLik");
-			QString sep = QStringLiteral("------------------------------------------------------------");
+			QString hdr = QString::asprintf((lbl_fmt + " %6s %12s").c_str(), "", "npar", "logLik");
+			QString sep = QString(lbl_width + 6 + 12 + 2, QChar('-'));
 
 			if (result.has_bayes_factors) {
 				hdr += QString::asprintf(" %14s", "log p(y|M)");
@@ -1283,18 +1330,15 @@ void AnalysisView::onCompareModels()
 			}
 			text += hdr + QStringLiteral("\n") + sep + QStringLiteral("\n");
 
+			std::string row_base = lbl_fmt + " %6ld %12.1f";
+
 			for (size_t i = 0; i < result.rows.size(); i++)
 			{
 				auto &row = result.rows[i];
-				auto &m = m_analysis->model(model_idx((int)i));
-				QString mlabel = QStringLiteral("Model %1").arg(model_idx((int)i) + 1);
-				QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-				if (formula.length() > 30)
-					formula = formula.left(27) + QStringLiteral("...");
+				QString mlabel = modelDisplayLabel(model_idx((int)i));
 
-				QString line = QString::asprintf("%-8s %-30s %6ld %12.1f",
+				QString line = QString::asprintf(row_base.c_str(),
 				                                  mlabel.toUtf8().constData(),
-				                                  formula.toUtf8().constData(),
 				                                  (long)row.npar, row.loglik);
 				if (result.has_bayes_factors)
 					line += QString::asprintf(" %14.2f", row.log_marginal);
@@ -1319,8 +1363,19 @@ void AnalysisView::onCompareModels()
 			text += QStringLiteral("log BF_ij = log p(y|M_i) - log p(y|M_j)\n");
 			text += QStringLiteral("Positive values favour model i.\n\n");
 
-			text += QString::asprintf("%-18s %12s   %s\n", "", "log BF", "Evidence (Kass & Raftery 1995)");
-			text += QStringLiteral("----------------------------------------------------------------------\n");
+			// Compute pair label width.
+			int pair_width = 18;
+			for (auto &pair : result.pairs)
+			{
+				int idx_a = model_idx(pair.index_a);
+				int idx_b = model_idx(pair.index_b);
+				int len = (modelDisplayLabel(idx_a) + " vs " + modelDisplayLabel(idx_b)).toUtf8().size();
+				if (len + 2 > pair_width) pair_width = len + 2;
+			}
+			std::string pair_fmt = "%-" + std::to_string(pair_width) + "s";
+
+			text += QString::asprintf((pair_fmt + " %12s   %s\n").c_str(), "", "log BF", "Evidence (Kass & Raftery 1995)");
+			text += QString(pair_width + 12 + 3 + 35, QChar('-')) + QStringLiteral("\n");
 
 			auto bayes_label = [](double log_bf) -> const char * {
 				double twice = 2.0 * std::abs(log_bf);
@@ -1336,16 +1391,18 @@ void AnalysisView::onCompareModels()
 
 				int idx_a = model_idx(pair.index_a);
 				int idx_b = model_idx(pair.index_b);
-				QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
+				QString lbl_a = modelDisplayLabel(idx_a);
+				QString lbl_b = modelDisplayLabel(idx_b);
+				QString plabel = lbl_a + QStringLiteral(" vs ") + lbl_b;
 
 				const char *label = bayes_label(pair.log_bf);
 				QString direction = (pair.log_bf > 0)
-					? QStringLiteral("favours %1").arg(idx_a + 1)
+					? QStringLiteral("favours ") + lbl_a
 					: (pair.log_bf < 0)
-						? QStringLiteral("favours %1").arg(idx_b + 1)
+						? QStringLiteral("favours ") + lbl_b
 						: QStringLiteral("--");
 
-				text += QString::asprintf("%-18s %12.2f   %s (%s)\n",
+				text += QString::asprintf((pair_fmt + " %12.2f   %s (%s)\n").c_str(),
 				                           plabel.toUtf8().constData(),
 				                           pair.log_bf,
 				                           label,
@@ -1361,8 +1418,19 @@ void AnalysisView::onCompareModels()
 			text += QStringLiteral("=============================\n\n");
 			text += QStringLiteral("Negative values favour model i.\n\n");
 
+			// Compute pair label width.
+			int pw = 18;
+			for (auto &pair : result.pairs)
+			{
+				int idx_a = model_idx(pair.index_a);
+				int idx_b = model_idx(pair.index_b);
+				int len = (modelDisplayLabel(idx_a) + " vs " + modelDisplayLabel(idx_b)).toUtf8().size();
+				if (len + 2 > pw) pw = len + 2;
+			}
+			std::string pw_fmt = "%-" + std::to_string(pw) + "s";
+
 			// Build header based on available ICs.
-			QString hdr = QString::asprintf("%-18s", "");
+			QString hdr = QString::asprintf(pw_fmt.c_str(), "");
 			QString sep;
 			if (any_have_waic) {
 				hdr += QString::asprintf(" %10s %10s", "\u0394WAIC", "SE");
@@ -1373,7 +1441,7 @@ void AnalysisView::onCompareModels()
 				sep += QStringLiteral("---------------------");
 			}
 			text += hdr + QStringLiteral("\n");
-			text += QStringLiteral("------------------") + sep + QStringLiteral("\n");
+			text += QString(pw, QChar('-')) + sep + QStringLiteral("\n");
 
 			for (auto &pair : result.pairs)
 			{
@@ -1383,9 +1451,9 @@ void AnalysisView::onCompareModels()
 
 				int idx_a = model_idx(pair.index_a);
 				int idx_b = model_idx(pair.index_b);
-				QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
+				QString plabel = modelDisplayLabel(idx_a) + QStringLiteral(" vs ") + modelDisplayLabel(idx_b);
 
-				QString line = QString::asprintf("%-18s", plabel.toUtf8().constData());
+				QString line = QString::asprintf(pw_fmt.c_str(), plabel.toUtf8().constData());
 				if (any_have_waic)
 				{
 					if (has_waic_pair)
@@ -1427,7 +1495,7 @@ void AnalysisView::onCompareModels()
 				}
 				intptr_t total = m.pareto_k.size();
 
-				text += QStringLiteral("Model %1: ").arg(model_idx((int)i) + 1);
+				text += modelDisplayLabel(model_idx((int)i)) + QStringLiteral(": ");
 
 				if (n_bad == 0 && n_verybad == 0 && n_ok == 0)
 				{
@@ -1494,26 +1562,43 @@ void AnalysisView::onCompareModels()
 
 	QString text;
 
-	// ── Information criteria table ───────────────────────────────────
-
+	// ── Model legend ───────────────────────────────────────────────
 	text += QStringLiteral("Model comparison\n");
 	text += QStringLiteral("================\n\n");
-	text += QString::asprintf("%-8s %-40s %6s %10s %10s %12s\n",
-	                           "", "Formula", "npar", "AIC", "BIC", "logLik");
-	text += QStringLiteral("------------------------------------------------------------------------------------\n");
+
+	for (int idx : indices)
+	{
+		auto &m = m_analysis->model(idx);
+		text += modelDisplayLabel(idx) + QStringLiteral(": ")
+			+ QString::fromUtf8(m.formula.data(), (int)m.formula.size())
+			+ QStringLiteral("\n");
+	}
+	text += QStringLiteral("\n");
+
+	// ── Information criteria table ───────────────────────────────────
+
+	// Compute label column width.
+	int flbl_width = 8;
+	for (int idx : indices)
+	{
+		int len = modelDisplayLabel(idx).toUtf8().size();
+		if (len + 2 > flbl_width) flbl_width = len + 2;
+	}
+	std::string flbl_fmt = "%-" + std::to_string(flbl_width) + "s";
+
+	text += QString::asprintf((flbl_fmt + " %6s %10s %10s %12s\n").c_str(),
+	                           "", "npar", "AIC", "BIC", "logLik");
+	text += QString(flbl_width + 6 + 10 + 10 + 12 + 4, QChar('-')) + QStringLiteral("\n");
+
+	std::string frow_fmt = flbl_fmt + " %6ld %10.1f %10.1f %12.1f\n";
 
 	for (auto &row : result.rows)
 	{
-		int model_idx = indices[row.original_index]; // map back to analysis model index
-		auto &m = m_analysis->model(model_idx);
-		QString mlabel = QStringLiteral("Model %1").arg(model_idx + 1);
-		QString formula = QString::fromUtf8(m.formula.data(), (int)m.formula.size());
-		if (formula.length() > 40)
-			formula = formula.left(37) + QStringLiteral("...");
+		int midx = indices[row.original_index];
+		QString mlabel = modelDisplayLabel(midx);
 
-		text += QString::asprintf("%-8s %-40s %6ld %10.1f %10.1f %12.1f\n",
+		text += QString::asprintf(frow_fmt.c_str(),
 		                           mlabel.toUtf8().constData(),
-		                           formula.toUtf8().constData(),
 		                           (long)row.npar,
 		                           row.aic, row.bic, row.loglik);
 	}
@@ -1522,22 +1607,34 @@ void AnalysisView::onCompareModels()
 
 	text += QStringLiteral("\n\nPairwise likelihood ratio tests\n");
 	text += QStringLiteral("===============================\n\n");
-	text += QString::asprintf("%-18s %6s %10s %12s\n",
+
+	// Compute pair label width.
+	int fpw = 18;
+	for (auto &pair : result.pairs)
+	{
+		int idx_a = indices[result.rows[pair.index_a].original_index];
+		int idx_b = indices[result.rows[pair.index_b].original_index];
+		int len = (modelDisplayLabel(idx_a) + " vs " + modelDisplayLabel(idx_b)).toUtf8().size();
+		if (len + 2 > fpw) fpw = len + 2;
+	}
+	std::string fpw_fmt = "%-" + std::to_string(fpw) + "s";
+
+	text += QString::asprintf((fpw_fmt + " %6s %10s %12s\n").c_str(),
 	                           "", "Df", "Chisq", "Pr(>Chisq)");
-	text += QStringLiteral("----------------------------------------------------\n");
+	text += QString(fpw + 6 + 10 + 12 + 3, QChar('-')) + QStringLiteral("\n");
 
 	for (auto &pair : result.pairs)
 	{
 		int idx_a = indices[result.rows[pair.index_a].original_index];
 		int idx_b = indices[result.rows[pair.index_b].original_index];
-		QString plabel = QStringLiteral("%1 vs %2").arg(idx_a + 1).arg(idx_b + 1);
+		QString plabel = modelDisplayLabel(idx_a) + QStringLiteral(" vs ") + modelDisplayLabel(idx_b);
 
 		if (pair.df_diff > 0)
 		{
 			QString pstr = format_p(pair.p_value);
 			const char *stars = signif_stars(pair.p_value);
 
-			text += QString::asprintf("%-18s %6ld %10.4f   %-12s%s\n",
+			text += QString::asprintf((fpw_fmt + " %6ld %10.4f   %-12s%s\n").c_str(),
 			                           plabel.toUtf8().constData(),
 			                           (long)pair.df_diff,
 			                           pair.chisq,
@@ -1547,7 +1644,7 @@ void AnalysisView::onCompareModels()
 		else
 		{
 			// Same nparams — LRT undefined.
-			text += QString::asprintf("%-18s %6s %10s   %s\n",
+			text += QString::asprintf((fpw_fmt + " %6s %10s   %s\n").c_str(),
 			                           plabel.toUtf8().constData(),
 			                           "--", "--", "(same complexity)");
 		}
@@ -4358,12 +4455,27 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	// ── Fixed effects ──────────────────────────────────────────────
 
+	// Compute first-column width from the longest coefficient name.
+	int name_width = 12; // minimum
+	for (intptr_t i = 1; i <= m.coef_names.size(); i++)
+	{
+		int len = (int)m.coef_names[i].size();
+		if (len > name_width) name_width = len;
+	}
+	name_width += 2; // padding
+
+	// Build reusable format strings.
+	std::string hdr_fmt  = "%-" + std::to_string(name_width) + "s";
+	std::string name_fmt = "%-" + std::to_string(name_width) + "s";
+
 	if (m.is_bayesian() && !m.posterior_mean.empty())
 	{
 		text += QStringLiteral("Fixed effects (posterior):\n");
-		text += QString::asprintf("%-24s %12s %12s %12s %12s %12s %12s %10s\n",
+		text += QString::asprintf((hdr_fmt + " %12s %12s %12s %12s %12s %12s %10s\n").c_str(),
 		                           "", "Post.Mean", "Post.Mode", "Post.Median",
 		                           "Post.SD", "CI.lower", "CI.upper", "pd");
+
+		std::string row_fmt = name_fmt + " %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %10s%s\n";
 
 		for (intptr_t i = 1; i <= m.nfixed; i++)
 		{
@@ -4390,7 +4502,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			double ci_lo = (i <= m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
 			double ci_hi = (i <= m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
 
-			text += QString::asprintf("%-24s %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %10s%s\n",
+			text += QString::asprintf(row_fmt.c_str(),
 			                           name, post_mean, post_mode, post_median,
 			                           post_sd, ci_lo, ci_hi, pd_buf, stars);
 		}
@@ -4402,8 +4514,10 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	{
 		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
 		text += QStringLiteral("Fixed effects:\n");
-		text += QString::asprintf("%-24s %12s %12s %12s %12s\n",
+		text += QString::asprintf((hdr_fmt + " %12s %12s %12s %12s\n").c_str(),
 		                           "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
+
+		std::string row_fmt = name_fmt + " %12.4f %12.4f %12.3f %12s%s\n";
 
 		for (intptr_t i = 1; i <= m.nfixed; i++)
 		{
@@ -4420,7 +4534,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			else if (m.p[i] < 0.05) stars = " *";
 			else if (m.p[i] < 0.1) stars = " .";
 
-			text += QString::asprintf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
+			text += QString::asprintf(row_fmt.c_str(),
 			                           name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
 		}
 
