@@ -1284,10 +1284,10 @@ void Concordance::load()
 				m_aux_columns.append(std::move(col));
 			}
 		}
-		else if (node.name() == str("Metadata"))
-		{
-			metadata_from_xml(node);
-		}
+		// Note: Metadata (description, properties, filter rules) is NOT re-read here.
+		// It was already loaded by preload() for standalone files and by from_xml()
+		// for project-loaded files. Re-reading from the concordance file would overwrite
+		// project-level filter rules with potentially stale data.
 		else if (node.name() == str("Matches"))
 		{
 			parse_matches_from_xml(node);

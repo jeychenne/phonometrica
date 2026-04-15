@@ -672,8 +672,8 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"emtrends(model as Model, factor as String, variable as String)\nEstimates the slope of `variable` at each level of `factor`.\002",
 		"emtrends(model as Model, factor as String, variable as String, adjustment as String)\nEstimates slopes and computes pairwise contrasts of trends.\001"
 	}},
-	{ "dharma",  {
-		"dharma(model as Model)\nComputes DHARMa-style simulation-based residual diagnostics (KS test,\ndispersion test, outlier test) and prints the results."
+	{ "test_residuals",  {
+		"test_residuals(model as Model)\nComputes DHARMa-style simulation-based residual diagnostics (KS test,\ndispersion test, outlier test) and prints the results."
 	}},
 
 	// ── GUI convenience functions ───────────────────────────────

@@ -307,6 +307,8 @@ void SoundView::createToolBar()
 		tr("View whole file"));
 	connect(view_all_action, &QAction::triggered, this, &SoundView::onViewAll);
 
+	m_toolbar->addSeparator();
+
 	auto *goto_action = m_toolbar->addAction(QIcon(":/icons/text-cursor.svg"),
 		tr("Go to time..."));
 	connect(goto_action, &QAction::triggered, this, &SoundView::onGoToTime);
