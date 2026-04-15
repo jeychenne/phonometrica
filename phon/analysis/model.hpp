@@ -144,6 +144,7 @@ struct Model
 	// ---- Predictions and residuals ----
 	Array<double> fitted;      // fitted values (conditional on random effects if present)
 	Array<double> residuals;   // response residuals (y - fitted)
+	Array<double> offset;      // offset vector (added to η before linkinv); empty if no offset
 
 	// ---- Overall fit ----
 	double loglik = 0;         // log-likelihood at convergence
@@ -299,6 +300,10 @@ struct Model
 		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
 		Eigen::Map<Vector<double>> bm(beta.data(), nfixed);
 		Vector<double> eta = Xm * bm;
+		if (!offset.empty()) {
+			Eigen::Map<const Vector<double>> off(offset.data(), nobs);
+			eta += off;
+		}
 		Vector<double> mu = linkinv(eta);
 
 		fitted.resize(nobs);
@@ -323,6 +328,10 @@ struct Model
 		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
 		Eigen::Map<Vector<double>> bm(const_cast<double*>(beta.data()), nfixed);
 		Vector<double> eta_fixed = Xm * bm;
+		if (!offset.empty()) {
+			Eigen::Map<const Vector<double>> off(const_cast<double*>(offset.data()), nobs);
+			eta_fixed += off;
+		}
 		double mean_eta = eta_fixed.mean();
 		double var_f = (eta_fixed.array() - mean_eta).square().mean();
 

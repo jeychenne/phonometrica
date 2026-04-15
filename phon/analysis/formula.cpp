@@ -179,6 +179,14 @@ String Formula::to_string() const
 		need_plus = true;
 	}
 
+	if (!offset.empty())
+	{
+		if (need_plus) result.append(" + ");
+		result.append("offset(");
+		result.append(quote_name(offset));
+		result.append(")");
+	}
+
 	return result;
 }
 
@@ -221,6 +229,10 @@ Array<String> Formula::all_variables() const
 		for (intptr_t j = 1; j <= rt.slopes.size(); j++) {
 			add_unique(rt.slopes[j]);
 		}
+	}
+
+	if (!offset.empty()) {
+		add_unique(offset);
 	}
 
 	return vars;
@@ -563,6 +575,13 @@ private:
 			return;
 		}
 
+		// Detect offset term: offset(column_name)
+		if (first == "offset" && m_current.type == TokenType::LParen)
+		{
+			parse_offset_term(f);
+			return;
+		}
+
 		// Simple term (no operator following, or next is + - ) end)
 		if (m_current.type != TokenType::Star && m_current.type != TokenType::Colon)
 		{
@@ -700,6 +719,32 @@ private:
 		}
 
 		f.smooth.append(std::move(st));
+	}
+
+	// offset_term := 'offset' '(' name ')'
+	//
+	// Example:
+	//   offset(log_duration)  → Formula::offset = "log_duration"
+	//
+	// Only one offset term is allowed per formula.
+	// Precondition: "offset" has been consumed as a Name, current token is LParen.
+	void parse_offset_term(Formula &f)
+	{
+		expect(TokenType::LParen, "Expected '(' after 'offset'");
+		advance();
+
+		expect(TokenType::Name, "Expected column name inside offset()");
+		String col = m_current.text;
+		advance();
+
+		expect(TokenType::RParen, "Expected ')' to close offset()");
+		advance();
+
+		if (!f.offset.empty()) {
+			throw error("Only one offset() term is allowed per formula");
+		}
+
+		f.offset = std::move(col);
 	}
 
 	// random_term := '(' random_inner '|' name ')'

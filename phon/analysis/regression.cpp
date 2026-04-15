@@ -79,7 +79,7 @@ static void store_vcov(Model &model, const Eigen::MatrixXd &cov)
 // Linear model (OLS)
 // =====================================================================
 
-Model lm(const Array<double> &y, const Array<double> &X)
+Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &offset)
 {
 	using namespace Eigen;
 
@@ -92,15 +92,23 @@ Model lm(const Array<double> &y, const Array<double> &X)
 	model.family = "gaussian";
 	model.link = "identity";
 	store_matrices(model, y, X);
+	if (!offset.empty()) model.offset = offset;
+
+	// If an offset is present, solve OLS on y_adj = y - offset.
+	Map<Vector<double>> y1(const_cast<double*>(y.data()), n);
+	Vector<double> y_work = y1;
+	if (!offset.empty()) {
+		Map<const Vector<double>> off(offset.data(), n);
+		y_work -= off;
+	}
 
 	// Solve via SVD
 	model.beta = Array<double>(m, 0.0);
 	Map<Matrix<double>> X1(const_cast<double*>(X.data()), n, m);
-	Map<Vector<double>> y1(const_cast<double*>(y.data()), n);
 	Map<Vector<double>> b1(model.beta.data(), m);
 
 	BDCSVD<Matrix<double>, ComputeThinU | ComputeThinV> svd(X1);
-	b1 = svd.solve(y1);
+	b1 = svd.solve(y_work);
 
 	// Fitted values and residuals
 	model.fitted = Array<double>(n, 0.0);
@@ -112,6 +120,7 @@ Model lm(const Array<double> &y, const Array<double> &X)
 		for (intptr_t j = 1; j <= m; j++) {
 			val += X(i, j) * model.beta[j];
 		}
+		if (!offset.empty()) val += offset[i];
 		model.fitted[i] = val;
 	}
 
@@ -182,7 +191,8 @@ Model lm(const Array<double> &y, const Array<double> &X)
 // Compute cost (negative log-likelihood / n) and gradient for L-BFGS.
 // The gradient X'(μ-y)/n is exact for canonical links (identity, logit, log).
 static double glm_cost(const Array<double> &y, const Array<double> &X,
-                       const Family &fam, const Eigen::VectorXd &beta, Eigen::VectorXd &grad)
+                       const Family &fam, const Eigen::VectorXd &beta, Eigen::VectorXd &grad,
+                       const Array<double> &offset)
 {
 	intptr_t n = X.nrow();
 	intptr_t m = X.ncol();
@@ -191,6 +201,10 @@ static double glm_cost(const Array<double> &y, const Array<double> &X,
 	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
 
 	Vector<double> eta = Xm * beta;
+	if (!offset.empty()) {
+		Eigen::Map<const Vector<double>> off(offset.data(), n);
+		eta += off;
+	}
 	Vector<double> mu = fam.linkinv(eta);
 
 	grad = (Xm.transpose() * (mu - ym)).array() / n;
@@ -201,7 +215,8 @@ static double glm_cost(const Array<double> &y, const Array<double> &X,
 
 // Model-based covariance: (X'WX)^{-1}
 static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
-                                      const Eigen::VectorXd &beta)
+                                      const Eigen::VectorXd &beta,
+                                      const Array<double> &offset)
 {
 	intptr_t n = X.nrow();
 	intptr_t m = X.ncol();
@@ -209,6 +224,10 @@ static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
 
 	Vector<double> eta = Xm * beta;
+	if (!offset.empty()) {
+		Eigen::Map<const Vector<double>> off(offset.data(), n);
+		eta += off;
+	}
 	Vector<double> mu = fam.linkinv(eta);
 	Vector<double> W = fam.variance(mu);
 
@@ -218,7 +237,8 @@ static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
 
 // Sandwich (robust) covariance: (X'WX)^{-1} X'diag(e²)X (X'WX)^{-1}
 static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<double> &X,
-                                             const Family &fam, const Eigen::VectorXd &beta)
+                                             const Family &fam, const Eigen::VectorXd &beta,
+                                             const Array<double> &offset)
 {
 	intptr_t n = X.nrow();
 	intptr_t m = X.ncol();
@@ -227,6 +247,10 @@ static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<
 	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
 
 	Vector<double> eta = Xm * beta;
+	if (!offset.empty()) {
+		Eigen::Map<const Vector<double>> off(offset.data(), n);
+		eta += off;
+	}
 	Vector<double> mu = fam.linkinv(eta);
 	Vector<double> W = fam.variance(mu);
 
@@ -244,7 +268,8 @@ static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<
 }
 
 
-Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust, int max_iter)
+Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust, int max_iter,
+          const Array<double> &offset)
 {
 	using namespace LBFGSpp;
 
@@ -257,6 +282,7 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 	model.family = fam.name;
 	model.link = fam.link_name;
 	store_matrices(model, y, X);
+	if (!offset.empty()) model.offset = offset;
 
 	// L-BFGS optimization
 	Eigen::VectorXd weights = Eigen::VectorXd::Zero(m);
@@ -267,7 +293,7 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 
 	auto cost = [&](const Eigen::VectorXd &b, Eigen::VectorXd &grad)
 	{
-		return glm_cost(y, X, fam, b, grad);
+		return glm_cost(y, X, fam, b, grad, offset);
 	};
 
 	double fx;
@@ -282,9 +308,9 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 	// Variance-covariance matrix
 	Matrix<double> cov;
 	if (robust) {
-		cov = glm_robust_covariance(y, X, fam, weights);
+		cov = glm_robust_covariance(y, X, fam, weights, offset);
 	} else {
-		cov = glm_covariance(X, fam, weights);
+		cov = glm_covariance(X, fam, weights, offset);
 	}
 
 	// Store full variance-covariance matrix
@@ -328,7 +354,7 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 // Convenience wrappers
 // =====================================================================
 
-Model logit(const Array<double> &y, const Array<double> &X, int max_iter)
+Model logit(const Array<double> &y, const Array<double> &X, int max_iter, const Array<double> &offset)
 {
 	for (auto value : y)
 	{
@@ -337,13 +363,14 @@ Model logit(const Array<double> &y, const Array<double> &X, int max_iter)
 		}
 	}
 
-	return glm(y, X, Family::binomial(), false, max_iter);
+	return glm(y, X, Family::binomial(), false, max_iter, offset);
 }
 
 
-Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter)
+Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter,
+              const Array<double> &offset)
 {
-	return glm(y, X, Family::poisson(), robust, max_iter);
+	return glm(y, X, Family::poisson(), robust, max_iter, offset);
 }
 
 
@@ -366,7 +393,7 @@ Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int m
 //   Lawless (1987). Negative binomial and mixed Poisson regression. Can J Stat 15(3).
 //   Venables & Ripley (2002). Modern Applied Statistics with S. §7.4.
 
-Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
+Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const Array<double> &offset)
 {
 	validate_inputs(y, X);
 
@@ -376,10 +403,12 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
 	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
 
+	// Map offset (may be empty).
+	bool has_off = !offset.empty();
+	Eigen::Map<const Eigen::VectorXd> off(
+		has_off ? offset.data() : nullptr, has_off ? n : 0);
+
 	// ── Initial θ from method-of-moments ─────────────────────────────
-	//
-	// E[Y] = μ, Var(Y) = μ + μ²/θ  →  θ = μ² / (Var(Y) − μ)
-	// Use sample mean and variance as plug-in estimators.
 
 	double ybar = ym.mean();
 	double yvar = (ym.array() - ybar).square().sum() / (n - 1);
@@ -387,23 +416,19 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 	if (yvar > ybar) {
 		theta = ybar * ybar / (yvar - ybar);
 	} else {
-		theta = 10.0; // low overdispersion fallback
+		theta = 10.0;
 	}
 	theta = std::clamp(theta, 0.01, 1e6);
 
-	// ── Initial β from Poisson GLM (quick starting point) ────────────
+	// ── Initial β from Poisson GLM ──────────────────────────────────
 
 	Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
 	{
-		auto pois = glm(y, X, Family::poisson(), false, 50);
+		auto pois = glm(y, X, Family::poisson(), false, 50, offset);
 		for (intptr_t j = 0; j < p; j++) {
 			beta[j] = pois.beta[j + 1];
 		}
 	}
-
-	// ── Precompute X'X factorisation for IWLS solve ──────────────────
-
-	// (Recomputed each iteration with weights, but we keep the structure)
 
 	int outer_iter = 0;
 	bool converged = false;
@@ -414,26 +439,23 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 		double theta_old = theta;
 
 		// ── (a) IWLS for β given θ ───────────────────────────────────
-		//
-		// Iterate IWLS until β converges (typically 3–8 iterations).
 
 		for (int iwls = 0; iwls < 50; iwls++)
 		{
-			Eigen::VectorXd eta = Xm * beta;
+			Eigen::VectorXd eta_xb = Xm * beta;
+			Eigen::VectorXd eta = eta_xb;
+			if (has_off) eta += off;
 			Eigen::VectorXd mu = eta.array().exp().matrix();
 
-			// Working weights and response for log link + NB variance
 			Eigen::VectorXd w(n), z(n);
 			for (intptr_t i = 0; i < n; i++)
 			{
 				double mi = std::max(mu[i], 1e-10);
-				// w_i = (dμ/dη)² / V(μ) = μ² / (μ + μ²/θ) = μθ/(θ+μ)
 				w[i] = mi * theta / (theta + mi);
-				// z_i = η_i + (y_i − μ_i) / (dμ/dη) = η_i + (y_i − μ_i) / μ_i
-				z[i] = eta[i] + (ym[i] - mi) / mi;
+				// Working response on the Xβ scale (without offset)
+				z[i] = eta_xb[i] + (ym[i] - mi) / mi;
 			}
 
-			// Solve (X'WX) β = X'Wz
 			Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
 			Eigen::VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
 
@@ -446,15 +468,10 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 			if (max_change < 1e-8) break;
 		}
 
-		// ── (b) Update θ given β (1D Newton on profile log-likelihood) ──
-		//
-		// ℓ(θ) = Σ [lgamma(y_i+θ) − lgamma(θ) + θ log(θ/(θ+μ_i))
-		//         + y_i log(μ_i/(θ+μ_i)) − lgamma(y_i+1)]
-		//
-		// Score:     s = Σ [digamma(y_i+θ) − digamma(θ) + log(θ/(θ+μ_i)) + 1 − (y_i+θ)/(θ+μ_i)]
-		// Info (−s'): I = Σ [−trigamma(y_i+θ) + trigamma(θ) − 1/θ + 2/(θ+μ_i) − (y_i+θ)/(θ+μ_i)²]
+		// ── (b) Update θ given β ─────────────────────────────────────
 
 		Eigen::VectorXd eta = Xm * beta;
+		if (has_off) eta += off;
 		Eigen::VectorXd mu = eta.array().exp().matrix();
 
 		for (int newton = 0; newton < 20; newton++)
@@ -508,6 +525,7 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 	model.link = "log";
 	model.theta = theta;
 	store_matrices(model, y, X);
+	if (has_off) model.offset = offset;
 
 	model.beta = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
@@ -524,7 +542,9 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 
 	// Covariance: (X'WX)⁻¹ with NB working weights
 	{
-		Eigen::VectorXd mu_vec = (Xm * beta).array().exp().matrix();
+		Eigen::VectorXd eta_cov = Xm * beta;
+		if (has_off) eta_cov += off;
+		Eigen::VectorXd mu_vec = eta_cov.array().exp().matrix();
 		Eigen::VectorXd w(n);
 		for (intptr_t i = 0; i < n; i++)
 		{
@@ -580,7 +600,8 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter)
 //   likelihood regression with beta-distributed dependent variables.
 //   Psychological Methods, 11(1), 54–71.
 
-Model beta_regression(const Array<double> &y, const Array<double> &X, int max_iter)
+Model beta_regression(const Array<double> &y, const Array<double> &X, int max_iter,
+                      const Array<double> &offset)
 {
 	validate_inputs(y, X);
 
@@ -589,6 +610,11 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
 	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+
+	// Map offset (may be empty).
+	bool has_off = !offset.empty();
+	Eigen::Map<const Eigen::VectorXd> off(
+		has_off ? offset.data() : nullptr, has_off ? n : 0);
 
 	// ── Validate response ────────────────────────────────────────────
 	for (intptr_t i = 0; i < n; i++)
@@ -600,8 +626,6 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	}
 
 	// ── Initial φ from method-of-moments ─────────────────────────────
-	//
-	// E[Y] = μ, Var(Y) = μ(1-μ) / (1+φ)  →  φ = μ(1-μ) / Var(Y) - 1
 
 	double ybar = ym.mean();
 	double yvar = (ym.array() - ybar).square().sum() / (n - 1);
@@ -609,19 +633,15 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	if (yvar > 0 && yvar < ybar * (1.0 - ybar)) {
 		phi = ybar * (1.0 - ybar) / yvar - 1.0;
 	} else {
-		phi = 10.0; // conservative fallback
+		phi = 10.0;
 	}
 	phi = std::clamp(phi, 0.1, 1e6);
 
-	// ── Initial β from logistic regression on the proportion data ─────
-	//
-	// We treat y as a continuous proportion and fit via L-BFGS with
-	// binomial family. This gives a quick starting point for the
-	// logit-scale linear predictor.
+	// ── Initial β from logistic regression ──────────────────────────
 
 	Eigen::VectorXd beta = Eigen::VectorXd::Zero(p);
 	{
-		auto logit_fit = glm(y, X, Family::binomial(), false, 50);
+		auto logit_fit = glm(y, X, Family::binomial(), false, 50, offset);
 		for (intptr_t j = 0; j < p; j++) {
 			beta[j] = logit_fit.beta[j + 1];
 		}
@@ -638,17 +658,12 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 		double phi_old = phi;
 
 		// ── (a) IWLS for β given φ ───────────────────────────────────
-		//
-		// Working weights: w_i = (dμ/dη)² / V(μ)
-		//   = [μ_i(1-μ_i)]² / [μ_i(1-μ_i)/(1+φ)]
-		//   = μ_i(1-μ_i)(1+φ)
-		// Working response:
-		//   z_i = η_i + (y_i − μ_i) / [μ_i(1 − μ_i)]
 
 		for (int iwls = 0; iwls < 50; iwls++)
 		{
-			Eigen::VectorXd eta = Xm * beta;
-			// μ = logistic(η)
+			Eigen::VectorXd eta_xb = Xm * beta;
+			Eigen::VectorXd eta = eta_xb;
+			if (has_off) eta += off;
 			Eigen::VectorXd mu = (1.0 / (1.0 + (-eta.array()).exp())).matrix();
 
 			Eigen::VectorXd w(n), z(n);
@@ -657,10 +672,10 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 				double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
 				double mu1m = mi * (1.0 - mi);
 				w[i] = mu1m * (1.0 + phi);
-				z[i] = eta[i] + (ym[i] - mi) / mu1m;
+				// Working response on the Xβ scale (without offset)
+				z[i] = eta_xb[i] + (ym[i] - mi) / mu1m;
 			}
 
-			// Solve (X'WX) β = X'Wz
 			Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
 			Eigen::VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
 
@@ -673,19 +688,10 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 			if (max_change < 1e-8) break;
 		}
 
-		// ── (b) Update φ given β (1D Newton on profile log-likelihood) ──
-		//
-		// ℓ(φ) = Σ [lgamma(φ) - lgamma(μ_iφ) - lgamma((1-μ_i)φ)
-		//         + (μ_iφ-1)log(y_i) + ((1-μ_i)φ-1)log(1-y_i)]
-		//
-		// Score (dℓ/dφ):
-		//   Σ [digamma(φ) - μ_i·digamma(μ_iφ) - (1-μ_i)·digamma((1-μ_i)φ)
-		//     + μ_i·log(y_i) + (1-μ_i)·log(1-y_i)]
-		//
-		// Fisher info (−d²ℓ/dφ²):
-		//   Σ [−trigamma(φ) + μ_i²·trigamma(μ_iφ) + (1-μ_i)²·trigamma((1-μ_i)φ)]
+		// ── (b) Update φ given β ─────────────────────────────────────
 
 		Eigen::VectorXd eta = Xm * beta;
+		if (has_off) eta += off;
 		Eigen::VectorXd mu = (1.0 / (1.0 + (-eta.array()).exp())).matrix();
 
 		for (int newton = 0; newton < 30; newton++)
@@ -739,6 +745,7 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	model.link = "logit";
 	model.phi = phi;
 	store_matrices(model, y, X);
+	if (has_off) model.offset = offset;
 
 	model.beta = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
@@ -755,7 +762,9 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 
 	// Covariance: (X'WX)⁻¹ with beta working weights
 	{
-		Eigen::VectorXd mu_vec = (1.0 / (1.0 + (-(Xm * beta)).array().exp())).matrix();
+		Eigen::VectorXd eta_cov = Xm * beta;
+		if (has_off) eta_cov += off;
+		Eigen::VectorXd mu_vec = (1.0 / (1.0 + (-eta_cov).array().exp())).matrix();
 		Eigen::VectorXd w(n);
 		for (intptr_t i = 0; i < n; i++)
 		{
@@ -842,7 +851,8 @@ gcv_score(const Matrix<double> &XtX, const Vector<double> &Xty,
 Model penalized_lm(const Array<double> &y, const Array<double> &X,
                    const Array<double> &S, intptr_t n_parametric,
                    const std::vector<SmoothColumnRange> &smooth_ranges,
-                   FittingCallback progress)
+                   FittingCallback progress,
+                   const Array<double> &offset)
 {
 	using namespace Eigen;
 
@@ -856,8 +866,16 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
 	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
 
+	// For Gaussian with identity link, absorb offset into the response:
+	// y_work = y - offset, then solve (X'X + λS)β = X'y_work.
+	VectorXd ym_work = ym;
+	if (!offset.empty()) {
+		Map<const VectorXd> off(offset.data(), n);
+		ym_work -= off;
+	}
+
 	MatrixXd XtX = Xm.transpose() * Xm;
-	VectorXd Xty = Xm.transpose() * ym;
+	VectorXd Xty = Xm.transpose() * ym_work;
 
 	// ── Extract per-smooth penalty sub-matrices from S ───────────
 
@@ -891,7 +909,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 			MatrixXd M = XtX + lam * Sm;
 			LDLT<MatrixXd> ldlt(M);
 			VectorXd beta = ldlt.solve(Xty);
-			double rss = (ym - Xm * beta).squaredNorm();
+			double rss = (ym_work - Xm * beta).squaredNorm();
 			double edf = ldlt.solve(XtX).trace();
 			double denom = (double)n - edf;
 			double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
@@ -938,7 +956,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 				MatrixXd M = XtX + S_other + lam * S_blocks[j];
 				LDLT<MatrixXd> ldlt(M);
 				VectorXd beta = ldlt.solve(Xty);
-				double rss = (ym - Xm * beta).squaredNorm();
+				double rss = (ym_work - Xm * beta).squaredNorm();
 				double edf = ldlt.solve(XtX).trace();
 				double denom = (double)n - edf;
 				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
@@ -959,7 +977,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 				MatrixXd M = XtX + S_other + lam * S_blocks[j];
 				LDLT<MatrixXd> ldlt(M);
 				VectorXd beta = ldlt.solve(Xty);
-				double rss = (ym - Xm * beta).squaredNorm();
+				double rss = (ym_work - Xm * beta).squaredNorm();
 				double edf = ldlt.solve(XtX).trace();
 				double denom = (double)n - edf;
 				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
@@ -994,7 +1012,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	MatrixXd M = XtX + S_final;
 	LLT<MatrixXd> llt(M);
 	VectorXd beta_vec = llt.solve(Xty);
-	VectorXd resid = ym - Xm * beta_vec;
+	VectorXd resid = ym_work - Xm * beta_vec;
 	double rss = resid.squaredNorm();
 
 	// EDF and influence matrix: A = (X'X + S_final)⁻¹ X'X
@@ -1017,6 +1035,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	model.family = "gaussian";
 	model.link = "identity";
 	store_matrices(model, y, X);
+	if (!offset.empty()) model.offset = offset;
 
 	// Store full variance-covariance matrix
 	store_vcov(model, Vb);
@@ -1100,6 +1119,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		for (intptr_t j = 0; j < p; j++) {
 			yhat += Xm(i, j) * beta_vec[j];
 		}
+		if (!offset.empty()) yhat += offset.data()[i];
 		model.fitted[i + 1] = yhat;
 		model.residuals[i + 1] = ym[i] - yhat;
 	}
@@ -1137,7 +1157,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     intptr_t n_parametric,
                     const std::vector<SmoothColumnRange> &smooth_ranges,
                     FittingCallback progress,
-                    int max_iter)
+                    int max_iter,
+                    const Array<double> &offset)
 {
 	using namespace Eigen;
 
@@ -1149,6 +1170,9 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
 	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
 	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
+
+	bool has_off = !offset.empty();
+	Map<const VectorXd> off(has_off ? offset.data() : nullptr, has_off ? n : 0);
 
 	// Initialize beta from unpenalized GLM-style: eta = link(y)
 	VectorXd beta = VectorXd::Zero(p);
@@ -1164,6 +1188,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		// Working weights and response
 		VectorXd mu_eta_vec = fam.mu_eta(mu);
 		VectorXd var_vec = fam.variance(mu);
+		VectorXd eta_xb = Xm * beta;
 		VectorXd w(n), z(n);
 
 		for (intptr_t i = 0; i < n; i++)
@@ -1171,7 +1196,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 			double dmu = std::max(std::abs(mu_eta_vec[i]), 1e-10);
 			double v = std::max(var_vec[i], 1e-10);
 			w[i] = dmu * dmu / v;
-			z[i] = eta[i] + (ym[i] - mu[i]) / dmu;
+			// Working response on Xβ scale (without offset)
+			z[i] = eta_xb[i] + (ym[i] - mu[i]) / dmu;
 		}
 
 		// Penalized WLS: (X'WX + λS) β = X'Wz
@@ -1216,6 +1242,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		double delta = (beta_new - beta).norm() / (beta.norm() + 1e-10);
 		beta = beta_new;
 		eta = Xm * beta;
+		if (has_off) eta += off;
 		mu = fam.linkinv(eta);
 
 		if (delta < 1e-6)
@@ -1307,6 +1334,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	model.family = fam.name;
 	model.link = fam.link_name;
 	store_matrices(model, y, X);
+	if (has_off) model.offset = offset;
 
 	// Store full variance-covariance matrix
 	store_vcov(model, Vb);

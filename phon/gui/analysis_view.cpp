@@ -33,6 +33,7 @@
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QGroupBox>
+#include <QRegularExpression>
 #include <QMainWindow>
 #include <QStatusBar>
 #include <QProgressBar>
@@ -1923,6 +1924,16 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 
 	menu.addSeparator();
 
+	// ── Offset ──────────────────────────────────────────────────────
+
+	auto *offset_action = menu.addAction(tr("Add as offset"));
+	// Offset is only meaningful for numeric columns.
+	if (m_analysis->has_source()) {
+		offset_action->setEnabled(isColumnNumeric(String(name.toUtf8().constData())));
+	}
+
+	menu.addSeparator();
+
 	// ── Reference level ──────────────────────────────────────────────
 
 	QMenu *ref_menu = nullptr;
@@ -2065,6 +2076,33 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	}
 	else if (chosen->parent() == indep_slope_menu) {
 		addRandomSlope(name, chosen->data().toString(), false);
+	}
+	else if (chosen == offset_action) {
+		// Insert offset(name) into the formula.
+		QString quoted = quoteIfNeeded(name);
+		QString term = QStringLiteral("offset(") + quoted + QStringLiteral(")");
+		QString text = m_formula_edit->text().trimmed();
+		if (text.isEmpty()) {
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		} else if (!text.contains('~')) {
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+		} else {
+			// Remove any existing offset() term before adding the new one.
+			static QRegularExpression offset_re(QStringLiteral(R"(\+?\s*offset\([^)]*\)\s*)"));
+			QString rhs = text.mid(text.indexOf('~') + 1);
+			rhs.replace(offset_re, QStringLiteral(" "));
+			rhs = rhs.trimmed();
+			QString lhs = text.left(text.indexOf('~') + 1);
+			if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+				m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+			} else {
+				// Strip leading '+' that might be left after removal.
+				if (rhs.startsWith('+')) rhs = rhs.mid(1).trimmed();
+				m_formula_edit->setText(lhs + QStringLiteral(" ") + rhs + QStringLiteral(" + ") + term);
+			}
+		}
+		m_formula_edit->setFocus();
+		m_formula_edit->setCursorPosition(m_formula_edit->text().length());
 	}
 	else if (ref_menu && chosen->parent() == ref_menu) {
 		auto name_s = String(name.toUtf8().constData());
@@ -2385,6 +2423,11 @@ void AnalysisView::removeFromFormula(const QString &name)
 			// For bs=cr by-factor, the plain smooth s(x) may already exist.
 			parsed->smooth.remove_at(i);
 		}
+	}
+
+	// Remove offset if this variable is the offset.
+	if (parsed->offset == name_s) {
+		parsed->offset = String();
 	}
 
 	applyFormula(*parsed);

@@ -49,6 +49,11 @@ namespace {
 
 using ADdouble = CppAD::AD<double>;
 
+// Helper: add offset vector to linear predictor η (no-op if off_ptr is null).
+static inline void add_offset(Eigen::VectorXd &eta, const Eigen::VectorXd *off_ptr) {
+	if (off_ptr) eta += *off_ptr;
+}
+
 // =====================================================================
 // Multi-group random effects layout (unchanged)
 // =====================================================================
@@ -576,7 +581,8 @@ static InnerResult solve_inner(const Eigen::VectorXd &beta,
                                 const Eigen::Map<Matrix<double>> &Xm,
                                 const Eigen::Map<Vector<double>> &ym,
                                 const GroupLayout &lay,
-                                intptr_t n, intptr_t p)
+                                intptr_t n, intptr_t p,
+                                const Eigen::VectorXd *off_ptr = nullptr)
 {
 	InnerResult res;
 	res.u = Eigen::VectorXd::Zero(lay.J_total);
@@ -594,6 +600,7 @@ static InnerResult solve_inner(const Eigen::VectorXd &beta,
 	double inner_tol = 1e-8;
 
 	Eigen::VectorXd Xbeta = Xm * beta;
+	add_offset(Xbeta, off_ptr);
 	Eigen::VectorXd eta(n), mu(n);
 
 	for (int iter = 0; iter < max_inner; iter++)
@@ -761,7 +768,8 @@ static ADdouble laplace_nll_ad(const std::vector<ADdouble> &a_phi,
                                 const Eigen::Map<Vector<double>> &ym,
                                 const GroupLayout &lay,
                                 intptr_t n, intptr_t p,
-                                bool is_gaussian)
+                                bool is_gaussian,
+                                const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t G = lay.G;
 
@@ -793,6 +801,7 @@ static ADdouble laplace_nll_ad(const std::vector<ADdouble> &a_phi,
 		for (intptr_t g = 0; g < G; g++) {
 			sum += u_hat[lay.offset[g] + (*lay.group_indices[g])[i]];  // double + AD = AD
 		}
+		if (off_ptr) sum += (*off_ptr)[i];
 		eta[i] = sum;
 	}
 
@@ -942,6 +951,7 @@ struct OuterObjective
 	intptr_t n, p;
 	bool is_gaussian;
 	std::string family_name;  // cached for AD (avoids String comparison in tape)
+	const Eigen::VectorXd *off_ptr = nullptr;
 
 	// Plain-double evaluation (for starting value, final nll, etc.)
 	double eval(const Eigen::VectorXd &phi) const
@@ -953,7 +963,7 @@ struct OuterObjective
 		}
 		double sigma2 = is_gaussian ? std::exp(2.0 * phi[p + lay.G]) : 0.0;
 
-		auto res = solve_inner(beta, sigma2_u, sigma2, fam, Xm, ym, lay, n, p);
+		auto res = solve_inner(beta, sigma2_u, sigma2, fam, Xm, ym, lay, n, p, off_ptr);
 		return res.laplace_nll;
 	}
 
@@ -1009,7 +1019,7 @@ static Eigen::VectorXd exact_gradient(const Eigen::VectorXd &phi,
 	double sigma2 = obj.is_gaussian ? std::exp(2.0 * phi[obj.p + obj.lay.G]) : 0.0;
 
 	auto inner = solve_inner(beta, sigma2_u, sigma2, obj.fam, obj.Xm, obj.ym,
-	                          obj.lay, obj.n, obj.p);
+	                          obj.lay, obj.n, obj.p, obj.off_ptr);
 
 	std::vector<ADdouble> a_phi(dim);
 	for (intptr_t i = 0; i < dim; i++) {
@@ -1019,7 +1029,8 @@ static Eigen::VectorXd exact_gradient(const Eigen::VectorXd &phi,
 
 	std::vector<ADdouble> a_nll(1);
 	a_nll[0] = laplace_nll_ad(a_phi, inner.u, obj.family_name,
-	                           obj.Xm, obj.ym, obj.lay, obj.n, obj.p, obj.is_gaussian);
+	                           obj.Xm, obj.ym, obj.lay, obj.n, obj.p, obj.is_gaussian,
+	                           obj.off_ptr);
 
 	CppAD::ADFun<double> tape;
 	tape.Dependent(a_phi, a_nll);
@@ -1062,11 +1073,16 @@ static ProfiledResult solve_profiled_gaussian(
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p,
 	const Eigen::LDLT<Eigen::MatrixXd> &XtX_ldlt,
-	const Eigen::MatrixXd &Xt)          // precomputed X'
+	const Eigen::MatrixXd &Xt,          // precomputed X'
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	ProfiledResult res;
 	res.u = Eigen::VectorXd::Zero(lay.J_total);
-	res.beta = XtX_ldlt.solve(Xt * ym);   // OLS starting β
+
+	// OLS starting β (with offset absorbed into y if present).
+	Eigen::VectorXd ym_adj = ym;
+	if (off_ptr) ym_adj -= *off_ptr;
+	res.beta = XtX_ldlt.solve(Xt * ym_adj);
 
 	double inv_sigma2 = 1.0 / sigma2;
 	Eigen::VectorXd inv_sigma2_u(lay.G);
@@ -1080,6 +1096,7 @@ static ProfiledResult solve_profiled_gaussian(
 	{
 		// ── Update u given β ────────────────────────────────────────
 		Eigen::VectorXd eta = Xm * res.beta;
+		add_offset(eta, off_ptr);
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			auto &idx = *lay.group_indices[g];
@@ -1126,8 +1143,9 @@ static ProfiledResult solve_profiled_gaussian(
 			max_u_change = std::max(max_u_change, std::abs(step));
 		}
 
-		// ── Update β given u:  β = (X'X)⁻¹ X'(y − Zu) ─────────────
+		// ── Update β given u:  β = (X'X)⁻¹ X'(y − Zu − offset) ────
 		Eigen::VectorXd y_adj = ym;
+		if (off_ptr) y_adj -= *off_ptr;
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			auto &idx = *lay.group_indices[g];
@@ -1145,6 +1163,7 @@ static ProfiledResult solve_profiled_gaussian(
 
 	// ── Final eta / mu ──────────────────────────────────────────────
 	Eigen::VectorXd eta = Xm * res.beta;
+	add_offset(eta, off_ptr);
 	for (intptr_t g = 0; g < lay.G; g++)
 	{
 		auto &idx = *lay.group_indices[g];
@@ -1198,6 +1217,7 @@ struct ProfiledObjective
 	intptr_t n, p;
 	const Eigen::LDLT<Eigen::MatrixXd> &XtX_ldlt;
 	const Eigen::MatrixXd &Xt;
+	const Eigen::VectorXd *off_ptr = nullptr;
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
@@ -1208,7 +1228,7 @@ struct ProfiledObjective
 		double sigma2 = std::exp(2.0 * theta[lay.G]);
 
 		auto res = solve_profiled_gaussian(sigma2_u, sigma2, Xm, ym, lay,
-		                                    n, p, XtX_ldlt, Xt);
+		                                    n, p, XtX_ldlt, Xt, off_ptr);
 		return res.laplace_nll;
 	}
 };
@@ -1234,7 +1254,8 @@ static ProfiledResult solve_gaussian_henderson(
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p,
 	const PriorSpec *priors = nullptr,
-	const Array<String> *coef_names = nullptr)
+	const Array<String> *coef_names = nullptr,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1243,17 +1264,21 @@ static ProfiledResult solve_gaussian_henderson(
 
 	double inv_sigma2 = 1.0 / sigma2;
 
+	// Effective response: y - offset (identity link).
+	Eigen::VectorXd y_work = ym;
+	if (off_ptr) y_work -= *off_ptr;
+
 	// Build Henderson system:
-	// [(1/σ²)X'X     (1/σ²)X'Z           ] [β]   [(1/σ²)X'y ]
-	// [(1/σ²)Z'X   (1/σ²)Z'Z + D⁻¹       ] [u ] = [(1/σ²)Z'y ]
+	// [(1/σ²)X'X     (1/σ²)X'Z           ] [β]   [(1/σ²)X'y_work ]
+	// [(1/σ²)Z'X   (1/σ²)Z'Z + D⁻¹       ] [u ] = [(1/σ²)Z'y_work ]
 
 	Eigen::MatrixXd H = Eigen::MatrixXd::Zero(sdim, sdim);
 	Eigen::VectorXd rhs = Eigen::VectorXd::Zero(sdim);
 
-	// (1/σ²)X'X and (1/σ²)X'y
+	// (1/σ²)X'X and (1/σ²)X'y_work
 	for (intptr_t i = 0; i < n; i++)
 	{
-		double wy = inv_sigma2 * ym[i];
+		double wy = inv_sigma2 * y_work[i];
 		for (intptr_t j1 = 0; j1 < p; j1++)
 		{
 			rhs[j1] += Xm(i, j1) * wy;
@@ -1305,7 +1330,7 @@ static ProfiledResult solve_gaussian_henderson(
 					H(base1 + t, j) += val;
 				}
 
-				rhs[base1 + t] += inv_sigma2 * ym[i] * z_val;
+				rhs[base1 + t] += inv_sigma2 * y_work[i] * z_val;
 			}
 
 			// Z'Z within-group
@@ -1352,8 +1377,9 @@ static ProfiledResult solve_gaussian_henderson(
 	res.beta = sol.head(p);
 	res.u = sol.tail(J);
 
-	// Final η = Xβ + Zu
+	// Final η = Xβ + Zu + offset
 	Eigen::VectorXd eta = Xm * res.beta;
+	add_offset(eta, off_ptr);
 	for (intptr_t g = 0; g < G; g++)
 	{
 		auto &idx = *lay.group_indices[g];
@@ -1420,6 +1446,7 @@ struct GaussianCholObjective
 	intptr_t n_chol;
 	const PriorSpec *priors;
 	const Array<String> *coef_names;
+	const Eigen::VectorXd *off_ptr = nullptr;
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
@@ -1440,7 +1467,7 @@ struct GaussianCholObjective
 		// Henderson includes the fixed-effect prior (shifts β̂ to MAP).
 		double nll = solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
 		                                       Xm, ym, lay, n, p,
-		                                       priors, coef_names).laplace_nll;
+		                                       priors, coef_names, off_ptr).laplace_nll;
 
 		// Variance-component and residual priors.
 		if (priors)
@@ -1484,7 +1511,8 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
                                    const Eigen::VectorXd &beta_init,
                                    const Eigen::VectorXd &u_init = Eigen::VectorXd(),
                                    const PriorSpec *priors = nullptr,
-                                   const Array<String> *coef_names = nullptr)
+                                   const Array<String> *coef_names = nullptr,
+                                   const Eigen::VectorXd *off_ptr = nullptr)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1496,7 +1524,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	for (int pirls_iter = 0; pirls_iter < 100; pirls_iter++)
 	{
-		// ── η = Xβ + Zu ──────────────────────────────────────
+		// ── η = Xβ + Zu (without offset for working response) ──
 		Eigen::VectorXd eta = Xm * res.beta;
 		for (intptr_t g = 0; g < G; g++)
 		{
@@ -1510,12 +1538,14 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 				}
 			}
 		}
-		Eigen::VectorXd mu = fam.linkinv(eta);
+		// μ uses full η (with offset); working response z uses η without offset.
+		Eigen::VectorXd eta_full = eta;
+		add_offset(eta_full, off_ptr);
+		Eigen::VectorXd mu = fam.linkinv(eta_full);
 
 		// ── Working weights and response ────────────────────────
-		// General GLM: w_i = (dμ/dη)² / V(μ),  z_i = η_i + (y_i − μ_i) / (dμ/dη)
-		// Student t:   w_i from custom_weights (observation-dependent),
-		//              z_i = η_i + (y_i − μ_i) / (dμ/dη) = y_i (identity link)
+		// z_i on the Xβ+Zu scale (offset excluded) so the Henderson solve
+		// recovers β without absorbing the offset.
 		Eigen::VectorXd w(n), z(n);
 		if (fam.custom_weights)
 		{
@@ -1668,6 +1698,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 
 	// ── Final η, μ ──────────────────────────────────────────────────
 	Eigen::VectorXd eta = Xm * res.beta;
+	add_offset(eta, off_ptr);
 	for (intptr_t g = 0; g < G; g++)
 	{
 		auto &idx = *lay.group_indices[g];
@@ -1769,7 +1800,8 @@ static ProfiledResult solve_u_given_beta(
     const GroupLayout &lay,
     intptr_t n, intptr_t p,
     const Eigen::VectorXd &beta,
-    const Eigen::VectorXd &u_init = Eigen::VectorXd())
+    const Eigen::VectorXd &u_init = Eigen::VectorXd(),
+    const Eigen::VectorXd *off_ptr = nullptr)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1779,6 +1811,7 @@ static ProfiledResult solve_u_given_beta(
 	res.u = (u_init.size() == J) ? u_init : Eigen::VectorXd::Zero(J);
 
 	Eigen::VectorXd Xbeta = Xm * beta;
+	add_offset(Xbeta, off_ptr);
 
 	// When there are no random effects (G=0, J=0), skip the u-update loop entirely.
 	if (J > 0)
@@ -2034,6 +2067,7 @@ struct PirlsObjective
 	intptr_t n_chol;  // total Cholesky params = Σ q_g(q_g+1)/2
 	const PriorSpec *priors;
 	const Array<String> *coef_names;
+	const Eigen::VectorXd *off_ptr = nullptr;
 
 	// Warm-start: cache the random effects from the last PIRLS solve
 	// so consecutive evaluations at nearby θ start close to the mode.
@@ -2064,24 +2098,24 @@ struct PirlsObjective
 		{
 			double theta_nb = std::exp(theta[n_chol]);
 			auto fam_nb = Family::negbin(theta_nb);
-			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
+			res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names, off_ptr);
 		}
 		else if (fam.name == "beta")
 		{
 			double phi_beta = std::exp(theta[n_chol]);
 			auto fam_beta = Family::beta(phi_beta);
-			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
+			res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names, off_ptr);
 		}
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(theta[n_chol]);
 			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 			auto fam_t = Family::student(sigma_t, nu_t);
-			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
+			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names, off_ptr);
 		}
 		else
 		{
-			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names);
+			res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names, off_ptr);
 		}
 
 		double nll = res.laplace_nll;
@@ -2123,6 +2157,7 @@ struct LaplaceJointObjective
 	intptr_t n, p, n_chol;
 	const PriorSpec *priors;
 	const Array<String> *coef_names;
+	const Eigen::VectorXd *off_ptr = nullptr;
 
 	mutable Eigen::VectorXd last_u;
 
@@ -2163,7 +2198,7 @@ struct LaplaceJointObjective
 		}
 
 		auto res = solve_u_given_beta(D_inv, log_det_Dg, fam_used,
-		                               Xm, ym, lay, n, p, beta, last_u);
+		                               Xm, ym, lay, n, p, beta, last_u, off_ptr);
 		double nll;
 		if (std::isfinite(res.laplace_nll))
 		{
@@ -2572,7 +2607,8 @@ static GridPointResult eval_gaussian_grid_point(
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const PriorSpec *priors,
-	const Array<String> *coef_names)
+	const Array<String> *coef_names,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	GridPointResult gpr;
 
@@ -2593,7 +2629,7 @@ static GridPointResult eval_gaussian_grid_point(
 	// ── Solve Henderson → β̂, û ───────────────────────────────────
 	auto inner = solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
 	                                       Xm, ym, lay, n, p,
-	                                       priors, coef_names);
+	                                       priors, coef_names, off_ptr);
 	gpr.beta = inner.beta;
 
 	// ── Neg-log-posterior (reuse objective which includes all prior terms) ──
@@ -2720,7 +2756,8 @@ static GridPointResult eval_pirls_grid_point(
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const Eigen::VectorXd &beta_init,
 	const PriorSpec *priors,
-	const Array<String> *coef_names)
+	const Array<String> *coef_names,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	GridPointResult gpr;
 	intptr_t G = lay.G;
@@ -2745,14 +2782,14 @@ static GridPointResult eval_pirls_grid_point(
 		double theta_nb = std::exp(theta[n_chol]);
 		auto fam_nb = Family::negbin(theta_nb);
 		res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names);
+		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
 	}
 	else if (fam.name == "beta")
 	{
 		double phi_beta = std::exp(theta[n_chol]);
 		auto fam_beta = Family::beta(phi_beta);
 		res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names);
+		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
 	}
 	else if (fam.name == "student")
 	{
@@ -2760,13 +2797,13 @@ static GridPointResult eval_pirls_grid_point(
 		double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 		auto fam_t = Family::student(sigma_t, nu_t);
 		res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names);
+		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
 	}
 	else
 	{
 		// Binomial, Poisson: no extra dispersion parameters.
 		res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names);
+		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
 	}
 
 	gpr.beta = res.beta;
@@ -3004,7 +3041,8 @@ static void compute_grid_waic(
 	intptr_t n, intptr_t p,
 	intptr_t n_chol,
 	std::function<double(double)> linkinv_scalar,
-	std::function<void(const Eigen::VectorXd &theta, double *disp)> disp_from_theta)
+	std::function<void(const Eigen::VectorXd &theta, double *disp)> disp_from_theta,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t n_grid = (intptr_t)results.size();
 	intptr_t d = theta_star.size();
@@ -3083,10 +3121,11 @@ static void compute_grid_waic(
 		// Compute pointwise log-likelihoods.
 		for (intptr_t i = 0; i < n; i++)
 		{
-			// η_i = x_i' β^(s) + zu_i
+			// η_i = x_i' β^(s) + zu_i + offset_i
 			double eta_i = zu[i];
 			for (intptr_t j = 0; j < p; j++)
 				eta_i += Xm(i, j) * beta_s[j];
+			if (off_ptr) eta_i += (*off_ptr)[i];
 
 			double mu_i = linkinv_scalar(eta_i);
 			loglik_matrix[i * WAIC_S + s] = pointwise_loglik(ym[i], mu_i,
@@ -3115,7 +3154,8 @@ static void inla_grid_integrate_gaussian(
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const PriorSpec *priors,
-	const Array<String> *coef_names)
+	const Array<String> *coef_names,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t d = theta_star.size();
 
@@ -3149,7 +3189,8 @@ static void inla_grid_integrate_gaussian(
 	{
 		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
 		results[k] = eval_gaussian_grid_point(theta_k, obj, Xm, ym, lay,
-		                                       n, p, n_chol, priors, coef_names);
+		                                       n, p, n_chol, priors, coef_names,
+		                                       off_ptr);
 
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
@@ -3413,7 +3454,8 @@ static void inla_grid_integrate_gaussian(
 	                   // Gaussian: σ = exp(θ[n_chol])
 	                   [n_chol](const Eigen::VectorXd &theta, double *disp) {
 	                       disp[0] = std::exp(theta[n_chol]);
-	                   });
+	                   },
+	                   off_ptr);
 }
 // Populates the Model's posterior fields with mixture-based estimates.
 //
@@ -3430,7 +3472,8 @@ static void inla_grid_integrate_pirls(
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const Eigen::VectorXd &beta_init,
 	const PriorSpec *priors,
-	const Array<String> *coef_names)
+	const Array<String> *coef_names,
+	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t d = theta_star.size();  // n_chol + n_disp
 
@@ -3462,7 +3505,7 @@ static void inla_grid_integrate_pirls(
 		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
 		results[k] = eval_pirls_grid_point(theta_k, fam, Xm, ym, lay,
 		                                    n, p, n_chol, beta_init,
-		                                    priors, coef_names);
+		                                    priors, coef_names, off_ptr);
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
 
@@ -3796,7 +3839,7 @@ static void inla_grid_integrate_pirls(
 
 	compute_grid_waic(model, results, w, z_points, theta_star, T,
 	                   Xm, ym, n, p, n_chol,
-	                   linkinv_fn, disp_fn);
+	                   linkinv_fn, disp_fn, off_ptr);
 }
 
 
@@ -3812,7 +3855,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   FittingCallback progress,
                   const PriorSpec *priors,
                   const Array<String> *coef_names,
-                  int max_iter)
+                  int max_iter,
+                  const Array<double> &offset)
 {
 
 	if (y.ndim() != 1) {
@@ -3827,6 +3871,15 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	intptr_t n = y.size();
 	intptr_t p = X.ncol();
 	bool is_gaussian = (fam.name == "gaussian");
+
+	// Map offset vector (nullable pointer for internal use).
+	std::unique_ptr<Eigen::VectorXd> off_storage;
+	const Eigen::VectorXd *off_ptr = nullptr;
+	if (!offset.empty()) {
+		off_storage = std::make_unique<Eigen::VectorXd>(
+			Eigen::Map<const Eigen::VectorXd>(offset.data(), n));
+		off_ptr = off_storage.get();
+	}
 
 	// Gaussian and standard GLMs (binomial, Poisson) without random effects
 	// should be fitted via lm()/glm(); only families with a dispersion
@@ -3871,19 +3924,15 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	Model fe;
 	if (is_gaussian) {
-		fe = lm(y, X);
+		fe = lm(y, X, offset);
 	} else if (fam.name == "negbin") {
-		// For NB, use Poisson as starting fit (glm() uses canonical-link
-		// gradient which is incorrect for NB's non-canonical log link).
-		fe = glm(y, X, Family::poisson());
+		fe = glm(y, X, Family::poisson(), false, 200, offset);
 	} else if (fam.name == "beta") {
-		// For beta, use binomial as starting fit (same logit link).
-		fe = glm(y, X, Family::binomial());
+		fe = glm(y, X, Family::binomial(), false, 200, offset);
 	} else if (fam.name == "student") {
-		// For Student t, use OLS as starting fit (identity link).
-		fe = lm(y, X);
+		fe = lm(y, X, offset);
 	} else {
-		fe = glm(y, X, fam);
+		fe = glm(y, X, fam, false, 200, offset);
 	}
 
 	intptr_t outer_dim = is_gaussian ? (p + G + 1) : (p + G);
@@ -3975,7 +4024,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		intptr_t n_chol = total_chol_params(lay);
 		intptr_t outer_dim_gauss = n_chol + 1; // Cholesky params + log σ
 
-		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names};
+		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
 
 		// ── Initialize Cholesky from ANOVA variance estimates ──
 		Eigen::VectorXd theta(outer_dim_gauss);
@@ -4029,7 +4078,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		auto final_gauss = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
 		                                             Xm, ym, lay, n, p,
-		                                             priors, coef_names);
+		                                             priors, coef_names, off_ptr);
 		beta_hat = final_gauss.beta;
 
 		// Save for INLA grid integration (after Model is built).
@@ -4174,7 +4223,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		// Create PirlsObjective after beta_init is finalized
 
-		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names};
+		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names, off_ptr};
 
 		auto newton_res = newton_optimize(pirls_obj, theta, max_iter, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
@@ -4215,7 +4264,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
 			                             Xm, ym, lay, n, p, beta_init,
-			                             Eigen::VectorXd(), priors, coef_names);
+			                             Eigen::VectorXd(), priors, coef_names, off_ptr);
 
 			if (is_student)
 			{
@@ -4230,7 +4279,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				phi2.head(p) = p1_pirls.beta;
 				phi2.tail(theta.size()) = theta;
 
-				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names};
+				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
 				joint_obj.last_u = std::move(p1_pirls.u);
 
 				auto res2 = newton_optimize(joint_obj, phi2, max_iter, 1e-8, progress, 1e-2);
@@ -4308,7 +4357,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	{
 		auto gauss_final = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
 		                                            Xm, ym, lay, n, p,
-		                                            priors, coef_names);
+		                                            priors, coef_names, off_ptr);
 		final_inner.u = std::move(gauss_final.u);
 		final_inner.mu = std::move(gauss_final.mu);
 		final_inner.laplace_nll = gauss_final.laplace_nll;
@@ -4317,7 +4366,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	{
 		// Use solve_u_given_beta to ensure β̂ from Phase 2 is not modified
 		auto pirls_final = solve_u_given_beta(D_inv_final, log_det_Dg_final, fam_used,
-		                                       Xm, ym, lay, n, p, beta_hat);
+		                                       Xm, ym, lay, n, p, beta_hat,
+		                                       Eigen::VectorXd(), off_ptr);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
@@ -4599,20 +4649,22 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		if (is_gaussian && saved_theta.size() > 0 && G > 0)
 		{
 			GaussianCholObjective gauss_obj{Xm, ym, lay, n, p,
-			                                 saved_n_chol, priors, coef_names};
+			                                 saved_n_chol, priors, coef_names, off_ptr};
 			inla_grid_integrate_gaussian(model, gauss_obj, saved_theta,
 			                              Xm, ym, lay, n, p, saved_n_chol,
-			                              priors, coef_names);
+			                              priors, coef_names, off_ptr);
 		}
 		else if (!is_gaussian && saved_theta.size() > 0 && G > 0)
 		{
 			PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p,
-			                          saved_beta_init, saved_n_chol, priors, coef_names};
+			                          saved_beta_init, saved_n_chol, priors, coef_names, off_ptr};
 			inla_grid_integrate_pirls(model, pirls_obj, saved_theta,
 			                           fam, Xm, ym, lay, n, p, saved_n_chol,
-			                           saved_beta_init, priors, coef_names);
+			                           saved_beta_init, priors, coef_names, off_ptr);
 		}
 	}
+
+	if (!offset.empty()) model.offset = offset;
 
 	return model;
 }

@@ -302,7 +302,10 @@ static ScaledResidualResult compute_simulation(const Model &m)
 		Eigen::VectorXd Xb = Xm * bm;
 		eta_fixed.resize(n);
 		for (intptr_t i = 0; i < n; i++)
+		{
 			eta_fixed[i] = Xb[i];
+			if (!m.offset.empty()) eta_fixed[i] += m.offset[i + 1];
+		}
 
 		// Unpack Cholesky factors from each RE group's cov_chol (packed lower triangle).
 		for (intptr_t g = 1; g <= m.random_effects.size(); g++)

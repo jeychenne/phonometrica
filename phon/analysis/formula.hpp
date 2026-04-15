@@ -89,6 +89,7 @@ struct Formula
 	Array<FixedTerm> fixed;         // fixed-effects terms
 	Array<SmoothTerm> smooth;       // smooth (GAM) terms
 	Array<RandomTerm> random;       // random-effects terms
+	String offset;                  // column name for offset term (empty if none)
 	bool intercept = true;          // whether a fixed intercept is included
 
 	// Parse an R-style formula string.
@@ -113,6 +114,9 @@ struct Formula
 
 	// True if the formula has any smooth terms.
 	bool has_smooth_terms() const { return !smooth.empty(); }
+
+	// True if the formula includes an offset term.
+	bool has_offset() const { return !offset.empty(); }
 
 	// Collect all variable names appearing in the formula (response + all terms).
 	// Useful for validating against available columns.
