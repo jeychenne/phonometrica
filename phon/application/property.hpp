@@ -115,6 +115,9 @@ public:
 
 	static intptr_t category_count();
 
+	// Clear all global property data. Must be called when closing a project.
+	static void clear_all();
+
 private:
 
 	static std::set<Property> known_properties;

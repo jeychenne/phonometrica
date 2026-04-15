@@ -533,6 +533,7 @@ void Settings::reset_statistics()
 	auto table = make_handle<Table>(runtime);
 	auto &map = table->data();
 	map["estimation"] = String("frequentist");
+	map["max_iterations"] = intptr_t(200);
 	Settings::set_value("statistics", std::move(table));
 }
 

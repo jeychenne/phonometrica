@@ -97,7 +97,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const std::vector<GroupingInfo> &groups, const Family &fam,
                   FittingCallback progress = nullptr,
                   const PriorSpec *priors = nullptr,
-                  const Array<String> *coef_names = nullptr);
+                  const Array<String> *coef_names = nullptr,
+                  int max_iter = 200);
 
 } // namespace phonometrica::stats
 

@@ -418,4 +418,11 @@ intptr_t Property::category_count()
 	return (intptr_t) known_categories.size();
 }
 
+void Property::clear_all()
+{
+	known_properties.clear();
+	known_categories.clear();
+	the_property_types.clear();
+}
+
 } // namespace phonometrica

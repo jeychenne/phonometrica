@@ -24,6 +24,7 @@
 #include <phon/runtime/runtime.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/constants.hpp>
 #include <phon/utils/helpers.hpp>
@@ -1472,6 +1473,7 @@ void Project::clear()
     m_files.clear();
     m_modified = false;
     m_accumulator.clear();
+    Property::clear_all();
 }
 
 String Project::label() const
@@ -1783,42 +1785,54 @@ void Project::add_bookmark(Handle<Bookmark> bookmark)
 
 void Project::interpolate(String &path, std::string_view project_dir)
 {
-	if (path.starts_with(VAR_PROJECT)) {
-		path.replace(1, VAR_PROJECT.size(), project_dir);
-	}
-	else if (path.starts_with(VAR_APPDIR)) {
-		path.replace(1, VAR_APPDIR.size(), filesystem::application_directory());
-	}
-	else if (path.starts_with(VAR_HOME)) {
-		path.replace(1, VAR_HOME.size(), filesystem::user_directory());
-	}
+	// Replace a variable prefix with the corresponding directory, using join()
+	// to guarantee a separator between directory and filename. This also handles
+	// legacy project files where the separator after the variable was missing.
+	auto expand = [&path](std::string_view var, std::string_view dir) -> bool {
+		if (!path.starts_with(var)) return false;
+		intptr_t skip = (intptr_t)var.size();
+		// Skip a following separator if present.
+		if (skip < path.size()) {
+			char c = path.data()[skip];
+			if (c == '/' || c == '\\') skip++;
+		}
+		String rest(path.data() + skip, path.size() - skip);
+		path = rest.empty() ? String(dir) : filesystem::join(dir, rest);
+		return true;
+	};
+
+	if (!expand(VAR_PROJECT, project_dir))
+		if (!expand(VAR_APPDIR, filesystem::application_directory()))
+			expand(VAR_HOME, filesystem::user_directory());
 
 	filesystem::nativize(path);
 }
 
 void Project::compress(String &path, std::string_view project_dir)
 {
-	if (path.starts_with(project_dir))
-	{
-		path.replace(1, project_dir.size(), VAR_PROJECT);
-	}
-	else
-	{
-		auto app_dir = filesystem::application_directory();
-
-		if (path.starts_with(app_dir))
-		{
-			path.replace(1, app_dir.size(), VAR_APPDIR);
+	// Replace a directory prefix with the corresponding variable, always
+	// inserting a '/' separator after the variable. We strip any trailing
+	// separator from the prefix so that the result is always $VAR/rest.
+	auto compact = [&path](std::string_view dir, std::string_view var) -> bool {
+		if (dir.empty() || !path.starts_with(dir)) return false;
+		intptr_t skip = (intptr_t)dir.size();
+		// Skip a following separator if present.
+		if (skip < path.size()) {
+			char c = path.data()[skip];
+			if (c == '/' || c == '\\') skip++;
 		}
-		else
-		{
-			auto user_dir = filesystem::user_directory();
-
-			if (path.starts_with(user_dir)) {
-				path.replace(1, user_dir.size(), VAR_HOME);
-			}
+		String rest(path.data() + skip, path.size() - skip);
+		path = String(var);
+		if (!rest.empty()) {
+			path.push_back('/');
+			path.append(rest);
 		}
-	}
+		return true;
+	};
+
+	if (!compact(project_dir, VAR_PROJECT))
+		if (!compact(filesystem::application_directory(), VAR_APPDIR))
+			compact(filesystem::user_directory(), VAR_HOME);
 
 	filesystem::genericize(path);
 }

@@ -37,7 +37,7 @@ set(PHON_VERSION_DEVEL 0)
 
 set(PHON_RELEASE_DATE_YEAR  2026)
 set(PHON_RELEASE_DATE_MONTH 4)
-set(PHON_RELEASE_DATE_DAY   5)
+set(PHON_RELEASE_DATE_DAY   15)
 
 add_definitions(
     -DPHON_VERSION_MAJOR=${PHON_VERSION_MAJOR}
@@ -403,6 +403,7 @@ if(WITH_GUI)
         icons/list-ordered.svg
         icons/list.svg
         icons/vowel-space.svg
+        icons/settings.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES

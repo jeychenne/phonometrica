@@ -57,7 +57,8 @@ public:
 	// Throws if source is unavailable.
 	int fit(const String &formula_str, const String &family = "gaussian",
 	        stats::FittingCallback progress = nullptr,
-	        const stats::PriorSpec *priors = nullptr);
+	        const stats::PriorSpec *priors = nullptr,
+	        int max_iter = 200);
 
 	// Number of fitted models.
 	int model_count() const { return (int)m_models.size(); }

@@ -156,6 +156,11 @@ private:
 	QComboBox *m_family_combo = nullptr;
 	QComboBox *m_estimation_combo = nullptr;
 	QPushButton *m_fit_button = nullptr;
+	QToolButton *m_options_button = nullptr;
+
+	// Fitting options popup
+	QSpinBox *m_max_iter_spin = nullptr;
+	QComboBox *m_default_est_combo = nullptr;
 
 	// Prior customization panel (visible only when Bayesian is selected)
 	QToolButton *m_prior_toggle = nullptr;

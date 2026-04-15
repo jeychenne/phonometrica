@@ -39,7 +39,8 @@ using FittingCallback = std::function<void(int, int)>;
 //! \param progress  optional callback for reporting fitting progress
 Model fit(const DataTable &data, const Formula &formula, const String &family = "gaussian",
           const std::map<String, String> &reference_levels = {},
-          FittingCallback progress = nullptr);
+          FittingCallback progress = nullptr,
+          int max_iter = 200);
 
 //! Fit a model to data using a formula (Bayesian).
 //! When a PriorSpec is provided, the model is fitted using INLA-style
@@ -50,7 +51,8 @@ Model fit(const DataTable &data, const Formula &formula, const String &family = 
 Model fit(const DataTable &data, const Formula &formula, const String &family,
           const PriorSpec &priors,
           const std::map<String, String> &reference_levels = {},
-          FittingCallback progress = nullptr);
+          FittingCallback progress = nullptr,
+          int max_iter = 200);
 
 } // namespace phonometrica::stats
 

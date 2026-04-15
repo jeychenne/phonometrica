@@ -3811,7 +3811,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const std::vector<GroupingInfo> &groups, const Family &fam,
                   FittingCallback progress,
                   const PriorSpec *priors,
-                  const Array<String> *coef_names)
+                  const Array<String> *coef_names,
+                  int max_iter)
 {
 
 	if (y.ndim() != 1) {
@@ -4003,7 +4004,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		theta[n_chol] = phi[p + G]; // log σ
 
-		auto newton_res = newton_optimize(gauss_obj, theta, 200, 1e-8, progress);
+		auto newton_res = newton_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -4175,7 +4176,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names};
 
-		auto newton_res = newton_optimize(pirls_obj, theta, 200, 1e-8, progress, 1e-2);
+		auto newton_res = newton_optimize(pirls_obj, theta, max_iter, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -4232,7 +4233,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names};
 				joint_obj.last_u = std::move(p1_pirls.u);
 
-				auto res2 = newton_optimize(joint_obj, phi2, 200, 1e-8, progress, 1e-2);
+				auto res2 = newton_optimize(joint_obj, phi2, max_iter, 1e-8, progress, 1e-2);
 
 				// Update β and θ from Phase 2
 				beta_hat = res2.theta.head(p);
