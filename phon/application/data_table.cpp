@@ -118,7 +118,10 @@ void DataTable::metadata_from_xml(xml_node meta_node)
 	// Read standard metadata (description, properties).
 	Document::metadata_from_xml(meta_node);
 
-	// Read filter rules.
+	// Read filter rules. Clear first so that repeated calls (preload, from_xml,
+	// load) replace rather than accumulate.
+	m_filter_rules.clear();
+
 	static const std::string_view filter_rules_tag("FilterRules");
 	static const std::string_view rule_tag("Rule");
 	static const std::string_view value_tag("Value");

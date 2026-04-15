@@ -123,6 +123,8 @@ void AnnotationView::escape()
 
 void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 {
+	toolbar->addSeparator();
+
 	// Save button.
 	auto *save_action = toolbar->addAction(QIcon(":/icons/save.svg"), tr("Save annotation"));
 	connect(save_action, &QAction::triggered, this, &AnnotationView::onSaveAnnotation);

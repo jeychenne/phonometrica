@@ -228,9 +228,9 @@ Example::
 Diagnostics
 -----------
 
-.. function:: dharma(model)
+.. function:: test_residuals(model)
 
-Computes simulation-based residual diagnostics and prints the results. Three tests
+Computes simulation-based residual diagnostics similar to the DHARMa package in R [HAR2022]_ and prints the results. Three tests
 are performed:
 
 * **Uniformity test** (Kolmogorov-Smirnov): tests whether the scaled residuals follow a uniform
@@ -239,10 +239,10 @@ are performed:
   of the scaled residuals to its expected value.
 * **Outlier test**: counts observations whose response falls entirely outside the simulated range.
 
-For **frequentist models**, the simulations are drawn from the fitted model (DHARMa-style
-conditional simulation with 1000 replicates).
+For **frequentist models**, the simulations are drawn from the fitted model (conditional
+simulation with 1000 replicates).
 
-For **Bayesian models**, the function performs posterior predictive checking (PPC): coefficient
+For **Bayesian models**, the function performs posterior predictive checking (PPC) for the uniformity and dispersion tests: coefficient
 vectors are drawn from the posterior (200 replicates), new response vectors are simulated, and
 the test statistics are compared between observed and simulated data. The resulting *p*-values
 are Bayesian *p*-values (proportion of replicates where the simulated statistic exceeds the
@@ -251,7 +251,7 @@ observed).
 Example::
 
    let m = fit("count ~ condition + (1|subject)", ds, "poisson")
-   dharma(m)
+   test_residuals(m)
 
 
 Model fields
@@ -523,3 +523,9 @@ Example::
    WAIC, LPPD, and log-marginal likelihood are displayed by :func:`summarize` and in the
    GUI summary and comparison panels, but are not yet exposed as individual model fields
    in the scripting API.
+
+
+References
+----------
+
+.. [HAR2022] Hartig, Florian. 2022. DHARMa: Residual Diagnostics for Hierarchical (Multi-Level / Mixed) Regression Models. R package. https://CRAN.R-project.org/package=DHARMa.
