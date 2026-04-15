@@ -17,6 +17,14 @@
  *                                                                                                                     *
  * Purpose: regression models (linear and generalized linear).                                                         *
  *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
+ *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #ifndef PHONOMETRICA_REGRESSION_HPP

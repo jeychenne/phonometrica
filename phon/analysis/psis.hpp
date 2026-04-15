@@ -17,13 +17,21 @@
  *                                                                                                                     *
  * Purpose: PSIS-LOO (Pareto Smoothed Importance Sampling Leave-One-Out cross-validation).                             *
  *                                                                                                                     *
- * Algorithm reference (published mathematical specifications):                                                         *
- *   Vehtari, A., Gelman, A. & Gabry, J. (2017). Practical Bayesian model evaluation                                  *
+ * Algorithm reference (published mathematical specifications):                                                        *
+ *   Vehtari, A., Gelman, A. & Gabry, J. (2017). Practical Bayesian model evaluation                                   *
  *     using leave-one-out cross-validation and WAIC. Statistics and Computing 27(5),                                  *
- *     1413-1432.                                                                                                       *
- *   Hosking, J.R.M. & Wallis, J.R. (1987). Parameter and quantile estimation for                                     *
+ *     1413-1432.                                                                                                      *
+ *   Hosking, J.R.M. & Wallis, J.R. (1987). Parameter and quantile estimation for                                      *
  *     the generalized Pareto distribution. Technometrics 29(3), 339-349.                                              *
  *     (L-moment GPD estimator)                                                                                        *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

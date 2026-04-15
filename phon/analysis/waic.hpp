@@ -20,12 +20,20 @@
  * WAIC is a fully observation-level Bayesian model comparison criterion, asymptotically                               *
  * equivalent to leave-one-out cross-validation.                                                                       *
  *                                                                                                                     *
- * Algorithm reference (published mathematical specification):                                                          *
- *   Gelman, A., Hwang, J. & Vehtari, A. (2014). Understanding predictive information                                 *
+ * Algorithm reference (published mathematical specification):                                                         *
+ *   Gelman, A., Hwang, J. & Vehtari, A. (2014). Understanding predictive information                                  *
  *     criteria for Bayesian models. Statistics and Computing 24(6), 997-1016.                                         *
- *   Vehtari, A., Gelman, A. & Gabry, J. (2017). Practical Bayesian model evaluation                                  *
+ *   Vehtari, A., Gelman, A. & Gabry, J. (2017). Practical Bayesian model evaluation                                   *
  *     using leave-one-out cross-validation and WAIC. Statistics and Computing 27(5),                                  *
- *     1413-1432.                                                                                                       *
+ *     1413-1432.                                                                                                      *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

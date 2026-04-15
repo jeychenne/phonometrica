@@ -18,15 +18,23 @@
  * Purpose: estimated marginal means (EMMs) and pairwise contrasts for post-hoc analysis of fitted models.             *
  *          Conceptually similar to the emmeans package in R.                                                          *
  *                                                                                                                     *
- *          EMMs are population-averaged predictions at each level of a target factor, with other categorical           *
- *          factors balanced (equal weights across levels) and numeric covariates held at their observed means.         *
- *          For GLMs and mixed models, results are computed on the link scale and back-transformed to the               *
+ *          EMMs are population-averaged predictions at each level of a target factor, with other categorical          *
+ *          factors balanced (equal weights across levels) and numeric covariates held at their observed means.        *
+ *          For GLMs and mixed models, results are computed on the link scale and back-transformed to the              *
  *          response scale via the inverse link (delta method for SEs, endpoint transformation for CIs).               *
  *                                                                                                                     *
  *          Mathematical reference:                                                                                    *
  *            Searle, Speed & Milliken (1980). Population marginal means in the linear model:                          *
- *                an alternative to least squares means. The American Statistician, 34(4), 216–221.                     *
+ *                an alternative to least squares means. The American Statistician, 34(4), 216–221.                    *
  *            Lenth (2016). Least-squares means: the R package lsmeans. JSS 69(1), 1–33.                               *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

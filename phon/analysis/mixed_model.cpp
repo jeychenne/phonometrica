@@ -22,13 +22,21 @@
  * mode u_hat for given outer parameters) runs with plain doubles. At the converged u_hat, the                         *
  * stationarity condition df/du = 0 means that du_hat/dphi does not contribute to the gradient                         *
  * (implicit function theorem), so we can treat u_hat as a constant when taping the nll w.r.t.                         *
- * the outer parameters phi = (beta, log_sigma_u_1, ..., log_sigma_u_G, [log_sigma]).                                *
+ * the outer parameters phi = (beta, log_sigma_u_1, ..., log_sigma_u_G, [log_sigma]).                                  *
  *                                                                                                                     *
  * Mathematical references:                                                                                            *
- *   Breslow & Clayton (1993). JASA 88(421), 9–25.                                                                    *
- *   Kristensen et al. (2016). JSS 70(5), 1–21.                                                                       *
- *   Skaug & Fournier (2006). Automatic approximation of the marginal likelihood in non-Gaussian                      *
+ *   Breslow & Clayton (1993). JASA 88(421), 9–25.                                                                     *
+ *   Kristensen et al. (2016). JSS 70(5), 1–21.                                                                        *
+ *   Skaug & Fournier (2006). Automatic approximation of the marginal likelihood in non-Gaussian                       *
  *       hierarchical models. Computational Statistics & Data Analysis, 51, 699–709.                                   *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

@@ -19,14 +19,22 @@
  *                                                                                                                     *
  * This is a unified engine: the same code path handles Gaussian, binomial, Poisson, and negative binomial families    *
  * with one or more random-effects terms (intercepts and/or slopes, crossed or nested). The only family-dependent      *
- * piece is the conditional log-likelihood and its derivatives, supplied by the Family struct.                          *
+ * piece is the conditional log-likelihood and its derivatives, supplied by the Family struct.                         *
  * Estimation is by maximum likelihood (not REML).                                                                     *
  *                                                                                                                     *
  * Algorithm references (all published mathematical specifications, no GPL code):                                      *
- *   - Breslow & Clayton (1993). Approximate inference in generalized linear mixed models. JASA 88(421).              *
- *   - Kristensen et al. (2016). TMB: Automatic Differentiation and Laplace Approximation. JSS 70(5).                *
- *   - Bates et al. (2015). Fitting Linear Mixed-Effects Models Using lme4. JSS 67(1).                               *
+ *   - Breslow & Clayton (1993). Approximate inference in generalized linear mixed models. JASA 88(421).               *
+ *   - Kristensen et al. (2016). TMB: Automatic Differentiation and Laplace Approximation. JSS 70(5).                  *
+ *   - Bates et al. (2015). Fitting Linear Mixed-Effects Models Using lme4. JSS 67(1).                                 *
  *   - Henderson (1984). Applications of Linear Models in Animal Breeding. University of Guelph Press.                 *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
