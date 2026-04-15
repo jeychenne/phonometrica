@@ -16,7 +16,15 @@
  * Created: 03/04/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: ANOVA-style likelihood ratio test for comparing nested models.                                             *
- *          When models are not nested, issues a warning and suggests using AIC/BIC instead.                            *
+ *          When models are not nested, issues a warning and suggests using AIC/BIC instead.                           *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

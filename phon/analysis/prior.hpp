@@ -17,7 +17,7 @@
  *                                                                                                                     *
  * Purpose: Prior specification for INLA-style approximate Bayesian inference.                                         *
  *                                                                                                                     *
- * The individual prior types provide log_density() as a template so that the same code works for both double           *
+ * The individual prior types provide log_density() as a template so that the same code works for both double          *
  * (general use) and CppAD::AD<double> (automatic differentiation in the Laplace engine). The template bodies use      *
  * only standard arithmetic operators and, where needed, unqualified calls to log() — ADL finds CppAD::log for         *
  * AD<double>, and the using-declaration provides std::log for plain double.                                           *
@@ -25,8 +25,16 @@
  * References:                                                                                                         *
  *   Simpson, Rue, Riebler, Martino & Sørbye (2017). Penalising model component complexity: a principled,              *
  *     practical approach to constructing priors. Statistical Science 32(1).                                           *
- *   Rue, Martino & Chopin (2009). Approximate Bayesian inference for latent Gaussian models by using integrated        *
- *     nested Laplace approximations. JRSS-B 71(2).                                                                   *
+ *   Rue, Martino & Chopin (2009). Approximate Bayesian inference for latent Gaussian models by using integrated       *
+ *     nested Laplace approximations. JRSS-B 71(2).                                                                    *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

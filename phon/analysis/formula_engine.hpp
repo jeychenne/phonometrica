@@ -16,8 +16,16 @@
  * Created: 03/04/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: Lightweight expression evaluator for column transformations. Parses a formula string into an AST and       *
- *          evaluates it for a given value of x. Supports standard math functions, phonetic scale conversions           *
+ *          evaluates it for a given value of x. Supports standard math functions, phonetic scale conversions          *
  *          (bark, erb, mel, st), and the constants pi and e.                                                          *
+ *                                                                                                                     *
+ * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
+ * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
+ * on published statistical literature and reference R implementations.                                                *
+ * All AI-assisted logic has been manually audited, refactored, and validated against a diverse suite of datasets and  *
+ * reference R packages to ensure mathematical accuracy and implementation integrity.                                  *
+ * While every effort has been made to ensure reliability, this software is provided without a guarantee of being      *
+ * bug-free. In the event that discrepancies or errors are discovered, the author will do his best to address them.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
