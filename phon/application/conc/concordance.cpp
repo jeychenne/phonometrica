@@ -685,16 +685,19 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 	// First handle information columns: these are fixed.
 	if (j == 1) {
-		return m_matches[mi]->annotation()->label();
+		return m_matches[mi]->annotation()->browser_label();
 	}
 	else if (j == 2) {
-		return String::convert(m_matches[mi]->get_layer(1));
+		auto *ref = m_matches[mi]->reference_target();
+		return String::convert(ref ? ref->layer : m_matches[mi]->get_layer(1));
 	}
 	else if (j == 3) {
-        return String::format("%.4f", m_matches[mi]->get_start_time(1));
+		auto *ref = m_matches[mi]->reference_target();
+        return String::format("%.4f", ref ? ref->start_time : m_matches[mi]->get_start_time(1));
 	}
 	else if (j == 4) {
-        return String::format("%.4f", m_matches[mi]->get_end_time(1));
+		auto *ref = m_matches[mi]->reference_target();
+        return String::format("%.4f", ref ? ref->end_time : m_matches[mi]->get_end_time(1));
 	}
 	else if (j == 5 && has_context()) {
 		return get_left_context(mi);
