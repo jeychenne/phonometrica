@@ -19,9 +19,15 @@
  *                                                                                                                     *
  * All models use simulation-based PIT (the approach used by DHARMa):                                                  *
  *   - For each of N replicates, a response is simulated from the fitted model.                                        *
- *   - Simulation is CONDITIONAL on estimated random effects (BLUPs), matching                                         *
- *     DHARMa's default behavior with glmmTMB (re.form = NULL / simulate with                                          *
- *     conditional modes).                                                                                             *
+ *   - For mixed models, simulation is UNCONDITIONAL (marginal): random effects                                        *
+ *     are re-drawn from N(0, Σ̂) for each replicate, matching DHARMa's default                                        *
+ *     behavior with glmmTMB.  This is critical because BLUPs are functions of y                                       *
+ *     (they absorb part of the residual noise via shrinkage), so conditioning                                         *
+ *     on them produces systematically biased PIT residuals — typically under-                                          *
+ *     dispersed — even when the model is correct.                                                                     *
+ *   - The unconditional path requires Z_design, indices, and cov_chol (populated                                      *
+ *     at fit time).  If unavailable (e.g. model loaded from file), the code falls                                     *
+ *     back to conditional simulation using fitted values directly.                                                    *
  *   - The observed y_i is ranked among its simulated values, yielding a PIT value                                     *
  *     via the empirical CDF.  For discrete families (binomial, Poisson, NB),                                          *
  *     randomized PIT is used (uniform jitter within the tied range) to ensure                                         *
@@ -81,8 +87,8 @@ struct ScaledResidualResult
 };
 
 // Compute DHARMa-style simulation-based scaled residuals for a fitted model.
-// Simulation is conditional on estimated random effects (BLUPs), matching
-// DHARMa's default behavior.  For discrete families (binomial, Poisson, NB),
+// For mixed models, simulation is unconditional (re-draws random effects),
+// matching DHARMa's default.  For discrete families (binomial, Poisson, NB),
 // randomized PIT is used; for continuous families (Gaussian), midpoint PIT.
 ScaledResidualResult compute_scaled_residuals(const Model &m);
 

@@ -33,7 +33,6 @@
 #include <boost/math/distributions/students_t.hpp>
 #include <Eigen/Dense>
 #include <phon/analysis/scaled_residuals.hpp>
-#include <phon/analysis/family.hpp>
 #include <phon/utils/matrix.hpp>
 
 namespace phonometrica::stats {
@@ -153,6 +152,89 @@ static void run_diagnostics(ScaledResidualResult &result, intptr_t n)
 
 
 // =====================================================================
+// Scalar link / inverse link (used by simulation and PPC)
+// =====================================================================
+
+static double link_fn(double mu, const String &family)
+{
+	if (family == "binomial" || family == "beta") {
+		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
+		return std::log(mu / (1.0 - mu));
+	}
+	if (family == "poisson" || family == "negbin") {
+		return std::log(std::max(mu, 1e-10));
+	}
+	return mu; // identity for gaussian, student
+}
+
+static double linkinv_fn(double eta, const String &family)
+{
+	if (family == "binomial" || family == "beta") {
+		return 1.0 / (1.0 + std::exp(-eta));
+	}
+	if (family == "poisson" || family == "negbin") {
+		return std::exp(std::clamp(eta, -30.0, 30.0));
+	}
+	return eta; // identity for gaussian, student
+}
+
+
+// =====================================================================
+// Simulate one observation from Family(μ, disp)
+// =====================================================================
+
+static double simulate_one(double mu, const String &family,
+                            double disp0, double disp1, std::mt19937 &rng)
+{
+	if (family == "gaussian")
+	{
+		std::normal_distribution<double> dist(mu, std::max(disp0, 1e-10));
+		return dist(rng);
+	}
+	else if (family == "binomial")
+	{
+		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
+		std::bernoulli_distribution dist(mu);
+		return dist(rng) ? 1.0 : 0.0;
+	}
+	else if (family == "poisson")
+	{
+		mu = std::max(mu, 1e-10);
+		std::poisson_distribution<int> dist(mu);
+		return (double)dist(rng);
+	}
+	else if (family == "negbin")
+	{
+		mu = std::max(mu, 1e-10);
+		double shape = std::max(disp0, 1e-10);
+		double scale = mu / shape;
+		std::gamma_distribution<double> gamma_dist(shape, scale);
+		double g = gamma_dist(rng);
+		std::poisson_distribution<int> pois_dist(std::max(g, 1e-10));
+		return (double)pois_dist(rng);
+	}
+	else if (family == "beta")
+	{
+		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
+		double phi = std::max(disp0, 1e-10);
+		double a = mu * phi;
+		double b = (1.0 - mu) * phi;
+		std::gamma_distribution<double> g1(a, 1.0), g2(b, 1.0);
+		double v1 = g1(rng), v2 = g2(rng);
+		return std::clamp(v1 / (v1 + v2), 1e-10, 1.0 - 1e-10);
+	}
+	else if (family == "student")
+	{
+		double sigma_val = std::max(disp0, 1e-10);
+		double nu_val = std::max(disp1, 1.01);
+		std::student_t_distribution<double> dist(nu_val);
+		return mu + sigma_val * dist(rng);
+	}
+	return mu;
+}
+
+
+// =====================================================================
 // Simulation engine
 // =====================================================================
 
@@ -164,103 +246,171 @@ static ScaledResidualResult compute_simulation(const Model &m)
 {
 	intptr_t n = m.nobs;
 
-	// Simulation strategy: CONDITIONAL on estimated random effects (BLUPs).
-	// This matches DHARMa's default behavior with glmmTMB (re.form = NULL),
-	// where simulate() conditions on the estimated random effects rather
-	// than drawing fresh ones from N(0, Σ).  The conditional approach tests
-	// whether the residuals, given the random effects, follow the assumed
-	// distribution.  With fresh RE draws the simulated range per observation
-	// becomes much wider, suppressing outlier detection and inflating the
-	// marginal variance — producing systematically wrong diagnostics.
+	// Simulation strategy: UNCONDITIONAL (marginal) simulation for mixed models.
 	//
-	// The conditional path simply uses model.fitted (which already includes
-	// the BLUPs for mixed models) as the mean for simulation.
+	// DHARMa with glmmTMB uses unconditional simulation by default: TMB's
+	// simulate() re-draws random effects from N(0, Σ̂) for each replicate,
+	// rather than conditioning on the estimated BLUPs.  This is critical
+	// because BLUPs are functions of y (they absorb part of the residual
+	// noise), so conditioning on them produces a predictive distribution
+	// that is systematically too wide relative to the actual conditional
+	// residuals.  The result is underdispersed PIT residuals and inflated
+	// KS statistics — false positives in model diagnostics.
+	//
+	// The unconditional path requires the RE design info (Z_design, indices,
+	// cov_chol) that is populated at fit time.  If unavailable (e.g. model
+	// loaded from file), we fall back to the conditional path using
+	// model.fitted directly.
 
-	Family fam = Family::from_name(m.family);
-	if (m.family == "negbin") {
-		fam = Family::negbin(m.theta);
-	}
-	if (m.family == "beta") {
-		fam = Family::beta(m.phi);
-	}
-	if (m.family == "student") {
-		fam = Family::student(m.sigma, m.nu);
-	}
-
-	std::vector<double> sim_y(n * NSIM);
-
-	std::mt19937 rng(SEED);
-
-	for (int s = 0; s < NSIM; s++)
+	// ── Determine simulation mode ───────────────────────────────────
+	bool use_unconditional = false;
+	if (m.has_random_effects() && !m.X.empty() && !m.beta.empty())
 	{
-		// Draw y_sim ~ Family(mu) where mu = conditional fitted values (including BLUPs).
-		for (intptr_t i = 0; i < n; i++)
+		use_unconditional = true;
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
 		{
-			double mu_i = m.fitted[i + 1];
-			double y_sim;
-
-			if (m.family == "gaussian")
-			{
-				std::normal_distribution<double> dist(mu_i, std::max(m.rse, 1e-10));
-				y_sim = dist(rng);
+			const auto &re = m.random_effects[g];
+			if (re.indices.empty() || re.Z_design.empty() || re.cov_chol.empty()) {
+				use_unconditional = false;
+				break;
 			}
-			else if (m.family == "binomial")
-			{
-				mu_i = std::clamp(mu_i, 1e-10, 1.0 - 1e-10);
-				std::bernoulli_distribution dist(mu_i);
-				y_sim = dist(rng) ? 1.0 : 0.0;
-			}
-			else if (m.family == "poisson")
-			{
-				mu_i = std::max(mu_i, 1e-10);
-				std::poisson_distribution<int> dist(mu_i);
-				y_sim = (double)dist(rng);
-			}
-			else if (m.family == "negbin")
-			{
-				mu_i = std::max(mu_i, 1e-10);
-				double shape = std::max(m.theta, 1e-10);
-				double scale = mu_i / shape;
-				std::gamma_distribution<double> gamma_dist(shape, scale);
-				double g = gamma_dist(rng);
-				std::poisson_distribution<int> pois_dist(std::max(g, 1e-10));
-				y_sim = (double)pois_dist(rng);
-			}
-			else if (m.family == "beta")
-			{
-				// Beta(a, b) where a = μφ, b = (1-μ)φ.
-				// Simulate via two independent gamma variates:
-				//   G1 ~ Gamma(a, 1), G2 ~ Gamma(b, 1), Y = G1/(G1+G2).
-				mu_i = std::clamp(mu_i, 1e-10, 1.0 - 1e-10);
-				double phi_val = std::max(m.phi, 1e-10);
-				double a = mu_i * phi_val;
-				double b = (1.0 - mu_i) * phi_val;
-				std::gamma_distribution<double> g1(a, 1.0);
-				std::gamma_distribution<double> g2(b, 1.0);
-				double v1 = g1(rng);
-				double v2 = g2(rng);
-				y_sim = v1 / (v1 + v2);
-				y_sim = std::clamp(y_sim, 1e-10, 1.0 - 1e-10);
-			}
-			else if (m.family == "student")
-			{
-				// t(μ, σ, ν): location-scale t distribution.
-				// Draw t ~ t(ν), then y = μ + σ * t.
-				double sigma_val = std::max(m.sigma, 1e-10);
-				double nu_val = std::max(m.nu, 1.01);
-				std::student_t_distribution<double> dist(nu_val);
-				y_sim = mu_i + sigma_val * dist(rng);
-			}
-			else
-			{
-				y_sim = mu_i;
-			}
-
-			sim_y[i * NSIM + s] = y_sim;
 		}
 	}
 
-	// Rank observed y among simulated values.
+	// ── Precompute fixed-effects linear predictor and Cholesky factors ──
+	std::vector<double> eta_fixed;   // Xβ̂ on the link scale (no BLUPs)
+
+	struct GroupChol {
+		intptr_t nterms;
+		intptr_t nlevels;
+		Eigen::MatrixXd L;                        // nterms × nterms Cholesky factor
+		const std::vector<intptr_t> *indices;      // per-obs level index [0, nlevels)
+		const std::vector<double> *Z_design;       // n × nterms, row-major
+	};
+	std::vector<GroupChol> group_chols;
+
+	if (use_unconditional)
+	{
+		// η_fixed = Xβ̂ (includes fixed effects + smooth basis, but NOT random effects).
+		intptr_t p = m.beta.size();
+		// Sanity: X column count must match β length. If not (shouldn't happen
+		// for freshly fitted models), fall back to nfixed.
+		if (m.X.ndim() == 2 && m.X.ncol() != p)
+			p = m.nfixed;
+		Eigen::Map<const Eigen::MatrixXd> Xm(m.X.data(), n, p);
+		Eigen::Map<const Eigen::VectorXd> bm(m.beta.data(), p);
+		Eigen::VectorXd Xb = Xm * bm;
+		eta_fixed.resize(n);
+		for (intptr_t i = 0; i < n; i++)
+			eta_fixed[i] = Xb[i];
+
+		// Unpack Cholesky factors from each RE group's cov_chol (packed lower triangle).
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			const auto &re = m.random_effects[g];
+			GroupChol gc;
+			gc.nterms = re.nterms;
+			gc.nlevels = re.nlevels;
+			gc.L = Eigen::MatrixXd::Zero(re.nterms, re.nterms);
+			intptr_t idx = 0;  // 0-based into data()
+			for (intptr_t r = 0; r < re.nterms; r++) {
+				for (intptr_t c = 0; c <= r; c++) {
+					gc.L(r, c) = re.cov_chol.data()[idx];
+					idx++;
+				}
+			}
+			gc.indices = &re.indices;
+			gc.Z_design = &re.Z_design;
+			group_chols.push_back(std::move(gc));
+		}
+	}
+
+	// ── Dispersion parameters ───────────────────────────────────────
+	double disp0 = 0, disp1 = 0;
+	if (m.family == "gaussian")       disp0 = std::max(m.rse, 1e-10);
+	else if (m.family == "negbin")    disp0 = std::max(m.theta, 1e-10);
+	else if (m.family == "beta")      disp0 = std::max(m.phi, 1e-10);
+	else if (m.family == "student") {
+		disp0 = std::max(m.sigma, 1e-10);
+		disp1 = std::max(m.nu, 1.01);
+	}
+
+	// ── Simulation loop ─────────────────────────────────────────────
+	std::vector<double> sim_y(n * NSIM);
+	std::mt19937 rng(SEED);
+	std::normal_distribution<double> std_normal(0.0, 1.0);
+
+	for (int s = 0; s < NSIM; s++)
+	{
+		// For unconditional simulation: draw fresh random effects for each group.
+		// b_g ~ N(0, L_g L_g') for each level j of each group g.
+		std::vector<std::vector<double>> group_b;
+		if (use_unconditional)
+		{
+			group_b.resize(group_chols.size());
+			for (size_t g = 0; g < group_chols.size(); g++)
+			{
+				auto &gc = group_chols[g];
+				group_b[g].resize(gc.nlevels * gc.nterms);
+				for (intptr_t j = 0; j < gc.nlevels; j++)
+				{
+					// Draw z ~ N(0, I), then b_j = L * z.
+					if (gc.nterms == 1)
+					{
+						// Scalar RE: avoid Eigen overhead.
+						group_b[g][j] = gc.L(0, 0) * std_normal(rng);
+					}
+					else
+					{
+						Eigen::VectorXd z(gc.nterms);
+						for (intptr_t t = 0; t < gc.nterms; t++)
+							z[t] = std_normal(rng);
+						Eigen::VectorXd b_j = gc.L * z;
+						for (intptr_t t = 0; t < gc.nterms; t++)
+							group_b[g][j * gc.nterms + t] = b_j[t];
+					}
+				}
+			}
+		}
+
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mu_i;
+			if (use_unconditional)
+			{
+				// η_i = Xβ̂_i + Σ_g z_{g,i}' b_{g,level(i)}
+				double eta_i = eta_fixed[i];
+				for (size_t g = 0; g < group_chols.size(); g++)
+				{
+					auto &gc = group_chols[g];
+					intptr_t j = (*gc.indices)[i];
+					if (gc.nterms == 1)
+					{
+						double z_val = (*gc.Z_design)[i];
+						eta_i += z_val * group_b[g][j];
+					}
+					else
+					{
+						for (intptr_t t = 0; t < gc.nterms; t++)
+						{
+							double z_val = (*gc.Z_design)[i * gc.nterms + t];
+							eta_i += z_val * group_b[g][j * gc.nterms + t];
+						}
+					}
+				}
+				mu_i = linkinv_fn(eta_i, m.family);
+			}
+			else
+			{
+				// Conditional fallback: use fitted values (Xβ̂ + Zb̂) directly.
+				mu_i = m.fitted[i + 1];
+			}
+
+			sim_y[i * NSIM + s] = simulate_one(mu_i, m.family, disp0, disp1, rng);
+		}
+	}
+
+	// ── Rank observed y among simulated values (PIT) ────────────────
 	ScaledResidualResult result;
 	result.residuals.resize(n);
 
@@ -296,8 +446,6 @@ static ScaledResidualResult compute_simulation(const Model &m)
 		result.residuals[i + 1] = pit;
 
 		// Outlier: scaled residual in the extreme tails.
-		// This matches DHARMa's testOutliers(type = "binomial"):
-		//   outliers = sum(u < 1/(nSim+1)) + sum(u > 1 - 1/(nSim+1))
 		if (pit < outlier_lo || pit > outlier_hi)
 			n_outliers++;
 	}
@@ -413,62 +561,6 @@ static double analytical_pit(double y, double mu, const String &family,
 }
 
 
-// ── Simulate one observation from Family(μ, disp) ──────────────────
-//
-// This is the same simulation logic as in compute_simulation, extracted
-// as a per-observation function for PPC.
-
-static double simulate_one(double mu, const String &family,
-                            double disp0, double disp1, std::mt19937 &rng)
-{
-	if (family == "gaussian")
-	{
-		std::normal_distribution<double> dist(mu, std::max(disp0, 1e-10));
-		return dist(rng);
-	}
-	else if (family == "binomial")
-	{
-		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
-		std::bernoulli_distribution dist(mu);
-		return dist(rng) ? 1.0 : 0.0;
-	}
-	else if (family == "poisson")
-	{
-		mu = std::max(mu, 1e-10);
-		std::poisson_distribution<int> dist(mu);
-		return (double)dist(rng);
-	}
-	else if (family == "negbin")
-	{
-		mu = std::max(mu, 1e-10);
-		double shape = std::max(disp0, 1e-10);
-		double scale = mu / shape;
-		std::gamma_distribution<double> gamma_dist(shape, scale);
-		double g = gamma_dist(rng);
-		std::poisson_distribution<int> pois_dist(std::max(g, 1e-10));
-		return (double)pois_dist(rng);
-	}
-	else if (family == "beta")
-	{
-		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
-		double phi = std::max(disp0, 1e-10);
-		double a = mu * phi;
-		double b = (1.0 - mu) * phi;
-		std::gamma_distribution<double> g1(a, 1.0), g2(b, 1.0);
-		double v1 = g1(rng), v2 = g2(rng);
-		return std::clamp(v1 / (v1 + v2), 1e-10, 1.0 - 1e-10);
-	}
-	else if (family == "student")
-	{
-		double sigma_val = std::max(disp0, 1e-10);
-		double nu_val = std::max(disp1, 1.01);
-		std::student_t_distribution<double> dist(nu_val);
-		return mu + sigma_val * dist(rng);
-	}
-	return mu;
-}
-
-
 // ── Number of dispersion parameters for a given family ──────────────
 
 static int n_disp_params(const String &family)
@@ -494,32 +586,6 @@ static void disp_from_theta(const String &family, const double *theta_k,
 		disp[0] = std::exp(theta_k[n_chol]);
 		disp[1] = std::clamp(std::exp(theta_k[n_chol + 1]), 2.0, 200.0);
 	}
-}
-
-
-// ── Scalar link / inverse link ──────────────────────────────────────
-
-static double link_fn(double mu, const String &family)
-{
-	if (family == "binomial" || family == "beta") {
-		mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);
-		return std::log(mu / (1.0 - mu));
-	}
-	if (family == "poisson" || family == "negbin") {
-		return std::log(std::max(mu, 1e-10));
-	}
-	return mu; // identity for gaussian, student
-}
-
-static double linkinv_fn(double eta, const String &family)
-{
-	if (family == "binomial" || family == "beta") {
-		return 1.0 / (1.0 + std::exp(-eta));
-	}
-	if (family == "poisson" || family == "negbin") {
-		return std::exp(std::clamp(eta, -30.0, 30.0));
-	}
-	return eta; // identity for gaussian, student
 }
 
 
@@ -699,10 +765,15 @@ static bool compute_ppc(ScaledResidualResult &result, const Model &m)
 	}
 
 	// ── 5. Posterior predictive p-values ─────────────────────────
+	//
+	// Replace frequentist p-values with PPC p-values for KS and dispersion.
+	// The outlier test keeps its exact binomial p-value: the outlier probability
+	// is 2/(NSIM+1) per observation by construction and does not depend on
+	// parameter values, so PPC adds only Monte Carlo noise.
 
 	result.ks_pvalue = (double)count_ks / PPC_R;
 	result.dispersion_pvalue = (double)count_disp / PPC_R;
-	result.outlier_pvalue = (double)count_outlier / PPC_R;
+	// result.outlier_pvalue unchanged — exact binomial from compute_simulation.
 	result.is_ppc = true;
 
 	return true;

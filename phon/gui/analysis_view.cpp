@@ -2539,15 +2539,43 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 	}
 
 	intptr_t n = m.nobs;
-	std::vector<double> x(n), y(n);
+
+	// Rank-transform fitted values to [0, 1], matching DHARMa's default
+	// x-axis ("Model predictions, rank transformed").  This spreads
+	// observations evenly across the x-axis, making patterns visible
+	// even when fitted values cluster.
+	std::vector<double> fitted(n), y(n);
 	for (intptr_t i = 0; i < n; i++) {
-		x[i] = m.fitted[i + 1];
+		fitted[i] = m.fitted[i + 1];
 		y[i] = sr->residuals[i + 1];
 	}
 
+	// Compute ranks (average rank for ties).
+	std::vector<intptr_t> order(n);
+	std::iota(order.begin(), order.end(), 0);
+	std::sort(order.begin(), order.end(), [&](intptr_t a, intptr_t b) {
+		return fitted[a] < fitted[b];
+	});
+
+	std::vector<double> x(n);
+	intptr_t i = 0;
+	while (i < n)
+	{
+		// Find run of tied values.
+		intptr_t j = i + 1;
+		while (j < n && fitted[order[j]] == fitted[order[i]])
+			j++;
+		// Average rank for this group: midpoint of [i+1, j] mapped to (0, 1).
+		double avg_rank = 0.5 * (i + 1 + j);
+		double rank_scaled = avg_rank / (n + 1);
+		for (intptr_t k = i; k < j; k++)
+			x[order[k]] = rank_scaled;
+		i = j;
+	}
+
 	m_plot->setData(std::move(x), std::move(y),
-	                tr("Fitted values"), tr("Scaled residual"),
-	                tr("Scaled Residuals vs Fitted"),
+	                tr("Model predictions (rank transformed)"), tr("Scaled residual"),
+	                tr("Scaled Residuals vs Predicted"),
 	                PlotWidget::RefLine::HorizontalAtHalf);
 	m_plot->setFixedYTicks({0.0, 0.25, 0.50, 0.75, 1.0});
 
@@ -2722,10 +2750,9 @@ void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 				text += QStringLiteral("  \u2014 underdispersion");
 		}
 
-		text += QStringLiteral("\nOutlier test:  %1 outlier(s)  (Bayesian p-value = %2, %3)")
+		text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
 			.arg(sr.n_outliers)
-			.arg(format_p(sr.outlier_pvalue))
-			.arg(QString::fromUtf8(ppc_label(sr.outlier_pvalue)));
+			.arg(format_p(sr.outlier_pvalue));
 	}
 	else
 	{
