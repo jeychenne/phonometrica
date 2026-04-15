@@ -57,7 +57,7 @@ Analysis::Analysis(Directory *parent, const String &path) :
 // Fitting
 // =====================================================================
 
-int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, const stats::PriorSpec *priors)
+int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, const stats::PriorSpec *priors, int max_iter)
 {
 	if (!m_source) {
 		throw error("Cannot fit model: source data is not available");
@@ -67,9 +67,9 @@ int Analysis::fit(const String &formula_str, const String &family, stats::Fittin
 	stats::Model model;
 	if (priors) {
 		model = stats::fit(*m_source, formula, family, *priors,
-		                    m_reference_levels, std::move(progress));
+		                    m_reference_levels, std::move(progress), max_iter);
 	} else {
-		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress));
+		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress), max_iter);
 	}
 	model.formula = formula.to_string();
 	model.compute_pseudo_r2();

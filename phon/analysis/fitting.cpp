@@ -604,7 +604,8 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 static Model fit_impl(const DataTable &data, const Formula &formula, const String &family,
                        const std::map<String, String> &reference_levels,
                        FittingCallback progress,
-                       const PriorSpec *priors)
+                       const PriorSpec *priors,
+                       int max_iter)
 {
 	if (formula.response.empty()) {
 		throw error("Formula has no response variable");
@@ -1029,7 +1030,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		else
 		{
 			auto fam = Family::from_name(family);
-			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress);
+			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter);
 		}
 	}
 	else if (formula.has_random_effects())
@@ -1042,7 +1043,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter);
 	}
 	else if (family == "gaussian")
 	{
@@ -1054,12 +1055,12 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		// optimization, ensuring comparable log-likelihoods with mixed models.
 		std::vector<GroupingInfo> groups;
 		auto fam = Family::from_name(family);
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter);
 	}
 	else
 	{
 		auto fam = Family::from_name(family);
-		model = glm(dm.y, dm.X, fam);
+		model = glm(dm.y, dm.X, fam, false, max_iter);
 	}
 
 	// ── Attach metadata ──────────────────────────────────────────────
@@ -1197,9 +1198,10 @@ static void scale_default_priors(PriorSpec &priors,
 
 Model fit(const DataTable &data, const Formula &formula, const String &family,
           const std::map<String, String> &reference_levels,
-          FittingCallback progress)
+          FittingCallback progress,
+          int max_iter)
 {
-	return fit_impl(data, formula, family, reference_levels, progress, nullptr);
+	return fit_impl(data, formula, family, reference_levels, progress, nullptr, max_iter);
 }
 
 
@@ -1373,7 +1375,8 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 Model fit(const DataTable &data, const Formula &formula, const String &family,
           const PriorSpec &priors,
           const std::map<String, String> &reference_levels,
-          FittingCallback progress)
+          FittingCallback progress,
+          int max_iter)
 {
 	// Auto-scale any prior fields the user didn't set explicitly.
 	PriorSpec scaled_priors = priors;
@@ -1386,7 +1389,7 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	                 || family == "negbin" || family == "beta" || family == "student";
 
 	Model model = fit_impl(data, formula, family, reference_levels, progress,
-	                         uses_laplace ? &scaled_priors : nullptr);
+	                         uses_laplace ? &scaled_priors : nullptr, max_iter);
 
 	if (uses_laplace)
 	{

@@ -43,6 +43,8 @@
 #include <QToolBar>
 #include <QAction>
 #include <QToolButton>
+#include <QWidgetAction>
+#include <QFormLayout>
 #include <QHeaderView>
 #include <QEvent>
 #include <QSet>
@@ -251,6 +253,61 @@ void AnalysisView::setupUi()
 	m_fit_button = new QPushButton(tr("Fit"));
 	m_fit_button->setDefault(true);
 	top_bar->addWidget(m_fit_button);
+
+	// ── Fitting options popup ────────────────────────────────────
+	m_options_button = new QToolButton;
+	m_options_button->setIcon(QIcon(QStringLiteral(":/icons/settings.svg")));
+	m_options_button->setFixedSize(24, 24);
+	m_options_button->setIconSize(QSize(16, 16));
+	m_options_button->setToolTip(tr("Fitting options"));
+	m_options_button->setAutoRaise(true);
+	m_options_button->setPopupMode(QToolButton::InstantPopup);
+
+	auto *options_menu = new QMenu(m_options_button);
+	auto *options_action = new QWidgetAction(options_menu);
+	auto *options_widget = new QWidget;
+	auto *options_form = new QFormLayout(options_widget);
+	options_form->setContentsMargins(8, 8, 8, 8);
+
+	m_default_est_combo = new QComboBox;
+	m_default_est_combo->addItem(tr("Frequentist"), QStringLiteral("frequentist"));
+	m_default_est_combo->addItem(tr("Bayesian"), QStringLiteral("bayesian"));
+	{
+		int idx = 0;
+		try {
+			auto s = Settings::get_string("statistics", "estimation");
+			if (s == "bayesian") idx = 1;
+		} catch (...) {}
+		m_default_est_combo->setCurrentIndex(idx);
+	}
+	options_form->addRow(tr("Default estimation:"), m_default_est_combo);
+
+	m_max_iter_spin = new QSpinBox;
+	m_max_iter_spin->setRange(10, 10000);
+	{
+		int val = 200;
+		try { val = Settings::get_int("statistics", "max_iterations"); } catch (...) {}
+		m_max_iter_spin->setValue(val);
+	}
+	m_max_iter_spin->setToolTip(tr("Maximum number of optimizer iterations for iterative models\n"
+	                                "(GLMs, mixed models, GAMs). Has no effect on OLS."));
+	options_form->addRow(tr("Max iterations:"), m_max_iter_spin);
+
+	options_action->setDefaultWidget(options_widget);
+	options_menu->addAction(options_action);
+	m_options_button->setMenu(options_menu);
+
+	connect(m_default_est_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+		String val = (idx == 1) ? "bayesian" : "frequentist";
+		Settings::set_value("statistics", "estimation", std::move(val));
+		m_estimation_combo->setCurrentIndex(idx);
+	});
+
+	connect(m_max_iter_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, [](int val) {
+		Settings::set_value("statistics", "max_iterations", intptr_t(val));
+	});
+
+	top_bar->addWidget(m_options_button);
 
 	auto *help_button = new QPushButton(QIcon(QStringLiteral(":/icons/circle-help.svg")), QString());
 	help_button->setFlat(true);
@@ -1035,7 +1092,8 @@ void AnalysisView::onFit()
 			priors_ptr = &priors;
 		}
 
-		int index = m_analysis->fit(formula, family, cb, priors_ptr);
+		int max_iter = m_max_iter_spin->value();
+		int index = m_analysis->fit(formula, family, cb, priors_ptr, max_iter);
 		auto &m = m_analysis->model(index);
 
 		QApplication::restoreOverrideCursor();
@@ -1157,11 +1215,16 @@ void AnalysisView::onDeleteModel()
 
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
-	m_current_model = -1;
 	m_scaled_residuals.reset();
 	m_scaled_residuals_model = -1;
 
-	if (m_model_list->count() == 0) {
+	if (m_model_list->count() > 0) {
+		// Select the nearest remaining model.
+		int select = std::min(rows.last(), m_model_list->count() - 1);
+		m_model_list->setCurrentRow(select);
+	}
+	else {
+		m_current_model = -1;
 		m_summary->clear();
 		m_plot->clear();
 		clearTestResults();
