@@ -11,11 +11,15 @@ This is a major release. Phonometrica has gained substantial new functionality f
 
 - New user interface based on Qt 6.
 - License changed from GPL-2.0 to GPL-3.0.
+- Start view with quick-access buttons (Open Project, Add Files, New Annotation, Analyze Data, Documentation) and a recent projects list.
+- Preferences dialog with three tabs (General, Measurement, Appearance): configure Praat path, default estimation method, query context settings, display precision, and monospaced font.
 - IPA panel for inserting phonetic symbols into annotations and scripts.
 - Output panel for script execution output, separate from the interactive console.
-- Batch property editing: select multiple files in the file manager and edit their properties at once through the information panel.
+- Batch property editing: select multiple files in the file manager and edit their properties at once through the information panel, with a union property table showing coverage counts.
 - Context-sensitive help: each view has a Help button that links to the relevant documentation page.
 - Research notes: create and edit rich-text notes (bold, italic, headings, lists) within your project, stored as HTML (``.phon-note``).
+- Praat integration: configure the Praat path in preferences; "Open in Praat" from the file manager, annotation views, and concordance views; auto-detection of Praat on macOS and Windows.
+- Bidirectional TextGrid ↔ native annotation conversion with property, description, and sound binding transfer.
 
 **Sound visualization**
 
@@ -42,6 +46,7 @@ This is a major release. Phonometrica has gained substantial new functionality f
 - Metric columns for outlier detection: z-score, modified z-score, Mahalanobis distance.
 - Wide/long format toggle for n-point acoustic data.
 - Scales menu for toggling ERB, Bark, and semitone columns.
+- Vowel normalization: Lobanov, Nearey 1, Nearey 2, and Watt & Fabricius methods, accessible from concordance and dataset views.
 - Target highlighting (bold red).
 - Split view: option to open annotations beside the concordance.
 
@@ -56,9 +61,16 @@ This is a major release. Phonometrica has gained substantial new functionality f
 - Analysis view: visual workspace for fitting, comparing, and diagnosing statistical models.
 - Visual formula builder with right-click context menus on columns.
 - Fixed-effects GLMs: Gaussian, binomial, Poisson, and experimental support for negative binomial (NB2) regression.
+- Beta regression (logit link) for proportion response variables.
+- Student *t* regression (identity link) for robust estimation with heavy-tailed residuals; jointly estimates scale σ and degrees-of-freedom ν parameters.
 - Mixed-effects models (LMM/GLMM): experimental support for random intercepts and correlated random slopes; crossed random effects.
 - Generalized additive models (GAM): experimental support for penalized cubic regression splines, per-smooth GCV, by-variable smooths, EDF and F-statistics.
+- Random intercepts and random slopes via ``s(group, bs=re)`` and ``s(group, by=x, bs=re)`` in GAMs.
 - Model comparison: AIC/BIC table, pairwise likelihood ratio tests with automatic nestedness checking.
+- Approximate Bayesian inference (INLA-style): data-dependent weakly informative priors, posterior summaries (mean, credible intervals, probability of direction), customizable priors.
+- Bayesian model comparison: WAIC, PSIS-LOO-IC with Pareto *k* diagnostics, log Bayes factors.
+- Posterior predictive checks (PPC) for Bayesian models.
+- Estimated marginal means (EMMs) and pairwise contrasts with Holm/Bonferroni adjustment; emtrends mode for testing slopes across groups. Bayesian EMMs report credible intervals and probability of direction.
 - Reference level setting for categorical variables.
 - DHARMa-style simulation-based scaled residuals for all model families.
 - Pseudo R² (Nakagawa & Schielzeth) for mixed-effects models.

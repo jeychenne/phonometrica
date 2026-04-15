@@ -19,20 +19,20 @@ It is particularly well suited for dealing with time-aligned data, and integrate
 acoustic analysis, and statistical modeling into a single workflow. The main features it offers are:
 
    * **Project management**: organize files into projects with extensible metadata (properties).
-   * **Sound visualization and analysis**: visualize waveforms, spectrograms, pitch tracks, formant tracks, intensity curves, and spectral slices.
+   * **Sound visualization and analysis**: visualize waveforms, spectrograms, pitch tracks, formant tracks, intensity curves, spectral slices, and spectral moments.
    * **Sound annotation**: create and edit multi-layer annotations based on annotation graphs; import and export Praat TextGrids.
-   * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, and intensity measurements.
-   * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; toggle between wide and long formats; perform set operations on concordances.
-   * **Statistical analysis**: experimental support for linear, logistic, Poisson, and negative binomial regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; approximate Bayesian inference with weakly informative priors, WAIC, and posterior predictive checks; inspect diagnostic plots and exploratory visualizations.
+   * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, intensity, and spectral moment measurements.
+   * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; vowel normalization (Lobanov, Nearey, Watt & Fabricius); toggle between wide and long formats; perform set operations on concordances.
+   * **Statistical analysis**: linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; approximate Bayesian inference with weakly informative priors, WAIC, PSIS-LOO-IC, and posterior predictive checks; estimated marginal means and pairwise contrasts; inspect diagnostic plots and exploratory visualizations.
    * **Scripting engine**: Phonometrica can be configured and extended with an easy-to-use scripting language, JSON-based plugins, and coding protocols.
    * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
-   * **Interaction with Praat**: Phonometrica can read and write TextGrid files and open files directly in Praat.
+   * **Interaction with Praat**: Phonometrica can read and write TextGrid files and open files directly in Praat from the file manager, annotation views, and concordance views.
 
 Phonometrica runs on all major platforms (Windows, macOS and GNU/Linux) and is freely available under the terms of the
 GNU General Public License (version 3). The latest version can be downloaded from http://www.phonometrica-ling.org.
 The source code is available at https://github.com/jeychenne/phonometrica.
-If you have questions, problems, or would like to report a bug, please contact us at phonometrica.dev@gmail.com.
+If you have questions, problems, or would like to report a bug, please contact us at julien.eychenne@usherbrooke.ca.
 
 
 .. figure:: img/main_window.png
@@ -70,6 +70,7 @@ Topics
 	
    intro/install
    intro/start
+   intro/preferences
    sound
    annotation
    query
@@ -79,6 +80,8 @@ Topics
    analysis
    transform
    notes
+   intro/praat
+   intro/shortcuts
    scripting/index
    scripting/plugins
    License <about/license>

@@ -110,12 +110,23 @@ which is produced by the `Praat <http://www.praat.org>`_ program. Phonometrica c
 
 To convert a native Phonometrica annotation to a TextGrid, right-click on it in the file manager and choose ``Save as Praat TextGrid...``. Likewise,
 to convert a TextGrid to a Phonometrica annotation, right-click on it and choose ``Save as Phonometrica annotation...``. Both commands will give you
-the opportunity to import the file into the current project.
+the opportunity to import the converted file into the current project. When converting, Phonometrica
+copies the file's properties, description, and sound file binding to the new file, so you do not lose
+any metadata in the process.
 
 TextGrid files can be visualized and edited like native annotations, but please note that due to the limitations of the TextGrid format, metadata will
 *not* be stored in the TextGrid file. Instead, they will be stored in a database associated with your project.
 
 You can also export annotations to plain text using ``File > Export > Export annotation(s) to plain text...``.
+
+
+Opening annotations in Praat
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+If you have Praat installed and configured (see :ref:`praat-integration`), you can open the current
+annotation and its bound sound file directly in Praat. Right-click anywhere in the annotation view
+and choose **Open in Praat**, or use the corresponding command in the toolbar. This sends both files
+to Praat so that you can view the annotation overlaid on the sound in Praat's editor.
 
 
 References
