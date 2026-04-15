@@ -749,6 +749,19 @@ frequentist test statistics:
   WAIC is computed from 1000 posterior draws at fit time.
 - **LPPD** (log pointwise predictive density): the sum of the log-predictive densities
   at each observation, averaged over the posterior. WAIC = −2 × LPPD + 2 × *p*\ :sub:`WAIC`.
+- **LOO-IC** (leave-one-out information criterion): an alternative to WAIC based on Pareto
+  Smoothed Importance Sampling (PSIS-LOO; Vehtari, Gelman & Gabry, 2017). Like WAIC, lower
+  LOO-IC indicates better predictive performance. LOO-IC is reported with its standard error
+  (SE) and the effective number of parameters (*p*\ :sub:`LOO`). LOO-IC is generally preferred
+  over WAIC because it provides per-observation Pareto *k* diagnostics (see below) that warn
+  when the approximation is unreliable. When all *k* values are below 0.7, the LOO-IC
+  estimate is considered reliable.
+- **Pareto k diagnostics**: for each observation, a Pareto *k* value measures the influence
+  of that observation on the posterior. Phonometrica reports a summary of the Pareto *k*
+  distribution. Values below 0.5 are good, values between 0.5 and 0.7 are acceptable, and
+  values above 0.7 indicate that the LOO-IC estimate for that observation is unreliable —
+  in that case, WAIC may be preferred, or the model should be refit (e.g. with a different
+  family or additional predictors to account for the influential observations).
 - **Log-marginal likelihood**: the Laplace-approximated log p(*y* | *M*), which can be used
   for Bayes factor computation between models.
 
@@ -809,11 +822,17 @@ Model comparison (Bayesian mode)
 
 When comparing Bayesian models, the **Compare** button produces:
 
-- **WAIC table**: each model's WAIC, *p*\ :sub:`WAIC`, LPPD, and SE(WAIC), sorted from
-  best (lowest WAIC) to worst.
-- **ΔWAIC**: the difference in WAIC between each model and the best model, with its
-  standard error. A model whose ΔWAIC is within ~2 SE of zero is not meaningfully worse
-  than the best model.
+- **Information criteria table**: each model's WAIC, *p*\ :sub:`WAIC`, LPPD, and SE(WAIC),
+  sorted from best (lowest WAIC) to worst. If LOO-IC is available for all models, the table
+  also includes LOO-IC and *p*\ :sub:`LOO` columns.
+- **ΔWAIC** (and **ΔLOO-IC** when available): the difference in the information criterion
+  between each model and the best model, with its standard error computed from the pointwise
+  contributions. A model whose ΔIC is within approximately 2 SE of zero is not meaningfully
+  worse than the best model.
+- **Pareto k summary**: when LOO-IC is available, the output includes a summary of the Pareto
+  *k* diagnostics across all models. If any observation has *k* > 0.7, a warning is printed
+  advising that the LOO-IC estimate may be unreliable for that model and that WAIC should be
+  preferred.
 - **Log-marginal likelihood** and **Bayes factors**: for each pair of models, the log Bayes
   factor is computed as the difference of the log-marginal likelihoods. A log BF > 3
   (BF > 20) is conventionally considered strong evidence in favor of the better model.
@@ -823,11 +842,14 @@ mix, Phonometrica will ask you to select only one type.
 
 .. note::
 
-   **Interpreting WAIC vs AIC.** WAIC and AIC are both information criteria that balance
-   fit against complexity, but they measure different things. AIC uses the maximum-likelihood
-   point estimate; WAIC averages over the posterior. For large samples with weak priors, WAIC
-   and AIC converge. For small samples or informative priors, WAIC is generally preferred
-   because it accounts for parameter uncertainty and prior regularization.
+   **Interpreting WAIC vs LOO-IC vs AIC.** WAIC and LOO-IC are both Bayesian information
+   criteria that estimate out-of-sample predictive accuracy by averaging over the posterior.
+   LOO-IC is generally preferred because it provides per-observation Pareto *k* diagnostics
+   that flag unreliable estimates. WAIC does not offer such diagnostics, but it is always
+   available (it does not require importance sampling). AIC uses the maximum-likelihood
+   point estimate and does not account for prior regularization or parameter uncertainty.
+   For large samples with weak priors, all three criteria converge. For small samples or
+   informative priors, LOO-IC and WAIC are preferred.
 
 
 Tips
@@ -859,6 +881,45 @@ Tips
 - For mixed-effects models, check **Show random effects** in the Summary toolbar to inspect
   the conditional modes (BLUPs) for each speaker, item, or other grouping factor. Large
   deviations from zero may indicate influential groups worth investigating.
+
+
+Worked example: formant analysis with a mixed model
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Suppose you have a concordance with formant measurements (F1, F2) for several vowels produced
+by multiple speakers, along with metadata columns for *vowel*, *gender*, and *speaker*.
+
+1. **Prepare the data**: in the concordance view, use **Metric column** to compute z-scores
+   on F1 grouped by speaker, then filter out rows where the absolute z-score exceeds 3 to
+   remove outliers. Click **Subset** to create a clean dataset.
+
+2. **Open the analysis**: click **Analyze** in the concordance or dataset toolbar. The analysis
+   view opens with the formula bar at the top and the column list on the left.
+
+3. **Build the formula**: right-click on *F1* and choose *Set as response*. Double-click on
+   *vowel* and *gender* to add them as fixed effects. Right-click on *speaker* and choose
+   *Add as grouping factor* to add a random intercept ``(1|speaker)``. The formula bar now
+   reads ``F1 ~ vowel + gender + (1|speaker)``.
+
+4. **Fit the model**: make sure the Outcome dropdown is set to **Continuous** and click **Fit**.
+   The Summary tab displays the fixed-effects coefficients, the random-effects variance, and
+   goodness-of-fit statistics.
+
+5. **Check diagnostics**: switch to the **Diagnostics** tab and select *Scaled Residuals vs Fitted*.
+   The points should be scattered uniformly between 0 and 1 with no pattern. Check the residual
+   tests below the plot: all three should be non-significant if the model is well-specified.
+
+6. **Post-hoc comparisons**: switch to the **Post-hoc** tab, select *vowel* as the Factor, and
+   click to compute EMMs. The upper table shows the estimated marginal mean of F1 for each vowel;
+   the lower table shows all pairwise contrasts with Holm-adjusted *p*-values.
+
+7. **Compare models**: fit a second model without *gender* (``F1 ~ vowel + (1|speaker)``), then
+   select both models in the Models panel and click **Compare** to run a likelihood ratio test.
+
+This same workflow applies to other response types: select **Binary** for a logistic model
+of categorical outcomes, **Overdispersed count** for count data with extra variability (e.g.
+frequency of schwa deletion per speaker), or **Proportion** for voicing ratios or similar
+bounded continuous measures.
 
 
 References
@@ -902,6 +963,8 @@ References
   Science*, 32(1), 1–28.
 - Tierney, L. & Kadane, J.B. (1986). Accurate approximations for posterior moments and
   marginal densities. *Journal of the American Statistical Association*, 81(393), 82–86.
+- Vehtari, A., Gelman, A. & Gabry, J. (2017). Practical Bayesian model evaluation using
+  leave-one-out cross-validation and WAIC. *Statistics and Computing*, 27(5), 1413–1432.
 - Watanabe, S. (2010). Asymptotic equivalence of Bayes cross validation and widely
   applicable information criterion in singular learning theory. *Journal of Machine Learning
   Research*, 11, 3571–3594.

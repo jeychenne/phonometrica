@@ -31,6 +31,14 @@ Phonometrica uses `GitHub <https://github.com>`_ to host its source code. The so
 
 The implementation of Phonometrica's scripting engine was partly inspired by Robert Nystrom's excellent book `Crafting Interpreters <https://craftinginterpreters.com/>`_.
 
+Portions of the statistical estimation logic — including negative binomial regression, mixed-effects models,
+generalized additive models, DHARMa-style residual diagnostics, estimated marginal means, approximate
+Bayesian inference (INLA-style), WAIC, PSIS-LOO, and posterior predictive checks — were developed with the
+assistance of Claude Opus 4.6 (Anthropic), based on published statistical literature and reference R
+implementations. All AI-assisted logic was manually audited, refactored, and validated against reference R
+packages (glmmTMB, mgcv, emmeans, MuMIn, DHARMa, loo, brms) to ensure mathematical accuracy and
+implementation integrity.
+
 We are also grateful to JetBrains for providing us with a non-commercial license of their `C++ editor <https://www.jetbrains.com/clion/>`_.
 
 The development of coding protocols was originally developed as part of the following research project: *A corpus-based longitudinal study of the interphonological features of Japanese learners of French*. PI: Sylvain DETEY (Waseda University). This project was supported by the Japanese Society for the Promotion of Science (JSPS), Grant-in-Aid for Scientific Research (B) n°23320121 (2011-2014).

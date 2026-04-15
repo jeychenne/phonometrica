@@ -26,6 +26,9 @@ The toolbar at the top of the concordance view provides the following actions:
 - |bookmark| **Bookmark**: bookmark the selected match for later reference. Bookmarks are accessible from the bookmark panel in the bottom left corner of the main window.
 - |edit| **Edit**: edit the text of the event where the match was found in the original annotation.
 - |delete| **Delete rows**: remove the selected row(s) from the concordance.
+- **Open in Praat**: if Praat is configured (see :ref:`praat-integration`), open the sound file and
+  annotation in Praat at the location of the selected match. This is useful for inspecting a
+  measurement or verifying a match using Praat's acoustic analysis tools.
 
 Set operations
 ~~~~~~~~~~~~~~
@@ -124,7 +127,7 @@ Table features
 The concordance table supports the following interactions:
 
 - **Double-click** on a row to play the match (if a sound file is bound).
-- **Right-click** on a row to open a context menu with *Play match*, *View in annotation*, *Bookmark*, *Edit event text*, and *Delete row(s)*.
+- **Right-click** on a row to open a context menu with *Play match*, *View in annotation*, *Open in Praat* (if configured), *Bookmark*, *Edit event text*, and *Delete row(s)*.
 - **Right-click on a column header** to access column-level operations: *Sort ascending*, *Sort descending*, *Rename column*, *Recode* (for text columns), and *Transform* (for numeric columns).
 
 Sorting

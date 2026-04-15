@@ -91,8 +91,7 @@ Example::
 
 ------------
 
-.. function:: fit(formula, data, prior)
-              fit(formula, data, family, prior)
+.. function:: fit(formula, data, prior[, prior])
 
 Fits a **Bayesian** model using approximate Bayesian inference (INLA-style). The ``prior``
 argument is a ``Prior`` object (see `Prior specification`_ below) that controls the
@@ -134,8 +133,8 @@ and *p*-values), random-effects variance components (if present), and overall fi
 **Bayesian models**: fixed-effects posterior summaries (posterior mean, posterior SD, 95%
 credible interval bounds, and probability of direction with significance codes), hyperparameter
 posteriors (variance component SDs, dispersion parameters) with credible intervals when
-available from grid integration, and Bayesian fit statistics (WAIC, LPPD, log-marginal
-likelihood).
+available from grid integration, and Bayesian fit statistics (WAIC, LOO-IC with Pareto *k*
+diagnostics, LPPD, log-marginal likelihood).
 
 Example::
 
@@ -164,8 +163,9 @@ Compares two fitted models. The comparison method depends on the estimation type
 (AIC, BIC, log-likelihood, deviance) and the LRT chi-squared statistic with *p*-value.
 The models should be nested (one should be a special case of the other).
 
-**Bayesian models**: WAIC comparison table and log Bayes factors. Cannot be mixed with
-frequentist models.
+**Bayesian models**: WAIC and LOO-IC comparison tables (with ΔWAIC, ΔLOO-IC and their
+standard errors), Pareto *k* diagnostic summaries, and log Bayes factors. Cannot be mixed
+with frequentist models.
 
 Example::
 
@@ -347,6 +347,45 @@ Array of fitted values from the model.
 
 Array of response residuals (observed − fitted) from the model.
 
+.. attribute:: estimation
+
+A string indicating the estimation method: ``"Frequentist"`` or ``"Bayesian"``.
+Available on all models.
+
+.. attribute:: waic
+
+WAIC (Watanabe–Akaike information criterion). NaN for frequentist models.
+
+.. attribute:: loo_ic
+
+LOO-IC (PSIS leave-one-out information criterion). NaN for frequentist models.
+
+.. attribute:: p_waic
+
+Effective number of parameters from WAIC. NaN for frequentist models.
+
+.. attribute:: p_loo
+
+Effective number of parameters from LOO-IC. NaN for frequentist models.
+
+.. attribute:: se_waic
+
+Standard error of WAIC. NaN for frequentist models.
+
+.. attribute:: se_loo
+
+Standard error of LOO-IC. NaN for frequentist models.
+
+.. attribute:: pareto_k
+
+Array of per-observation Pareto *k* diagnostics from PSIS-LOO. Empty for frequentist
+models. Values below 0.7 indicate that LOO-IC is reliable; values above 0.7 suggest
+that the LOO approximation may be poor for those observations.
+
+.. attribute:: log_marginal
+
+Log-marginal likelihood (Laplace approximation). NaN for frequentist models.
+
 
 .. _prior-specification:
 
@@ -520,9 +559,9 @@ Example::
 
 .. note::
 
-   WAIC, LPPD, and log-marginal likelihood are displayed by :func:`summarize` and in the
-   GUI summary and comparison panels, but are not yet exposed as individual model fields
-   in the scripting API.
+   WAIC, LOO-IC, and log-marginal likelihood are available both through :func:`summarize`
+   and as individual model fields (``waic``, ``loo_ic``, ``log_marginal``, etc.; see
+   `Model fields`_).
 
 
 References

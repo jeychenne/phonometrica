@@ -21,7 +21,16 @@ The main window is divided into several areas:
     text field. Click on a symbol to insert it at the cursor in the currently focused text widget.
 
 - The **viewer** (center) is the main working area. It displays views as tabs, similar to web pages in a
-  modern browser. The default **start view** provides quick-access buttons for common operations.
+  modern browser. The default **start view** provides quick-access buttons for common operations:
+
+  - **Open Project...**: open an existing project file.
+  - **Add Files...**: import sound files, annotations, or data files into the current project.
+  - **New Annotation...**: create a new annotation from a sound file already in the project.
+  - **Analyze Data...**: open a CSV file or concordance for statistical analysis.
+  - **Documentation**: open the built-in help.
+
+  Below the quick-action buttons, a **Recent projects** list shows the projects you have opened
+  recently (up to 10). Click on a project name to reopen it. The full path is shown as a tooltip.
 
 All panels can be shown or hidden via the **Window** menu. You can also resize and rearrange them by
 dragging their borders.
@@ -86,9 +95,12 @@ value, for example *11ajp1*) and *Gender* (with the values *Male* and
 file is selected.
 
 When multiple files are selected in the file manager, the information panel displays a **batch
-editing** view. This shows a union table of all properties across the selected files, with a
-coverage count indicating how many of the selected files have each property. You can add, edit,
-or remove properties for all selected files at once.
+editing** view. This shows a union table of all properties across the selected files, with columns
+for the property category, type (Boolean, text, or numeric), value, and a coverage count indicating
+how many of the selected files have each property. If a property has different values across the
+selected files, the value column shows *(mixed)*. You can add, edit, or remove properties for all
+selected files at once. If the selected files have different descriptions, a checkbox lets you
+choose whether to overwrite them all with a new common description.
 
 In addition to properties, each file can be annotated with a
 **description**, a free-form string which can be used to store any kind of
