@@ -98,7 +98,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   FittingCallback progress = nullptr,
                   const PriorSpec *priors = nullptr,
                   const Array<String> *coef_names = nullptr,
-                  int max_iter = 200);
+                  int max_iter = 200,
+                  const Array<double> &offset = Array<double>());
 
 } // namespace phonometrica::stats
 

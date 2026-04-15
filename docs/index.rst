@@ -23,7 +23,7 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
    * **Sound annotation**: create and edit multi-layer annotations based on annotation graphs; import and export Praat TextGrids.
    * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, and intensity measurements.
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; toggle between wide and long formats; perform set operations on concordances.
-   * **Statistical analysis**: fit linear, logistic, Poisson, and negative binomial regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; approximate Bayesian inference with weakly informative priors, WAIC, and posterior predictive checks; inspect diagnostic plots and exploratory visualizations.
+   * **Statistical analysis**: experimental support for linear, logistic, Poisson, and negative binomial regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; approximate Bayesian inference with weakly informative priors, WAIC, and posterior predictive checks; inspect diagnostic plots and exploratory visualizations.
    * **Scripting engine**: Phonometrica can be configured and extended with an easy-to-use scripting language, JSON-based plugins, and coding protocols.
    * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.

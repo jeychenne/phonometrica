@@ -732,6 +732,23 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		}
 	}
 
+	// Offset column
+	if (formula.has_offset())
+	{
+		intptr_t off_col = find_column(data, formula.offset);
+		if (off_col == 0) {
+			throw error("Offset variable '%' not found in data", formula.offset);
+		}
+		bool found = false;
+		for (intptr_t c : all_col_indices)
+		{
+			if (c == off_col) { found = true; break; }
+		}
+		if (!found) {
+			all_col_indices.push_back(off_col);
+		}
+	}
+
 	// ── Complete cases ───────────────────────────────────────────────
 
 	auto rows = find_complete_rows(data, all_col_indices);
@@ -759,6 +776,20 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 				            "found y = % at observation %", yi, i);
 			}
 		}
+	}
+
+	// ── Extract offset vector (if present) ──────────────────────────
+
+	Array<double> off;
+	if (formula.has_offset())
+	{
+		intptr_t off_col = find_column(data, formula.offset);
+		if (off_col == 0) {
+			throw error("Offset variable '%' not found in data", formula.offset);
+		}
+		off = Array<double>(dm.nobs, 0.0);
+		for (intptr_t i = 0; i < dm.nobs; i++)
+			off[i + 1] = data.get_cell(rows[i], off_col).to_float();
 	}
 
 	// ── Build smooth bases and augment design matrix ──────────────
@@ -1025,12 +1056,12 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 		if (family == "gaussian")
 		{
-			model = penalized_lm(dm.y, dm.X, S_aug, n_parametric, ranges, progress);
+			model = penalized_lm(dm.y, dm.X, S_aug, n_parametric, ranges, progress, off);
 		}
 		else
 		{
 			auto fam = Family::from_name(family);
-			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter);
+			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter, off);
 		}
 	}
 	else if (formula.has_random_effects())
@@ -1043,11 +1074,11 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter, off);
 	}
 	else if (family == "gaussian")
 	{
-		model = lm(dm.y, dm.X);
+		model = lm(dm.y, dm.X, off);
 	}
 	else if (family == "negbin" || family == "beta" || family == "student")
 	{
@@ -1055,12 +1086,12 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		// optimization, ensuring comparable log-likelihoods with mixed models.
 		std::vector<GroupingInfo> groups;
 		auto fam = Family::from_name(family);
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter);
+		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter, off);
 	}
 	else
 	{
 		auto fam = Family::from_name(family);
-		model = glm(dm.y, dm.X, fam, false, max_iter);
+		model = glm(dm.y, dm.X, fam, false, max_iter, off);
 	}
 
 	// ── Attach metadata ──────────────────────────────────────────────

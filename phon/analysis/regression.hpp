@@ -36,7 +36,8 @@ using FittingCallback = std::function<void(int, int)>;
 //! \param y a vector of N observations
 //! \param X an N by M design matrix (first column is the intercept).
 //! \return a Model with Gaussian family diagnostics.
-Model lm(const Array<double> &y, const Array<double> &X);
+Model lm(const Array<double> &y, const Array<double> &X,
+         const Array<double> &offset = Array<double>());
 
 
 //! Fits a logistic regression model via L-BFGS.
@@ -44,7 +45,8 @@ Model lm(const Array<double> &y, const Array<double> &X);
 //! \param X an N by M design matrix (first column is the intercept).
 //! \param max_iter maximum number of L-BFGS iterations.
 //! \return a Model with binomial family diagnostics.
-Model logit(const Array<double> &y, const Array<double> &X, int max_iter = 200);
+Model logit(const Array<double> &y, const Array<double> &X,
+            int max_iter = 200, const Array<double> &offset = Array<double>());
 
 
 //! Fits a Poisson regression model via L-BFGS.
@@ -53,7 +55,8 @@ Model logit(const Array<double> &y, const Array<double> &X, int max_iter = 200);
 //! \param robust if true, uses sandwich (robust) standard errors.
 //! \param max_iter maximum number of L-BFGS iterations.
 //! \return a Model with Poisson family diagnostics.
-Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int max_iter = 200);
+Model poisson(const Array<double> &y, const Array<double> &X, bool robust,
+              int max_iter = 200, const Array<double> &offset = Array<double>());
 
 
 //! Fits a negative binomial regression model via IWLS with alternating
@@ -62,7 +65,8 @@ Model poisson(const Array<double> &y, const Array<double> &X, bool robust, int m
 //! \param X an N by M design matrix (first column is the intercept).
 //! \param max_iter maximum number of outer iterations.
 //! \return a Model with negbin family diagnostics (theta stored in Model::theta).
-Model negbin(const Array<double> &y, const Array<double> &X, int max_iter = 50);
+Model negbin(const Array<double> &y, const Array<double> &X,
+             int max_iter = 50, const Array<double> &offset = Array<double>());
 
 
 //! Fits a beta regression model via IWLS with alternating profile likelihood
@@ -72,7 +76,8 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter = 50);
 //! \param X an N by M design matrix (first column is the intercept).
 //! \param max_iter maximum number of outer iterations.
 //! \return a Model with beta family diagnostics (phi stored in Model::phi).
-Model beta_regression(const Array<double> &y, const Array<double> &X, int max_iter = 50);
+Model beta_regression(const Array<double> &y, const Array<double> &X,
+                      int max_iter = 50, const Array<double> &offset = Array<double>());
 
 
 //! Generic GLM fitting via L-BFGS with a specified family.
@@ -84,7 +89,9 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 //! \param robust if true, uses sandwich standard errors (Poisson only).
 //! \param max_iter maximum number of iterations.
 //! \return a Model.
-Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust = false, int max_iter = 200);
+Model glm(const Array<double> &y, const Array<double> &X, const Family &fam,
+          bool robust = false, int max_iter = 200,
+          const Array<double> &offset = Array<double>());
 
 
 //! A range of columns belonging to one smooth term in the augmented design matrix.
@@ -111,7 +118,8 @@ struct SmoothColumnRange
 Model penalized_lm(const Array<double> &y, const Array<double> &X,
                    const Array<double> &S, intptr_t n_parametric,
                    const std::vector<SmoothColumnRange> &smooth_ranges = {},
-                   FittingCallback progress = nullptr);
+                   FittingCallback progress = nullptr,
+                   const Array<double> &offset = Array<double>());
 
 
 //! Fits a penalized GLM (non-Gaussian GAM) via penalized IWLS
@@ -130,7 +138,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     intptr_t n_parametric,
                     const std::vector<SmoothColumnRange> &smooth_ranges = {},
                     FittingCallback progress = nullptr,
-                    int max_iter = 50);
+                    int max_iter = 50,
+                    const Array<double> &offset = Array<double>());
 
 } // namespace phonometrica::stats
 
