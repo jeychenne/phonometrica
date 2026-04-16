@@ -14,7 +14,7 @@ Creating a note
 
 There are several ways to create a new note:
 
-- Choose ``File > New note`` from the menu bar.
+- Choose ``File > New > New note`` from the menu bar.
 - Right-click on the **Notes** folder (or any subfolder within it) in the file manager and choose ``New note``.
 
 A new, untitled note will open in the viewer. You can start typing immediately. When you save for the first time

@@ -430,10 +430,14 @@ Phonometrica computes scaled residuals using a procedure inspired by the DHARMa 
 (Hartig, 2020). The steps are as follows:
 
 1. For each of 1000 replicates, a new response vector is simulated from the fitted model.
-   For mixed-effects models, the simulation is *conditional* on the estimated random effects
-   (BLUPs), meaning that the per-observation fitted values — which already include the
-   random effects — are used as the mean for the simulation. Only the residual noise is
-   re-drawn.
+   For mixed-effects models, the simulation is *unconditional* (marginal): fresh random effects
+   are drawn from N(0, Σ̂) for each replicate, rather than conditioning on the estimated BLUPs.
+   This is important because BLUPs are functions of the observed data — they absorb part of the
+   residual noise via shrinkage — so conditioning on them would produce a predictive distribution
+   that is systematically too narrow, resulting in underdispersed PIT residuals and inflated
+   KS statistics (false positives). If the random-effects design information is unavailable
+   (e.g. a model loaded from a file), Phonometrica falls back to conditional simulation using
+   the fitted values directly.
 2. For each observation, the observed value is ranked among its 1000 simulated counterparts.
    An observation that falls in the middle of the simulated range receives a residual near
    0.5; one that falls near the edge receives a residual close to 0 or 1.
@@ -469,22 +473,18 @@ three formal tests:
 
 .. note::
 
-   **Comparison with R.** Phonometrica's scaled residuals use conditional simulation for
-   mixed-effects models: the random effects are held fixed at their estimated values (BLUPs),
-   and only the residual noise is re-simulated. In R, the DHARMa package computes scaled
-   residuals via ``simulateResiduals()``, which calls the model's ``simulate()`` method.
-   The default behaviour depends on the package used to fit the model:
+   **Comparison with R.** Phonometrica's scaled residuals use unconditional (marginal) simulation
+   for mixed-effects models: random effects are re-drawn from N(0, Σ̂) for each replicate. In R,
+   the DHARMa package computes scaled residuals via ``simulateResiduals()``, which calls the
+   model's ``simulate()`` method. The default behaviour depends on the package used to fit the
+   model:
 
-   - **lme4** (``lmer``/``glmer``): by default, ``simulate()`` draws *new* random effects
-     from the estimated distribution (unconditional simulation). To match Phonometrica's
-     conditional approach, pass ``re.form = NULL``::
-
-        sim <- simulateResiduals(model, re.form = NULL)
-
-   - **glmmTMB**: ``simulate()`` always draws new random effects. Conditional simulation
-     is not currently supported (as of glmmTMB 1.1.x). Diagnostic values may therefore
-     differ from those reported by Phonometrica, though both approaches should agree on
-     whether the model is well-specified.
+   - **glmmTMB**: ``simulate()`` draws new random effects by default (unconditional simulation),
+     which matches Phonometrica's approach. Results should be directly comparable.
+   - **lme4** (``lmer``/``glmer``): by default, ``simulate()`` also draws new random effects
+     (unconditional). This matches Phonometrica. If you want to force conditional simulation in R
+     (holding BLUPs fixed), pass ``re.form = NULL`` — but note that Phonometrica does *not* use
+     conditional simulation by default.
 
    Because of differences in random number generators and the limited number of simulation
    replicates, individual test statistics and *p*-values are not expected to match exactly
@@ -698,24 +698,6 @@ strategy:
 This grid integration provides full marginal posteriors for both the fixed effects and the
 hyperparameters (variance component SDs, dispersion parameters, residual SD), capturing
 uncertainty from the hyperparameters that a simple plug-in estimate at the mode would miss.
-
-**Simplified Laplace correction.** For non-Gaussian families (binomial, Poisson, negative
-binomial, beta, Student *t*), the conditional posterior of each fixed effect β\ :sub:`j`
-given θ\ :sub:`k` is not exactly Gaussian — it has skewness arising from the nonlinear
-log-likelihood. Phonometrica applies the simplified Laplace correction (Rue et al., 2009,
-§3.2.2; Tierney & Kadane, 1986), which shifts the conditional mean by a term proportional to
-the third derivative of the log-likelihood:
-
-.. math::
-
-   \tilde{\mu}_j(\theta_k) = \hat{\mu}_j(\theta_k) + \tfrac{1}{2}\, d_{3,j}\, \sigma_j^4(\theta_k)
-
-where *d*\ :sub:`3,j` = Σ\ :sub:`i` *X*\ :sub:`ij`\ ³ ℓ‴(η̂\ :sub:`i`) is the third
-derivative of the log-full-conditional of β\ :sub:`j` at its conditional mode. For Gaussian
-models this correction is exactly zero (the log-likelihood is quadratic in η), so it only
-affects non-Gaussian families. The correction matters most for small-sample GLMMs with
-skewed variance-component posteriors; for typical phonetics datasets it is small but
-provides a more principled approximation.
 
 
 Summary tab (Bayesian mode)

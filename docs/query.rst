@@ -203,10 +203,22 @@ Pitch queries
 To run a pitch query, click on ``Analysis > Measure pitch...``. The pitch query editor adds a panel for
 pitch analysis settings:
 
-- **Algorithm**: Phonometrica supports the SWIPE algorithm [CAM2007]_ and the Praat algorithm [BOE1993]_.
+- **Algorithm**: Phonometrica supports five pitch tracking algorithms: **REAPER** [TAL2014]_ (the default),
+  **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_. Reaper,
+  Harvest, and RAPT are provided by the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are
+  dedicated implementations. See :ref:`sound-view` for references.
 - **Minimum pitch** and **Maximum pitch**: the expected pitch range.
-- **Voicing threshold**: sensitivity to voicing detection (SWIPE) or related algorithm-specific parameters.
+- **Voicing threshold**: sensitivity to voicing detection. The valid range and default value depend on the
+  selected algorithm (for example, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER);
+  the editor updates the default automatically when you change algorithm.
 - **Time step**: determines the temporal resolution of the pitch track.
+
+When **Praat** is selected, four additional parameters are revealed, corresponding to Praat's ``To Pitch (ac)`` command:
+
+- **Silence threshold** (default 0.03): frames below this relative amplitude are treated as silent.
+- **Octave cost** (default 0.01): favors higher-frequency candidates during path selection.
+- **Octave-jump cost** (default 0.35): penalty for an octave jump between adjacent frames.
+- **Voiced/unvoiced cost** (default 0.45): penalty for a voiced↔unvoiced transition.
 
 Like formant queries, pitch can be measured at the midpoint or as an n-point average. Pitch values in
 Hertz can be converted to **semitones** (relative to a reference) or to **ERB rate** via the Scales menu.
@@ -268,5 +280,11 @@ References
 .. [CAM2007] Camacho, Arturo. 2007. SWIPE: A sawtooth waveform inspired pitch estimator for speech and music. PhD dissertation, University of Florida Gainesville.
 
 .. [BOE1993] Boersma, Paul. 1993. Accurate short-term analysis of the fundamental frequency and the harmonics-to-noise ratio of a sampled sound. *Proceedings of the Institute of Phonetic Sciences, University of Amsterdam* 17. 97–110.
+
+.. [MOR2017] Morise, Masanori. 2017. Harvest: A high-performance fundamental frequency estimator from speech signals. *Proceedings of INTERSPEECH 2017*, 2321–2325.
+
+.. [TAL1995] Talkin, David. 1995. A robust algorithm for pitch tracking (RAPT). In W. B. Kleijn & K. K. Paliwal (eds.), *Speech Coding and Synthesis*, 495–518. Amsterdam: Elsevier.
+
+.. [TAL2014] Talkin, David. 2014. REAPER: Robust Epoch And Pitch EstimatoR. Software, Google. https://github.com/google/REAPER.
 
 .. [WEE2015] Weenink, David. 2015. Improved formant frequency measurements of short segments. *Proceedings of the 18th International Congress of Phonetic Sciences*. Glasgow: University of Glasgow.

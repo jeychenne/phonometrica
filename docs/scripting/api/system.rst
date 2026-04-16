@@ -18,12 +18,6 @@ Functions
 
 ------------
 
-.. function:: get_application_directory()
-
-Returns the path of the directory (inside the user's directory) where application settings are usually written to.
-
-------------
-
 .. function:: get_user_directory()
     
 Get the user's directory (read only).    
@@ -104,7 +98,7 @@ Remove a file. If the file could not be removed, an error is thrown.
 
 ------------
 
-.. function:: remove(path as String)  
+.. function:: remove_path(path as String)  
     
 Remove ``path``, which can be either a file or a directory. If ``path`` could not be removed, an error is thrown.
 

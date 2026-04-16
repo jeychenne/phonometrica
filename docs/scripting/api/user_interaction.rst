@@ -94,16 +94,6 @@ See also: :func:`save_file_dialog`,
 
 ------------
 
-.. function:: set_status(message, timeout)
+.. function:: view_text(path, title)
 
-Displays ``message`` in the status bar for ``timeout`` seconds. If
-``timeout`` is ``0``, the message is displayed until the next one
-appears.
-
-
-------------
-
-.. function:: view_text(path [, title [, width]])
-
-Opens the plain text file ``path`` in a new dialog. Optionally, you can specify the dialog's ``title`` and set its
-``width``.
+Opens the plain text file ``path`` in a new dialog with the given ``title``.

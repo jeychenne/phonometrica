@@ -115,7 +115,7 @@ copies the file's properties, description, and sound file binding to the new fil
 any metadata in the process.
 
 TextGrid files can be visualized and edited like native annotations, but please note that due to the limitations of the TextGrid format, metadata will
-*not* be stored in the TextGrid file. Instead, they will be stored in a database associated with your project.
+*not* be stored in the TextGrid file itself. Instead, they will be stored inside the project file alongside the annotation.
 
 You can also export annotations to plain text using ``File > Export > Export annotation(s) to plain text...``.
 

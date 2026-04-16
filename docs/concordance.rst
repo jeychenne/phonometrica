@@ -161,9 +161,9 @@ functions.
 Keyboard shortcuts
 ------------------
 
-- **Space**: play the selected match.
-- **Escape**: stop playback.
-- **Delete**: delete the selected rows.
+Playback, stop, and row deletion in concordance views are available via the toolbar, the right-click
+context menu, and double-click (which plays the match when a sound file is bound). No dedicated key
+bindings are currently registered for these actions.
 
 
 .. |save| image:: ../icons/save.svg
@@ -242,6 +242,6 @@ Keyboard shortcuts
     :height: 16px
     :width: 16px
 
-.. |normvowel| image:: ../icons/scales.svg
+.. |normvowel| image:: ../icons/vowel-space.svg
     :height: 16px
     :width: 16px
