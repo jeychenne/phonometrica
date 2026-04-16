@@ -40,15 +40,17 @@ replacing ``X.X.X`` with the correct version number.
 Building from source
 ~~~~~~~~~~~~~~~~~~~~
 
-Phonometrica is written in C++ (C++17) and uses Qt 6 for its graphical interface. To build from source,
+Phonometrica is written in C++ (C++20) and uses Qt 6 for its graphical interface. To build from source,
 you need:
 
-- A C++17-compliant compiler (GCC 10+, Clang 13+, or MSVC 2019+)
-- CMake 3.21 or later
-- Qt 6.2 or later (Widgets, Svg, and PrintSupport modules)
-- QScintilla for Qt 6
+- A C++20-compliant compiler (GCC 11+, Clang 14+, or MSVC 2022+)
+- CMake 3.20 or later
+- Qt 6.5 or later on Windows and Linux; Qt 6.11 or later on macOS (required for current Xcode SDKs).
+  The Widgets, Svg, and PrintSupport modules are needed.
+- QScintilla built against your Qt 6 installation
+- Boost.Math headers (header-only; install via your system package manager or Boost release)
 
-All other dependencies (Eigen, Boost.Math, PCRE2, pocketfft, CppAD, utf8proc, etc.) are bundled
+All other dependencies (Eigen, PCRE2, pocketfft, CppAD, LBFGSpp, utf8proc, etc.) are bundled
 in the source tree. See the ``BUILD.md`` file in the repository for detailed instructions.
 
 The source code is available at https://github.com/jeychenne/phonometrica.

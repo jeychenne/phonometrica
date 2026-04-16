@@ -68,7 +68,7 @@ that has a different type?
         return x * y
     end
 
-    var a = area(100, "30")
+    let a = area(100, "30")
 
 
 Phonometrica will throw an error because it can't apply the math operator ``*`` to a number and a string. But we might not always 
@@ -274,7 +274,7 @@ This is achieved by adding the keyword ``ref`` before the corresponding paramete
         append(list, item)
     end
 
-    var lst = [1, 2, 3, 4]
+    let lst = [1, 2, 3, 4]
     append_item(lst, 5)
     print lst # prints [1, 2, 3, 4, 5]
 
@@ -344,7 +344,7 @@ Here is another example of a closure which generates the next number in the Fibo
         return fib
     end
 
-    var f = fibonacci()
+    let f = fibonacci()
 
     for i = 1 to 10 do
         print f()

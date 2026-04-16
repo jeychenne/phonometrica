@@ -18,12 +18,12 @@ Convert ``object`` to a string according to the JSON specification.
 
 .. code:: phon
 
-    var o = {
+    let o = {
         "name": "John",
         "pi": 3.14
     }
 
-    var s = json.stringify(o)
+    let s = json.stringify(o)
     print(s)
 
 
@@ -35,8 +35,8 @@ Convert the string ``str`` to an object according to the JSON specification.
 
 .. code:: phon
 
-    var s = '{"name":"John", "pi":3.14}'
-    var o = json.parse(s)
+    let s = '{"name":"John", "pi":3.14}'
+    let o = json.parse(s)
     print("The value of pi is " + o.pi)
 
 

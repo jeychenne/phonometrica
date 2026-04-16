@@ -75,7 +75,7 @@ Example::
 
 ------------
 
-.. function:: column_type(dataset as Dataset, col as Integer)
+.. function:: get_column_type(dataset as Dataset, col as Integer)
 
 Returns the type of column ``col`` as a string: ``"numeric"``, ``"text"``, or ``"boolean"``.
 

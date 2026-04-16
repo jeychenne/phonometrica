@@ -17,9 +17,8 @@ folder. On Windows, it checks the default installation directory. If Praat is in
 or if auto-detection fails, you need to set the path manually in
 ``Edit > Preferences... > General > Path to Praat`` (see :ref:`preferences`).
 
-Phonometrica communicates with Praat using the ``--send`` command-line interface, which means Praat
-must be running for the "Open in Praat" commands to work. If Praat is not already running,
-Phonometrica will launch it automatically.
+Phonometrica communicates with Praat using the ``--send`` command-line interface: Praat will be
+launched automatically if it is not already running.
 
 
 Opening files in Praat
@@ -65,6 +64,6 @@ To convert between formats, right-click on an annotation in the file manager:
   file binding are copied over.
 
 Note that Praat's TextGrid format does not support metadata (properties or descriptions). When you
-work with TextGrids in Phonometrica, metadata are stored in a database associated with your project.
-This is entirely transparent: TextGrid files and native annotations can be freely mixed within a
-project, and metadata are handled identically regardless of the file format.
+work with TextGrids in Phonometrica, metadata are stored inside the project file. This is entirely
+transparent: TextGrid files and native annotations can be freely mixed within a project, and
+metadata are handled identically regardless of the file format.

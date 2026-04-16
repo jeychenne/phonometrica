@@ -187,14 +187,14 @@ An ``Array`` is a one or two dimension numeric array. Elements along each dimens
 (Negative indices start from the end of the dimension.) Two-dimensional arrays are accessed with a pair of indices noted *(i, j)*,
 where *i* represents the *i*\ th row and *j* represents the *j*\ th column. To get or set an element in an array, use the index ``[]`` operator. 
 
-You can create a new array by passing the size of each dimension to the constructor. For instance, here is how to create an array containing 3 rows and 4 columns:
+You can create a new array by passing the size of each dimension to the constructor. For instance, here is how to create an array containing 3 rows and 5 columns:
 
 .. code:: phon
 
-    array = Array(3, 4)
+    array = Array(3, 5)
     
-    for i = 1 to array.row_count do
-        for j = 1 to array.column_count do
+    for i = 1 to array.nrow do
+        for j = 1 to array.ncol do
             array[i,j] = i + j
         end
     end

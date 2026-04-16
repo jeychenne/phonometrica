@@ -8,8 +8,9 @@ are typically CSV files that have been imported into the project, but they can a
 results. The dataset view provides tools for inspecting, filtering, transforming, and preparing your data
 for statistical analysis.
 
-Datasets are saved as ``.phon-data`` files in XML format and are listed in the project tree under a
-**Datasets** folder.
+Datasets are stored as plain ``.csv`` (or ``.tsv``) files on disk. They are listed in the project tree under a
+**Datasets** folder, and any metadata associated with a dataset (column aliases, filter rules, properties, etc.)
+is kept in the project file alongside the dataset.
 
 
 Opening a dataset
@@ -144,6 +145,6 @@ Tips
     :height: 16px
     :width: 16px
 
-.. |normvowel| image:: ../icons/scales.svg
+.. |normvowel| image:: ../icons/vowel-space.svg
     :height: 16px
     :width: 16px

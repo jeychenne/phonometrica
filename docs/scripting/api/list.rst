@@ -243,13 +243,6 @@ Randomizes the order of the elements in the list.
 
 ------------
 
-.. function:: slice(list as List, from as Integer, to as Integer)
-
-Returns a new list which contains the elements of the original list starting at index ``from`` and ending at index ``to`` (inclusive).
-
-
-------------
-
 .. function:: sort(ref list as List)
 
 Sorts the elements in the list in increasing order. The elements should be of the same type.

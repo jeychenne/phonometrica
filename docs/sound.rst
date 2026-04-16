@@ -82,14 +82,24 @@ toolbar) allows you to adjust the formant tracking algorithm's parameters:
 Pitch track
 ~~~~~~~~~~~
 
-The pitch track is a two-dimensional representation of the sound which shows how pitch (measured in Hertz) changes over time. Phonometrica uses the SWIPE algorithm [CAM2007]_ for 
-pitch tracking. The ``Pitch settings...`` command (available from the pitch menu |pitch| in the toolbar) allows you to adjust the algorithm's parameters:
+The pitch track is a two-dimensional representation of the sound which shows how pitch (measured in Hertz) changes over time. Phonometrica supports five pitch
+tracking algorithms: **REAPER** [TAL2014]_ (the default), **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_.
+Reaper, Harvest, and RAPT come from the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are dedicated implementations.
 
+The ``Pitch settings...`` command (available from the pitch menu |pitch| in the toolbar) allows you to choose the algorithm and adjust its parameters:
+
+* ``method``: the pitch tracking algorithm to use (Reaper, Harvest, RAPT, SWIPE, or Praat).
 * ``minimum pitch``: the lowest pitch value expected to be found in the sound.
 * ``maximum pitch``: the highest pitch value expected to be found in the sound.
 * ``time step``: this determines the number of points used to estimate pitch in the current window.
-* ``voicing threshold``: this determines the sensitivity of the algorithm to voicing detection. This parameter is a value between 0.2 and 0.5 (inclusive).
+* ``voicing threshold``: sensitivity of the algorithm to voicing detection. The valid range and default value depend on the chosen method (for example, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER).
 
+When **Praat** is selected, four additional parameters are exposed, matching Praat's ``To Pitch (ac)`` command:
+
+* ``silence threshold`` (default 0.03): frames below this relative amplitude are treated as silent.
+* ``octave cost`` (default 0.01): favors higher-frequency candidates during path selection.
+* ``octave-jump cost`` (default 0.35): penalty for an octave jump between adjacent frames.
+* ``voiced/unvoiced cost`` (default 0.45): penalty for a voiced↔unvoiced transition.
 
 You can show or hide the pitch track using the ``Show pitch`` command in the pitch menu.
 
@@ -204,7 +214,15 @@ To extract spectral moments systematically from a corpus, use a spectral moments
 References
 ----------
 
+.. [BOE1993] Boersma, Paul. 1993. Accurate short-term analysis of the fundamental frequency and the harmonics-to-noise ratio of a sampled sound. *Proceedings of the Institute of Phonetic Sciences, University of Amsterdam* 17. 97–110.
+
 .. [CAM2007] Camacho, Arturo. 2007. SWIPE: A sawtooth waveform inspired pitch estimator for speech and music. PhD dissertation, University of Florida Gainesville.
+
+.. [MOR2017] Morise, Masanori. 2017. Harvest: A high-performance fundamental frequency estimator from speech signals. *Proceedings of INTERSPEECH 2017*, 2321–2325.
+
+.. [TAL1995] Talkin, David. 1995. A robust algorithm for pitch tracking (RAPT). In W. B. Kleijn & K. K. Paliwal (eds.), *Speech Coding and Synthesis*, 495–518. Amsterdam: Elsevier.
+
+.. [TAL2014] Talkin, David. 2014. REAPER: Robust Epoch And Pitch EstimatoR. Software, Google. https://github.com/google/REAPER.
 
 
 

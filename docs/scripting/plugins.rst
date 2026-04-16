@@ -6,10 +6,10 @@ Plugins
 
 Phonometrica can be extended with plugins, which are written in `JSON <https://www.json.org/>`_ and Phonometrica's scripting language.
 When it starts up, Phonometrica loads all plugins which are located in the system plugin directory or in the user plugin directory. Plugins 
-can add functionality to Phonometrica in a number of ways, but most commonly they will create a submenu in the `Tools` menu which provides 
+can add functionality to Phonometrica in a number of ways, but most commonly they will create a submenu in the ``Plugins`` menu which provides 
 additional commands offered by the plugin and/or custom coding protocols.
 
-Plugins can be shared and redistributed as ZIP files. To install a plugin, go to ``Tools > Install plugin...`` and choose the ZIP
+Plugins can be shared and redistributed as ZIP files. To install a plugin, go to ``Plugins > Install plugin...`` and choose the ZIP
 file corresponding to the plugin you wish to install. It will be installed in the current user’s plugin directory.
 
 See :ref:`page-scripting` to learn more about scripting.

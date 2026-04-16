@@ -199,7 +199,7 @@ sub-expression, if there was no match or if ``match`` was not called.
 
 .. code:: phon
 
-    re = new Regex("^a(...)(..)(..)")
+    re = Regex("^a(...)(..)(..)") 
 
     # Print "bra", "ca", "da"
     if match(re, "abracadabra") then

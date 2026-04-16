@@ -17,15 +17,21 @@ Global shortcuts
    * - Shortcut
      - Action
    * - ``Ctrl+N``
-     - New project
+     - New script
    * - ``Ctrl+O``
      - Open project
+   * - ``Ctrl+Shift+O``
+     - Open the most recent project
    * - ``Ctrl+S``
-     - Save the current file (annotation, note, script, concordance, etc.)
+     - Save the current view (annotation, note, script, concordance, dataset, etc.)
    * - ``Ctrl+Shift+S``
-     - Save all modified files in the project
+     - Save the project (all modified files)
    * - ``Ctrl+W``
-     - Close the current tab
+     - Close the current view
+   * - ``Ctrl+Return``
+     - Execute the current view's script (in the script editor) or the selected portion
+   * - ``Escape``
+     - Context-dependent: cancel editing, stop playback, or dismiss a transient overlay
    * - ``Ctrl+Q``
      - Quit Phonometrica
 
@@ -48,18 +54,9 @@ Query shortcuts
 Concordance and dataset views
 -----------------------------
 
-.. list-table::
-   :widths: 35 65
-   :header-rows: 1
-
-   * - Shortcut
-     - Action
-   * - ``Space``
-     - Play the sound for the selected match
-   * - ``Escape``
-     - Stop playback
-   * - ``Delete``
-     - Delete the selected row(s)
+Playback, stop, and row deletion are available via the toolbar buttons, right-click context menus,
+and double-click (which plays the match when a sound file is bound). No dedicated key bindings are
+currently registered for these actions in concordance and dataset views.
 
 
 Sound and annotation views
@@ -109,10 +106,14 @@ Script editor
 
    * - Shortcut
      - Action
-   * - ``Ctrl+R``
+   * - ``Ctrl+Return``
      - Run the current script (or the selected portion)
-   * - ``Ctrl+/``
-     - Comment or uncomment the selected lines
+   * - ``Ctrl+F``
+     - Open the Find bar
+   * - ``Ctrl+H``
+     - Open the Replace bar
+
+Indent, unindent, comment, and uncomment are available from the script editor's toolbar.
 
 
 Note editor

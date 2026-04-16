@@ -137,6 +137,6 @@ References
   159–173.
 
 
-.. |normvowel| image:: ../icons/scales.svg
+.. |normvowel| image:: ../icons/vowel-space.svg
     :height: 16px
     :width: 16px

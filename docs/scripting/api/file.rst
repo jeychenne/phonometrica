@@ -51,35 +51,6 @@ Opens the file named ``path`` and returns a handle to it. The option ``mode`` mu
 In reading mode, Phonometrica will try to guess the encoding and will default to UTF-8 otherwise. In writing mode, Phonometrica will always use UTF-8.
 
 
-------------
-
-.. method:: init(path as String, mode as String, encoding as String)
-
-
-Opens the file named ``path`` and returns a handle to it. The option ``mode`` must be one of the following strings:
-
-* ``"r"`` = open the file in reading mode, starting at the beginning of the file  (the file must exist)
-* ``"w"`` = open the file in writing mode, starting at the beginning of the file (the file is overwritten if it already exists)
-* ``"a"`` = open the file in reading mode, starting at the end of the file (the file is created if it doesn't exist)
-* ``"r+"`` = open the file in reading and writing mode, starting at the beginning of the file (the file must exist)
-* ``"w+"`` = open the file in reading and writing mode, starting at the beginning of the file (the file is overwritten if it already exists)
-* ``"a+"`` = open the file in reading and writing mode, starting at the end of the file  (the file is created if it doesn't exist)
-
-
-If ``encoding`` is not specified, Phonometrica will try to guess the encoding in reading mode and will use UTF-8 in writing mode. Otherwise, ``encoding``
-must be one of the following strings:
-
-* ``utf8`` = UTF-8 encoding
-* ``utf16`` = UTF-16, using the platform's endianness
-* ``utf32`` = UTF-32, using the platform's endianness
-* ``utf16le`` = UTF-16 little endian
-* ``utf16be`` = UTF-16 big endian
-* ``utf32le`` = UTF-32 little endian
-* ``utf32be`` = UTF-32 big endian
-
-Note that the only supported encoding in writing mode is UTF-8.
-
-
 Functions
 ---------
 
@@ -122,35 +93,6 @@ Opens the file named ``path`` and returns a handle to it. The option ``mode`` mu
 * ``"a+"`` = open the file in reading and writing mode, starting at the end of the file  (the file is created if it doesn't exist)
 
 In reading mode, Phonometrica will try to guess the encoding and will default to UTF-8 otherwise. In writing mode, Phonometrica will always use UTF-8.
-
-
-------------
-
-.. function:: open(path as String, mode as String, encoding as String)
-
-
-Opens the file named ``path`` and returns a handle to it. The option ``mode`` must be one of the following strings:
-
-* ``"r"`` = open the file in reading mode, starting at the beginning of the file  (the file must exist)
-* ``"w"`` = open the file in writing mode, starting at the beginning of the file (the file is overwritten if it already exists)
-* ``"a"`` = open the file in reading mode, starting at the end of the file (the file is created if it doesn't exist)
-* ``"r+"`` = open the file in reading and writing mode, starting at the beginning of the file (the file must exist)
-* ``"w+"`` = open the file in reading and writing mode, starting at the beginning of the file (the file is overwritten if it already exists)
-* ``"a+"`` = open the file in reading and writing mode, starting at the end of the file  (the file is created if it doesn't exist)
-
-
-If ``encoding`` is not specified, Phonometrica will try to guess the encoding in reading mode and will use UTF-8 in writing mode. Otherwise, ``encoding``
-must be one of the following strings:
-
-* ``utf8`` = UTF-8 encoding
-* ``utf16`` = UTF-16, using the platform's endianness
-* ``utf32`` = UTF-32, using the platform's endianness
-* ``utf16le`` = UTF-16 little endian
-* ``utf16be`` = UTF-16 big endian
-* ``utf32le`` = UTF-32 little endian
-* ``utf32be`` = UTF-32 big endian
-
-Note that the only supported encoding in writing mode is UTF-8.
 
 
 ------------

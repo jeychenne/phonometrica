@@ -10,7 +10,6 @@ This is a major release. Phonometrica has gained substantial new functionality f
 **General**
 
 - New user interface based on Qt 6.
-- License changed from GPL-2.0 to GPL-3.0.
 - Start view with quick-access buttons (Open Project, Add Files, New Annotation, Analyze Data, Documentation) and a recent projects list.
 - Preferences dialog with three tabs (General, Measurement, Appearance): configure Praat path, default estimation method, query context settings, display precision, and monospaced font.
 - IPA panel for inserting phonetic symbols into annotations and scripts.
@@ -31,7 +30,7 @@ This is a major release. Phonometrica has gained substantial new functionality f
 
 - New query relation types: *left alignment*, *right alignment*, *strict dominance*, *precedes*, and *follows*, in addition to the existing *alignment*, *dominance*, and *precedence*.
 - **Formant queries**: extract formant measurements (F1–F5 and bandwidths) at the midpoint or as n-point averages; automatic formant selection using Weenink's method; on-the-fly ERB and Bark conversion.
-- **Pitch queries**: extract pitch (F0) measurements using SWIPE or Praat algorithms; semitone and ERB conversion.
+- **Pitch queries**: extract pitch (F0) measurements using one of five algorithms (REAPER, Harvest, RAPT, SWIPE, Praat); semitone and ERB conversion.
 - **Intensity queries**: extract intensity (dB) measurements at the midpoint or as n-point averages.
 - **Spectral moments queries**: extract centre of gravity, spread, skewness, and kurtosis from the power spectrum; configurable window duration, window type, frequency range, and pre-emphasis.
 
