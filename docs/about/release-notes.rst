@@ -2,7 +2,7 @@ Release notes
 -------------
 
 
-0.9.0 (05/04/2026)
+0.9.0 (17/04/2026)
 ~~~~~~~~~~~~~
 
 This is a major release. Phonometrica has gained substantial new functionality for acoustic analysis, data exploration, and statistical modeling.
