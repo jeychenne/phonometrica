@@ -103,7 +103,9 @@ add_definitions(-DUTF8PROC_STATIC)
 
 # PCRE2 (UTF-8, static)
 add_definitions(-DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC=1)
-add_subdirectory(phon/third_party/pcre2)
+set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
 include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2)
 
 

@@ -1,0 +1,5 @@
+# Phonometrica installs to /usr/local by design (not targeting the Debian archive)
+phonometrica: dir-in-usr-local *
+phonometrica: file-in-usr-local *
+phonometrica: file-in-unusual-dir *
+phonometrica: initial-upload-closes-no-bugs *

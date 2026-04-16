@@ -70,10 +70,10 @@ sudo apt -f install
 
 ## What gets installed
 
-- `/usr/bin/phonometrica` — the binary
-- `/usr/share/applications/phonometrica.desktop` — desktop integration
-- `/usr/share/metainfo/org.phonometrica.Phonometrica.metainfo.xml` — AppStream metadata
-- `/usr/share/icons/hicolor/scalable/apps/org.phonometrica.Phonometrica.svg` — app icon
+- `/usr/local/bin/phonometrica` — the binary
+- `/usr/local/share/applications/phonometrica.desktop` — desktop integration
+- `/usr/local/share/metainfo/org.phonometrica.Phonometrica.metainfo.xml` — AppStream metadata
+- `/usr/local/share/icons/hicolor/scalable/apps/org.phonometrica.Phonometrica.svg` — app icon
 
 
 ## Cross-distro notes
