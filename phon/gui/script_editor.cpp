@@ -80,8 +80,18 @@ void ScriptEditor::setupEditor()
 	// Line numbers.
 	setMarginType(0, NumberMargin);
 	setMarginWidth(0, QStringLiteral("00000"));
+#if defined(Q_OS_WIN)
+	// On Windows, QPalette::AlternateBase can resolve to black (or very
+	// nearly so) under the native Windows style, which turns the gutter
+	// into a solid dark strip and makes the line numbers invisible against
+	// the dark-grey QPalette::PlaceholderText foreground. Use explicit
+	// light-theme colours so the gutter is always readable.
+	setMarginsBackgroundColor(QColor(0xF4, 0xF4, 0xF4));
+	setMarginsForegroundColor(QColor(0x80, 0x80, 0x80));
+#else
 	setMarginsBackgroundColor(QApplication::palette().color(QPalette::AlternateBase));
 	setMarginsForegroundColor(QApplication::palette().color(QPalette::PlaceholderText));
+#endif
 	setMarginsFont(editorFont);
 
 	// Hide the default symbol margin (margin 1).
@@ -93,7 +103,12 @@ void ScriptEditor::setupEditor()
 
 	// Caret and selection.
 	setCaretLineVisible(true);
+#if defined(Q_OS_WIN)
+	// See comment on margin colours above — same palette-role problem here.
+	auto caretBg = QColor(0xF4, 0xF4, 0xF4);
+#else
 	auto caretBg = QApplication::palette().color(QPalette::AlternateBase);
+#endif
 	setCaretLineBackgroundColor(caretBg);
 
 	// Brace matching.

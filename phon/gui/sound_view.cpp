@@ -657,7 +657,18 @@ QFrame *SoundView::createSeparator()
 {
 	auto *line = new QFrame(this);
 	line->setFrameShape(QFrame::HLine);
+#if defined(Q_OS_WIN)
+	// On Windows, QFrame::HLine with Sunken shadow clamped to 1 px renders
+	// using the palette's Light colour, which on a light theme is nearly
+	// white and blends into the sound widget backgrounds. Force a plain
+	// mid-grey line so the separation between widgets is visible.
+	line->setFrameShadow(QFrame::Plain);
+	QPalette pal = line->palette();
+	pal.setColor(QPalette::WindowText, QColor(0xA0, 0xA0, 0xA0));
+	line->setPalette(pal);
+#else
 	line->setFrameShadow(QFrame::Sunken);
+#endif
 	line->setFixedHeight(1);
 	return line;
 }

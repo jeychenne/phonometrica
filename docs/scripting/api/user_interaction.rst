@@ -97,3 +97,17 @@ See also: :func:`save_file_dialog`,
 .. function:: view_text(path, title)
 
 Opens the plain text file ``path`` in a new dialog with the given ``title``.
+
+
+------------
+
+.. function:: clear()
+
+Clears the currently active output surface. When called interactively from
+the console, it empties the console and prints a new prompt. When called
+from a script run through the script view, it empties the Output panel
+instead.
+
+This is the zero-argument overload of ``clear``; the one-argument overloads
+that empty a :class:`List`, :class:`Table`, :class:`Array` or :class:`Set`
+are documented on their respective pages.

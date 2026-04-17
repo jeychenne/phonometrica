@@ -333,7 +333,7 @@ if (APPLE)
             ${CMAKE_BINARY_DIR}/phonometrica.app
             COMMENT "Deploying Qt frameworks into bundle...")
 elseif (WIN32)
-    add_executable(${PROJECT_NAME} WIN32 phonometrica.cpp ${QRC_SOURCES})
+    add_executable(${PROJECT_NAME} WIN32 phonometrica.cpp ${QRC_SOURCES} windows.rc)
 else ()
     add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
 endif ()

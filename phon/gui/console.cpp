@@ -50,11 +50,26 @@ Console::Console(Runtime &rt, QWidget *parent) :
 			appendOutput(qs);
 			m_text_written = true;
 		};
+
+		// Install the default clear-output behaviour. When the scripting
+		// `clear()` global is invoked from the REPL (i.e. while this
+		// callback is active on the runtime), it clears the console and
+		// re-adds a fresh prompt. ScriptView::execute() swaps this out
+		// while a script is running so that `clear()` targets the
+		// OutputPanel instead.
+		rt.clear_output = [this] {
+			clear();
+			addPrompt();
+		};
 	}
 
-	// Register a "reset" function to clear the console.
-	rt.add_global("reset", [this](Runtime &, std::span<Variant>) -> Variant {
-		clear();
+	// Register the `clear` scripting global. It dispatches through
+	// rt.clear_output so the currently active output surface is the one
+	// that gets cleared. Note: this is the zero-argument overload of
+	// `clear` — the one-argument overloads for List/Table/Array/Set are
+	// registered separately in builtins.cpp.
+	rt.add_global("clear", [](Runtime &rt, std::span<Variant>) -> Variant {
+		if (rt.clear_output) rt.clear_output();
 		return Variant();
 	}, {});
 
@@ -155,8 +170,8 @@ void Console::contextMenuEvent(QContextMenuEvent *e)
 {
 	auto *menu = createStandardContextMenu();
 	menu->addSeparator();
-	auto *reset_action = menu->addAction(tr("Reset"));
-	connect(reset_action, &QAction::triggered, this, [this]() {
+	auto *clear_action = menu->addAction(tr("Clear"));
+	connect(clear_action, &QAction::triggered, this, [this]() {
 		clear();
 		addPrompt();
 	});

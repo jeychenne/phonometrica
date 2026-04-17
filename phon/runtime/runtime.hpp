@@ -280,6 +280,11 @@ public:
 
 	std::function<void(const String &)> print;
 
+	// Callback invoked by the scripting `clear()` global. Clears whatever
+	// surface currently receives `print` output. Set by the component that
+	// installs the matching `print` callback (Console, ScriptView, ...).
+	std::function<void()> clear_output;
+
 	void printf(const char *fmt, ...) const;
 
 #if PHON_GUI

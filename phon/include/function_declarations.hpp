@@ -236,6 +236,7 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"join(items as List, delim as String)\nReturns a string in which all the elements in `items` have been joined with the separator `delim`."
 	}},
 	{ "clear",  {
+		"clear()\nClears the currently active output surface (console or Output panel).\002",
 		"clear(ref table as Table)\nRemoves all the elements in the table.\002",
 		"clear(ref list as List)\nEmpty the content of the list.\001"
 	}},
