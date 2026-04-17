@@ -218,6 +218,10 @@ struct Model
 	// ---- Convergence (iterative methods) ----
 	int niter = 0;             // number of iterations (0 for OLS)
 	bool converged = true;     // whether the optimizer converged
+	String optimizer;          // name of the optimizer that produced the final estimates:
+	                           // "newton" (Newton's method with LM-damped FD Hessian) or
+	                           // "lbfgs" (limited-memory BFGS). Empty for fixed-effects
+	                           // GLMs/OLS where the optimizer is implicit.
 
 	// ---- Random effects (empty for fixed-effects models) ----
 	Array<RandomEffectGroup> random_effects;

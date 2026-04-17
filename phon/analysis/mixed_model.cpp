@@ -1510,6 +1510,7 @@ struct NewtonResult
 	double fx = 0.0;
 	int niter = 0;
 	bool converged = false;
+	const char *optimizer = "";   // "newton" or "lbfgs"; set by the optimizer.
 };
 
 template<typename Objective>
@@ -1523,6 +1524,7 @@ static NewtonResult newton_optimize(const Objective &obj,
 	intptr_t dim = theta.size();
 	NewtonResult res;
 	res.converged = false;
+	res.optimizer = "newton";
 	res.fx = obj.eval(theta);
 	int stall_count = 0;
 
@@ -1794,6 +1796,7 @@ static NewtonResult lbfgs_optimize(const Objective &obj,
 {
 	NewtonResult res;
 	res.converged = false;
+	res.optimizer = "lbfgs";
 
 	double h_scale = (h_scale_hint > 0) ? h_scale_hint
 	               : (theta.size() <= 3 ? 1e-4 : 1e-3);
@@ -3519,6 +3522,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	double sigma2 = 0;
 	int niter = 0;
 	bool converged = true;
+	String optimizer_used;  // "newton" or "lbfgs" — records whichever optimizer
+	                        // produced the final reported estimates (for non-Gaussian
+	                        // models with Phase 2, this is the Phase 2 optimizer).
 	Family fam_used = fam;  // mutable copy; updated with fitted θ_nb for negative binomial
 	Eigen::VectorXd saved_theta;   // saved for INLA grid integration
 	Eigen::VectorXd saved_beta_init; // saved for INLA grid integration (non-Gaussian)
@@ -3562,6 +3568,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
+		optimizer_used = newton_res.optimizer;
 
 		// ── Unpack converged Cholesky → D_inv, sigma2_u, sigma2 ──
 		D_inv_final.resize(G);
@@ -3762,6 +3769,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
+		optimizer_used = newton_res.optimizer;
 
 		// ── Phase 2: joint (β, θ) optimization ─────────────────
 		// For non-Gaussian, the Laplace log-det depends on β through
@@ -3824,6 +3832,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
 				niter += res2.niter;
 				converged = res2.converged;
+				optimizer_used = res2.optimizer;  // Phase 2 produces the final estimates;
+				                                   // its optimizer is the one to report.
 			}
 		}
 
@@ -4174,6 +4184,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	model.niter = niter;
 	model.converged = converged;
+	model.optimizer = optimizer_used;
 
 	// ── Bayesian posterior ──────────────────────────────────────────
 	//
