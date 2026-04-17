@@ -57,6 +57,13 @@ add_definitions(
 if(WIN32)
     add_definitions(-DUNICODE -D_UNICODE -D_USE_MATH_DEFINES)
     add_definitions(-DPHON_WINDOWS=1 -DPHON_MACOS=0 -DPHON_LINUX=0 -DPHON_UNIX=0)
+    # Set this variable before calling cmake on Windows
+    include_directories(${BOOST_ROOT})
+    # Undefine macros for std::min and std::max
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    add_compile_options(/bigobj)
+
     if(MINGW)
         add_definitions(-DPHON_POSIX=1 -DPHON_MINGW=1)
     else()
@@ -106,8 +113,11 @@ add_definitions(-DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC=1)
 set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
 set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
-include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2)
-
+if(WIN32)
+    include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2/interface)
+else()
+    include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2)
+endif()
 
 ###########################
 ##  SCRIPTING ENGINE LIB ##
@@ -290,6 +300,11 @@ if(WITH_GUI)
     set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
 
     target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets Qt6::Svg Qt6::PrintSupport ${QSCINTILLA_LIBRARIES})
+
+    if(WIN32)
+        target_compile_definitions(phon-gui PRIVATE QSCINTILLA_DLL)
+    endif()
+
 endif()
 
 
@@ -317,6 +332,8 @@ if (APPLE)
             COMMAND /Users/julieneychenne/Qt/6.11.0/macos/bin/macdeployqt
             ${CMAKE_BINARY_DIR}/phonometrica.app
             COMMENT "Deploying Qt frameworks into bundle...")
+elseif (WIN32)
+    add_executable(${PROJECT_NAME} WIN32 phonometrica.cpp ${QRC_SOURCES})
 else ()
     add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
 endif ()
