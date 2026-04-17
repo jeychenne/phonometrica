@@ -220,15 +220,34 @@ void ScriptView::execute()
 	else
 		code = m_editor->text();
 
-	// Redirect print output to the Output panel while running a script.
-	// Console output (typed interactively) is unaffected because it goes through Console::runCode.
+	// Redirect `print` output and the scripting `clear()` target to the
+	// OutputPanel while running a script. Console output (typed
+	// interactively) is unaffected because it goes through Console::runCode.
+	//
+	// Both callbacks are saved and restored together. A lightweight scope
+	// guard ensures restoration even if an unexpected exception escapes
+	// the catch blocks below — otherwise the runtime would be left with
+	// dangling lambdas capturing the OutputPanel pointer.
 	auto oldPrint = m_runtime.print;
+	auto oldClear = m_runtime.clear_output;
+
+	struct Restore
+	{
+		Runtime &rt;
+		decltype(oldPrint) &p;
+		decltype(oldClear) &c;
+		~Restore() { rt.print = std::move(p); rt.clear_output = std::move(c); }
+	} restore{ m_runtime, oldPrint, oldClear };
+
 	auto *output = OutputPanel::instance();
 	if (output)
 	{
 		m_runtime.print = [output](const String &s) {
 			auto qs = QString::fromUtf8(s.data(), (int) s.size());
 			output->appendText(qs);
+		};
+		m_runtime.clear_output = [output] {
+			output->clear();
 		};
 	}
 
@@ -259,8 +278,7 @@ void ScriptView::execute()
 		}
 	}
 
-	// Restore the original print callback.
-	m_runtime.print = oldPrint;
+	// `restore` destructor puts both callbacks back in place.
 }
 
 

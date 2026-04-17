@@ -284,8 +284,26 @@ void Settings::set_value(const String &category, const String &key, Variant valu
 {
 	auto &phon = cast<Module>((*runtime)[phon_key]);
 	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &mod = cast<Table>(settings.get(category));
-	mod[key] = std::move(value);
+	auto &settings_map = settings.data();
+
+	auto it = settings_map.find(category);
+	if (it == settings_map.end())
+	{
+		// Self-heal: if the category table does not exist yet, create it.
+		// This can happen when a settings file written by an earlier version
+		// is loaded and a new category (e.g. "font") has been added since.
+		// The migration logic in post_initialize() should normally handle
+		// this, but making set_value() robust prevents a hard crash if a
+		// migration check is ever forgotten.
+		auto tab = make_handle<Table>(runtime);
+		tab->data()[key] = std::move(value);
+		settings_map[category] = std::move(tab);
+	}
+	else
+	{
+		auto &mod = cast<Table>(it->second);
+		mod[key] = std::move(value);
+	}
 }
 
 String Settings::get_std_plugin_directory()
@@ -372,46 +390,119 @@ String Settings::resources_directory()
 
 void Settings::post_initialize()
 {
-	// Ensure newly added settings are available
+	// Ensure that every settings category used by the application is
+	// present. This is the migration path for users upgrading from an
+	// earlier version whose settings file predates one or more categories.
+	//
+	// Philosophy: we check whether the top-level key exists and, if not,
+	// run the corresponding reset_* function to populate platform defaults.
+	// We never overwrite an existing table, so user customisations are
+	// preserved across upgrades. A few categories have grown new sub-keys
+	// over time; for those, we additionally probe a representative newer
+	// key and reset the whole table if that key is absent.
+	//
+	// The self-healing Settings::set_value(category, key, value) is the
+	// second line of defence: writes to a category whose table is present
+	// but missing the sub-key no longer crash — they insert the sub-key
+	// lazily. This migration just guarantees sensible defaults on reads.
+
 	auto &phon = cast<Module>((*runtime)[phon_key]);
 	auto &settings = cast<Table>(phon.get(settings_key)).data();
 
+	// --- Window layout and session state ---------------------------------
+	// reset_geometry writes eight scalars directly at the top level of
+	// `settings`. "project_ratio" is used as the canary for the whole set.
+	if (!settings.contains("project_ratio")) {
+		reset_geometry();
+	}
+	if (!settings.contains("restore_views")) {
+		reset_recent_views();
+	}
+	if (!settings.contains("recent_projects")) {
+		reset_recent_projects();
+	}
+
+	// --- Top-level scalar preferences ------------------------------------
 	if (!settings.contains("autohints")) {
 		reset_autohints();
 	}
-	if (!settings.contains("restore_views"))
-	{
-		reset_recent_views();
+	if (!settings.contains("autoload")) {
+		reset_autoload();
 	}
-	if (!settings.contains("concordance"))
-	{
-		reset_concordance();
+	if (!settings.contains("autosave")) {
+		reset_autosave();
+	}
+	if (!settings.contains("last_directory")) {
+		reset_last_directory();
+	}
+	if (!settings.contains("enable_mouse_tracking")) {
+		reset_mouse_tracking();
 	}
 
-	// Added in 0.8
-	try {
-
-		Settings::get_boolean("sound_plots", "waveform");
+	// --- Appearance ------------------------------------------------------
+	if (!settings.contains("font")) {
+		// Added after initial release: users upgrading from a version that
+		// predates the font preference will not have this table. Without
+		// this migration, reading "font"/"name" or "font"/"size" throws,
+		// and saving preferences would crash before set_value became
+		// self-healing.
+		reset_mono_font();
 	}
-	catch (...) {
+
+	// --- Signal analysis tables ------------------------------------------
+	if (!settings.contains("waveform")) {
+		reset_waveform();
+	}
+	if (!settings.contains("pitch_tracking")) {
+		reset_pitch_tracking();
+	}
+	if (!settings.contains("spectrogram")) {
+		reset_spectrogram();
+	}
+	if (!settings.contains("intensity")) {
+		reset_intensity();
+	}
+
+	// sound_plots gained "formants", "pitch" and "intensity" sub-keys in
+	// 0.8; probe a late-added key so that pre-0.8 tables are refreshed
+	// rather than silently carrying partial state.
+	if (!settings.contains("sound_plots")) {
 		reset_sound_plots();
 	}
-	try {
-		Settings::get_number("formants", "time_step");
+	else {
+		try {
+			Settings::get_boolean("sound_plots", "intensity");
+		}
+		catch (...) {
+			reset_sound_plots();
+		}
 	}
-	catch (...) {
+
+	// formants gained "time_step" in 0.8.
+	if (!settings.contains("formants")) {
 		reset_formants();
 	}
-	if (!settings.contains("display"))
-	{
+	else {
+		try {
+			Settings::get_number("formants", "time_step");
+		}
+		catch (...) {
+			reset_formants();
+		}
+	}
+
+	// --- Concordance, display, statistics --------------------------------
+	if (!settings.contains("concordance")) {
+		reset_concordance();
+	}
+	if (!settings.contains("display")) {
 		reset_display();
 	}
-	if (!settings.contains("statistics"))
-	{
+	if (!settings.contains("statistics")) {
 		reset_statistics();
 	}
 
-	// Added in 0.9: default query context
+	// concordance gained "default_context" in 0.9.
 	try {
 		Settings::get_string("concordance", "default_context");
 	}
