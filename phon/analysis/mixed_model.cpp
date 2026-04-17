@@ -17,18 +17,22 @@
  *                                                                                                                     *
  * Purpose: see header.                                                                                                *
  *                                                                                                                     *
- * The outer gradient of the Laplace-approximated marginal log-likelihood is computed exactly                          *
- * by algorithmic differentiation (CppAD). The inner Newton solve (which finds the random-effects                      *
- * mode u_hat for given outer parameters) runs with plain doubles. At the converged u_hat, the                         *
- * stationarity condition df/du = 0 means that du_hat/dphi does not contribute to the gradient                         *
- * (implicit function theorem), so we can treat u_hat as a constant when taping the nll w.r.t.                         *
- * the outer parameters phi = (beta, log_sigma_u_1, ..., log_sigma_u_G, [log_sigma]).                                  *
+ * The outer optimization over variance parameters dispatches between Newton's method (for trivial                     *
+ * random-intercept-only models with outer dimension ≤ 3) and L-BFGS (for anything else, including                     *
+ * random-slope models and non-Gaussian Phase 2).  Newton uses a finite-difference Hessian with                        *
+ * Levenberg-Marquardt eigenvalue damping when indefinite, and Armijo backtracking line search.                        *
+ * For Gaussian LMMs, β is profiled out and the objective is evaluated by a single Henderson solve.                    *
+ * For non-Gaussian GLMMs, Phase 1 concentrates β out via PIRLS; Phase 2 then re-optimizes (β, θ)                      *
+ * jointly with u profiled out, matching the strategy used by lme4 / glmmTMB.  The random-effects                      *
+ * covariance D_g is parameterized via its lower Cholesky factor (log-Cholesky diagonal,                               *
+ * unconstrained off-diagonal).                                                                                        *
  *                                                                                                                     *
  * Mathematical references:                                                                                            *
- *   Breslow & Clayton (1993). JASA 88(421), 9–25.                                                                     *
- *   Kristensen et al. (2016). JSS 70(5), 1–21.                                                                        *
- *   Skaug & Fournier (2006). Automatic approximation of the marginal likelihood in non-Gaussian                       *
- *       hierarchical models. Computational Statistics & Data Analysis, 51, 699–709.                                   *
+ *   Breslow & Clayton (1993). Approximate inference in generalized linear mixed models.                               *
+ *       JASA 88(421), 9–25.                                                                                           *
+ *   Bates, Mächler, Bolker & Walker (2015). Fitting linear mixed-effects models using lme4.                           *
+ *       JSS 67(1), 1–48.                                                                                              *
+ *   Henderson (1984). Applications of Linear Models in Animal Breeding. University of Guelph Press.                   *
  *                                                                                                                     *
  * Note: The core architecture and integration logic were designed and authored by Julien Eychenne. Portions of the    *
  * statistical estimation logic in this file were developed with the assistance of Claude Opus 4.6 (Anthropic), based  *
@@ -43,8 +47,8 @@
 #include <cmath>
 #include <algorithm>
 #include <random>
-#include <cppad/cppad.hpp>
 #include <boost/math/distributions/normal.hpp>
+#include <phon/third_party/LBFGSpp/LBFGS.h>
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/waic.hpp>
@@ -54,8 +58,6 @@
 namespace phonometrica::stats {
 
 namespace {
-
-using ADdouble = CppAD::AD<double>;
 
 // Helper: add offset vector to linear predictor η (no-op if off_ptr is null).
 static inline void add_offset(Eigen::VectorXd &eta, const Eigen::VectorXd *off_ptr) {
@@ -112,6 +114,17 @@ struct GroupLayout
 	{
 		return offset[g] + j * q[g] + t;
 	}
+};
+
+
+// Result of an inner solve (β̂, û, μ̂) plus the Laplace-approximated NLL.
+// Returned by solve_gaussian_henderson, solve_pirls, and solve_u_given_beta.
+struct ProfiledResult
+{
+	Eigen::VectorXd beta;
+	Eigen::VectorXd u;
+	Eigen::VectorXd mu;
+	double laplace_nll;
 };
 
 
@@ -322,11 +335,32 @@ static double variance_prior_log_density(const std::vector<Eigen::MatrixXd> &D_c
 	for (intptr_t g = 0; g < lay.G; g++)
 	{
 		intptr_t qg = lay.q[g];
+
+		// Marginal prior on each random-effect SD (plus log-σ Jacobian).
 		for (intptr_t t = 0; t < qg; t++)
 		{
 			double sd = std::sqrt(std::max(D_cov[g](t, t), 1e-20));
 			// Prior on SD + Jacobian for the exp transform (log σ → σ).
 			lp += priors.variance_components.log_density(sd) + std::log(sd);
+		}
+
+		// LKJ-style prior on the correlation structure when q_g ≥ 2.
+		// Density: p(R | η) ∝ |R|^(η − 1) where R is the correlation matrix
+		// obtained from D = σ R σ, so R_ij = D_ij / (σ_i σ_j) and therefore
+		//     |R| = |D| / ∏_i D_ii.
+		// Taking logs:  log|R| = log|D| − Σ_i log D_ii.
+		// With η = 1 (the default), this contribution is identically zero,
+		// so we skip the computation entirely — preserves exact backward
+		// compatibility when the user does not set an LKJ prior.
+		if (qg >= 2 && priors.lkj_eta != 1.0)
+		{
+			double log_det_D = std::log(std::max(D_cov[g].determinant(), 1e-20));
+			double log_det_diag = 0;
+			for (intptr_t t = 0; t < qg; t++) {
+				log_det_diag += std::log(std::max(D_cov[g](t, t), 1e-20));
+			}
+			double log_det_R = log_det_D - log_det_diag;
+			lp += (priors.lkj_eta - 1.0) * log_det_R;
 		}
 	}
 	return lp;
@@ -461,785 +495,6 @@ static double full_log_det_H(const Eigen::VectorXd &w,
 	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 	return ldlt.vectorD().array().log().sum();
 }
-
-
-// Backward-compatible overload: scalar per-group precisions → diagonal D_inv matrices.
-// Used by the Gaussian path (solve_inner, solve_profiled_gaussian) which still operates
-// with scalar variances for random-intercept-only models.
-static double full_log_det_H(const Eigen::VectorXd &w,
-                               const Eigen::VectorXd &inv_sigma2_u,
-                               const GroupLayout &lay,
-                               intptr_t n)
-{
-	std::vector<Eigen::MatrixXd> D_inv(lay.G);
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		D_inv[g] = Eigen::MatrixXd::Identity(lay.q[g], lay.q[g]) * inv_sigma2_u[g];
-	}
-	return full_log_det_H(w, D_inv, lay, n);
-}
-
-
-// AD version: manual LDLT for CppAD types.
-// Only called when G > 1 (crossed effects); for G = 1 the diagonal
-// formula is used directly in laplace_nll_ad.
-
-static ADdouble full_log_det_H_ad(const std::vector<ADdouble> &w,
-                                    const std::vector<ADdouble> &inv_sigma2_u,
-                                    const GroupLayout &lay,
-                                    intptr_t n)
-{
-	intptr_t J = lay.J_total;
-
-	// Build H with AD entries
-	std::vector<std::vector<ADdouble>> H(J, std::vector<ADdouble>(J, ADdouble(0)));
-
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		intptr_t off = lay.offset[g];
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			H[off + j][off + j] = inv_sigma2_u[g];
-		}
-	}
-	for (intptr_t i = 0; i < n; i++)
-	{
-		for (intptr_t g1 = 0; g1 < lay.G; g1++)
-		{
-			intptr_t k1 = lay.offset[g1] + (*lay.group_indices[g1])[i];
-			H[k1][k1] += w[i];
-
-			for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
-			{
-				intptr_t k2 = lay.offset[g2] + (*lay.group_indices[g2])[i];
-				H[k1][k2] += w[i];
-				H[k2][k1] += w[i];
-			}
-		}
-	}
-
-	// LDLT decomposition: H = L D L' (no sqrt needed)
-	std::vector<ADdouble> D(J);
-	// L stored in-place in the lower triangle of H
-	for (intptr_t j = 0; j < J; j++)
-	{
-		ADdouble s = H[j][j];
-		for (intptr_t k = 0; k < j; k++) {
-			s -= H[j][k] * H[j][k] * D[k];
-		}
-		D[j] = s;
-
-		for (intptr_t i = j + 1; i < J; i++)
-		{
-			ADdouble s2 = H[i][j];
-			for (intptr_t k = 0; k < j; k++) {
-				s2 -= H[i][k] * D[k] * H[j][k];
-			}
-			H[i][j] = s2 / D[j];   // store L[i][j] in H[i][j]
-		}
-	}
-
-	ADdouble log_det = ADdouble(0);
-	for (intptr_t j = 0; j < J; j++) {
-		log_det += CppAD::log(D[j]);
-	}
-	return log_det;
-}
-
-
-// =====================================================================
-// Plain-double helpers for the inner Newton
-// =====================================================================
-
-static Eigen::VectorXd working_weights(const Eigen::VectorXd &mu, const Family &fam,
-                                        double inv_sigma2)
-{
-	Eigen::VectorXd V = fam.variance(mu);
-	if (fam.name == "gaussian") {
-		V *= inv_sigma2;
-	}
-	return V;
-}
-
-static Eigen::VectorXd nll_gradient_eta(const Eigen::VectorXd &y, const Eigen::VectorXd &mu,
-                                          const Family &fam, double inv_sigma2)
-{
-	Eigen::VectorXd g = -(y - mu);
-	if (fam.name == "gaussian") {
-		g *= inv_sigma2;
-	}
-	return g;
-}
-
-
-// =====================================================================
-// Inner Newton solve (plain double — unchanged)
-// =====================================================================
-
-struct InnerResult
-{
-	Eigen::VectorXd u;
-	Eigen::VectorXd mu;
-	double laplace_nll;
-};
-
-static InnerResult solve_inner(const Eigen::VectorXd &beta,
-                                const Eigen::VectorXd &sigma2_u,
-                                double sigma2,
-                                const Family &fam,
-                                const Eigen::Map<Matrix<double>> &Xm,
-                                const Eigen::Map<Vector<double>> &ym,
-                                const GroupLayout &lay,
-                                intptr_t n, intptr_t p,
-                                const Eigen::VectorXd *off_ptr = nullptr)
-{
-	InnerResult res;
-	res.u = Eigen::VectorXd::Zero(lay.J_total);
-
-	bool is_gaussian = (fam.name == "gaussian");
-	double inv_sigma2 = is_gaussian ? (1.0 / sigma2) : 0.0;
-
-	Eigen::VectorXd inv_sigma2_u(lay.G);
-	for (intptr_t g = 0; g < lay.G; g++) {
-		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
-	}
-
-	int max_inner = 200;  // convergence check exits early for Gaussian (1–5 steps);
-	                      // non-Gaussian with step damping may need more
-	double inner_tol = 1e-8;
-
-	Eigen::VectorXd Xbeta = Xm * beta;
-	add_offset(Xbeta, off_ptr);
-	Eigen::VectorXd eta(n), mu(n);
-
-	for (int iter = 0; iter < max_inner; iter++)
-	{
-		eta = Xbeta;
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++) {
-				eta[i] += res.u[off + idx[i]];
-			}
-		}
-		mu = fam.linkinv(eta);
-
-		Eigen::VectorXd g_eta = nll_gradient_eta(ym, mu, fam, inv_sigma2);
-		Eigen::VectorXd w = working_weights(mu, fam, inv_sigma2);
-
-		Eigen::VectorXd g_u = Eigen::VectorXd::Zero(lay.J_total);
-		Eigen::VectorXd h_u = Eigen::VectorXd::Zero(lay.J_total);
-
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				h_u[off + j] = inv_sigma2_u[g];
-			}
-		}
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++)
-			{
-				intptr_t k = off + idx[i];
-				g_u[k] += g_eta[i];
-				h_u[k] += w[i];
-			}
-		}
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				g_u[off + j] += res.u[off + j] * inv_sigma2_u[g];
-			}
-		}
-
-		double max_change = 0;
-
-		if (!is_gaussian && lay.G > 1)
-		{
-			// Full Newton step for crossed non-Gaussian effects.
-			// The diagonal approximation ignores cross-group Hessian entries
-			// and fails to converge for models with multiple grouping factors.
-			// Build the full J × J Hessian and solve exactly.
-			Eigen::MatrixXd H_full = Eigen::MatrixXd::Zero(lay.J_total, lay.J_total);
-
-			for (intptr_t g = 0; g < lay.G; g++)
-			{
-				intptr_t off = lay.offset[g];
-				for (intptr_t j = 0; j < lay.J[g]; j++) {
-					H_full(off + j, off + j) = inv_sigma2_u[g];
-				}
-			}
-			for (intptr_t i = 0; i < n; i++)
-			{
-				for (intptr_t g1 = 0; g1 < lay.G; g1++)
-				{
-					intptr_t k1 = lay.offset[g1] + (*lay.group_indices[g1])[i];
-					H_full(k1, k1) += w[i];
-
-					for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
-					{
-						intptr_t k2 = lay.offset[g2] + (*lay.group_indices[g2])[i];
-						H_full(k1, k2) += w[i];
-						H_full(k2, k1) += w[i];
-					}
-				}
-			}
-
-			Eigen::LDLT<Eigen::MatrixXd> ldlt(H_full);
-			Eigen::VectorXd step_vec = ldlt.solve(g_u);
-
-			for (intptr_t k = 0; k < lay.J_total; k++)
-			{
-				double s = std::clamp(step_vec[k], -5.0, 5.0);
-				res.u[k] -= s;
-				max_change = std::max(max_change, std::abs(s));
-			}
-		}
-		else
-		{
-			// Diagonal Newton: exact for single grouping factor or Gaussian.
-			for (intptr_t k = 0; k < lay.J_total; k++)
-			{
-				double step = g_u[k] / h_u[k];
-				step = std::clamp(step, -5.0, 5.0);
-				res.u[k] -= step;
-				max_change = std::max(max_change, std::abs(step));
-			}
-		}
-
-		if (max_change < inner_tol) break;
-	}
-
-	// Recompute mu at converged u
-	eta = Xbeta;
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		auto &idx = *lay.group_indices[g];
-		intptr_t off = lay.offset[g];
-		for (intptr_t i = 0; i < n; i++) {
-			eta[i] += res.u[off + idx[i]];
-		}
-	}
-	res.mu = fam.linkinv(eta);
-
-	// Also compute the plain-double nll (used as the return value for L-BFGS)
-	double cond_nll;
-	if (is_gaussian)
-	{
-		double rss = (ym - res.mu).squaredNorm();
-		cond_nll = rss / (2.0 * sigma2) + 0.5 * n * std::log(2.0 * M_PI * sigma2);
-	}
-	else
-	{
-		cond_nll = -fam.loglik(ym, res.mu);
-	}
-
-	double prior_nll = 0;
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		intptr_t off = lay.offset[g];
-		double sq = 0;
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			sq += res.u[off + j] * res.u[off + j];
-		}
-		prior_nll += sq / (2.0 * sigma2_u[g])
-		             + 0.5 * lay.J[g] * std::log(2.0 * M_PI * sigma2_u[g]);
-	}
-
-	Eigen::VectorXd w_final = working_weights(res.mu, fam, inv_sigma2);
-	double log_det_H = full_log_det_H(w_final, inv_sigma2_u, lay, n);
-
-	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_H
-	                  - 0.5 * lay.J_total * std::log(2.0 * M_PI);
-
-	return res;
-}
-
-
-// =====================================================================
-// AD evaluation of Laplace nll (for exact outer gradients)
-// =====================================================================
-//
-// u_hat is treated as a constant (plain double). Only the outer
-// parameters phi are AD-active. This is valid because at the inner
-// optimum, df/du = 0, so the implicit-function-theorem correction
-// du_hat/dphi vanishes from the total derivative.
-
-static ADdouble laplace_nll_ad(const std::vector<ADdouble> &a_phi,
-                                const Eigen::VectorXd &u_hat,
-                                const std::string &family_name,
-                                const Eigen::Map<Matrix<double>> &Xm,
-                                const Eigen::Map<Vector<double>> &ym,
-                                const GroupLayout &lay,
-                                intptr_t n, intptr_t p,
-                                bool is_gaussian,
-                                const Eigen::VectorXd *off_ptr = nullptr)
-{
-	intptr_t G = lay.G;
-
-	// ── Extract variance parameters ─────────────────────────────────
-
-	std::vector<ADdouble> sigma2_u(G), inv_sigma2_u(G);
-	for (intptr_t g = 0; g < G; g++)
-	{
-		sigma2_u[g] = CppAD::exp(2.0 * a_phi[p + g]);
-		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
-	}
-
-	ADdouble sigma2(0), inv_sigma2(0);
-	if (is_gaussian)
-	{
-		sigma2 = CppAD::exp(2.0 * a_phi[p + G]);
-		inv_sigma2 = 1.0 / sigma2;
-	}
-
-	// ── Linear predictor: eta = X*beta + Z*u_hat ─────────────────────
-
-	std::vector<ADdouble> eta(n);
-	for (intptr_t i = 0; i < n; i++)
-	{
-		ADdouble sum = 0;
-		for (intptr_t j = 0; j < p; j++) {
-			sum += Xm(i, j) * a_phi[j];   // double * AD = AD
-		}
-		for (intptr_t g = 0; g < G; g++) {
-			sum += u_hat[lay.offset[g] + (*lay.group_indices[g])[i]];  // double + AD = AD
-		}
-		if (off_ptr) sum += (*off_ptr)[i];
-		eta[i] = sum;
-	}
-
-	// ── mu = linkinv(eta) ────────────────────────────────────────────
-
-	std::vector<ADdouble> mu(n);
-	if (family_name == "gaussian")
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			mu[i] = eta[i];
-		}
-	}
-	else if (family_name == "binomial")
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			mu[i] = 1.0 / (1.0 + CppAD::exp(-eta[i]));
-		}
-	}
-	else // poisson
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			mu[i] = CppAD::exp(eta[i]);
-		}
-	}
-
-	// ── Conditional nll: -log p(y | eta) ─────────────────────────────
-
-	ADdouble cond_nll = 0;
-
-	if (family_name == "gaussian")
-	{
-		ADdouble rss = 0;
-		for (intptr_t i = 0; i < n; i++)
-		{
-			ADdouble d = ym[i] - mu[i];
-			rss += d * d;
-		}
-		cond_nll = rss / (2.0 * sigma2) + 0.5 * n * CppAD::log(2.0 * M_PI * sigma2);
-	}
-	else if (family_name == "binomial")
-	{
-		// Numerically stable: use eta directly
-		// -loglik = sum -[ y*log(mu) + (1-y)*log(1-mu) ]
-		//         = sum -[ y*eta - log(1+exp(eta)) ]
-		for (intptr_t i = 0; i < n; i++)
-		{
-			// log(1 + exp(eta)): use log1p(exp(eta)) for stability
-			// For large eta, log(1+exp(eta)) ≈ eta
-			// CppAD handles exp and log; we rely on the AD library for correctness
-			ADdouble log1pexp = CppAD::log(1.0 + CppAD::exp(eta[i]));
-			cond_nll += -ym[i] * eta[i] + log1pexp;
-		}
-	}
-	else // poisson
-	{
-		for (intptr_t i = 0; i < n; i++)
-		{
-			// -loglik = sum [ mu - y*log(mu) + lgamma(y+1) ]
-			// mu = exp(eta), so log(mu) = eta
-			cond_nll += mu[i] - ym[i] * eta[i] + std::lgamma(ym[i] + 1.0);
-		}
-	}
-
-	// ── Prior nll: sum_g [ ||u_g||^2 / (2 sigma2_u_g) + J_g/2 log(2pi sigma2_u_g) ]
-
-	ADdouble prior_nll = 0;
-	for (intptr_t g = 0; g < G; g++)
-	{
-		intptr_t off = lay.offset[g];
-		double sq = 0;
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			sq += u_hat[off + j] * u_hat[off + j];
-		}
-		// sq is plain double, sigma2_u[g] is AD
-		prior_nll += sq / (2.0 * sigma2_u[g])
-		             + 0.5 * lay.J[g] * CppAD::log(2.0 * M_PI * sigma2_u[g]);
-	}
-
-	// ── Working weights and log det H ────────────────────────────────
-
-	std::vector<ADdouble> w(n);
-	if (family_name == "gaussian")
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			w[i] = inv_sigma2;  // V(mu) = 1 for Gaussian, scaled by 1/sigma2
-		}
-	}
-	else if (family_name == "binomial")
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			w[i] = mu[i] * (1.0 - mu[i]);
-		}
-	}
-	else // poisson
-	{
-		for (intptr_t i = 0; i < n; i++) {
-			w[i] = mu[i];
-		}
-	}
-
-	// h_k = inv_sigma2_u[g] + sum_{i in group} w[i]
-	// For G > 1 (crossed effects) the full Hessian has off-diagonal blocks;
-	// the diagonal formula underestimates log det(H).
-	ADdouble log_det_H;
-	if (G > 1)
-	{
-		log_det_H = full_log_det_H_ad(w, inv_sigma2_u, lay, n);
-	}
-	else
-	{
-		// Single grouping factor: H is truly diagonal — fast path.
-		std::vector<ADdouble> h_u(lay.J_total);
-		for (intptr_t j = 0; j < lay.J[0]; j++) {
-			h_u[j] = inv_sigma2_u[0];
-		}
-		auto &idx = *lay.group_indices[0];
-		for (intptr_t i = 0; i < n; i++) {
-			h_u[idx[i]] += w[i];
-		}
-		log_det_H = ADdouble(0);
-		for (intptr_t k = 0; k < lay.J_total; k++) {
-			log_det_H += CppAD::log(h_u[k]);
-		}
-	}
-
-	// ── Laplace nll ──────────────────────────────────────────────────
-
-	return cond_nll + prior_nll + 0.5 * log_det_H
-	       - 0.5 * lay.J_total * std::log(2.0 * M_PI);
-}
-
-
-// =====================================================================
-// Outer objective with CppAD gradients
-// =====================================================================
-//
-// Outer parameter layout:
-//   Non-Gaussian: phi = (beta_1..p, log_sigma_u_1..G)            dim = p + G
-//   Gaussian:     phi = (beta_1..p, log_sigma_u_1..G, log_sigma)  dim = p + G + 1
-
-struct OuterObjective
-{
-	const Family &fam;
-	const Eigen::Map<Matrix<double>> &Xm;
-	const Eigen::Map<Vector<double>> &ym;
-	const GroupLayout &lay;
-	intptr_t n, p;
-	bool is_gaussian;
-	std::string family_name;  // cached for AD (avoids String comparison in tape)
-	const Eigen::VectorXd *off_ptr = nullptr;
-
-	// Plain-double evaluation (for starting value, final nll, etc.)
-	double eval(const Eigen::VectorXd &phi) const
-	{
-		Eigen::VectorXd beta = phi.head(p);
-		Eigen::VectorXd sigma2_u(lay.G);
-		for (intptr_t g = 0; g < lay.G; g++) {
-			sigma2_u[g] = std::exp(2.0 * phi[p + g]);
-		}
-		double sigma2 = is_gaussian ? std::exp(2.0 * phi[p + lay.G]) : 0.0;
-
-		auto res = solve_inner(beta, sigma2_u, sigma2, fam, Xm, ym, lay, n, p, off_ptr);
-		return res.laplace_nll;
-	}
-
-	// L-BFGS callback: value and gradient via finite differences.
-	//
-	// Finite differences are used for the outer optimization because the
-	// implicit re-solve of the inner problem at each perturbed point captures
-	// curvature information that improves the L-BFGS search direction, compared
-	// to the frozen-u_hat AD gradient. CppAD exact gradients are used for the
-	// SE computation (see exact_gradient below), where accuracy matters more
-	// than search-direction quality.
-	double operator()(const Eigen::VectorXd &phi, Eigen::VectorXd &grad) const
-	{
-		double f0 = eval(phi);
-
-		intptr_t dim = phi.size();
-		for (intptr_t k = 0; k < dim; k++)
-		{
-			double hk = 1e-5 * std::max(std::abs(phi[k]), 1.0);
-
-			Eigen::VectorXd phi_plus = phi, phi_minus = phi;
-			phi_plus[k] += hk;
-			phi_minus[k] -= hk;
-
-			grad[k] = (eval(phi_plus) - eval(phi_minus)) / (2.0 * hk);
-		}
-
-		return f0;
-	}
-};
-
-
-// =====================================================================
-// Exact gradient for Hessian estimation (SE computation)
-// =====================================================================
-//
-// Given phi, compute the exact gradient of the Laplace nll.
-// This is used to build the numerical Hessian: H_{jk} ≈ (grad_j(phi+e_k) - grad_j(phi-e_k)) / (2h).
-// Since the gradient itself is exact (not a finite difference), this gives a first-order-accurate
-// Hessian rather than the second-order-noisy Hessian we had before.
-
-static Eigen::VectorXd exact_gradient(const Eigen::VectorXd &phi,
-                                       const OuterObjective &obj)
-{
-	intptr_t dim = phi.size();
-	Eigen::VectorXd grad(dim);
-
-	Eigen::VectorXd beta = phi.head(obj.p);
-	Eigen::VectorXd sigma2_u(obj.lay.G);
-	for (intptr_t g = 0; g < obj.lay.G; g++) {
-		sigma2_u[g] = std::exp(2.0 * phi[obj.p + g]);
-	}
-	double sigma2 = obj.is_gaussian ? std::exp(2.0 * phi[obj.p + obj.lay.G]) : 0.0;
-
-	auto inner = solve_inner(beta, sigma2_u, sigma2, obj.fam, obj.Xm, obj.ym,
-	                          obj.lay, obj.n, obj.p, obj.off_ptr);
-
-	std::vector<ADdouble> a_phi(dim);
-	for (intptr_t i = 0; i < dim; i++) {
-		a_phi[i] = phi[i];
-	}
-	CppAD::Independent(a_phi);
-
-	std::vector<ADdouble> a_nll(1);
-	a_nll[0] = laplace_nll_ad(a_phi, inner.u, obj.family_name,
-	                           obj.Xm, obj.ym, obj.lay, obj.n, obj.p, obj.is_gaussian,
-	                           obj.off_ptr);
-
-	CppAD::ADFun<double> tape;
-	tape.Dependent(a_phi, a_nll);
-
-	std::vector<double> phi_vec(phi.data(), phi.data() + dim);
-	tape.Forward(0, phi_vec);
-
-	std::vector<double> w(1, 1.0);
-	std::vector<double> dw = tape.Reverse(1, w);
-
-	for (intptr_t i = 0; i < dim; i++) {
-		grad[i] = dw[i];
-	}
-	return grad;
-}
-
-
-// =====================================================================
-// Profiled inner solve for Gaussian (β concentrated out)
-// =====================================================================
-//
-// For Gaussian LMMs, given variance parameters θ = (log σ_u_1..G, log σ),
-// the optimal β is the GLS estimator β̂(θ) = (X'X)⁻¹ X'(y − Zû).
-// This function alternates between updating u (diagonal Newton) and
-// updating β (OLS on adjusted response) until both converge.
-// The result is the joint mode (β̂, û) plus the Laplace nll.
-
-struct ProfiledResult
-{
-	Eigen::VectorXd beta;
-	Eigen::VectorXd u;
-	Eigen::VectorXd mu;
-	double laplace_nll;
-};
-
-static ProfiledResult solve_profiled_gaussian(
-	const Eigen::VectorXd &sigma2_u, double sigma2,
-	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
-	const GroupLayout &lay,
-	intptr_t n, intptr_t p,
-	const Eigen::LDLT<Eigen::MatrixXd> &XtX_ldlt,
-	const Eigen::MatrixXd &Xt,          // precomputed X'
-	const Eigen::VectorXd *off_ptr = nullptr)
-{
-	ProfiledResult res;
-	res.u = Eigen::VectorXd::Zero(lay.J_total);
-
-	// OLS starting β (with offset absorbed into y if present).
-	Eigen::VectorXd ym_adj = ym;
-	if (off_ptr) ym_adj -= *off_ptr;
-	res.beta = XtX_ldlt.solve(Xt * ym_adj);
-
-	double inv_sigma2 = 1.0 / sigma2;
-	Eigen::VectorXd inv_sigma2_u(lay.G);
-	for (intptr_t g = 0; g < lay.G; g++) {
-		inv_sigma2_u[g] = 1.0 / sigma2_u[g];
-	}
-
-	// Alternating (u | β) and (β | u) updates, both linear for Gaussian.
-	// Typically converges in 2–4 passes for crossed designs.
-	for (int iter = 0; iter < 50; iter++)
-	{
-		// ── Update u given β ────────────────────────────────────────
-		Eigen::VectorXd eta = Xm * res.beta;
-		add_offset(eta, off_ptr);
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++) {
-				eta[i] += res.u[off + idx[i]];
-			}
-		}
-
-		Eigen::VectorXd g_u = Eigen::VectorXd::Zero(lay.J_total);
-		Eigen::VectorXd h_u = Eigen::VectorXd::Zero(lay.J_total);
-
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				h_u[off + j] = inv_sigma2_u[g];
-			}
-		}
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++)
-			{
-				intptr_t k = off + idx[i];
-				g_u[k] += -(ym[i] - eta[i]) * inv_sigma2;
-				h_u[k] += inv_sigma2;
-			}
-		}
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			intptr_t off = lay.offset[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++) {
-				g_u[off + j] += res.u[off + j] * inv_sigma2_u[g];
-			}
-		}
-
-		double max_u_change = 0;
-		for (intptr_t k = 0; k < lay.J_total; k++)
-		{
-			double step = g_u[k] / h_u[k];
-			res.u[k] -= step;
-			max_u_change = std::max(max_u_change, std::abs(step));
-		}
-
-		// ── Update β given u:  β = (X'X)⁻¹ X'(y − Zu − offset) ────
-		Eigen::VectorXd y_adj = ym;
-		if (off_ptr) y_adj -= *off_ptr;
-		for (intptr_t g = 0; g < lay.G; g++)
-		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t off = lay.offset[g];
-			for (intptr_t i = 0; i < n; i++) {
-				y_adj[i] -= res.u[off + idx[i]];
-			}
-		}
-		Eigen::VectorXd beta_new = XtX_ldlt.solve(Xt * y_adj);
-		double max_beta_change = (beta_new - res.beta).cwiseAbs().maxCoeff();
-		res.beta = beta_new;
-
-		if (std::max(max_u_change, max_beta_change) < 1e-10) break;
-	}
-
-	// ── Final eta / mu ──────────────────────────────────────────────
-	Eigen::VectorXd eta = Xm * res.beta;
-	add_offset(eta, off_ptr);
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		auto &idx = *lay.group_indices[g];
-		intptr_t off = lay.offset[g];
-		for (intptr_t i = 0; i < n; i++) {
-			eta[i] += res.u[off + idx[i]];
-		}
-	}
-	res.mu = eta;   // identity link
-
-	// ── Laplace nll ─────────────────────────────────────────────────
-	double rss = (ym - res.mu).squaredNorm();
-	double cond_nll = rss / (2.0 * sigma2) + 0.5 * n * std::log(2.0 * M_PI * sigma2);
-
-	double prior_nll = 0;
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		intptr_t off = lay.offset[g];
-		double sq = 0;
-		for (intptr_t j = 0; j < lay.J[g]; j++) {
-			sq += res.u[off + j] * res.u[off + j];
-		}
-		prior_nll += sq / (2.0 * sigma2_u[g])
-		             + 0.5 * lay.J[g] * std::log(2.0 * M_PI * sigma2_u[g]);
-	}
-
-	// Working weights for Gaussian: w_i = 1/σ² for all i
-	Eigen::VectorXd w_prof = Eigen::VectorXd::Constant(n, inv_sigma2);
-	double log_det_H = full_log_det_H(w_prof, inv_sigma2_u, lay, n);
-
-	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_H
-	                  - 0.5 * lay.J_total * std::log(2.0 * M_PI);
-	return res;
-}
-
-
-// =====================================================================
-// Profiled outer objective (Gaussian only)
-// =====================================================================
-//
-// θ = (log σ_u_1, ..., log σ_u_G, log σ)    dim = G + 1
-//
-// β is concentrated out: for each θ, the optimal (β̂, û) is computed
-// by solve_profiled_gaussian.
-
-struct ProfiledObjective
-{
-	const Eigen::Map<Matrix<double>> &Xm;
-	const Eigen::Map<Vector<double>> &ym;
-	const GroupLayout &lay;
-	intptr_t n, p;
-	const Eigen::LDLT<Eigen::MatrixXd> &XtX_ldlt;
-	const Eigen::MatrixXd &Xt;
-	const Eigen::VectorXd *off_ptr = nullptr;
-
-	double eval(const Eigen::VectorXd &theta) const
-	{
-		Eigen::VectorXd sigma2_u(lay.G);
-		for (intptr_t g = 0; g < lay.G; g++) {
-			sigma2_u[g] = std::exp(2.0 * theta[g]);
-		}
-		double sigma2 = std::exp(2.0 * theta[lay.G]);
-
-		auto res = solve_profiled_gaussian(sigma2_u, sigma2, Xm, ym, lay,
-		                                    n, p, XtX_ldlt, Xt, off_ptr);
-		return res.laplace_nll;
-	}
-};
 
 
 // =====================================================================
@@ -2252,9 +1507,9 @@ struct LaplaceJointObjective
 struct NewtonResult
 {
 	Eigen::VectorXd theta;
-	double fx;
-	int niter;
-	bool converged;
+	double fx = 0.0;
+	int niter = 0;
+	bool converged = false;
 };
 
 template<typename Objective>
@@ -2353,14 +1608,52 @@ static NewtonResult newton_optimize(const Objective &obj,
 		}
 
 		// ── Newton direction: −H⁻¹g ─────────────────────────────
+		//
+		// Fast path: if H is positive-definite, solve via LDLT (O(d³/3)).
+		//
+		// Slow path: if H is indefinite — which happens when the FD Hessian
+		// picks up negative curvature from noise near a ridge, or when the
+		// true objective surface is genuinely non-convex away from the
+		// optimum — use Levenberg-Marquardt damping via eigenvalue
+		// clamping.  Decompose H = V Λ V', floor each eigenvalue at a
+		// positive value, and reconstruct the step as
+		//     s = -V diag(1/Λ_clamped) V' g.
+		// This preserves the correct step direction in all curvature-PD
+		// directions and regularizes only those that are noisy or negative.
+		// Steepest descent (the previous fallback) ignores all curvature
+		// information and zig-zags along narrow valleys; LM damping keeps
+		// whatever curvature is reliable.
+		//
+		// The floor 1e-8 × max|Λ| is conservative: it imposes LM damping
+		// only when an eigenvalue falls 8 orders of magnitude below the
+		// largest (genuinely degenerate or noise-driven), leaving well-
+		// scaled directions untouched.
 		Eigen::VectorXd step;
 		{
 			Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 			if (ldlt.info() == Eigen::Success && ldlt.isPositive()) {
 				step = -ldlt.solve(grad);
 			} else {
-				// Hessian not positive-definite: steepest-descent fallback
-				step = -grad * (1.0 / grad.norm());
+				Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(H);
+				if (eig.info() == Eigen::Success)
+				{
+					Eigen::VectorXd evals = eig.eigenvalues();
+					Eigen::MatrixXd V = eig.eigenvectors();
+					double max_abs = evals.cwiseAbs().maxCoeff();
+					double floor_val = std::max(1e-8 * max_abs, 1e-12);
+					for (intptr_t j = 0; j < evals.size(); j++) {
+						if (evals[j] < floor_val) evals[j] = floor_val;
+					}
+					Eigen::VectorXd g_rot = V.transpose() * grad;
+					Eigen::VectorXd s_rot = -g_rot.array() / evals.array();
+					step = V * s_rot;
+				}
+				else
+				{
+					// Eigendecomposition failed (extreme pathology); fall
+					// back to steepest descent as a last resort.
+					step = -grad * (1.0 / grad.norm());
+				}
 			}
 		}
 
@@ -2423,6 +1716,187 @@ static NewtonResult newton_optimize(const Objective &obj,
 	res.theta = theta;
 	res.niter = max_iter;
 	return res;
+}
+
+
+// =====================================================================
+// L-BFGS optimizer (for large-dim outer problems)
+// =====================================================================
+//
+// For outer dimensions above ~15, Newton's finite-difference Hessian
+// becomes the dominant cost: each iteration requires 1 + 2d + 4·d(d−1)/2
+// function evaluations (so 1 + 2·20 + 380 = 421 for d = 20), each of
+// which is a full inner solve.  L-BFGS trades the exact local Hessian
+// for a low-rank secant approximation built from gradient history, which
+// makes each iteration O(d) rather than O(d²).  For smooth, well-scaled
+// objectives — which the Laplace marginal NLL is away from the boundary
+// — L-BFGS converges in a comparable number of iterations to Newton.
+//
+// The gradient is computed by central finite differences; for an
+// objective that is already O(d) evaluations per gradient, this is the
+// same regime as L-BFGS with analytical gradients.
+//
+// Reference: Nocedal & Wright (2006), Numerical Optimization, §7.2.
+
+template<typename Objective>
+class LBfgsFdWrapper
+{
+public:
+	LBfgsFdWrapper(const Objective &obj, double h_scale,
+	               FittingCallback progress, int max_iter)
+		: obj_(obj), h_scale_(h_scale),
+		  progress_(progress), max_iter_(max_iter) {}
+
+	double operator()(const Eigen::VectorXd &theta, Eigen::VectorXd &grad)
+	{
+		double f0 = obj_.eval(theta);
+		intptr_t dim = theta.size();
+		for (intptr_t j = 0; j < dim; j++)
+		{
+			double h = h_scale_ * std::max(std::abs(theta[j]), 1.0);
+			Eigen::VectorXd tp = theta, tm = theta;
+			tp[j] += h;
+			tm[j] -= h;
+			grad[j] = (obj_.eval(tp) - obj_.eval(tm)) / (2.0 * h);
+		}
+		// Progress reporting: LBFGSpp has no per-iteration callback, so we
+		// fire progress from inside the functor.  Each call corresponds to
+		// one gradient evaluation (typically 1 per L-BFGS iteration plus a
+		// few per line search).  We report call_count/3 as an approximate
+		// iteration count, capped at max_iter — this keeps the status bar
+		// moving without overshooting when the optimizer stalls.
+		call_count_++;
+		if (progress_)
+		{
+			int approx_iter = std::min((int)(call_count_ / 3), max_iter_);
+			progress_(approx_iter, max_iter_);
+		}
+		return f0;
+	}
+
+	int call_count() const { return call_count_; }
+
+private:
+	const Objective &obj_;
+	double h_scale_;
+	FittingCallback progress_;
+	int max_iter_;
+	int call_count_ = 0;
+};
+
+template<typename Objective>
+static NewtonResult lbfgs_optimize(const Objective &obj,
+                                    Eigen::VectorXd theta,
+                                    int max_iter,
+                                    double grad_tol,
+                                    FittingCallback progress,
+                                    double h_scale_hint)
+{
+	NewtonResult res;
+	res.converged = false;
+
+	double h_scale = (h_scale_hint > 0) ? h_scale_hint
+	               : (theta.size() <= 3 ? 1e-4 : 1e-3);
+
+	LBFGSpp::LBFGSParam<double> param;
+
+	// Primary stopping criterion: relative gradient norm.  LBFGSpp stops
+	// when ‖∇‖ < epsilon × max(1, ‖θ‖).  Newton uses absolute ‖∇‖ < grad_tol.
+	// For typical θ norms of 3–10 on log-scale, setting epsilon = grad_tol
+	// gives effective absolute tolerance 3–10 × grad_tol — slightly looser
+	// than Newton, but well below the AIC-sensitivity threshold (noise in
+	// log-likelihood from either optimizer is O(ε²) ≈ 1e-16, vs meaningful
+	// ΔAIC > 2).
+	param.epsilon = grad_tol;
+
+	// Secondary stopping criterion: relative function-value change over
+	// `past` iterations.  At very tight gradient tolerances the line search
+	// can fail because sufficient-decrease is unachievable given the
+	// floating-point resolution of the objective (~1e-14 relative).  The
+	// function-value criterion handles this case: if the objective hasn't
+	// changed meaningfully over 3 consecutive iterations, we're at the
+	// optimum regardless of what the gradient norm says.
+	param.past = 3;
+	param.delta = 1e-10;
+
+	param.max_iterations = max_iter;
+	param.m = 10;  // memory size (history length)
+
+	LBFGSpp::LBFGSSolver<double> solver(param);
+	LBfgsFdWrapper<Objective> wrapper(obj, h_scale, progress, max_iter);
+
+	double fx = 0.0;
+	int niter = 0;
+	bool threw = false;
+	try {
+		niter = solver.minimize(wrapper, theta, fx);
+		if (niter < 1) niter = 1;
+		res.converged = (niter < max_iter);
+	}
+	catch (const std::exception &) {
+		// Common exception source: line search failure near convergence,
+		// where function-value differences are below floating-point
+		// resolution.  The iterate at this point is typically optimal —
+		// LBFGSpp just can't formally certify it because the Armijo
+		// condition can't be distinguished from noise.  We classify
+		// empirically: compute the gradient at the final theta; if small,
+		// declare convergence.
+		threw = true;
+	}
+
+	if (threw)
+	{
+		// Evaluate gradient at the final theta to determine whether the
+		// exception reflected real failure or merely a near-optimum
+		// line-search issue.  This uses the same FD scheme as the optimizer
+		// would have used internally.
+		Eigen::VectorXd grad(theta.size());
+		fx = wrapper(theta, grad);
+		double gnorm = grad.norm();
+		// Use a generous tolerance (1000× grad_tol) because the exception
+		// path is often triggered by FD noise, not by genuine non-convergence.
+		res.converged = (gnorm < 1000.0 * grad_tol);
+		if (niter < 1) niter = std::max(1, wrapper.call_count() / 3);
+	}
+
+	// Final progress callback (100% bar — wrapper already reported per call).
+	if (progress) progress(max_iter, max_iter);
+
+	res.theta = theta;
+	res.fx = fx;
+	res.niter = niter;
+	return res;
+}
+
+
+// Dispatch between Newton (small dim, trivially simple surfaces) and
+// L-BFGS (everything else).  Although Newton's FD Hessian gives it
+// quadratic convergence on well-conditioned surfaces, mixed-model outer
+// objectives commonly have curved ridges — e.g. a between-cluster fixed
+// effect partially aliased with the corresponding random intercept, or
+// a weakly-identified random-slope variance.  On such ridges the FD
+// Hessian is noisy in its smallest eigendirection, produces near-unit-
+// length but mis-scaled steps, and convergence stalls.  L-BFGS with
+// secant updates handles this regime gracefully: the accumulated
+// curvature history smooths out FD noise and the backtracking line
+// search keeps steps in-range.  The threshold of 3 keeps Newton for
+// trivial problems (random-intercept-only models with one or two
+// grouping factors, where dim ≤ 3 and no ridge is possible) and
+// switches to L-BFGS as soon as random slopes or multiple grouping
+// factors introduce the geometry that causes Newton trouble.
+template<typename Objective>
+static NewtonResult robust_optimize(const Objective &obj,
+                                     Eigen::VectorXd theta,
+                                     int max_iter = 200,
+                                     double grad_tol = 1e-8,
+                                     FittingCallback progress = nullptr,
+                                     double h_scale_hint = 0)
+{
+	constexpr intptr_t LBFGS_THRESHOLD = 3;
+	if (theta.size() > LBFGS_THRESHOLD) {
+		return lbfgs_optimize(obj, theta, max_iter, grad_tol, progress, h_scale_hint);
+	}
+	return newton_optimize(obj, theta, max_iter, grad_tol, progress, h_scale_hint);
 }
 
 
@@ -3088,10 +2562,19 @@ static void compute_grid_waic(
 	std::vector<double> zu = compute_re_offset(model, n);
 
 	// ── 3. Precompute Cholesky factors of Σ_k for correlated draws ──
+	//
+	// For invalid grid points (vcov_beta zeroed by sanitise_grid_points) the
+	// LLT will fail; we track that and fall back to β̂_k (no perturbation)
+	// when sampling.  In practice, invalid points have w[k] = 0 and should
+	// never be drawn, but the guard makes this robustness explicit.
 
 	std::vector<Eigen::LLT<Eigen::MatrixXd>> chol_vcov(n_grid);
+	std::vector<bool> chol_ok(n_grid, false);
 	for (intptr_t k = 0; k < n_grid; k++)
+	{
 		chol_vcov[k].compute(results[k].vcov_beta);
+		chol_ok[k] = (chol_vcov[k].info() == Eigen::Success);
+	}
 
 	// ── 4. Build cumulative weight distribution for grid sampling ────
 
@@ -3119,7 +2602,9 @@ static void compute_grid_waic(
 		for (intptr_t j = 0; j < p; j++)
 			z[j] = std_normal(rng);
 
-		Eigen::VectorXd beta_s = results[k].beta + chol_vcov[k].matrixL() * z;
+		Eigen::VectorXd beta_s = results[k].beta;
+		if (chol_ok[k])
+			beta_s += chol_vcov[k].matrixL() * z;
 
 		// Dispersion parameters from θ_k.
 		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
@@ -3443,12 +2928,17 @@ static void inla_grid_integrate_gaussian(
 	// where f(θ*) is the neg-log-posterior at the mode and λ_j are
 	// the eigenvalues of the Hessian of f at θ*.
 	{
+		// build_ccd_points places the center (z = 0, which maps to θ*) at
+		// index 0; sanitise_grid_points preserves the order. If the grid
+		// construction ever changes, this index must move with it.
+		constexpr intptr_t CENTER_IDX = 0;
+
 		static const double log_2pi = std::log(2.0 * M_PI);
 		double sum_log_eig = 0;
 		for (intptr_t j = 0; j < d; j++)
 			sum_log_eig += std::log(eigenvalues[j]);
 
-		model.log_marginal = -results[0].neg_log_posterior
+		model.log_marginal = -results[CENTER_IDX].neg_log_posterior
 		                   + 0.5 * d * log_2pi
 		                   - 0.5 * sum_log_eig;
 	}
@@ -3802,12 +3292,16 @@ static void inla_grid_integrate_pirls(
 
 	// ── 9. Laplace-approximated log marginal likelihood ─────────
 	{
+		// build_ccd_points places the center (z = 0, which maps to θ*) at
+		// index 0; sanitise_grid_points preserves the order.
+		constexpr intptr_t CENTER_IDX = 0;
+
 		static const double log_2pi = std::log(2.0 * M_PI);
 		double sum_log_eig = 0;
 		for (intptr_t j = 0; j < d; j++)
 			sum_log_eig += std::log(eigenvalues[j]);
 
-		model.log_marginal = -results[0].neg_log_posterior
+		model.log_marginal = -results[CENTER_IDX].neg_log_posterior
 		                   + 0.5 * d * log_2pi
 		                   - 0.5 * sum_log_eig;
 	}
@@ -4007,13 +3501,16 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	// ── Outer optimisation ──────────────────────────────────────────
 	//
 	// Gaussian:     β is profiled out — Newton's method searches only over
-	//               θ = (log σ_u_1..G, log σ), dimension G+1.
-	//               For each θ, the joint mode (β̂,û) is found by
-	//               solve_profiled_gaussian.  This matches the profiling
-	//               strategy used by lme4/glmmTMB internally.
+	//               θ = (chol_1..G, log σ), dimension = Σ q_g(q_g+1)/2 + 1.
+	//               For each θ, the joint mode (β̂, û) is found by
+	//               solve_gaussian_henderson (one linear solve).  This matches
+	//               the profiling strategy used by lme4 / glmmTMB internally.
 	//
-	// Non-Gaussian: L-BFGS searches over φ = (β, log σ_u_1..G),
-	//               dimension p+G (original approach).
+	// Non-Gaussian: Phase 1 — Newton over θ only, with β profiled out via PIRLS.
+	//               Phase 2 — Newton over (β, θ) jointly, with u profiled out via
+	//               u-only IRLS.  Phase 2 is needed because the Laplace log-det
+	//               depends on β through the working weights.  Student-t skips
+	//               Phase 2 (σ–ν correlation makes the joint Hessian ill-conditioned).
 
 	Eigen::VectorXd beta_hat;
 	Eigen::VectorXd sigma2_u(G);
@@ -4061,7 +3558,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		theta[n_chol] = phi[p + G]; // log σ
 
-		auto newton_res = newton_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
+		auto newton_res = robust_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -4199,17 +3696,35 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		else if (is_student)
 		{
-			// Initialize σ from a MAD-based robust scale estimate of the OLS
-			// residuals. The OLS RSE is inflated by outliers (the very thing
-			// t-regression is meant to handle) and by random-effects variance,
-			// leading to weights that are too flat to detect heavy tails.
-			// MAD * 1.4826 is a consistent estimator of σ for normal data,
-			// and is much less inflated by outliers from t-distributed errors.
+			// Student-t σ initialization — three corrections to the raw
+			// OLS-based scale estimate:
+			//
+			//   (1) Heavy-tail robustness. The OLS residual-standard-error is
+			//       inflated by outliers — the very thing t-regression handles.
+			//       We use MAD × 1.4826 instead, which is a consistent estimator
+			//       of σ under Gaussianity but is far less inflated by heavy
+			//       tails (MAD uses the median, not the mean, of |residuals|).
+			//
+			//   (2) Random-effects variance. In a mixed model, MAD of the OLS
+			//       residuals conflates σ with Σ σ_u,g.  We subtract the ANOVA-
+			//       based variance components already computed above (phi[p+g])
+			//       to isolate the within-group residual variance.
+			//
+			//   (3) t-distribution tail inflation. For t_ν residuals,
+			//       Var(r) = σ² · ν/(ν−2).  With ν₀ = 5 as the initial value,
+			//       σ² = Var(r) · 3/5 ≈ 0.6 · Var(r).
+			//
+			// The previous "σ *= 0.5 if G > 0" heuristic applied only a partial,
+			// dimensionless correction that did not adapt to the actual RE
+			// structure or to the initial ν. This version is based on explicit
+			// variance decomposition and is invariant to the number of grouping
+			// factors and the magnitude of their variance components.
+
 			Eigen::VectorXd ols_resid(n);
 			for (intptr_t i = 0; i < n; i++) {
 				ols_resid[i] = fe.residuals[i + 1];
 			}
-			// Compute median of |residuals - median(residuals)|
+			// MAD = median(|r − median(r)|), × 1.4826 for Gaussian consistency.
 			std::vector<double> abs_dev(n);
 			std::nth_element(ols_resid.data(), ols_resid.data() + n / 2, ols_resid.data() + n);
 			double median_r = ols_resid[n / 2];
@@ -4218,22 +3733,32 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			}
 			std::nth_element(abs_dev.data(), abs_dev.data() + n / 2, abs_dev.data() + n);
 			double mad = abs_dev[n / 2];
-			double sigma_init = std::max(mad * 1.4826, 0.01);
-			// For mixed models, the MAD includes random-effects variance.
-			// Halve it as a heuristic to separate σ from σ_u.
-			if (G > 0) {
-				sigma_init *= 0.5;
+			double sigma_total = std::max(mad * 1.4826, 0.01);
+			double var_total = sigma_total * sigma_total;
+
+			// Subtract the ANOVA-based RE variance contributions.
+			double sum_sigma2_u = 0;
+			for (intptr_t g = 0; g < G; g++) {
+				sum_sigma2_u += std::exp(2.0 * phi[p + g]);
 			}
+			// Floor at 1% of total variance to keep log(σ) finite if the RE
+			// components collectively explain nearly all the variance.
+			double var_resid = std::max(var_total - sum_sigma2_u, 0.01 * var_total);
+
+			// Adjust for t-distribution variance inflation at initial ν.
+			constexpr double nu_init = 5.0;
+			double sigma2_init = var_resid * (nu_init - 2.0) / nu_init;
+			double sigma_init = std::sqrt(std::max(sigma2_init, 1e-4));
+
 			theta[n_chol] = std::log(sigma_init);
-			// Initialize ν = 5 (moderately heavy tails; ν → ∞ is Gaussian).
-			theta[n_chol + 1] = std::log(5.0);
+			theta[n_chol + 1] = std::log(nu_init);
 		}
 
 		// Create PirlsObjective after beta_init is finalized
 
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names, off_ptr};
 
-		auto newton_res = newton_optimize(pirls_obj, theta, max_iter, 1e-8, progress, 1e-2);
+		auto newton_res = robust_optimize(pirls_obj, theta, max_iter, 1e-8, progress, 1e-2);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -4290,7 +3815,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
 				joint_obj.last_u = std::move(p1_pirls.u);
 
-				auto res2 = newton_optimize(joint_obj, phi2, max_iter, 1e-8, progress, 1e-2);
+				// Phase 2 outer dimension p + n_chol + n_disp is effectively
+				// always > 3, so robust_optimize routes this to L-BFGS.
+				auto res2 = robust_optimize(joint_obj, phi2, max_iter, 1e-8, progress, 1e-2);
 
 				// Update β and θ from Phase 2
 				beta_hat = res2.theta.head(p);
@@ -4355,11 +3882,12 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	// ── Final result at converged estimates ──────────────────────────
 	//
-	// Gaussian: solve_inner (diagonal Newton converges exactly for identity link).
-	// Non-Gaussian: re-run PIRLS (its Henderson system solve is more accurate
-	//               than solve_inner's diagonal Newton for the u mode).
+	// Gaussian:     one final Henderson solve at the converged (D_inv, σ²) —
+	//               exact because the Gaussian Henderson system is linear.
+	// Non-Gaussian: one final u-only IRLS at the converged β̂ — this preserves
+	//               the Phase 2 β̂ without modifying it, while refining û.
 
-	InnerResult final_inner;
+	ProfiledResult final_inner;
 
 	if (is_gaussian)
 	{
@@ -4575,8 +4103,14 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	if (is_gaussian)
 	{
 		model.rse = std::sqrt(sigma2);
-		model.df_residual = n - p;
 	}
+	// df_residual is set consistently for all families.  For mixed models,
+	// this is not the "true" residual degrees of freedom (which would need
+	// to account for random-effects shrinkage via edf), but rather the same
+	// n − p convention that lme4 reports for GLMMs.  Keeping it populated
+	// means the `model.df` scripting key returns a sensible value for both
+	// Gaussian and non-Gaussian mixed models.
+	model.df_residual = n - p;
 
 	for (intptr_t g = 0; g < G; g++)
 	{
