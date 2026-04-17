@@ -58,7 +58,14 @@ inline double pointwise_loglik_gaussian(double y, double mu, double sigma)
 	return -0.5 * std::log(2 * M_PI) - std::log(sigma) - 0.5 * r * r;
 }
 
-// Binomial (Bernoulli): y log(mu) + (1-y) log(1-mu)
+// Binomial (Bernoulli only): y log(mu) + (1-y) log(1-mu)
+//
+// This assumes y ∈ {0, 1} (Bernoulli). Phonometrica's binomial GLM pipeline
+// (binomial_loglik, binomial_variance in family.hpp) is likewise Bernoulli-only
+// — it does NOT support Binomial(n, p) with n > 1 (count-of-successes-out-of-trials
+// or proportion-with-weights). If that support is ever added, this kernel must
+// be updated to y*log(μ) + (n_i − y)*log(1 − μ) and pointwise_loglik(..., const Model&)
+// must be extended to pass the trials/weight per observation.
 inline double pointwise_loglik_binomial(double y, double mu)
 {
 	mu = std::clamp(mu, 1e-10, 1.0 - 1e-10);

@@ -1393,6 +1393,13 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 
 				Eigen::VectorXd beta_s = beta_full + chol_post.matrixL() * z;
 				Eigen::VectorXd eta = Xm * beta_s;
+				// Offset contribution: η = X β + offset. Must match the
+				// convention used during fitting (see mixed_model() and the
+				// offset handling in bayesian_adjust / compute_grid_waic).
+				if (!model.offset.empty()) {
+					Eigen::Map<const Eigen::VectorXd> off(model.offset.data(), n);
+					eta += off;
+				}
 
 				for (intptr_t i = 0; i < n; i++)
 				{

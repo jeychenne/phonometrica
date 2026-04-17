@@ -11,7 +11,7 @@ Phonometrica provides an integrated environment for managing, annotating, queryi
 - **Annotation**: create and edit multi-layer annotations based on annotation graphs; seamless import/export of Praat TextGrids.
 - **Queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries (alignment, dominance, precedence, and more); extract formant, pitch, and intensity measurements.
 - **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; toggle wide/long formats; perform set operations.
-- **Statistical modeling**: fit linear, logistic, Poisson, and negative binomial regression models with fixed and random effects (LMM/GLMM); post-hoc testing (estimated marginal means);  model comparison with LRT and information criteria; diagnostic plots and exploratory visualizations.
+- **Statistical modeling** (preview): fit linear, logistic, Poisson, and negative binomial regression models with fixed and random effects (LMM/GLMM); post-hoc testing (estimated marginal means);  model comparison with LRT and information criteria; diagnostic plots and exploratory visualizations.
 - **Scripting**: extend Phonometrica with a built-in scripting language and JSON-based plugins.
 - **Cross-platform**: runs on Windows, macOS, and Linux.
 
