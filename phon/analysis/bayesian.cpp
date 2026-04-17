@@ -54,11 +54,39 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	Eigen::VectorXd prior_mean(p);
 	Eigen::VectorXd prior_precision(p);  // diagonal
 
+	// For GAMs, the smoothing penalty S is already embedded in vcov (Bayesian
+	// interpretation: vcov = σ²(X'X + S)⁻¹ is the posterior covariance under
+	// the implicit smoothing prior N(0, σ² S⁻)). Applying an additional
+	// fixed-effects prior to the smooth basis coefficients would double-penalize
+	// them. Build a mask of smooth-basis columns and skip the prior for those.
+	std::vector<bool> is_smooth_col(p, false);
+	for (intptr_t s = 1; s <= model.smooth_terms.size(); s++)
+	{
+		auto &sm = model.smooth_terms[s];
+		for (intptr_t c = 0; c < sm.col_count; c++)
+		{
+			if (sm.col_start + c >= 0 && sm.col_start + c < p)
+				is_smooth_col[sm.col_start + c] = true;
+		}
+	}
+
 	for (intptr_t j = 0; j < p; j++)
 	{
-		const auto &pr = priors.prior_for(model.coef_names[j + 1]);
-		prior_mean[j] = pr.mean;
-		prior_precision[j] = 1.0 / (pr.sd * pr.sd);
+		if (is_smooth_col[j])
+		{
+			// Smooth basis coefficient: penalty is already in vcov. No
+			// additional prior is applied; the posterior for this column
+			// remains the penalized MLE (the posterior mode under the
+			// smoothing prior alone).
+			prior_mean[j] = 0.0;
+			prior_precision[j] = 0.0;
+		}
+		else
+		{
+			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
+			prior_mean[j] = pr.mean;
+			prior_precision[j] = 1.0 / (pr.sd * pr.sd);
+		}
 	}
 
 	// ── 2. Compute posterior covariance and mean ─────────────────────
@@ -218,9 +246,12 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		double loglik_post = model.loglik - 0.5 * shift.dot(H_lik * shift);
 
 		// Log-prior at the posterior mode.
+		// Skip smooth basis coefficients — their implicit smoothing prior is
+		// already folded into the Laplace term via vcov = σ²(X'X + S)⁻¹.
 		double log_prior = 0;
 		for (intptr_t j = 0; j < p; j++)
 		{
+			if (is_smooth_col[j]) continue;
 			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
 			double z = (beta_post[j] - pr.mean) / pr.sd;
 			log_prior += -0.5 * log_2pi - std::log(pr.sd) - 0.5 * z * z;

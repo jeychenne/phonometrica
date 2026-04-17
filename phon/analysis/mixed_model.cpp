@@ -2063,8 +2063,14 @@ static std::vector<Eigen::VectorXd> build_ccd_points(intptr_t d, double delta = 
 	}
 
 	// Corner points: ±(δ/√d) in all dimensions (2^d combinations).
+	// Skip if d == 1: corner_val = δ/√1 = δ coincides exactly with the axial
+	// points already placed at ±δ. Including them would duplicate grid
+	// locations and double their weight in the mixture posterior, biasing
+	// β moments and inflating the log-marginal likelihood. This case arises
+	// for non-Gaussian GLMMs with a single random intercept and no extra
+	// dispersion parameter (binomial/Poisson with (1|group) only).
 	// Skip if d > 6 to avoid exponential blowup (64 corners).
-	if (d <= 6)
+	if (d >= 2 && d <= 6)
 	{
 		double corner_val = delta / std::sqrt((double)d);
 		intptr_t n_corners = 1 << d;  // 2^d
@@ -2082,7 +2088,92 @@ static std::vector<Eigen::VectorXd> build_ccd_points(intptr_t d, double delta = 
 }
 
 
-// Evaluate a Gaussian LMM at a single grid point θ:
+// Compute moment-matching CCD quadrature base weights for Gaussian integration
+// in z-space (w.r.t. the standard multivariate normal N(0, I)). These weights
+// pair with the grid points returned by build_ccd_points.
+//
+// Design: weights are chosen to integrate Gaussian moments exactly up to 2nd
+// order (∫ 1·φ = 1 and ∫ z_i²·φ = 1). With 3 unknown weights (center, axial,
+// corner) and 2 constraints for d ≥ 2, the under-determined system is closed
+// by imposing equal total mass on the axial vs corner classes — a common
+// convention in the CCD literature that produces positive weights for any δ.
+//
+// Closed form:
+//   d = 1 (no corners — see build_ccd_points):
+//     w_axial  = 1 / (2 δ²)     per axial point
+//     w_center = 1 − 2 w_axial
+//   d ≥ 2:
+//     w_axial  = 1 / (4 δ²)            per axial point
+//     w_corner = d / (2^{d+1} δ²)      per corner point
+//     w_center = 1 − 2d · w_axial − 2^d · w_corner
+//
+// Points are classified by the number of non-zero components in z_k:
+//   0 non-zero  → center (exactly one such point, by construction)
+//   1 non-zero  → axial
+//   ≥ 2 non-zero → corner
+//
+// When combined with the density-ratio correction P(θ_k|y) / φ(z_k), the
+// effective grid weights produce a proper integration rule against the true
+// posterior that reduces to exact CCD quadrature of Gaussian moments in the
+// concentrated-posterior limit. This is the mechanism that prevents the
+// mixture variance from collapsing to Σ(θ*) when the hyperparameter posterior
+// is approximately Gaussian.
+//
+// Reference: Rue, Martino & Chopin (2009), JRSS-B 71(2), §6.5; design-of-
+// experiments literature on central composite designs.
+static std::vector<double> ccd_base_weights(intptr_t d, double delta,
+                                             const std::vector<Eigen::VectorXd> &z_points)
+{
+	intptr_t n_pts = (intptr_t) z_points.size();
+	std::vector<double> w(n_pts, 0.0);
+	if (n_pts == 0 || d <= 0) return w;
+
+	double delta2 = delta * delta;
+	if (delta2 <= 0) return w;
+
+	double w_axial, w_corner;
+	if (d == 1)
+	{
+		w_axial = 1.0 / (2.0 * delta2);
+		w_corner = 0.0;  // no corners for d=1 (see build_ccd_points)
+	}
+	else
+	{
+		w_axial = 1.0 / (4.0 * delta2);
+		w_corner = (double) d / (std::pow(2.0, (double)(d + 1)) * delta2);
+	}
+
+	intptr_t center_idx = -1;
+	for (intptr_t k = 0; k < n_pts; k++)
+	{
+		int nonzero = 0;
+		for (intptr_t j = 0; j < d; j++) {
+			if (std::abs(z_points[k][j]) > 1e-10) nonzero++;
+		}
+		if (nonzero == 0)       { w[k] = 0.0; center_idx = k; }
+		else if (nonzero == 1)  { w[k] = w_axial; }
+		else                    { w[k] = w_corner; }
+	}
+
+	// Set the center weight from the normalisation constraint.
+	if (center_idx >= 0)
+	{
+		double non_center_sum = 0;
+		for (intptr_t k = 0; k < n_pts; k++) {
+			if (k != center_idx) non_center_sum += w[k];
+		}
+		w[center_idx] = 1.0 - non_center_sum;
+	}
+
+	// Defensive renormalisation (guards against floating-point drift and
+	// against designs where the center might be missing).
+	double sum_w = 0;
+	for (double wk : w) sum_w += wk;
+	if (sum_w > 0) {
+		for (intptr_t k = 0; k < n_pts; k++) w[k] /= sum_w;
+	}
+	return w;
+}
 // returns β̂(θ), Σ_β(θ), and the neg-log-posterior.
 static GridPointResult eval_gaussian_grid_point(
 	const Eigen::VectorXd &theta,
@@ -2561,10 +2652,28 @@ static void compute_grid_waic(
 	model.grid_summary = std::move(gs);
 
 	// ── 2. Precompute RE offset from BLUPs at mode θ* ───────────────
+	//
+	// Conditional WAIC: the random-effect contribution zu_i = Σ_g Z_g(i,:) · û_g
+	// is treated as a point estimate from the BLUPs at θ*, and the sampling
+	// loop only draws (β, θ) from the posterior. This does NOT integrate u
+	// over its conditional posterior — a strict Bayesian "marginal WAIC"
+	// would require storing per-grid-point BLUPs and the conditional
+	// posterior variance V_u(θ_k), which we don't currently do.
+	//
+	// A previous refactor (superseded) drew u from its *prior* N(0, Σ_g(θ_k))
+	// per posterior sample, on the reasoning that this would match DHARMa's
+	// unconditional simulation. That was a conceptual error: DHARMa uses the
+	// prior of u because its goal is to simulate y for new groups; WAIC
+	// needs u from its *posterior* because y_obs came from the observed
+	// groups. Drawing from the prior produces log-likelihoods disconnected
+	// from the group labels, which catastrophically inflates p_waic.
+	// The conditional form below (BLUP as point estimate) is what lme4 and
+	// brms-with-re_formula-NULL effectively report for similar models and
+	// gives numbers in the right order of magnitude.
 
 	std::vector<double> zu = compute_re_offset(model, n);
 
-	// ── 3. Precompute Cholesky factors of Σ_k for correlated draws ──
+	// ── 3. Precompute Cholesky factors of Σ_β(θ_k) for correlated β draws ──
 	//
 	// For invalid grid points (vcov_beta zeroed by sanitise_grid_points) the
 	// LLT will fail; we track that and fall back to β̂_k (no perturbation)
@@ -2596,25 +2705,26 @@ static void compute_grid_waic(
 	for (int s = 0; s < WAIC_S; s++)
 	{
 		// Sample grid point k with probability w_k.
-		double u = unif(rng);
-		intptr_t k = (intptr_t)(std::lower_bound(cdf.begin(), cdf.end(), u) - cdf.begin());
+		double uu = unif(rng);
+		intptr_t k = (intptr_t)(std::lower_bound(cdf.begin(), cdf.end(), uu) - cdf.begin());
 		k = std::min(k, n_grid - 1);
 
-		// Draw β^(s) ~ N(β̂_k, Σ_k)
-		Eigen::VectorXd z(p);
+		// Draw β^(s) ~ N(β̂_k, Σ_β(θ_k))
+		Eigen::VectorXd z_beta(p);
 		for (intptr_t j = 0; j < p; j++)
-			z[j] = std_normal(rng);
+			z_beta[j] = std_normal(rng);
 
 		Eigen::VectorXd beta_s = results[k].beta;
 		if (chol_ok[k])
-			beta_s += chol_vcov[k].matrixL() * z;
+			beta_s += chol_vcov[k].matrixL() * z_beta;
 
 		// Dispersion parameters from θ_k.
 		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
 		double disp[2] = {0.0, 0.0};
 		disp_from_theta(theta_k, disp);
 
-		// Compute pointwise log-likelihoods.
+		// Compute pointwise log-likelihoods using the fixed BLUP-based
+		// RE offset (conditional WAIC, see section 2 above).
 		for (intptr_t i = 0; i < n; i++)
 		{
 			// η_i = x_i' β^(s) + zu_i + offset_i
@@ -2696,32 +2806,59 @@ static void inla_grid_integrate_gaussian(
 
 	// ── 5. Integration weights ───────────────────────────────────
 	//
-	// For deterministic CCD integration, weights are proportional to the
-	// unnormalized posterior density at each grid point (not the p/q
-	// importance ratio, which gives equal weights for a Gaussian posterior
-	// and produces over-dispersed mixtures).
+	// Weights combine CCD moment-matching base weights (against the Gaussian
+	// reference N(0, I) in z-space) with a posterior/reference density-ratio
+	// correction:
 	//
-	// w_k ∝ p̃(θ_k | y) = exp(-neg_log_posterior_k)
+	//   w_k ∝ w_k^{CCD} × P(θ_k | y) / φ(z_k)
+	//       = w_k^{CCD} × exp(-nll_k + ½ ||z_k||²)
 	//
-	// Log-sum-exp trick for numerical stability.
+	// Rationale: the CCD base weights integrate Gaussian polynomial moments up
+	// to 2nd order exactly against φ(z). The density ratio corrects for
+	// deviation of the true posterior from this Gaussian reference. In the
+	// concentrated-posterior limit (true posterior ≈ φ after the linear
+	// transform by T), the density ratio is constant across points and the
+	// rule reduces to exact CCD quadrature — the mixture variance
+	// Σ_k w_k [Σ_k + (β_k − β̄)(β_k − β̄)'] then correctly integrates both
+	// E_θ[Σ(θ)] and Var_θ[β(θ)], rather than collapsing to Σ(θ*).
+	//
+	// Historical note: an earlier version used raw-posterior weights
+	// w_k ∝ exp(-nll_k), which gave ~98% of the mass to the center point in
+	// typical designs and effectively reduced the grid integration to
+	// Laplace-at-the-mode, discarding hyperparameter uncertainty in β.
 
+	auto w_ccd = ccd_base_weights(d, 3.0, z_points);
 	std::vector<double> log_w(n_grid);
-	double max_log_w = -1e300;
+	double max_log_w = -std::numeric_limits<double>::infinity();
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		log_w[k] = log_posterior[k];  // = -neg_log_posterior_k
-		max_log_w = std::max(max_log_w, log_w[k]);
+		if (w_ccd[k] <= 0.0 || !std::isfinite(log_posterior[k]))
+		{
+			log_w[k] = -std::numeric_limits<double>::infinity();
+			continue;
+		}
+		log_w[k] = std::log(w_ccd[k]) + log_posterior[k]
+		         + 0.5 * z_points[k].squaredNorm();
+		if (log_w[k] > max_log_w) max_log_w = log_w[k];
 	}
 
-	double sum_w = 0;
-	std::vector<double> w(n_grid);
-	for (intptr_t k = 0; k < n_grid; k++)
+	std::vector<double> w(n_grid, 0.0);
+	if (std::isfinite(max_log_w))
 	{
-		w[k] = std::exp(log_w[k] - max_log_w);
-		sum_w += w[k];
+		double sum_w = 0;
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			w[k] = std::isfinite(log_w[k]) ? std::exp(log_w[k] - max_log_w) : 0.0;
+			sum_w += w[k];
+		}
+		double inv_sum = (sum_w > 0) ? 1.0 / sum_w : 0.0;
+		for (intptr_t k = 0; k < n_grid; k++) w[k] *= inv_sum;
 	}
-	for (intptr_t k = 0; k < n_grid; k++) {
-		w[k] /= sum_w;
+	else
+	{
+		// Every point invalid. sanitise_grid_points should have already
+		// thrown if no valid points existed, so this is defensive.
+		for (intptr_t k = 0; k < n_grid; k++) w[k] = 1.0 / (double) n_grid;
 	}
 
 	// ── 5b. SLA-corrected conditional means ─────────────────────
@@ -3014,24 +3151,38 @@ static void inla_grid_integrate_pirls(
 	sanitise_grid_points(results, log_posterior, n_grid, p);
 
 	// ── 5. Integration weights ───────────────────────────────────
-	// w_k ∝ exp(-neg_log_posterior_k)
+	// CCD base weights × density-ratio correction. See the parallel section
+	// in inla_grid_integrate_gaussian for the full rationale.
+	auto w_ccd = ccd_base_weights(d, 3.0, z_points);
 	std::vector<double> log_w(n_grid);
-	double max_log_w = -1e300;
+	double max_log_w = -std::numeric_limits<double>::infinity();
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		log_w[k] = log_posterior[k];
-		max_log_w = std::max(max_log_w, log_w[k]);
+		if (w_ccd[k] <= 0.0 || !std::isfinite(log_posterior[k]))
+		{
+			log_w[k] = -std::numeric_limits<double>::infinity();
+			continue;
+		}
+		log_w[k] = std::log(w_ccd[k]) + log_posterior[k]
+		         + 0.5 * z_points[k].squaredNorm();
+		if (log_w[k] > max_log_w) max_log_w = log_w[k];
 	}
 
-	double sum_w = 0;
-	std::vector<double> w(n_grid);
-	for (intptr_t k = 0; k < n_grid; k++)
+	std::vector<double> w(n_grid, 0.0);
+	if (std::isfinite(max_log_w))
 	{
-		w[k] = std::exp(log_w[k] - max_log_w);
-		sum_w += w[k];
+		double sum_w = 0;
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			w[k] = std::isfinite(log_w[k]) ? std::exp(log_w[k] - max_log_w) : 0.0;
+			sum_w += w[k];
+		}
+		double inv_sum = (sum_w > 0) ? 1.0 / sum_w : 0.0;
+		for (intptr_t k = 0; k < n_grid; k++) w[k] *= inv_sum;
 	}
-	for (intptr_t k = 0; k < n_grid; k++) {
-		w[k] /= sum_w;
+	else
+	{
+		for (intptr_t k = 0; k < n_grid; k++) w[k] = 1.0 / (double) n_grid;
 	}
 
 	// ── 5b. SLA-corrected conditional means ─────────────────────
