@@ -227,6 +227,21 @@ struct PriorSpec
 	// Applied to each random-effect group's standard deviation(s).
 	VariancePrior variance_components;
 
+	// LKJ-style prior on the correlation structure of the random-effect
+	// covariance, applied when a group has q_g ≥ 2 random terms
+	// (intercept + slope, or multiple slopes).  The density is
+	//
+	//     p(R | η) ∝ |R|^(η − 1)
+	//
+	// where R is the correlation matrix derived from D = σ R σ via
+	// R_ij = D_ij / (σ_i σ_j).  η = 1 is uniform over correlation matrices
+	// (the default — equivalent to no correlation prior); η > 1 concentrates
+	// mass toward the identity (independent random terms); η < 1 pushes
+	// toward highly correlated random terms.  In typical mixed-model
+	// applications, η = 2 gives a mildly regularising prior.
+	// Reference: Lewandowski, Kurowicka & Joe (2009), J. Multivariate Anal.
+	double lkj_eta = 1.0;
+
 	// ---- Residual SD (Gaussian family only) ----
 	VariancePrior residual;
 
@@ -267,7 +282,8 @@ struct PriorSpec
 		    && residual.type == VariancePriorType::PC
 		    && residual.param1 == 1.0 && residual.param2 == 0.05
 		    && negbin_theta.shape == 1.0 && negbin_theta.rate == 0.01
-		    && beta_phi.shape == 1.0 && beta_phi.rate == 0.01;
+		    && beta_phi.shape == 1.0 && beta_phi.rate == 0.01
+		    && lkj_eta == 1.0;
 	}
 
 	// Compute the total log-prior for fixed-effect coefficients.
