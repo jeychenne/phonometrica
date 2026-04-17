@@ -3,3 +3,5 @@ CMakeLists.txt.user
 .DS_Store
 __pycache__/
 *.pyc
+cmake-build-debug-visual-studio
+cmake-build-release-visual-studio

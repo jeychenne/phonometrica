@@ -23,6 +23,7 @@
 #define PHONOMETRICA_CODE_HPP
 
 #include <algorithm>
+#include <array>
 #include <utility>
 #include <vector>
 #include "phon/runtime/definitions.hpp"

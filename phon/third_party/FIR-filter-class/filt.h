@@ -123,7 +123,9 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
+#ifndef _MSC_VER
 #include <unistd.h>
+#endif
 #include <string.h>
 #include <inttypes.h>
 
