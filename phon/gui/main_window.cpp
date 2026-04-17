@@ -292,7 +292,7 @@ QMenu *MainWindow::createToolsMenu()
 	menu->addAction(tr("Uninstall plugin..."), this, &MainWindow::onUninstallPlugin);
 	menu->addSeparator();
 	menu->addAction(tr("How to extend this menu"), [this]() {
-		HelpBrowser::showPage("scripting/plugins.html", this);
+		HelpBrowser::showPage(QStringLiteral("scripting/plugins"), this);
 	});
 
 	return menu;
@@ -333,7 +333,7 @@ QMenu *MainWindow::createHelpMenu()
 	manual_action->setShortcut(QKeySequence::HelpContents);
 
 	menu->addAction(tr("Scripting"), [this]() {
-		HelpBrowser::showPage(QStringLiteral("scripting"), this);
+		HelpBrowser::showPage(QStringLiteral("scripting/index"), this);
 	});
 
 	menu->addSeparator();
