@@ -145,9 +145,19 @@ HelpBrowser::HelpBrowser(QWidget *parent)
 
 void HelpBrowser::navigateTo(const QString &anchor)
 {
-	QString page = anchor.isEmpty()
-		? QStringLiteral("index.html")
-		: anchor + QStringLiteral(".html");
+	// Accept either "sound" or "sound.html" from callers — normalise so we never
+	// produce something like "sound.html.html". An empty anchor means the project
+	// landing page.
+	QString page;
+	if (anchor.isEmpty()) {
+		page = QStringLiteral("index.html");
+	}
+	else if (anchor.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)) {
+		page = anchor;
+	}
+	else {
+		page = anchor + QStringLiteral(".html");
+	}
 
 	m_browser->setSource(QUrl(QStringLiteral("qrc:/docs/") + page));
 }
