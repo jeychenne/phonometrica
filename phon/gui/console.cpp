@@ -53,13 +53,15 @@ Console::Console(Runtime &rt, QWidget *parent) :
 
 		// Install the default clear-output behaviour. When the scripting
 		// `clear()` global is invoked from the REPL (i.e. while this
-		// callback is active on the runtime), it clears the console and
-		// re-adds a fresh prompt. ScriptView::execute() swaps this out
-		// while a script is running so that `clear()` targets the
-		// OutputPanel instead.
+		// callback is active on the runtime), it empties the console.
+		// We deliberately do NOT add a prompt here: this callback is
+		// only ever fired from inside Console::runCode(), which always
+		// appends a prompt when execution returns. Adding one here
+		// would leave two prompts stacked. ScriptView::execute() swaps
+		// this out while a script is running so that `clear()` targets
+		// the OutputPanel instead.
 		rt.clear_output = [this] {
 			clear();
-			addPrompt();
 		};
 	}
 
