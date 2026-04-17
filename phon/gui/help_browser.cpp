@@ -33,14 +33,14 @@ namespace phonometrica {
 static const char *defaultStyleSheet = R"(
     body {
         font-family: sans-serif;
-        font-size: 10pt;
+        font-size: 12pt;
         margin: 8px;
         color: #1a1a1a;
     }
-    h1 { font-size: 16pt; margin-top: 12px; margin-bottom: 8px; }
-    h2 { font-size: 13pt; margin-top: 10px; margin-bottom: 6px; }
-    h3 { font-size: 11pt; margin-top: 8px;  margin-bottom: 4px; }
-    h4 { font-size: 10pt; margin-top: 6px;  margin-bottom: 4px; }
+    h1 { font-size: 18pt; margin-top: 12px; margin-bottom: 8px; }
+    h2 { font-size: 16pt; margin-top: 10px; margin-bottom: 6px; }
+    h3 { font-size: 14pt; margin-top: 8px;  margin-bottom: 4px; }
+    h4 { font-size: 12pt; margin-top: 6px;  margin-bottom: 4px; }
 
     a { color: #0057ae; }
 
