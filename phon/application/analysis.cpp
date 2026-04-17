@@ -364,6 +364,8 @@ void Analysis::write()
 		add_data_node(mn, "StudentNu", String::format("%.17g", m.nu));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
+		if (!m.optimizer.empty())
+			add_data_node(mn, "Optimizer", m.optimizer);
 
 		if (!m.response_levels.empty()) {
 			add_data_node(mn, "ResponseLevels", strings_to_csv(m.response_levels));
@@ -591,6 +593,7 @@ void Analysis::load()
 					else if (name == "StudentNu")    m.nu = parse_double_safe(text);
 					else if (name == "Niter")    m.niter = (int)String(text).to_int();
 					else if (name == "Converged") m.converged = (str(text) == str("true"));
+					else if (name == "Optimizer") m.optimizer = String(text);
 					else if (name == "ResponseLevels") m.response_levels = parse_csv_strings(text);
 					else if (name == "RandomEffects")
 					{

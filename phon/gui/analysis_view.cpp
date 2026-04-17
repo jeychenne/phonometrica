@@ -4887,10 +4887,14 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 
 	if (m.niter > 0) {
+		const char *opt_suffix = "";
+		if (m.optimizer == "newton")     opt_suffix = " (Newton)";
+		else if (m.optimizer == "lbfgs") opt_suffix = " (L-BFGS)";
+
 		if (m.converged)
-			text += QString::asprintf("Converged in %d iterations\n", m.niter);
+			text += QString::asprintf("Converged in %d iterations%s\n", m.niter, opt_suffix);
 		else
-			text += QStringLiteral("WARNING: did not converge after %1 iterations\n").arg(m.niter);
+			text += QString::asprintf("WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
 	}
 
 	return text;

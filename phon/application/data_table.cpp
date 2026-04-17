@@ -467,8 +467,14 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 	if (m.niter > 0)
 	{
-		if (m.converged) rt.printf("Converged in %d iterations\n", m.niter);
-		else rt.printf("WARNING: did not converge after %d iterations\n", m.niter);
+		const char *opt_suffix = "";
+		if (m.optimizer == "newton")     opt_suffix = " (Newton)";
+		else if (m.optimizer == "lbfgs") opt_suffix = " (L-BFGS)";
+
+		if (m.converged)
+			rt.printf("Converged in %d iterations%s\n", m.niter, opt_suffix);
+		else
+			rt.printf("WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
 	}
 
 	rt.printf("\n");
@@ -722,6 +728,7 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "nu") return model.nu;
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
+		if (key == "optimizer") return model.optimizer;
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));

@@ -681,6 +681,29 @@ log-posterior (likelihood × prior) is optimized directly, with the prior enteri
 objective function. For mixed-effects models, a two-phase optimization finds the joint
 posterior mode over fixed effects β and variance parameters θ.
 
+.. note::
+
+   **Optimizer dispatch.** The outer optimization over variance parameters
+   uses Newton's method with a finite-difference Hessian (Levenberg–Marquardt
+   damping applied when the Hessian becomes indefinite) for small-dimensional
+   problems, and limited-memory BFGS (Liu & Nocedal 1989) for everything else.
+   The threshold is set at outer dimension 4: random-intercept-only models
+   with one or two grouping factors stay with Newton, while anything with
+   random slopes or multiple crossed random intercepts switches to L-BFGS.
+   Newton's quadratic convergence is preferred on trivial, well-conditioned
+   surfaces; L-BFGS's secant-based curvature estimate is preferred on the
+   curved ridges typical of larger models (e.g. a between-cluster fixed
+   effect partially aliased with the corresponding random intercept).
+
+   Both optimizers minimize the same Laplace-approximated marginal negative
+   log-likelihood to the same tolerance (10⁻⁸ on the gradient norm), with a
+   secondary function-value convergence criterion for L-BFGS. Log-likelihood
+   values agree across optimizers to within numerical noise (~10⁻¹⁰),
+   far below the threshold at which AIC differences or likelihood-ratio
+   statistics are meaningful. The optimizer used for each fit is reported in
+   the model summary (**Converged in N iterations (Newton)** or
+   **(L-BFGS)**) and is accessible from scripts as ``model.optimizer``.
+
 For mixed-effects models, the posterior is then refined via **grid integration** over the
 hyperparameters θ (variance component SDs, dispersion parameters). This follows the INLA
 strategy:
