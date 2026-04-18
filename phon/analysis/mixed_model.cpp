@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <random>
 #include <boost/math/distributions/normal.hpp>
+#include <boost/math/special_functions/trigamma.hpp>
 #include <phon/third_party/LBFGSpp/LBFGS.h>
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/analysis/regression.hpp>
@@ -2457,7 +2458,27 @@ static GridPointResult eval_pirls_grid_point(
 		fam_gp = Family::student(std::exp(theta[n_chol]),
 		                          std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0));
 
-	if (fam_gp.custom_weights)
+	if (fam.name == "beta")
+	{
+		// Beta: expected Fisher info weight for Var(β|θ).
+		// I_ββ = φ² · X' diag(w_i) X,
+		//   w_i = [μ_i(1-μ_i)]² · [ψ'(μ_i φ) + ψ'((1-μ_i) φ)]
+		// The IRLS quasi-weight μ(1-μ)(1+φ) used during estimation
+		// under-estimates I_ββ when μ is far from 0.5 (Ferrari &
+		// Cribari-Neto 2004, eq. 5). Using the true Fisher info weight
+		// here aligns Var(β|θ) with glmmTMB's vcov block.
+		double phi_b = std::exp(theta[n_chol]);
+		double phi_sq = phi_b * phi_b;
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mi = std::clamp(res.mu[i], 1e-10, 1.0 - 1e-10);
+			double mu1m = mi * (1.0 - mi);
+			double tri = boost::math::trigamma(mi * phi_b)
+			             + boost::math::trigamma((1.0 - mi) * phi_b);
+			w_gp[i] = phi_sq * mu1m * mu1m * tri;
+		}
+	}
+	else if (fam_gp.custom_weights)
 	{
 		w_gp = fam_gp.custom_weights(ym, res.mu);
 	}
@@ -4137,6 +4158,26 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		{
 			w_se.setConstant(1.0 / sigma2);
 		}
+		else if (fam_used.name == "beta")
+		{
+			// Beta: expected Fisher info weight for Var(β|θ).
+			// I_ββ = φ² · X' diag(w_i) X,
+			//   w_i = [μ_i(1-μ_i)]² · [ψ'(μ_i φ) + ψ'((1-μ_i) φ)]
+			// The IRLS quasi-weight μ(1-μ)(1+φ) used during estimation
+			// under-estimates I_ββ when μ is far from 0.5 (Ferrari &
+			// Cribari-Neto 2004, eq. 5). Using the true Fisher info weight
+			// here aligns Var(β|θ) with glmmTMB's vcov block.
+			double phi_b = fam_used.phi;
+			double phi_sq = phi_b * phi_b;
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mi = std::clamp(final_inner.mu[i], 1e-10, 1.0 - 1e-10);
+				double mu1m = mi * (1.0 - mi);
+				double tri = boost::math::trigamma(mi * phi_b)
+				             + boost::math::trigamma((1.0 - mi) * phi_b);
+				w_se[i] = phi_sq * mu1m * mu1m * tri;
+			}
+		}
 		else if (fam_used.custom_weights)
 		{
 			w_se = fam_used.custom_weights(ym, final_inner.mu);
@@ -4259,6 +4300,77 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
 		Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 		vcov = Cinv.topLeftCorner(p, p);
+
+		// ── Beta: profile φ out by extending C with a φ row/column ──────
+		//
+		// The Henderson inverse above gives Var(β̂|θ̂,φ̂).  glmmTMB reports
+		// the marginal variance accounting for φ uncertainty, obtained by
+		// inverting the full joint information matrix.  For beta, the cross
+		// blocks are given by Ferrari–Cribari-Neto (2004, eqs. 6–7):
+		//
+		//   K_βφ_j = Σ_i X_{ij} · c_i
+		//   K_uφ_k = Σ_i Z_{ik} · c_i
+		//   K_φφ   = Σ_i [μ_i² ψ'(μ_i φ) + (1-μ_i)² ψ'((1-μ_i) φ) − ψ'(φ)]
+		//
+		// where c_i = μ_i(1-μ_i) · φ · [μ_i ψ'(μ_i φ) − (1-μ_i) ψ'((1-μ_i) φ)].
+		//
+		// Var(β̂) = top-left p×p of (extended C)⁻¹.  If the extended system
+		// is indefinite we keep the conditional vcov above.
+		if (fam_used.name == "beta")
+		{
+			double phi_b = fam_used.phi;
+			double tri_phi = boost::math::trigamma(phi_b);
+			intptr_t ext = sdim + 1;
+			Eigen::MatrixXd C_ext = Eigen::MatrixXd::Zero(ext, ext);
+			C_ext.topLeftCorner(sdim, sdim) = C;
+			double K_ff = 0.0;
+
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double mi = std::clamp(final_inner.mu[i], 1e-10, 1.0 - 1e-10);
+				double mu1m = mi * (1.0 - mi);
+				double a = mi * phi_b;
+				double b = (1.0 - mi) * phi_b;
+				double tri_a = boost::math::trigamma(a);
+				double tri_b = boost::math::trigamma(b);
+				double c_i = mu1m * phi_b * (mi * tri_a - (1.0 - mi) * tri_b);
+				K_ff += mi * mi * tri_a + (1.0 - mi) * (1.0 - mi) * tri_b - tri_phi;
+
+				// K_βφ contribution
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double v = Xm(i, j) * c_i;
+					C_ext(j, ext - 1) += v;
+					C_ext(ext - 1, j) += v;
+				}
+				// K_uφ contribution
+				for (intptr_t g = 0; g < G; g++)
+				{
+					intptr_t gj = groups[g].indices[i];
+					intptr_t qg = lay.q[g];
+					intptr_t base = p + lay.offset[g] + gj * qg;
+					for (intptr_t t = 0; t < qg; t++)
+					{
+						double v = lay.Z(g, i, t) * c_i;
+						C_ext(base + t, ext - 1) += v;
+						C_ext(ext - 1, base + t) += v;
+					}
+				}
+			}
+			C_ext(ext - 1, ext - 1) = K_ff;
+
+			Eigen::LDLT<Eigen::MatrixXd> ldlt_ext(C_ext);
+			if (ldlt_ext.info() == Eigen::Success && ldlt_ext.isPositive())
+			{
+				Eigen::MatrixXd Ce_inv = ldlt_ext.solve(
+					Eigen::MatrixXd::Identity(ext, ext));
+				Eigen::MatrixXd vcov_ext = Ce_inv.topLeftCorner(p, p);
+				bool ok = vcov_ext.allFinite();
+				for (intptr_t j = 0; ok && j < p; j++)
+					if (vcov_ext(j, j) <= 0) ok = false;
+				if (ok) vcov = std::move(vcov_ext);
+			}
+		}
 	}
 
 	// ── Full Laplace vcov for random-slope non-Gaussian models ─────────

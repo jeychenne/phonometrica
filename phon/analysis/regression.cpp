@@ -768,21 +768,65 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	model.loglik = fam.loglik(ym, mu_eig);
 	model.compute_information_criteria();
 
-	// Covariance: (X'WX)⁻¹ with beta working weights
+	// ── Covariance from expected Fisher information, profiled over φ ──────
+	//
+	// Under the Ferrari–Cribari parameterisation with the logit link, the
+	// expected information blocks are (Ferrari & Cribari-Neto 2004, eqs. 5–7):
+	//
+	//   K_ββ   = φ² · X' · diag(w_i) · X
+	//            w_i = [μ_i(1-μ_i)]² · [ψ'(μ_i φ) + ψ'((1-μ_i) φ)]
+	//
+	//   K_βφ_j = Σ_i X_{ij} · μ_i(1-μ_i) · φ ·
+	//            [μ_i ψ'(μ_i φ) − (1-μ_i) ψ'((1-μ_i) φ)]
+	//
+	//   K_φφ   = Σ_i [μ_i² ψ'(μ_i φ) + (1-μ_i)² ψ'((1-μ_i) φ) − ψ'(φ)]
+	//
+	// Profiled variance of β̂ (accounting for φ uncertainty at the MLE):
+	//
+	//   Cov(β̂) = [K_ββ − K_βφ K_φφ⁻¹ K_βφ']⁻¹
+	//
+	// The IRLS working weight μ(1-μ)(1+φ) used during estimation is the
+	// quasi-likelihood weight; it equals K_ββ only in the φ → ∞ limit and
+	// under-estimates the ML Fisher information elsewhere — notably when μ
+	// is far from 0.5, where the trigamma factor dominates.
+	//
+	// Matches glmmTMB's vcov (which computes the observed information by AD
+	// of the exact beta log-likelihood).
 	{
 		Eigen::VectorXd eta_cov = Xm * beta;
 		if (has_off) eta_cov += off;
 		Eigen::VectorXd mu_vec = (1.0 / (1.0 + (-eta_cov).array().exp())).matrix();
-		Eigen::VectorXd w(n);
+
+		Eigen::VectorXd w_bb(n);     // diagonal for K_ββ (without φ² factor)
+		Eigen::VectorXd c_bphi(n);   // column for K_βφ = X' · c_bphi
+		double K_ff = 0.0;            // scalar K_φφ
+		double tri_phi = boost::math::trigamma(phi);
+
 		for (intptr_t i = 0; i < n; i++)
 		{
 			double mi = std::clamp(mu_vec[i], 1e-10, 1.0 - 1e-10);
-			w[i] = mi * (1.0 - mi) * (1.0 + phi);
-		}
-		Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
-		Eigen::MatrixXd cov = XtWX.inverse();
+			double mu1m = mi * (1.0 - mi);
+			double a = mi * phi;
+			double b = (1.0 - mi) * phi;
+			double tri_a = boost::math::trigamma(a);
+			double tri_b = boost::math::trigamma(b);
 
-		// Store full variance-covariance matrix
+			w_bb[i]   = mu1m * mu1m * (tri_a + tri_b);
+			c_bphi[i] = mu1m * phi * (mi * tri_a - (1.0 - mi) * tri_b);
+			K_ff     += mi * mi * tri_a + (1.0 - mi) * (1.0 - mi) * tri_b - tri_phi;
+		}
+
+		Eigen::MatrixXd K_bb = phi * phi * (Xm.transpose() * w_bb.asDiagonal() * Xm);
+		Eigen::VectorXd K_bf = Xm.transpose() * c_bphi;
+
+		// Profile out φ: I_β = K_ββ − K_βφ K_φφ⁻¹ K_φβ
+		Eigen::MatrixXd I_profile = K_bb;
+		if (K_ff > 1e-15) {
+			I_profile.noalias() -= (K_bf * K_bf.transpose()) / K_ff;
+		}
+
+		Eigen::MatrixXd cov = I_profile.inverse();
+
 		store_vcov(model, cov);
 
 		model.se = Array<double>(p, 0.0);
