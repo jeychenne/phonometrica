@@ -45,6 +45,7 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 #include <random>
 #include <boost/math/distributions/normal.hpp>
@@ -1842,23 +1843,66 @@ static NewtonResult lbfgs_optimize(const Objective &obj,
 		// resolution.  The iterate at this point is typically optimal —
 		// LBFGSpp just can't formally certify it because the Armijo
 		// condition can't be distinguished from noise.  We classify
-		// empirically: compute the gradient at the final theta; if small,
-		// declare convergence.
+		// empirically in the block below: probe for descent directions
+		// at coordinate perturbations of size h_scale.  If no perturbation
+		// decreases f beyond the noise floor, declare convergence.
 		threw = true;
 	}
 
 	if (threw)
 	{
-		// Evaluate gradient at the final theta to determine whether the
-		// exception reflected real failure or merely a near-optimum
-		// line-search issue.  This uses the same FD scheme as the optimizer
-		// would have used internally.
-		Eigen::VectorXd grad(theta.size());
-		fx = wrapper(theta, grad);
+		// Classify the exception as genuine non-convergence or spurious
+		// line-search failure near the optimum.  Two independent tests
+		// are computed from the same 2·dim evaluations used for FD
+		// gradient:
+		//
+		//   (a) Descent probe: at each coordinate j, evaluate f at
+		//       θ ± h·e_j.  At a local minimum, neither probe decreases
+		//       f by more than the objective's evaluation noise floor,
+		//       because pure curvature contributes +½h²·H_jj (positive).
+		//       A genuinely non-converged θ with gradient g_j has linear
+		//       response ±h·g_j, so at least one of the 2·dim probes
+		//       produces a measurable decrease.  This test is robust:
+		//       it compares function values on the same evaluation
+		//       scale, so the signal is h·|g_j| against h²·|H_jj| —
+		//       a factor 1/h separation, ≈ 100× at h_scale = 1e-2.
+		//
+		//   (b) Legacy FD gradient norm ‖∇f‖ < 1000·grad_tol.  Kept as
+		//       a fallback when descent probing is inconclusive, but no
+		//       longer the primary criterion: FD gradient noise scales
+		//       as σ_f / h ≈ 1e-10·|f| / h, which with h_scale = 1e-2
+		//       and |f| ~ 1e4 exceeds 1e-5 even at the exact optimum.
+		//       This was the source of spurious non-convergence flags
+		//       in Poisson/NB GLMMs where point estimates matched the
+		//       reference implementation to 4 decimal places.
+		//
+		// Convergence is declared if EITHER test passes.  False-positive
+		// rate is limited by the descent_tol threshold (1e-8 relative);
+		// false-negative rate (missing genuine convergence) is nearly
+		// zero because line-search exceptions almost always fire at or
+		// within a few FD steps of the optimum.
+		intptr_t dim = theta.size();
+		double f0 = obj.eval(theta);
+		Eigen::VectorXd grad(dim);
+		double fref = std::max(std::abs(f0), 1.0);
+		double descent_tol = 1e-8 * fref;
+		bool found_descent = false;
+		for (intptr_t j = 0; j < dim; j++)
+		{
+			double h = h_scale * std::max(std::abs(theta[j]), 1.0);
+			Eigen::VectorXd tp = theta, tm = theta;
+			tp[j] += h;
+			tm[j] -= h;
+			double fp = obj.eval(tp);
+			double fm = obj.eval(tm);
+			grad[j] = (fp - fm) / (2.0 * h);
+			if (fp < f0 - descent_tol || fm < f0 - descent_tol) {
+				found_descent = true;
+			}
+		}
 		double gnorm = grad.norm();
-		// Use a generous tolerance (1000× grad_tol) because the exception
-		// path is often triggered by FD noise, not by genuine non-convergence.
-		res.converged = (gnorm < 1000.0 * grad_tol);
+		fx = f0;
+		res.converged = !found_descent || (gnorm < 1000.0 * grad_tol);
 		if (niter < 1) niter = std::max(1, wrapper.call_count() / 3);
 	}
 
@@ -4248,6 +4292,95 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		if (lay.q[g] > 1) { has_random_slopes = true; break; }
 	}
 
+	// Local flags populated by the identifiability diagnostic below.
+	// Default: optimistic.  Set to false when the model is structurally
+	// unidentified (random slope aliased with random intercept).
+	bool well_identified_flag = true;
+	String identifiability_msg;
+
+	// ── Structural identifiability check ──────────────────────────
+	// The most common cause of weak identifiability in mixed models is
+	// a random-slope predictor that is constant within every level of
+	// its grouping factor.  Example: the formula `(1 + age | speaker)`
+	// where `age` is a between-subject variable — every observation of
+	// a given speaker has the same `age` value, so the random slope
+	// `u_age` enters the linear predictor only through `u_age · age_i`
+	// with constant age_i, which is aliased with the random intercept
+	// `u_0i`.  The data therefore contains no curvature information
+	// about σ²_age or its correlation with σ²_0, and the posterior mode
+	// is determined entirely by the priors on those hyperparameters.
+	//
+	// glmmTMB catches this case by returning NA for logLik because its
+	// unregularized Hessian is singular.  Phonometrica's weakly-
+	// informative priors make the regularized objective smooth, so the
+	// optimizer reports convergence; without an explicit diagnostic,
+	// the user has no signal that the fit is non-informative in that
+	// direction.
+	//
+	// This structural test inspects the design directly: for each
+	// random-slope term, check whether its Z column is constant within
+	// every level of the grouping factor.  It is deterministic (no FD
+	// noise), catches the condition exactly, and does not depend on
+	// prior strength.  Tolerance 1e-10 on the within-level range
+	// handles floating-point exact-equality while letting any genuine
+	// within-level variation pass.
+	//
+	// Applies to every mixed-model family (Gaussian, Poisson, NB, Beta,
+	// binomial, Student) — the diagnostic is a property of the design,
+	// not of the likelihood.
+	if (has_random_slopes && G > 0)
+	{
+		for (intptr_t g = 0; g < G && well_identified_flag; g++)
+		{
+			if (lay.q[g] <= 1) continue;    // intercept-only group, no slopes
+			const std::vector<intptr_t> &gi = *lay.group_indices[g];
+			intptr_t J = lay.J[g];
+
+			for (intptr_t t = 1; t < lay.q[g] && well_identified_flag; t++)
+			{
+				// Track min/max of slope term t's Z values within
+				// each level of group g.
+				std::vector<double> z_min(J, std::numeric_limits<double>::infinity());
+				std::vector<double> z_max(J, -std::numeric_limits<double>::infinity());
+				for (intptr_t i = 0; i < n; i++)
+				{
+					intptr_t j = gi[i];
+					double z = lay.Z(g, i, t);
+					if (z < z_min[j]) z_min[j] = z;
+					if (z > z_max[j]) z_max[j] = z;
+				}
+
+				bool constant_within_all_levels = true;
+				for (intptr_t j = 0; j < J; j++)
+				{
+					if (z_max[j] - z_min[j] > 1e-10) {
+						constant_within_all_levels = false;
+						break;
+					}
+				}
+
+				if (constant_within_all_levels)
+				{
+					well_identified_flag = false;
+					identifiability_msg = String(
+						"A random-slope predictor is constant within "
+						"every level of its grouping factor, so the "
+						"corresponding variance component is not "
+						"identified by the data (the random slope is "
+						"aliased with the random intercept). The "
+						"reported mode is sustained by prior "
+						"regularization alone; glmmTMB would typically "
+						"return NA for this fit. Consider removing the "
+						"random slope or moving the predictor to a finer "
+						"grouping factor. Parameter estimates and "
+						"standard errors along that direction are "
+						"prior-driven and should be interpreted with "
+						"caution.");
+				}
+			}
+		}
+	}
+
 	if (!is_gaussian && fam.name != "student" && has_random_slopes && G > 0
 	    && saved_theta.size() > 0)
 	{
@@ -4260,19 +4393,18 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			phi_hat[p + i] = saved_theta[i];
 		}
 
-		// Re-construct the Phase 2 objective at convergence.  Warm-start
-		// with the converged u so each FD evaluation starts near the mode.
+		// ── Regularized Hessian for SE computation ─────────────────
+		// When the joint (β, θ) Hessian inverts cleanly, use its
+		// top-left p×p block as the fixed-effect vcov; otherwise fall
+		// back silently to the Henderson conditional vcov already in
+		// `vcov`.  Numerical failures here are unrelated to the
+		// structural identifiability test above — they reflect FD
+		// noise on the outer Hessian, not model mis-specification.
 		LaplaceJointObjective joint_obj_vc{fam, Xm, ym, lay, n, p,
 		                                    saved_n_chol, priors, coef_names, off_ptr};
 		joint_obj_vc.last_u = final_inner.u;
 
-		// FD Hessian.  h = 1e-3 is slightly larger than the INLA default
-		// (1e-4) to cope with the PIRLS inner-solve noise floor.
 		Eigen::MatrixXd H_full = compute_fd_hessian(joint_obj_vc, phi_hat, 1e-3);
-
-		// Invert and extract the top-left p × p block.  LDLT rejects
-		// indefinite matrices; we also sanity-check diagonals after
-		// inversion since subtle indefiniteness can slip through.
 		Eigen::LDLT<Eigen::MatrixXd> ldlt_full(H_full);
 		if (ldlt_full.info() == Eigen::Success && ldlt_full.isPositive())
 		{
@@ -4415,6 +4547,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.niter = niter;
 	model.converged = converged;
 	model.optimizer = optimizer_used;
+	model.well_identified = well_identified_flag;
+	model.fit_warning = identifiability_msg;
 
 	// ── Bayesian posterior ──────────────────────────────────────────
 	//

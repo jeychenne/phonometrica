@@ -526,6 +526,16 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			rt.printf("WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
 	}
 
+	// Identifiability diagnostic.  Independent of the optimizer's
+	// convergence flag: a model can converge to a well-defined mode
+	// of the prior-regularized objective while still being weakly
+	// identified by the data (flat joint Hessian, pinned variance
+	// component, etc.).  Only printed when the fit set the flag.
+	if (!m.well_identified && !m.fit_warning.empty())
+	{
+		rt.printf("Note: %s\n", m.fit_warning.data());
+	}
+
 	rt.printf("\n");
 }
 
@@ -778,6 +788,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "converged") return model.converged;
 		if (key == "niter") return intptr_t(model.niter);
 		if (key == "optimizer") return model.optimizer;
+		if (key == "well_identified") return model.well_identified;
+		if (key == "warning") return model.fit_warning;
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
