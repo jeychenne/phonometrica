@@ -36,6 +36,7 @@
 #include <QLabel>
 #include <QSettings>
 #include <QProcess>
+#include <QThread>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/start_view.hpp>
 #include <phon/gui/file_manager.hpp>
@@ -59,10 +60,13 @@
 #include <phon/gui/analysis_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
+#include <phon/gui/transcribe_dialog.hpp>
+#include <phon/gui/transcription_worker.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/praat.hpp>
+#include <phon/application/transcriber.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/zip.hpp>
 #include <phon/utils/helpers.hpp>
@@ -269,6 +273,10 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addAction(tr("Edit last query..."), QKeySequence(tr("Ctrl+L")),
 	this, &MainWindow::onEditLastQuery);
+
+	menu->addSeparator();
+
+	menu->addAction(tr("Transcribe audio..."), this, &MainWindow::onTranscribe);
 
 	menu->addSeparator();
 
@@ -1410,6 +1418,96 @@ void MainWindow::onMeasureSpectralMoments()
 		{
 			QMessageBox::information(this, tr("Search"), tr("No matches found."));
 		}
+	}
+}
+
+void MainWindow::onTranscribe()
+{
+	if (Project::get()->get_sounds().empty())
+	{
+		QMessageBox::warning(this, tr("Transcribe audio"),
+			tr("There are no sound files in the project. Please add a sound file first."));
+		return;
+	}
+
+	TranscribeDialog dlg(this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	auto sound = dlg.sound();
+	auto opts  = dlg.options();
+	if (!sound)
+		return;
+
+	// Run whisper on a background thread. Both `thread` and `worker` live on the stack of this
+	// slot; we join the thread via wait() before reading results, so lifetime is simple and
+	// there is no need for deleteLater() dances.
+	QThread thread;
+	TranscriptionWorker worker(sound, opts);
+	worker.moveToThread(&thread);
+
+	QProgressDialog progress(tr("Transcribing audio..."), QString(), 0, 100, this);
+	progress.setWindowTitle(tr("Transcribe"));
+	progress.setWindowModality(Qt::ApplicationModal);
+	progress.setMinimumDuration(0);
+	progress.setAutoClose(false);
+	progress.setAutoReset(false);
+	progress.setValue(0);
+
+	// Custom cancel button: the default QProgressDialog behavior on cancel hides the dialog
+	// synchronously before we get a chance to keep it visible during the "canceling..."
+	// window. We bypass that by owning the button and disconnecting QProgressDialog's default
+	// clicked -> cancel() wiring.
+	auto *cancelBtn = new QPushButton(tr("Cancel"));
+	progress.setCancelButton(cancelBtn);
+	disconnect(cancelBtn, &QPushButton::clicked, &progress, &QProgressDialog::cancel);
+	connect(cancelBtn, &QPushButton::clicked, this, [&worker, &progress, cancelBtn]() {
+		// Runs on the GUI thread (context = this). worker.cancel() touches only an atomic
+		// and is safe to call from either thread; the UI updates here must stay on the GUI
+		// thread, which is why we use `this` rather than `&worker` as the context object.
+		worker.cancel();
+		cancelBtn->setEnabled(false);
+		progress.setLabelText(tr("Canceling..."));
+	});
+
+	// Drive the worker: start on thread-started; progress/finished are queued across threads.
+	connect(&thread, &QThread::started,        &worker, &TranscriptionWorker::run);
+	connect(&worker, &TranscriptionWorker::progress, &progress, &QProgressDialog::setValue);
+	connect(&worker, &TranscriptionWorker::finished,
+	        &progress, &QProgressDialog::accept, Qt::QueuedConnection);
+
+	thread.start();
+	progress.exec();
+
+	// Ensure the worker has finished before we touch its fields.
+	thread.quit();
+	thread.wait();
+
+	if (worker.succeeded())
+	{
+		const Layer &layer = worker.result();
+
+		auto annot = make_handle<Annotation>();
+		annot->set_sound(sound);
+		annot->create_layer(1, opts.layer_label, false);
+
+		for (intptr_t i = 1; i <= layer.count(); i++)
+		{
+			const auto &ev = layer.events[i];
+			annot->add_interval(1, ev.start, ev.end, ev.text);
+		}
+
+		auto *view = createAnnotationView(annot);
+		if (view)
+			addViewTab(view);
+
+		statusBar()->showMessage(
+			tr("Transcription complete: %1 segment(s)").arg((int) layer.count()), 5000);
+	}
+	else
+	{
+		QMessageBox::warning(this, tr("Transcribe"),
+			tr("Transcription failed:\n%1").arg(worker.errorMessage()));
 	}
 }
 

@@ -24,6 +24,7 @@ option(WITH_APPLICATION   "Build the application layer"         ON)
 option(WITH_GUI           "Build the user interface"            ON)
 option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
+option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
 
 ###########################
@@ -228,6 +229,19 @@ if(WITH_APPLICATION)
     add_library(phon-app STATIC ${APP_SOURCES} ${VENDOR_APP_SOURCES})
     set_property(TARGET phon-app PROPERTY POSITION_INDEPENDENT_CODE ON)
     target_link_libraries(phon-app PRIVATE phon-runtime)
+
+    # ---- whisper.cpp (optional, for transcription) ----
+
+    if(WITH_WHISPER)
+        # Vendored at phon/third_party/whisper (whisper.cpp v1.7.4, CPU backend only).
+        # Builds four static libs: ggml-base, ggml-cpu, ggml, whisper.
+        add_subdirectory(phon/third_party/whisper EXCLUDE_FROM_ALL)
+
+        target_compile_definitions(phon-app PRIVATE PHON_WITH_WHISPER=1)
+        target_link_libraries(phon-app PRIVATE whisper)
+    else()
+        target_compile_definitions(phon-app PRIVATE PHON_WITH_WHISPER=0)
+    endif()
 
     # ---- Platform link libraries ----
 
