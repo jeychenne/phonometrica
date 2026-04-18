@@ -120,6 +120,8 @@ public:
 
     static void reset_statistics();
 
+    static void reset_whisper_log();
+
     static void reset_last_directory();
 
     static void reset_recent_projects();

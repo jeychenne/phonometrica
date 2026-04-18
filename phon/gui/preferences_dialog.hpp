@@ -58,6 +58,7 @@ private:
 	QCheckBox *m_autosave = nullptr;
 	QCheckBox *m_autohints = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
+	QCheckBox *m_whisper_log = nullptr;
 	QLineEdit *m_praat_path = nullptr;
 
 	// Statistics

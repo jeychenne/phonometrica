@@ -86,11 +86,15 @@ QWidget *PreferencesDialog::createGeneralPage()
 	m_discard_empty = new QCheckBox(tr("Discard empty queries"));
 	m_discard_empty->setChecked(Settings::get_boolean("concordance", "discard_empty"));
 
+	m_whisper_log = new QCheckBox(tr("Show whisper transcription logs in output panel"));
+	m_whisper_log->setChecked(Settings::get_boolean("whisper_log"));
+
 	layout->addWidget(m_autoload);
 	layout->addWidget(m_restore_views);
 	layout->addWidget(m_autosave);
 	layout->addWidget(m_autohints);
 	layout->addWidget(m_discard_empty);
+	layout->addWidget(m_whisper_log);
 
 	// ── Praat path ────────────────────────────────────────────────────────
 	layout->addSpacing(12);
@@ -277,6 +281,7 @@ void PreferencesDialog::accept()
 	Settings::set_value("autohints", m_autohints->isChecked());
 	Settings::set_value("restore_views", m_restore_views->isChecked());
 	Settings::set_value("concordance", "discard_empty", m_discard_empty->isChecked());
+	Settings::set_value("whisper_log", m_whisper_log->isChecked());
 
 	// Praat path
 	auto praat_text = m_praat_path->text().trimmed();

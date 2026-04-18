@@ -88,12 +88,25 @@ TranscribeDialog::TranscribeDialog(QWidget *parent) :
 	// --- Model file ---
 	auto *model_row = new QHBoxLayout;
 	m_model_edit = new QLineEdit(this);
-	m_model_edit->setPlaceholderText(tr("Path to ggml whisper model (.bin)"));
+	m_model_edit->setPlaceholderText(tr("Path to ggml whisper model (e.g. ggml-base.bin)"));
 	m_browse_button = new QPushButton(tr("Browse..."), this);
 	model_row->addWidget(m_model_edit);
 	model_row->addWidget(m_browse_button);
 	form->addRow(tr("Model:"), model_row);
 	connect(m_browse_button, &QPushButton::clicked, this, &TranscribeDialog::onBrowseModel);
+
+	// Hyperlink hint shown under the model field. Clicking opens the HuggingFace tree in
+	// the user's default browser. setOpenExternalLinks routes the <a> through QDesktopServices.
+	auto *download_label = new QLabel(
+		tr("<small>Don't have a model? "
+		   "<a href=\"https://huggingface.co/ggerganov/whisper.cpp/tree/main\">Download from Hugging Face</a>. "
+		   "<tt>ggml-base.bin</tt> is a good starting point.</small>"),
+		this);
+	download_label->setTextFormat(Qt::RichText);
+	download_label->setTextInteractionFlags(Qt::TextBrowserInteraction);
+	download_label->setOpenExternalLinks(true);
+	download_label->setWordWrap(true);
+	form->addRow(QString(), download_label);
 
 	// --- Language ---
 	m_language_combo = new QComboBox(this);

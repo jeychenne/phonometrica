@@ -37,6 +37,7 @@
 #include <QSettings>
 #include <QProcess>
 #include <QThread>
+#include <QMetaObject>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/start_view.hpp>
 #include <phon/gui/file_manager.hpp>
@@ -2744,6 +2745,28 @@ void MainWindow::postInitialize()
 
 	// Set up Praat integration (praat --send / praat --open).
 	setupPraat();
+
+	// Install the whisper/ggml log sink. Routes all diagnostic output to the OutputPanel
+	// when the "whisper_log" setting is true; drops silently otherwise. Installed here
+	// (not in the worker) so that whisper is silent from the first model load onward,
+	// without a startup window where logs could leak to stderr. The sink lambda runs on
+	// the worker thread when whisper is in flight, so the QWidget update is marshaled to
+	// the GUI thread via a queued invokeMethod.
+	Transcriber::set_log_sink([](const String &msg) {
+		bool enabled = false;
+		try {
+			enabled = Settings::get_boolean("whisper_log");
+		} catch (...) { return; }
+		if (!enabled) return;
+
+		auto *panel = OutputPanel::instance();
+		if (!panel) return;
+
+		QString qs = QString::fromUtf8(msg.data(), (int) msg.size());
+		QMetaObject::invokeMethod(panel, [panel, qs]() {
+			panel->appendText(qs);
+		}, Qt::QueuedConnection);
+	});
 
 	// Load system plugins/scripts first, then user plugins/scripts.
 	auto resources_dir = Settings::resources_directory();
