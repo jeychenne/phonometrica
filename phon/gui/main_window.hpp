@@ -97,6 +97,7 @@ private slots:
 	void onMeasureIntensity();
 	void onMeasureSpectralMoments();
 	void onEditLastQuery();
+	void onTranscribe();
 
 	// Analysis menu (data analysis / visualization)
 	void onAnalyzeData();
