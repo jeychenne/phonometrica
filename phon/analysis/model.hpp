@@ -223,6 +223,24 @@ struct Model
 	                           // "lbfgs" (limited-memory BFGS). Empty for fixed-effects
 	                           // GLMs/OLS where the optimizer is implicit.
 
+	// ---- Identifiability diagnostic ----
+	// Set to false when the outer joint (β, θ) Hessian at the reported
+	// optimum is not positive-definite, ill-conditioned (condition number
+	// above ~1e12), or produces non-finite / non-positive SE diagonals
+	// under inversion.  These conditions indicate the model is weakly or
+	// non-identified by the data — typical causes are a random-slope
+	// predictor that is constant within groups, a collinear fixed effect,
+	// or a covariance parameter pinned at a boundary (σ²≈0 or |ρ|≈1).
+	// The optimizer can still report "converged" in these cases because
+	// the prior-regularized objective has a well-defined mode; the flag
+	// is the principled warning that the mode is not information-rich.
+	// When false, standard errors fall back to the Henderson conditional
+	// vcov (still a useful lower bound) and should be interpreted with
+	// caution.  Empty `fit_warning` is invariant when `well_identified`
+	// is true.
+	bool well_identified = true;
+	String fit_warning;        // human-readable explanation when well_identified is false
+
 	// ---- Random effects (empty for fixed-effects models) ----
 	Array<RandomEffectGroup> random_effects;
 
