@@ -1882,11 +1882,15 @@ static NewtonResult lbfgs_optimize(const Objective &obj,
 // length but mis-scaled steps, and convergence stalls.  L-BFGS with
 // secant updates handles this regime gracefully: the accumulated
 // curvature history smooths out FD noise and the backtracking line
-// search keeps steps in-range.  The threshold of 3 keeps Newton for
-// trivial problems (random-intercept-only models with one or two
-// grouping factors, where dim ≤ 3 and no ridge is possible) and
-// switches to L-BFGS as soon as random slopes or multiple grouping
-// factors introduce the geometry that causes Newton trouble.
+// search keeps steps in-range.  The threshold of 2 keeps Newton for
+// one or two independent random-intercept variances, where the log-
+// posterior surface is well-scaled and Newton's quadratic convergence
+// is an advantage.  We switch to L-BFGS as soon as dim ≥ 3 — this
+// covers every random-slope model (a 2×2 random-slope covariance has
+// q(q+1)/2 = 3 Cholesky parameters) and is also safe on the (rare)
+// 3-intercept-only case.  The previous threshold of 3 routed exactly
+// the smallest random-slope case to Newton, causing 200-iteration
+// stalls on 2×2 random-slope covariances.
 template<typename Objective>
 static NewtonResult robust_optimize(const Objective &obj,
                                      Eigen::VectorXd theta,
@@ -1895,7 +1899,7 @@ static NewtonResult robust_optimize(const Objective &obj,
                                      FittingCallback progress = nullptr,
                                      double h_scale_hint = 0)
 {
-	constexpr intptr_t LBFGS_THRESHOLD = 3;
+	constexpr intptr_t LBFGS_THRESHOLD = 2;
 	if (theta.size() > LBFGS_THRESHOLD) {
 		return lbfgs_optimize(obj, theta, max_iter, grad_tol, progress, h_scale_hint);
 	}
@@ -4211,6 +4215,81 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
 		Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 		vcov = Cinv.topLeftCorner(p, p);
+	}
+
+	// ── Full Laplace vcov for random-slope non-Gaussian models ─────────
+	//
+	// The Henderson conditional vcov Var(β̂ | θ̂) computed above matches
+	// lme4 and agrees with glmmTMB to high precision for random-intercept-
+	// only models: H_uu = Z'WZ + D⁻¹ is dominated by D⁻¹ when Z is a
+	// group-indicator matrix, so the Laplace correction ½ log|H_uu(β)|
+	// is essentially β-independent and the Henderson formula captures
+	// the full marginal Hessian of β.
+	//
+	// For random-slope models the working weights W = μ(1−μ) vary within
+	// group, making H_uu genuinely β-dependent.  The full Laplace
+	// marginal Hessian then has additional β-block contributions that
+	// Henderson misses, and Henderson underestimates Var(β̂) — notably
+	// for the intercept when the random intercept and slope are
+	// correlated.  glmmTMB reports the full Laplace vcov by inverting
+	// TMB's joint (β, θ) Hessian; we do the same by finite-differencing
+	// LaplaceJointObjective (the Phase 2 objective, which already
+	// includes ½ log|H_uu|) at the converged φ̂ = (β̂, θ̂), inverting,
+	// and extracting the top-left p×p block.
+	//
+	// We skip this pass in the cases where Henderson is already exact:
+	// Gaussian (no log-det correction), Student-t (Phase 2 skipped),
+	// and intercept-only models (H_uu is β-free in practice).  We also
+	// fall back to the Henderson vcov if the FD Hessian is numerically
+	// indefinite — rare, but can occur at quasi-singular random-slope
+	// fits where the variance component is at the boundary.
+	bool has_random_slopes = false;
+	for (intptr_t g = 0; g < G; g++) {
+		if (lay.q[g] > 1) { has_random_slopes = true; break; }
+	}
+
+	if (!is_gaussian && fam.name != "student" && has_random_slopes && G > 0
+	    && saved_theta.size() > 0)
+	{
+		intptr_t D_p2 = p + saved_theta.size();
+
+		// Assemble φ̂ = [β̂, θ̂] — the point at which Phase 2 converged.
+		Eigen::VectorXd phi_hat(D_p2);
+		for (intptr_t i = 0; i < p; i++) phi_hat[i] = beta_hat[i];
+		for (intptr_t i = 0; i < saved_theta.size(); i++) {
+			phi_hat[p + i] = saved_theta[i];
+		}
+
+		// Re-construct the Phase 2 objective at convergence.  Warm-start
+		// with the converged u so each FD evaluation starts near the mode.
+		LaplaceJointObjective joint_obj_vc{fam, Xm, ym, lay, n, p,
+		                                    saved_n_chol, priors, coef_names, off_ptr};
+		joint_obj_vc.last_u = final_inner.u;
+
+		// FD Hessian.  h = 1e-3 is slightly larger than the INLA default
+		// (1e-4) to cope with the PIRLS inner-solve noise floor.
+		Eigen::MatrixXd H_full = compute_fd_hessian(joint_obj_vc, phi_hat, 1e-3);
+
+		// Invert and extract the top-left p × p block.  LDLT rejects
+		// indefinite matrices; we also sanity-check diagonals after
+		// inversion since subtle indefiniteness can slip through.
+		Eigen::LDLT<Eigen::MatrixXd> ldlt_full(H_full);
+		if (ldlt_full.info() == Eigen::Success && ldlt_full.isPositive())
+		{
+			Eigen::MatrixXd Hinv = ldlt_full.solve(
+				Eigen::MatrixXd::Identity(D_p2, D_p2));
+			if (Hinv.allFinite())
+			{
+				Eigen::MatrixXd vcov_full = Hinv.topLeftCorner(p, p);
+				bool ok = true;
+				for (intptr_t i = 0; i < p; i++) {
+					double v = vcov_full(i, i);
+					if (!std::isfinite(v) || v <= 0) { ok = false; break; }
+				}
+				if (ok) vcov = std::move(vcov_full);
+			}
+		}
+		// else: keep the Henderson vcov already in `vcov`.
 	}
 
 	// ── Build the Model ─────────────────────────────────────────────

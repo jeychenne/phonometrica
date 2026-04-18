@@ -24,8 +24,10 @@
 #if PHON_WITH_WHISPER
 
 #include <algorithm>
+#include <mutex>
 #include <thread>
 #include <whisper.h>
+#include <ggml.h>
 #include <phon/error.hpp>
 #include <phon/application/resampler.hpp>
 
@@ -33,6 +35,47 @@ namespace phonometrica {
 
 // whisper.h already defines WHISPER_SAMPLE_RATE as a macro (16000). We use that directly
 // rather than shadowing it with our own constant.
+
+// ---------------------------------------------------------------------------------------
+// Log sink plumbing.
+//
+// whisper and ggml each have their own global log_set() hook. We install a single C shim
+// for both, which reads a std::function kept here. The function is protected by a mutex
+// to allow set_log_sink() to be called from any thread without races against in-flight
+// log writes. Each message arrives with its trailing '\n' intact — we forward it as-is
+// so sinks that append line-by-line (e.g. OutputPanel::appendText, which uses insertText
+// and does NOT add newlines) keep their line structure.
+
+static std::mutex s_log_mutex;
+static Transcriber::LogSink s_log_sink;  // null = drop silently
+
+static void phon_whisper_log_cb(ggml_log_level /*level*/, const char *text, void * /*ud*/)
+{
+	if (!text || !*text) return;
+
+	// Grab a copy of the sink under the lock so the caller can reset it concurrently.
+	Transcriber::LogSink sink;
+	{
+		std::lock_guard<std::mutex> lk(s_log_mutex);
+		sink = s_log_sink;
+	}
+	if (!sink) return;
+
+	sink(String(text));
+}
+
+void Transcriber::set_log_sink(Transcriber::LogSink sink)
+{
+	{
+		std::lock_guard<std::mutex> lk(s_log_mutex);
+		s_log_sink = std::move(sink);
+	}
+	// Install (or re-install) the C callback. whisper and ggml each take their own.
+	whisper_log_set(&phon_whisper_log_cb, nullptr);
+	ggml_log_set   (&phon_whisper_log_cb, nullptr);
+}
+
+// ---------------------------------------------------------------------------------------
 
 // Progress callback state passed to whisper via the user_data void*. We keep it here
 // (and not in the class) so that only the C ABI shims see it.
@@ -262,6 +305,7 @@ Transcriber::Transcriber() = default;
 Transcriber::~Transcriber() = default;
 void Transcriber::free_model() {}
 void Transcriber::load_model(const String &) {}
+void Transcriber::set_log_sink(Transcriber::LogSink) {}
 Array<float> Transcriber::prepare_samples(Sound &) { return {}; }
 
 Layer Transcriber::transcribe(Sound &, const Options &, ProgressCallback)

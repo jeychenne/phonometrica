@@ -501,6 +501,9 @@ void Settings::post_initialize()
 	if (!settings.contains("statistics")) {
 		reset_statistics();
 	}
+	if (!settings.contains("whisper_log")) {
+		reset_whisper_log();
+	}
 
 	// concordance gained "default_context" in 0.9.
 	try {
@@ -530,6 +533,7 @@ void Settings::reset()
 	reset_concordance();
 	reset_display();
 	reset_statistics();
+	reset_whisper_log();
 }
 
 void Settings::reset_waveform()
@@ -563,6 +567,14 @@ void Settings::reset_mono_font()
 void Settings::reset_autohints()
 {
 	Settings::set_value("autohints", true);
+}
+
+void Settings::reset_whisper_log()
+{
+	// Whisper + ggml normally print diagnostic output to stderr (model load sizes, compute
+	// buffer allocations, etc.). Silenced by default; when toggled on, routed to the
+	// Phonometrica output panel — never back to stderr/stdout.
+	Settings::set_value("whisper_log", false);
 }
 
 void Settings::reset_autoload()

@@ -55,6 +55,16 @@ public:
 	// Progress feedback. Return false from the callback to request cancellation.
 	using ProgressCallback = std::function<bool(int percent, const String &message)>;
 
+	// Sink for whisper + ggml diagnostic messages. Receives one message per call (trailing
+	// newlines stripped). Installed globally via set_log_sink(); a null sink silences all
+	// whisper/ggml output, including its default stderr fallback.
+	using LogSink = std::function<void(const String &message)>;
+
+	// Install a process-global log sink. Thread-safe to call from any thread. The sink is
+	// itself invoked on whichever thread whisper/ggml chooses — typically the inference
+	// thread. Callers routing to GUI widgets must marshal to the GUI thread themselves.
+	static void set_log_sink(LogSink sink);
+
 	Transcriber();
 	~Transcriber();
 
