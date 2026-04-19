@@ -21,6 +21,7 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
    * **Project management**: organize files into projects with extensible metadata (properties).
    * **Sound visualization and analysis**: visualize waveforms, spectrograms, pitch tracks, formant tracks, intensity curves, spectral slices, and spectral moments.
    * **Sound annotation**: create and edit multi-layer annotations based on annotation graphs; import and export Praat TextGrids.
+   * **Speech processing**: detect silences to pre-segment recordings for manual annotation; automatic speech recognition via whisper.cpp (runs locally on CPU, requires a model file).
    * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, intensity, and spectral moment measurements.
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; vowel normalization (Lobanov, Nearey, Watt & Fabricius); toggle between wide and long formats; perform set operations on concordances.
    * **Statistical analysis**: linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and generalized additive models (GAMs); compare models with likelihood ratio tests and information criteria; approximate Bayesian inference with weakly informative priors, WAIC, PSIS-LOO-IC, and posterior predictive checks; estimated marginal means and pairwise contrasts; inspect diagnostic plots and exploratory visualizations.
@@ -73,6 +74,7 @@ Topics
    intro/preferences
    sound
    annotation
+   speech
    query
    concordance
    dataset
