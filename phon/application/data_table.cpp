@@ -399,6 +399,52 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 	}
 
+	// ── Smooth terms (GAM / penalized regression) ───────────────
+	// Mirrors the smooth-terms table shown in the GUI analysis view.
+	// Applies to both frequentist and Bayesian GAMs; empty for plain
+	// linear, GLM, and mixed-model fits.
+	if (m.has_smooth_terms())
+	{
+		rt.printf("Approximate significance of smooth terms:\n");
+		rt.printf("%-24s %8s %8s %10s %12s\n",
+		          "", "edf", "Ref.df", "F", "p-value");
+
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
+
+			// mgcv-style labels: s(x), s(x, bs=re), s(group):slope for
+			// random slopes s(group, by=x, bs=re).
+			String label("s(");
+			label.append(sm.variable);
+			if (sm.basis == "re") {
+				if (!sm.by.empty()) {
+					label.append("):");
+					label.append(sm.by);
+				} else {
+					label.append(", bs=re)");
+				}
+			} else {
+				label.append(")");
+			}
+
+			char pbuf[16];
+			if (sm.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
+			else snprintf(pbuf, sizeof(pbuf), "%.4f", sm.p_value);
+
+			const char *stars = "";
+			if (sm.p_value < 0.001) stars = " ***";
+			else if (sm.p_value < 0.01) stars = " **";
+			else if (sm.p_value < 0.05) stars = " *";
+			else if (sm.p_value < 0.1) stars = " .";
+
+			rt.printf("%-24s %8.3f %8.3f %10.2f %12s%s\n",
+			          label.data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
+		}
+		rt.printf("---\n");
+		rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+	}
+
 	if (m.has_random_effects())
 	{
 		// Show a "Corr" column when any group has q > 1 (random slopes).

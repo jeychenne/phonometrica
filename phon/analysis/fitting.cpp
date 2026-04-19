@@ -1070,6 +1070,25 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		{
 			auto fam = Family::from_name(family);
 			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter, off);
+
+			// The penalized GLM path uses IRLS with a fixed Family object and
+			// does not estimate a dispersion parameter.  For negative binomial
+			// this means θ stays at its default (1.0) rather than being fit to
+			// the data, which yields a mis-specified fit and an unreliable
+			// AIC.  Surface this as a warning so the user isn't silently given
+			// a wrong answer; for GAMs with count data, Poisson is supported
+			// correctly, and if overdispersion is a concern θ can be fit
+			// separately on the unsmoothed model and inspected.
+			if (family == "negbin") {
+				model.fit_warning = String(
+					"Negative-binomial GAMs are fit with a fixed dispersion "
+					"parameter θ = 1 (no outer θ estimation in the penalized "
+					"IRLS path).  Coefficients and AIC from this fit should "
+					"not be trusted.  For count data with smooth terms, use "
+					"family=\"poisson\"; if overdispersion is suspected, fit "
+					"the unsmoothed model with family=\"negbin\" to estimate "
+					"θ and report it separately.");
+			}
 		}
 	}
 	else if (formula.has_random_effects())
