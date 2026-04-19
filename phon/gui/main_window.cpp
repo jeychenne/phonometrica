@@ -62,12 +62,14 @@
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
 #include <phon/gui/transcribe_dialog.hpp>
+#include <phon/gui/find_silences_dialog.hpp>
 #include <phon/gui/transcription_worker.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/praat.hpp>
 #include <phon/application/transcriber.hpp>
+#include <phon/application/silence_detector.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/zip.hpp>
 #include <phon/utils/helpers.hpp>
@@ -136,6 +138,7 @@ void MainWindow::createMenus()
 	auto *bar = menuBar();
 	bar->addMenu(createFileMenu());
 	bar->addMenu(createEditMenu());
+	bar->addMenu(createSpeechMenu());
 	bar->addMenu(createAnalysisMenu());
 	bar->addMenu(createToolsMenu());
 	bar->addMenu(createWindowMenu());
@@ -277,12 +280,21 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addSeparator();
 
-	menu->addAction(tr("Transcribe audio..."), this, &MainWindow::onTranscribe);
+	menu->addAction(tr("Analyze data..."), this, &MainWindow::onAnalyzeData);
+	menu->addAction(tr("Visualize data..."), this, &MainWindow::onVisualizeData);
+
+	return menu;
+}
+
+QMenu *MainWindow::createSpeechMenu()
+{
+	auto *menu = new QMenu(tr("&Speech"), this);
+
+	menu->addAction(tr("Find silences..."), this, &MainWindow::onFindSilences);
 
 	menu->addSeparator();
 
-	menu->addAction(tr("Analyze data..."), this, &MainWindow::onAnalyzeData);
-	menu->addAction(tr("Visualize data..."), this, &MainWindow::onVisualizeData);
+	menu->addAction(tr("Transcribe audio..."), this, &MainWindow::onTranscribe);
 
 	return menu;
 }
@@ -1422,6 +1434,116 @@ void MainWindow::onMeasureSpectralMoments()
 	}
 }
 
+void MainWindow::onFindSilences()
+{
+	if (Project::get()->get_sounds().empty())
+	{
+		QMessageBox::warning(this, tr("Find silences"),
+			tr("There are no sound files in the project. Please add a sound file first."));
+		return;
+	}
+
+	FindSilencesDialog dlg(this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	auto sound = dlg.sound();
+	if (!sound)
+		return;
+
+	auto det_opts     = dlg.options();
+	auto layer_name   = dlg.layerName();
+	auto silence_text = dlg.silenceLabel();
+	auto speech_text  = dlg.speechLabel();
+
+	// Silence detection runs on the native-rate audio. The dominant cost is loading
+	// the audio buffer (first access) rather than the energy pass itself, so on large
+	// files most of the wait happens inside SilenceDetector::find_speech_regions. We
+	// show a wait cursor and report the outcome via the status bar.
+	std::vector<SilenceDetector::Region> regions;
+	QString error_msg;
+
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	try
+	{
+		regions = SilenceDetector::find_speech_regions(*sound, det_opts);
+	}
+	catch (std::exception &e)
+	{
+		error_msg = QString::fromUtf8(e.what());
+	}
+	QApplication::restoreOverrideCursor();
+
+	if (!error_msg.isEmpty())
+	{
+		QMessageBox::warning(this, tr("Find silences"),
+			tr("Silence detection failed:\n%1").arg(error_msg));
+		return;
+	}
+
+	// Build the output annotation with one interval layer. We fill the timeline with
+	// alternating silence/speech intervals (Praat's "To TextGrid (silences)" model):
+	// a leading silence (if the first speech region doesn't start at 0), then each
+	// speech region, separated by silence intervals, then a trailing silence (if the
+	// last speech region doesn't end at the sound's duration). When no speech is
+	// detected, the whole timeline becomes a single silence interval.
+
+	auto annot = make_handle<Annotation>();
+	annot->set_sound(sound);
+	auto layer_label_str = String(layer_name.toUtf8().constData());
+	annot->create_empty_layer(1, layer_label_str, false);
+
+	const auto silence_str = String(silence_text.toUtf8().constData());
+	const auto speech_str  = String(speech_text.toUtf8().constData());
+	const double duration  = sound->duration();
+
+	auto add_silence = [&](double start, double end) {
+		if (end > start)
+			annot->add_interval(1, start, end, silence_str);
+	};
+	auto add_speech = [&](double start, double end) {
+		if (end > start)
+			annot->add_interval(1, start, end, speech_str);
+	};
+
+	if (regions.empty())
+	{
+		add_silence(0.0, duration);
+	}
+	else
+	{
+		// Leading silence, if any.
+		if (regions.front().start > 0.0)
+			add_silence(0.0, regions.front().start);
+
+		// Speech regions and the silences between them.
+		for (size_t i = 0; i < regions.size(); i++)
+		{
+			const auto &r = regions[i];
+			add_speech(r.start, r.end);
+
+			if (i + 1 < regions.size())
+			{
+				const auto &next = regions[i + 1];
+				if (next.start > r.end)
+					add_silence(r.end, next.start);
+			}
+		}
+
+		// Trailing silence, if any.
+		if (regions.back().end < duration)
+			add_silence(regions.back().end, duration);
+	}
+
+	auto *view = createAnnotationView(annot);
+	if (view)
+		addViewTab(view);
+
+	const int n_speech = int(regions.size());
+	statusBar()->showMessage(
+		tr("Silence detection complete: %1 speech region(s)").arg(n_speech), 5000);
+}
+
 void MainWindow::onTranscribe()
 {
 	if (Project::get()->get_sounds().empty())
@@ -1490,7 +1612,7 @@ void MainWindow::onTranscribe()
 
 		auto annot = make_handle<Annotation>();
 		annot->set_sound(sound);
-		annot->create_layer(1, opts.layer_label, false);
+		annot->create_empty_layer(1, opts.layer_label, false);
 
 		for (intptr_t i = 1; i <= layer.count(); i++)
 		{

@@ -660,11 +660,28 @@ void Annotation::create_layer(intptr_t index, const String &name, bool has_insta
 {
 	Layer layer(name, has_instants);
 
-	// Create one empty interval that spans the whole file.
+	// Seed interval layers with a full-duration interval. See the header for the
+	// semantic contract: this is for manual-annotation workflows that start from a
+	// single interval and split it with anchors. Data-driven callers should use
+	// `create_empty_layer` instead — otherwise this placeholder stays underneath the
+	// real events and wins cache-order-based matching in the annotation view.
 	if (!has_instants && has_sound())
 	{
 		layer.add_interval(0, m_sound->duration(), String());
 	}
+
+	if (index > m_layers.size()) {
+		m_layers.append(std::move(layer));
+	}
+	else {
+		m_layers.insert(index, std::move(layer));
+	}
+	m_modified = true;
+}
+
+void Annotation::create_empty_layer(intptr_t index, const String &name, bool has_instants)
+{
+	Layer layer(name, has_instants);
 
 	if (index > m_layers.size()) {
 		m_layers.append(std::move(layer));
