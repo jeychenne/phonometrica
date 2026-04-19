@@ -661,6 +661,64 @@ it to enter custom values:
 When **Auto** is checked, the italic text next to the Priors header shows the computed scale
 value after fitting.
 
+**Choosing a prior family.** Each of the three prior families puts its mode at zero and lives
+on [0, ∞), so the relevant difference between them is tail behaviour — how aggressively they
+shrink the random-effect SD toward zero and how much probability mass they assign to large
+variances. The figure below plots all three priors with their scales calibrated so that the
+median of each is σ = 1, making the differences in tail weight visible directly.
+
+.. figure:: img/prior_comparison.png
+   :align: center
+   :width: 85%
+
+   Half-Normal, Half-Cauchy and PC (exponential) priors on a standard deviation σ, each
+   calibrated so that the median equals 1.
+
+**Half-Normal(*s*)** priors are truncated Gaussians, with density proportional to exp(−σ² /
+(2 *s*²)) for σ ≥ 0. The Gaussian tail decays very fast, so values much larger than *s* are
+effectively ruled out a priori. This makes the prior informative: a misspecified *s* can
+bias the posterior SD downward. Use Half-Normal when you have genuine prior information
+about a plausible upper bound on σ — for example, when σ is on a log-odds scale and values
+above 5 are implausible on substantive grounds. Chung et al. (2013) recommend Half-Normal
+specifically to avoid the degenerate σ = 0 estimates produced by penalized-likelihood fits
+when the number of random-effect groups is small.
+
+**Half-Cauchy(γ)** priors are truncated Cauchy distributions, with density proportional to
+1 / (σ² + γ²). The Cauchy tail decays only polynomially, so even with a small scale γ the
+prior keeps non-trivial mass at large σ. This is the classical "weakly informative" default
+recommended by Gelman (2006) for variance components in hierarchical models, and for many
+years the default in tools such as Stan, rstanarm and brms. The Half-Cauchy is the most
+permissive of the three: the data can override the prior even when the true SD is large.
+Its weakness is the flip side of its strength — the tail is so heavy that with few
+random-effect levels (say, 2–5 groups) the posterior can drift into implausibly large
+variances and degrade the stability of the INLA grid integration. Use Half-Cauchy when you
+have many random-effect levels and genuinely want the data to speak for themselves.
+
+**PC(*U*, α)** priors (Simpson et al., 2017) reduce to an *exponential* distribution on the
+standard deviation, *p*\ (σ) = λ · exp(−λσ). The functional form is unsurprising; what makes
+PC priors distinctive is their construction. They are derived from the Kullback–Leibler
+divergence between the richer model (random effect with SD = σ) and a simpler *base model*
+(σ = 0, i.e. no random effect at that level). Deviating from the base model is penalized
+linearly in its natural Riemannian distance, and this penalty translates into an exponential
+prior on the SD. The rate λ is set through the interpretable tail-probability statement
+P(σ > *U*) = α: you specify a plausible upper bound *U* and a small probability α of
+exceeding it, and the software solves λ = −ln(α) / *U*. PC priors combine the interpretability
+that Half-Normal lacks (you state a probability rather than an abstract scale parameter) with
+the robustness that Half-Cauchy can over-supply (exponential tails are lighter than Cauchy,
+so posterior mass cannot drift arbitrarily far from the null). By construction they shrink
+the model toward the simpler structure, which is the right behaviour when the random-effect
+structure is richer than the data can support. For these reasons, PC priors are the default
+in R-INLA and in Phonometrica.
+
+For routine analyses, keep the PC default. Switch to Half-Cauchy when you have substantive
+reasons to expect large between-group variability and enough random-effect levels (roughly
+10–15 or more) to identify it. Switch to Half-Normal only when you can justify a specific
+scale on substantive grounds — otherwise its short tail can hide real variance components.
+When you are unsure, the PC default is the most forgiving choice. It is always good practice
+to refit with a different prior family as a sensitivity check: posterior summaries that
+change substantially across priors indicate that the data are too sparse to pin down the
+variance component, and results should be reported accordingly.
+
 
 Estimation method
 ~~~~~~~~~~~~~~~~~
@@ -938,10 +996,15 @@ References
   378–400.
 - Bürkner, P.-C. (2017). brms: An R package for Bayesian multilevel models using Stan.
   *Journal of Statistical Software*, 80(1), 1–28.
+- Chung, Y., Rabe-Hesketh, S., Dorie, V., Gelman, A. & Liu, J. (2013). A nondegenerate
+  penalized likelihood estimator for variance parameters in multilevel models.
+  *Psychometrika*, 78(4), 685–709.
 - Dunn, P.K. & Smyth, G.K. (1996). Randomized quantile residuals. *Journal of
   Computational and Graphical Statistics*, 5(3), 236–244.
 - Ferrari, S.L.P. & Cribari-Neto, F. (2004). Beta regression for modelling rates and
   proportions. *Journal of Applied Statistics*, 31(7), 799–815.
+- Gelman, A. (2006). Prior distributions for variance parameters in hierarchical models.
+  *Bayesian Analysis*, 1(3), 515–534.
 - Gelman, A., Hwang, J. & Vehtari, A. (2014). Understanding predictive information criteria
   for Bayesian models. *Statistics and Computing*, 24(6), 997–1016.
 - Hartig, F. (2020). DHARMa: Residual diagnostics for hierarchical (multi-level / mixed)
