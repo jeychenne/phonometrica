@@ -44,6 +44,7 @@
 #include <QIcon>
 #include <phon/gui/view.hpp>
 #include <phon/gui/plot_widget.hpp>
+#include <phon/gui/checkable_combo_box.hpp>
 #include <phon/application/analysis.hpp>
 #include <phon/analysis/formula.hpp>
 #include <phon/analysis/scaled_residuals.hpp>
@@ -191,6 +192,12 @@ private:
 
 	// Diagnostics tab
 	QComboBox *m_plot_type_combo = nullptr;
+	QLabel *m_posterior_predictors_label = nullptr;
+	CheckableComboBox *m_posterior_predictors_combo = nullptr;
+	// Tracks the predictor list (non-intercept coef names) last shown in the
+	// posterior combo, so we only repopulate (resetting selection to "all")
+	// when the model's predictor set actually changes.
+	QStringList m_posterior_last_predictors;
 	PlotWidget *m_plot = nullptr;
 	QGroupBox *m_test_results_group = nullptr;
 	QTextEdit *m_test_results_text = nullptr;
