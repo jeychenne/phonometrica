@@ -97,6 +97,9 @@ private slots:
 	void onMeasureIntensity();
 	void onMeasureSpectralMoments();
 	void onEditLastQuery();
+
+	// Speech menu
+	void onFindSilences();
 	void onTranscribe();
 
 	// Analysis menu (data analysis / visualization)
@@ -147,6 +150,7 @@ private:
 
 	QMenu *createFileMenu();
 	QMenu *createEditMenu();
+	QMenu *createSpeechMenu();
 	QMenu *createAnalysisMenu();
 	QMenu *createToolsMenu();
 	QMenu *createWindowMenu();

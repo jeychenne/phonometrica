@@ -85,7 +85,21 @@ public:
 
 	intptr_t layer_count() const;
 
+	// Create a new layer at `index`, pre-populated with a full-duration interval when
+	// `has_instants` is false and the annotation has a bound sound. This seeded interval
+	// is the historical contract of this method: manual-annotation workflows (the "New
+	// annotation" and "Add layer" GUI actions, script-driven stubs for hand annotation)
+	// start from that single interval and split it with anchors. Callers that will
+	// populate the layer from data — transcription, silence detection, batch imports —
+	// should use `create_empty_layer` instead; otherwise the seeded placeholder remains
+	// underneath the real events and causes cache-order-based matching (e.g. clicks in
+	// the annotation view) to resolve to the placeholder rather than the event on top.
 	void create_layer(intptr_t index, const String &name, bool has_instants);
+
+	// Create a new layer at `index` with no events. Use this when the layer will be
+	// populated from data. For instant layers this is equivalent to `create_layer`;
+	// the distinction matters only for interval layers.
+	void create_empty_layer(intptr_t index, const String &name, bool has_instants);
 
 	void remove_layer(intptr_t index);
 
