@@ -676,6 +676,19 @@ void AnalysisView::setupUi()
 	m_plot_type_combo->addItem(tr("Scaled Residuals Q-Q"));
 	m_plot_type_combo->addItem(tr("Posterior Densities"));
 	diag_top->addWidget(m_plot_type_combo);
+
+	// Predictor selector for the posterior-densities plot. Hidden unless that
+	// plot is active on a Bayesian model.
+	m_posterior_predictors_label = new QLabel(tr("Predictors:"));
+	m_posterior_predictors_label->setVisible(false);
+	diag_top->addWidget(m_posterior_predictors_label);
+	m_posterior_predictors_combo = new CheckableComboBox;
+	m_posterior_predictors_combo->setToolTip(
+		tr("Select which predictors to display. Axis scales adjust to the current selection."));
+	m_posterior_predictors_combo->setMinimumWidth(160);
+	m_posterior_predictors_combo->setVisible(false);
+	diag_top->addWidget(m_posterior_predictors_combo);
+
 	diag_top->addStretch();
 	auto *export_button = new QPushButton(tr("Export..."));
 	diag_top->addWidget(export_button);
@@ -914,6 +927,8 @@ void AnalysisView::setupUi()
 	connect(m_column_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onColumnDoubleClicked);
 	connect(m_column_list, &QListWidget::customContextMenuRequested, this, &AnalysisView::onColumnContextMenu);
 	connect(m_plot_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPlotTypeChanged);
+	connect(m_posterior_predictors_combo, &CheckableComboBox::checkedItemsChanged,
+	        this, [this](const QStringList &) { updateDiagnosticPlot(); });
 	connect(export_button, &QPushButton::clicked, this, &AnalysisView::onExportPlot);
 	connect(copy_action, &QAction::triggered, this, &AnalysisView::onCopySummary);
 	connect(save_txt_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryText);
@@ -2520,11 +2535,23 @@ void AnalysisView::updateDiagnosticPlot()
 	{
 		m_plot->clear();
 		clearTestResults();
+		m_posterior_predictors_label->setVisible(false);
+		m_posterior_predictors_combo->setVisible(false);
 		return;
 	}
 
 	auto &m = m_analysis->model(m_current_model);
 	int plot_type = m_plot_type_combo->currentIndex();
+
+	// The predictor selector is relevant only for the posterior-densities plot
+	// on a Bayesian model that actually carries posterior summaries.
+	bool show_predictor_combo = (plot_type == 4)
+	                         && m.is_bayesian()
+	                         && !m.posterior_mean.empty()
+	                         && !m.posterior_sd.empty()
+	                         && m.nfixed > 0;
+	m_posterior_predictors_label->setVisible(show_predictor_combo);
+	m_posterior_predictors_combo->setVisible(show_predictor_combo);
 
 	switch (plot_type)
 	{
@@ -2742,6 +2769,37 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 	static const int N_POINTS = 200;
 
 	intptr_t ncoef = m.nfixed;
+
+	// Build the current list of non-intercept coefficient names. This is the
+	// universe the user picks from in m_posterior_predictors_combo.
+	QStringList current_names;
+	current_names.reserve((int)ncoef);
+	for (intptr_t j = 0; j < ncoef; j++)
+	{
+		QString name = (j + 1 <= m.coef_names.size())
+			? QString::fromUtf8(m.coef_names[j + 1].data(), (int)m.coef_names[j + 1].size())
+			: QStringLiteral("coef %1").arg(j + 1);
+		current_names << name;
+	}
+
+	// Repopulate the combo only when the predictor set changes (e.g. another
+	// model was selected). In that case default to all-checked. Block signals
+	// so the repopulation doesn't re-enter updateDiagnosticPlot().
+	if (current_names != m_posterior_last_predictors)
+	{
+		QSignalBlocker blocker(m_posterior_predictors_combo);
+		m_posterior_predictors_combo->setItems(current_names);
+		m_posterior_predictors_combo->checkAll(true);
+		m_posterior_last_predictors = current_names;
+	}
+
+	// Current user selection. NB: CheckableComboBox displays "(all)" when zero
+	// items are checked as well as when all are — unchecking everything will
+	// simply yield an empty plot, and the user can re-check via "Select all"
+	// in the popup.
+	QStringList checked = m_posterior_predictors_combo->checkedItems();
+	QSet<QString> checked_set(checked.begin(), checked.end());
+
 	std::vector<PlotWidget::LineCurve> curves;
 	curves.reserve(ncoef);
 
@@ -2755,6 +2813,9 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 
 	for (intptr_t j = 0; j < ncoef; j++)
 	{
+		const QString &name = current_names[(int)j];
+		if (!checked_set.contains(name)) continue;
+
 		double mu_j = m.posterior_mean[j + 1];
 		double sd_j = m.posterior_sd[j + 1];
 		if (sd_j <= 0) continue;
@@ -2765,9 +2826,7 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 		double dx = (xhi - xlo) / (N_POINTS - 1);
 
 		PlotWidget::LineCurve curve;
-		curve.name = (j + 1 <= m.coef_names.size())
-			? QString::fromUtf8(m.coef_names[j + 1].data(), (int)m.coef_names[j + 1].size())
-			: QStringLiteral("coef %1").arg(j + 1);
+		curve.name = name;
 		curve.x.resize(N_POINTS);
 		curve.y.resize(N_POINTS);
 
@@ -2814,6 +2873,9 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 		return;
 	}
 
+	// Passing only the selected curves to setLinePlotData causes
+	// PlotWidget::renderLinePlot to recompute x/y ranges from the filtered
+	// data, so axis scales update automatically on every selection change.
 	m_plot->setLinePlotData(std::move(curves),
 	                         tr("Coefficient value"), tr("Density"),
 	                         tr("Posterior Densities"));
