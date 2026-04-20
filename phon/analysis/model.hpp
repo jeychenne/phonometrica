@@ -154,6 +154,22 @@ struct Model
 	Array<double> residuals;   // response residuals (y - fitted)
 	Array<double> offset;      // offset vector (added to η before linkinv); empty if no offset
 
+	// ---- Source-table row indices ----
+	// 1-based indices into the original DataTable for the complete cases used
+	// in fitting. Length == nobs. Together with fitted / residuals / y this
+	// lets downstream code align per-observation quantities back to specific
+	// rows in the concordance or dataset the model was fitted on. Empty for
+	// models loaded from .phon-analysis files saved before this field was
+	// introduced.
+	//
+	// Note: stored as std::vector (0-based container indexing) rather than
+	// Array (1-based) because Array<intptr_t>(size, value) is ambiguous
+	// against the two-size_type Array(nrow, ncol) matrix constructor — both
+	// arguments being intptr_t makes overload resolution fail. The *values*
+	// in the vector are still 1-based (they are DataTable row numbers), only
+	// the container indexing changes.
+	std::vector<intptr_t> source_rows;
+
 	// ---- Overall fit ----
 	double loglik = 0;         // log-likelihood at convergence
 	double aic = 0;            // Akaike information criterion
@@ -292,6 +308,45 @@ struct Model
 	bool is_bayesian() const { return estimation == Estimation::Bayesian; }
 
 	bool is_frequentist() const { return estimation == Estimation::Frequentist; }
+
+	bool has_source_rows() const { return !source_rows.empty(); }
+
+	// Scatter a per-observation vector (length nobs) back to source-table
+	// coordinates. Returns an Array of length n_source_rows (1-indexed) where
+	// entries at positions source_rows[i] hold per_obs[i], and all other
+	// entries are NaN. Returns an empty Array if source_rows is not populated
+	// (e.g. the model was loaded from a pre-this-version .phon-analysis file)
+	// or if the caller passes a mismatched length.
+	Array<double> align_to_source(const Array<double> &per_obs,
+	                              intptr_t n_source_rows) const
+	{
+		if (source_rows.empty() || per_obs.size() != nobs || n_source_rows <= 0)
+			return Array<double>();
+
+		Array<double> out(n_source_rows, std::nan(""));
+		// source_rows is std::vector (0-based) but holds 1-based DataTable row
+		// indices; per_obs is Array<double> (1-based).
+		for (intptr_t i = 0; i < nobs; i++)
+		{
+			intptr_t r = source_rows[i];
+			if (r >= 1 && r <= n_source_rows)
+				out[r] = per_obs[i + 1];
+		}
+		return out;
+	}
+
+	// Convenience: fitted values aligned to source-table rows (NaN for rows
+	// excluded from fitting because of missing cells).
+	Array<double> fitted_aligned(intptr_t n_source_rows) const
+	{
+		return align_to_source(fitted, n_source_rows);
+	}
+
+	// Convenience: residuals aligned to source-table rows.
+	Array<double> residuals_aligned(intptr_t n_source_rows) const
+	{
+		return align_to_source(residuals, n_source_rows);
+	}
 
 	// Number of estimated parameters (for AIC/BIC).
 	// Fixed-effects parameters + dispersion (if Gaussian, NB, or Beta) + variance components.

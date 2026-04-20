@@ -1149,6 +1149,14 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		model.nfixed = n_parametric;
 	}
 
+	// Record the source-table row indices for the complete cases used in
+	// fitting, so downstream code can align per-observation quantities
+	// (fitted values, residuals, scaled residuals, posterior predictions)
+	// back to specific rows in the source DataTable. `rows` is already a
+	// std::vector<intptr_t> with 1-based DataTable row indices, so the field
+	// is populated by a single copy.
+	model.source_rows = rows;
+
 	return model;
 }
 
