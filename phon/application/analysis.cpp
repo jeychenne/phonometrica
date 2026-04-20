@@ -26,6 +26,8 @@
 #include <string>
 #include <phon/application/analysis.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/dataset.hpp>
+#include <phon/application/conc/concordance.hpp>
 #include <phon/utils/xml.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -136,6 +138,70 @@ String Analysis::reference_level(const String &variable) const
 
 
 // =====================================================================
+// Append model values to source
+// =====================================================================
+
+void Analysis::append_columns_to_source(const AppendColumnsRequest &request)
+{
+	if (!m_source) {
+		throw error("Source data is not available");
+	}
+	if (request.columns.empty()) {
+		return; // nothing to do
+	}
+
+	intptr_t nr = m_source->row_count();
+
+	// Pre-flight validation: check for collisions and length mismatches up
+	// front, so we either succeed completely or leave the source untouched.
+	// (add_numeric_column on Dataset/Concordance mutates state incrementally,
+	// so we cannot rely on them to roll back on a mid-request failure.)
+	for (auto &col : request.columns)
+	{
+		if (col.values.size() != nr) {
+			throw error("Cannot append column '%': expected % values, got %",
+			            col.header, nr, col.values.size());
+		}
+		intptr_t nc = m_source->column_count();
+		for (intptr_t j = 1; j <= nc; j++) {
+			if (m_source->get_header(j) == col.header) {
+				throw error("Source already has a column named '%'", col.header);
+			}
+		}
+	}
+
+	// Dispatch by concrete type. Both Dataset and Concordance expose an
+	// identically-signed add_numeric_column(header, std::vector<double>).
+	auto *ds   = dynamic_cast<Dataset*>(m_source.get());
+	auto *conc = dynamic_cast<Concordance*>(m_source.get());
+	if (!ds && !conc) {
+		throw error("Source is not a dataset or a concordance; cannot append columns");
+	}
+
+	for (auto &col : request.columns)
+	{
+		// Array<double> is 1-indexed; add_numeric_column takes std::vector<double>
+		// (0-indexed). Copy element-wise; NaN entries flow through unchanged.
+		std::vector<double> vals;
+		vals.reserve(nr);
+		for (intptr_t i = 1; i <= nr; i++)
+			vals.push_back(col.values[i]);
+
+		if (ds) {
+			ds->add_numeric_column(col.header, vals);
+		} else {
+			conc->add_numeric_column(col.header, vals);
+		}
+	}
+
+	// Intentionally do NOT flip m_modified: the Analysis itself hasn't
+	// changed, only its source. Dataset::add_numeric_column and
+	// Concordance::add_numeric_column have already marked the source document
+	// modified (m_content_modified / modify()).
+}
+
+
+// =====================================================================
 // Source resolution
 // =====================================================================
 
@@ -242,6 +308,35 @@ Array<double> parse_doubles(const char *text)
 	return result;
 }
 
+// Write a 0-indexed vector of intptr_t as space-separated integers.
+String intptrs_to_string(const std::vector<intptr_t> &arr)
+{
+	std::ostringstream oss;
+	for (size_t i = 0; i < arr.size(); i++)
+	{
+		if (i > 0) oss << ' ';
+		oss << arr[i];
+	}
+	return String(oss.str());
+}
+
+// Parse space-separated intptr_t values.
+std::vector<intptr_t> parse_intptrs(const char *text)
+{
+	std::vector<intptr_t> result;
+	std::istringstream iss(text);
+	std::string token;
+	while (iss >> token)
+	{
+		try {
+			result.push_back((intptr_t)std::stoll(token));
+		} catch (...) {
+			result.push_back((intptr_t)0);
+		}
+	}
+	return result;
+}
+
 // Parse a single double value, handling NaN and Inf.
 double parse_double_safe(const char *text)
 {
@@ -333,6 +428,8 @@ void Analysis::write()
 		add_data_node(mn, "Fitted", doubles_to_string(m.fitted));
 		add_data_node(mn, "Residuals", doubles_to_string(m.residuals));
 		add_data_node(mn, "Y", doubles_to_string(m.y));
+		if (!m.source_rows.empty())
+			add_data_node(mn, "SourceRows", intptrs_to_string(m.source_rows));
 
 		add_data_node(mn, "LogLik", String::format("%.17g", m.loglik));
 		add_data_node(mn, "AIC", String::format("%.17g", m.aic));
@@ -566,6 +663,7 @@ void Analysis::load()
 					else if (name == "Fitted")   m.fitted = parse_doubles(text);
 					else if (name == "Residuals") m.residuals = parse_doubles(text);
 					else if (name == "Y")        m.y = parse_doubles(text);
+					else if (name == "SourceRows") m.source_rows = parse_intptrs(text);
 					else if (name == "LogLik")   m.loglik = parse_double_safe(text);
 					else if (name == "AIC")      m.aic = parse_double_safe(text);
 					else if (name == "BIC")      m.bic = parse_double_safe(text);

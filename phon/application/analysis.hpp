@@ -88,6 +88,30 @@ public:
 	// All user-specified reference levels.
 	const std::map<String, String> &reference_levels() const { return m_reference_levels; }
 
+	// ── Append model values to the source DataTable ─────────────────
+
+	// Request for append_columns_to_source(). Each column has a final header
+	// name and an Array<double> of values whose length must equal
+	// source->row_count(). NaN entries are stored as NaN in the target column
+	// (displayed as an empty/"nan" cell in the source's view).
+	struct AppendColumnsRequest
+	{
+		struct Column
+		{
+			String header;
+			Array<double> values;
+		};
+		std::vector<Column> columns;
+	};
+
+	// Append one or more numeric columns to the source DataTable (Dataset or
+	// Concordance). Only the source document's modified flag is flipped; the
+	// Analysis itself is NOT marked modified (no Analysis state changes).
+	// Throws if the source is unavailable, if a header already exists on the
+	// source, if a values array length mismatches, or if the source is of an
+	// unsupported concrete type.
+	void append_columns_to_source(const AppendColumnsRequest &request);
+
 protected:
 
 	void load() override;

@@ -77,6 +77,8 @@ private slots:
 	void onDeleteModel();
 	void onRenameModel(QListWidgetItem *item);
 	void onCompareModels();
+	void onAddToData();
+	void onModelListContextMenu(const QPoint &pos);
 	void onColumnDoubleClicked(QListWidgetItem *item);
 	void onColumnContextMenu(const QPoint &pos);
 	void onPlotTypeChanged(int index);
@@ -138,6 +140,30 @@ private:
 	void updateEdaPlot();
 	void updateEdaSummary();
 	bool isColumnNumeric(const String &col_name) const;
+
+	// EDA virtual-column support. "Virtual" columns are per-observation model
+	// quantities (fitted values, residuals, scaled residuals) that appear in
+	// the X and Y combos of the EDA tab alongside real data columns. They are
+	// resolved on the fly against the current model; they do not mutate the
+	// source DataTable.
+	static bool isVirtualEdaColumn(const QString &name);
+	// Build an Array<String> of length source->row_count() holding the virtual
+	// column's values formatted for the cell-access path ("nan" for source
+	// rows that were excluded from fitting). Returns an empty Array if no
+	// current model, if the model has no source_rows, or if the name is not a
+	// recognized virtual column. Non-const because scaled residuals are
+	// computed lazily via ensureScaledResiduals().
+	Array<String> buildVirtualEdaCells(const QString &name);
+	// Add the virtual-column entries (with a disabled separator) to the X
+	// and Y EDA combos, preserving the current text selection if it remains
+	// valid. No-op for the other EDA combos (group/pool/style/label).
+	void refreshEdaVirtualColumns();
+
+	// Enable/disable the "Add to data" button based on the current model and
+	// whether the source is available. Called from onModelSelected,
+	// onDeleteModel, and after fitting a model.
+	void updateAddToDataButton();
+
 	void updatePostHoc();
 	void populatePostHocFactors();
 	stats::PriorSpec buildPriorSpec() const;
@@ -184,6 +210,7 @@ private:
 	QListWidget *m_model_list = nullptr;
 	QPushButton *m_delete_button = nullptr;
 	QPushButton *m_compare_button = nullptr;
+	QPushButton *m_add_to_data_button = nullptr;
 
 	// Right panel (tabbed)
 	QTabWidget *m_right_tabs = nullptr;

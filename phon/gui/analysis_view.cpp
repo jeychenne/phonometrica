@@ -55,6 +55,7 @@
 #include <boost/math/distributions/normal.hpp>
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/gui/analysis_view.hpp>
+#include <phon/gui/add_model_values_dialog.hpp>
 #include <phon/gui/font_helpers.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/analysis/model_comparison.hpp>
@@ -546,7 +547,16 @@ void AnalysisView::setupUi()
 	m_compare_button = new QPushButton(tr("Compare"));
 	m_compare_button->setEnabled(false);
 	model_buttons->addWidget(m_compare_button);
+	m_add_to_data_button = new QPushButton(tr("Add to data…"));
+	m_add_to_data_button->setToolTip(tr("Append fitted values, residuals, or scaled "
+	                                     "residuals from the selected model as new "
+	                                     "columns on the source data"));
+	m_add_to_data_button->setEnabled(false);
+	model_buttons->addWidget(m_add_to_data_button);
 	model_layout->addLayout(model_buttons);
+
+	// Enable right-click on the model list for Rename / Add to data / Delete.
+	m_model_list->setContextMenuPolicy(Qt::CustomContextMenu);
 
 	left_layout->addWidget(model_group, 1);
 	left_widget->setMinimumWidth(160);
@@ -923,6 +933,9 @@ void AnalysisView::setupUi()
 	});
 	connect(m_delete_button, &QPushButton::clicked, this, &AnalysisView::onDeleteModel);
 	connect(m_compare_button, &QPushButton::clicked, this, &AnalysisView::onCompareModels);
+	connect(m_add_to_data_button, &QPushButton::clicked, this, &AnalysisView::onAddToData);
+	connect(m_model_list, &QListWidget::customContextMenuRequested,
+	        this, &AnalysisView::onModelListContextMenu);
 	connect(m_model_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onRenameModel);
 	connect(m_column_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onColumnDoubleClicked);
 	connect(m_column_list, &QListWidget::customContextMenuRequested, this, &AnalysisView::onColumnContextMenu);
@@ -1035,6 +1048,7 @@ void AnalysisView::populateModelList()
 		m_model_list->addItem(modelListText(i));
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
+	updateAddToDataButton();
 
 	if (m_analysis->model_count() > 0) {
 		m_model_list->setCurrentRow(0);
@@ -1201,6 +1215,8 @@ void AnalysisView::displayModel(int index)
 	m_summary->setPlainText(formatSummary(m));
 	updateDiagnosticPlot();
 	populatePostHocFactors();
+	refreshEdaVirtualColumns();
+	updateAddToDataButton();
 }
 
 
@@ -1254,6 +1270,8 @@ void AnalysisView::onDeleteModel()
 		m_posthoc_contrast_table->clear();
 		m_posthoc_contrast_table->setRowCount(0);
 		m_posthoc_contrast_table->setColumnCount(0);
+		refreshEdaVirtualColumns();
+		updateAddToDataButton();
 	}
 
 	emit titleChanged(label());
@@ -3111,6 +3129,10 @@ bool AnalysisView::eventFilter(QObject *obj, QEvent *event)
 
 bool AnalysisView::isColumnNumeric(const String &col_name) const
 {
+	// Virtual model columns are always numeric.
+	QString qname = QString::fromUtf8(col_name.data(), (int)col_name.size());
+	if (isVirtualEdaColumn(qname)) return true;
+
 	if (!m_analysis->has_source()) return false;
 	auto *dt = m_analysis->data();
 	intptr_t nc = dt->column_count();
@@ -3133,6 +3155,127 @@ bool AnalysisView::isColumnNumeric(const String &col_name) const
 		checked++;
 	}
 	return checked > 0;
+}
+
+// =====================================================================
+// EDA virtual model columns
+// =====================================================================
+
+bool AnalysisView::isVirtualEdaColumn(const QString &name)
+{
+	return name == QStringLiteral("(fitted)")
+	    || name == QStringLiteral("(residuals)")
+	    || name == QStringLiteral("(scaled residuals)");
+}
+
+Array<String> AnalysisView::buildVirtualEdaCells(const QString &name)
+{
+	// Early-out cases: no model, no source, or unknown virtual name.
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
+		return Array<String>();
+	if (!m_analysis->has_source())
+		return Array<String>();
+	if (!isVirtualEdaColumn(name))
+		return Array<String>();
+
+	auto &m = m_analysis->model(m_current_model);
+	if (!m.has_source_rows())
+		return Array<String>();
+
+	intptr_t nr = m_analysis->data()->row_count();
+
+	// Resolve the source array of per-observation values for this virtual name.
+	Array<double> aligned;
+	if (name == QStringLiteral("(fitted)"))
+	{
+		if (m.fitted.empty()) return Array<String>();
+		aligned = m.fitted_aligned(nr);
+	}
+	else if (name == QStringLiteral("(residuals)"))
+	{
+		if (m.residuals.empty()) return Array<String>();
+		aligned = m.residuals_aligned(nr);
+	}
+	else // (scaled residuals)
+	{
+		auto *sr = ensureScaledResiduals(m);
+		if (!sr || sr->residuals.empty()) return Array<String>();
+		aligned = m.align_to_source(sr->residuals, nr);
+	}
+
+	if (aligned.empty()) return Array<String>();
+
+	// Format each aligned value as a String, using "nan" for NaN entries so
+	// downstream to_float / empty-cell checks treat excluded rows as missing,
+	// matching the convention at fitting.cpp:145.
+	Array<String> cells(nr, String());
+	for (intptr_t r = 1; r <= nr; r++)
+	{
+		double v = aligned[r];
+		if (std::isnan(v))
+			cells[r] = String("nan");
+		else
+			cells[r] = String::format("%.17g", v);
+	}
+	return cells;
+}
+
+void AnalysisView::refreshEdaVirtualColumns()
+{
+	// Remember the current text selection so we can preserve it if still valid.
+	QString x_selected = m_eda_x_combo->currentText();
+	QString y_selected = m_eda_y_combo->currentText();
+
+	// Strip any existing virtual entries and their separator. Real columns
+	// plus the leading "(None)" stay; virtual entries always sit at the end.
+	auto strip_virtuals = [](QComboBox *combo) {
+		for (int i = combo->count() - 1; i >= 0; i--)
+		{
+			QString t = combo->itemText(i);
+			if (t.isEmpty() || isVirtualEdaColumn(t)) {
+				combo->removeItem(i);
+			}
+		}
+	};
+
+	// We need to block signals on the combos during restructuring, otherwise
+	// removeItem() / addItem() will fire currentIndexChanged mid-rebuild and
+	// re-enter updateEdaPlot with inconsistent state.
+	QSignalBlocker bx(m_eda_x_combo);
+	QSignalBlocker by(m_eda_y_combo);
+
+	strip_virtuals(m_eda_x_combo);
+	strip_virtuals(m_eda_y_combo);
+
+	// Only add virtual entries if there's a current model with aligned data.
+	bool offer_virtuals = false;
+	if (m_current_model >= 0 && m_current_model < m_analysis->model_count()
+	    && m_analysis->has_source())
+	{
+		auto &m = m_analysis->model(m_current_model);
+		offer_virtuals = m.has_source_rows() && !m.fitted.empty();
+	}
+
+	if (offer_virtuals)
+	{
+		auto add_virtual_block = [](QComboBox *combo) {
+			combo->insertSeparator(combo->count());
+			combo->addItem(QStringLiteral("(fitted)"));
+			combo->addItem(QStringLiteral("(residuals)"));
+			combo->addItem(QStringLiteral("(scaled residuals)"));
+		};
+		add_virtual_block(m_eda_x_combo);
+		add_virtual_block(m_eda_y_combo);
+	}
+
+	// Restore previous selection if still present; otherwise fall back to
+	// index 0 ("(None)").
+	auto restore = [](QComboBox *combo, const QString &sel) {
+		int idx = combo->findText(sel);
+		combo->setCurrentIndex(idx >= 0 ? idx : 0);
+	};
+	restore(m_eda_x_combo, x_selected);
+	restore(m_eda_y_combo, y_selected);
 }
 
 void AnalysisView::updateEdaPlot()
@@ -3167,13 +3310,27 @@ void AnalysisView::updateEdaPlot()
 	auto x_name_q = m_eda_x_combo->currentText();
 	auto x_name = String(x_name_q.toUtf8().constData());
 
-	// Find X column
+	// Resolve X column: either a real column (x_col >= 1) or a virtual model
+	// column (x_col == 0, x_virtual_cells populated). xc(r) dispatches.
 	intptr_t nc = dt->column_count();
 	intptr_t x_col = 0;
 	for (intptr_t j = 1; j <= nc; j++) {
 		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
-	if (x_col < 1) { m_eda_plot->clear(); return; }
+	Array<String> x_virtual_cells;
+	bool x_virtual = false;
+	if (x_col < 1)
+	{
+		if (isVirtualEdaColumn(x_name_q))
+		{
+			x_virtual_cells = buildVirtualEdaCells(x_name_q);
+			x_virtual = !x_virtual_cells.empty();
+		}
+		if (!x_virtual) { m_eda_plot->clear(); return; }
+	}
+	auto xc = [&](intptr_t r) -> String {
+		return x_virtual ? x_virtual_cells[r] : dt->get_cell(r, x_col);
+	};
 
 	intptr_t nr = dt->row_count();
 
@@ -3210,7 +3367,7 @@ void AnalysisView::updateEdaPlot()
 			vals.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, x_col);
+				auto v = xc(r);
 				if (v.empty()) continue;
 				bool ok;
 				double d = v.to_float(&ok);
@@ -3310,7 +3467,7 @@ void AnalysisView::updateEdaPlot()
 			std::vector<QString> order;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, x_col);
+				auto v = xc(r);
 				if (v.empty()) continue;
 				auto qs = QString::fromUtf8(v.data(), (int)v.size());
 				if (counts.find(qs) == counts.end()) order.push_back(qs);
@@ -3334,7 +3491,20 @@ void AnalysisView::updateEdaPlot()
 	for (intptr_t j = 1; j <= nc; j++) {
 		if (dt->get_header(j) == y_name) { y_col = j; break; }
 	}
-	if (y_col < 1) { m_eda_plot->clear(); return; }
+	Array<String> y_virtual_cells;
+	bool y_virtual = false;
+	if (y_col < 1)
+	{
+		if (isVirtualEdaColumn(y_name_q))
+		{
+			y_virtual_cells = buildVirtualEdaCells(y_name_q);
+			y_virtual = !y_virtual_cells.empty();
+		}
+		if (!y_virtual) { m_eda_plot->clear(); return; }
+	}
+	auto yc = [&](intptr_t r) -> String {
+		return y_virtual ? y_virtual_cells[r] : dt->get_cell(r, y_col);
+	};
 
 	bool y_numeric = isColumnNumeric(y_name);
 
@@ -3421,8 +3591,8 @@ void AnalysisView::updateEdaPlot()
 			if (s_col > 0) sv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto vx = dt->get_cell(r, x_col);
-				auto vy = dt->get_cell(r, y_col);
+				auto vx = xc(r);
+				auto vy = yc(r);
 				auto vg = dt->get_cell(r, g_col);
 				if (vx.empty() || vy.empty() || vg.empty()) continue;
 				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
@@ -3465,8 +3635,8 @@ void AnalysisView::updateEdaPlot()
 
 				for (intptr_t r = 1; r <= nr; r++)
 				{
-					auto vx = dt->get_cell(r, x_col);
-					auto vy = dt->get_cell(r, y_col);
+					auto vx = xc(r);
+					auto vy = yc(r);
 					auto vg = dt->get_cell(r, g_col);
 					auto vp = dt->get_cell(r, p_col);
 					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
@@ -3565,8 +3735,8 @@ void AnalysisView::updateEdaPlot()
 			if (l_col > 0) lv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto vx = dt->get_cell(r, x_col);
-				auto vy = dt->get_cell(r, y_col);
+				auto vx = xc(r);
+				auto vy = yc(r);
 				if (vx.empty() || vy.empty()) continue;
 				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
 				bool okx, oky;
@@ -3651,8 +3821,8 @@ void AnalysisView::updateEdaPlot()
 		vals.reserve(nr);
 		for (intptr_t r = 1; r <= nr; r++)
 		{
-			auto vx = dt->get_cell(r, x_col);
-			auto vy = dt->get_cell(r, y_col);
+			auto vx = xc(r);
+			auto vy = yc(r);
 			if (vx.empty() || vy.empty()) continue;
 			bool ok;
 			double dy = vy.to_float(&ok);
@@ -3746,7 +3916,20 @@ void AnalysisView::updateEdaSummary()
 	for (intptr_t j = 1; j <= nc; j++) {
 		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
-	if (x_col < 1) return;
+	Array<String> x_virtual_cells;
+	bool x_virtual = false;
+	if (x_col < 1)
+	{
+		if (isVirtualEdaColumn(x_name_q))
+		{
+			x_virtual_cells = buildVirtualEdaCells(x_name_q);
+			x_virtual = !x_virtual_cells.empty();
+		}
+		if (!x_virtual) return;
+	}
+	auto xc = [&](intptr_t r) -> String {
+		return x_virtual ? x_virtual_cells[r] : dt->get_cell(r, x_col);
+	};
 
 	intptr_t nr = dt->row_count();
 	bool has_y = (m_eda_y_combo->currentIndex() > 0);
@@ -3763,7 +3946,7 @@ void AnalysisView::updateEdaSummary()
 			intptr_t missing = 0;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, x_col);
+				auto v = xc(r);
 				if (v.empty()) { missing++; continue; }
 				bool ok;
 				double d = v.to_float(&ok);
@@ -3813,7 +3996,7 @@ void AnalysisView::updateEdaSummary()
 			std::map<QString, int> counts;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto v = dt->get_cell(r, x_col);
+				auto v = xc(r);
 				if (v.empty()) continue;
 				auto qs = QString::fromUtf8(v.data(), (int)v.size());
 				if (counts.find(qs) == counts.end()) order.push_back(qs);
@@ -3846,7 +4029,20 @@ void AnalysisView::updateEdaSummary()
 	for (intptr_t j = 1; j <= nc; j++) {
 		if (dt->get_header(j) == y_name) { y_col = j; break; }
 	}
-	if (y_col < 1) return;
+	Array<String> y_virtual_cells;
+	bool y_virtual = false;
+	if (y_col < 1)
+	{
+		if (isVirtualEdaColumn(y_name_q))
+		{
+			y_virtual_cells = buildVirtualEdaCells(y_name_q);
+			y_virtual = !y_virtual_cells.empty();
+		}
+		if (!y_virtual) return;
+	}
+	auto yc = [&](intptr_t r) -> String {
+		return y_virtual ? y_virtual_cells[r] : dt->get_cell(r, y_col);
+	};
 
 	bool y_numeric = isColumnNumeric(y_name);
 
@@ -3891,8 +4087,8 @@ void AnalysisView::updateEdaSummary()
 
 				for (intptr_t r = 1; r <= nr; r++)
 				{
-					auto vx = dt->get_cell(r, x_col);
-					auto vy = dt->get_cell(r, y_col);
+					auto vx = xc(r);
+					auto vy = yc(r);
 					auto vg = dt->get_cell(r, g_col);
 					auto vp = dt->get_cell(r, p_col);
 					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
@@ -3924,8 +4120,8 @@ void AnalysisView::updateEdaSummary()
 				// No pooling: raw data points.
 				for (intptr_t r = 1; r <= nr; r++)
 				{
-					auto vx = dt->get_cell(r, x_col);
-					auto vy = dt->get_cell(r, y_col);
+					auto vx = xc(r);
+					auto vy = yc(r);
 					auto vg = dt->get_cell(r, g_col);
 					if (vx.empty() || vy.empty() || vg.empty()) continue;
 					bool okx, oky;
@@ -4004,8 +4200,8 @@ void AnalysisView::updateEdaSummary()
 			intptr_t missing = 0;
 			for (intptr_t r = 1; r <= nr; r++)
 			{
-				auto vx = dt->get_cell(r, x_col);
-				auto vy = dt->get_cell(r, y_col);
+				auto vx = xc(r);
+				auto vy = yc(r);
 				if (vx.empty() || vy.empty()) { missing++; continue; }
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
@@ -4069,8 +4265,8 @@ void AnalysisView::updateEdaSummary()
 
 		for (intptr_t r = 1; r <= nr; r++)
 		{
-			auto vx = dt->get_cell(r, x_col);
-			auto vy = dt->get_cell(r, y_col);
+			auto vx = xc(r);
+			auto vy = yc(r);
 			if (vx.empty() || vy.empty()) continue;
 			bool ok;
 			double dy = vy.to_float(&ok);
@@ -5587,6 +5783,174 @@ void AnalysisView::updatePriorResidualVisibility()
 	bool is_gaussian = (family_data == QStringLiteral("gaussian") || family_data == QStringLiteral("student"));
 	for (auto *w : m_prior_residual_widgets)
 		w->setVisible(is_gaussian);
+}
+
+
+// =====================================================================
+// Add to data (Layer 4)
+// =====================================================================
+
+void AnalysisView::updateAddToDataButton()
+{
+	bool can_add = false;
+	if (m_current_model >= 0 && m_current_model < m_analysis->model_count()
+	    && m_analysis->has_source())
+	{
+		auto &m = m_analysis->model(m_current_model);
+		can_add = m.has_source_rows() && !m.fitted.empty();
+	}
+	m_add_to_data_button->setEnabled(can_add);
+}
+
+void AnalysisView::onAddToData()
+{
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count())
+		return;
+	if (!m_analysis->has_source())
+		return;
+
+	auto &m = m_analysis->model(m_current_model);
+	if (!m.has_source_rows()) {
+		QMessageBox::warning(this, tr("Add to data"),
+			tr("This model does not carry source-row indices (it may have been "
+			   "loaded from a file saved by an older version of Phonometrica). "
+			   "Refit the model to enable this action."));
+		return;
+	}
+
+	// Probe scaled-residual availability cheaply by attempting to compute it
+	// now — the result is cached on m_scaled_residuals via ensureScaledResiduals
+	// so the subsequent call on accept is free.
+	const stats::ScaledResidualResult *pre_sr = ensureScaledResiduals(m);
+	bool scaled_available = (pre_sr != nullptr) && !pre_sr->residuals.empty();
+
+	// Gather existing source headers for collision checking.
+	QStringList existing;
+	auto names = m_analysis->column_names();
+	for (intptr_t i = 1; i <= names.size(); i++)
+		existing << QString::fromUtf8(names[i].data(), (int)names[i].size());
+
+	QString model_label = modelDisplayLabel(m_current_model);
+	QString source_name = m_analysis->has_source()
+		? QString::fromUtf8(m_analysis->data()->label().data(),
+		                     (int)m_analysis->data()->label().size())
+		: tr("source");
+
+	AddModelValuesDialog dlg(model_label, source_name, existing,
+	                          scaled_available, this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	// Build the request. For each selected value type, fetch an aligned vector
+	// of length source->row_count() (NaN for rows excluded from fitting).
+	intptr_t nr = m_analysis->data()->row_count();
+	Analysis::AppendColumnsRequest req;
+
+	auto q_to_string = [](const QString &s) -> String {
+		QByteArray utf8 = s.toUtf8();
+		return String(utf8.constData(), utf8.size());
+	};
+
+	if (dlg.wantsFitted())
+	{
+		Analysis::AppendColumnsRequest::Column c;
+		c.header = q_to_string(dlg.fittedColumnName());
+		c.values = m.fitted_aligned(nr);
+		if (c.values.empty()) {
+			QMessageBox::warning(this, tr("Add to data"),
+				tr("Could not align fitted values to source rows."));
+			return;
+		}
+		req.columns.push_back(std::move(c));
+	}
+	if (dlg.wantsResiduals())
+	{
+		Analysis::AppendColumnsRequest::Column c;
+		c.header = q_to_string(dlg.residualsColumnName());
+		c.values = m.residuals_aligned(nr);
+		if (c.values.empty()) {
+			QMessageBox::warning(this, tr("Add to data"),
+				tr("Could not align residuals to source rows."));
+			return;
+		}
+		req.columns.push_back(std::move(c));
+	}
+	if (dlg.wantsScaledResiduals())
+	{
+		// Scaled residuals were cached above via ensureScaledResiduals.
+		auto *sr = ensureScaledResiduals(m);
+		if (!sr || sr->residuals.empty()) {
+			QMessageBox::warning(this, tr("Add to data"),
+				tr("Scaled residuals are not available for this model."));
+			return;
+		}
+		Analysis::AppendColumnsRequest::Column c;
+		c.header = q_to_string(dlg.scaledResidualsColumnName());
+		c.values = m.align_to_source(sr->residuals, nr);
+		if (c.values.empty()) {
+			QMessageBox::warning(this, tr("Add to data"),
+				tr("Could not align scaled residuals to source rows."));
+			return;
+		}
+		req.columns.push_back(std::move(c));
+	}
+
+	if (req.columns.empty())
+		return; // dialog OK would have been disabled, but be defensive
+
+	try
+	{
+		m_analysis->append_columns_to_source(req);
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::warning(this, tr("Add to data"),
+			tr("Could not add columns:\n%1").arg(QString::fromUtf8(e.what())));
+		return;
+	}
+
+	// Status-bar feedback rather than a modal — the operation is silent by
+	// nature (only a flag flip on the source, not a visible change here). The
+	// source view, if open in another tab, will not refresh until reopened;
+	// that's a known v1 limitation worth surfacing.
+	QString status_msg = tr("Added %n column(s) to %1. Close and reopen the source "
+	                         "to see them.", nullptr, (int)req.columns.size())
+	                      .arg(source_name);
+	if (auto *mw = qobject_cast<QMainWindow*>(window())) {
+		if (auto *bar = mw->statusBar()) {
+			bar->showMessage(status_msg, 6000);
+		}
+	}
+}
+
+void AnalysisView::onModelListContextMenu(const QPoint &pos)
+{
+	auto *item = m_model_list->itemAt(pos);
+	if (!item) return;
+
+	int row = m_model_list->row(item);
+	// Make sure the right-clicked row is the current selection, so slot
+	// handlers operate on the intended model.
+	if (m_model_list->currentRow() != row)
+		m_model_list->setCurrentRow(row);
+
+	QMenu menu(this);
+	QAction *rename_act = menu.addAction(tr("Rename…"));
+	QAction *add_act = menu.addAction(tr("Add to data…"));
+	add_act->setEnabled(m_add_to_data_button->isEnabled());
+	menu.addSeparator();
+	QAction *delete_act = menu.addAction(tr("Delete"));
+
+	QAction *chosen = menu.exec(m_model_list->viewport()->mapToGlobal(pos));
+	if (chosen == rename_act) {
+		onRenameModel(item);
+	}
+	else if (chosen == add_act) {
+		onAddToData();
+	}
+	else if (chosen == delete_act) {
+		onDeleteModel();
+	}
 }
 
 } // namespace phonometrica
