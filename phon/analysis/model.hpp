@@ -44,7 +44,7 @@ namespace phonometrica::stats {
 
 // A single grouping factor in a mixed-effects model.
 // For example, (1 + vowel | speaker) produces one RandomEffectGroup with
-// group_name = "speaker", term_names = {"(Intercept)", "vowel[i]", ...},
+// group_name = "speaker", term_names = {"Intercept", "vowel[i]", ...},
 // and variances/covariances for those terms.
 struct RandomEffectGroup
 {
@@ -100,7 +100,7 @@ struct Model
 	PriorSpec priors;   // prior specification (only meaningful when estimation == Bayesian)
 
 	// ---- Fixed effects ----
-	Array<String> coef_names;  // coefficient names: "(Intercept)", "vowel[i]", etc.
+	Array<String> coef_names;  // coefficient names: "Intercept", "vowel[i]", etc.
 	Array<double> beta;        // estimated coefficients
 	Array<double> se;          // standard errors
 	Array<double> stat;        // test statistics (t-values for Gaussian, z-values for GLM)
@@ -256,6 +256,21 @@ struct Model
 	// is true.
 	bool well_identified = true;
 	String fit_warning;        // human-readable explanation when well_identified is false
+
+	// ---- Prior-scale diagnostic (Bayesian only) ----
+	// Set to a human-readable message when the fit appears to have been
+	// distorted by a prior whose scale does not match the response scale.
+	// The canonical example is an identity-link Student-t or Gaussian fit
+	// with a user-supplied N(0, 10) prior on fixed effects while the data
+	// are on a Hz scale (coefficients in the hundreds): the prior pulls β
+	// toward zero, the optimizer compensates by inflating σ, and — for
+	// Student-t — ν runs to its upper clamp to maximise per-observation
+	// density given the near-zero standardised residuals.  The fit is
+	// numerically "converged" and `well_identified` may still be true, but
+	// the posterior is driven by the prior rather than the data.
+	// Empty when no pathology is detected (the common case).  Frequentist
+	// fits never set this field.  This warning is advisory, not fatal.
+	String prior_warning;
 
 	// ---- Random effects (empty for fixed-effects models) ----
 	Array<RandomEffectGroup> random_effects;

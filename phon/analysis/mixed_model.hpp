@@ -58,7 +58,7 @@ using FittingCallback = std::function<void(int, int)>;
 //   name      = "speaker"
 //   nlevels   = number of unique speakers
 //   nterms    = 3 (intercept + 2 treatment-coded dummies for vowel)
-//   term_names = {"(Intercept)", "vowel[i]", "vowel[u]"}
+//   term_names = {"Intercept", "vowel[i]", "vowel[u]"}
 //   Z_design  = n × 3 row-major matrix
 //
 // For (1 | speaker) (intercept only), nterms=1 and Z_design is all 1s.

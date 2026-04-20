@@ -5110,7 +5110,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		intptr_t qg = lay.q[g];
 
-		// Term names from the GroupingInfo (e.g. "(Intercept)", "vowel[i]", "vowel[u]")
+		// Term names from the GroupingInfo (e.g. "Intercept", "vowel[i]", "vowel[u]")
 		reg.term_names = groups[g].term_names;
 
 		// Covariance matrix D_g: from D_inv_final (non-Gaussian/Cholesky path)

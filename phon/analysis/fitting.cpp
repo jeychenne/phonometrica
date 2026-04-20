@@ -387,7 +387,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	if (formula.intercept)
 	{
 		DesignColumn dc;
-		dc.name = "(Intercept)";
+		dc.name = "Intercept";
 		dc.values.assign(n, 1.0);
 		all_columns.push_back(std::move(dc));
 	}
@@ -564,7 +564,7 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 	if (rt.intercept)
 	{
-		gi.term_names.append("(Intercept)");
+		gi.term_names.append("Intercept");
 		z_columns.push_back(std::vector<double>(n, 1.0));
 	}
 
@@ -1239,7 +1239,7 @@ static void scale_default_priors(PriorSpec &priors,
 		NormalPrior intercept_prior;
 		intercept_prior.mean = y_mean;
 		intercept_prior.sd = scale;
-		priors.coefficient_priors[String("(Intercept)")] = intercept_prior;
+		priors.coefficient_priors[String("Intercept")] = intercept_prior;
 	}
 
 	if (priors.variance_auto)
@@ -1445,6 +1445,146 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 }
 
 
+// Post-fit diagnostic: detect prior-scale / data-scale mismatch.
+//
+// For identity-link Bayesian fits (Gaussian, Student), a fixed-effects prior
+// whose scale is much tighter than the response scale produces a degenerate
+// joint optimum: β is pulled toward the prior mean (usually 0), and the
+// optimizer compensates by inflating σ so the prior-shrunken predictions
+// don't look too improbable.  For Student-t specifically, ν then races to
+// the upper clamp because tiny standardised residuals are maximised as
+// ν → ∞.  The fit "converges" and posterior summaries print without issue,
+// but the estimates are driven by the prior rather than the data.
+//
+// The canonical symptom is σ >> sd(y).  A healthy fit satisfies σ < sd(y):
+// the residual spread after subtracting X β̂ is less than the total spread
+// of y.  When σ exceeds sd(y) we know β̂ explains less variance than a
+// constant-mean fit, which is only plausible when the prior is dominating.
+//
+// This check is Bayesian-only and advisory: we set model.prior_warning and
+// continue.  Frequentist paths never enter this code.
+static void check_prior_scale_mismatch(Model &model,
+                                         const DataTable &data,
+                                         const Formula &formula,
+                                         const String &family)
+{
+	// Only identity-link families are susceptible: others fit coefficients
+	// on the logit or log scale where N(0, 10) is a loose prior by default.
+	if (family != "gaussian" && family != "student") return;
+
+	// Resolve the residual / scale parameter σ.  Storage differs by family
+	// and by whether random effects are present:
+	//   - Student (any):        model.sigma is populated during the fit
+	//   - Gaussian fixed-effect: model.rse holds residual SE on the link scale
+	//   - Gaussian mixed:       hyper_posterior_mean[hyper_names == "sd(residual)"]
+	double sigma = 0;
+	if (family == "student")
+	{
+		sigma = model.sigma;
+	}
+	else  // gaussian
+	{
+		if (formula.has_random_effects())
+		{
+			for (intptr_t k = 0; k < model.hyper_names.size(); k++)
+			{
+				if (model.hyper_names[k] == String("sd(residual)"))
+				{
+					sigma = model.hyper_posterior_mean[k];
+					break;
+				}
+			}
+		}
+		else
+		{
+			sigma = model.rse;
+		}
+	}
+	if (!(sigma > 0) || !std::isfinite(sigma)) return;
+
+	// Compute sd(y) on the raw scale (identity link, so link scale = raw).
+	intptr_t resp_col = find_column(data, formula.response);
+	if (resp_col == 0) return;
+	intptr_t n = data.row_count();
+	if (n < 2) return;
+
+	double sum = 0, sum2 = 0;
+	intptr_t count = 0;
+	for (intptr_t i = 1; i <= n; i++)
+	{
+		double v = 0;
+		if (!try_parse_double(data.get_cell(i, resp_col), &v)) continue;
+		sum += v;
+		sum2 += v * v;
+		count++;
+	}
+	if (count < 2) return;
+
+	double y_var = (sum2 - sum * sum / count) / (count - 1);
+	double y_sd = std::sqrt(std::max(y_var, 1e-10));
+	if (!(y_sd > 0) || !std::isfinite(y_sd)) return;
+
+	// Threshold: σ > 1.5 × sd(y) is a strong signal of prior-driven distortion.
+	// A healthy fit typically has σ < sd(y), often considerably less once
+	// fixed effects explain some variance.  We allow 1.5× slack for cases
+	// where the predictors are weak but the fit is otherwise sound.
+	const double sigma_threshold = 1.5 * y_sd;
+	bool sigma_inflated = (sigma > sigma_threshold);
+
+	// Student-specific: ν pinned at upper clamp (200) is an independent signal.
+	bool nu_pinned = (family == "student") && (model.nu >= 199.0);
+
+	if (!sigma_inflated && !nu_pinned) return;  // Fit looks fine, no warning.
+
+	// Build a clear, actionable message.
+	std::string msg;
+	char buf[256];
+
+	if (sigma_inflated)
+	{
+		snprintf(buf, sizeof(buf),
+		         "Residual scale (sigma = %.3g) exceeds %.1f x sd(y) = %.3g. ",
+		         sigma, 1.5, y_sd);
+		msg += buf;
+		msg += "This usually indicates that the fixed-effects prior is too tight "
+		       "for the response scale. ";
+	}
+
+	if (nu_pinned)
+	{
+		msg += "The degrees-of-freedom parameter nu has converged to its upper "
+		       "bound (200), indicating the fit has collapsed to an effectively "
+		       "Gaussian regime. ";
+	}
+
+	msg += "For identity-link families (Gaussian, Student t), coefficients are "
+	       "on the response scale (e.g. Hz for F1 data), so a prior like N(0, 10) "
+	       "shrinks coefficients toward zero while the optimizer compensates by "
+	       "inflating sigma. ";
+
+	// Recommendation tailored to what the user has set.
+	if (!model.priors.fixed_auto)
+	{
+		msg += "Consider removing the explicit fixed-effects prior so data-scaled "
+		       "auto-defaults are used (N(mean(y), 2.5 x sd(y)) for the intercept "
+		       "and N(0, 2.5 x sd(y)) for slopes), or set a prior SD comparable to "
+		       "2.5 x sd(y). ";
+	}
+	else
+	{
+		msg += "The auto-scaled defaults were applied, so this may reflect a "
+		       "genuinely ill-conditioned fit — check the frequentist version of "
+		       "the same model for comparison. ";
+	}
+
+	msg += "Comparing against the frequentist fit is a reliable sanity check: "
+	       "if the Bayesian estimates diverge substantially from the frequentist "
+	       "estimates, the prior is driving the result.";
+
+	model.prior_warning = String(msg.data(), msg.size());
+}
+
+
 Model fit(const DataTable &data, const Formula &formula, const String &family,
           const PriorSpec &priors,
           const std::map<String, String> &reference_levels,
@@ -1477,6 +1617,9 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 		// Fixed-effects LM/GLM: post-hoc adjustment (exact for Gaussian, approximate for GLM).
 		bayesian_adjust(model, scaled_priors);
 	}
+
+	// Post-fit diagnostic: flag suspected prior-scale mismatch for identity-link fits.
+	check_prior_scale_mismatch(model, data, formula, family);
 
 	return model;
 }

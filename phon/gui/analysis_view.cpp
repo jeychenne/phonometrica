@@ -5186,6 +5186,28 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			text += QString::asprintf("WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
 	}
 
+	// ── Diagnostic warnings ──────────────────────────────────────
+	// Identifiability warning (fit_warning): set by the fitting engine
+	// when the outer Hessian is ill-conditioned, e.g. for a random slope
+	// aliased with its intercept.  Independent of the convergence flag.
+	if (!m.well_identified && !m.fit_warning.empty())
+	{
+		text += QStringLiteral("\nNote: ");
+		text += QString::fromUtf8(m.fit_warning.data(), (int)m.fit_warning.size());
+		text += QStringLiteral("\n");
+	}
+
+	// Prior-scale warning (prior_warning): set by the Bayesian fit when
+	// the residual scale is anomalously large relative to sd(y), suggesting
+	// the fixed-effects prior is too tight for the response scale.  See
+	// check_prior_scale_mismatch() in fitting.cpp.
+	if (!m.prior_warning.empty())
+	{
+		text += QStringLiteral("\nWarning (prior scale): ");
+		text += QString::fromUtf8(m.prior_warning.data(), (int)m.prior_warning.size());
+		text += QStringLiteral("\n");
+	}
+
 	return text;
 }
 
