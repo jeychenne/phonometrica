@@ -416,6 +416,17 @@ void AnalysisView::setupUi()
 	m_prior_variance_scale->setDecimals(2);
 	m_prior_variance_scale->setToolTip(tr("Scale parameter (u for PC prior, scale for Half-Cauchy/Half-Normal)"));
 	var_hl->addWidget(m_prior_variance_scale);
+	m_prior_variance_alpha_label = new QLabel(tr("\u03b1:"));
+	var_hl->addWidget(m_prior_variance_alpha_label);
+	m_prior_variance_alpha = new QDoubleSpinBox;
+	m_prior_variance_alpha->setRange(0.001, 0.5);
+	m_prior_variance_alpha->setValue(0.05);
+	m_prior_variance_alpha->setDecimals(3);
+	m_prior_variance_alpha->setSingleStep(0.01);
+	m_prior_variance_alpha->setToolTip(tr("Tail probability \u03b1 for the PC prior: P(\u03c3 > u) = \u03b1.\n"
+	                                      "Smaller \u03b1 tightens the prior toward \u03c3 = 0; larger \u03b1 makes it more diffuse.\n"
+	                                      "Convention (Simpson et al. 2017, INLA): \u03b1 = 0.05."));
+	var_hl->addWidget(m_prior_variance_alpha);
 	var_hl->addStretch();
 	var_detail->setEnabled(false); // auto is on by default
 	prior_grid->addWidget(var_detail, row, 2);
@@ -449,6 +460,17 @@ void AnalysisView::setupUi()
 	m_prior_residual_scale->setDecimals(2);
 	m_prior_residual_scale->setToolTip(tr("Scale parameter for the residual SD prior"));
 	res_hl->addWidget(m_prior_residual_scale);
+	m_prior_residual_alpha_label = new QLabel(tr("\u03b1:"));
+	res_hl->addWidget(m_prior_residual_alpha_label);
+	m_prior_residual_alpha = new QDoubleSpinBox;
+	m_prior_residual_alpha->setRange(0.001, 0.5);
+	m_prior_residual_alpha->setValue(0.05);
+	m_prior_residual_alpha->setDecimals(3);
+	m_prior_residual_alpha->setSingleStep(0.01);
+	m_prior_residual_alpha->setToolTip(tr("Tail probability \u03b1 for the PC prior: P(\u03c3 > u) = \u03b1.\n"
+	                                      "Smaller \u03b1 tightens the prior toward \u03c3 = 0; larger \u03b1 makes it more diffuse.\n"
+	                                      "Convention (Simpson et al. 2017, INLA): \u03b1 = 0.05."));
+	res_hl->addWidget(m_prior_residual_alpha);
 	res_hl->addStretch();
 	res_detail->setEnabled(false); // auto is on by default
 	prior_grid->addWidget(res_detail, row, 2);
@@ -504,12 +526,15 @@ void AnalysisView::setupUi()
 	// Update the summary label when any value changes.
 	connect(m_prior_fixed_mean, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
 	connect(m_prior_fixed_sd, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
-	connect(m_prior_variance_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorDefaultsLabel(); });
+	connect(m_prior_variance_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorPcAlphaVisibility(); updatePriorDefaultsLabel(); });
 	connect(m_prior_variance_scale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
-	connect(m_prior_residual_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorDefaultsLabel(); });
+	connect(m_prior_variance_alpha, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+	connect(m_prior_residual_type, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { updatePriorPcAlphaVisibility(); updatePriorDefaultsLabel(); });
 	connect(m_prior_residual_scale, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
+	connect(m_prior_residual_alpha, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](double) { updatePriorDefaultsLabel(); });
 
 	updatePriorResidualVisibility();
+	updatePriorPcAlphaVisibility();
 	updatePriorDefaultsLabel();
 
 	// ── Main content ────────────────────────────────────────────────
@@ -1195,6 +1220,9 @@ void AnalysisView::onModelSelected(int row)
 			case stats::VariancePriorType::HalfNormal:  m_prior_variance_type->setCurrentIndex(2); break;
 			}
 			m_prior_variance_scale->setValue(pr.variance_components.param1);
+			if (pr.variance_components.type == stats::VariancePriorType::PC) {
+				m_prior_variance_alpha->setValue(pr.variance_components.param2);
+			}
 
 			m_prior_residual_auto->setChecked(pr.residual_auto);
 			switch (pr.residual.type)
@@ -1204,6 +1232,9 @@ void AnalysisView::onModelSelected(int row)
 			case stats::VariancePriorType::HalfNormal:  m_prior_residual_type->setCurrentIndex(2); break;
 			}
 			m_prior_residual_scale->setValue(pr.residual.param1);
+			if (pr.residual.type == stats::VariancePriorType::PC) {
+				m_prior_residual_alpha->setValue(pr.residual.param2);
+			}
 		}
 	}
 }
@@ -5693,7 +5724,7 @@ stats::PriorSpec AnalysisView::buildPriorSpec() const
 	if (var_type == QStringLiteral("pc")) {
 		spec.variance_components.type = stats::VariancePriorType::PC;
 		spec.variance_components.param1 = m_prior_variance_scale->value();
-		spec.variance_components.param2 = 0.05;
+		spec.variance_components.param2 = m_prior_variance_alpha->value();
 	} else if (var_type == QStringLiteral("halfcauchy")) {
 		spec.variance_components.type = stats::VariancePriorType::HalfCauchy;
 		spec.variance_components.param1 = m_prior_variance_scale->value();
@@ -5708,7 +5739,7 @@ stats::PriorSpec AnalysisView::buildPriorSpec() const
 	if (res_type == QStringLiteral("pc")) {
 		spec.residual.type = stats::VariancePriorType::PC;
 		spec.residual.param1 = m_prior_residual_scale->value();
-		spec.residual.param2 = 0.05;
+		spec.residual.param2 = m_prior_residual_alpha->value();
 	} else if (res_type == QStringLiteral("halfcauchy")) {
 		spec.residual.type = stats::VariancePriorType::HalfCauchy;
 		spec.residual.param1 = m_prior_residual_scale->value();
@@ -5728,9 +5759,11 @@ void AnalysisView::resetPriorPanel()
 	m_prior_variance_auto->setChecked(true);
 	m_prior_variance_type->setCurrentIndex(0); // PC
 	m_prior_variance_scale->setValue(1.0);
+	m_prior_variance_alpha->setValue(0.05);
 	m_prior_residual_auto->setChecked(true);
 	m_prior_residual_type->setCurrentIndex(0); // PC
 	m_prior_residual_scale->setValue(1.0);
+	m_prior_residual_alpha->setValue(0.05);
 }
 
 void AnalysisView::updatePriorDefaultsLabel()
@@ -5755,9 +5788,16 @@ void AnalysisView::updatePriorDefaultsLabel()
 	if (m_prior_variance_auto->isChecked()) {
 		var_str = QStringLiteral("Variance: auto");
 	} else {
-		var_str = QStringLiteral("Variance: %1(%2)")
-			.arg(m_prior_variance_type->currentText())
-			.arg(m_prior_variance_scale->value(), 0, 'g', 4);
+		bool is_pc = (m_prior_variance_type->currentData().toString() == QStringLiteral("pc"));
+		if (is_pc) {
+			var_str = QStringLiteral("Variance: PC(%1, %2)")
+				.arg(m_prior_variance_scale->value(), 0, 'g', 4)
+				.arg(m_prior_variance_alpha->value(), 0, 'g', 3);
+		} else {
+			var_str = QStringLiteral("Variance: %1(%2)")
+				.arg(m_prior_variance_type->currentText())
+				.arg(m_prior_variance_scale->value(), 0, 'g', 4);
+		}
 	}
 
 	QString family_data = m_family_combo->currentData().toString();
@@ -5768,9 +5808,16 @@ void AnalysisView::updatePriorDefaultsLabel()
 		if (m_prior_residual_auto->isChecked()) {
 			summary += QStringLiteral("  |  Residual: auto");
 		} else {
-			summary += QStringLiteral("  |  Residual: %1(%2)")
-				.arg(m_prior_residual_type->currentText())
-				.arg(m_prior_residual_scale->value(), 0, 'g', 4);
+			bool is_pc = (m_prior_residual_type->currentData().toString() == QStringLiteral("pc"));
+			if (is_pc) {
+				summary += QStringLiteral("  |  Residual: PC(%1, %2)")
+					.arg(m_prior_residual_scale->value(), 0, 'g', 4)
+					.arg(m_prior_residual_alpha->value(), 0, 'g', 3);
+			} else {
+				summary += QStringLiteral("  |  Residual: %1(%2)")
+					.arg(m_prior_residual_type->currentText())
+					.arg(m_prior_residual_scale->value(), 0, 'g', 4);
+			}
 		}
 	}
 
@@ -5783,6 +5830,20 @@ void AnalysisView::updatePriorResidualVisibility()
 	bool is_gaussian = (family_data == QStringLiteral("gaussian") || family_data == QStringLiteral("student"));
 	for (auto *w : m_prior_residual_widgets)
 		w->setVisible(is_gaussian);
+}
+
+// Show the α spinbox (and its label) only when the prior type is "PC".
+// Half-Cauchy and Half-Normal are single-parameter priors, so α is hidden
+// to avoid suggesting it has any effect on those families.
+void AnalysisView::updatePriorPcAlphaVisibility()
+{
+	bool var_is_pc = (m_prior_variance_type->currentData().toString() == QStringLiteral("pc"));
+	m_prior_variance_alpha_label->setVisible(var_is_pc);
+	m_prior_variance_alpha->setVisible(var_is_pc);
+
+	bool res_is_pc = (m_prior_residual_type->currentData().toString() == QStringLiteral("pc"));
+	m_prior_residual_alpha_label->setVisible(res_is_pc);
+	m_prior_residual_alpha->setVisible(res_is_pc);
 }
 
 

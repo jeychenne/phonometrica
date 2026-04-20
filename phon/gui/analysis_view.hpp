@@ -170,6 +170,7 @@ private:
 	void resetPriorPanel();
 	void updatePriorDefaultsLabel();
 	void updatePriorResidualVisibility();
+	void updatePriorPcAlphaVisibility();
 
 	Handle<Analysis> m_analysis;
 	int m_current_model = -1;
@@ -199,9 +200,13 @@ private:
 	QCheckBox *m_prior_variance_auto = nullptr;
 	QComboBox *m_prior_variance_type = nullptr;
 	QDoubleSpinBox *m_prior_variance_scale = nullptr;
+	QLabel *m_prior_variance_alpha_label = nullptr;
+	QDoubleSpinBox *m_prior_variance_alpha = nullptr;
 	QCheckBox *m_prior_residual_auto = nullptr;
 	QComboBox *m_prior_residual_type = nullptr;
 	QDoubleSpinBox *m_prior_residual_scale = nullptr;
+	QLabel *m_prior_residual_alpha_label = nullptr;
+	QDoubleSpinBox *m_prior_residual_alpha = nullptr;
 	QList<QWidget *> m_prior_residual_widgets; // all widgets in the residual grid row
 	QPushButton *m_prior_reset_button = nullptr;
 
