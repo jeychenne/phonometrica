@@ -51,6 +51,13 @@ add_definitions(
 )
 
 
+###########
+## DEBUG ##
+###########
+
+add_definitions(-DPHON_INLA_DEBUG=1)
+
+
 ########################
 ##  OPERATING SYSTEM  ##
 ########################

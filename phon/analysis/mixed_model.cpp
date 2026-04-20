@@ -2663,7 +2663,14 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 // This function:
 //   1. Stores the per-grid-point results in model.grid_summary (for PPC later)
 //   2. Draws S posterior samples of (β, θ) from the mixture
-//   3. Computes μ_i^(s) = linkinv(x_i' β^(s) + zu_i)  [zu_i from BLUPs at mode]
+//   3. Samples the random effects u either:
+//        • from their full conditional posterior N(E[u|β,θ,y], Cov[u|β,θ,y])
+//          per draw (Gaussian with lay_cond_u != nullptr) — captures the β↔u
+//          ridge cancellation and matches brms's default waic; or
+//        • held fixed at the mode BLUPs (all other cases) — simpler but
+//          inflates p_WAIC when β and u are strongly coupled, e.g. when a
+//          fixed-effect covariate is constant within levels of the grouping
+//          factor (gender at speaker, condition at subject, etc.).
 //   4. Evaluates pointwise log-likelihood using dispersion params from θ^(s)
 //   5. Calls compute_waic_from_loglik to populate model.waic/p_waic/lppd/se_waic
 //
@@ -2673,6 +2680,18 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 //   n_chol: number of Cholesky parameters (needed to find dispersion in θ)
 //   linkinv_scalar: scalar inverse link function (identity for Gaussian, exp for log, etc.)
 //   disp_from_theta: extracts dispersion params from a θ vector (family-dependent)
+//   lay_cond_u: if non-null AND model.family == "gaussian", enables conditional
+//       u-sampling (see (3) above). For non-Gaussian families the conditional
+//       u density is no longer Gaussian in closed form, so this hook is
+//       currently a no-op for them and the mode-BLUP fallback is used instead.
+//
+// Historical note: an earlier version drew u from its *prior* N(0, D_k) per
+// posterior sample, on the reasoning that this would match DHARMa's
+// unconditional simulation. That was a conceptual error — DHARMa uses the
+// prior because its goal is to simulate y for new groups, but WAIC needs u
+// from its *posterior* because y_obs came from the observed groups. Drawing
+// from the prior produces log-likelihoods disconnected from the group labels
+// and catastrophically inflates p_waic.
 //
 static void compute_grid_waic(
 	Model &model,
@@ -2687,7 +2706,8 @@ static void compute_grid_waic(
 	intptr_t n_chol,
 	std::function<double(double)> linkinv_scalar,
 	std::function<void(const Eigen::VectorXd &theta, double *disp)> disp_from_theta,
-	const Eigen::VectorXd *off_ptr = nullptr)
+	const Eigen::VectorXd *off_ptr = nullptr,
+	const GroupLayout *lay_cond_u = nullptr)
 {
 	intptr_t n_grid = (intptr_t)results.size();
 	intptr_t d = theta_star.size();
@@ -2720,27 +2740,130 @@ static void compute_grid_waic(
 
 	model.grid_summary = std::move(gs);
 
-	// ── 2. Precompute RE offset from BLUPs at mode θ* ───────────────
+	// ── 2. RE offset setup: mode BLUPs (fallback) and conditional-u ─
 	//
-	// Conditional WAIC: the random-effect contribution zu_i = Σ_g Z_g(i,:) · û_g
-	// is treated as a point estimate from the BLUPs at θ*, and the sampling
-	// loop only draws (β, θ) from the posterior. This does NOT integrate u
-	// over its conditional posterior — a strict Bayesian "marginal WAIC"
-	// would require storing per-grid-point BLUPs and the conditional
-	// posterior variance V_u(θ_k), which we don't currently do.
+	// zu_blup is always computed as a robust fallback used when:
+	//   • conditional_u is off (non-Gaussian families or no layout passed), or
+	//   • the per-grid-point u-system factorization fails for grid point k.
 	//
-	// A previous refactor (superseded) drew u from its *prior* N(0, Σ_g(θ_k))
-	// per posterior sample, on the reasoning that this would match DHARMa's
-	// unconditional simulation. That was a conceptual error: DHARMa uses the
-	// prior of u because its goal is to simulate y for new groups; WAIC
-	// needs u from its *posterior* because y_obs came from the observed
-	// groups. Drawing from the prior produces log-likelihoods disconnected
-	// from the group labels, which catastrophically inflates p_waic.
-	// The conditional form below (BLUP as point estimate) is what lme4 and
-	// brms-with-re_formula-NULL effectively report for similar models and
-	// gives numbers in the right order of magnitude.
+	// When conditional_u is on (Gaussian + lay_cond_u != nullptr), we also
+	// precompute per grid point:
+	//   M_k = Z'Z / σ²_k + D_k⁻¹    (J × J, SPD)
+	//   L_k L_kᵀ = M_k              (Cholesky)
+	//   aux_y[k] = M_k⁻¹ · Z'y / σ²_k   (length J)
+	//   aux_X[k] = M_k⁻¹ · Z'X / σ²_k   (J × p)
+	// Per draw:
+	//   u_mean = aux_y[k] − aux_X[k] · β^(s)
+	//   u^(s)  = u_mean + (L_kᵀ)⁻¹ · ε,   ε ~ N(0, I_J)
+	// The cross-block (Z'X) and Z'Z products are design-only and the same
+	// across grid points, so they are computed once.
 
-	std::vector<double> zu = compute_re_offset(model, n);
+	std::vector<double> zu_blup = compute_re_offset(model, n);
+
+	bool conditional_u = (lay_cond_u != nullptr)
+	                  && (model.family == "gaussian");
+
+	std::vector<Eigen::LLT<Eigen::MatrixXd>> u_llt;
+	std::vector<Eigen::VectorXd> aux_y;
+	std::vector<Eigen::MatrixXd> aux_X;
+	std::vector<bool> u_llt_ok;
+	intptr_t J_cond = 0;
+
+	if (conditional_u)
+	{
+		J_cond = lay_cond_u->J_total;
+		u_llt.resize(n_grid);
+		aux_y.resize(n_grid);
+		aux_X.resize(n_grid);
+		u_llt_ok.assign(n_grid, false);
+
+		// Z' (y − offset)    (length J)
+		Eigen::VectorXd Zty = Eigen::VectorXd::Zero(J_cond);
+		for (intptr_t i = 0; i < n; i++) {
+			double y_eff = ym[i];
+			if (off_ptr) y_eff -= (*off_ptr)[i];
+			for (intptr_t g = 0; g < lay_cond_u->G; g++) {
+				intptr_t jlev = (*lay_cond_u->group_indices[g])[i];
+				intptr_t qg = lay_cond_u->q[g];
+				intptr_t base = lay_cond_u->offset[g] + jlev * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					Zty[base + t] += lay_cond_u->Z(g, i, t) * y_eff;
+			}
+		}
+
+		// Z' X              (J × p)
+		Eigen::MatrixXd ZtX = Eigen::MatrixXd::Zero(J_cond, p);
+		for (intptr_t i = 0; i < n; i++) {
+			for (intptr_t g = 0; g < lay_cond_u->G; g++) {
+				intptr_t jlev = (*lay_cond_u->group_indices[g])[i];
+				intptr_t qg = lay_cond_u->q[g];
+				intptr_t base = lay_cond_u->offset[g] + jlev * qg;
+				for (intptr_t t = 0; t < qg; t++) {
+					double zv = lay_cond_u->Z(g, i, t);
+					for (intptr_t jj = 0; jj < p; jj++)
+						ZtX(base + t, jj) += zv * Xm(i, jj);
+				}
+			}
+		}
+
+		// Z' Z              (J × J)
+		Eigen::MatrixXd ZtZ = Eigen::MatrixXd::Zero(J_cond, J_cond);
+		for (intptr_t i = 0; i < n; i++) {
+			for (intptr_t g1 = 0; g1 < lay_cond_u->G; g1++) {
+				intptr_t j1lev = (*lay_cond_u->group_indices[g1])[i];
+				intptr_t q1 = lay_cond_u->q[g1];
+				intptr_t base1 = lay_cond_u->offset[g1] + j1lev * q1;
+				for (intptr_t t1 = 0; t1 < q1; t1++) {
+					double z1 = lay_cond_u->Z(g1, i, t1);
+					// Same-group block
+					for (intptr_t t2 = 0; t2 < q1; t2++)
+						ZtZ(base1 + t1, base1 + t2) += z1 * lay_cond_u->Z(g1, i, t2);
+					// Cross-group blocks
+					for (intptr_t g2 = g1 + 1; g2 < lay_cond_u->G; g2++) {
+						intptr_t j2lev = (*lay_cond_u->group_indices[g2])[i];
+						intptr_t q2 = lay_cond_u->q[g2];
+						intptr_t base2 = lay_cond_u->offset[g2] + j2lev * q2;
+						for (intptr_t t2 = 0; t2 < q2; t2++) {
+							double z2 = lay_cond_u->Z(g2, i, t2);
+							ZtZ(base1 + t1, base2 + t2) += z1 * z2;
+							ZtZ(base2 + t2, base1 + t1) += z1 * z2;
+						}
+					}
+				}
+			}
+		}
+
+		// Per grid point: factorize M_k = Z'Z / σ²_k + D_k⁻¹
+		for (intptr_t k = 0; k < n_grid; k++) {
+			Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+			double sigma2_k = std::exp(2.0 * theta_k[n_chol]);
+			double inv_s2 = 1.0 / sigma2_k;
+
+			Eigen::MatrixXd M = ZtZ * inv_s2;
+
+			// Add block-diagonal D_k⁻¹ from the Cholesky slice of θ_k
+			intptr_t cp = 0;
+			for (intptr_t g = 0; g < lay_cond_u->G; g++) {
+				intptr_t qg = lay_cond_u->q[g];
+				Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + cp, qg);
+				Eigen::MatrixXd D_inv_g = cholesky_to_precision(L);
+				for (intptr_t jlev = 0; jlev < lay_cond_u->J[g]; jlev++) {
+					intptr_t base = lay_cond_u->offset[g] + jlev * qg;
+					for (intptr_t t1 = 0; t1 < qg; t1++)
+						for (intptr_t t2 = 0; t2 < qg; t2++)
+							M(base + t1, base + t2) += D_inv_g(t1, t2);
+				}
+				cp += n_chol_params(qg);
+			}
+
+			u_llt[k].compute(M);
+			u_llt_ok[k] = (u_llt[k].info() == Eigen::Success);
+			if (u_llt_ok[k]) {
+				aux_y[k] = u_llt[k].solve(Zty * inv_s2);
+				aux_X[k] = u_llt[k].solve(ZtX * inv_s2);
+			}
+		}
+	}
 
 	// ── 3. Precompute Cholesky factors of Σ_β(θ_k) for correlated β draws ──
 	//
@@ -2771,6 +2894,9 @@ static void compute_grid_waic(
 	std::uniform_real_distribution<double> unif(0.0, 1.0);
 	std::normal_distribution<double> std_normal(0.0, 1.0);
 
+	// Scratch buffer for conditional-u per-draw offset.
+	std::vector<double> zu_draw(conditional_u ? (size_t)n : 0);
+
 	for (int s = 0; s < WAIC_S; s++)
 	{
 		// Sample grid point k with probability w_k.
@@ -2792,12 +2918,47 @@ static void compute_grid_waic(
 		double disp[2] = {0.0, 0.0};
 		disp_from_theta(theta_k, disp);
 
-		// Compute pointwise log-likelihoods using the fixed BLUP-based
-		// RE offset (conditional WAIC, see section 2 above).
+		// Pick the RE-offset vector for this draw.
+		const double *zu_ptr;
+		if (conditional_u && u_llt_ok[k])
+		{
+			// u^(s) mean: aux_y[k] − aux_X[k] · β^(s)
+			Eigen::VectorXd u_sample = aux_y[k] - aux_X[k] * beta_s;
+
+			// Add N(0, M_k⁻¹) noise via (L_kᵀ)⁻¹ ε.
+			// LLT decomposes M_k = L_k L_kᵀ so M_k⁻¹ = L_k⁻ᵀ L_k⁻¹; drawing
+			// v = L_k⁻ᵀ ε with ε ~ N(0,I) gives Cov(v) = L_k⁻ᵀ L_k⁻¹ = M_k⁻¹.
+			// Eigen's matrixU() returns L_kᵀ (upper), so solveInPlace applies
+			// the inverse of the upper-triangular L_kᵀ, i.e. computes L_k⁻ᵀ ε.
+			Eigen::VectorXd eps(J_cond);
+			for (intptr_t j = 0; j < J_cond; j++)
+				eps[j] = std_normal(rng);
+			u_llt[k].matrixU().solveInPlace(eps);
+			u_sample += eps;
+
+			// Expand to per-observation zu_draw[i] = z_i' u^(s)
+			std::fill(zu_draw.begin(), zu_draw.end(), 0.0);
+			for (intptr_t i = 0; i < n; i++) {
+				for (intptr_t g = 0; g < lay_cond_u->G; g++) {
+					intptr_t jlev = (*lay_cond_u->group_indices[g])[i];
+					intptr_t qg = lay_cond_u->q[g];
+					intptr_t base = lay_cond_u->offset[g] + jlev * qg;
+					for (intptr_t t = 0; t < qg; t++)
+						zu_draw[i] += lay_cond_u->Z(g, i, t) * u_sample[base + t];
+				}
+			}
+			zu_ptr = zu_draw.data();
+		}
+		else
+		{
+			zu_ptr = zu_blup.data();
+		}
+
+		// Compute pointwise log-likelihoods.
 		for (intptr_t i = 0; i < n; i++)
 		{
 			// η_i = x_i' β^(s) + zu_i + offset_i
-			double eta_i = zu[i];
+			double eta_i = zu_ptr[i];
 			for (intptr_t j = 0; j < p; j++)
 				eta_i += Xm(i, j) * beta_s[j];
 			if (off_ptr) eta_i += (*off_ptr)[i];
@@ -2966,6 +3127,142 @@ static void inla_grid_integrate_gaussian(
 		Eigen::VectorXd diff = sla_beta[k] - mix_mean;
 		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
 	}
+
+#ifdef PHON_INLA_DEBUG
+	// ── Diagnostic dump (compile with -DPHON_INLA_DEBUG) ────────────
+	//
+	// Two hypotheses under investigation:
+	//
+	//   (1) p_WAIC inflation: is the posterior approximation used by
+	//       compute_grid_waic (mixture of N(β̂_k, Σ_β(θ_k))) under-
+	//       representing the β↔β ridge correlations that MCMC captures?
+	//
+	//       Inspect per-grid-point correlation matrices of Σ_β(θ_k)
+	//       and the mixture correlation matrix. If the ridge between
+	//       (Intercept, genderM) exists, corr(β_0, β_gender) should
+	//       be strongly negative in one or both.
+	//
+	//   (2) σ_u under-shrinkage vs brms: does the CCD grid give any
+	//       weight to the right tail of log σ_u, or does it truncate?
+	//
+	//       Inspect the per-grid-point σ values and weights.  If the
+	//       largest σ in the grid has σ < post.mean and w < 0.01, the
+	//       grid is truncating.
+	//
+	// Pipe the run through `2> inla_debug.log` to capture.
+	{
+		std::fprintf(stderr,
+			"\n=== PHON_INLA_DEBUG: inla_grid_integrate_gaussian ===\n");
+		std::fprintf(stderr, "d=%ld  n_grid=%ld  n_chol=%ld  p=%ld  G=%ld\n",
+			(long)d, (long)n_grid, (long)n_chol, (long)p, (long)lay.G);
+
+		// Outer Hessian eigenvalues (clamped to ≥1e-6 already)
+		std::fprintf(stderr, "H eigenvalues (clamped): ");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%.4g ", eigenvalues[j]);
+		std::fprintf(stderr, "\n");
+
+		// θ* (the mode, in log-σ / Cholesky coords)
+		std::fprintf(stderr, "theta_star = [");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "", theta_star[j]);
+		std::fprintf(stderr, "]\n");
+
+		// ── Per-grid-point table ────────────────────────────────────
+		std::fprintf(stderr, "\nper-grid-point summary:\n");
+		std::fprintf(stderr, "%-3s %-8s %-9s %-11s %-8s",
+		             "k", "|z|", "w_ccd", "log_post", "w");
+		for (intptr_t g = 0; g < lay.G; g++)
+			for (intptr_t t = 0; t < lay.q[g]; t++)
+				std::fprintf(stderr, " sd[g%ld,t%ld]", (long)g, (long)t);
+		std::fprintf(stderr, " %-9s", "sd_res");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, " %-9s", "beta");
+		std::fprintf(stderr, "\n");
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+			std::fprintf(stderr, "%-3ld %-8.3f %-9.4g %-11.4f %-8.4f",
+			             (long)k, z_points[k].norm(), w_ccd[k],
+			             std::isfinite(log_posterior[k]) ? log_posterior[k] : NAN,
+			             w[k]);
+
+			// Recover σ values from θ_k for each RE diag term
+			intptr_t cp = 0;
+			for (intptr_t g = 0; g < lay.G; g++) {
+				intptr_t qg = lay.q[g];
+				Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + cp, qg);
+				Eigen::MatrixXd D = cholesky_to_cov(L);
+				for (intptr_t t = 0; t < qg; t++)
+					std::fprintf(stderr, " %-10.3f",
+					             std::sqrt(std::max(D(t, t), 0.0)));
+				cp += n_chol_params(qg);
+			}
+			std::fprintf(stderr, " %-9.3f", std::exp(theta_k[n_chol]));
+
+			for (intptr_t j = 0; j < p; j++)
+				std::fprintf(stderr, " %-9.3f", results[k].beta[j]);
+			std::fprintf(stderr, "\n");
+		}
+
+		// ── Per-grid-point correlation matrices of Σ_β(θ_k) ─────────
+		// Only show grid points with non-negligible weight.
+		std::fprintf(stderr,
+			"\nper-grid-point correlation matrix of Σ_β(θ_k)  (coef_names: ");
+		if (coef_names) {
+			for (intptr_t j = 1; j <= p; j++)
+				std::fprintf(stderr, "%s%s", j > 1 ? ", " : "",
+				             std::string((*coef_names)[j].data(),
+				                         (*coef_names)[j].size()).c_str());
+		} else {
+			std::fprintf(stderr, "unavailable");
+		}
+		std::fprintf(stderr, "):\n");
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			if (w[k] < 1e-6) continue;
+			std::fprintf(stderr, "  k=%ld  (w=%.4f):\n", (long)k, w[k]);
+			for (intptr_t i = 0; i < p; i++)
+			{
+				std::fprintf(stderr, "   ");
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double dii = std::max(results[k].vcov_beta(i, i), 1e-30);
+					double djj = std::max(results[k].vcov_beta(j, j), 1e-30);
+					double corr = results[k].vcov_beta(i, j)
+					            / std::sqrt(dii * djj);
+					std::fprintf(stderr, " %7.3f", corr);
+				}
+				std::fprintf(stderr, "\n");
+			}
+		}
+
+		// ── Mixture posterior summary ───────────────────────────────
+		std::fprintf(stderr, "\nmixture posterior for β:\n  mean = [");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "", mix_mean[j]);
+		std::fprintf(stderr, "]\n  sd   = [");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "",
+			             std::sqrt(std::max(mix_var(j, j), 0.0)));
+		std::fprintf(stderr, "]\n  correlation matrix:\n");
+		for (intptr_t i = 0; i < p; i++)
+		{
+			std::fprintf(stderr, "   ");
+			for (intptr_t j = 0; j < p; j++)
+			{
+				double dii = std::max(mix_var(i, i), 1e-30);
+				double djj = std::max(mix_var(j, j), 1e-30);
+				double corr = mix_var(i, j) / std::sqrt(dii * djj);
+				std::fprintf(stderr, " %7.3f", corr);
+			}
+			std::fprintf(stderr, "\n");
+		}
+		std::fprintf(stderr, "=== end PHON_INLA_DEBUG ===\n\n");
+	}
+#endif
 
 	// ── 7. Mixture CDF, quantiles, and posterior summaries ──────
 
@@ -3162,7 +3459,10 @@ static void inla_grid_integrate_gaussian(
 	                   [n_chol](const Eigen::VectorXd &theta, double *disp) {
 	                       disp[0] = std::exp(theta[n_chol]);
 	                   },
-	                   off_ptr);
+	                   off_ptr,
+	                   // Gaussian enables conditional u-sampling to capture the
+	                   // β↔u ridge cancellation (matches brms's default waic).
+	                   &lay);
 }
 // Populates the Model's posterior fields with mixture-based estimates.
 //
