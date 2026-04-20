@@ -400,6 +400,29 @@ When a prior field is left at its default, Phonometrica replaces it at fit time 
 data-dependent weakly informative prior scaled to the response variable (following the
 approach of brms). Setting a prior explicitly disables auto-scaling for that component.
 
+.. _prior-scale-awareness:
+
+.. warning::
+
+   **Match the prior scale to the response scale.**  Custom priors supplied via
+   :func:`set_fixed`, :func:`set_variance`, and :func:`set_residual` are applied on the
+   *link scale* of the model, which for identity-link families (Gaussian, Student-t) is
+   the raw response scale.  Data on a Hz scale (e.g. F1 formant values in the hundreds)
+   will have slope coefficients of similar magnitude, so a tight prior like ``N(0, 10)``
+   acts as a very strong shrinkage toward zero — pulling coefficients away from their
+   data-supported values and, for Student-t specifically, causing the optimizer to
+   inflate ``sigma`` and push ``nu`` to its upper bound as it compensates.
+
+   For logit-link families (Binomial, Beta) and log-link families (Poisson, Negative
+   Binomial), coefficients live on a transformed scale and are typically O(1), so
+   ``N(0, 10)`` is a loose prior by default.  Custom priors on these families can
+   usually use moderate scales without issue.
+
+   When in doubt, omit the ``set_fixed`` call and let the auto-scaled defaults apply
+   (the constructor default is to auto-scale every field).  Phonometrica will emit a
+   ``prior_warning`` on the fitted model when the residual scale of an identity-link
+   fit exceeds 1.5 × sd(*y*), which reliably flags this class of misconfiguration.
+
 .. function:: Prior()
 
 Creates a new prior specification with all fields set to auto-scaled defaults:
@@ -423,6 +446,13 @@ Sets the default Normal prior for all fixed-effect slope coefficients to Normal(
 ``sd``). The intercept receives a separate prior centered on the response mean (this is
 handled automatically). Disables auto-scaling for fixed effects.
 
+.. note::
+
+   The ``sd`` value is on the link scale of the model.  For identity-link families
+   (Gaussian, Student-t) fit to data on a Hz or dB scale, a small ``sd`` such as ``10``
+   strongly shrinks coefficients toward the prior mean and may produce a degenerate
+   fit.  See :ref:`prior-scale-awareness` for details.
+
 Example::
 
    let prior = Prior()
@@ -433,13 +463,13 @@ Example::
 .. function:: set_fixed(prior, name, mean, sd)
 
 Sets a Normal prior for a specific coefficient identified by ``name`` (e.g.
-``"(Intercept)"``, ``"age"``). This overrides the default fixed-effects prior for that
+``"Intercept"``, ``"age"``). This overrides the default fixed-effects prior for that
 coefficient only.
 
 Example::
 
    let prior = Prior()
-   set_fixed(prior, "(Intercept)", 500, 100)  // informative prior for intercept (e.g. F1 in Hz)
+   set_fixed(prior, "Intercept", 500, 100)  // informative prior for intercept (e.g. F1 in Hz)
 
 ------------
 

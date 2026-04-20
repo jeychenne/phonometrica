@@ -58,7 +58,7 @@ struct CoefComponent
 
 // Parse a coefficient name into its interaction components.
 // "vowel[i]:context[CC]" → [{vowel, i}, {context, CC}]
-// "(Intercept)" → returns empty vector (special-cased by caller)
+// "Intercept" → returns empty vector (special-cased by caller)
 static std::vector<CoefComponent> parse_coef_name(const String &name)
 {
 	std::string s(name.data(), name.size());
@@ -167,7 +167,7 @@ static std::vector<ParsedCoef> preparse_coefs(const Model &model, intptr_t p)
 		auto &name = model.coef_names[j + 1];
 		std::string s(name.data(), name.size());
 
-		if (s == "(Intercept)") {
+		if (s == "Intercept") {
 			parsed[j].is_intercept = true;
 		}
 		else {

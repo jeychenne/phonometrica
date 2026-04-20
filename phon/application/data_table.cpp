@@ -582,6 +582,15 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		rt.printf("Note: %s\n", m.fit_warning.data());
 	}
 
+	// Prior-scale diagnostic (Bayesian only).  Separate from the
+	// identifiability warning: the fit can be well-identified yet still
+	// have its posterior driven by a prior whose scale does not match
+	// the response scale (see Model::prior_warning).
+	if (!m.prior_warning.empty())
+	{
+		rt.printf("Warning (prior scale): %s\n", m.prior_warning.data());
+	}
+
 	rt.printf("\n");
 }
 
@@ -836,6 +845,7 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "optimizer") return model.optimizer;
 		if (key == "well_identified") return model.well_identified;
 		if (key == "warning") return model.fit_warning;
+		if (key == "prior_warning") return model.prior_warning;
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
