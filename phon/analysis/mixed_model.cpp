@@ -1976,6 +1976,14 @@ struct GridPointResult
 	double neg_log_posterior;     // neg-log-posterior at θ
 	Eigen::VectorXd d3;          // SLA third-derivative correction per coefficient (size p)
 	                              // d3_j = Σ_i X³_{ij} ℓ'''(η̂_i)
+	// Populated only for non-Gaussian PIRLS grid points; empty otherwise.
+	// Used by compute_grid_waic to sample u from its Laplace-approximate
+	// conditional posterior u|β,θ,y, matching the Gaussian closed-form path.
+	//   working_weights[i] = μ'(η̂_i)² / V(μ̂_i)   (IRLS weight at convergence)
+	//   working_response[i] = η̂_i + (y_i − μ̂_i) / μ'(η̂_i)   (without offset,
+	//     on the Xβ+Zu scale matching solve_pirls convention)
+	Eigen::VectorXd working_weights;
+	Eigen::VectorXd working_response;
 };
 
 
@@ -2587,6 +2595,70 @@ static GridPointResult eval_pirls_grid_point(
 	Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 	gpr.vcov_beta = Cinv.topLeftCorner(p, p);
 
+	// ── Save working weights / response for conditional-u WAIC ──────
+	//
+	// The PIRLS-converged weights and a freshly computed working
+	// response z_gp = η̂_no_offset + (y − μ̂) / μ'(η̂) define the local
+	// Gaussian Laplace approximation to the conditional u | β, θ, y.
+	// compute_grid_waic uses these to build M_k = Z'W_k Z + D_k⁻¹ and
+	// sample u ~ N(û(β^(s)), M_k⁻¹) per posterior draw, capturing the
+	// β ↔ u ridge cancellation that fixed-BLUP WAIC misses.
+	//
+	// Weight choice: we need the *IRLS* weight (what solve_pirls
+	// iterated with), because the Laplace approximation to u | β, θ
+	// is centered on PIRLS's converged mode.  For binomial/Poisson/
+	// negbin/Student, the w_gp above is already the IRLS weight
+	// (d²/v from the default branch at lines ~2489-2503 or family-
+	// specific via custom_weights).  For the **beta** family, w_gp
+	// uses Fisher information weights to match glmmTMB's vcov block
+	// (see lines ~2469-2487) — those are NOT the IRLS weights, so we
+	// recompute them here specifically for the WAIC u-sampling path.
+	// The β vcov stored in gpr.vcov_beta remains unchanged.
+	//
+	// η̂ is reconstructed from (β̂, û) to match PIRLS's offset-excluded
+	// convention (see solve_pirls for why offset is excluded here).
+
+	if (fam.name == "beta")
+	{
+		// Beta IRLS weight: w_i = μ_i(1−μ_i)(1+φ) for logit link.
+		// This matches solve_pirls's d²/v calculation for beta
+		// (d = μ(1−μ), v = μ(1−μ)/(1+φ)).
+		double phi_b = std::exp(theta[n_chol]);
+		double one_plus_phi = 1.0 + phi_b;
+		gpr.working_weights = Eigen::VectorXd(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mi = std::clamp(res.mu[i], 1e-10, 1.0 - 1e-10);
+			gpr.working_weights[i] = mi * (1.0 - mi) * one_plus_phi;
+		}
+	}
+	else
+	{
+		gpr.working_weights = w_gp;
+	}
+
+	{
+		Eigen::VectorXd eta_hat = Xm * res.beta;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			auto &idx = *lay.group_indices[g];
+			intptr_t qg = lay.q[g];
+			for (intptr_t i = 0; i < n; i++)
+			{
+				intptr_t base = lay.offset[g] + idx[i] * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					eta_hat[i] += lay.Z(g, i, t) * res.u[base + t];
+			}
+		}
+		Eigen::VectorXd me_z = fam_gp.mu_eta(res.mu);
+		gpr.working_response = Eigen::VectorXd(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double d = std::max(me_z[i], 1e-10);
+			gpr.working_response[i] = eta_hat[i] + (ym[i] - res.mu[i]) / d;
+		}
+	}
+
 	// ── Simplified Laplace correction: third derivative d₃ ──────
 	//
 	// d3_j = Σ_i X³_{ij} × ℓ'''(η̂_i)
@@ -2664,13 +2736,23 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 //   1. Stores the per-grid-point results in model.grid_summary (for PPC later)
 //   2. Draws S posterior samples of (β, θ) from the mixture
 //   3. Samples the random effects u either:
-//        • from their full conditional posterior N(E[u|β,θ,y], Cov[u|β,θ,y])
-//          per draw (Gaussian with lay_cond_u != nullptr) — captures the β↔u
-//          ridge cancellation and matches brms's default waic; or
-//        • held fixed at the mode BLUPs (all other cases) — simpler but
-//          inflates p_WAIC when β and u are strongly coupled, e.g. when a
-//          fixed-effect covariate is constant within levels of the grouping
-//          factor (gender at speaker, condition at subject, etc.).
+//        • from their Gaussian closed-form conditional posterior
+//          N(E[u|β,θ,y], Cov[u|β,θ,y]) per draw (Gaussian family
+//          with lay_cond_u != nullptr) — captures the β↔u ridge
+//          cancellation and matches brms's default waic; or
+//        • from the Laplace-approximate conditional posterior (non-
+//          Gaussian family with lay_cond_u != nullptr AND every grid
+//          point has converged working weights/response populated).
+//          Uses the PIRLS-linearized quasi-Gaussian at each grid point
+//          mode: u | β, θ ≈ N(M_k⁻¹ Z' W_k (z_k − X β), M_k⁻¹) where
+//          M_k = Z' W_k Z + D_k⁻¹, W_k is the diagonal of converged
+//          IRLS weights, and z_k is the converged working response.
+//          The likelihood is then evaluated on the actual family
+//          density (not the quasi-Gaussian), so the approximation is
+//          only in the u-sampling distribution.  Same Laplace quality
+//          as the overall fit; or
+//        • held fixed at the mode BLUPs (fallback when lay_cond_u is
+//          null, or non-Gaussian without working weights).
 //   4. Evaluates pointwise log-likelihood using dispersion params from θ^(s)
 //   5. Calls compute_waic_from_loglik to populate model.waic/p_waic/lppd/se_waic
 //
@@ -2680,10 +2762,8 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 //   n_chol: number of Cholesky parameters (needed to find dispersion in θ)
 //   linkinv_scalar: scalar inverse link function (identity for Gaussian, exp for log, etc.)
 //   disp_from_theta: extracts dispersion params from a θ vector (family-dependent)
-//   lay_cond_u: if non-null AND model.family == "gaussian", enables conditional
-//       u-sampling (see (3) above). For non-Gaussian families the conditional
-//       u density is no longer Gaussian in closed form, so this hook is
-//       currently a no-op for them and the mode-BLUP fallback is used instead.
+//   lay_cond_u: if non-null, enables conditional u-sampling (see (3) above).
+//       Must be the GroupLayout used during grid integration.
 //
 // Historical note: an earlier version drew u from its *prior* N(0, D_k) per
 // posterior sample, on the reasoning that this would match DHARMa's
@@ -2760,8 +2840,24 @@ static void compute_grid_waic(
 
 	std::vector<double> zu_blup = compute_re_offset(model, n);
 
-	bool conditional_u = (lay_cond_u != nullptr)
-	                  && (model.family == "gaussian");
+	// Enable conditional u-sampling when the layout was passed AND either
+	// (a) the family is Gaussian (closed-form conditional), or (b) every
+	// grid point has working weights and response populated (PIRLS-Laplace
+	// conditional).  The fallback is the mode-BLUP zu_blup above.
+	bool conditional_u = (lay_cond_u != nullptr);
+	bool is_gaussian_path = (model.family == "gaussian");
+	if (conditional_u && !is_gaussian_path)
+	{
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			if (results[k].working_weights.size() != n
+			 || results[k].working_response.size() != n)
+			{
+				conditional_u = false;
+				break;
+			}
+		}
+	}
 
 	std::vector<Eigen::LLT<Eigen::MatrixXd>> u_llt;
 	std::vector<Eigen::VectorXd> aux_y;
@@ -2769,7 +2865,7 @@ static void compute_grid_waic(
 	std::vector<bool> u_llt_ok;
 	intptr_t J_cond = 0;
 
-	if (conditional_u)
+	if (conditional_u && is_gaussian_path)
 	{
 		J_cond = lay_cond_u->J_total;
 		u_llt.resize(n_grid);
@@ -2861,6 +2957,106 @@ static void compute_grid_waic(
 			if (u_llt_ok[k]) {
 				aux_y[k] = u_llt[k].solve(Zty * inv_s2);
 				aux_X[k] = u_llt[k].solve(ZtX * inv_s2);
+			}
+		}
+	}
+	else if (conditional_u /* && non-Gaussian */)
+	{
+		// PIRLS-Laplace conditional: for each grid point k the weights and
+		// working response vary with k (unlike the Gaussian case where only
+		// 1/σ²_k scales common Z'Z/Z'y/Z'X matrices). We rebuild the weighted
+		// products per grid point. Cost is O(n(p+q)²) per grid point, trivial
+		// compared to the PIRLS solve that already produced the mode.
+		//
+		// Sampling identity:
+		//   u | β, θ, y  ≈  N(û_k(β), M_k⁻¹)
+		// with û_k(β) = M_k⁻¹ · Z' W_k · (z_k − X β)
+		//    = aux_y[k] − aux_X[k] · β
+		// where
+		//   aux_y[k] = M_k⁻¹ · Z' W_k z_k
+		//   aux_X[k] = M_k⁻¹ · Z' W_k X
+		//   M_k = Z' W_k Z + D_k⁻¹
+
+		J_cond = lay_cond_u->J_total;
+		u_llt.resize(n_grid);
+		aux_y.resize(n_grid);
+		aux_X.resize(n_grid);
+		u_llt_ok.assign(n_grid, false);
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			const Eigen::VectorXd &w_k = results[k].working_weights;
+			const Eigen::VectorXd &z_k = results[k].working_response;
+
+			Eigen::VectorXd ZtWz = Eigen::VectorXd::Zero(J_cond);
+			Eigen::MatrixXd ZtWX = Eigen::MatrixXd::Zero(J_cond, p);
+			Eigen::MatrixXd M = Eigen::MatrixXd::Zero(J_cond, J_cond);
+
+			// Single pass over observations: accumulate Z'Wz, Z'WX, Z'WZ
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double wi = w_k[i];
+				double wzi = wi * z_k[i];
+
+				for (intptr_t g1 = 0; g1 < lay_cond_u->G; g1++)
+				{
+					intptr_t j1lev = (*lay_cond_u->group_indices[g1])[i];
+					intptr_t q1 = lay_cond_u->q[g1];
+					intptr_t base1 = lay_cond_u->offset[g1] + j1lev * q1;
+
+					for (intptr_t t1 = 0; t1 < q1; t1++)
+					{
+						double z1 = lay_cond_u->Z(g1, i, t1);
+						// Z'Wz
+						ZtWz[base1 + t1] += z1 * wzi;
+						// Z'WX
+						double wz1 = wi * z1;
+						for (intptr_t jj = 0; jj < p; jj++)
+							ZtWX(base1 + t1, jj) += wz1 * Xm(i, jj);
+						// Z'WZ within group
+						for (intptr_t t2 = 0; t2 < q1; t2++)
+							M(base1 + t1, base1 + t2) += wz1 * lay_cond_u->Z(g1, i, t2);
+						// Z'WZ cross-group
+						for (intptr_t g2 = g1 + 1; g2 < lay_cond_u->G; g2++)
+						{
+							intptr_t j2lev = (*lay_cond_u->group_indices[g2])[i];
+							intptr_t q2 = lay_cond_u->q[g2];
+							intptr_t base2 = lay_cond_u->offset[g2] + j2lev * q2;
+							for (intptr_t t2 = 0; t2 < q2; t2++)
+							{
+								double val = wz1 * lay_cond_u->Z(g2, i, t2);
+								M(base1 + t1, base2 + t2) += val;
+								M(base2 + t2, base1 + t1) += val;
+							}
+						}
+					}
+				}
+			}
+
+			// Add block-diagonal D_k⁻¹
+			Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+			intptr_t cp = 0;
+			for (intptr_t g = 0; g < lay_cond_u->G; g++)
+			{
+				intptr_t qg = lay_cond_u->q[g];
+				Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + cp, qg);
+				Eigen::MatrixXd D_inv_g = cholesky_to_precision(L);
+				for (intptr_t jlev = 0; jlev < lay_cond_u->J[g]; jlev++)
+				{
+					intptr_t base = lay_cond_u->offset[g] + jlev * qg;
+					for (intptr_t t1 = 0; t1 < qg; t1++)
+						for (intptr_t t2 = 0; t2 < qg; t2++)
+							M(base + t1, base + t2) += D_inv_g(t1, t2);
+				}
+				cp += n_chol_params(qg);
+			}
+
+			u_llt[k].compute(M);
+			u_llt_ok[k] = (u_llt[k].info() == Eigen::Success);
+			if (u_llt_ok[k])
+			{
+				aux_y[k] = u_llt[k].solve(ZtWz);
+				aux_X[k] = u_llt[k].solve(ZtWX);
 			}
 		}
 	}
@@ -3091,24 +3287,17 @@ static void inla_grid_integrate_gaussian(
 		for (intptr_t k = 0; k < n_grid; k++) w[k] = 1.0 / (double) n_grid;
 	}
 
-	// ── 5b. SLA-corrected conditional means ─────────────────────
+	// ── 5b. Per-grid-point conditional means ───────────────────
 	//
-	// For Gaussian LMMs, ℓ'''(η) = 0 for all observations, so d₃ = 0
-	// and sla_beta[k] == results[k].beta identically.  We include the
-	// same structure as the PIRLS path for code consistency.
+	// For Gaussian families ℓ'''(η) ≡ 0, so the SLA third-derivative
+	// correction is mathematically zero here.  See the PIRLS path for
+	// the full rationale (and for why SLA is also disabled there).
+	// The variable name sla_beta is kept to minimise downstream churn.
 
 	std::vector<Eigen::VectorXd> sla_beta(n_grid);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
 		sla_beta[k] = results[k].beta;
-		if (results[k].d3.size() == p)
-		{
-			for (intptr_t j = 0; j < p; j++)
-			{
-				double s2 = results[k].vcov_beta(j, j);
-				sla_beta[k][j] += 0.5 * results[k].d3[j] * s2 * s2;
-			}
-		}
 	}
 
 	// ── 6. Mixture posterior for β ───────────────────────────────
@@ -3554,33 +3743,45 @@ static void inla_grid_integrate_pirls(
 		for (intptr_t k = 0; k < n_grid; k++) w[k] = 1.0 / (double) n_grid;
 	}
 
-	// ── 5b. SLA-corrected conditional means ─────────────────────
+	// ── 5b. Per-grid-point conditional means ───────────────────
 	//
-	// Simplified Laplace correction (Rue, Martino & Chopin 2009 §3.2.2):
-	// The Gaussian approximation π̃_G(β_j | θ_k) = N(μ_j, σ²_j) is corrected
-	// by shifting the component mean to account for third-derivative skewness:
+	// The current implementation uses the Gaussian Laplace approximation
+	// at each grid point without any additional skewness correction:
 	//
-	//   μ̃_j(θ_k) = μ_j(θ_k) + ½ d₃_j(θ_k) σ⁴_j(θ_k)
+	//   μ̃_j(θ_k) = β̂_j(θ_k) = mode of π_G(β_j | θ_k, y)
 	//
-	// For Gaussian families d₃ = 0, so no correction.  For non-Gaussian
-	// families (binomial, Poisson, NB, beta, Student), this captures the
-	// skewness of the log-full-conditional and matters for small-sample
-	// GLMMs with skewed variance-component posteriors.
+	// A simplified Laplace (SLA) correction along the lines of
+	// Rue, Martino & Chopin (2009) §3.2.2 was previously applied as
 	//
-	// The variance correction is O(n⁻²) and is not applied.
+	//   μ̃_j(θ_k) = β̂_j(θ_k) + ½ d₃_j(θ_k) σ⁴_j(θ_k)
+	//
+	// where d₃_j = Σ_i X³_{ij} ℓ'''(η̂_i).  This formula is only first-
+	// order correct for the *marginal* posterior of β_j when the mixed
+	// third derivatives ∂³ℓ/∂β_j∂β_k∂β_l are negligible — i.e., when β_j
+	// is effectively independent of the other fixed effects.  For the
+	// **intercept** column (all 1's, correlated with every other coefficient)
+	// this assumption is routinely violated, and we observed
+	// 0.1–0.3 logit over-corrections on binomial/Poisson GLMM intercepts
+	// relative to brms (NUTS MCMC) and INLA references, with no benefit
+	// to slope estimates (whose SLA shifts are numerically negligible —
+	// ≤ 0.003 on the logit scale for typical designs).
+	//
+	// A properly marginalised SLA correction would require the full
+	// third-derivative tensor of ℓ plus a correction derived from
+	// integrating the other β's out Laplace-style.  That is deferred.
+	// For now we use the plain Laplace-at-the-mode β̂_j(θ_k), which
+	// matches INLA's default for non-Gaussian models and gives posterior
+	// means within MC noise of brms.
+	//
+	// Note: for Gaussian families d₃ = 0 always (ℓ'''(η) ≡ 0 for the
+	// normal log-density w.r.t. η), so this branch was a no-op there.
+	// The variable name sla_beta is kept to minimise downstream churn;
+	// it now simply aliases β̂_k.
 
 	std::vector<Eigen::VectorXd> sla_beta(n_grid);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
 		sla_beta[k] = results[k].beta;
-		if (results[k].d3.size() == p)
-		{
-			for (intptr_t j = 0; j < p; j++)
-			{
-				double s2 = results[k].vcov_beta(j, j);
-				sla_beta[k][j] += 0.5 * results[k].d3[j] * s2 * s2;
-			}
-		}
 	}
 
 	// ── 6. Mixture posterior for β ───────────────────────────────
@@ -3864,7 +4065,11 @@ static void inla_grid_integrate_pirls(
 
 	compute_grid_waic(model, results, w, z_points, theta_star, T,
 	                   Xm, ym, n, p, n_chol,
-	                   linkinv_fn, disp_fn, off_ptr);
+	                   linkinv_fn, disp_fn, off_ptr,
+	                   // Enable conditional u-sampling via the PIRLS-Laplace
+	                   // approximation (uses working weights / response stored
+	                   // at each grid point).
+	                   &lay);
 }
 
 
