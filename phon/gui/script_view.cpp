@@ -28,6 +28,7 @@
 #include <QTimer>
 #include <QKeyEvent>
 #include <QShortcut>
+#include <QApplication>
 #include <phon/gui/script_view.hpp>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/search_bar.hpp>
@@ -220,6 +221,23 @@ void ScriptView::execute()
 	else
 		code = m_editor->text();
 
+	// Show a busy cursor while the script runs. Script execution is synchronous
+	// on the main thread (the GUI blocks until `do_string` returns), so this is
+	// the main visual cue that something is happening — especially useful for
+	// long operations such as fitting a model. RAII ensures the cursor is
+	// restored even if an exception escapes the try blocks below.
+	struct WaitCursorGuard
+	{
+		WaitCursorGuard()
+		{
+			QApplication::setOverrideCursor(Qt::WaitCursor);
+			// Repaint pending events once so the cursor actually shows before
+			// we enter the (blocking) runtime call.
+			QApplication::processEvents();
+		}
+		~WaitCursorGuard() { QApplication::restoreOverrideCursor(); }
+	} wait_guard;
+
 	// Redirect `print` output and the scripting `clear()` target to the
 	// OutputPanel while running a script. Console output (typed
 	// interactively) is unaffected because it goes through Console::runCode.
@@ -278,7 +296,8 @@ void ScriptView::execute()
 		}
 	}
 
-	// `restore` destructor puts both callbacks back in place.
+	// `restore` and `wait_guard` destructors put the callbacks and cursor back
+	// in place, in reverse declaration order (cursor last).
 }
 
 

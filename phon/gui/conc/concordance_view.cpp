@@ -32,6 +32,8 @@
 #include <QToolButton>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QGuiApplication>
+#include <QClipboard>
 #include <phon/gui/file_dialog.hpp>
 #include <QFileInfo>
 #include <algorithm>
@@ -1619,6 +1621,15 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 	auto &match = m_conc->get_match(src + 1);
 
 	QMenu menu(this);
+
+	// Copy the cell's display value to the clipboard. Uses the display role
+	// so what's copied matches what the user sees (e.g. native-scale F1/F2
+	// rather than the stored Hz when ERB/Bark is toggled on).
+	menu.addAction(QIcon(":/icons/clipboard-copy.svg"), tr("Copy value"), this, [this, index]() {
+		auto text = index.data(Qt::DisplayRole).toString();
+		QGuiApplication::clipboard()->setText(text);
+	});
+	menu.addSeparator();
 
 	menu.addAction(QIcon(":/icons/file-search-corner.svg"), tr("View in annotation"), this, &ConcordanceView::onViewMatch);
 

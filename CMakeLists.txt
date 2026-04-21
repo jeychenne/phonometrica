@@ -55,7 +55,7 @@ add_definitions(
 ## DEBUG ##
 ###########
 
-add_definitions(-DPHON_INLA_DEBUG=1)
+#add_definitions(-DPHON_INLA_DEBUG=1)
 
 
 ########################

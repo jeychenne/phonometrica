@@ -1486,7 +1486,7 @@ static void check_prior_scale_mismatch(Model &model,
 	{
 		if (formula.has_random_effects())
 		{
-			for (intptr_t k = 0; k < model.hyper_names.size(); k++)
+			for (intptr_t k = 1; k <= model.hyper_names.size(); k++)
 			{
 				if (model.hyper_names[k] == String("sd(residual)"))
 				{
