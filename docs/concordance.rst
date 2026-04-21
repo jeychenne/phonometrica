@@ -157,6 +157,60 @@ new column by applying a mathematical formula to each value. For instance, you c
 using ``bark(x)`` or log-transform durations using ``log(x)``. See :ref:`transform` for the full list of available
 functions.
 
+.. _applying-coding-protocols:
+
+Applying coding protocols
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A **coding protocol** is a description of a coding scheme (such as the numeric schwa coding used in the PFC project)
+which tells Phonometrica how to split each coded value into its constituent fields and, optionally, how to replace
+raw codes with human-readable labels. Protocols are stored as JSON files. See :ref:`page-plugins` for the full
+specification of the protocol format.
+
+There are two ways to attach a protocol to a concordance column. Both are available on the right-click menu of any
+text column header:
+
+- **Apply coding protocol...** opens a file picker; pick an existing ``.json`` protocol and Phonometrica creates one
+  new column per field in the protocol, to the right of the existing columns. Raw codes are replaced with the labels
+  defined in the protocol; values that do not match any label are kept as-is so that no information is lost.
+
+- **Build coding protocol...** opens the protocol builder (see below). The clicked column supplies sample input for
+  the live preview, and the protocol can be applied directly from the dialog when you're happy with it. This is the
+  recommended entry point when you don't already have a ``.json`` protocol for your coding scheme.
+
+If some rows do not match the protocol, or contain field values that aren't defined in the protocol, Phonometrica
+will display a warning summarising how many rows are affected. Non-matching rows are left blank across all new
+columns; rows with undefined field values keep the raw code in the affected columns.
+
+
+Building a coding protocol
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The protocol builder is an interactive dialog for creating or editing a coding protocol without writing JSON by hand.
+It can be launched in two ways:
+
+- From **Plugins > Build coding protocol...** (standalone mode). The sample area starts empty; type or paste coded
+  values directly into it to test the protocol as you build it.
+
+- From a concordance column's right-click menu, via **Build coding protocol...** The first ten values of the column
+  are copied into the sample area automatically, and the dialog's **Apply** button becomes available to apply the
+  protocol directly to that column.
+
+The dialog is divided into three panes. The **field list** on the left lets you add, remove, and reorder fields.
+The **field editor** in the middle configures the selected field: its name, the ``match_all`` regular expression
+(which must match every possible value of that field), and a table of ``match`` / ``label`` pairs that translate raw
+codes into human-readable labels. The **preview** on the right shows the sample text split into columns according
+to the current protocol. Each row is marked ✓ (fully translated), ⚠ (matched the protocol but contains one or more
+values not defined in the label table), or ✗ (did not match the protocol at all).
+
+Above the preview you can set the protocol's name, the **separator** that appears between fields in a coded value
+(leave empty when fields are concatenated directly, as in ``1412``), and whether the protocol is **case-sensitive**.
+
+At the bottom of the dialog, **Load...** reads an existing protocol into the builder; the menu lists every protocol
+installed under a plugin, plus a **Browse file system...** entry for arbitrary paths. **Save...** writes the current
+protocol to a ``.json`` file via a file dialog. **Apply...** is enabled only when the dialog was launched from a
+concordance column and applies the current protocol to that column.
+
 
 Keyboard shortcuts
 ------------------

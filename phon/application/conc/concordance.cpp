@@ -23,6 +23,7 @@
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/protocol_apply.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/utils/xml.hpp>
 
@@ -2318,6 +2319,44 @@ void Concordance::add_text_column(const String &header, const std::vector<String
 
 	m_aux_columns.append(std::move(col));
 	modify();
+}
+
+ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Protocol &protocol, bool translate)
+{
+	const intptr_t n_cols = column_count();
+	if (source_col < 1 || source_col > n_cols) {
+		throw error("Cannot apply protocol: column index % is out of range (1..%)", source_col, n_cols);
+	}
+	if (is_measurement_column(source_col)) {
+		throw error("Cannot apply protocol to a measurement column (column %)", source_col);
+	}
+
+	const intptr_t n_rows = row_count();
+
+	// Read displayed text of the source column. get_cell() handles every column type uniformly,
+	// so targets, aux text columns, file-info, context, and metadata all work.
+	Array<String> source(n_rows);
+	for (intptr_t i = 1; i <= n_rows; i++) {
+		source.append(get_cell(i, source_col));
+	}
+
+	// Delegate the actual splitting and recoding to the free function. Explicit namespace
+	// qualification is required because the member name here hides the free function.
+	ProtocolApplyResult result = phonometrica::apply_protocol(source, protocol, translate);
+
+	// Append each output column as a text aux column. add_text_column calls modify() for each,
+	// which is fine — the concordance is dirtied regardless of how many columns we add.
+	for (intptr_t j = 1; j <= result.headers.size(); j++)
+	{
+		std::vector<String> col_values;
+		col_values.reserve((size_t)result.columns[j].size());
+		for (intptr_t i = 1; i <= result.columns[j].size(); i++) {
+			col_values.push_back(result.columns[j][i]);
+		}
+		add_text_column(result.headers[j], col_values);
+	}
+
+	return result;
 }
 
 bool Concordance::matches_equal(const Concordance &other) const

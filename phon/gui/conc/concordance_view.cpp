@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/conc/concordance_commands.hpp>
+#include <phon/gui/conc/protocol_builder_dialog.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/convert_to_text_dialog.hpp>
@@ -51,6 +52,8 @@
 #include <phon/application/dataset.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/praat.hpp>
+#include <phon/application/protocol.hpp>
+#include <phon/application/protocol_apply.hpp>
 #include <phon/analysis/column_metrics.hpp>
 #include <phon/analysis/formula_engine.hpp>
 
@@ -550,6 +553,83 @@ void ConcordanceView::setupUi()
 			menu.addSeparator();
 			menu.addAction(tr("Recode values..."), this, [this, section]() {
 				onRecodeColumn(section);
+			});
+			menu.addAction(tr("Apply coding protocol..."), this, [this, col_1based]() {
+				auto qpath = getOpenFileName(this, tr("Apply coding protocol"),
+					tr("Coding protocols (*.json);;All files (*)"));
+				if (qpath.isEmpty()) return;
+
+				String path(qpath.toUtf8().constData());
+
+				// Load the protocol. The Runtime is needed because Phonometrica parses JSON via the
+				// scripting engine (JSON is a subset of the Phon script language).
+				std::shared_ptr<Protocol> protocol;
+				try {
+					protocol = std::make_shared<Protocol>(Project::get()->runtime(), path);
+				}
+				catch (std::exception &e) {
+					QMessageBox::critical(this, tr("Protocol error"),
+						tr("Could not load protocol:\n%1").arg(QString::fromUtf8(e.what())));
+					return;
+				}
+
+				// Apply the protocol to the clicked column. Structural errors (e.g. malformed
+				// match_all) throw; per-row parse failures are collected in result.failed_rows.
+				ProtocolApplyResult result;
+				try {
+					result = m_conc->apply_protocol(col_1based, *protocol, /*translate=*/true);
+				}
+				catch (std::exception &e) {
+					QMessageBox::critical(this, tr("Apply coding protocol"),
+						tr("Could not apply protocol:\n%1").arg(QString::fromUtf8(e.what())));
+					return;
+				}
+
+				// Refresh the view so the newly-appended aux columns become visible. Mirrors the
+				// refresh sequence used after remove_aux_column above.
+				m_model->refreshAll();
+				m_table->resizeColumnsToContents();
+				updateColumnVisibility();
+				setupFilterBar();
+				updateCountLabel();
+				emit titleChanged(label());
+
+				if (!result.failed_rows.empty() || !result.untranslated_rows.empty()) {
+					QStringList msgs;
+					if (!result.failed_rows.empty()) {
+						msgs << tr("%1 row(s) did not match the protocol and were left blank.")
+							.arg((qlonglong) result.failed_rows.size());
+					}
+					if (!result.untranslated_rows.empty()) {
+						msgs << tr("%1 row(s) contain values not defined in the protocol; "
+						           "raw values were kept.")
+							.arg((qlonglong) result.untranslated_rows.size());
+					}
+					QMessageBox::warning(this, tr("Apply coding protocol"),
+						msgs.join(QStringLiteral("\n\n")));
+				}
+			});
+			menu.addAction(tr("Build coding protocol..."), this, [this, col_1based]() {
+				// Seed the dialog with the first 10 values of the clicked column so the user
+				// has concrete sample input to iterate the protocol against.
+				Array<String> samples;
+				intptr_t n_rows = m_conc->row_count();
+				intptr_t n = std::min<intptr_t>(n_rows, 10);
+				for (intptr_t i = 1; i <= n; i++) {
+					samples.append(m_conc->get_cell(i, col_1based));
+				}
+
+				ProtocolBuilderDialog dlg(Project::get()->runtime(), m_conc, col_1based, this);
+				dlg.setSampleText(samples);
+				if (dlg.exec() == QDialog::Accepted) {
+					// Apply was clicked and succeeded inside the dialog; refresh the view.
+					m_model->refreshAll();
+					m_table->resizeColumnsToContents();
+					updateColumnVisibility();
+					setupFilterBar();
+					updateCountLabel();
+					emit titleChanged(label());
+				}
 			});
 		}
 

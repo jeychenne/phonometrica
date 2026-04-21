@@ -326,7 +326,7 @@ QWidget *ProtocolQueryEditor::createButtonPanel()
 
 String ProtocolQueryEditor::buildPattern() const
 {
-	auto separator = m_protocol->field_separator();
+	auto separator = m_protocol->separator();
 	auto qsep = QString::fromUtf8(separator.data(), (int) separator.size());
 
 	QStringList parts;

@@ -55,7 +55,14 @@ class Protocol final
 {
 public:
 
+	// Tag type used to disambiguate the JSON-string constructor from the path constructor.
+	struct FromString {};
+
 	Protocol(Runtime &rt, const String &path);
+
+	// Parse a coding protocol from an in-memory JSON string. Used by the protocol-builder dialog
+	// to drive the live preview without touching the filesystem.
+	Protocol(Runtime &rt, const String &json, FromString);
 
 	String version() const { return m_version; }
 
@@ -67,7 +74,7 @@ public:
 
 	String name() const { return m_name; }
 
-	String field_separator() const { return m_separator; }
+	String separator() const { return m_separator; }
 
 	intptr_t field_count() const { return m_fields.size(); }
 
@@ -80,6 +87,10 @@ public:
 private:
 
 	void parse();
+
+	// Parse protocol fields from an already-evaluated JSON Variant (Table at the top level).
+	// Shared by both the path-based and string-based constructors.
+	void parse_variant(Variant result);
 
 	Runtime &runtime;
 

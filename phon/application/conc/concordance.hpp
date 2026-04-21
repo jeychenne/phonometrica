@@ -29,6 +29,10 @@
 
 namespace phonometrica {
 
+// Forward declarations (full definitions in phon/application/protocol.hpp and protocol_apply.hpp).
+class Protocol;
+struct ProtocolApplyResult;
+
 class Concordance : public DataTable
 {
 public:
@@ -276,6 +280,16 @@ public:
 	/// Append a new text auxiliary column with the given header and values.
 	/// The values vector must have exactly row_count() elements.
 	void add_text_column(const String &header, const std::vector<String> &values);
+
+	/// Apply a coding protocol to the text of column `source_col` (1-based), appending one new
+	/// text aux column per protocol field. Cells are read via get_cell() so any text column is
+	/// accepted (targets, aux columns, file info, context, metadata); measurement (numeric)
+	/// columns are rejected. When `translate` is true (default), raw captures are replaced by
+	/// the protocol's human-readable labels; when false, raw captures are kept. The source
+	/// column is not modified or hidden — column visibility is a view-layer concern.
+	/// Rows that fail to match the protocol yield empty cells across all new columns and are
+	/// reported via the returned ProtocolApplyResult's `failed_rows` list.
+	ProtocolApplyResult apply_protocol(intptr_t source_col, const Protocol &protocol, bool translate = true);
 
 	/// Check that this concordance has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.

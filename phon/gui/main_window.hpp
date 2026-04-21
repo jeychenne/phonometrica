@@ -66,6 +66,12 @@ public:
 	// Called after show() — loads plugins and startup scripts.
 	void postInitialize();
 
+	// Access to installed plugins, needed by dialogs that enumerate protocols (e.g. the
+	// protocol builder's "Load" menu). Phonometrica is a single-MainWindow application, so the
+	// static instance pointer is set in the constructor body and cleared in the destructor.
+	const Array<AutoPlugin> &plugins() const { return m_plugins; }
+	static MainWindow *instance() { return s_instance; }
+
 protected:
 
 	void closeEvent(QCloseEvent *event) override;
@@ -276,6 +282,10 @@ private:
 
 	// Default dock layout state, captured at construction before restoreWindowState().
 	QByteArray m_default_state;
+
+	// Single-instance pointer used by MainWindow::instance(). Set in the constructor body,
+	// cleared in the destructor. Phonometrica is not designed to run multiple MainWindows.
+	static MainWindow *s_instance;
 };
 
 } // namespace phonometrica
