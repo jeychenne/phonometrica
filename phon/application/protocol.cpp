@@ -30,6 +30,16 @@ Protocol::Protocol(Runtime &rt, const String &path) :
 	parse();
 }
 
+Protocol::Protocol(Runtime &rt, const String &json, FromString) :
+	runtime(rt)
+{
+	// Drive parsing through the scripting engine the same way the file path constructor does.
+	// do_string returns the parsed JSON as a Variant, which parse_variant then walks. m_path is
+	// left empty; the protocol has no on-disk home when built from a string.
+	auto result = runtime.do_string(json);
+	parse_variant(std::move(result));
+}
+
 String Protocol::get_field_name(intptr_t i) const
 {
 	return m_fields[i].name;
@@ -38,6 +48,11 @@ String Protocol::get_field_name(intptr_t i) const
 void Protocol::parse()
 {
 	auto result = runtime.do_file(m_path);
+	parse_variant(std::move(result));
+}
+
+void Protocol::parse_variant(Variant result)
+{
 	if (!check_type<Table>(result)) {
 		throw error("File % must contain a table", m_path);
 	}
@@ -65,7 +80,7 @@ void Protocol::parse()
 		m_version = cast<String>(it->second);
 	}
 
-	it = json.find("field_separator");
+	it = json.find("separator");
 	if (it != json.end()) {
 		m_separator = cast<String>(it->second);
 	}

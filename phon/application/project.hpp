@@ -74,6 +74,10 @@ public:
 
 	bool has_path() const;
 
+	/// Access to the scripting runtime, needed by consumers that load Protocol or other script-parsed
+	/// resources (e.g. coding protocols from the concordance/dataset context menus).
+	Runtime &runtime() { return rt; }
+
 	void save();
 
 	void save(String path);

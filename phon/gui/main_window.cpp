@@ -61,6 +61,7 @@
 #include <phon/gui/analysis_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
 #include <phon/gui/conc/protocol_query_editor.hpp>
+#include <phon/gui/conc/protocol_builder_dialog.hpp>
 #include <phon/gui/transcribe_dialog.hpp>
 #include <phon/gui/find_silences_dialog.hpp>
 #include <phon/gui/transcription_worker.hpp>
@@ -79,10 +80,13 @@ namespace phonometrica {
 
 static constexpr int MAX_RECENT = 10;
 
+MainWindow *MainWindow::s_instance = nullptr;
+
 
 MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 	QMainWindow(parent), m_runtime(rt)
 {
+	s_instance = this;
 	resize(1200, 800);
 
 	// Make the left and right docks span the full height of the window.
@@ -308,6 +312,11 @@ QMenu *MainWindow::createToolsMenu()
 	m_plugin_separator = menu->addSeparator();
 
 	menu->addAction(tr("Run script..."), this, &MainWindow::onRunScript);
+	menu->addSeparator();
+	menu->addAction(tr("Build coding protocol..."), this, [this]() {
+		ProtocolBuilderDialog dlg(m_runtime, this);
+		dlg.exec();
+	});
 	menu->addSeparator();
 	menu->addAction(tr("Install plugin..."), this, &MainWindow::onInstallPlugin);
 	menu->addAction(tr("Uninstall plugin..."), this, &MainWindow::onUninstallPlugin);

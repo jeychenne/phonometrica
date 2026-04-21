@@ -73,6 +73,16 @@ A coding protocol defines a number of **fields** which can take on a number of v
 field, and Phonometrica converts the query to the corresponding regular expression, as defined by the coding protocol. Coding protocols are written
 in JSON.  Here is a simple yet realistic example, drawn from the `PFC project <http://www.projet-pfc.net>`_:
 
+.. note::
+
+    Writing a coding protocol by hand is not strictly necessary. The **protocol builder** dialog (available from
+    ``Plugins > Build coding protocol...`` or from the right-click menu of any concordance column) provides an
+    interactive editor with live preview and saves the result as a JSON file that can be dropped into a plugin's
+    ``Protocols/`` directory. Hand-editing remains useful when you need features that the builder does not expose
+    (for instance the ``layer_index``, ``layer_field``, or ``fields_per_row`` attributes described below), or when
+    you want to version-control the protocol source directly. See :ref:`applying-coding-protocols` for more on
+    using the builder.
+
 .. code:: json
 
     {
@@ -80,7 +90,7 @@ in JSON.  Here is a simple yet realistic example, drawn from the `PFC project <h
         "name": "Schwa coding",
         "version": "0.1",
         
-        "field_separator": "",
+        "separator": "",
         "layer_index": 2,
         "fields_per_row": 3,
 
@@ -135,7 +145,7 @@ in JSON.  Here is a simple yet realistic example, drawn from the `PFC project <h
 The ``type`` field is required and indicates that this file is a coding protocol. The ``name`` field corresponds to the name of the grammar, as it 
 will be seen by the user, and ``version`` is an optional field which corresponds to the version of the protocol.
 
-Next, the ``field_separator`` is an optional attribute which indicates the separator to be used between fields. In this case, it is an empty string, 
+Next, the ``separator`` is an optional attribute which indicates the separator to be used between fields. In this case, it is an empty string, 
 which means that the fields are concatenated directly (e.g. ``1412``). If the separator
 was ``_``, for instance, each field should be separated by this symbol (e.g. ``1_4_1_2``). 
 
