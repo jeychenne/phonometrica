@@ -2142,24 +2142,88 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 {
 	check_columns_compatible(other);
 
-	std::set<AutoMatch, MatchLess> buffer;
+	// Track the origin of each surviving match so we can pull aux-column values
+	// from the correct source concordance. source: 0 = *this*, 1 = other.
+	// src_row is a 1-based index into the corresponding source's m_matches.
+	struct Origin { int source; intptr_t src_row; };
 
-	for (auto &match : m_matches) {
-		buffer.insert(std::make_unique<Match>(*match));
+	std::map<AutoMatch, Origin, MatchLess> buffer;
+
+	for (intptr_t i = 1; i <= m_matches.size(); i++) {
+		buffer.try_emplace(std::make_unique<Match>(*m_matches[i]), Origin{0, i});
 	}
-	for (auto &match : other.m_matches) {
-		buffer.insert(std::make_unique<Match>(*match));
+	for (intptr_t i = 1; i <= other.m_matches.size(); i++) {
+		// If an equal match is already present (from *this*), try_emplace is a
+		// no-op and the existing origin is preserved, so aux values for
+		// duplicates come from *this* consistently.
+		buffer.try_emplace(std::make_unique<Match>(*other.m_matches[i]), Origin{1, i});
 	}
+
 	Array<AutoMatch> result;
+	std::vector<Origin> origins;
 	result.reserve((intptr_t)buffer.size());
-	for (auto &match : buffer)
+	origins.reserve(buffer.size());
+	for (auto &entry : buffer)
 	{
-		auto m = const_cast<AutoMatch&>(match).release();
+		auto m = const_cast<AutoMatch&>(entry.first).release();
 		result.append(std::unique_ptr<Match>(m));
+		origins.push_back(entry.second);
 	}
+
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
+
+	// Copy header aliases: prefer *this*; add any from other not already present.
+	for (auto &[key, val] : m_header_aliases) {
+		conc->set_header_alias(key, val);
+	}
+	for (auto &[key, val] : other.m_header_aliases) {
+		if (m_header_aliases.find(key) == m_header_aliases.end()) {
+			conc->set_header_alias(key, val);
+		}
+	}
+
+	// Rebuild aux columns, pulling each cell from its originating source.
+	// check_columns_compatible() guarantees both sides have the same aux count
+	// and headers (because column_count() includes aux_display_column_count()).
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		auto &src_a = m_aux_columns[c];
+		auto &src_b = other.m_aux_columns[c];
+		AuxColumn dst;
+		dst.header = src_a.header;
+		dst.type = src_a.type;
+		dst.semitone_ref = src_a.semitone_ref;
+
+		intptr_t n = (intptr_t)origins.size();
+		if (src_a.type == AuxColumnType::Text) {
+			dst.text_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				auto &src = (origins[i].source == 0) ? src_a : src_b;
+				intptr_t r = origins[i].src_row;
+				if (r >= 1 && r <= src.text_data.size())
+					dst.text_data[i + 1] = src.text_data[r];
+			}
+		}
+		else {
+			dst.num_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				auto &src = (origins[i].source == 0) ? src_a : src_b;
+				intptr_t r = origins[i].src_row;
+				if (r >= 1 && r <= src.num_data.size())
+					dst.num_data[i + 1] = src.num_data[r];
+			}
+		}
+		conc->m_aux_columns.append(std::move(dst));
+	}
+
+	// OR-merge aux display flags so that any optional derived column visible
+	// on either side remains visible in the result.
+	conc->m_aux_pitch_st     = m_aux_pitch_st     || other.m_aux_pitch_st;
+	conc->m_aux_pitch_erb    = m_aux_pitch_erb    || other.m_aux_pitch_erb;
+	conc->m_aux_formant_erb  = m_aux_formant_erb  || other.m_aux_formant_erb;
+	conc->m_aux_formant_bark = m_aux_formant_bark || other.m_aux_formant_bark;
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
@@ -2172,20 +2236,62 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
+	std::vector<intptr_t> src_rows;   // 1-based row indices in *this*
 
-	for (auto &match : m_matches)
+	for (intptr_t i = 1; i <= m_matches.size(); i++)
 	{
-		// Matches are guaranteed to be sorted
+		auto &match = m_matches[i];
+		// Matches are guaranteed to be sorted.
 		auto it = std::lower_bound(other.m_matches.begin(), other.m_matches.end(), match, MatchLess());
 
 		if (it != other.m_matches.end() && **it == *match) {
 			result.append(std::make_unique<Match>(*match));
+			src_rows.push_back(i);
 		}
 	}
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
+
+	// Copy header aliases from *this*.
+	for (auto &[key, val] : m_header_aliases) {
+		conc->set_header_alias(key, val);
+	}
+
+	// Subset aux columns by src_rows (same pattern as Concordance::subset).
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		auto &src = m_aux_columns[c];
+		AuxColumn dst;
+		dst.header = src.header;
+		dst.type = src.type;
+		dst.semitone_ref = src.semitone_ref;
+
+		intptr_t n = (intptr_t)src_rows.size();
+		if (src.type == AuxColumnType::Text) {
+			dst.text_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t r = src_rows[i];
+				if (r >= 1 && r <= src.text_data.size())
+					dst.text_data[i + 1] = src.text_data[r];
+			}
+		}
+		else {
+			dst.num_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t r = src_rows[i];
+				if (r >= 1 && r <= src.num_data.size())
+					dst.num_data[i + 1] = src.num_data[r];
+			}
+		}
+		conc->m_aux_columns.append(std::move(dst));
+	}
+
+	conc->m_aux_pitch_st     = m_aux_pitch_st;
+	conc->m_aux_pitch_erb    = m_aux_pitch_erb;
+	conc->m_aux_formant_erb  = m_aux_formant_erb;
+	conc->m_aux_formant_bark = m_aux_formant_bark;
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
@@ -2198,20 +2304,62 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
+	std::vector<intptr_t> src_rows;   // 1-based row indices in *this*
 
-	for (auto &match : m_matches)
+	for (intptr_t i = 1; i <= m_matches.size(); i++)
 	{
-		// Matches are guaranteed to be sorted
+		auto &match = m_matches[i];
+		// Matches are guaranteed to be sorted.
 		auto it = std::lower_bound(other.m_matches.begin(), other.m_matches.end(), match, MatchLess());
 
 		if (it == other.m_matches.end() || **it != *match) {
 			result.append(std::make_unique<Match>(*match));
+			src_rows.push_back(i);
 		}
 	}
 
 	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
+
+	// Copy header aliases from *this*.
+	for (auto &[key, val] : m_header_aliases) {
+		conc->set_header_alias(key, val);
+	}
+
+	// Subset aux columns by src_rows (same pattern as Concordance::subset).
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		auto &src = m_aux_columns[c];
+		AuxColumn dst;
+		dst.header = src.header;
+		dst.type = src.type;
+		dst.semitone_ref = src.semitone_ref;
+
+		intptr_t n = (intptr_t)src_rows.size();
+		if (src.type == AuxColumnType::Text) {
+			dst.text_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t r = src_rows[i];
+				if (r >= 1 && r <= src.text_data.size())
+					dst.text_data[i + 1] = src.text_data[r];
+			}
+		}
+		else {
+			dst.num_data.resize(n);
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t r = src_rows[i];
+				if (r >= 1 && r <= src.num_data.size())
+					dst.num_data[i + 1] = src.num_data[r];
+			}
+		}
+		conc->m_aux_columns.append(std::move(dst));
+	}
+
+	conc->m_aux_pitch_st     = m_aux_pitch_st;
+	conc->m_aux_pitch_erb    = m_aux_pitch_erb;
+	conc->m_aux_formant_erb  = m_aux_formant_erb;
+	conc->m_aux_formant_bark = m_aux_formant_bark;
 
 	auto parent = Project::get()->data().get();
 	parent->append(conc, false);
