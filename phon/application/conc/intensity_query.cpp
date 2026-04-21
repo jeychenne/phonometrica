@@ -95,6 +95,7 @@ void IntensityQuery::clear()
 	m_series = true;
 	m_average = false;
 	m_initial_layout = Concordance::Layout::Wide;
+	m_output_time = false;
 }
 
 Handle<Concordance> IntensityQuery::execute()
@@ -127,6 +128,9 @@ Handle<Concordance> IntensityQuery::execute()
 	}
 
 	conc->set_intensity_meta();
+
+	// Measurement-time column(s)
+	conc->set_has_time(m_output_time);
 
 	if (m_method == Method::NPoint)
 	{
@@ -238,6 +242,7 @@ Handle<Query> IntensityQuery::copy() const
 	c->m_series = m_series;
 	c->m_average = m_average;
 	c->m_initial_layout = m_initial_layout;
+	c->m_output_time = m_output_time;
 	c->m_content_modified = true;
 
 	return c;
@@ -322,6 +327,10 @@ void IntensityQuery::load()
 					auto val = str(child.text().get());
 					m_initial_layout = (val == "long") ? Concordance::Layout::Long : Concordance::Layout::Wide;
 				}
+				else if (child.name() == str("OutputTime"))
+				{
+					m_output_time = child.text().as_bool(false);
+				}
 			}
 		}
 	}
@@ -393,6 +402,8 @@ void IntensityQuery::write()
 		add_data_node(is_node, "NPointAverage", String::convert(m_average));
 		add_data_node(is_node, "Layout", m_initial_layout == Concordance::Layout::Long ? "long" : "wide");
 	}
+
+	add_data_node(is_node, "OutputTime", String::convert(m_output_time));
 
 	write_xml(doc, m_path);
 }

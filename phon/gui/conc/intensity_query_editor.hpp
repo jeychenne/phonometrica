@@ -100,6 +100,7 @@ private:
 	QRadioButton *m_wide_radio = nullptr;
 	QRadioButton *m_long_radio = nullptr;
 	QCheckBox *m_average_check = nullptr;
+	QCheckBox *m_time_check = nullptr;
 
 	QListWidget *m_file_list = nullptr;
 	Array<PropertyWidget*> m_properties;

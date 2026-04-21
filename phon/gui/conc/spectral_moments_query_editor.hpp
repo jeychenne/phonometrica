@@ -117,6 +117,7 @@ private:
 	QCheckBox *m_spread_check = nullptr;
 	QCheckBox *m_skewness_check = nullptr;
 	QCheckBox *m_kurtosis_check = nullptr;
+	QCheckBox *m_time_check = nullptr;
 
 	QListWidget *m_file_list = nullptr;
 	Array<PropertyWidget*> m_properties;

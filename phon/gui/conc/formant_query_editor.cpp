@@ -365,9 +365,12 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_bw_check = new QCheckBox(tr("Add bandwidth"));
 	m_erb_check = new QCheckBox(tr("Add ERB"));
 	m_bark_check = new QCheckBox(tr("Add Bark"));
+	m_time_check = new QCheckBox(tr("Add measurement time"));
+	m_time_check->setToolTip(tr("Include the absolute time (seconds) at which each measurement was taken"));
 	opt_row->addWidget(m_bw_check);
 	opt_row->addWidget(m_erb_check);
 	opt_row->addWidget(m_bark_check);
+	opt_row->addWidget(m_time_check);
 	opt_row->addStretch();
 	outer->addLayout(opt_row);
 
@@ -714,6 +717,7 @@ void FormantQueryEditor::parseQuery()
 	m_query->set_output_bandwidth(m_bw_check->isChecked());
 	m_query->set_output_erb(m_erb_check->isChecked());
 	m_query->set_output_bark(m_bark_check->isChecked());
+	m_query->set_output_time(m_time_check->isChecked());
 }
 
 bool FormantQueryEditor::validateQuery()
@@ -1009,6 +1013,7 @@ void FormantQueryEditor::loadQuery()
 	m_bw_check->setChecked(m_query->output_bandwidth());
 	m_erb_check->setChecked(m_query->output_erb());
 	m_bark_check->setChecked(m_query->output_bark());
+	m_time_check->setChecked(m_query->output_time());
 
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);

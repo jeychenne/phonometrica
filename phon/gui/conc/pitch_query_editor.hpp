@@ -138,6 +138,7 @@ private:
 	QCheckBox *m_semitones_check = nullptr;
 	QLineEdit *m_semitone_ref_edit = nullptr;
 	QCheckBox *m_erb_check = nullptr;
+	QCheckBox *m_time_check = nullptr;
 
 	// File selection
 	QListWidget *m_file_list = nullptr;

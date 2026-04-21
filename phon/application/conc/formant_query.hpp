@@ -122,6 +122,12 @@ public:
 	bool output_bark() const { return m_bark; }
 	void set_output_bark(bool b) { m_bark = b; }
 
+	// Add measurement time (absolute seconds) as an extra column. Applies to both
+	// Midpoint and NPoint methods: Midpoint gives the event midpoint, NPoint gives
+	// one Time column per measurement point (no Time column for the average group).
+	bool output_time() const { return m_output_time; }
+	void set_output_time(bool b) { m_output_time = b; }
+
 	// ── Column helpers ───────────────────────────────────────────────────
 
 	// Number of numeric fields per match (F1..Fn + optional B1..Bn + E1..En + z1..zn + auto params)
@@ -184,6 +190,7 @@ private:
 	bool m_bandwidth = false;
 	bool m_erb = false;
 	bool m_bark = false;
+	bool m_output_time = false;    // add measurement-time column(s) to the concordance
 };
 
 namespace traits {

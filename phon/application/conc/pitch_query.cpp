@@ -122,6 +122,7 @@ void PitchQuery::clear()
 	m_semitones = false;
 	m_semitone_ref = 100;
 	m_erb = false;
+	m_output_time = false;
 }
 
 Handle<Concordance> PitchQuery::execute()
@@ -161,6 +162,9 @@ Handle<Concordance> PitchQuery::execute()
 
 	// Set pitch metadata — semitones and ERB are computed on the fly by the concordance
 	conc->set_pitch_meta(m_semitones, m_semitone_ref, m_erb);
+
+	// Measurement-time column(s)
+	conc->set_has_time(m_output_time);
 
 	// Provide measurement metadata so the concordance can toggle between wide and long layout.
 	if (m_method == Method::NPoint)
@@ -287,6 +291,7 @@ Handle<Query> PitchQuery::copy() const
 	c->m_semitones = m_semitones;
 	c->m_semitone_ref = m_semitone_ref;
 	c->m_erb = m_erb;
+	c->m_output_time = m_output_time;
 	c->m_content_modified = true;
 
 	return c;
@@ -441,6 +446,10 @@ void PitchQuery::load()
 				{
 					m_erb = child.text().as_bool(false);
 				}
+				else if (child.name() == str("OutputTime"))
+				{
+					m_output_time = child.text().as_bool(false);
+				}
 			}
 		}
 	}
@@ -538,6 +547,7 @@ void PitchQuery::write()
 		add_data_node(ps_node, "SemitoneReference", String::format("%.1f", m_semitone_ref));
 	}
 	add_data_node(ps_node, "ERB", String::convert(m_erb));
+	add_data_node(ps_node, "OutputTime", String::convert(m_output_time));
 
 	write_xml(doc, m_path);
 }

@@ -104,6 +104,10 @@ public:
 	Concordance::Layout initial_layout() const { return m_initial_layout; }
 	void set_initial_layout(Concordance::Layout l) { m_initial_layout = l; }
 
+	// Add measurement time (absolute seconds) as an extra column. See FormantQuery.
+	bool output_time() const { return m_output_time; }
+	void set_output_time(bool b) { m_output_time = b; }
+
 	// ── Column helpers ───────────────────────────────────────────────────
 
 	/// Number of enabled moments (1–4).
@@ -150,6 +154,7 @@ private:
 	bool m_series = true;
 	bool m_average = false;
 	Concordance::Layout m_initial_layout = Concordance::Layout::Wide;
+	bool m_output_time = false;    // add measurement-time column(s) to the concordance
 };
 
 namespace traits {

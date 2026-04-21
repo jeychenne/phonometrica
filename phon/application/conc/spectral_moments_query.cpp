@@ -128,6 +128,7 @@ void SpectralMomentsQuery::clear()
 	m_series = true;
 	m_average = false;
 	m_initial_layout = Concordance::Layout::Wide;
+	m_output_time = false;
 }
 
 Handle<Concordance> SpectralMomentsQuery::execute()
@@ -160,6 +161,9 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 	}
 
 	conc->set_spectral_moments_meta(m_out_cog, m_out_spread, m_out_skewness, m_out_kurtosis);
+
+	// Measurement-time column(s)
+	conc->set_has_time(m_output_time);
 
 	if (m_method == Method::NPoint)
 	{
@@ -304,6 +308,7 @@ Handle<Query> SpectralMomentsQuery::copy() const
 	c->m_series = m_series;
 	c->m_average = m_average;
 	c->m_initial_layout = m_initial_layout;
+	c->m_output_time = m_output_time;
 	c->m_content_modified = true;
 
 	return c;
@@ -454,6 +459,10 @@ void SpectralMomentsQuery::load()
 				{
 					m_out_kurtosis = child.text().as_bool(true);
 				}
+				else if (child.name() == str("OutputTime"))
+				{
+					m_output_time = child.text().as_bool(false);
+				}
 			}
 		}
 	}
@@ -521,6 +530,7 @@ void SpectralMomentsQuery::write()
 	add_data_node(sm_node, "OutputSpread", String::convert(m_out_spread));
 	add_data_node(sm_node, "OutputSkewness", String::convert(m_out_skewness));
 	add_data_node(sm_node, "OutputKurtosis", String::convert(m_out_kurtosis));
+	add_data_node(sm_node, "OutputTime", String::convert(m_output_time));
 
 	if (m_method == Method::NPoint && !m_points.empty())
 	{
