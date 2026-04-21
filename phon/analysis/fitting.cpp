@@ -1236,10 +1236,17 @@ static void scale_default_priors(PriorSpec &priors,
 
 		// Intercept: N(mean(y_link), scale).
 		// Added as a per-coefficient override so it doesn't affect slopes.
-		NormalPrior intercept_prior;
-		intercept_prior.mean = y_mean;
-		intercept_prior.sd = scale;
-		priors.coefficient_priors[String("Intercept")] = intercept_prior;
+		// Only inserted if the user has not already set a per-coefficient
+		// prior for the intercept via set_fixed(prior, "Intercept", ...);
+		// overwriting would silently discard the user's override.
+		if (priors.coefficient_priors.find(String("Intercept"))
+		    == priors.coefficient_priors.end())
+		{
+			NormalPrior intercept_prior;
+			intercept_prior.mean = y_mean;
+			intercept_prior.sd = scale;
+			priors.coefficient_priors[String("Intercept")] = intercept_prior;
+		}
 	}
 
 	if (priors.variance_auto)

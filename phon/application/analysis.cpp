@@ -579,6 +579,10 @@ void Analysis::write()
 				add_data_node(res_node, "Param1", String::format("%.17g", pr.residual.param1));
 				add_data_node(res_node, "Param2", String::format("%.17g", pr.residual.param2));
 				add_data_node(res_node, "Auto", pr.residual_auto ? "true" : "false");
+
+				// LKJ prior on random-effect correlation matrix (scalar).
+				// η = 1 is the default (uniform over correlation matrices).
+				add_data_node(pr_node, "LkjEta", String::format("%.17g", pr.lkj_eta));
 			}
 		}
 	}
@@ -852,6 +856,10 @@ void Analysis::load()
 									else if (rsn == "Param2") m.priors.residual.param2 = parse_double_safe(rst);
 									else if (rsn == "Auto")   m.priors.residual_auto = (str(rst) == str("true"));
 								}
+							}
+							else if (pr_name == "LkjEta")
+							{
+								m.priors.lkj_eta = parse_double_safe(pr_child.text().get());
 							}
 						}
 					}
