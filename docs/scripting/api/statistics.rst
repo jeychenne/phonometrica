@@ -525,6 +525,37 @@ Example::
    let prior = Prior()
    set_beta_phi(prior, 1, 0.01)
 
+------------
+
+.. function:: set_lkj(prior, eta)
+
+Sets an LKJ prior on the correlation matrix of correlated random effects (e.g. a random
+intercept and random slope for the same grouping factor). The density is
+
+.. math::
+
+   p(R \mid \eta) \propto |R|^{\eta - 1}
+
+where *R* is the correlation matrix derived from the random-effect covariance.
+
+``eta`` must be strictly positive. The default is ``1.0``, which is uniform over
+correlation matrices (equivalent to placing no prior on the correlation structure).
+Values greater than 1 concentrate posterior mass toward the identity (favouring
+independent random terms); values less than 1 push toward strongly correlated random
+terms. ``eta = 2`` is a common mildly regularising choice — it downweights extreme
+correlations (±1) that would indicate a degenerate covariance — and matches the
+convention used in brms and in Vasishth et al. (2018).
+
+The prior is only active when a grouping factor has two or more random terms (e.g. an
+intercept plus a slope); for intercept-only random effects it has no effect.
+
+Reference: Lewandowski, Kurowicka & Joe (2009), *J. Multivariate Anal.*
+
+Example::
+
+   let prior = Prior()
+   set_lkj(prior, 2)   // LKJ(2): mildly regularising
+
 
 .. _bayesian-model-fields:
 

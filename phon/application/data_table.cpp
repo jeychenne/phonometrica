@@ -1380,6 +1380,22 @@ void DataTable::initialize(Runtime &rt)
 		return Variant();
 	};
 
+	// set_lkj(prior, eta) — LKJ prior on random-effect correlation matrix.
+	// Density: p(R | η) ∝ |R|^(η − 1). η = 1 is uniform over correlation
+	// matrices (the default — equivalent to no correlation prior); η > 1
+	// concentrates toward the identity (independent random terms); η < 1
+	// pushes toward strongly correlated random terms. η = 2 gives a mildly
+	// regularising prior, as used in e.g. Vasishth et al. 2018.
+	auto set_lkj = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &prior = cast<stats::PriorSpec>(args[0]);
+		double eta = args[1].to_float();
+		if (!(eta > 0.0)) {
+			throw error("set_lkj: eta must be strictly positive (got %)", eta);
+		}
+		prior.lkj_eta = eta;
+		return Variant();
+	};
+
 	// Bayesian fit: fit(formula, data, prior) — Gaussian
 	auto fit_bayes2 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
@@ -1457,6 +1473,7 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("set_residual", set_residual4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
 	rt.add_global("set_negbin_theta", set_negbin_theta, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
 	rt.add_global("set_beta_phi", set_beta_phi, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
+	rt.add_global("set_lkj", set_lkj, { CLS(stats::PriorSpec), CLS(Number) });
 
 	auto model_cls = CLS(stats::Model);
 	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });
