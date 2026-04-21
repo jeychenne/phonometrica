@@ -320,11 +320,15 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	m_semitone_ref_edit->setFixedWidth(50);
 	m_semitone_ref_edit->setEnabled(false);
 	m_erb_check = new QCheckBox(tr("Add ERB"));
+	m_time_check = new QCheckBox(tr("Add measurement time"));
+	m_time_check->setToolTip(tr("Include the absolute time (seconds) at which each measurement was taken"));
 	opt_row->addWidget(m_semitones_check);
 	opt_row->addWidget(m_semitone_ref_edit);
 	opt_row->addWidget(new QLabel(tr("Hz)")));
 	opt_row->addSpacing(10);
 	opt_row->addWidget(m_erb_check);
+	opt_row->addSpacing(10);
+	opt_row->addWidget(m_time_check);
 	opt_row->addStretch();
 	outer->addLayout(opt_row);
 	connect(m_semitones_check, &QCheckBox::toggled, m_semitone_ref_edit, &QLineEdit::setEnabled);
@@ -549,6 +553,7 @@ void PitchQueryEditor::parseQuery()
 		m_query->set_semitone_reference(ref);
 	}
 	m_query->set_output_erb(m_erb_check->isChecked());
+	m_query->set_output_time(m_time_check->isChecked());
 }
 
 bool PitchQueryEditor::validateQuery()
@@ -720,6 +725,7 @@ void PitchQueryEditor::loadQuery()
 	m_semitones_check->setChecked(m_query->output_semitones());
 	m_semitone_ref_edit->setText(QString::number(m_query->semitone_reference()));
 	m_erb_check->setChecked(m_query->output_erb());
+	m_time_check->setChecked(m_query->output_time());
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);
 }

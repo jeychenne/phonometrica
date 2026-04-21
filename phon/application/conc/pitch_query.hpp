@@ -115,6 +115,10 @@ public:
 	bool output_erb() const { return m_erb; }
 	void set_output_erb(bool b) { m_erb = b; }
 
+	// Add measurement time (absolute seconds) as an extra column. See FormantQuery.
+	bool output_time() const { return m_output_time; }
+	void set_output_time(bool b) { m_output_time = b; }
+
 	// ── Column helpers ───────────────────────────────────────────────────
 
 	// Number of numeric fields per match (F0 values × points + optional computed columns)
@@ -175,6 +179,7 @@ private:
 	bool m_semitones = false;
 	double m_semitone_ref = 100;   // Hz (reference for semitone conversion)
 	bool m_erb = false;
+	bool m_output_time = false;    // add measurement-time column(s) to the concordance
 };
 
 namespace traits {

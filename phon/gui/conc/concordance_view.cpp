@@ -171,14 +171,26 @@ void ConcordanceView::setupUi()
 	ctx_action->setEnabled(m_conc->has_context());
 	ctx_action->setToolTip(tr("Show left and right context"));
 
+	// Insert this here since time appears between the context and metadata
+	bool is_measurement_query = m_conc->nformant() > 0 || m_conc->is_pitch() || m_conc->is_intensity() || m_conc->is_spectral_moments();
+	QAction *time_action = nullptr;
+	if (is_measurement_query)
+	{
+		time_action = display_menu->addAction(tr("Measurement time"));
+		time_action->setCheckable(true);
+		time_action->setChecked(m_conc->has_time());
+		time_action->setToolTip(tr("Show the absolute time (seconds) at which each measurement was taken"));
+	}
+
 	auto *meta_action = display_menu->addAction(tr("Metadata"));
 	meta_action->setCheckable(true);
 	meta_action->setChecked(m_show_metadata);
 	meta_action->setToolTip(tr("Show file description and properties"));
 
-	// Wide/Long toggle — shown for formant and pitch concordances; enabled only for n-point data
+	// Wide/Long toggle — shown for formant, pitch, intensity, spectral moments concordances;
+	// enabled only for n-point data
 	QAction *long_action = nullptr;
-	if (m_conc->nformant() > 0 || m_conc->is_pitch() || m_conc->is_intensity())
+	if (is_measurement_query)
 	{
 		display_menu->addSeparator();
 		long_action = display_menu->addAction(tr("Long format (one row per time point)"));
@@ -189,6 +201,7 @@ void ConcordanceView::setupUi()
 			long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
 		else
 			long_action->setToolTip(tr("Long format is only available for n-point measurements (not midpoint)"));
+
 	}
 
 	display_menu->addSeparator();
@@ -424,6 +437,11 @@ void ConcordanceView::setupUi()
 	if (long_action)
 	{
 		connect(long_action, &QAction::toggled, this, &ConcordanceView::onToggleLayout);
+	}
+
+	if (time_action)
+	{
+		connect(time_action, &QAction::toggled, this, &ConcordanceView::onToggleMeasurementTime);
 	}
 
 	connect(split_action, &QAction::toggled, this, [this](bool checked) {
@@ -1211,6 +1229,15 @@ void ConcordanceView::onToggleLayout(bool long_format)
 	updateCountLabel();
 	updateColumnVisibility();
 	m_table->resizeColumnsToContents();
+}
+
+void ConcordanceView::onToggleMeasurementTime(bool checked)
+{
+	m_conc->set_has_time(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
 }
 
 // ── Scales (ERB / Bark) ─────────────────────────────────

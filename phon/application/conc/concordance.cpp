@@ -92,6 +92,8 @@ Concordance::Concordance(const Concordance &other) :
 	m_duration_in_ms = other.m_duration_in_ms;
 	m_highlight_targets = other.m_highlight_targets;
 
+	m_has_time = other.m_has_time;
+
 	m_aux_columns = other.m_aux_columns;
 	m_aux_pitch_st = other.m_aux_pitch_st;
 	m_aux_pitch_erb = other.m_aux_pitch_erb;
@@ -168,6 +170,14 @@ void Concordance::set_has_pitch_erb(bool b)
 	m_content_modified = true;
 }
 
+void Concordance::set_has_time(bool b)
+{
+	if (m_has_time == b) return;
+	m_has_time = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
 void Concordance::set_intensity_meta()
 {
 	m_is_intensity = true;
@@ -233,10 +243,14 @@ void Concordance::rebuild_extra_headers()
 			if (m_sm_kurtosis) headers.append(String::format("Kurtosis%s", suffix));
 		};
 
+		// Base headers: prefix with Time when enabled (long-mode: "Time" alongside "Time (normalized)")
+		if (m_has_time) m_base_headers.append("Time");
 		emit_sm_group(m_base_headers, "");
 
 		if (!has_measurement_data())
 		{
+			// Midpoint: flat extra headers, optional single Time column first
+			if (m_has_time) m_extra_headers.append("Time (s)");
 			emit_sm_group(m_extra_headers, "");
 		}
 		else
@@ -247,11 +261,13 @@ void Concordance::rebuild_extra_headers()
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					if (m_has_time) m_extra_headers.append(String::format("Time %s", suffix));
 					emit_sm_group(m_extra_headers, suffix);
 				}
 			}
 			if (m_has_average)
 			{
+				// No Time column for the average group: averaging across points has no single meaningful time.
 				emit_sm_group(m_extra_headers, "(avg)");
 			}
 		}
@@ -266,10 +282,12 @@ void Concordance::rebuild_extra_headers()
 			headers.append(String::format("Intensity(dB)%s", suffix));
 		};
 
+		if (m_has_time) m_base_headers.append("Time");
 		emit_intensity_group(m_base_headers, "");
 
 		if (!has_measurement_data())
 		{
+			if (m_has_time) m_extra_headers.append("Time (s)");
 			emit_intensity_group(m_extra_headers, "");
 		}
 		else
@@ -280,6 +298,7 @@ void Concordance::rebuild_extra_headers()
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					if (m_has_time) m_extra_headers.append(String::format("Time %s", suffix));
 					emit_intensity_group(m_extra_headers, suffix);
 				}
 			}
@@ -304,11 +323,13 @@ void Concordance::rebuild_extra_headers()
 		};
 
 		// Base headers (for long mode): un-suffixed
+		if (m_has_time) m_base_headers.append("Time");
 		emit_pitch_group(m_base_headers, "");
 
 		if (!has_measurement_data())
 		{
 			// Midpoint: flat extra headers
+			if (m_has_time) m_extra_headers.append("Time (s)");
 			emit_pitch_group(m_extra_headers, "");
 		}
 		else
@@ -319,6 +340,7 @@ void Concordance::rebuild_extra_headers()
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+					if (m_has_time) m_extra_headers.append(String::format("Time %s", suffix));
 					emit_pitch_group(m_extra_headers, suffix);
 				}
 			}
@@ -360,11 +382,13 @@ void Concordance::rebuild_extra_headers()
 	};
 
 	// Base headers (for long mode): un-suffixed
+	if (m_has_time) m_base_headers.append("Time");
 	emit_group(m_base_headers, "");
 
 	if (!has_measurement_data())
 	{
 		// Midpoint: flat extra headers (same as base, plus auto params)
+		if (m_has_time) m_extra_headers.append("Time (s)");
 		emit_group(m_extra_headers, "");
 	}
 	else
@@ -376,11 +400,13 @@ void Concordance::rebuild_extra_headers()
 			{
 				char suffix[16];
 				std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
+				if (m_has_time) m_extra_headers.append(String::format("Time %s", suffix));
 				emit_group(m_extra_headers, suffix);
 			}
 		}
 		if (m_has_average)
 		{
+			// No Time column for the average group: averaging across points has no single meaningful time.
 			emit_group(m_extra_headers, "(avg)");
 		}
 	}
@@ -478,7 +504,7 @@ String Concordance::get_default_header(intptr_t j) const
 			if (m_layout == Layout::Long && has_measurement_data())
 			{
 				if (j == 1) return "Step";
-				if (j == 2) return "Time";
+				if (j == 2) return "Time (normalized)";
 				return m_base_headers[j - 2]; // 1-based
 			}
 			else
@@ -748,17 +774,27 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 			if (m_layout == Layout::Long && has_measurement_data())
 			{
-				// Long mode: Step, Time, then measurement group for this point
+				// Long mode: Step, Time(normalized), [Time(abs) if m_has_time], then measurement group for this point
 				intptr_t pi = point_for_row(i); // 0-based point index
 
 				if (j == 1) {
 					return String::convert(intptr_t(pi + 1));
 				}
 				if (j == 2) {
+					// Time (normalized): fraction within the event [0,1]
 					return String::format("%.4f", m_measurement_points[pi + 1] / 100.0);
 				}
-				// j >= 3: measurement within the point
-				int within = (int)(j - 3); // 0-based
+				if (m_has_time && j == 3) {
+					// Time (absolute seconds): t1 + pct * (t2 - t1)
+					auto *ref = m_matches[mi]->reference_target();
+					if (!ref) ref = m_matches[mi]->get(1);
+					if (!ref) return String();
+					double pct = m_measurement_points[pi + 1];
+					double t = ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
+					return String::format("%.4f", t);
+				}
+				// j >= 3 (or >= 4 when has_time): measurement within the point
+				int within = (int)(j - 3 - (m_has_time ? 1 : 0)); // 0-based
 				int stored_base = (int)(pi * stored_fields_per_point());
 
 				double val = resolve_group_value(meas, stored_base, within);
@@ -766,35 +802,18 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 			}
 			else
 			{
-				// Wide mode (or midpoint): direct mapping
+				// Wide mode (or midpoint): walk the extras structure.
 				int d0 = (int)(j - 1); // 0-based within extra columns
+				int dfpp = display_fields_per_point();
+				int sfpp = stored_fields_per_point();
 
-				if (m_is_pitch || m_is_intensity || m_is_spectral_moments)
+				if (dfpp > 0)
 				{
-					int dfpp = display_fields_per_point();
-					int sfpp = stored_fields_per_point();
-
-					if (dfpp > 0) {
-						int group_index = d0 / dfpp;
-						int within_group = d0 % dfpp;
-						int stored_base = group_index * sfpp;
-
-						double val = resolve_group_value(meas, stored_base, within_group);
-						return format_measurement(val, within_group);
-					}
-				}
-				else if (m_nformant > 0)
-				{
-					int dfpp = display_fields_per_point();
-					int sfpp = stored_fields_per_point();
-
-					// Check for auto params at the end
+					// Auto params (formant auto mode) live at the very end of the extras block.
 					int auto_count = m_has_auto_params ? 2 : 0;
 					int total_display = (int)m_extra_headers.size();
-
 					if (auto_count > 0 && d0 >= total_display - auto_count)
 					{
-						// Auto param: stored at the end of the measurement vector
 						int series_points = (has_measurement_data() && m_has_series)
 							? (int)m_measurement_points.size() : 0;
 						int ngroups = series_points + (m_has_average ? 1 : 0);
@@ -811,14 +830,53 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 						return "nan";
 					}
 
-					// Measurement group
-					if (dfpp > 0) {
-						int group_index = d0 / dfpp;
-						int within_group = d0 % dfpp;
-						int stored_base = group_index * sfpp;
+					// Per-point groups (with optional Time column) then an average group (without Time).
+					//   point group layout:  [Time?] [F1 F2 F3 ... B ... E ... z ...]   (size = dfpp + has_time)
+					//   avg group layout:    [F1 F2 F3 ... B ... E ... z ...]           (size = dfpp; no Time)
+					const int DFPP = dfpp + (m_has_time ? 1 : 0);
 
+					if (!has_measurement_data())
+					{
+						// Midpoint: a single implicit group of size DFPP
+						if (m_has_time && d0 == 0) {
+							auto *ref = m_matches[mi]->reference_target();
+							if (!ref) ref = m_matches[mi]->get(1);
+							if (!ref) return String();
+							double t = (ref->start_time + ref->end_time) / 2.0;
+							return String::format("%.4f", t);
+						}
+						int within_group = d0 - (m_has_time ? 1 : 0);
+						double val = resolve_group_value(meas, 0, within_group);
+						return format_measurement(val, within_group);
+					}
+
+					// N-point: point groups first, then optional avg group
+					int npoints_in_series = m_has_series ? (int)m_measurement_points.size() : 0;
+					int point_block = npoints_in_series * DFPP;
+					if (d0 < point_block)
+					{
+						int gi = d0 / DFPP;
+						int wp = d0 % DFPP;
+						if (m_has_time && wp == 0) {
+							auto *ref = m_matches[mi]->reference_target();
+							if (!ref) ref = m_matches[mi]->get(1);
+							if (!ref) return String();
+							double pct = m_measurement_points[gi + 1]; // 1-based
+							double t = ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
+							return String::format("%.4f", t);
+						}
+						int within_group = wp - (m_has_time ? 1 : 0);
+						int stored_base = gi * sfpp;
 						double val = resolve_group_value(meas, stored_base, within_group);
 						return format_measurement(val, within_group);
+					}
+					// Average group (no Time column)
+					int avg_d0 = d0 - point_block;
+					if (m_has_average && avg_d0 < dfpp)
+					{
+						int stored_base = npoints_in_series * sfpp;
+						double val = resolve_group_value(meas, stored_base, avg_d0);
+						return format_measurement(val, avg_d0);
 					}
 				}
 
@@ -878,9 +936,10 @@ intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) co
 
 	if (m_layout == Layout::Long && has_measurement_data())
 	{
-		// Long mode: extra_j 1=Step, 2=Time, 3+=measurement
-		if (extra_j <= 2) return -1;
-		int within = (int)(extra_j - 3); // 0-based
+		// Long mode: extra_j 1=Step, 2=Time(norm), [3=Time(abs) if has_time], then measurement slots
+		int reserved = 2 + (m_has_time ? 1 : 0);
+		if (extra_j <= reserved) return -1;
+		int within = (int)(extra_j - reserved - 1); // 0-based
 		if (within >= sfpp) return -1; // derived or out of range
 		intptr_t pi = point_for_row(row); // 0-based
 		return pi * sfpp + within;
@@ -889,18 +948,41 @@ intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) co
 	// Wide mode (or midpoint)
 	int d0 = (int)(extra_j - 1); // 0-based
 
-	// Check auto params at end
+	// Auto params at the end: not editable
 	int auto_count = m_has_auto_params ? 2 : 0;
 	int total = (int)m_extra_headers.size();
-	if (auto_count > 0 && d0 >= total - auto_count)
-		return -1; // auto params are not editable
+	if (auto_count > 0 && d0 >= total - auto_count) return -1;
 
-	int within_group = d0 % dfpp;
-	if (within_group >= sfpp)
-		return -1; // derived column (ERB/Bark)
+	const int DFPP = dfpp + (m_has_time ? 1 : 0);
 
-	int group_index = d0 / dfpp;
-	return group_index * sfpp + within_group;
+	if (!has_measurement_data())
+	{
+		// Midpoint: single group
+		if (m_has_time && d0 == 0) return -1; // Time column not editable
+		int within_group = d0 - (m_has_time ? 1 : 0);
+		if (within_group < 0 || within_group >= sfpp) return -1;
+		return within_group;
+	}
+
+	int npoints_in_series = m_has_series ? (int)m_measurement_points.size() : 0;
+	int point_block = npoints_in_series * DFPP;
+	if (d0 < point_block)
+	{
+		int gi = d0 / DFPP;
+		int wp = d0 % DFPP;
+		if (m_has_time && wp == 0) return -1; // Time column not editable
+		int within_group = wp - (m_has_time ? 1 : 0);
+		if (within_group < 0 || within_group >= sfpp) return -1;
+		return gi * sfpp + within_group;
+	}
+	// Average group (no Time column)
+	int avg_d0 = d0 - point_block;
+	if (m_has_average && avg_d0 < dfpp)
+	{
+		if (avg_d0 >= sfpp) return -1; // derived
+		return npoints_in_series * sfpp + avg_d0;
+	}
+	return -1;
 }
 
 void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
@@ -945,18 +1027,17 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 	// Compute extra column index
 	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
 
-	// Use row 1 — the stored_index_for_column logic for within_group doesn't depend on row in wide mode,
-	// and in long mode it only matters for determining the point (which doesn't affect editability).
-	// We just check whether within_group < sfpp.
-
+	int sfpp = stored_fields_per_point();
 	int dfpp = display_fields_per_point();
 	if (dfpp == 0) return false;
 
 	if (m_layout == Layout::Long && has_measurement_data())
 	{
-		if (extra_j <= 2) return false; // Step, Time
-		int within = (int)(extra_j - 3);
-		return within < stored_fields_per_point();
+		// Long mode: Step, Time(norm), [Time(abs) if has_time], then measurement slots
+		int reserved = 2 + (m_has_time ? 1 : 0);
+		if (extra_j <= reserved) return false;
+		int within = (int)(extra_j - reserved - 1);
+		return within < sfpp;
 	}
 
 	int d0 = (int)(extra_j - 1);
@@ -964,8 +1045,30 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 	int total = (int)m_extra_headers.size();
 	if (auto_count > 0 && d0 >= total - auto_count) return false;
 
-	int within_group = d0 % dfpp;
-	return within_group < stored_fields_per_point();
+	const int DFPP = dfpp + (m_has_time ? 1 : 0);
+
+	if (!has_measurement_data())
+	{
+		if (m_has_time && d0 == 0) return false;
+		int within_group = d0 - (m_has_time ? 1 : 0);
+		return within_group >= 0 && within_group < sfpp;
+	}
+
+	int npoints_in_series = m_has_series ? (int)m_measurement_points.size() : 0;
+	int point_block = npoints_in_series * DFPP;
+	if (d0 < point_block)
+	{
+		int wp = d0 % DFPP;
+		if (m_has_time && wp == 0) return false;
+		int within_group = wp - (m_has_time ? 1 : 0);
+		return within_group >= 0 && within_group < sfpp;
+	}
+	int avg_d0 = d0 - point_block;
+	if (m_has_average && avg_d0 < dfpp)
+	{
+		return avg_d0 < sfpp;
+	}
+	return false;
 }
 
 bool Concordance::is_left_context(intptr_t col) const
@@ -1100,6 +1203,7 @@ void Concordance::load()
 	m_has_duration = false;
 	m_duration_in_ms = false;
 	m_highlight_targets = true;
+	m_has_time = false;
 	m_aux_pitch_st = false;
 	m_aux_pitch_erb = false;
 	m_aux_formant_erb = false;
@@ -1464,6 +1568,11 @@ void Concordance::parse_options_from_xml(xml_node root)
 			auto attr = node.attribute("enabled");
 			m_highlight_targets = !attr || attr.as_bool(); // default true
 		}
+		else if (node.name() == str("MeasurementTime"))
+		{
+			auto attr = node.attribute("enabled");
+			m_has_time = attr && attr.as_bool();
+		}
 		else
 		{
 			throw error("Invalid option for concordance: %", node.name());
@@ -1645,6 +1754,10 @@ void Concordance::write()
 
 	if (!m_highlight_targets) {
 		option_node.append_child("HighlightTargets").append_attribute("enabled").set_value(false);
+	}
+
+	if (m_has_time) {
+		option_node.append_child("MeasurementTime").append_attribute("enabled").set_value(true);
 	}
 
 	auto matches_node = root.append_child("Matches");
@@ -1834,6 +1947,52 @@ bool Concordance::is_file_info_column(intptr_t col) const
 	return col <= FILE_INFO_COLUMN_COUNT;
 }
 
+bool Concordance::is_measurement_time_column(intptr_t col) const
+{
+	if (!m_has_time) return false;
+	auto eff = effective_extra_count();
+	if (eff == 0) return false;
+	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count();
+	if (col <= lower || col > lower + eff) return false;
+
+	// Work in 0-based extras space (d0 = col - lower - 1).
+	int d0 = (int)(col - lower - 1);
+
+	if (m_layout == Layout::Long && has_measurement_data())
+	{
+		// Long mode: extra_j == 3 is Time (abs) when has_time
+		return d0 == 2;
+	}
+
+	int dfpp = display_fields_per_point();
+	int sfpp = stored_fields_per_point();
+	if (dfpp == 0) return false;
+
+	// Exclude auto params tail
+	int auto_count = m_has_auto_params ? 2 : 0;
+	int total = (int)m_extra_headers.size();
+	if (auto_count > 0 && d0 >= total - auto_count) return false;
+
+	const int DFPP = dfpp + 1; // has_time is true here
+
+	if (!has_measurement_data())
+	{
+		// Midpoint: Time is at d0 == 0
+		return d0 == 0;
+	}
+
+	int npoints_in_series = m_has_series ? (int)m_measurement_points.size() : 0;
+	int point_block = npoints_in_series * DFPP;
+	if (d0 < point_block)
+	{
+		int wp = d0 % DFPP;
+		return wp == 0; // Time is the first slot in each point group
+	}
+	// Average group has no Time column
+	(void)sfpp;
+	return false;
+}
+
 bool Concordance::is_metadata_column(intptr_t col) const
 {
 	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count() + aux_display_column_count();
@@ -1845,8 +2004,9 @@ bool Concordance::is_measurement_column(intptr_t col) const
 	auto eff = effective_extra_count();
 	if (eff == 0) return false;
 	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count();
-	intptr_t upper = lower + eff;
-	return col > lower && col <= upper;
+	if (col <= lower || col > lower + eff) return false;
+	// Time columns are not measurement columns (they're derived, non-editable metadata).
+	return !is_measurement_time_column(col);
 }
 
 bool Concordance::is_duration_column(intptr_t col) const
@@ -1973,6 +2133,7 @@ void Concordance::copy_metadata_to(Concordance &target) const
 	}
 	target.set_has_duration(m_has_duration);
 	target.set_duration_in_ms(m_duration_in_ms);
+	target.set_has_time(m_has_time);
 	target.rebuild_extra_headers();
 }
 
@@ -2436,16 +2597,39 @@ Concordance::AuxColumnType Concordance::get_measurement_type(intptr_t col) const
 	if (m_is_intensity) return AuxColumnType::IntensityDb;
 	if (m_is_pitch) return AuxColumnType::PitchHz;
 
-	// Formant: determine if formant Hz or bandwidth Hz
+	// Formant: determine if formant Hz or bandwidth Hz — account for per-point Time
+	// columns and non-uniform point/avg groups.
 	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
 	int d0 = (int)(extra_j - 1); // 0-based within extra columns
 	int dfpp = display_fields_per_point();
+	int sfpp = stored_fields_per_point();
 	if (dfpp == 0) return AuxColumnType::Numeric;
 
-	int within_group = d0 % dfpp;
+	int within_group = 0;
+	if (!has_measurement_data())
+	{
+		// Midpoint: one group, optional leading Time column.
+		within_group = d0 - (m_has_time ? 1 : 0);
+	}
+	else
+	{
+		const int DFPP = dfpp + (m_has_time ? 1 : 0);
+		int npoints_in_series = m_has_series ? (int)m_measurement_points.size() : 0;
+		int point_block = npoints_in_series * DFPP;
+		if (d0 < point_block) {
+			int wp = d0 % DFPP;
+			within_group = wp - (m_has_time ? 1 : 0);
+		} else {
+			// Average group (no Time)
+			within_group = d0 - point_block;
+		}
+	}
+
 	int nf = m_nformant;
+	if (within_group < 0) return AuxColumnType::Numeric;
 	if (within_group < nf) return AuxColumnType::FormantHz;
 	if (m_has_bandwidth && within_group < nf + nf) return AuxColumnType::BandwidthHz;
+	(void)sfpp;
 
 	return AuxColumnType::Numeric;
 }

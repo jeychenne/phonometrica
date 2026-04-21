@@ -215,6 +215,14 @@ QWidget *IntensityQueryEditor::createIntensitySettingsPanel()
 		m_average_check->setEnabled(on && m_npoint_radio->isChecked());
 	});
 
+	// ── Row: output options ──────────────────────────────────────────────
+	auto *opt_row = new QHBoxLayout;
+	m_time_check = new QCheckBox(tr("Add measurement time"));
+	m_time_check->setToolTip(tr("Include the absolute time (seconds) at which each measurement was taken"));
+	opt_row->addWidget(m_time_check);
+	opt_row->addStretch();
+	outer->addLayout(opt_row);
+
 	return group;
 }
 
@@ -395,6 +403,8 @@ void IntensityQueryEditor::parseQuery()
 		if (points.empty()) throw std::runtime_error("N-point measurement requires at least one measurement point");
 		m_query->set_measurement_points(std::move(points));
 	}
+
+	m_query->set_output_time(m_time_check->isChecked());
 }
 
 bool IntensityQueryEditor::validateQuery()
@@ -540,6 +550,8 @@ void IntensityQueryEditor::loadQuery()
 	} else {
 		m_midpoint_radio->setChecked(true);
 	}
+
+	m_time_check->setChecked(m_query->output_time());
 
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);

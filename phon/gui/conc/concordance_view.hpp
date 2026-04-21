@@ -107,6 +107,8 @@ private:
 	void onToggleMetadata(bool visible);
 	void onToggleLayout(bool long_format);
 
+	void onToggleMeasurementTime(bool checked);
+
 	void onToggleErb(bool checked);
 	void onToggleBark(bool checked);
 
