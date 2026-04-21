@@ -92,6 +92,15 @@ void DataFilterProxyModel::setFilterEnabled(bool enabled)
 	emit filterChanged();
 }
 
+void DataFilterProxyModel::setLogic(FilterLogic logic)
+{
+	if (m_logic == logic) return;
+	m_logic = logic;
+	invalidateFilter();
+	emit logicChanged(m_logic);
+	emit filterChanged();
+}
+
 void DataFilterProxyModel::adjustAfterColumnRemove(int col)
 {
 	bool changed = false;
@@ -181,6 +190,14 @@ QVector<int> DataFilterProxyModel::visibleSourceRows() const
 	return rows;
 }
 
+bool DataFilterProxyModel::evaluateRow(int sourceRow) const
+{
+	// Ignore m_enabled here: the caller (e.g. the "Add boolean column"
+	// feature) wants to know what the rules say regardless of whether
+	// the filter toggle is currently on or off.
+	return evaluateRules(sourceRow);
+}
+
 bool DataFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const
 {
 	Q_UNUSED(sourceParent)
@@ -188,12 +205,29 @@ bool DataFilterProxyModel::filterAcceptsRow(int sourceRow, const QModelIndex &so
 	if (!m_enabled || m_rules.isEmpty())
 		return true;
 
-	// AND logic: every rule must pass.
+	return evaluateRules(sourceRow);
+}
+
+bool DataFilterProxyModel::evaluateRules(int sourceRow) const
+{
+	if (m_rules.isEmpty())
+		return true;
+
+	if (m_logic == FilterLogic::Or)
+	{
+		// OR: the row passes if any rule matches.
+		for (auto &rule : m_rules) {
+			if (matchesRule(sourceRow, rule))
+				return true;
+		}
+		return false;
+	}
+
+	// AND (default): every rule must pass.
 	for (auto &rule : m_rules) {
 		if (!matchesRule(sourceRow, rule))
 			return false;
 	}
-
 	return true;
 }
 
@@ -328,6 +362,25 @@ FilterOp string_to_filter_op(const char *s)
 	if (sv == "matches")    return FilterOp::Regex;
 	if (sv == "in")         return FilterOp::InSet;
 	return FilterOp::Eq;
+}
+
+// ─── FilterLogic ↔ String conversions ───────────────────────────────
+
+const char *filter_logic_to_string(FilterLogic logic)
+{
+	switch (logic)
+	{
+	case FilterLogic::And: return "and";
+	case FilterLogic::Or:  return "or";
+	}
+	return "and";
+}
+
+FilterLogic string_to_filter_logic(const char *s)
+{
+	std::string_view sv(s);
+	if (sv == "or") return FilterLogic::Or;
+	return FilterLogic::And;
 }
 
 } // namespace phonometrica

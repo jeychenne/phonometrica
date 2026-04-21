@@ -16,8 +16,10 @@
  * Created: 02/04/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: Compact filter bar widget for data table views. Displays one row per active filter rule with a column      *
- *          selector, operator selector, value field, and remove button. An "Add rule" button appends new rules.       *
- *          Reusable by DatasetView and ConcordanceView.                                                               *
+ *          selector, operator selector, value field, and remove button. An "Add rule" button appends new rules,       *
+ *          followed by AND/OR radio buttons controlling how rules combine, and an "Add boolean column" button that   *
+ *          produces a 0/1 column flagging rows that match the current filter. Reusable by DatasetView and             *
+ *          ConcordanceView.                                                                                           *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -31,6 +33,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QToolButton>
+#include <QRadioButton>
 #include <phon/gui/data_filter.hpp>
 #include <phon/gui/checkable_combo_box.hpp>
 
@@ -63,9 +66,25 @@ public:
 	// Add a new empty filter rule strip.
 	void appendStrip();
 
+	// Set the logic radio buttons without emitting logicChanged.
+	// Does NOT push the value back to the proxy; callers that want
+	// the proxy updated should call m_proxy->setLogic() themselves.
+	void setLogic(FilterLogic logic);
+
+	FilterLogic logic() const;
+
 signals:
 
 	void ruleCountChanged(int count);
+
+	// Emitted when the user toggles AND/OR via the radio buttons.
+	// Not emitted by setLogic() (which is for view-driven restoration).
+	void logicChanged(FilterLogic logic);
+
+	// Emitted when the user clicks the "Add boolean column" button.
+	// The host view is responsible for prompting the user for a name
+	// and creating the column on the underlying data table.
+	void addBooleanColumnRequested();
 
 private:
 
@@ -88,10 +107,14 @@ private:
 	FilterOp opFromIndex(int index, bool numeric) const;
 	int opToIndex(FilterOp op, bool numeric) const;
 	void updateStripValueWidget(RuleStrip &strip);
+	void onLogicRadioToggled();
 
 	DataFilterProxyModel *m_proxy;
 	QVBoxLayout *m_strips_layout = nullptr;
 	QPushButton *m_add_button = nullptr;
+	QRadioButton *m_and_radio = nullptr;
+	QRadioButton *m_or_radio = nullptr;
+	QPushButton *m_bool_column_button = nullptr;
 	QVector<RuleStrip> m_strips;
 
 	QStringList m_headers;

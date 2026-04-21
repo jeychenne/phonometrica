@@ -72,10 +72,14 @@ public:
 
 	const Array<FilterRuleData> &filter_rules() const { return m_filter_rules; }
 	bool filter_enabled() const { return m_filter_enabled; }
+	/// Logic used to combine filter rules: "and" (default) or "or".
+	const String &filter_logic() const { return m_filter_logic; }
 
 	/// Replace the saved filter rules. Does NOT mark the document as modified
-	/// (filters are view metadata, not data changes).
-	void set_filter_rules(Array<FilterRuleData> rules, bool enabled);
+	/// (filters are view metadata, not data changes). `logic` is "and" or "or";
+	/// anything else is coerced to "and" on write.
+	void set_filter_rules(Array<FilterRuleData> rules, bool enabled,
+	                      const String &logic = String("and"));
 
 	/// Clear all saved filter rules.
 	void clear_filter_rules();
@@ -99,6 +103,8 @@ private:
 	Array<FilterRuleData> m_filter_rules;
 
 	bool m_filter_enabled = true;
+
+	String m_filter_logic = String("and");  // "and" or "or"
 };
 
 

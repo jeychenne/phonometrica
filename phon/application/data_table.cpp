@@ -92,6 +92,8 @@ void DataTable::metadata_to_xml(xml_node meta_node)
 	auto filter_node = meta_node.append_child("FilterRules");
 	auto enabled_attr = filter_node.append_attribute("enabled");
 	enabled_attr.set_value(m_filter_enabled ? "true" : "false");
+	auto logic_attr = filter_node.append_attribute("logic");
+	logic_attr.set_value((m_filter_logic == "or") ? "or" : "and");
 
 	for (intptr_t i = 1; i <= m_filter_rules.size(); i++)
 	{
@@ -133,6 +135,14 @@ void DataTable::metadata_from_xml(xml_node meta_node)
 		auto enabled_attr = node.attribute("enabled");
 		m_filter_enabled = !enabled_attr || std::string_view(enabled_attr.value()) != "false";
 
+		auto logic_attr = node.attribute("logic");
+		if (logic_attr && std::string_view(logic_attr.value()) == "or") {
+			m_filter_logic = String("or");
+		}
+		else {
+			m_filter_logic = String("and");  // default for older files
+		}
+
 		for (auto rule_node = node.first_child(); rule_node; rule_node = rule_node.next_sibling())
 		{
 			if (rule_node.name() != rule_tag) continue;
@@ -163,10 +173,11 @@ void DataTable::metadata_from_xml(xml_node meta_node)
 	}
 }
 
-void DataTable::set_filter_rules(Array<FilterRuleData> rules, bool enabled)
+void DataTable::set_filter_rules(Array<FilterRuleData> rules, bool enabled, const String &logic)
 {
 	m_filter_rules = std::move(rules);
 	m_filter_enabled = enabled;
+	m_filter_logic = (logic == "or") ? String("or") : String("and");
 	// Intentionally no modified flag: filter rules are view metadata,
 	// not data changes. They are silently persisted when the project is saved.
 }
@@ -175,6 +186,7 @@ void DataTable::clear_filter_rules()
 {
 	m_filter_rules.clear();
 	m_filter_enabled = true;
+	m_filter_logic = String("and");
 }
 
 

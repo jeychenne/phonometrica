@@ -21,6 +21,8 @@
 
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QButtonGroup>
+#include <QFrame>
 #include <phon/gui/filter_bar.hpp>
 
 namespace phonometrica {
@@ -36,13 +38,53 @@ FilterBar::FilterBar(DataFilterProxyModel *proxy, QWidget *parent) :
 	m_strips_layout->setSpacing(3);
 	layout->addLayout(m_strips_layout);
 
+	// ── Bottom action row: Add rule | AND/OR | Add boolean column ──
+	auto *action_row = new QHBoxLayout;
+	action_row->setSpacing(8);
+
 	m_add_button = new QPushButton(QIcon(QStringLiteral(":/icons/circle-plus.svg")),
 	                               tr("Add filter rule"));
 	m_add_button->setFlat(true);
 	m_add_button->setCursor(Qt::PointingHandCursor);
-	layout->addWidget(m_add_button, 0, Qt::AlignLeft);
+	action_row->addWidget(m_add_button);
 
+	// AND/OR radio buttons controlling how rules combine.
+	auto *logic_group = new QButtonGroup(this);
+	m_and_radio = new QRadioButton(tr("AND"));
+	m_or_radio  = new QRadioButton(tr("OR"));
+	m_and_radio->setToolTip(tr("A row passes if every rule matches"));
+	m_or_radio->setToolTip(tr("A row passes if any rule matches"));
+	m_and_radio->setChecked(true);  // default
+	logic_group->addButton(m_and_radio);
+	logic_group->addButton(m_or_radio);
+	action_row->addWidget(m_and_radio);
+	action_row->addWidget(m_or_radio);
+
+	// Visual separator between logic radios and the boolean-column button.
+	auto *sep = new QFrame;
+	sep->setFrameShape(QFrame::VLine);
+	sep->setFrameShadow(QFrame::Sunken);
+	action_row->addWidget(sep);
+
+	// "Add boolean column" button: generates a 0/1 column reflecting filter matches.
+	m_bool_column_button = new QPushButton(QIcon(QStringLiteral(":/icons/circle-plus.svg")),
+	                                       tr("Add boolean column"));
+	m_bool_column_button->setFlat(true);
+	m_bool_column_button->setCursor(Qt::PointingHandCursor);
+	m_bool_column_button->setToolTip(tr("Add a 0/1 column marking rows that match the current filter"));
+	action_row->addWidget(m_bool_column_button);
+
+	action_row->addStretch();
+	layout->addLayout(action_row);
+
+	// ── Connections ────────────────────────────────────
 	connect(m_add_button, &QPushButton::clicked, this, &FilterBar::appendStrip);
+
+	connect(m_and_radio, &QRadioButton::toggled, this, &FilterBar::onLogicRadioToggled);
+	connect(m_or_radio,  &QRadioButton::toggled, this, &FilterBar::onLogicRadioToggled);
+
+	connect(m_bool_column_button, &QPushButton::clicked,
+	        this, &FilterBar::addBooleanColumnRequested);
 }
 
 void FilterBar::setColumns(const QStringList &headers, ColumnTypeCallback isNumeric,
@@ -129,6 +171,9 @@ void FilterBar::rebuild()
 			removeStrip(i);
 		});
 	}
+
+	// Sync radios to the proxy's logic (without emitting logicChanged).
+	setLogic(m_proxy->logic());
 }
 
 FilterBar::RuleStrip FilterBar::createStrip(int ruleIndex)
@@ -398,6 +443,40 @@ int FilterBar::opToIndex(FilterOp op, bool numeric) const
 		default: return 2;
 		}
 	}
+}
+
+// ─── Logic radio buttons ─────────────────────────────────────────────
+
+void FilterBar::setLogic(FilterLogic logic)
+{
+	// Set the radios without emitting logicChanged (this is for view-
+	// driven restoration after loading the document).
+	m_and_radio->blockSignals(true);
+	m_or_radio->blockSignals(true);
+	if (logic == FilterLogic::Or) {
+		m_or_radio->setChecked(true);
+	}
+	else {
+		m_and_radio->setChecked(true);
+	}
+	m_and_radio->blockSignals(false);
+	m_or_radio->blockSignals(false);
+}
+
+FilterLogic FilterBar::logic() const
+{
+	return m_or_radio->isChecked() ? FilterLogic::Or : FilterLogic::And;
+}
+
+void FilterBar::onLogicRadioToggled()
+{
+	// QButtonGroup fires toggled() for both the newly-unchecked and the
+	// newly-checked radio; only act on the one that ended up checked to
+	// avoid double emission.
+	auto *sender_radio = qobject_cast<QRadioButton*>(sender());
+	if (!sender_radio || !sender_radio->isChecked()) return;
+
+	emit logicChanged(logic());
 }
 
 } // namespace phonometrica

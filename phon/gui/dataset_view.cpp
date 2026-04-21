@@ -142,6 +142,8 @@ void DatasetView::setupUi()
 	if (!m_ds->filter_rules().empty())
 	{
 		auto &saved = m_ds->filter_rules();
+		// Apply logic BEFORE adding rules so any re-evaluation uses the right one.
+		m_proxy->setLogic(string_to_filter_logic(m_ds->filter_logic().data()));
 		for (intptr_t r = 1; r <= saved.size(); r++)
 		{
 			auto &rd = saved[r];
@@ -159,7 +161,7 @@ void DatasetView::setupUi()
 			m_proxy->addRule(rule);
 		}
 		m_proxy->setFilterEnabled(m_ds->filter_enabled());
-		m_filter_bar->rebuild();
+		m_filter_bar->rebuild();  // rebuild() also syncs the radios to the proxy's logic
 		m_filter_bar->show();
 		m_filter_action->setChecked(true);
 	}
@@ -326,8 +328,16 @@ void DatasetView::setupUi()
 			}
 			saved.append(std::move(rd));
 		}
-		m_ds->set_filter_rules(std::move(saved), m_proxy->isFilterEnabled());
+		m_ds->set_filter_rules(std::move(saved), m_proxy->isFilterEnabled(),
+		                      String(filter_logic_to_string(m_proxy->logic())));
 	});
+
+	// The filter bar's radio buttons push logic changes to the proxy;
+	// the proxy then fires filterChanged, which the handler above serializes.
+	connect(m_filter_bar, &FilterBar::logicChanged, m_proxy, &DataFilterProxyModel::setLogic);
+
+	connect(m_filter_bar, &FilterBar::addBooleanColumnRequested,
+	        this, &DatasetView::onAddBooleanColumn);
 
 	// Update the tab label (adds/removes the modification star) when a cell is edited.
 	connect(m_model, &QAbstractItemModel::dataChanged, this, [this]() {
@@ -1017,6 +1027,77 @@ void DatasetView::onAddMetricColumn()
 			m_filter_action->setChecked(true);
 			m_filter_bar->rebuild();
 		}
+	}
+	catch (std::exception &e)
+	{
+		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
+	}
+}
+
+
+void DatasetView::onAddBooleanColumn()
+{
+	auto nrows = m_ds->row_count();
+	if (nrows == 0) {
+		QMessageBox::information(this, tr("Information"), tr("The dataset is empty."));
+		return;
+	}
+
+	if (m_proxy->ruleCount() == 0) {
+		QMessageBox::information(this, tr("Information"),
+			tr("There are no filter rules. Add at least one rule before creating a boolean column."));
+		return;
+	}
+
+	// Prompt for the column name. Default is "flag"; ensure uniqueness against
+	// existing headers.
+	QString default_name = tr("flag");
+	bool ok = false;
+	QString col_name;
+	while (true)
+	{
+		col_name = QInputDialog::getText(this,
+			tr("Add boolean column"),
+			tr("Name for the new column:"),
+			QLineEdit::Normal, default_name, &ok);
+
+		if (!ok) return;  // user cancelled
+
+		col_name = col_name.trimmed();
+		if (col_name.isEmpty()) {
+			QMessageBox::warning(this, tr("Invalid name"),
+				tr("The column name cannot be empty."));
+			continue;
+		}
+		if (m_ds->find_column(String(col_name.toUtf8().constData())) != 0) {
+			QMessageBox::warning(this, tr("Duplicate name"),
+				tr("A column named \"%1\" already exists. Please choose another name.").arg(col_name));
+			default_name = col_name;
+			continue;
+		}
+		break;
+	}
+
+	// Evaluate rules directly against every source row. We intentionally use
+	// evaluateRow() (which ignores the enabled flag) so that the flag column
+	// is a faithful snapshot of the rule set: toggling the filter bar off
+	// afterwards doesn't silently change the stored values.
+	std::vector<double> flags;
+	flags.reserve(static_cast<size_t>(nrows));
+	for (intptr_t i = 0; i < nrows; i++) {
+		flags.push_back(m_proxy->evaluateRow(static_cast<int>(i)) ? 1.0 : 0.0);
+	}
+
+	try
+	{
+		m_ds->add_numeric_column(String(col_name.toUtf8().constData()), flags);
+		m_model->refreshAll();
+		m_table->resizeColumnsToContents();
+		setupFilterBar();
+		updateCountLabel();
+		emit titleChanged(label());
+
+		record(std::make_unique<AddDatasetColumnCommand>(this));
 	}
 	catch (std::exception &e)
 	{
