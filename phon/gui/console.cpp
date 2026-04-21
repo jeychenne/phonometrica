@@ -25,6 +25,7 @@
 #include <QTextBlock>
 #include <QScrollBar>
 #include <QTabWidget>
+#include <QApplication>
 #include <phon/gui/font_helpers.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/runtime.hpp>
@@ -190,6 +191,23 @@ void Console::runCode(const QString &code)
 {
 	m_text_written = false;
 	appendPlainText(QString()); // newline after the input
+
+	// Show a busy cursor while the script runs. Script execution is synchronous
+	// on the main thread (the GUI blocks until `do_string` returns), so this is
+	// the main visual cue that something is happening — especially useful for
+	// long operations such as fitting a model. RAII ensures the cursor is
+	// restored even if an exception escapes the try blocks below.
+	struct WaitCursorGuard
+	{
+		WaitCursorGuard()
+		{
+			QApplication::setOverrideCursor(Qt::WaitCursor);
+			// Repaint pending events once so the cursor actually shows before
+			// we enter the (blocking) runtime call.
+			QApplication::processEvents();
+		}
+		~WaitCursorGuard() { QApplication::restoreOverrideCursor(); }
+	} wait_guard;
 
 	try
 	{
