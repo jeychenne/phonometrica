@@ -17,6 +17,7 @@
  *                                                                                                                     *
  * Purpose: Filter proxy model for data tables. Sits between a DatasetModel or ConcordanceModel and the QTableView,   *
  *          providing non-destructive row filtering based on user-defined column rules, plus free column sorting.       *
+ *          Rules can be combined with AND (default) or OR logic.                                                      *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -44,6 +45,13 @@ enum class FilterOp
 	NotContains,   // text does not contain substring
 	Regex,         // text matches regex
 	InSet          // text is one of a set of values (factor levels)
+};
+
+// How multiple rules combine.
+enum class FilterLogic
+{
+	And,   // row must pass every rule (default)
+	Or     // row passes if any rule matches
 };
 
 struct FilterRule
@@ -82,6 +90,10 @@ public:
 	void setFilterEnabled(bool enabled);
 	bool isFilterEnabled() const { return m_enabled; }
 
+	// Logic used to combine rules.
+	void setLogic(FilterLogic logic);
+	FilterLogic logic() const { return m_logic; }
+
 	// Adjust rule column indices after structural column changes.
 	// col is 0-based. Rules targeting the removed column are deleted.
 	void adjustAfterColumnRemove(int col);
@@ -97,9 +109,17 @@ public:
 	// Returns 0-based source row indices.
 	QVector<int> visibleSourceRows() const;
 
+	// Evaluate the current filter rules against a source-model row,
+	// ignoring the enabled flag. Returns true if the row passes under
+	// the current logic. If there are no rules, returns true.
+	// Used by the "Add boolean column" feature so the computed flag
+	// reflects rule matching regardless of whether the filter is active.
+	bool evaluateRow(int sourceRow) const;
+
 signals:
 
 	void filterChanged();
+	void logicChanged(FilterLogic logic);
 
 protected:
 
@@ -112,14 +132,22 @@ private:
 
 	bool matchesRule(int sourceRow, const FilterRule &rule) const;
 
+	// Evaluate all rules under the current logic (ignoring m_enabled).
+	bool evaluateRules(int sourceRow) const;
+
 	QVector<FilterRule> m_rules;
 	bool m_enabled = true;
+	FilterLogic m_logic = FilterLogic::And;
 };
 
 // Convert between FilterOp and serialization strings used by FilterRuleData.
 // Strings: "==", "!=", "<", "<=", ">", ">=", "contains", "!contains", "matches", "in".
 const char *filter_op_to_string(FilterOp op);
 FilterOp string_to_filter_op(const char *s);
+
+// Convert between FilterLogic and serialization strings ("and" / "or").
+const char *filter_logic_to_string(FilterLogic logic);
+FilterLogic string_to_filter_logic(const char *s);
 
 } // namespace phonometrica
 

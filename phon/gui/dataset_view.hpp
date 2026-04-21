@@ -83,6 +83,7 @@ private slots:
 	void onClearFilters();
 	void onCreateSubset();
 	void onAddMetricColumn();
+	void onAddBooleanColumn();
 	void onNormalizeVowels();
 
 	void onContextMenu(const QPoint &pos);
