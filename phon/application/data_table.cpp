@@ -1310,7 +1310,34 @@ void DataTable::initialize(Runtime &rt)
 		stats::NormalPrior np;
 		np.mean = args[2].to_float();
 		np.sd = args[3].to_float();
+#if defined(PHON_INLA_BAYES_DIAG)
+		std::fprintf(stderr,
+			"[PHON_INLA_BAYES_DIAG/set_fixed4] name=\"%.*s\"  "
+			"np = {mean=%.4f, sd=%.4f}  "
+			"(raw args[2].to_float()=%.4f, args[3].to_float()=%.4f)\n",
+			(int) name.size(), name.data(),
+			np.mean, np.sd,
+			args[2].to_float(), args[3].to_float());
+#endif
 		prior.coefficient_priors[name] = np;
+#if defined(PHON_INLA_BAYES_DIAG)
+		{
+			auto it = prior.coefficient_priors.find(name);
+			if (it != prior.coefficient_priors.end())
+			{
+				const auto &stored = it->second;
+				std::fprintf(stderr,
+					"[PHON_INLA_BAYES_DIAG/set_fixed4] after insert: "
+					"coefficient_priors[\"%.*s\"] = {mean=%.4f, sd=%.4f}  "
+					"&entry=%p%s\n",
+					(int) name.size(), name.data(),
+					stored.mean, stored.sd,
+					(const void *) &stored,
+					(stored.sd > 0 && std::isfinite(stored.sd))
+						? "" : "  [INVALID SD]");
+			}
+		}
+#endif
 		return Variant();
 	};
 
@@ -1401,6 +1428,28 @@ void DataTable::initialize(Runtime &rt)
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		auto &priors = cast<stats::PriorSpec>(args[2]);
+#if defined(PHON_INLA_BAYES_DIAG)
+		std::fprintf(stderr,
+			"[PHON_INLA_BAYES_DIAG/fit_bayes2] entry — priors state:\n"
+			"  &priors=%p  fixed_effects={mean=%.4f, sd=%.4f}"
+			"  fixed_auto=%s\n",
+			(const void *) &priors,
+			priors.fixed_effects.mean, priors.fixed_effects.sd,
+			priors.fixed_auto ? "true" : "false");
+		std::fprintf(stderr,
+			"  coefficient_priors (%zu entries):\n",
+			priors.coefficient_priors.size());
+		for (const auto &[pname, np] : priors.coefficient_priors)
+		{
+			std::fprintf(stderr,
+				"    \"%.*s\"  {mean=%.4f, sd=%.4f}  &entry=%p%s\n",
+				(int) pname.size(), pname.data(),
+				np.mean, np.sd,
+				(const void *) &np,
+				(np.sd > 0 && std::isfinite(np.sd))
+					? "" : "  [INVALID SD]");
+		}
+#endif
 		data.open();
 		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", priors);
 		model.compute_pseudo_r2();

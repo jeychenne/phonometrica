@@ -296,11 +296,103 @@ static double anova_variance_component(const Eigen::VectorXd &resid,
 
 // Add Normal prior precision to the Henderson system's X'WX block.
 // This shifts β̂ toward the prior mean, giving the MAP estimate.
+#if defined(PHON_INLA_BAYES_DIAG)
+// One-shot flag: set to true at the fit call site before each Bayesian
+// fit; cleared by the first subsequent call to add_fixed_prior_to_henderson
+// (or fixed_prior_nll), which dumps the full prior/coef lookup state.
+// thread_local so multiple concurrent fits wouldn't interleave dumps;
+// the rest of this TU is effectively single-threaded, but the declaration
+// costs nothing extra. "dump_" prefix avoids clashing with any user name.
+namespace {
+thread_local bool diag_dump_prior_lookup_once = false;
+}
+
+// Emit the prior/coef-lookup trace. Called from both add_fixed_prior_to_henderson
+// and fixed_prior_nll; whichever fires first consumes the one-shot flag.
+// `context` is a short label ("add_fixed_prior_to_henderson" etc.).
+static void diag_dump_fixed_prior_state(
+	const PriorSpec &priors,
+	const Array<String> &coef_names,
+	intptr_t p,
+	const char *context)
+{
+	std::fprintf(stderr,
+		"\n--- PHON_INLA_BAYES_DIAG: fixed-effect prior lookup (%s) ---\n",
+		context);
+
+	std::fprintf(stderr, "  priors.fixed_effects:  mean=%.4f  sd=%.4f",
+	             priors.fixed_effects.mean, priors.fixed_effects.sd);
+	if (!(priors.fixed_effects.sd > 0) || !std::isfinite(priors.fixed_effects.sd))
+		std::fprintf(stderr, "   [INVALID SD]");
+	std::fprintf(stderr, "\n  priors.fixed_auto = %s\n",
+	             priors.fixed_auto ? "true" : "false");
+
+	std::fprintf(stderr, "  priors.coefficient_priors (%zu entries):\n",
+	             priors.coefficient_priors.size());
+	for (const auto &[name, np] : priors.coefficient_priors)
+	{
+		std::fprintf(stderr, "    \"%.*s\"  mean=%.4f  sd=%.4f%s\n",
+		             (int) name.size(), name.data(),
+		             np.mean, np.sd,
+		             (!(np.sd > 0) || !std::isfinite(np.sd)) ? "   [INVALID SD]" : "");
+	}
+
+	std::fprintf(stderr, "  coef_names (p=%ld, 1-indexed):\n", (long) p);
+	for (intptr_t j = 0; j < p; j++)
+	{
+		const auto &coef = coef_names[j + 1];
+		std::fprintf(stderr, "    [%ld] \"%.*s\"  (size=%ld)\n",
+		             (long) j, (int) coef.size(), coef.data(),
+		             (long) coef.size());
+	}
+
+	std::fprintf(stderr, "  per-coef lookups and precision contributions:\n");
+	bool any_invalid = false;
+	for (intptr_t j = 0; j < p; j++)
+	{
+		const auto &coef = coef_names[j + 1];
+		auto it = priors.coefficient_priors.find(coef);
+		bool hit = (it != priors.coefficient_priors.end());
+		const NormalPrior &pr = hit ? it->second : priors.fixed_effects;
+		double lambda = 1.0 / (pr.sd * pr.sd);
+		bool lambda_bad = !std::isfinite(lambda);
+		std::fprintf(stderr,
+			"    j=%ld  coef=\"%.*s\"  map=%s  mean=%.4f  sd=%.4f  1/sd²=%.4e%s\n",
+			(long) j,
+			(int) coef.size(), coef.data(),
+			hit ? "HIT " : "miss",
+			pr.mean, pr.sd, lambda,
+			lambda_bad ? "   [NON-FINITE]" : "");
+		if (lambda_bad) any_invalid = true;
+	}
+
+	if (any_invalid)
+		std::fprintf(stderr,
+			"  >>> At least one precision contribution is non-finite.\n"
+			"      This will poison the Henderson solve and propagate NaN\n"
+			"      through laplace_nll, explaining the universal NaN seen\n"
+			"      downstream at inla_grid_integrate_gaussian.\n");
+	else
+		std::fprintf(stderr,
+			"  (all precision contributions finite — NaN origin is elsewhere)\n");
+
+	std::fprintf(stderr, "--- end prior-lookup dump ---\n\n");
+}
+#endif  // PHON_INLA_BAYES_DIAG
+
 static void add_fixed_prior_to_henderson(Eigen::MatrixXd &H, Eigen::VectorXd &rhs,
                                           const PriorSpec &priors,
                                           const Array<String> &coef_names,
                                           intptr_t p)
 {
+#if defined(PHON_INLA_BAYES_DIAG)
+	if (diag_dump_prior_lookup_once)
+	{
+		diag_dump_prior_lookup_once = false;
+		diag_dump_fixed_prior_state(priors, coef_names, p,
+		                             "add_fixed_prior_to_henderson");
+	}
+#endif
 	for (intptr_t j = 0; j < p; j++)
 	{
 		const auto &pr = priors.prior_for(coef_names[j + 1]);
@@ -316,6 +408,13 @@ static double fixed_prior_nll(const Eigen::VectorXd &beta,
                                const Array<String> &coef_names,
                                intptr_t p)
 {
+#if defined(PHON_INLA_BAYES_DIAG)
+	if (diag_dump_prior_lookup_once)
+	{
+		diag_dump_prior_lookup_once = false;
+		diag_dump_fixed_prior_state(priors, coef_names, p, "fixed_prior_nll");
+	}
+#endif
 	double nll = 0;
 	for (intptr_t j = 0; j < p; j++)
 	{
@@ -1910,6 +2009,32 @@ static NewtonResult lbfgs_optimize(const Objective &obj,
 	// Final progress callback (100% bar — wrapper already reported per call).
 	if (progress) progress(max_iter, max_iter);
 
+	// ── NaN guard (correctness fix) ──────────────────────────────────
+	// LBFGSpp throws when an iterate goes non-finite. The descent-probe
+	// recovery above then evaluates at the NaN θ, producing NaN gradient
+	// and NaN f0. Since IEEE 754 comparisons against NaN always return
+	// false, neither the descent check (fp < f0 − tol) nor the gradient-
+	// norm check (gnorm < 1000·tol) can fire, so the recovery silently
+	// declares convergence=true and returns garbage θ. That garbage then
+	// propagates to saved_theta and first surfaces at INLA grid
+	// integration, where the user-facing error misleadingly blames the
+	// random-effects structure.  Fail loud here instead.
+	if (!theta.allFinite() || !std::isfinite(fx))
+	{
+		throw error(
+			"L-BFGS optimizer produced non-finite state after % iteration(s) "
+			"(θ all-finite: %; f(θ) finite: %). This typically indicates a "
+			"numerically unstable combination of priors or data — most commonly "
+			"very wide fixed-effect priors interacting with weakly-identified "
+			"random-effect variance components. If the same model fits under "
+			"the frequentist engine, the issue is in the prior specification. "
+			"Compile with -DPHON_INLA_BAYES_DIAG=1 and rerun to see the full "
+			"pre- and post-optimizer state.",
+			(int) niter,
+			theta.allFinite() ? "yes" : "no",
+			std::isfinite(fx) ? "yes" : "no");
+	}
+
 	res.theta = theta;
 	res.fx = fx;
 	res.niter = niter;
@@ -3175,6 +3300,182 @@ static void compute_grid_waic(
 }
 
 
+#if defined(PHON_INLA_BAYES_DIAG)
+// ─────────────────────────────────────────────────────────────────
+// Compile-gated diagnostic helper for inla_grid_integrate_gaussian.
+//
+// Decomposes the neg-log-posterior at a given θ into its seven
+// contributions (see the layout below), so each subterm can be
+// checked for NaN/Inf independently when the grid integration
+// fails universally at every evaluation point.
+//
+// The breakdown is computed by replicating the arithmetic of
+// solve_gaussian_henderson + GaussianCholObjective::eval rather
+// than by instrumenting them — deliberately independent, so a bug
+// in the inner solve does not silence the diagnostic itself.
+//
+// Identity (up to floating-point noise):
+//   obj.eval(θ) = A + B + C + D + E + F + G
+// where
+//   A = cond_nll        = rss/(2σ²) + ½ n·log(2πσ²)
+//   B = u_prior_nll     = ½ Σ_j u_j' D⁻¹ u_j
+//                       + Σ_g J_g·[½ q_g·log(2π) + ½ log|D_g|]
+//   C = ½ log|H_uu|                                  (Laplace correction)
+//   D = −½ J_total · log(2π)                         (Laplace constant)
+//   E = fixed_prior_nll(β̂)                          (per-coef N priors)
+//   F = −variance_prior_log_density                  (σ_g,t priors + LKJ)
+//   G = −residual_prior_log_density                  (σ_res prior)
+// ─────────────────────────────────────────────────────────────────
+struct DiagNllBreakdown
+{
+	// θ-space decomposition
+	Eigen::VectorXd theta_raw;
+	std::vector<Eigen::MatrixXd> D_cov;  // per-group RE covariance
+	std::vector<Eigen::MatrixXd> D_cor;  // per-group RE correlation
+	std::vector<double> log_det_Dg;
+	double sigma2 = 0.0;
+	bool sigma2_overflow = false;
+
+	// Inner solve
+	Eigen::VectorXd beta_hat;
+	Eigen::VectorXd u_hat;
+	double rss = 0.0;
+	bool beta_finite = true;
+	bool u_finite = true;
+
+	// Subterms (signed so they sum to the total)
+	double A_cond_nll = 0.0;
+	double B_u_prior_nll = 0.0;
+	double C_half_log_det_Huu = 0.0;
+	double D_minus_half_J_log_2pi = 0.0;
+	double E_fixed_prior_nll = 0.0;
+	double F_minus_variance_prior_lp = 0.0;
+	double G_minus_residual_prior_lp = 0.0;
+
+	// Totals
+	double total_breakdown = 0.0;   // A + B + C + D + E + F + G
+	double total_obj_eval = 0.0;    // obj.eval(θ)
+
+	// Validity mask: bit i set ⇒ subterm i (A=0, …, G=6) not finite
+	uint32_t nan_mask = 0;
+};
+
+static DiagNllBreakdown diag_eval_gaussian_breakdown(
+	const Eigen::VectorXd &theta,
+	const GaussianCholObjective &obj,
+	const Eigen::Map<Matrix<double>> &Xm,
+	const Eigen::Map<Vector<double>> &ym,
+	const GroupLayout &lay,
+	intptr_t n, intptr_t p, intptr_t n_chol,
+	const PriorSpec *priors,
+	const Array<String> *coef_names,
+	const Eigen::VectorXd *off_ptr)
+{
+	DiagNllBreakdown br;
+	br.theta_raw = theta;
+
+	// ── Unpack θ → D_inv, D_cov, D_cor, σ² ─────────────────────
+	std::vector<Eigen::MatrixXd> D_inv(lay.G);
+	br.D_cov.resize(lay.G);
+	br.D_cor.resize(lay.G);
+	br.log_det_Dg.resize(lay.G);
+	intptr_t cp = 0;
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		Eigen::MatrixXd L = unpack_cholesky(theta.data() + cp, qg);
+		D_inv[g]       = cholesky_to_precision(L);
+		br.D_cov[g]    = cholesky_to_cov(L);
+		br.log_det_Dg[g] = log_det_D(theta.data() + cp, qg);
+
+		br.D_cor[g] = Eigen::MatrixXd::Identity(qg, qg);
+		for (intptr_t i = 0; i < qg; i++)
+			for (intptr_t j = 0; j < qg; j++)
+			{
+				double dii = br.D_cov[g](i, i);
+				double djj = br.D_cov[g](j, j);
+				if (dii > 0 && djj > 0 && std::isfinite(dii) && std::isfinite(djj))
+					br.D_cor[g](i, j) = br.D_cov[g](i, j) / std::sqrt(dii * djj);
+			}
+		cp += n_chol_params(qg);
+	}
+	br.sigma2 = std::exp(2.0 * theta[n_chol]);
+	br.sigma2_overflow = !std::isfinite(br.sigma2);
+
+	// ── Inner Henderson solve ──────────────────────────────────
+	ProfiledResult inner = solve_gaussian_henderson(
+		D_inv, br.log_det_Dg, br.sigma2,
+		Xm, ym, lay, n, p, priors, coef_names, off_ptr);
+	br.beta_hat    = inner.beta;
+	br.u_hat       = inner.u;
+	br.beta_finite = br.beta_hat.allFinite();
+	br.u_finite    = br.u_hat.allFinite();
+
+	// ── A: conditional likelihood neg-log ──────────────────────
+	br.rss = (ym - inner.mu).squaredNorm();
+	br.A_cond_nll = br.rss / (2.0 * br.sigma2)
+	              + 0.5 * (double) n * std::log(2.0 * M_PI * br.sigma2);
+
+	// ── B: u-prior neg-log (quadratic form + normalisers) ──────
+	double B = 0;
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++)
+				for (intptr_t t2 = 0; t2 < qg; t2++)
+					quad += br.u_hat[base + t1] * D_inv[g](t1, t2) * br.u_hat[base + t2];
+			B += 0.5 * quad;
+		}
+		B += (double) lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI)
+		                        + 0.5 * br.log_det_Dg[g]);
+	}
+	br.B_u_prior_nll = B;
+
+	// ── C: +½ log|H_uu|   (Laplace correction) ─────────────────
+	Eigen::VectorXd w_final = Eigen::VectorXd::Constant(n, 1.0 / br.sigma2);
+	br.C_half_log_det_Huu = 0.5 * full_log_det_H(w_final, D_inv, lay, n);
+
+	// ── D: −½ J log(2π)   (Laplace constant) ───────────────────
+	br.D_minus_half_J_log_2pi = -0.5 * (double) lay.J_total * std::log(2.0 * M_PI);
+
+	// ── E: fixed-effect prior neg-log at β̂ ─────────────────────
+	if (priors && coef_names)
+		br.E_fixed_prior_nll = fixed_prior_nll(br.beta_hat, *priors, *coef_names, p);
+
+	// ── F: −variance prior log-density (σ_g,t + LKJ) ───────────
+	if (priors)
+		br.F_minus_variance_prior_lp = -variance_prior_log_density(br.D_cov, *priors, lay);
+
+	// ── G: −residual prior log-density (σ_res) ─────────────────
+	if (priors)
+		br.G_minus_residual_prior_lp = -residual_prior_log_density(std::sqrt(br.sigma2), *priors);
+
+	// ── Sum + cross-check against obj.eval ─────────────────────
+	br.total_breakdown = br.A_cond_nll + br.B_u_prior_nll
+	                   + br.C_half_log_det_Huu + br.D_minus_half_J_log_2pi
+	                   + br.E_fixed_prior_nll
+	                   + br.F_minus_variance_prior_lp
+	                   + br.G_minus_residual_prior_lp;
+	br.total_obj_eval = obj.eval(theta);
+
+	const double terms[7] = {
+		br.A_cond_nll, br.B_u_prior_nll,
+		br.C_half_log_det_Huu, br.D_minus_half_J_log_2pi,
+		br.E_fixed_prior_nll,
+		br.F_minus_variance_prior_lp, br.G_minus_residual_prior_lp
+	};
+	for (int i = 0; i < 7; i++)
+		if (!std::isfinite(terms[i])) br.nan_mask |= (1u << i);
+
+	return br;
+}
+#endif  // PHON_INLA_BAYES_DIAG
+
+
 // Main INLA grid integration for Gaussian LMMs.
 // Populates the Model's posterior fields with mixture-based estimates.
 static void inla_grid_integrate_gaussian(
@@ -3190,6 +3491,21 @@ static void inla_grid_integrate_gaussian(
 	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t d = theta_star.size();
+
+	// ── Defense-in-depth: guard against NaN θ* ───────────────────────
+	// The outer mode-finder (robust_optimize → lbfgs_optimize) should
+	// have thrown already if it produced non-finite state. Fail clearly
+	// here rather than propagating NaN through the Hessian, eigen-
+	// decomposition, and every grid point, which produces a cascade of
+	// "all 43 grid points invalid" without actionable information.
+	if (!theta_star.allFinite()) {
+		throw error(
+			"inla_grid_integrate_gaussian: θ* contains non-finite values "
+			"(size=%). Mode-finding failed silently upstream — this is a "
+			"bug in the Bayesian optimizer path, not in the model spec. "
+			"Compile with -DPHON_INLA_BAYES_DIAG=1 to trace the mode-finder.",
+			(long) d);
+	}
 
 	// ── 1. Hessian at the mode ───────────────────────────────────
 	Eigen::MatrixXd H = compute_fd_hessian(obj, theta_star);
@@ -3226,6 +3542,352 @@ static void inla_grid_integrate_gaussian(
 
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
+
+#if defined(PHON_INLA_BAYES_DIAG)
+	// ── PHON_INLA_BAYES_DIAG dump ──────────────────────────────────────
+	//
+	// Target: prior-combination bug where `inla_grid_integrate_gaussian`
+	// returns invalid (NaN/non-finite) results at every grid point even
+	// though (a) each prior individually works and (b) the frequentist
+	// engine converges on the same model.
+	//
+	// Reproducer: VOT ~ gender + (gender | Item) with the full Vasishth-
+	// style stack (N(0, 50) slopes + N(0, 200) intercept + HalfNormal(100)
+	// variance + HalfNormal(100) residual + LKJ(2)) on Mandarin VOT.
+	// Bisection narrows the interaction to the two `set_fixed` calls
+	// being jointly sufficient to trigger failure; singletons pass.
+	//
+	// Working hypothesis: the combined prior stack alters the profiled
+	// β̂(θ) curvature enough that `compute_fd_hessian` at h=1e-4·|θ*|
+	// produces one or more near-zero (or negative) eigenvalues, which
+	// get clamped to 1e-6. Then Λ^{-½} ≈ 1000 in the clamped direction,
+	// axial CCD steps at δ=3 move θ by ~3000 units along that axis, and
+	// the non-chol decodings (σ_res = exp(θ[n_chol]), D_g = L Lᵀ with
+	// log-scaled diagonal) over/underflow — producing NaN at every grid
+	// point, not just a few.
+	//
+	// The block is placed BEFORE `sanitise_grid_points` so invalid entries
+	// have not yet been overwritten with zero β / +∞ NLL. The per-point
+	// breakdown re-uses the existing `diag_eval_gaussian_breakdown` helper
+	// (A…G in that struct map to likelihood / u-prior / ½·log|H_uu| /
+	// Laplace-const / fixed-prior / −variance-prior / −residual-prior),
+	// deliberately computed independently of the inner solve so that a
+	// bug in Henderson does not silence the diagnostic itself.
+	//
+	// Sections:
+	//   [A] θ* decoded (σ per group, correlations, σ_res) + NLL at θ*
+	//   [B] FD Hessian H_θ (raw) + FD step sizes
+	//   [C] Eigendecomposition — pre- and post-clamp eigenvalues,
+	//       eigenvectors, condition number, count of clamped λ
+	//   [D] Transform column norms ‖T.col(j)‖ = Λ^{-½}[j] + predicted
+	//       axial θ displacement at δ=3
+	//   [E] Per-grid-point breakdown (first DIAG_MAX_POINTS points plus
+	//       any additional invalid points, capped)
+	//
+	// Compile with -DPHON_INLA_BAYES_DIAG=1 and capture stderr:
+	//   phonometrica ... 2> bayes_diag.log
+	{
+		std::fprintf(stderr,
+			"\n=== PHON_INLA_BAYES_DIAG: inla_grid_integrate_gaussian ===\n");
+		std::fprintf(stderr,
+			"d=%ld  n_grid=%ld  n_chol=%ld  p=%ld  n=%ld  G=%ld  J_total=%ld\n",
+			(long)d, (long)n_grid, (long)n_chol, (long)p,
+			(long)n, (long)lay.G, (long)lay.J_total);
+
+		// ── [A] Mode θ* ───────────────────────────────────────────────
+		std::fprintf(stderr, "\n[A] Mode θ* (raw, chol-parameterised)\n");
+		std::fprintf(stderr, "    θ*[%ld] =", (long)d);
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, " %+.6e", theta_star[j]);
+		std::fprintf(stderr, "\n");
+
+		{
+			DiagNllBreakdown bm = diag_eval_gaussian_breakdown(
+				theta_star, obj, Xm, ym, lay,
+				n, p, n_chol, priors, coef_names, off_ptr);
+
+			// Decoded σ / correlations per group (from D_cov / D_cor)
+			for (intptr_t g = 0; g < lay.G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				std::fprintf(stderr, "    group %ld  q=%ld  σ=[", (long)g, (long)qg);
+				for (intptr_t t = 0; t < qg; t++)
+				{
+					double v = bm.D_cov[g](t, t);
+					double sd = (v >= 0 && std::isfinite(v))
+					          ? std::sqrt(v) : std::nan("");
+					std::fprintf(stderr, "%s%.4f", t ? ", " : "", sd);
+				}
+				std::fprintf(stderr, "]");
+				if (qg >= 2)
+				{
+					std::fprintf(stderr, "  det(D)=%.3e  corr:",
+					             bm.D_cov[g].determinant());
+					for (intptr_t t1 = 0; t1 < qg; t1++)
+						for (intptr_t t2 = t1 + 1; t2 < qg; t2++)
+							std::fprintf(stderr, " r[%ld,%ld]=%+.4f",
+							             (long)t1, (long)t2,
+							             bm.D_cor[g](t1, t2));
+				}
+				std::fprintf(stderr, "\n");
+			}
+			std::fprintf(stderr, "    σ_res = exp(θ*[%ld]) = %.4f  σ²=%.4e%s\n",
+			             (long)n_chol, std::exp(theta_star[n_chol]),
+			             bm.sigma2, bm.sigma2_overflow ? "  [OVERFLOW]" : "");
+			std::fprintf(stderr, "    β̂ finite: %s   û finite: %s\n",
+			             bm.beta_finite ? "yes" : "NO",
+			             bm.u_finite    ? "yes" : "NO");
+
+			// NLL decomposition at the mode (sanity: should all be finite)
+			auto tag = [](double v) {
+				return std::isfinite(v) ? "" : "  [NON-FINITE]";
+			};
+			std::fprintf(stderr, "    NLL(θ*) components:\n");
+			std::fprintf(stderr, "      A  cond_nll            = %+.6e%s\n",
+			             bm.A_cond_nll, tag(bm.A_cond_nll));
+			std::fprintf(stderr, "      B  u_prior_nll         = %+.6e%s\n",
+			             bm.B_u_prior_nll, tag(bm.B_u_prior_nll));
+			std::fprintf(stderr, "      C  ½·log|H_uu|         = %+.6e%s\n",
+			             bm.C_half_log_det_Huu, tag(bm.C_half_log_det_Huu));
+			std::fprintf(stderr, "      D  -½·J·log(2π)        = %+.6e\n",
+			             bm.D_minus_half_J_log_2pi);
+			std::fprintf(stderr, "      E  fixed_prior_nll(β̂)  = %+.6e%s\n",
+			             bm.E_fixed_prior_nll, tag(bm.E_fixed_prior_nll));
+			std::fprintf(stderr, "      F  -variance_prior_lp  = %+.6e%s\n",
+			             bm.F_minus_variance_prior_lp,
+			             tag(bm.F_minus_variance_prior_lp));
+			std::fprintf(stderr, "      G  -residual_prior_lp  = %+.6e%s\n",
+			             bm.G_minus_residual_prior_lp,
+			             tag(bm.G_minus_residual_prior_lp));
+			std::fprintf(stderr, "      Σ(A..G) breakdown      = %+.6e%s\n",
+			             bm.total_breakdown, tag(bm.total_breakdown));
+			std::fprintf(stderr, "      obj.eval(θ*) cross-chk = %+.6e  "
+			             "(|Δ| = %.3e)\n",
+			             bm.total_obj_eval,
+			             std::abs(bm.total_breakdown - bm.total_obj_eval));
+			if (bm.nan_mask != 0)
+				std::fprintf(stderr,
+				             "    >>> subterms non-finite at θ*: nan_mask=0x%x\n",
+				             bm.nan_mask);
+		}
+
+		// ── [B] FD Hessian ────────────────────────────────────────────
+		std::fprintf(stderr,
+			"\n[B] FD Hessian H_θ  (d x d, central differences,"
+			" h = 1e-4·max(|θ*[j]|, 1))\n    step h_j =");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, " %.3e",
+			             1e-4 * std::max(std::abs(theta_star[j]), 1.0));
+		std::fprintf(stderr, "\n");
+		for (intptr_t i = 0; i < d; i++)
+		{
+			std::fprintf(stderr, "   ");
+			for (intptr_t j = 0; j < d; j++)
+				std::fprintf(stderr, " %+11.4e", H(i, j));
+			std::fprintf(stderr, "\n");
+		}
+		std::fprintf(stderr, "    det(H) = %+.4e   trace(H) = %+.4e\n",
+		             H.determinant(), H.trace());
+
+		// ── [C] Eigendecomposition ───────────────────────────────────
+		std::fprintf(stderr,
+			"\n[C] Eigendecomposition H = V Λ Vᵀ  (ascending)\n");
+		std::fprintf(stderr, "    λ (pre-clamp):       ");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, " %+11.4e", eig.eigenvalues()[j]);
+		std::fprintf(stderr, "\n    λ (post-clamp ≥1e-6):");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, " %+11.4e", eigenvalues[j]);
+		std::fprintf(stderr, "\n");
+		{
+			double lam_min = eigenvalues.minCoeff();
+			double lam_max = eigenvalues.maxCoeff();
+			double kappa = (lam_min > 0)
+				? lam_max / lam_min
+				: std::numeric_limits<double>::infinity();
+			intptr_t n_clamped = 0;
+			for (intptr_t j = 0; j < d; j++)
+				if (eig.eigenvalues()[j] < 1e-6) n_clamped++;
+			std::fprintf(stderr,
+				"    condition(H, post-clamp) = %.4e"
+				"   clamped eigenvalues: %ld/%ld\n",
+				kappa, (long)n_clamped, (long)d);
+			if (n_clamped > 0)
+				std::fprintf(stderr,
+					"    >>> WARNING: near-flat curvature in %ld direction(s).\n"
+					"        θ displacement along clamped axes scales as δ/√λ\n"
+					"        = 3/√1e-6 ≈ 3e3 — this is the expected failure\n"
+					"        signature for the prior-combination bug. The mode\n"
+					"        is fine; the grid pushes θ off a near-flat ridge\n"
+					"        that the FD Hessian fails to resolve at h=1e-4·|θ|.\n",
+					(long)n_clamped);
+		}
+		std::fprintf(stderr, "    V (columns = eigenvectors):\n");
+		for (intptr_t i = 0; i < d; i++)
+		{
+			std::fprintf(stderr, "   ");
+			for (intptr_t j = 0; j < d; j++)
+				std::fprintf(stderr, " %+9.5f", V(i, j));
+			std::fprintf(stderr, "\n");
+		}
+
+		// ── [D] Transform column norms — predicted θ displacement ─────
+		std::fprintf(stderr,
+			"\n[D] Transform T = V·Λ^{-½}  →  θ_k = θ* + T·z_k\n");
+		std::fprintf(stderr, "    ‖T.col(j)‖ = Λ^{-½}[j]:");
+		double max_step = 0;
+		for (intptr_t j = 0; j < d; j++)
+		{
+			double tn = T.col(j).norm();
+			std::fprintf(stderr, " %.3e", tn);
+			if (tn > max_step) max_step = tn;
+		}
+		std::fprintf(stderr,
+			"\n    max axial |θ_k − θ*| at δ=3 (predicted): %.3e\n",
+			3.0 * max_step);
+		if (3.0 * max_step > 20.0)
+			std::fprintf(stderr,
+				"    >>> WARNING: predicted axial θ step > 20. Non-chol\n"
+				"        decodings (σ_res, D_g) will over/underflow by many\n"
+				"        orders of magnitude; Henderson output will be NaN.\n");
+
+		// ── [E] Per-grid-point breakdown ─────────────────────────────
+		constexpr intptr_t DIAG_MAX_POINTS = 12;
+		std::fprintf(stderr,
+			"\n[E] Per-grid-point NLL breakdown\n"
+			"    (first %ld points; up to %ld additional invalid points)\n",
+			(long)DIAG_MAX_POINTS, (long)DIAG_MAX_POINTS);
+
+		auto dump_grid_point = [&](intptr_t k, const char *label) {
+			Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+			bool valid = grid_point_valid(results[k], p);
+			std::fprintf(stderr,
+				"\n  --- k=%ld  (%s)  |z|=%.3f  valid=%s ---\n",
+				(long)k, label, z_points[k].norm(), valid ? "yes" : "NO");
+
+			std::fprintf(stderr, "    z_k =");
+			for (intptr_t j = 0; j < d; j++)
+				std::fprintf(stderr, " %+.3f", z_points[k][j]);
+			std::fprintf(stderr, "\n    θ_k =");
+			for (intptr_t j = 0; j < d; j++)
+				std::fprintf(stderr, " %+.4e", theta_k[j]);
+			std::fprintf(stderr, "\n");
+
+			DiagNllBreakdown bk = diag_eval_gaussian_breakdown(
+				theta_k, obj, Xm, ym, lay,
+				n, p, n_chol, priors, coef_names, off_ptr);
+
+			// Decoded σ / correlations per group
+			for (intptr_t g = 0; g < lay.G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				std::fprintf(stderr, "    group %ld σ =", (long)g);
+				for (intptr_t t = 0; t < qg; t++)
+				{
+					double v = bk.D_cov[g](t, t);
+					double sd = (v >= 0 && std::isfinite(v))
+					          ? std::sqrt(v) : std::nan("");
+					std::fprintf(stderr, " %.3e", sd);
+				}
+				std::fprintf(stderr, "   det(D_%ld)=%.3e",
+				             (long)g, bk.D_cov[g].determinant());
+				if (qg >= 2)
+					std::fprintf(stderr, "   r[0,1]=%+.4f", bk.D_cor[g](0, 1));
+				std::fprintf(stderr, "\n");
+			}
+			std::fprintf(stderr, "    σ_res=%.3e  σ²=%.3e%s\n",
+			             std::exp(theta_k[n_chol]), bk.sigma2,
+			             bk.sigma2_overflow ? "  [OVERFLOW]" : "");
+
+			// Validity flags on the stored grid-point result (before sanitisation)
+			if (!valid)
+			{
+				std::fprintf(stderr, "    failure: nll=%s  β=[",
+					std::isfinite(results[k].neg_log_posterior)
+						? "finite" : "NON-FINITE");
+				for (intptr_t j = 0; j < p; j++)
+					std::fprintf(stderr, "%s%s", j ? " " : "",
+						std::isfinite(results[k].beta[j]) ? "ok" : "NaN");
+				std::fprintf(stderr, "]  diag(vcov)=[");
+				for (intptr_t j = 0; j < p; j++)
+				{
+					if (results[k].vcov_beta.rows() <= j)
+					{
+						std::fprintf(stderr, "%s-", j ? " " : "");
+					}
+					else
+					{
+						double v = results[k].vcov_beta(j, j);
+						std::fprintf(stderr, "%s%s", j ? " " : "",
+							!std::isfinite(v) ? "NaN" : (v < 0 ? "NEG" : "ok"));
+					}
+				}
+				std::fprintf(stderr, "]\n");
+			}
+
+			// Seven-term NLL breakdown (A…G, from the existing helper)
+			auto tag = [](double v) {
+				return std::isfinite(v) ? "" : "  [NON-FINITE]";
+			};
+			std::fprintf(stderr, "    rss=%+.4e\n", bk.rss);
+			std::fprintf(stderr, "    A  cond_nll           = %+.4e%s\n",
+			             bk.A_cond_nll, tag(bk.A_cond_nll));
+			std::fprintf(stderr, "    B  u_prior_nll        = %+.4e%s\n",
+			             bk.B_u_prior_nll, tag(bk.B_u_prior_nll));
+			std::fprintf(stderr, "    C  ½·log|H_uu|        = %+.4e%s\n",
+			             bk.C_half_log_det_Huu, tag(bk.C_half_log_det_Huu));
+			std::fprintf(stderr, "    D  -½·J·log(2π)       = %+.4e\n",
+			             bk.D_minus_half_J_log_2pi);
+			std::fprintf(stderr, "    E  fixed_prior_nll    = %+.4e%s\n",
+			             bk.E_fixed_prior_nll, tag(bk.E_fixed_prior_nll));
+			std::fprintf(stderr, "    F  -variance_prior    = %+.4e%s\n",
+			             bk.F_minus_variance_prior_lp,
+			             tag(bk.F_minus_variance_prior_lp));
+			std::fprintf(stderr, "    G  -residual_prior    = %+.4e%s\n",
+			             bk.G_minus_residual_prior_lp,
+			             tag(bk.G_minus_residual_prior_lp));
+			for (intptr_t g = 0; g < lay.G; g++)
+				std::fprintf(stderr, "       log|D_%ld|         = %+.4e%s\n",
+				             (long)g, bk.log_det_Dg[g], tag(bk.log_det_Dg[g]));
+			std::fprintf(stderr, "    ─────────────────────\n");
+			std::fprintf(stderr,
+			             "    Σ(A..G) breakdown     = %+.4e%s\n",
+			             bk.total_breakdown, tag(bk.total_breakdown));
+			std::fprintf(stderr,
+			             "    obj.eval(θ_k) check   = %+.4e  (|Δ|=%.3e)\n",
+			             bk.total_obj_eval,
+			             std::abs(bk.total_breakdown - bk.total_obj_eval));
+			if (bk.nan_mask != 0)
+				std::fprintf(stderr,
+				             "    >>> non-finite subterms: nan_mask=0x%x\n",
+				             bk.nan_mask);
+		};
+
+		intptr_t n_first = std::min((intptr_t)DIAG_MAX_POINTS, n_grid);
+		for (intptr_t k = 0; k < n_first; k++)
+			dump_grid_point(k, k == 0 ? "center" : "grid");
+
+		intptr_t extra = 0;
+		for (intptr_t k = n_first; k < n_grid && extra < DIAG_MAX_POINTS; k++)
+		{
+			if (!grid_point_valid(results[k], p))
+			{
+				dump_grid_point(k, "invalid");
+				extra++;
+			}
+		}
+
+		intptr_t n_invalid = 0;
+		for (intptr_t k = 0; k < n_grid; k++)
+			if (!grid_point_valid(results[k], p)) n_invalid++;
+		std::fprintf(stderr,
+			"\n  summary: %ld/%ld grid points invalid"
+			"  (first-%ld dumped, %ld extra invalid shown)\n",
+			(long)n_invalid, (long)n_grid, (long)n_first, (long)extra);
+
+		std::fprintf(stderr, "=== end PHON_INLA_BAYES_DIAG ===\n\n");
+	}
+#endif  // PHON_INLA_BAYES_DIAG
 
 	// ── 4b. Discard invalid grid points ──────────────────────────
 	sanitise_grid_points(results, log_posterior, n_grid, p);
@@ -3672,6 +4334,17 @@ static void inla_grid_integrate_pirls(
 	const Eigen::VectorXd *off_ptr = nullptr)
 {
 	intptr_t d = theta_star.size();  // n_chol + n_disp
+
+	// ── Defense-in-depth: guard against NaN θ* ───────────────────────
+	// See the Gaussian path for rationale. Non-finite θ* here means the
+	// outer PIRLS/joint optimizer silently produced garbage — fail loud.
+	if (!theta_star.allFinite()) {
+		throw error(
+			"inla_grid_integrate_pirls: θ* contains non-finite values "
+			"(size=%). Mode-finding failed silently upstream — this is a "
+			"bug in the Bayesian optimizer path, not in the model spec.",
+			(long) d);
+	}
 
 	// ── 1. Hessian at the mode ───────────────────────────────────
 	Eigen::MatrixXd H = compute_fd_hessian(obj, theta_star);
@@ -4289,11 +4962,171 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 		theta[n_chol] = phi[p + G]; // log σ
 
-		auto newton_res = robust_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
+#if defined(PHON_INLA_BAYES_DIAG)
+		// ── PHON_INLA_BAYES_DIAG: Bayesian mode-finding (pre) ────────
+		//
+		// The grid-integration dump (earlier in this translation unit)
+		// only fires after `inla_grid_integrate_gaussian` is called with
+		// a θ* that may already be NaN-poisoned. This block captures the
+		// state on either side of `robust_optimize` so we can see whether
+		// the optimizer entered with a finite initial θ and what state it
+		// returned. The try/catch is diagnostic-only: in a non-DIAG build
+		// the optimizer call is bare and exceptions propagate normally.
+		auto diag_decode_and_dump_theta = [&](const char *label,
+		                                       const Eigen::VectorXd &th,
+		                                       bool eval_obj) {
+			std::fprintf(stderr, "  %s θ =", label);
+			for (intptr_t j = 0; j < outer_dim_gauss; j++)
+				std::fprintf(stderr, " %+.4e", th[j]);
+			std::fprintf(stderr, "\n    θ all-finite: %s\n",
+			             th.allFinite() ? "yes" : "NO");
+			if (th.allFinite())
+			{
+				intptr_t cp = 0;
+				for (intptr_t g = 0; g < G; g++)
+				{
+					intptr_t qg = lay.q[g];
+					Eigen::MatrixXd L = unpack_cholesky(th.data() + cp, qg);
+					Eigen::MatrixXd D = cholesky_to_cov(L);
+					std::fprintf(stderr, "    group %ld σ=[", (long)g);
+					for (intptr_t t = 0; t < qg; t++) {
+						double v = D(t, t);
+						double sd = (v >= 0 && std::isfinite(v))
+						          ? std::sqrt(v) : std::nan("");
+						std::fprintf(stderr, "%s%.4f", t ? ", " : "", sd);
+					}
+					std::fprintf(stderr, "]");
+					if (qg >= 2)
+						std::fprintf(stderr, "  det(D)=%.3e",
+						             D.determinant());
+					std::fprintf(stderr, "\n");
+					cp += n_chol_params(qg);
+				}
+				std::fprintf(stderr, "    σ_res = %.4f\n",
+				             std::exp(th[n_chol]));
+				if (eval_obj) {
+					double fx = gauss_obj.eval(th);
+					std::fprintf(stderr,
+					             "    obj.eval(θ) = %+.6e%s\n",
+					             fx, std::isfinite(fx) ? "" : "  [NON-FINITE]");
+				}
+			}
+		};
+
+		if (priors)
+		{
+			std::fprintf(stderr,
+				"\n=== PHON_INLA_BAYES_DIAG: Bayesian Gaussian mode-finding ===\n");
+			std::fprintf(stderr,
+				"  outer_dim=%ld  n_chol=%ld  n=%ld  p=%ld  G=%ld  J_total=%ld\n"
+				"  priors: %s  (per-coef overrides: %zu)\n",
+				(long)outer_dim_gauss, (long)n_chol, (long)n, (long)p,
+				(long)G, (long)lay.J_total,
+				priors ? "yes" : "no",
+				priors ? priors->coefficient_priors.size() : (size_t)0);
+
+			// Arm the one-shot prior-lookup dump. The next call to
+			// add_fixed_prior_to_henderson (triggered inside the
+			// diag_eval_gaussian_breakdown below) will consume the flag
+			// and print the full prior/coef lookup trace inline. Subsequent
+			// calls during L-BFGS iteration leave stderr quiet.
+			diag_dump_prior_lookup_once = true;
+
+			diag_decode_and_dump_theta("[pre-optimize]  θ_init =", theta, true);
+
+			// Seven-term NLL decomposition at θ_init — identifies which
+			// subterm (A: likelihood, B: u-prior, C: ½·log|H_uu|,
+			// D: Laplace const, E: fixed_prior_nll(β̂), F: −variance prior,
+			// G: −residual prior) first produces NaN. Bit i of nan_mask
+			// is set when subterm i is non-finite.
+			DiagNllBreakdown b_init = diag_eval_gaussian_breakdown(
+				theta, gauss_obj, Xm, ym, lay,
+				n, p, n_chol, priors, coef_names, off_ptr);
+
+			auto tag = [](double v) {
+				return std::isfinite(v) ? "" : "  [NON-FINITE]";
+			};
+			std::fprintf(stderr, "  NLL(θ_init) components:\n");
+			std::fprintf(stderr, "    A  cond_nll            = %+.6e%s\n",
+			             b_init.A_cond_nll, tag(b_init.A_cond_nll));
+			std::fprintf(stderr, "    B  u_prior_nll         = %+.6e%s\n",
+			             b_init.B_u_prior_nll, tag(b_init.B_u_prior_nll));
+			std::fprintf(stderr, "    C  ½·log|H_uu|         = %+.6e%s\n",
+			             b_init.C_half_log_det_Huu,
+			             tag(b_init.C_half_log_det_Huu));
+			std::fprintf(stderr, "    D  -½·J·log(2π)        = %+.6e\n",
+			             b_init.D_minus_half_J_log_2pi);
+			std::fprintf(stderr, "    E  fixed_prior_nll(β̂)  = %+.6e%s\n",
+			             b_init.E_fixed_prior_nll,
+			             tag(b_init.E_fixed_prior_nll));
+			std::fprintf(stderr, "    F  -variance_prior_lp  = %+.6e%s\n",
+			             b_init.F_minus_variance_prior_lp,
+			             tag(b_init.F_minus_variance_prior_lp));
+			std::fprintf(stderr, "    G  -residual_prior_lp  = %+.6e%s\n",
+			             b_init.G_minus_residual_prior_lp,
+			             tag(b_init.G_minus_residual_prior_lp));
+			std::fprintf(stderr, "    Σ(A..G)                = %+.6e%s\n",
+			             b_init.total_breakdown, tag(b_init.total_breakdown));
+			std::fprintf(stderr, "    obj.eval(θ_init) check = %+.6e%s\n",
+			             b_init.total_obj_eval, tag(b_init.total_obj_eval));
+			std::fprintf(stderr, "    β̂ finite: %s   û finite: %s\n",
+			             b_init.beta_finite ? "yes" : "NO",
+			             b_init.u_finite    ? "yes" : "NO");
+			if (b_init.nan_mask != 0) {
+				std::fprintf(stderr,
+				             "    >>> non-finite subterms: nan_mask=0x%x"
+				             "  (bit 0=A, 1=B, 2=C, 3=D, 4=E, 5=F, 6=G)\n",
+				             b_init.nan_mask);
+			}
+		}
+#endif  // PHON_INLA_BAYES_DIAG
+
+		NewtonResult newton_res;
+#if defined(PHON_INLA_BAYES_DIAG)
+		try {
+			newton_res = robust_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
+		}
+		catch (const std::exception &e)
+		{
+			if (priors)
+			{
+				std::fprintf(stderr,
+					"\n  [optimizer THREW]: %s\n"
+					"=== end Bayesian mode-finding dump (aborted) ===\n\n",
+					e.what());
+			}
+			throw;
+		}
+#else
+		newton_res = robust_optimize(gauss_obj, theta, max_iter, 1e-8, progress);
+#endif
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
 		optimizer_used = newton_res.optimizer;
+
+#if defined(PHON_INLA_BAYES_DIAG)
+		if (priors)
+		{
+			std::fprintf(stderr,
+				"\n  [post-optimize]  optimizer=%s  niter=%d  converged=%s\n",
+				std::string(optimizer_used.data(),
+				             optimizer_used.size()).c_str(),
+				(int) niter, converged ? "yes" : "NO");
+			diag_decode_and_dump_theta("                 θ_final =",
+			                            theta, false);
+			std::fprintf(stderr,
+				"    newton_res.fx = %+.6e%s\n",
+				newton_res.fx,
+				std::isfinite(newton_res.fx) ? "" : "  [NON-FINITE]");
+			if (!theta.allFinite() || !std::isfinite(newton_res.fx))
+				std::fprintf(stderr,
+					"  >>> WARNING: optimizer returned non-finite state WITHOUT\n"
+					"      throwing. The NaN-guard in lbfgs_optimize should have\n"
+					"      fired — if you see this, the guard is not in effect.\n");
+			std::fprintf(stderr, "=== end Bayesian mode-finding dump ===\n\n");
+		}
+#endif  // PHON_INLA_BAYES_DIAG
 
 		// ── Unpack converged Cholesky → D_inv, sigma2_u, sigma2 ──
 		D_inv_final.resize(G);
