@@ -1598,9 +1598,42 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
           FittingCallback progress,
           int max_iter)
 {
+#if defined(PHON_INLA_BAYES_DIAG)
+	// Waypoint [fit-entry]: captures the PriorSpec as seen by the C++ fit()
+	// before the local copy, before scale_default_priors, before fit_impl.
+	auto diag_dump_priors = [](const char *label, const PriorSpec &p) {
+		std::fprintf(stderr,
+			"[PHON_INLA_BAYES_DIAG/%s] &priors=%p"
+			"  fixed_effects={mean=%.4f, sd=%.4f}"
+			"  fixed_auto=%s\n",
+			label, (const void *) &p,
+			p.fixed_effects.mean, p.fixed_effects.sd,
+			p.fixed_auto ? "true" : "false");
+		std::fprintf(stderr,
+			"  coefficient_priors (%zu entries):\n",
+			p.coefficient_priors.size());
+		for (const auto &[name, np] : p.coefficient_priors)
+		{
+			std::fprintf(stderr,
+				"    \"%.*s\"  {mean=%.4f, sd=%.4f}  &entry=%p%s\n",
+				(int) name.size(), name.data(),
+				np.mean, np.sd,
+				(const void *) &np,
+				(np.sd > 0 && std::isfinite(np.sd)) ? "" : "  [INVALID SD]");
+		}
+	};
+	diag_dump_priors("fit-entry", priors);
+#endif
+
 	// Auto-scale any prior fields the user didn't set explicitly.
 	PriorSpec scaled_priors = priors;
+#if defined(PHON_INLA_BAYES_DIAG)
+	diag_dump_priors("post-copy", scaled_priors);
+#endif
 	scale_default_priors(scaled_priors, data, formula, family);
+#if defined(PHON_INLA_BAYES_DIAG)
+	diag_dump_priors("post-scale", scaled_priors);
+#endif
 
 	// For mixed models and Laplace-routed families (NB, beta, Student t):
 	// fit_impl passes priors to mixed_model(), which optimizes the

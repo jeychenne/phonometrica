@@ -56,7 +56,7 @@ add_definitions(
 ###########
 
 #add_definitions(-DPHON_INLA_DEBUG=1)
-
+#add_definitions(-DPHON_INLA_BAYES_DIAG=1)
 
 ########################
 ##  OPERATING SYSTEM  ##
