@@ -9,14 +9,15 @@ or open an existing ``.phon-analysis`` file. The analysis view is divided into t
 a **top bar** for entering formulas, a **left panel** with column and model lists, and a
 **right panel** with tabs for results, post-hoc tests, diagnostics, and exploratory plots.
 
-Support for statistical modeling was introduced in version 0.9 and is currently classified as a preview/beta feature. The core estimation 
-engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented natively within the Phonometrica codebase. 
+**Support for statistical modeling was introduced in version 0.9 and is currently classified as a preview/beta feature**. The core estimation 
+engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented by the lead author within the Phonometrica codebase. 
 More specialized modules, including Negative Binomial regression, Mixed-Effects models, and Bayesian inference, along with post-hoc tests 
 and residual diagnostics, were developed with the assistance of Claude Opus 4.6 (as of April 2026) using algorithmic guidance 
 from established literature and reference implementations in R.
 
 While our internal benchmarking shows an excellent match across a diverse suite of datasets when compared to reference R packages 
-(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor 
+(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity, and the Bayesian engine is 
+still considered experimental at this stage. Users may encounter minor 
 discrepancies due to differences in optimization algorithms, convergence criteria, or numerical stability in edge cases. We strongly 
 recommend cross-validating critical results in a secondary statistical environment for the time being. We welcome community feedback and detailed bug 
 reports.
