@@ -29,6 +29,7 @@
 #include <QComboBox>
 #include <QRadioButton>
 #include <QSpinBox>
+#include <QCheckBox>
 #include <QListWidget>
 #include <QPushButton>
 #include <phon/application/conc/query.hpp>
@@ -85,6 +86,12 @@ private:
 
 	// Protocol fields
 	QList<FieldWidget*> m_fields;
+
+	// When checked, after the query executes the protocol is applied to the target
+	// column of the resulting concordance, appending one aux column per protocol field
+	// with raw codes translated to human-readable labels. Defaults to checked; state is
+	// persisted in Settings under ("concordance", "split_protocol_fields").
+	QCheckBox *m_split_fields = nullptr;
 
 	// Context
 	QRadioButton *m_ctx_none = nullptr;

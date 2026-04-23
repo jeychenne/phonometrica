@@ -28,10 +28,13 @@
 #include <QSplitter>
 #include <QProgressDialog>
 #include <QToolButton>
+#include <QCheckBox>
+#include <QStringList>
 #include <phon/gui/conc/protocol_query_editor.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/protocol_apply.hpp>
 
 namespace phonometrica {
 
@@ -107,7 +110,7 @@ void ProtocolQueryEditor::setupUi()
 
 
 // ---------------------------------------------------------
-//  Search panel: protocol field widgets
+//  Search panel: protocol field widgets + split checkbox
 // ---------------------------------------------------------
 
 QWidget *ProtocolQueryEditor::createSearchPanel()
@@ -134,6 +137,29 @@ QWidget *ProtocolQueryEditor::createSearchPanel()
 			++row;
 		}
 	}
+
+	// Append the "split result" checkbox below the field grid, spanning all columns.
+	// The checkbox drives post-execute application of the protocol to the concordance's
+	// target column (see onExecute); state is read from and written back to Settings
+	// so the user's last choice is remembered across sessions. Default: checked.
+	bool split_default = true;
+	try {
+		split_default = Settings::get_boolean("concordance", "split_protocol_fields");
+	}
+	catch (...) {
+		// Setting not yet registered (older project/settings file); fall back to the
+		// documented default and let the next execution persist the chosen value.
+		split_default = true;
+	}
+
+	m_split_fields = new QCheckBox(tr("Split result into one column per field"), group);
+	m_split_fields->setChecked(split_default);
+	m_split_fields->setToolTip(tr(
+		"When checked, each protocol field becomes a separate column in the resulting "
+		"concordance, with raw codes translated to their human-readable labels."));
+
+	int cb_row = (col == 0) ? row : row + 1;
+	grid->addWidget(m_split_fields, cb_row, 0, 1, cols_per_row);
 
 	return group;
 }
@@ -449,6 +475,56 @@ void ProtocolQueryEditor::onExecute()
 
 		if (m_query->modified())
 			Project::updated();
+
+		// If the user asked to split the matched target into one column per protocol
+		// field, apply the protocol to the concordance's target column now. The query
+		// built by parseQuery() uses exactly one constraint, so the concordance has
+		// exactly one target column; we locate it via is_target() rather than hard-
+		// coding its index. Persist the user's choice so it sticks across sessions.
+		const bool split = m_split_fields && m_split_fields->isChecked();
+		Settings::set_value("concordance", "split_protocol_fields", split);
+
+		if (split && m_concordance && m_concordance->row_count() > 0)
+		{
+			intptr_t target_col = 0;
+			const intptr_t n_cols = m_concordance->column_count();
+			for (intptr_t j = 1; j <= n_cols; j++) {
+				if (m_concordance->is_target(j)) { target_col = j; break; }
+			}
+
+			if (target_col > 0)
+			{
+				ProtocolApplyResult result;
+				bool applied = false;
+				try {
+					result = m_concordance->apply_protocol(target_col, *m_protocol, /*translate=*/true);
+					applied = true;
+				}
+				catch (std::exception &e) {
+					// The query succeeded; only the post-hoc split failed. Surface the
+					// error but still accept the dialog so the user keeps the concordance.
+					QMessageBox::critical(this, tr("Apply coding protocol"),
+						tr("Query succeeded, but splitting the target column into protocol "
+						   "fields failed:\n%1").arg(QString::fromUtf8(e.what())));
+				}
+
+				if (applied && (!result.failed_rows.empty() || !result.untranslated_rows.empty()))
+				{
+					QStringList msgs;
+					if (!result.failed_rows.empty()) {
+						msgs << tr("%1 row(s) did not match the protocol and were left blank.")
+							.arg((qlonglong) result.failed_rows.size());
+					}
+					if (!result.untranslated_rows.empty()) {
+						msgs << tr("%1 row(s) contain values not defined in the protocol; "
+						           "raw values were kept.")
+							.arg((qlonglong) result.untranslated_rows.size());
+					}
+					QMessageBox::warning(this, tr("Apply coding protocol"),
+						msgs.join(QStringLiteral("\n\n")));
+				}
+			}
+		}
 
 		accept();
 	}
