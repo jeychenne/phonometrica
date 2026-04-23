@@ -961,7 +961,7 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 	}
 	else if (ext == PHON_EXT_CONCORDANCE)
 	{
-		Directory *p = m_scripts.get();
+		Directory *p = m_data.get();
 
 		if (static_cast<int>(type) & static_cast<int>(FileType::Dataset))
 		{
