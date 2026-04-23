@@ -174,6 +174,51 @@ bool ViewPanel::isSplit() const
 	return m_splitter->count() > 1;
 }
 
+bool ViewPanel::closeSecondaryView()
+{
+	// No-op when not split — closing the last view is the caller's concern
+	// (it also needs to dispose of the tab, which we don't control from here).
+	if (!isSplit())
+		return false;
+
+	// The primary view (index 0) anchors the tab (supplies its label, owns the
+	// query result for concordance tabs, etc.) and is never closed by this
+	// path. Close the last-added view instead; with 3+ panes this unwinds the
+	// split right-to-left, one press per pane.
+	int last = m_splitter->count() - 1;
+	auto *v = viewFromSlot(m_splitter->widget(last));
+	if (!v)
+		return false;
+
+	return confirmAndRemoveView(v);
+}
+
+bool ViewPanel::confirmAndRemoveView(View *view)
+{
+	if (!view)
+		return false;
+
+	if (view->isModified())
+	{
+		auto answer = QMessageBox::question(this, tr("Unsaved changes"),
+			tr("\"%1\" has unsaved changes. Save before closing?").arg(view->label()),
+			QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+		if (answer == QMessageBox::Cancel)
+			return false;
+		if (answer == QMessageBox::Save)
+		{
+			if (!view->save())
+				return false;
+		}
+		else
+		{
+			view->discardChanges();
+		}
+	}
+	removeView(view);
+	return true;
+}
+
 
 // ─────────────────────────────────────────────────
 //  Aggregate queries
@@ -239,24 +284,7 @@ QWidget *ViewPanel::createSlot(View *view, bool isPrimary)
 				emit viewDetached(v);
 		});
 		connect(header, &ViewHeader::closeRequested, this, [this](View *v) {
-			if (v->isModified())
-			{
-				auto answer = QMessageBox::question(this, tr("Unsaved changes"),
-					tr("\"%1\" has unsaved changes. Save before closing?").arg(v->label()),
-					QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
-				if (answer == QMessageBox::Cancel)
-					return;
-				if (answer == QMessageBox::Save)
-				{
-					if (!v->save())
-						return;
-				}
-				else
-				{
-					v->discardChanges();
-				}
-			}
-			removeView(v);
+			confirmAndRemoveView(v);
 		});
 	}
 

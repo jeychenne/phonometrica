@@ -72,6 +72,13 @@ public:
 
 	bool isSplit() const;
 
+	// Close the rightmost non-primary view with an unsaved-changes prompt if
+	// needed. Intended for the "unwind split" keyboard shortcut: the primary
+	// view (index 0) owns the tab and is never closed by this path. No-op if
+	// the panel isn't split. Returns true if a view was closed, false if
+	// nothing was closed (not split, or user cancelled the save prompt).
+	bool closeSecondaryView();
+
 	// ── Aggregate queries ──────────────────────────────
 
 	// Tab label: uses the primary view's label.
@@ -114,6 +121,11 @@ private:
 
 	// Show or hide all headers based on whether the panel is split.
 	void updateHeaders();
+
+	// Prompt about unsaved changes (Save / Discard / Cancel) and, unless the
+	// user cancels or save fails, delete the view. Returns true if the view
+	// was removed. Shared by the header close button and closeSecondaryView().
+	bool confirmAndRemoveView(View *view);
 
 	void trackView(View *view);
 	void untrackView(View *view);

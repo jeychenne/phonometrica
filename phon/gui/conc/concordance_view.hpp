@@ -53,12 +53,19 @@ public:
 	bool isModified() const override;
 	bool save() override;
 	void discardChanges() override;
+	void execute() override;
+	void escape() override;
 	QString helpAnchor() const override { return QStringLiteral("concordance"); }
 
 	// Filters mouse-move events on the table's viewport to switch the cursor to
 	// IBeam over editable cells. This is our "you can type here" affordance —
 	// discovered on hover without adding any visual clutter at rest.
 	bool eventFilter(QObject *watched, QEvent *event) override;
+
+	// Focus the match table when the view becomes visible so keyboard
+	// shortcuts reach it. Qt's tab machinery focuses the ViewPanel, not this
+	// view, so setFocusProxy alone isn't enough.
+	void showEvent(QShowEvent *event) override;
 
 	// Public helpers for undo/redo commands.
 	ConcordanceModel *concModel() const { return m_model; }

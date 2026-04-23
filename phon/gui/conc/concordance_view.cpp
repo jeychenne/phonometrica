@@ -30,6 +30,8 @@
 #include <QMenu>
 #include <QEvent>
 #include <QMouseEvent>
+#include <QKeyEvent>
+#include <QShowEvent>
 #include <QPainter>
 #include <QAction>
 #include <QActionGroup>
@@ -155,15 +157,22 @@ void ConcordanceView::setupUi()
 	m_toolbar->addSeparator();
 
 	// -- Playback --
+	// Space is dispatched locally (no MainWindow-level claim on it); Esc and
+	// Ctrl+Return are claimed globally by MainWindow and reach us via escape()
+	// and execute() overrides, so we don't bind them here (would be "ambiguous
+	// shortcut overload"). Tooltips still advertise all three to the user.
 	auto *play_action = m_toolbar->addAction(QIcon(":/icons/play.svg"), tr("Play"));
-	play_action->setToolTip(tr("Play selected match"));
+	play_action->setToolTip(tr("Play selected match (Space)"));
+	play_action->setShortcut(QKeySequence(Qt::Key_Space));
+	play_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(play_action);
 
 	auto *stop_action = m_toolbar->addAction(QIcon(":/icons/square.svg"), tr("Stop"));
-	stop_action->setToolTip(tr("Stop playback"));
+	stop_action->setToolTip(tr("Stop playback (Esc)"));
 
 	// -- Navigation --
 	auto *view_action = m_toolbar->addAction(QIcon(":/icons/scan-eye.svg"), tr("View"));
-	view_action->setToolTip(tr("Open match in annotation"));
+	view_action->setToolTip(tr("Open match in annotation (Ctrl+Return)"));
 
 	m_toolbar->addSeparator();
 
@@ -501,6 +510,15 @@ void ConcordanceView::setupUi()
 	m_table->setMouseTracking(true);
 	m_table->viewport()->setMouseTracking(true);
 	m_table->viewport()->installEventFilter(this);
+	// Also filter the table proper, for keyboard events (the viewport only
+	// receives mouse events; keystrokes go to the table widget).
+	m_table->installEventFilter(this);
+
+	// When the tab system or any caller focuses the ConcordanceView, hand
+	// focus transparently to the table. Without this, Qt's tab-activation
+	// machinery focuses the view itself, keystrokes go nowhere interesting,
+	// and e.g. the Down-arrow empty-state shortcut doesn't see any events.
+	setFocusProxy(m_table);
 
 	m_table->resizeColumnsToContents();
 
@@ -857,6 +875,21 @@ void ConcordanceView::discardChanges()
 		m_conc->detach();
 		Project::updated();
 	}
+}
+
+// Ctrl+Return — dispatched from MainWindow::onExecuteCurrentView when this
+// view is active. Semantics for a concordance: open the selected match in its
+// annotation (what the "View" toolbar button does).
+void ConcordanceView::execute()
+{
+	onViewMatch();
+}
+
+// Escape — dispatched from MainWindow::onEscapeCurrentView. For a concordance,
+// the most useful cancel action is stopping any ongoing match playback.
+void ConcordanceView::escape()
+{
+	onStop();
 }
 
 // ── Toolbar actions ─────────────────────────────────────
@@ -2533,8 +2566,41 @@ void ConcordanceView::selectWholeColumn(int section)
 	sm->setCurrentIndex(m_proxy->index(0, section), QItemSelectionModel::NoUpdate);
 }
 
+void ConcordanceView::showEvent(QShowEvent *event)
+{
+	View::showEvent(event);
+	// Grab keyboard focus for the match table so Down, Space, etc. reach it
+	// immediately — Qt's tab-activation machinery focuses the ViewPanel wrapper
+	// above us, which on its own never propagates down to a useful widget.
+	m_table->setFocus(Qt::OtherFocusReason);
+}
+
 bool ConcordanceView::eventFilter(QObject *watched, QEvent *event)
 {
+	// Down-arrow on the table with no row selected lands on the first row —
+	// the usual "empty-state" navigation affordance. Must run as a filter
+	// (not in the view's keyPressEvent) because the table consumes arrow
+	// keys before they can bubble up to parent widgets.
+	//
+	// The trigger condition is "no full row is selected". A column selection
+	// (made by clicking a column header) does NOT count — Qt's default Down
+	// behavior would move relative to the column's anchor and land on row 1
+	// instead of row 0, which is never what the user wants.
+	if (watched == m_table && event->type() == QEvent::KeyPress)
+	{
+		auto *ke = static_cast<QKeyEvent *>(event);
+		if (ke->key() == Qt::Key_Down
+			&& ke->modifiers() == Qt::NoModifier
+			&& m_proxy->rowCount() > 0
+			&& m_table->selectionModel()->selectedRows().isEmpty())
+		{
+			auto idx = m_proxy->index(0, 0);
+			m_table->setCurrentIndex(idx);
+			m_table->selectRow(0);
+			return true;
+		}
+	}
+
 	// IBeam cursor over editable cells, arrow elsewhere. The viewport is what
 	// receives mouse events for the table body; the header has its own widget
 	// (not filtered here) so the cursor stays arrow over column headers.

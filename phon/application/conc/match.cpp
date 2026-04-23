@@ -145,17 +145,26 @@ Match::Target *Match::reference_target() const
 	return nullptr;
 }
 
-void Match::to_xml(xml_node root) const
+int Match::to_xml(xml_node root) const
 {
 	auto node = root.append_child("Match");
 	add_data_node(node, "Annotation", m_annot->path().data());
 	auto targets_node = node.append_child("Targets");
 	auto target = m_target.get();
+	int stale = 0;
 
 	while (target)
 	{
 		auto index = m_annot->get_event_index(target->layer, target->start_time);
-		assert(index != 0);
+		if (index == 0) {
+			// The target's stored start_time no longer matches any event's
+			// start on this layer — the annotation was likely edited since
+			// this match was created. Fall back to index 1 (a valid index,
+			// since annotation layers are never empty) so the file stays
+			// loadable. The caller reports the aggregate stale count.
+			index = 1;
+			stale++;
+		}
 		auto subnode = targets_node.append_child("Target");
 		subnode.append_attribute("layer").set_value(target->layer);
 		subnode.append_attribute("event").set_value(index);
@@ -181,6 +190,8 @@ void Match::to_xml(xml_node root) const
 		}
 		add_data_node(node, "Measurements", meas_str);
 	}
+
+	return stale;
 }
 
 bool Match::valid()

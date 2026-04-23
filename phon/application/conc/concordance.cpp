@@ -1973,13 +1973,29 @@ void Concordance::write()
 	auto msg = String("Writing concordance %1").arg(label());
 	request_progress(msg, "Writing matches...", (int)m_matches.size());
 	int count = 1;
+	int stale_targets = 0;
 	for (auto &match : m_matches)
 	{
 		update_progress(count++);
-		match->to_xml(matches_node);
+		stale_targets += match->to_xml(matches_node);
 	}
 
 	write_xml(doc, m_path);
+
+	if (stale_targets > 0)
+	{
+		// These matches were saved with a placeholder event index (1) because
+		// their stored start_time no longer maps to an event on the target
+		// layer — the referenced annotation was likely edited since the query
+		// was run. The file remains loadable, but the placeholder targets
+		// will point at the wrong interval; re-running the query is the clean
+		// recovery.
+		std::cerr << "Warning: " << stale_targets
+			<< " match target(s) in concordance \"" << label()
+			<< "\" no longer map to any event on their layer and were saved "
+			   "with placeholder index 1. The underlying annotation may have "
+			   "been edited; consider re-running the query.\n";
+	}
 }
 
 bool Concordance::has_context() const

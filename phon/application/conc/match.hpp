@@ -85,7 +85,13 @@ public:
 
 	Target *reference_target() const;
 
-	void to_xml(xml_node root) const;
+	/// Serialize this match as a <Match> node under `root`. If any target's
+	/// stored start_time no longer maps to an event on its layer (e.g. because
+	/// the annotation was edited since the query was run), that target is
+	/// written with the placeholder event index 1 rather than silently saving
+	/// an invalid index 0. Returns the number of stale targets, so callers can
+	/// surface a single aggregate warning after iterating over many matches.
+	int to_xml(xml_node root) const;
 
 	bool valid();
 

@@ -948,8 +948,21 @@ void MainWindow::onEditPreferences()
 void MainWindow::onCloseCurrentView()
 {
 	int idx = m_viewer->currentIndex();
-	if (idx >= 0)
-		closeTab(idx);
+	if (idx < 0)
+		return;
+
+	// If the current tab is split, Ctrl+W closes the rightmost non-primary
+	// pane first (unwinding the split) and only closes the whole tab on a
+	// subsequent press. In concordance split view, that secondary pane is
+	// the annotation; the concordance itself anchors the tab and stays put.
+	auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(idx));
+	if (panel && panel->isSplit())
+	{
+		panel->closeSecondaryView();
+		return;
+	}
+
+	closeTab(idx);
 }
 
 void MainWindow::onCloseAllViews()
