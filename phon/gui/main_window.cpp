@@ -2849,11 +2849,94 @@ void MainWindow::setupPraat()
 
 	auto qpath = QString::fromUtf8(praat_path.data(), (int) praat_path.size());
 
+#if defined(Q_OS_MAC)
+	// On macOS, send_script must route Praat's --send invocation through
+	// /usr/bin/open rather than calling the binary inside
+	// Praat.app/Contents/MacOS/ directly.
+	//
+	// --send is Praat's documented IPC mechanism — the in-binary replacement
+	// for the sendpraat tool, needed because sendpraat's X11 implementation
+	// does not work under Wayland. On macOS, --send forwards the script to
+	// a running Praat instance via Apple Events.
+	//
+	// Invoking the raw binary bypasses Launch Services. The spawned Praat
+	// process is not properly registered, and the --send Apple-Event
+	// forwarding silently fails: the running Praat still receives enough
+	// activation traffic to come to the front, but the script payload never
+	// reaches it. The unregistered helper process flashes briefly in the
+	// Dock and exits. This matches the reported symptom ("another instance
+	// is briefly opened and closed in the Finder, files are not sent").
+	//
+	// Routing through `open -n -a <bundle> --args --send <script>` fixes
+	// this:
+	//
+	//   * -n forces Launch Services to spawn a new Praat process even when
+	//     one is already running. This is required: without -n, `open`
+	//     would silently activate the existing instance and drop --args, so
+	//     --send would never be seen on a command line.
+	//
+	//   * The newly spawned process is properly LS-registered, so its
+	//     --send handler can forward the script via Apple Events to the
+	//     running Praat, then exit.
+	//
+	//   * When Praat is not running, the new process simply becomes the
+	//     primary instance and executes the script itself, with Launch
+	//     Services giving it correct window-server focus (also fixing the
+	//     reported "Praat doesn't get focused" symptom on first launch).
+	//
+	// The helper process still flashes briefly in the Dock when Praat is
+	// already running — that is Praat's own --send design, not something we
+	// can eliminate from this side without abandoning --send entirely.
+	QString bundle;
+	{
+		// Derive the .app bundle from the configured binary path. The
+		// preferences dialog asks the user for the Praat executable, which on
+		// a standard install is .../Praat.app/Contents/MacOS/Praat — strip
+		// from /Contents/MacOS/ onward and keep the ".app" suffix.
+		const QString marker = QStringLiteral(".app/Contents/MacOS/");
+		int idx = qpath.indexOf(marker);
+		if (idx >= 0)
+			bundle = qpath.left(idx + 4);
+	}
+
+	if (!bundle.isEmpty())
+	{
+		praat::send_script = [bundle](const String &script_path) {
+			auto qscript = QString::fromUtf8(script_path.data(), (int) script_path.size());
+			QStringList args;
+			args << QStringLiteral("-n")
+			     << QStringLiteral("-a") << bundle
+			     << QStringLiteral("--args")
+			     << QStringLiteral("--send") << qscript;
+			QProcess::startDetached(QStringLiteral("/usr/bin/open"), args);
+		};
+	}
+	else
+	{
+		// Fallback for non-bundle configurations (e.g. a locally built
+		// praat binary not installed as an .app). Direct invocation is the
+		// only option; users on this path will still see the original
+		// behaviour, but it is an uncommon configuration.
+		praat::send_script = [qpath](const String &script_path) {
+			auto qscript = QString::fromUtf8(script_path.data(), (int) script_path.size());
+			QProcess::startDetached(qpath, {QStringLiteral("--send"), qscript});
+		};
+	}
+#else
 	praat::send_script = [qpath](const String &script_path) {
 		auto qscript = QString::fromUtf8(script_path.data(), (int) script_path.size());
 		QProcess::startDetached(qpath, {QStringLiteral("--send"), qscript});
 	};
+#endif
 
+	// open_files is currently a legacy callback that is wired but never called
+	// — all three "Open in Praat" context menus (sound, annotation, concordance)
+	// go through the high-level commands open_sound / open_textgrid / open_at_time,
+	// which build a Praat script and route it through send_script above. The
+	// callback is kept for now for API stability; if it ever becomes live, its
+	// implementation should be migrated to a script + send_script, matching the
+	// pattern of the high-level commands (and sharing the macOS Launch-Services
+	// fix above for free).
 	praat::open_files = [qpath](const std::vector<String> &paths) {
 		QStringList args;
 		args << QStringLiteral("--open");

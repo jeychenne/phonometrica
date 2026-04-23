@@ -285,7 +285,17 @@ void PreferencesDialog::accept()
 
 	// Praat path
 	auto praat_text = m_praat_path->text().trimmed();
-	Settings::set_value("praat_path", String(praat_text.toUtf8().constData()));
+#if PHON_MACOS
+	if (praat_text.endsWith(".app"))
+	{
+		praat_text.append("/Contents/MacOS/Praat");
+	}
+	else if (praat_text.endsWith(".app/"))
+	{
+		praat_text.append("Contents/MacOS/Praat");
+	}
+#endif
+	Settings::set_value("praat_path", String(praat_text));
 	m_praat_path_changed = (praat_text != m_initial_praat_path);
 
 	// Statistics
