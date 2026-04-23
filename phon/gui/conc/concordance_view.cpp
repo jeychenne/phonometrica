@@ -26,7 +26,11 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QHeaderView>
+#include <QItemSelectionModel>
 #include <QMenu>
+#include <QEvent>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QAction>
 #include <QActionGroup>
 #include <QToolButton>
@@ -58,6 +62,67 @@
 #include <phon/analysis/formula_engine.hpp>
 
 namespace phonometrica {
+
+// ─────────────────────────────────────────────────
+//  ConcHeaderView
+// ─────────────────────────────────────────────────
+// Horizontal header that paints an overlay on the "current" column, i.e. the
+// column of the view's current index. We cannot use Qt's built-in
+// `highlightSections` here because it mirrors the whole selection, and in
+// SelectRows mode a row selection intersects every column — lighting up the
+// entire header strip. Tracking the current index instead gives us:
+//   • Click cell (r, c)   → currentIndex.column() == c → header c highlighted
+//   • Click header c      → selectWholeColumn sets current to (0, c) → same
+// so both interactions produce the same "this is the active column" cue.
+namespace {
+
+class ConcHeaderView : public QHeaderView
+{
+public:
+
+	explicit ConcHeaderView(QWidget *parent = nullptr) :
+		QHeaderView(Qt::Horizontal, parent) {}
+
+	void setCurrentColumn(int col)
+	{
+		if (m_current_col == col) return;
+		m_current_col = col;
+		viewport()->update();
+	}
+
+protected:
+
+	// Overriding paintEvent rather than paintSection turned out to be necessary
+	// in practice: on some platform styles, paintSection-based overlays were
+	// silently dropped (possibly absorbed by native-style repaints after the
+	// per-section call returned). Painting on the viewport AFTER the base
+	// class's paintEvent completes is unambiguous — we're just drawing a last
+	// pass on top of whatever Qt produced.
+	void paintEvent(QPaintEvent *e) override
+	{
+		QHeaderView::paintEvent(e);
+
+		if (m_current_col < 0 || m_current_col >= count()) return;
+
+		int pos = sectionViewportPosition(m_current_col);
+		int size = sectionSize(m_current_col);
+		if (size <= 0) return;
+
+		QPainter painter(viewport());
+		QRect r(pos, 0, size, viewport()->height());
+		// Translucent fill + solid underline. Explicit RGBA rather than a
+		// palette role — palette resolution is unreliable on Windows native.
+		painter.fillRect(r, QColor(70, 130, 200, 90));
+		painter.setPen(QPen(QColor(40, 100, 180), 2));
+		painter.drawLine(r.bottomLeft(), r.bottomRight());
+	}
+
+private:
+
+	int m_current_col = -1;
+};
+
+} // anonymous namespace
 
 ConcordanceView::ConcordanceView(Handle<Concordance> conc, QWidget *parent) :
 	View(parent), m_conc(std::move(conc))
@@ -390,20 +455,52 @@ void ConcordanceView::setupUi()
 	m_table->setEditTriggers(QAbstractItemView::DoubleClicked | QAbstractItemView::EditKeyPressed);
 	m_table->setAlternatingRowColors(true);
 	m_table->verticalHeader()->setDefaultSectionSize(28);
-	m_table->horizontalHeader()->setStretchLastSection(false);
+
+	// Install our column-aware header so the current-focus column is highlighted.
+	// Must happen before any per-header configuration below.
+	auto *hdr = new ConcHeaderView(m_table);
+	m_table->setHorizontalHeader(hdr);
+	hdr->setStretchLastSection(false);
+
 	m_table->setContextMenuPolicy(Qt::CustomContextMenu);
 	m_table->setSortingEnabled(false);
 
-	// Sorting is handled via the header context menu (right-click),
-	// not by clicking — this avoids interfering with double-click rename.
-	auto *hdr = m_table->horizontalHeader();
-	hdr->setSectionsClickable(false);
+	// Sorting is handled via the header context menu (right-click); left-click
+	// selects the whole column as a visual cue that column-level operations
+	// (sort, rename, recode, transform, delete) are available.
+	hdr->setSectionsClickable(true);
+	// Don't mirror the cell-selection state onto the header — row selection
+	// intersects every column, which would light up the entire header strip.
+	// The current-column highlight (see ConcHeaderView::paintEvent) takes
+	// care of showing which column is in focus.
+	hdr->setHighlightSections(false);
 	hdr->setSortIndicatorShown(false);
 	hdr->setContextMenuPolicy(Qt::CustomContextMenu);
-	hdr->setToolTip(tr("Right-click for column options (sort, rename, recode, transform)"));
+	hdr->setToolTip(tr("Click to select column; right-click for options (sort, rename, recode, transform)"));
+
+	// Track the current index so the header highlight follows cell clicks
+	// (row selection) as well as header clicks (column selection). We wire
+	// multiple signals for robustness: currentChanged covers keyboard nav,
+	// clicked covers mouse on cells, and selectWholeColumn calls the setter
+	// directly for the header-click path.
+	connect(m_table->selectionModel(), &QItemSelectionModel::currentChanged, this,
+		[hdr](const QModelIndex &current, const QModelIndex &) {
+			hdr->setCurrentColumn(current.isValid() ? current.column() : -1);
+		});
+	connect(m_table, &QAbstractItemView::clicked, this,
+		[hdr](const QModelIndex &index) {
+			hdr->setCurrentColumn(index.isValid() ? index.column() : -1);
+		});
 
 	// Monospace font for the table body.
 	m_table->setFont(defaultMonoFont());
+
+	// Hover-tracking for the editable-cell cursor hint. With mouse tracking on,
+	// MouseMove events reach the viewport even when no button is held down; the
+	// event filter below swaps the cursor to IBeam over editable cells.
+	m_table->setMouseTracking(true);
+	m_table->viewport()->setMouseTracking(true);
+	m_table->viewport()->installEventFilter(this);
 
 	m_table->resizeColumnsToContents();
 
@@ -436,6 +533,7 @@ void ConcordanceView::setupUi()
 	connect(norm_action, &QAction::triggered, this, &ConcordanceView::onNormalizeVowels);
 	connect(m_table, &QTableView::doubleClicked, this, &ConcordanceView::onDoubleClick);
 	connect(m_table, &QTableView::customContextMenuRequested, this, &ConcordanceView::onContextMenu);
+	connect(m_model, &ConcordanceModel::cellEdited, this, &ConcordanceView::onCellEdited);
 
 	connect(info_action, &QAction::toggled, this, &ConcordanceView::onToggleMatchInfo);
 	connect(ctx_action, &QAction::toggled, this, &ConcordanceView::onToggleContext);
@@ -464,10 +562,15 @@ void ConcordanceView::setupUi()
 	});
 
 	// Header context menu: sort + rename + recode + transform
+	connect(hdr, &QHeaderView::sectionClicked, this, &ConcordanceView::selectWholeColumn);
+
 	connect(hdr, &QHeaderView::customContextMenuRequested, this, [this](const QPoint &pos) {
 		auto *header = m_table->horizontalHeader();
 		int section = header->logicalIndexAt(pos);
 		if (section < 0) return;
+
+		// Select the column first so there's a visual cue before the menu appears.
+		selectWholeColumn(section);
 
 		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
 		intptr_t col_1based = section + 1;
@@ -1316,12 +1419,19 @@ void ConcordanceView::onToggleMetadata(bool visible)
 
 void ConcordanceView::onToggleLayout(bool long_format)
 {
+	// Wide↔Long changes how display rows map to matches (1:1 vs many:1), which
+	// invalidates any EditCellCommand / DeleteMatchesCommand that stored source
+	// row indices under the previous layout. Dropping the stacks is the safe call.
+	m_commands.clear();
+	emit undoRedoChanged(false, false);
+
 	m_conc->set_layout(long_format ? Concordance::Layout::Long : Concordance::Layout::Wide);
 	m_model->refreshAll();
 	updateCountLabel();
 	updateColumnVisibility();
 	m_table->resizeColumnsToContents();
 }
+
 
 void ConcordanceView::onToggleMeasurementTime(bool checked)
 {
@@ -1682,9 +1792,9 @@ void ConcordanceView::onDoubleClick(const QModelIndex &index)
 	auto source_idx = m_proxy->mapToSource(index);
 	intptr_t col = source_idx.column() + 1;
 
-	// If the cell is editable (measurement column), let the default editor handle it.
-	// The model's flags() returns Qt::ItemIsEditable for these cells.
-	if (m_conc->is_editable_measurement(col))
+	// If the cell is editable (measurement or aux base column), let the default
+	// editor handle it. The model's flags() returns Qt::ItemIsEditable for these.
+	if (m_conc->is_editable_cell(col))
 		return;
 
 	// Otherwise, navigate to the match in the annotation.
@@ -1737,10 +1847,10 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	menu.addSeparator();
 
-	// Edit cell — only for editable measurement columns
+	// Edit cell — any editable cell (measurement or aux base column)
 	auto source_idx = m_proxy->mapToSource(index);
 	intptr_t col = source_idx.column() + 1;
-	if (m_conc->is_editable_measurement(col))
+	if (m_conc->is_editable_cell(col))
 	{
 		menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit cell"), this, [this, index]() {
 			m_table->edit(index);
@@ -2391,6 +2501,79 @@ void ConcordanceView::adjustFiltersAfterColumnInsert(int col)
 {
 	m_proxy->adjustAfterColumnInsert(col);
 	m_filter_bar->rebuild();
+}
+
+void ConcordanceView::selectWholeColumn(int section)
+{
+	if (section < 0) return;
+	auto *sm = m_table->selectionModel();
+	if (!sm) return;
+
+	// Drive the header highlight directly. currentChanged() should also fire
+	// from the setCurrentIndex() call below, but the NoUpdate flag can suppress
+	// it on some Qt versions — calling the setter explicitly removes that
+	// dependency. The static_cast is safe because setupUi() always installs a
+	// ConcHeaderView (defined in the anonymous namespace at the top of this file).
+	static_cast<ConcHeaderView *>(m_table->horizontalHeader())->setCurrentColumn(section);
+
+	int nrows = m_proxy->rowCount();
+	if (nrows <= 0) {
+		sm->clearSelection();
+		return;
+	}
+
+	// Build a column-spanning selection. The Columns flag tells the selection
+	// model to treat the range as a full column regardless of the view's
+	// SelectRows behavior — cell clicks continue to produce row selections.
+	QItemSelection sel(m_proxy->index(0, section),
+	                   m_proxy->index(nrows - 1, section));
+	sm->select(sel, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Columns);
+
+	// Anchor the current index so keyboard navigation starts from the top of the column.
+	sm->setCurrentIndex(m_proxy->index(0, section), QItemSelectionModel::NoUpdate);
+}
+
+bool ConcordanceView::eventFilter(QObject *watched, QEvent *event)
+{
+	// IBeam cursor over editable cells, arrow elsewhere. The viewport is what
+	// receives mouse events for the table body; the header has its own widget
+	// (not filtered here) so the cursor stays arrow over column headers.
+	if (watched == m_table->viewport())
+	{
+		auto type = event->type();
+		if (type == QEvent::MouseMove)
+		{
+			auto *me = static_cast<QMouseEvent *>(event);
+			auto proxy_idx = m_table->indexAt(me->pos());
+			bool editable = false;
+			if (proxy_idx.isValid()) {
+				auto src_idx = m_proxy->mapToSource(proxy_idx);
+				intptr_t col = src_idx.column() + 1;
+				editable = m_conc->is_editable_cell(col);
+			}
+
+			auto *vp = m_table->viewport();
+			if (editable)
+				vp->setCursor(Qt::IBeamCursor);
+			else
+				vp->unsetCursor();
+		}
+		else if (type == QEvent::Leave)
+		{
+			// Restore default when the mouse leaves the viewport entirely
+			// (hovering over headers, scrollbars, or outside the table).
+			m_table->viewport()->unsetCursor();
+		}
+	}
+	return View::eventFilter(watched, event);
+}
+
+void ConcordanceView::onCellEdited(int row, int col, const QString &old_text, const QString &new_text)
+{
+	// The edit has already been committed by ConcordanceModel::setData() when this
+	// fires; we register it on the undo stack via record() (not submit()), so
+	// execute() is only invoked on redo. record() itself emits undoRedoChanged.
+	record(std::make_unique<EditCellCommand>(this, row, col, old_text, new_text));
 }
 
 } // namespace phonometrica

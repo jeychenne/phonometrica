@@ -121,6 +121,15 @@ public:
 	/// True if column `col` (1-based) is a stored formant or bandwidth value that can be edited.
 	bool is_editable_measurement(intptr_t col) const;
 
+	/// True if column `col` (1-based) is the base (non-derived) display column of an auxiliary
+	/// column added via merge() or apply_protocol(). Derived ERB/Bark/ST display columns are
+	/// computed from the base value and remain read-only.
+	bool is_editable_aux(intptr_t col) const;
+
+	/// True if column `col` (1-based) is editable — either a measurement cell or an aux base cell.
+	/// This is the unified predicate the GUI uses to decide whether a cell opens an editor.
+	bool is_editable_cell(intptr_t col) const;
+
 	// ── Wide-mode extra columns (formant measurements) ───────────────────
 
 	bool has_extra_columns() const { return !m_extra_headers.empty(); }

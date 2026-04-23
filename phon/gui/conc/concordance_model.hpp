@@ -65,6 +65,17 @@ public:
 
 	Handle<Concordance> concordance() const { return m_conc; }
 
+	// Write a cell directly, bypassing the cellEdited signal. Used by undo/redo
+	// commands to re-apply or revert an edit without re-recording it.
+	bool applyCellEdit(int row, int col, const QString &text);
+
+signals:
+
+	// Emitted after a successful user-driven cell edit via setData(). The view
+	// catches this to push an EditCellCommand onto the undo stack. Not emitted
+	// for applyCellEdit() calls from undo/redo machinery itself.
+	void cellEdited(int row, int col, QString old_text, QString new_text);
+
 private:
 
 	Handle<Concordance> m_conc;

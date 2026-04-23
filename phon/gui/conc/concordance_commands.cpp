@@ -103,4 +103,22 @@ void RenameConcColumnCommand::undo()
 }
 
 
+// ─────────────────────────────────────────────────
+//  EditCellCommand
+// ─────────────────────────────────────────────────
+
+bool EditCellCommand::execute()
+{
+	// Called on redo: re-apply the new text. On first invocation we go through
+	// record() (not submit()), so the initial edit is already committed and
+	// execute() is not called — only redo after an undo lands here.
+	return m_view->concModel()->applyCellEdit(m_row, m_col, m_new_text);
+}
+
+void EditCellCommand::undo()
+{
+	m_view->concModel()->applyCellEdit(m_row, m_col, m_old_text);
+}
+
+
 } // namespace phonometrica

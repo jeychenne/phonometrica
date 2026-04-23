@@ -55,6 +55,11 @@ public:
 	void discardChanges() override;
 	QString helpAnchor() const override { return QStringLiteral("concordance"); }
 
+	// Filters mouse-move events on the table's viewport to switch the cursor to
+	// IBeam over editable cells. This is our "you can type here" affordance —
+	// discovered on hover without adding any visual clutter at rest.
+	bool eventFilter(QObject *watched, QEvent *event) override;
+
 	// Public helpers for undo/redo commands.
 	ConcordanceModel *concModel() const { return m_model; }
 	void refreshAfterRowChange();
@@ -122,6 +127,15 @@ private:
 	void onToggleAuxFormantBark(bool checked);
 
 	void onHeaderDoubleClick(int section);
+
+	// Select the entire column at `section` using the selection model. The Columns
+	// flag overrides the view's SelectRows behavior for programmatic selection, so
+	// cell clicks continue to select rows normally.
+	void selectWholeColumn(int section);
+
+	// Record an EditCellCommand after ConcordanceModel emits cellEdited. Row and
+	// column are source-model indices.
+	void onCellEdited(int row, int col, const QString &old_text, const QString &new_text);
 
 private:
 

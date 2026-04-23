@@ -988,6 +988,52 @@ intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) co
 
 void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 {
+	// ── Aux column path ──────────────────────────────────────────────
+	// Aux base-display columns (k == 1) are editable: Numeric/Text plus merged
+	// measurement types (FormantHz, BandwidthHz, PitchHz, IntensityDb). Derived
+	// display columns (ERB, Bark, ST) are computed on-the-fly and read-only.
+	if (is_editable_aux(j))
+	{
+		intptr_t c = resolve_aux_column(j);
+		assert(c > 0);
+		auto &col = m_aux_columns[c];
+
+		// Map display row to match index (aux storage is per-match, even in Long layout).
+		intptr_t mi = (m_layout == Layout::Long && has_measurement_data()) ? match_for_row(i) : i;
+
+		if (col.type == AuxColumnType::Text)
+		{
+			if (mi > col.text_data.size()) {
+				throw error("Row % out of bounds for aux text column", i);
+			}
+			col.text_data[mi] = value;
+			modify();
+			return;
+		}
+
+		// All other aux types are numeric. Empty string or "nan" => NaN.
+		if (mi > col.num_data.size()) {
+			throw error("Row % out of bounds for aux numeric column", i);
+		}
+		auto trimmed = value;
+		trimmed.trim();
+		double val;
+		if (trimmed.empty() || trimmed == "nan" || trimmed == "NaN" || trimmed == "NAN") {
+			val = std::nan("");
+		}
+		else {
+			bool ok;
+			val = trimmed.to_float(&ok);
+			if (!ok) {
+				throw error("Invalid numeric value: %", value);
+			}
+		}
+		col.num_data[mi] = val;
+		modify();
+		return;
+	}
+
+	// ── Measurement path (unchanged) ─────────────────────────────────
 	if (!is_editable_measurement(j)) {
 		throw error("Cannot edit column %", j);
 	}
@@ -1070,6 +1116,37 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 		return avg_d0 < sfpp;
 	}
 	return false;
+}
+
+bool Concordance::is_editable_aux(intptr_t col) const
+{
+	if (m_aux_columns.empty()) return false;
+
+	intptr_t c = resolve_aux_column(col);
+	if (c == 0) return false;
+
+	// Compute the 1-based display position k within the aux column group.
+	// Only the base column (k == 1) stores raw data; derived ERB/Bark/ST columns
+	// are computed on-the-fly and must remain read-only.
+	intptr_t aux_start = FILE_INFO_COLUMN_COUNT + context_column_count()
+	                   + m_target_count + duration_column_count()
+	                   + effective_extra_count();
+	intptr_t j = col - aux_start; // 1-based position within the aux region
+
+	for (intptr_t cc = 1; cc <= m_aux_columns.size(); cc++)
+	{
+		int dw = aux_col_display_width(cc);
+		if (j <= dw) {
+			return j == 1; // base column only
+		}
+		j -= dw;
+	}
+	return false;
+}
+
+bool Concordance::is_editable_cell(intptr_t col) const
+{
+	return is_editable_measurement(col) || is_editable_aux(col);
 }
 
 bool Concordance::is_left_context(intptr_t col) const

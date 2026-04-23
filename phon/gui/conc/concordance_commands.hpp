@@ -15,7 +15,7 @@
  *                                                                                                                     *
  * Created: 04/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Undoable commands for concordance views: row deletion, column addition, column renaming.                   *
+ * Purpose: Undoable commands for concordance views: row deletion, column addition, column renaming, cell editing.     *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -23,6 +23,7 @@
 #define PHONOMETRICA_CONCORDANCE_COMMANDS_HPP
 
 #include <vector>
+#include <QString>
 #include <phon/gui/command.hpp>
 #include <phon/gui/conc/concordance_model.hpp>
 
@@ -115,6 +116,37 @@ private:
 	int m_section;
 	QString m_old_name;
 	QString m_new_name;
+};
+
+
+// ─────────────────────────────────────────────────
+//  EditCellCommand
+// ─────────────────────────────────────────────────
+// Recorded after ConcordanceModel::setData() has already committed a cell edit.
+// Stores the old and new display text so undo/redo can round-trip via get_cell/
+// set_cell. Row and column are source-model indices (not proxy-model indices).
+
+class EditCellCommand : public Command
+{
+public:
+
+	EditCellCommand(ConcordanceView *view, int row, int col,
+	                QString old_text, QString new_text) :
+		m_view(view), m_row(row), m_col(col),
+		m_old_text(std::move(old_text)), m_new_text(std::move(new_text)) {}
+
+	bool execute() override;
+	void undo() override;
+
+	String description() const override { return "Edit cell"; }
+
+private:
+
+	ConcordanceView *m_view;
+	int m_row;
+	int m_col;
+	QString m_old_text;
+	QString m_new_text;
 };
 
 

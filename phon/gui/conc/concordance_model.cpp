@@ -88,17 +88,55 @@ bool ConcordanceModel::setData(const QModelIndex &index, const QVariant &value, 
 	intptr_t row = index.row() + 1;
 	intptr_t col = index.column() + 1;
 
-	if (!m_conc->is_editable_measurement(col)) return false;
+	if (!m_conc->is_editable_cell(col)) return false;
+
+	// Snapshot the old display text before writing, so the view can record an
+	// undoable command that round-trips via get_cell/set_cell.
+	auto old_text_utf8 = m_conc->get_cell(row, col);
+	QString old_text = QString::fromUtf8(old_text_utf8.data(), (int) old_text_utf8.size());
+	QString new_text = value.toString();
+
+	// No-op if nothing changed.
+	if (new_text == old_text) return true;
 
 	try
 	{
-		auto text = String(value.toString().toUtf8().constData());
+		auto text = String(new_text.toUtf8().constData());
 		m_conc->set_cell(row, col, text);
 		Document::file_modified();
 
-		// Emit dataChanged for the whole row so that derived columns (ERB/Bark) update too.
+		// Emit dataChanged for the whole row so that derived columns (ERB/Bark/ST
+		// for measurements and aux measurement columns) update too.
 		emit dataChanged(this->index(index.row(), 0),
 		                 this->index(index.row(), columnCount() - 1));
+
+		emit cellEdited(index.row(), index.column(), old_text, new_text);
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
+bool ConcordanceModel::applyCellEdit(int row, int col, const QString &text)
+{
+	// Used by EditCellCommand::execute()/undo(). Does the same work as setData()
+	// but without emitting cellEdited (which would re-record the command and
+	// corrupt the undo stack).
+	if (row < 0 || row >= rowCount() || col < 0 || col >= columnCount()) return false;
+
+	intptr_t r1 = row + 1;
+	intptr_t c1 = col + 1;
+	if (!m_conc->is_editable_cell(c1)) return false;
+
+	try
+	{
+		auto s = String(text.toUtf8().constData());
+		m_conc->set_cell(r1, c1, s);
+		Document::file_modified();
+
+		emit dataChanged(index(row, 0), index(row, columnCount() - 1));
 		return true;
 	}
 	catch (...)
@@ -158,7 +196,7 @@ Qt::ItemFlags ConcordanceModel::flags(const QModelIndex &index) const
 
 	intptr_t col = index.column() + 1;
 
-	if (m_conc->is_editable_measurement(col)) {
+	if (m_conc->is_editable_cell(col)) {
 		return base | Qt::ItemIsEditable;
 	}
 
