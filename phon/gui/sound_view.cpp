@@ -655,20 +655,22 @@ void SoundView::createIntensityTracks(QVBoxLayout *layout)
 
 QFrame *SoundView::createSeparator()
 {
+	// Paint the separator as a plain 1 px coloured strip via autoFillBackground
+	// rather than relying on QFrame::HLine. The macOS native style ignores
+	// palette role changes on QFrame decoration (both Sunken and Plain shadows),
+	// so any palette-based approach renders invisibly against the sound widget
+	// backgrounds. autoFillBackground + an explicit Window colour bypasses the
+	// style entirely — it's just a rectangle the widget paints itself, which
+	// mirrors how LayerWidget draws its own bottom separator.
+	//
+	// The return type is kept as QFrame* to avoid churn in the m_*_lines
+	// vectors; QFrame's frame shape is left at its default NoFrame.
 	auto *line = new QFrame(this);
-	line->setFrameShape(QFrame::HLine);
-#if defined(Q_OS_WIN)
-	// On Windows, QFrame::HLine with Sunken shadow clamped to 1 px renders
-	// using the palette's Light colour, which on a light theme is nearly
-	// white and blends into the sound widget backgrounds. Force a plain
-	// mid-grey line so the separation between widgets is visible.
-	line->setFrameShadow(QFrame::Plain);
+	line->setFrameShape(QFrame::NoFrame);
+	line->setAutoFillBackground(true);
 	QPalette pal = line->palette();
-	pal.setColor(QPalette::WindowText, QColor(0xA0, 0xA0, 0xA0));
+	pal.setColor(QPalette::Window, QColor(0xA0, 0xA0, 0xA0));
 	line->setPalette(pal);
-#else
-	line->setFrameShadow(QFrame::Sunken);
-#endif
 	line->setFixedHeight(1);
 	return line;
 }
