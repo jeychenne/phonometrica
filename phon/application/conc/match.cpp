@@ -173,7 +173,7 @@ void Match::to_xml(xml_node root) const
 		{
 			if (k > 0) meas_str.append(' ');
 			if (std::isnan(measurements[k])) {
-				meas_str.append("NaN");
+				meas_str.append("nan");
 			}
 			else {
 				meas_str.append(String::format("%.6f", measurements[k]));

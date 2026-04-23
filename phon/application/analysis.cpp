@@ -270,6 +270,17 @@ String doubles_to_string(const Array<double> &arr)
 	return String(oss.str());
 }
 
+// Write a scalar double with the same conventions as doubles_to_string.
+// NaN and Inf get portable tokens instead of the runtime-dependent output
+// of %.17g (which renders "-nan(ind)" / "1.#INF" on some Windows builds);
+// parse_double_safe() is the symmetric reader.
+String format_scalar(double v)
+{
+	if (std::isnan(v)) return String("nan");
+	if (std::isinf(v)) return String(v < 0 ? "-inf" : "inf");
+	return String::format("%.17g", v);
+}
+
 // Write a vector of strings as comma-separated text.
 String strings_to_csv(const Array<String> &arr)
 {
@@ -431,34 +442,34 @@ void Analysis::write()
 		if (!m.source_rows.empty())
 			add_data_node(mn, "SourceRows", intptrs_to_string(m.source_rows));
 
-		add_data_node(mn, "LogLik", String::format("%.17g", m.loglik));
-		add_data_node(mn, "AIC", String::format("%.17g", m.aic));
-		add_data_node(mn, "BIC", String::format("%.17g", m.bic));
-		add_data_node(mn, "Deviance", String::format("%.17g", m.deviance));
-		add_data_node(mn, "LogMarginal", String::format("%.17g", m.log_marginal));
-		add_data_node(mn, "WAIC", String::format("%.17g", m.waic));
-		add_data_node(mn, "PWAIC", String::format("%.17g", m.p_waic));
-		add_data_node(mn, "LPPD", String::format("%.17g", m.lppd));
-		add_data_node(mn, "SEWAIC", String::format("%.17g", m.se_waic));
+		add_data_node(mn, "LogLik", format_scalar(m.loglik));
+		add_data_node(mn, "AIC", format_scalar(m.aic));
+		add_data_node(mn, "BIC", format_scalar(m.bic));
+		add_data_node(mn, "Deviance", format_scalar(m.deviance));
+		add_data_node(mn, "LogMarginal", format_scalar(m.log_marginal));
+		add_data_node(mn, "WAIC", format_scalar(m.waic));
+		add_data_node(mn, "PWAIC", format_scalar(m.p_waic));
+		add_data_node(mn, "LPPD", format_scalar(m.lppd));
+		add_data_node(mn, "SEWAIC", format_scalar(m.se_waic));
 		if (!m.elpd_i.empty())
 			add_data_node(mn, "ElpdI", doubles_to_string(m.elpd_i));
-		add_data_node(mn, "LOOIC", String::format("%.17g", m.loo_ic));
-		add_data_node(mn, "PLOO", String::format("%.17g", m.p_loo));
-		add_data_node(mn, "SELOO", String::format("%.17g", m.se_loo));
+		add_data_node(mn, "LOOIC", format_scalar(m.loo_ic));
+		add_data_node(mn, "PLOO", format_scalar(m.p_loo));
+		add_data_node(mn, "SELOO", format_scalar(m.se_loo));
 		if (!m.elpd_loo_i.empty())
 			add_data_node(mn, "ElpdLooI", doubles_to_string(m.elpd_loo_i));
 		if (!m.pareto_k.empty())
 			add_data_node(mn, "ParetoK", doubles_to_string(m.pareto_k));
-		add_data_node(mn, "RSE", String::format("%.17g", m.rse));
+		add_data_node(mn, "RSE", format_scalar(m.rse));
 		add_data_node(mn, "DfResidual", String::convert(m.df_residual));
-		add_data_node(mn, "R2", String::format("%.17g", m.r2));
-		add_data_node(mn, "AdjR2", String::format("%.17g", m.adj_r2));
-		add_data_node(mn, "R2Marginal", String::format("%.17g", m.r2_marginal));
-		add_data_node(mn, "R2Conditional", String::format("%.17g", m.r2_conditional));
-		add_data_node(mn, "Theta", String::format("%.17g", m.theta));
-		add_data_node(mn, "Phi", String::format("%.17g", m.phi));
-		add_data_node(mn, "StudentSigma", String::format("%.17g", m.sigma));
-		add_data_node(mn, "StudentNu", String::format("%.17g", m.nu));
+		add_data_node(mn, "R2", format_scalar(m.r2));
+		add_data_node(mn, "AdjR2", format_scalar(m.adj_r2));
+		add_data_node(mn, "R2Marginal", format_scalar(m.r2_marginal));
+		add_data_node(mn, "R2Conditional", format_scalar(m.r2_conditional));
+		add_data_node(mn, "Theta", format_scalar(m.theta));
+		add_data_node(mn, "Phi", format_scalar(m.phi));
+		add_data_node(mn, "StudentSigma", format_scalar(m.sigma));
+		add_data_node(mn, "StudentNu", format_scalar(m.nu));
 		add_data_node(mn, "Niter", String::convert(intptr_t(m.niter)));
 		add_data_node(mn, "Converged", m.converged ? "true" : "false");
 		if (!m.optimizer.empty())
@@ -501,10 +512,10 @@ void Analysis::write()
 					add_data_node(sn, "By", sm.by);
 				add_data_node(sn, "Basis", sm.basis);
 				add_data_node(sn, "K", String::convert(sm.k));
-				add_data_node(sn, "Edf", String::format("%.17g", sm.edf));
-				add_data_node(sn, "RefDf", String::format("%.17g", sm.ref_df));
-				add_data_node(sn, "FStat", String::format("%.17g", sm.F_stat));
-				add_data_node(sn, "PValue", String::format("%.17g", sm.p_value));
+				add_data_node(sn, "Edf", format_scalar(sm.edf));
+				add_data_node(sn, "RefDf", format_scalar(sm.ref_df));
+				add_data_node(sn, "FStat", format_scalar(sm.F_stat));
+				add_data_node(sn, "PValue", format_scalar(sm.p_value));
 				add_data_node(sn, "ColStart", String::convert(sm.col_start));
 				add_data_node(sn, "ColCount", String::convert(sm.col_count));
 			}
@@ -564,25 +575,25 @@ void Analysis::write()
 				auto &pr = m.priors;
 
 				auto fe_node = pr_node.append_child("FixedEffects");
-				add_data_node(fe_node, "Mean", String::format("%.17g", pr.fixed_effects.mean));
-				add_data_node(fe_node, "Sd", String::format("%.17g", pr.fixed_effects.sd));
+				add_data_node(fe_node, "Mean", format_scalar(pr.fixed_effects.mean));
+				add_data_node(fe_node, "Sd", format_scalar(pr.fixed_effects.sd));
 				add_data_node(fe_node, "Auto", pr.fixed_auto ? "true" : "false");
 
 				auto vc_node = pr_node.append_child("VarianceComponents");
 				add_data_node(vc_node, "Type", stats::variance_prior_type_name(pr.variance_components.type));
-				add_data_node(vc_node, "Param1", String::format("%.17g", pr.variance_components.param1));
-				add_data_node(vc_node, "Param2", String::format("%.17g", pr.variance_components.param2));
+				add_data_node(vc_node, "Param1", format_scalar(pr.variance_components.param1));
+				add_data_node(vc_node, "Param2", format_scalar(pr.variance_components.param2));
 				add_data_node(vc_node, "Auto", pr.variance_auto ? "true" : "false");
 
 				auto res_node = pr_node.append_child("Residual");
 				add_data_node(res_node, "Type", stats::variance_prior_type_name(pr.residual.type));
-				add_data_node(res_node, "Param1", String::format("%.17g", pr.residual.param1));
-				add_data_node(res_node, "Param2", String::format("%.17g", pr.residual.param2));
+				add_data_node(res_node, "Param1", format_scalar(pr.residual.param1));
+				add_data_node(res_node, "Param2", format_scalar(pr.residual.param2));
 				add_data_node(res_node, "Auto", pr.residual_auto ? "true" : "false");
 
 				// LKJ prior on random-effect correlation matrix (scalar).
 				// η = 1 is the default (uniform over correlation matrices).
-				add_data_node(pr_node, "LkjEta", String::format("%.17g", pr.lkj_eta));
+				add_data_node(pr_node, "LkjEta", format_scalar(pr.lkj_eta));
 			}
 		}
 	}

@@ -368,6 +368,9 @@ void SoundView::createToolBar()
 	spectrum_menu->addSeparator();
 
 	auto *view_fft_action = spectrum_menu->addAction(tr("View FFT spectrum"));
+	view_fft_action->setShortcut(QKeySequence(Qt::Key_F5));
+	view_fft_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(view_fft_action);
 	connect(view_fft_action, &QAction::triggered, this,
 		[this]() { onViewSpectralSlice(SpectrumDisplayMode::FFT); });
 
@@ -376,6 +379,9 @@ void SoundView::createToolBar()
 		[this]() { onViewSpectralSlice(SpectrumDisplayMode::LPC); });
 
 	auto *view_both_action = spectrum_menu->addAction(tr("View FFT && LPC spectrum"));
+	view_both_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
+	view_both_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(view_both_action);
 	connect(view_both_action, &QAction::triggered, this,
 		[this]() { onViewSpectralSlice(SpectrumDisplayMode::Both); });
 
@@ -407,9 +413,15 @@ void SoundView::createToolBar()
 	formant_menu->addSeparator();
 
 	auto *get_formants_action = formant_menu->addAction(tr("Get formants"));
+	get_formants_action->setShortcut(QKeySequence(Qt::Key_F6));
+	get_formants_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_formants_action);
 	connect(get_formants_action, &QAction::triggered, this, &SoundView::onGetFormants);
 
 	auto *get_mean_formants_action = formant_menu->addAction(tr("Get mean formants"));
+	get_mean_formants_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F6));
+	get_mean_formants_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_mean_formants_action);
 	connect(get_mean_formants_action, &QAction::triggered, this, &SoundView::onGetMeanFormants);
 
 	formant_menu->addSeparator();
@@ -434,9 +446,15 @@ void SoundView::createToolBar()
 	pitch_menu->addSeparator();
 
 	auto *get_pitch_action = pitch_menu->addAction(tr("Get pitch"));
+	get_pitch_action->setShortcut(QKeySequence(Qt::Key_F7));
+	get_pitch_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_pitch_action);
 	connect(get_pitch_action, &QAction::triggered, this, &SoundView::onGetPitch);
 
 	auto *get_mean_pitch_action = pitch_menu->addAction(tr("Get mean pitch"));
+	get_mean_pitch_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F7));
+	get_mean_pitch_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_mean_pitch_action);
 	connect(get_mean_pitch_action, &QAction::triggered, this, &SoundView::onGetMeanPitch);
 
 	pitch_menu->addSeparator();
@@ -461,9 +479,15 @@ void SoundView::createToolBar()
 	intensity_menu->addSeparator();
 
 	auto *get_intensity_action = intensity_menu->addAction(tr("Get intensity"));
+	get_intensity_action->setShortcut(QKeySequence(Qt::Key_F8));
+	get_intensity_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_intensity_action);
 	connect(get_intensity_action, &QAction::triggered, this, &SoundView::onGetIntensity);
 
 	auto *get_mean_intensity_action = intensity_menu->addAction(tr("Get mean intensity"));
+	get_mean_intensity_action->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F8));
+	get_mean_intensity_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(get_mean_intensity_action);
 	connect(get_mean_intensity_action, &QAction::triggered, this, &SoundView::onGetMeanIntensity);
 
 	intensity_menu->addSeparator();

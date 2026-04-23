@@ -183,8 +183,9 @@ void Dataset::read_from_csv(std::string_view sep)
             {
             case ColumnType::Numeric:
             {
-                double value = row[j].to_float();
-                cast_num(col)->set(i, value);
+                // Tolerant parse: missing-value sentinels become NaN, as do unparseable
+                // cells (consistent with silent CSV import semantics).
+                cast_num(col)->set(i, parse_numeric_cell(row[j].view()));
                 break;
             }
             case ColumnType::Boolean:
@@ -214,7 +215,9 @@ void Dataset::read_from_csv(std::string_view sep)
         for (intptr_t i = 1; i <= nrow; i++)
         {
             auto &val = text_col->get(i);
-            if (val.empty())
+            // Missing-value sentinels (empty, "nan", "NaN", "NA", "undefined") are
+            // compatible with a Numeric column but not with Boolean.
+            if (is_missing_value_token(val.view()))
             {
                 all_boolean = false;
                 continue;
@@ -235,7 +238,7 @@ void Dataset::read_from_csv(std::string_view sep)
             for (intptr_t i = 1; i <= nrow; i++)
             {
                 auto &val = text_col->get(i);
-                num_col->set(i, val.empty() ? std::nan("") : val.to_float());
+                num_col->set(i, parse_numeric_cell(val.view()));
             }
             m_columns[j] = std::move(num_col);
         }
@@ -266,6 +269,7 @@ String Dataset::get_cell(intptr_t i, intptr_t j) const
         case ColumnType::Numeric:
 		{
 			double val = cast_num(col)->get(i);
+			if (std::isnan(val)) return String("nan");
 			if (std::isfinite(val) && val == std::floor(val))
 				return String::convert(intptr_t(val));
 			return String::convert(val);
@@ -285,12 +289,17 @@ void Dataset::set_cell(intptr_t i, intptr_t j, const String &value)
 	{
         case ColumnType::Numeric:
 		{
-			bool ok;
-			double result = value.to_float(&ok);
-			if (!ok) {
-				throw error("Invalid numeric value in cell (%, %)", i, j);
+			if (is_missing_value_token(value.view())) {
+				cast_num(col)->set(i, std::nan(""));
 			}
-			cast_num(col)->set(i, result);
+			else {
+				bool ok;
+				double result = value.to_float(&ok);
+				if (!ok) {
+					throw error("Invalid numeric value in cell (%, %)", i, j);
+				}
+				cast_num(col)->set(i, result);
+			}
 		}
 		break;
         case ColumnType::Boolean:

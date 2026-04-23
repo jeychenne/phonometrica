@@ -68,6 +68,29 @@ public:
 	/// Returns 0 if not found.
 	intptr_t find_column(const String &name) const;
 
+	// ── Numeric cell serialization helpers ───────────────────────────
+	// These are the canonical round-trip format for a floating-point cell
+	// in any DataTable-based format (Concordance XML, Dataset CSV). "nan"
+	// is the canonical write form (same representation as the scripting
+	// engine's string conversion). Read is permissive: empty cells and
+	// the tokens "nan", "NaN", "NA", "undefined" are all treated as NaN.
+
+	/// True if `cell` is a recognised missing-value sentinel (empty, "nan",
+	/// "NaN", "NA", "undefined"). Used for column-type auto-detection and
+	/// to distinguish "numeric missing" from "parse error".
+	static bool is_missing_value_token(std::string_view cell);
+
+	/// Parse a cell as a finite double or NaN. Never throws: an unparseable
+	/// cell yields NaN, matching the convention used for missing-value
+	/// sentinels. Callers that need to distinguish "missing" from "parse
+	/// error" should check is_missing_value_token() first.
+	static double parse_numeric_cell(std::string_view cell);
+
+	/// Serialize a double to a cell string. NaN becomes the literal "nan"
+	/// regardless of platform (avoids %.17g producing "-nan(ind)" on some
+	/// runtimes). Finite values are written with full round-trip precision.
+	static String format_numeric_cell(double value);
+
 	// ── Saved filter rules ───────────────────────────────────────────
 
 	const Array<FilterRuleData> &filter_rules() const { return m_filter_rules; }

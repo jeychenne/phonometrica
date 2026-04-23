@@ -1011,14 +1011,15 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 			return;
 		}
 
-		// All other aux types are numeric. Empty string or "nan" => NaN.
+		// All other aux types are numeric. Empty string or a missing-value
+		// token ("nan", "NaN", "NA", "undefined") => NaN.
 		if (mi > col.num_data.size()) {
 			throw error("Row % out of bounds for aux numeric column", i);
 		}
 		auto trimmed = value;
 		trimmed.trim();
 		double val;
-		if (trimmed.empty() || trimmed == "nan" || trimmed == "NaN" || trimmed == "NAN") {
+		if (is_missing_value_token(trimmed.view())) {
 			val = std::nan("");
 		}
 		else {
@@ -1460,7 +1461,7 @@ void Concordance::load()
 					if (col.type == AuxColumnType::Text) {
 						col.text_data.append(String(cell.text().get()));
 					} else {
-						col.num_data.append(String(cell.text().get()).to_float());
+						col.num_data.append(parse_numeric_cell(cell.text().get()));
 					}
 				}
 				m_aux_columns.append(std::move(col));
@@ -1761,14 +1762,7 @@ void Concordance::parse_matches_from_xml(xml_node root)
 				auto parts = text.split(" ");
 				for (auto &s : parts)
 				{
-					if (s == "NaN") {
-						measurements.push_back(std::nan(""));
-					}
-					else {
-						bool ok;
-						measurements.push_back(s.to_float(&ok));
-						if (!ok) measurements.back() = std::nan("");
-					}
+					measurements.push_back(parse_numeric_cell(s.view()));
 				}
 			}
 			else
@@ -1969,7 +1963,7 @@ void Concordance::write()
 				if (col.type == AuxColumnType::Text) {
 					add_data_node(col_node, "Cell", col.text_data[r]);
 				} else {
-					add_data_node(col_node, "Cell", String::format("%.17g", col.num_data[r]));
+					add_data_node(col_node, "Cell", format_numeric_cell(col.num_data[r]));
 				}
 			}
 		}

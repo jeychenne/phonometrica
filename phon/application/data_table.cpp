@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cmath>
 #include <phon/file.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/regex.hpp>
@@ -230,6 +231,37 @@ intptr_t DataTable::find_column(const String &name) const
 	}
 
 	return 0;
+}
+
+
+// =====================================================================
+// Numeric cell serialization helpers.
+// =====================================================================
+
+bool DataTable::is_missing_value_token(std::string_view cell)
+{
+	return cell.empty()
+	    || cell == "nan"
+	    || cell == "NaN"
+	    || cell == "NA"
+	    || cell == "undefined";
+}
+
+double DataTable::parse_numeric_cell(std::string_view cell)
+{
+	if (is_missing_value_token(cell)) return std::nan("");
+
+	bool ok = false;
+	double val = String::to_float(cell, &ok);
+	return ok ? val : std::nan("");
+}
+
+String DataTable::format_numeric_cell(double value)
+{
+	// Canonical NaN token: "nan". Matches scripting-engine output and is
+	// portable (some runtimes format NaN as "-nan(ind)" via %g).
+	if (std::isnan(value)) return String("nan");
+	return String::format("%.17g", value);
 }
 
 
