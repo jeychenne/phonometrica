@@ -1536,47 +1536,27 @@ Substring String::next_grapheme(intptr_t i) const
 
 double String::to_float(Substring str, bool *ok)
 {
-	if (str == "undefined") {
+	// Accept canonical NaN tokens as successful parses to NaN. "nan" is the
+	// standard NaN serialization produced by format_numeric_cell() and by the
+	// scripting engine; "NaN", empty, and "undefined" are accepted as
+	// interoperable aliases (CSV exports, JSON, scripting "undefined", etc.).
+	if (str.empty()
+	    || str == "nan"
+	    || str == "NaN"
+	    || str == "undefined")
+	{
+		if (ok) *ok = true;
 		return std::nan("");
 	}
 
-	auto ch = str.begin();
-	bool numeric = true;
+	// Delegate to std::from_chars, which handles fixed-point and scientific
+	// notation (e.g. "-1.234e-05") in the C locale. Require full-string
+	// consumption so trailing garbage ("1.5abc") is rejected.
 	double value = std::nan("");
-	if (*ch == '-') ch++;
+	auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
+	bool numeric = (ec == std::errc{}) && (ptr == str.data() + str.size());
 
-	// Recognize floating point numbers in the C locale.
-	while (ch < str.end())
-	{
-		if (isdigit(*ch))
-		{
-			ch++;
-		}
-		else if (*ch == '.')
-		{
-			do {
-				ch++;
-			} while (ch != str.end());
-
-			if (ch != str.end())
-			{
-				numeric = false;
-				break;
-			}
-		}
-		else
-		{
-			numeric = false;
-			break;
-		}
-	}
-	
-	if (numeric) {
-		auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
-		if (ec != std::errc{}) numeric = false;
-	}
-
-	// Only throw an error if ok is null
+	// Only throw an error if ok is null.
 	if (ok)
 	{
 		*ok = numeric;
