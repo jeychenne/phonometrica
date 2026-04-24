@@ -25,7 +25,7 @@ copyright = '2019-2026, Julien Eychenne & Léa Courdès-Murphy'
 author = 'Julien Eychenne & Léa Courdès-Murphy'
 
 version = '0.9'
-release = '0.9.0'
+release = '0.9.2'
 
 language = 'en'
 today_fmt = '%d %B %Y'

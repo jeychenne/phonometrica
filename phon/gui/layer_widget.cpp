@@ -1155,8 +1155,15 @@ void LayerWidget::mousePressEvent(QMouseEvent *e)
 
 void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 {
+	// Remember whether we were mid-drag so we can clear the shared tracking
+	// cursor only in that case (otherwise a plain click on an anchor would
+	// wipe out a cursor set by hovering over a sound widget).
+	const bool was_dragging_anchor = m_dragging_anchor;
 	m_dragging_anchor = false;
 	setCursor(Qt::ArrowCursor);
+
+	if (was_dragging_anchor)
+		m_model->clearCursor();
 
 	if (m_sharing_anchors)
 		emit editingSharedAnchor(m_layer_index, -1);
@@ -1277,6 +1284,11 @@ void LayerWidget::mouseMoveEvent(QMouseEvent *e)
 		setCursor(Qt::SizeHorCursor);
 		m_dropped_anchor_time = t;
 		emit anchorMoving(m_layer_index, t);
+		// Drive the shared tracking cursor so all sound plots (waveform,
+		// spectrogram, pitch, intensity) display a vertical line at the
+		// prospective boundary position while the anchor is being dragged.
+		// TimeModel::setCursor clamps to [0, duration] internally.
+		m_model->setCursor(t);
 		update();
 	}
 	else if (m_adding_anchor)
