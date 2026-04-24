@@ -424,11 +424,11 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 	return result;
 }
 
-std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost)
+std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost, bool use_gaussian)
 {
 	if (algorithm == PitchTracker::Praat)
 	{
-		return get_pitch_praat(input, sample_rate, min_pitch, max_pitch, time_step, voicing_threshold, octave_jump_cost, voicing_cost, silence_threshold, octave_cost);
+		return get_pitch_praat(input, sample_rate, min_pitch, max_pitch, time_step, voicing_threshold, octave_jump_cost, voicing_cost, silence_threshold, octave_cost, use_gaussian);
 	}
 
 	if (algorithm == PitchTracker::Swipe)

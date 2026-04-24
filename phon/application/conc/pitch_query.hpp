@@ -86,6 +86,10 @@ public:
 	double octave_cost() const { return m_octave_cost; }
 	void set_octave_cost(double c) { m_octave_cost = c; }
 
+	// Praat window choice: false = 3-period Hanning (Praat default), true = 6-period Gaussian ("very accurate").
+	bool use_gaussian() const { return m_use_gaussian; }
+	void set_use_gaussian(bool g) { m_use_gaussian = g; }
+
 	// ── Measurement points (for n-point methods) ─────────────────────────
 
 	const Array<double> &measurement_points() const { return m_points; }
@@ -167,6 +171,7 @@ private:
 	double m_voicing_cost = 0.45;
 	double m_silence_threshold = 0.03;
 	double m_octave_cost = 0.01;
+	bool m_use_gaussian = false;
 
 	// N-point output mode (both can be true simultaneously)
 	bool m_series = true;          // output per-point columns

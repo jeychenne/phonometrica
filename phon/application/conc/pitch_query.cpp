@@ -213,7 +213,7 @@ void PitchQuery::measure_match(Match &match) const
 	{
 		double t = (t1 + t2) / 2.0;
 		double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
-		                             m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost);
+		                             m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost, m_use_gaussian);
 		match.measurements[idx++] = (f0 > 0) ? f0 : std::nan("");
 	}
 	else
@@ -228,7 +228,7 @@ void PitchQuery::measure_match(Match &match) const
 		{
 			double t = t1 + (p / 100.0) * duration;
 			double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
-			                              m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost);
+			                              m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost, m_use_gaussian);
 			point_data.append((f0 > 0) ? f0 : std::nan(""));
 		}
 
@@ -285,6 +285,7 @@ Handle<Query> PitchQuery::copy() const
 	c->m_voicing_cost = m_voicing_cost;
 	c->m_silence_threshold = m_silence_threshold;
 	c->m_octave_cost = m_octave_cost;
+	c->m_use_gaussian = m_use_gaussian;
 	c->m_series = m_series;
 	c->m_average = m_average;
 	c->m_initial_layout = m_initial_layout;
@@ -421,6 +422,10 @@ void PitchQuery::load()
 				{
 					m_octave_cost = child.text().as_double(0.01);
 				}
+				else if (child.name() == str("UseGaussian"))
+				{
+					m_use_gaussian = child.text().as_bool(false);
+				}
 				else if (child.name() == str("Series"))
 				{
 					m_series = child.text().as_bool(true);
@@ -540,6 +545,7 @@ void PitchQuery::write()
 		add_data_node(ps_node, "VoicingCost", String::format("%.2f", m_voicing_cost));
 		add_data_node(ps_node, "SilenceThreshold", String::format("%.2f", m_silence_threshold));
 		add_data_node(ps_node, "OctaveCost", String::format("%.2f", m_octave_cost));
+		add_data_node(ps_node, "UseGaussian", String::convert(m_use_gaussian));
 	}
 
 	add_data_node(ps_node, "Semitones", String::convert(m_semitones));

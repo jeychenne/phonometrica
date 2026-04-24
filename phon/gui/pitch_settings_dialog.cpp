@@ -62,6 +62,7 @@ constexpr double DEFAULT_SILENCE         = 0.03;
 constexpr double DEFAULT_OCTAVE_COST     = 0.01;
 constexpr double DEFAULT_OCTAVE_JUMP     = 0.35;
 constexpr double DEFAULT_VOICING_COST    = 0.45;
+constexpr bool   DEFAULT_USE_GAUSSIAN    = false;
 } // namespace
 
 // Helper used in several places where a Praat-specific parameter may be
@@ -70,6 +71,12 @@ constexpr double DEFAULT_VOICING_COST    = 0.45;
 static double readPraatParam(const String &category, const char *key, double fallback)
 {
 	try { return Settings::get_number(category, key); }
+	catch (...) { return fallback; }
+}
+
+static bool readPraatBool(const String &category, const char *key, bool fallback)
+{
+	try { return Settings::get_boolean(category, key); }
 	catch (...) { return fallback; }
 }
 
@@ -132,6 +139,12 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	main_layout->addWidget(m_voicing_cost_label);
 	m_voicing_cost_edit = new QLineEdit;
 	main_layout->addWidget(m_voicing_cost_edit);
+
+	m_gaussian_check = new QCheckBox(tr("Very accurate (Gaussian window)"));
+	m_gaussian_check->setToolTip(tr(
+		"If unchecked, a 3-period Hanning window is used (Praat's default).\n"
+		"If checked, a 6-period Gaussian window is used — more accurate but twice as slow."));
+	main_layout->addWidget(m_gaussian_check);
 
 	// ── Buttons ──────────────────────────────────────
 	main_layout->addSpacing(10);
@@ -304,6 +317,7 @@ bool PitchSettingsDialog::validateAndCommit()
 		Settings::set_value(category, "octave_cost", octave_cost);
 		Settings::set_value(category, "octave_jump_cost", octave_jump);
 		Settings::set_value(category, "voicing_cost", voicing_cost);
+		Settings::set_value(category, "use_gaussian", m_gaussian_check->isChecked());
 	}
 
 	return true;
@@ -340,6 +354,7 @@ void PitchSettingsDialog::displayCurrentValues()
 	m_octave_cost_edit->setText(QString::number(readPraatParam(category, "octave_cost", DEFAULT_OCTAVE_COST), 'g'));
 	m_octave_jump_edit->setText(QString::number(readPraatParam(category, "octave_jump_cost", DEFAULT_OCTAVE_JUMP), 'g'));
 	m_voicing_cost_edit->setText(QString::number(readPraatParam(category, "voicing_cost", DEFAULT_VOICING_COST), 'g'));
+	m_gaussian_check->setChecked(readPraatBool(category, "use_gaussian", DEFAULT_USE_GAUSSIAN));
 
 	updatePraatFieldsVisibility(qmethod);
 
@@ -366,6 +381,7 @@ void PitchSettingsDialog::displayDefaultValues()
 	m_octave_cost_edit->setText(QString::number(DEFAULT_OCTAVE_COST, 'g'));
 	m_octave_jump_edit->setText(QString::number(DEFAULT_OCTAVE_JUMP, 'g'));
 	m_voicing_cost_edit->setText(QString::number(DEFAULT_VOICING_COST, 'g'));
+	m_gaussian_check->setChecked(DEFAULT_USE_GAUSSIAN);
 
 	updatePraatFieldsVisibility(DEFAULT_METHOD);
 
@@ -389,6 +405,7 @@ void PitchSettingsDialog::snapshotSettings()
 	m_snapshot.octave_cost       = readPraatParam(category, "octave_cost", DEFAULT_OCTAVE_COST);
 	m_snapshot.octave_jump_cost  = readPraatParam(category, "octave_jump_cost", DEFAULT_OCTAVE_JUMP);
 	m_snapshot.voicing_cost      = readPraatParam(category, "voicing_cost", DEFAULT_VOICING_COST);
+	m_snapshot.use_gaussian      = readPraatBool(category, "use_gaussian", DEFAULT_USE_GAUSSIAN);
 
 	m_snapshot.applied_any = false;
 }
@@ -407,6 +424,7 @@ bool PitchSettingsDialog::restoreSnapshot()
 	Settings::set_value(category, "octave_cost",       m_snapshot.octave_cost);
 	Settings::set_value(category, "octave_jump_cost",  m_snapshot.octave_jump_cost);
 	Settings::set_value(category, "voicing_cost",      m_snapshot.voicing_cost);
+	Settings::set_value(category, "use_gaussian",      m_snapshot.use_gaussian);
 	return true;
 }
 
@@ -449,6 +467,7 @@ void PitchSettingsDialog::updatePraatFieldsVisibility(const QString &method)
 	m_octave_jump_edit->setVisible(is_praat);
 	m_voicing_cost_label->setVisible(is_praat);
 	m_voicing_cost_edit->setVisible(is_praat);
+	m_gaussian_check->setVisible(is_praat);
 }
 
 void PitchSettingsDialog::onSliderMoved(int value)

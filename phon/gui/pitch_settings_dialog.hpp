@@ -30,6 +30,7 @@
 #include <QComboBox>
 #include <QSlider>
 #include <QLabel>
+#include <QCheckBox>
 #include <QPushButton>
 #include <QString>
 
@@ -92,6 +93,7 @@ private:
 	QLineEdit *m_octave_jump_edit;
 	QLabel *m_voicing_cost_label;
 	QLineEdit *m_voicing_cost_edit;
+	QCheckBox *m_gaussian_check;
 
 	QPushButton *m_ok_btn;
 	QPushButton *m_apply_btn;
@@ -116,6 +118,7 @@ private:
 		double  octave_cost;
 		double  octave_jump_cost;
 		double  voicing_cost;
+		bool    use_gaussian;
 		bool    applied_any;
 	} m_snapshot;
 };

@@ -123,6 +123,7 @@ private:
 	QLineEdit *m_octave_jump_edit = nullptr;
 	QLabel *m_voicing_cost_label = nullptr;
 	QLineEdit *m_voicing_cost_edit = nullptr;
+	QCheckBox *m_gaussian_check = nullptr;
 
 	// Measurement location
 	QRadioButton *m_midpoint_radio = nullptr;

@@ -119,6 +119,11 @@ void PitchWidget::readSettings()
 	} catch (...) {
 		m_octave_cost = 0.01;
 	}
+	try {
+		m_use_gaussian = Settings::get_boolean(category, "use_gaussian");
+	} catch (...) {
+		m_use_gaussian = false;
+	}
 
 	m_cache_valid = false;
 }
@@ -197,7 +202,7 @@ std::vector<double> PitchWidget::computePitch()
 
 	return speech::get_pitch(m_algorithm, input, sample_rate, m_min_pitch, m_max_pitch,
 	                         m_time_step, m_voicing_threshold, m_octave_jump_cost, m_voicing_cost,
-	                         m_silence_threshold, m_octave_cost);
+	                         m_silence_threshold, m_octave_cost, m_use_gaussian);
 }
 
 

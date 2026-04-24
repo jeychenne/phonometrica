@@ -385,7 +385,8 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 }
 
 double Sound::get_pitch(int channel, speech::PitchTracker method, double time, double min_pitch, double max_pitch, double threshold,
-                        double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost)
+                        double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost,
+                        bool use_gaussian)
 {
 	open();
 	double half_window = 0.025; // We use a 50 ms window
@@ -397,7 +398,7 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 	auto input = get_channel(channel, first_sample, last_sample);
 	//TODO: use time step from settings?
 	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, 0.01, threshold,
-	                             octave_jump_cost, voicing_cost, silence_threshold, octave_cost);
+	                             octave_jump_cost, voicing_cost, silence_threshold, octave_cost, use_gaussian);
 
 	if (f0.size() > 1)
 	{
@@ -419,13 +420,14 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 	return 0;
 }
 
-double Sound::get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold, double time_step)
+double Sound::get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold, double time_step, bool use_gaussian)
 {
 	open();
 	auto first_sample = time_to_frame(t1);
 	auto last_sample = time_to_frame(t2);
 	auto input = get_channel(channel, first_sample, last_sample);
-	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, time_step, threshold);
+	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, time_step, threshold,
+	                             0.35, 0.45, 0.03, 0.01, use_gaussian);
 	double total = 0;
 	int n = 0;
 

@@ -218,39 +218,50 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	m_threshold_edit->setText(QString::number(getThresholdInfo(2).default_value, 'g'));
 
 	// Praat-specific parameters (hidden unless Praat is selected)
-	auto *praat_row = new QHBoxLayout;
+	// Split across two rows to keep the layout readable.
+	auto *praat_row_a = new QHBoxLayout;
 	m_silence_label = new QLabel(tr("Silence threshold:"));
-	praat_row->addWidget(m_silence_label);
+	praat_row_a->addWidget(m_silence_label);
 	m_silence_edit = new QLineEdit("0.03");
 	m_silence_edit->setFixedWidth(50);
-	praat_row->addWidget(m_silence_edit);
-	praat_row->addSpacing(8);
+	praat_row_a->addWidget(m_silence_edit);
+	praat_row_a->addSpacing(8);
 	m_octave_cost_label = new QLabel(tr("Octave cost:"));
-	praat_row->addWidget(m_octave_cost_label);
+	praat_row_a->addWidget(m_octave_cost_label);
 	m_octave_cost_edit = new QLineEdit("0.01");
 	m_octave_cost_edit->setFixedWidth(50);
-	praat_row->addWidget(m_octave_cost_edit);
-	praat_row->addSpacing(8);
+	praat_row_a->addWidget(m_octave_cost_edit);
+	praat_row_a->addSpacing(8);
 	m_octave_jump_label = new QLabel(tr("Octave-jump cost:"));
-	praat_row->addWidget(m_octave_jump_label);
+	praat_row_a->addWidget(m_octave_jump_label);
 	m_octave_jump_edit = new QLineEdit("0.35");
 	m_octave_jump_edit->setFixedWidth(50);
-	praat_row->addWidget(m_octave_jump_edit);
-	praat_row->addSpacing(8);
+	praat_row_a->addWidget(m_octave_jump_edit);
+	praat_row_a->addStretch();
+	outer->addLayout(praat_row_a);
+
+	auto *praat_row_b = new QHBoxLayout;
 	m_voicing_cost_label = new QLabel(tr("Voiced/unvoiced cost:"));
-	praat_row->addWidget(m_voicing_cost_label);
+	praat_row_b->addWidget(m_voicing_cost_label);
 	m_voicing_cost_edit = new QLineEdit("0.45");
 	m_voicing_cost_edit->setFixedWidth(50);
-	praat_row->addWidget(m_voicing_cost_edit);
-	praat_row->addStretch();
-	outer->addLayout(praat_row);
+	praat_row_b->addWidget(m_voicing_cost_edit);
+	praat_row_b->addSpacing(8);
+	m_gaussian_check = new QCheckBox(tr("Very accurate"));
+	m_gaussian_check->setToolTip(tr(
+		"If unchecked, a 3-period Hanning window is used (Praat's default).\n"
+		"If checked, a 6-period Gaussian window is used — more accurate but twice as slow."));
+	praat_row_b->addWidget(m_gaussian_check);
+	praat_row_b->addStretch();
+	outer->addLayout(praat_row_b);
 
 	// Initially hide Praat fields
 	auto setPraatVisible = [this](bool v) {
 		for (auto *w : {(QWidget*)m_silence_label, (QWidget*)m_silence_edit,
 		               (QWidget*)m_octave_cost_label, (QWidget*)m_octave_cost_edit,
 		               (QWidget*)m_octave_jump_label, (QWidget*)m_octave_jump_edit,
-		               (QWidget*)m_voicing_cost_label, (QWidget*)m_voicing_cost_edit})
+		               (QWidget*)m_voicing_cost_label, (QWidget*)m_voicing_cost_edit,
+		               (QWidget*)m_gaussian_check})
 			w->setVisible(v);
 	};
 	setPraatVisible(false);
@@ -523,6 +534,7 @@ void PitchQueryEditor::parseQuery()
 		m_query->set_octave_jump_cost(val);
 		val = m_voicing_cost_edit->text().toDouble(&ok); if (!ok || val < 0) throw std::runtime_error("Invalid voiced/unvoiced cost");
 		m_query->set_voicing_cost(val);
+		m_query->set_use_gaussian(m_gaussian_check->isChecked());
 	}
 
 	if (m_midpoint_radio->isChecked()) {
@@ -707,6 +719,7 @@ void PitchQueryEditor::loadQuery()
 	m_octave_cost_edit->setText(QString::number(m_query->octave_cost()));
 	m_octave_jump_edit->setText(QString::number(m_query->octave_jump_cost()));
 	m_voicing_cost_edit->setText(QString::number(m_query->voicing_cost()));
+	m_gaussian_check->setChecked(m_query->use_gaussian());
 
 	if (m_query->method() == PitchQuery::Method::NPoint) {
 		m_npoint_radio->setChecked(true);
