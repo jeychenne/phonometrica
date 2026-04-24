@@ -839,16 +839,25 @@ void SoundView::onToggleSpectrogram(bool checked)
 
 void SoundView::onSpectrogramSettings()
 {
-	SpectrogramSettingsDialog dlg(this);
+	if (m_spectrogram_settings_dialog) {
+		m_spectrogram_settings_dialog->show();
+		m_spectrogram_settings_dialog->raise();
+		m_spectrogram_settings_dialog->activateWindow();
+		return;
+	}
 
-	if (dlg.exec() == QDialog::Accepted)
-	{
-		for (auto *sg : m_spectrograms)
-		{
+	auto *dlg = new SpectrogramSettingsDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+	connect(dlg, &SpectrogramSettingsDialog::settingsApplied, this, [this]() {
+		for (auto *sg : m_spectrograms) {
 			sg->readSettings();
 			sg->update();
 		}
-	}
+	});
+
+	m_spectrogram_settings_dialog = dlg;
+	dlg->show();
 }
 
 void SoundView::onViewSpectralSlice(SpectrumDisplayMode mode)
@@ -982,16 +991,25 @@ void SoundView::onToggleIntensity(bool checked)
 
 void SoundView::onIntensitySettings()
 {
-	IntensitySettingsDialog dlg(this);
+	if (m_intensity_settings_dialog) {
+		m_intensity_settings_dialog->show();
+		m_intensity_settings_dialog->raise();
+		m_intensity_settings_dialog->activateWindow();
+		return;
+	}
 
-	if (dlg.exec() == QDialog::Accepted)
-	{
-		for (auto *iw : m_intensities)
-		{
+	auto *dlg = new IntensitySettingsDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+	connect(dlg, &IntensitySettingsDialog::settingsApplied, this, [this]() {
+		for (auto *iw : m_intensities) {
 			iw->readSettings();
 			iw->update();
 		}
-	}
+	});
+
+	m_intensity_settings_dialog = dlg;
+	dlg->show();
 }
 
 void SoundView::onToggleFormants(bool checked)
@@ -1004,16 +1022,33 @@ void SoundView::onToggleFormants(bool checked)
 
 void SoundView::onFormantSettings()
 {
-	FormantSettingsDialog dlg(this);
+	// If a dialog is already open, raise it instead of creating a second one.
+	// This matches the expected UX for a persistent tool palette: one panel
+	// per SoundView, reused across multiple "Formant settings..." invocations.
+	if (m_formant_settings_dialog) {
+		m_formant_settings_dialog->show();
+		m_formant_settings_dialog->raise();
+		m_formant_settings_dialog->activateWindow();
+		return;
+	}
 
-	if (dlg.exec() == QDialog::Accepted)
-	{
-		for (auto *sg : m_spectrograms)
-		{
+	auto *dlg = new FormantSettingsDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+	// Each Apply click refreshes the spectrograms. The dialog stays open so
+	// the user can tweak values, observe the effect, and tweak again — the
+	// whole point of the non-modal design. readFormantSettings() re-reads
+	// Settings into the widget's cached members and invalidates the formant
+	// cache; update() triggers the repaint.
+	connect(dlg, &FormantSettingsDialog::settingsApplied, this, [this]() {
+		for (auto *sg : m_spectrograms) {
 			sg->readFormantSettings();
 			sg->update();
 		}
-	}
+	});
+
+	m_formant_settings_dialog = dlg;
+	dlg->show();
 }
 
 void SoundView::onTogglePitch(bool checked)
@@ -1025,16 +1060,25 @@ void SoundView::onTogglePitch(bool checked)
 
 void SoundView::onPitchSettings()
 {
-	PitchSettingsDialog dlg(this);
+	if (m_pitch_settings_dialog) {
+		m_pitch_settings_dialog->show();
+		m_pitch_settings_dialog->raise();
+		m_pitch_settings_dialog->activateWindow();
+		return;
+	}
 
-	if (dlg.exec() == QDialog::Accepted)
-	{
-		for (auto *pw : m_pitches)
-		{
+	auto *dlg = new PitchSettingsDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+
+	connect(dlg, &PitchSettingsDialog::settingsApplied, this, [this]() {
+		for (auto *pw : m_pitches) {
 			pw->readSettings();
 			pw->update();
 		}
-	}
+	});
+
+	m_pitch_settings_dialog = dlg;
+	dlg->show();
 }
 
 void SoundView::onGoToTime()

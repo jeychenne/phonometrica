@@ -15,8 +15,10 @@
  *                                                                                                                     *
  * Created: 23/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Dialog to edit spectrogram settings (window size, frequency range, window type, dynamic range,             *
- *          pre-emphasis threshold).                                                                                    *
+ * Purpose: Non-modal, Praat-style dialog to edit spectrogram settings (window size, frequency range, window type,     *
+ *          dynamic range, pre-emphasis threshold). The dialog stays above its parent window (Qt::Tool) so the user    *
+ *          can tweak parameters, click Apply, see the effect, and iterate. See formant_settings_dialog.hpp for the    *
+ *          design precedent.                                                                                          *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -30,6 +32,7 @@
 #include <QSlider>
 #include <QLabel>
 #include <QPushButton>
+#include <QString>
 
 namespace phonometrica {
 
@@ -41,19 +44,39 @@ public:
 
 	explicit SpectrogramSettingsDialog(QWidget *parent = nullptr);
 
+	// Overridden so Escape and the title-bar close button trigger the
+	// snapshot-revert logic (they default to calling reject()).
+	void reject() override;
+
+signals:
+
+	void settingsApplied();
+
 private slots:
 
 	void onOk();
-	void onReset();
+	void onApply();
+	void onCancel();
+	void onResetToDefaults();
 	void onDynamicRangeChanged(int value);
 	void onBandTypeChanged();
 
 private:
 
-	void displayValues();
+	void displayCurrentValues();
+	void displayDefaultValues();
+	bool validateAndCommit();
+	void snapshotSettings();
+	bool restoreSnapshot();
 	void enableCustomBand(bool value);
 	void setDynamicRangeLabel(int value);
-	void resetAndDisplay();
+
+	// Populates all widgets from an in-memory value tuple. Used by both
+	// displayCurrentValues() (Settings-sourced) and displayDefaultValues()
+	// (hard-coded defaults).
+	void applyValuesToWidgets(double window_size, int freq_range,
+	                          const QString &window_type, int dynamic_range,
+	                          int preemph_threshold);
 
 	QRadioButton *m_wide_btn;
 	QRadioButton *m_narrow_btn;
@@ -64,6 +87,18 @@ private:
 	QComboBox *m_window_combo;
 	QSlider *m_dyn_range_slider;
 	QLabel *m_dyn_range_label;
+
+	QPushButton *m_ok_btn;
+	QPushButton *m_apply_btn;
+
+	struct {
+		double  window_size;       // seconds
+		int     freq_range;        // Hz
+		QString window_type;
+		int     dynamic_range;     // dB
+		int     preemph_threshold; // Hz
+		bool    applied_any;
+	} m_snapshot;
 };
 
 } // namespace phonometrica

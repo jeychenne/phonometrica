@@ -22,7 +22,6 @@
 #include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
-#include <QDialogButtonBox>
 #include <QMessageBox>
 #include <phon/gui/pitch_settings_dialog.hpp>
 #include <phon/application/settings.hpp>
@@ -52,11 +51,34 @@ static ThresholdInfo getThresholdInfo(const QString &method)
 	/* reaper (default) */   return { -0.5,  1.6, 0.9  };
 }
 
+// Default values. Must match Settings::reset_pitch_tracking() in settings.cpp.
+namespace {
+const QString  DEFAULT_METHOD            = QStringLiteral("reaper");
+constexpr int  DEFAULT_MIN_PITCH         = 70;
+constexpr int  DEFAULT_MAX_PITCH         = 500;
+constexpr double DEFAULT_TIME_STEP       = 0.01;
+constexpr double DEFAULT_VOICING         = 0.9;   // reaper default
+constexpr double DEFAULT_SILENCE         = 0.03;
+constexpr double DEFAULT_OCTAVE_COST     = 0.01;
+constexpr double DEFAULT_OCTAVE_JUMP     = 0.35;
+constexpr double DEFAULT_VOICING_COST    = 0.45;
+} // namespace
+
+// Helper used in several places where a Praat-specific parameter may be
+// missing from the Settings table (older config files that predate those
+// keys) — returns the fallback rather than throwing.
+static double readPraatParam(const String &category, const char *key, double fallback)
+{
+	try { return Settings::get_number(category, key); }
+	catch (...) { return fallback; }
+}
+
 PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
 	setWindowTitle(tr("Pitch settings"));
 	setMinimumWidth(350);
+	setWindowFlag(Qt::Tool);
 
 	auto *main_layout = new QVBoxLayout(this);
 
@@ -114,26 +136,68 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 	// ── Buttons ──────────────────────────────────────
 	main_layout->addSpacing(10);
 	auto *button_layout = new QHBoxLayout;
-	auto *reset_btn = new QPushButton(tr("Reset"));
+	auto *reset_btn = new QPushButton(tr("Reset to defaults"));
 	button_layout->addWidget(reset_btn);
 	button_layout->addStretch();
-	auto *button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-	button_layout->addWidget(button_box);
+	auto *cancel_btn = new QPushButton(tr("Cancel"));
+	m_apply_btn = new QPushButton(tr("Apply"));
+	m_ok_btn = new QPushButton(tr("OK"));
+	m_ok_btn->setDefault(true);
+	button_layout->addWidget(cancel_btn);
+	button_layout->addWidget(m_apply_btn);
+	button_layout->addWidget(m_ok_btn);
 	main_layout->addLayout(button_layout);
 
 	// ── Connections ──────────────────────────────────
-	connect(reset_btn, &QPushButton::clicked, this, &PitchSettingsDialog::onReset);
-	connect(button_box, &QDialogButtonBox::accepted, this, &PitchSettingsDialog::onOk);
-	connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+	connect(reset_btn, &QPushButton::clicked, this, &PitchSettingsDialog::onResetToDefaults);
+	connect(m_apply_btn, &QPushButton::clicked, this, &PitchSettingsDialog::onApply);
+	connect(m_ok_btn, &QPushButton::clicked, this, &PitchSettingsDialog::onOk);
+	connect(cancel_btn, &QPushButton::clicked, this, &PitchSettingsDialog::onCancel);
 	connect(m_method_combo, QOverload<int>::of(&QComboBox::currentIndexChanged),
 	        this, &PitchSettingsDialog::onMethodChanged);
 	connect(m_voicing_slider, &QSlider::valueChanged, this, &PitchSettingsDialog::onSliderMoved);
 	connect(m_voicing_edit, &QLineEdit::editingFinished, this, &PitchSettingsDialog::onVoicingEdited);
 
-	displayValues();
+	snapshotSettings();
+	displayCurrentValues();
+}
+
+void PitchSettingsDialog::onApply()
+{
+	if (validateAndCommit()) {
+		m_snapshot.applied_any = true;
+		emit settingsApplied();
+	}
 }
 
 void PitchSettingsDialog::onOk()
+{
+	if (validateAndCommit()) {
+		m_snapshot.applied_any = true;
+		emit settingsApplied();
+		accept();
+	}
+}
+
+void PitchSettingsDialog::onCancel()
+{
+	reject();
+}
+
+void PitchSettingsDialog::onResetToDefaults()
+{
+	displayDefaultValues();
+}
+
+void PitchSettingsDialog::reject()
+{
+	if (restoreSnapshot()) {
+		emit settingsApplied();
+	}
+	QDialog::reject();
+}
+
+bool PitchSettingsDialog::validateAndCommit()
 {
 	bool ok;
 	String category("pitch_tracking");
@@ -145,7 +209,9 @@ void PitchSettingsDialog::onOk()
 	if (!ok || min_pitch < 1)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid minimum pitch"));
-		return;
+		m_min_edit->setFocus();
+		m_min_edit->selectAll();
+		return false;
 	}
 
 	String text_max(m_max_edit->text().toUtf8().constData());
@@ -153,7 +219,9 @@ void PitchSettingsDialog::onOk()
 	if (!ok || max_pitch <= min_pitch)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid maximum pitch"));
-		return;
+		m_max_edit->setFocus();
+		m_max_edit->selectAll();
+		return false;
 	}
 
 	String text_step(m_step_edit->text().toUtf8().constData());
@@ -161,7 +229,9 @@ void PitchSettingsDialog::onOk()
 	if (!ok || step <= 0.0)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid time step"));
-		return;
+		m_step_edit->setFocus();
+		m_step_edit->selectAll();
+		return false;
 	}
 
 	String text_voicing(m_voicing_edit->text().toUtf8().constData());
@@ -169,66 +239,77 @@ void PitchSettingsDialog::onOk()
 	if (!ok)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voicing threshold"));
-		return;
+		m_voicing_edit->setFocus();
+		m_voicing_edit->selectAll();
+		return false;
 	}
 
+	// Praat-specific parameters (validated only when the Praat method is
+	// selected). Reading them before committing anything so we don't leave
+	// the Settings table half-written on a Praat-field validation failure.
+	double silence = 0, octave_cost = 0, octave_jump = 0, voicing_cost = 0;
+	if (method == "praat")
+	{
+		String text_silence(m_silence_edit->text().toUtf8().constData());
+		silence = text_silence.to_float(&ok);
+		if (!ok || silence < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid silence threshold"));
+			m_silence_edit->setFocus();
+			m_silence_edit->selectAll();
+			return false;
+		}
+
+		String text_oc(m_octave_cost_edit->text().toUtf8().constData());
+		octave_cost = text_oc.to_float(&ok);
+		if (!ok || octave_cost < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave cost"));
+			m_octave_cost_edit->setFocus();
+			m_octave_cost_edit->selectAll();
+			return false;
+		}
+
+		String text_ojc(m_octave_jump_edit->text().toUtf8().constData());
+		octave_jump = text_ojc.to_float(&ok);
+		if (!ok || octave_jump < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave-jump cost"));
+			m_octave_jump_edit->setFocus();
+			m_octave_jump_edit->selectAll();
+			return false;
+		}
+
+		String text_vcost(m_voicing_cost_edit->text().toUtf8().constData());
+		voicing_cost = text_vcost.to_float(&ok);
+		if (!ok || voicing_cost < 0.0)
+		{
+			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voiced/unvoiced cost"));
+			m_voicing_cost_edit->setFocus();
+			m_voicing_cost_edit->selectAll();
+			return false;
+		}
+	}
+
+	// All validations passed — now commit.
 	Settings::set_value(category, "method", String(method.toUtf8().constData()));
 	Settings::set_value(category, "minimum_pitch", min_pitch);
 	Settings::set_value(category, "maximum_pitch", max_pitch);
 	Settings::set_value(category, "time_step", step);
 	Settings::set_value(category, "voicing_threshold", voicing);
 
-	// Save Praat-specific parameters.
 	if (method == "praat")
 	{
-		String text_silence(m_silence_edit->text().toUtf8().constData());
-		auto silence = text_silence.to_float(&ok);
-		if (!ok || silence < 0.0)
-		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid silence threshold"));
-			return;
-		}
-
-		String text_oc(m_octave_cost_edit->text().toUtf8().constData());
-		auto oc = text_oc.to_float(&ok);
-		if (!ok || oc < 0.0)
-		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave cost"));
-			return;
-		}
-
-		String text_ojc(m_octave_jump_edit->text().toUtf8().constData());
-		auto ojc = text_ojc.to_float(&ok);
-		if (!ok || ojc < 0.0)
-		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid octave-jump cost"));
-			return;
-		}
-
-		String text_vcost(m_voicing_cost_edit->text().toUtf8().constData());
-		auto vcost = text_vcost.to_float(&ok);
-		if (!ok || vcost < 0.0)
-		{
-			QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid voiced/unvoiced cost"));
-			return;
-		}
-
 		Settings::set_value(category, "silence_threshold", silence);
-		Settings::set_value(category, "octave_cost", oc);
-		Settings::set_value(category, "octave_jump_cost", ojc);
-		Settings::set_value(category, "voicing_cost", vcost);
+		Settings::set_value(category, "octave_cost", octave_cost);
+		Settings::set_value(category, "octave_jump_cost", octave_jump);
+		Settings::set_value(category, "voicing_cost", voicing_cost);
 	}
 
-	accept();
+	return true;
 }
 
-void PitchSettingsDialog::onReset()
-{
-	Settings::reset_pitch_tracking();
-	displayValues();
-}
-
-void PitchSettingsDialog::displayValues()
+void PitchSettingsDialog::displayCurrentValues()
 {
 	m_updating = true;
 
@@ -255,20 +336,78 @@ void PitchSettingsDialog::displayValues()
 	updateSliderRange(qmethod);
 	m_voicing_slider->setValue(thresholdToSlider(voicing));
 
-	// Praat-specific fields.
-	auto readPraatParam = [&](const char *key, double fallback) -> double {
-		try { return Settings::get_number(category, key); }
-		catch (...) { return fallback; }
-	};
-
-	m_silence_edit->setText(QString::number(readPraatParam("silence_threshold", 0.03), 'g'));
-	m_octave_cost_edit->setText(QString::number(readPraatParam("octave_cost", 0.01), 'g'));
-	m_octave_jump_edit->setText(QString::number(readPraatParam("octave_jump_cost", 0.35), 'g'));
-	m_voicing_cost_edit->setText(QString::number(readPraatParam("voicing_cost", 0.45), 'g'));
+	m_silence_edit->setText(QString::number(readPraatParam(category, "silence_threshold", DEFAULT_SILENCE), 'g'));
+	m_octave_cost_edit->setText(QString::number(readPraatParam(category, "octave_cost", DEFAULT_OCTAVE_COST), 'g'));
+	m_octave_jump_edit->setText(QString::number(readPraatParam(category, "octave_jump_cost", DEFAULT_OCTAVE_JUMP), 'g'));
+	m_voicing_cost_edit->setText(QString::number(readPraatParam(category, "voicing_cost", DEFAULT_VOICING_COST), 'g'));
 
 	updatePraatFieldsVisibility(qmethod);
 
 	m_updating = false;
+}
+
+void PitchSettingsDialog::displayDefaultValues()
+{
+	m_updating = true;
+
+	int index = m_method_combo->findData(DEFAULT_METHOD);
+	if (index >= 0)
+		m_method_combo->setCurrentIndex(index);
+
+	m_min_edit->setText(QString::number(DEFAULT_MIN_PITCH));
+	m_max_edit->setText(QString::number(DEFAULT_MAX_PITCH));
+	m_step_edit->setText(QString::number(DEFAULT_TIME_STEP, 'g'));
+	m_voicing_edit->setText(QString::number(DEFAULT_VOICING, 'g'));
+
+	updateSliderRange(DEFAULT_METHOD);
+	m_voicing_slider->setValue(thresholdToSlider(DEFAULT_VOICING));
+
+	m_silence_edit->setText(QString::number(DEFAULT_SILENCE, 'g'));
+	m_octave_cost_edit->setText(QString::number(DEFAULT_OCTAVE_COST, 'g'));
+	m_octave_jump_edit->setText(QString::number(DEFAULT_OCTAVE_JUMP, 'g'));
+	m_voicing_cost_edit->setText(QString::number(DEFAULT_VOICING_COST, 'g'));
+
+	updatePraatFieldsVisibility(DEFAULT_METHOD);
+
+	m_updating = false;
+}
+
+void PitchSettingsDialog::snapshotSettings()
+{
+	String category("pitch_tracking");
+
+	auto method_str = Settings::get_string(category, "method");
+	m_snapshot.method = QString::fromUtf8(method_str.data(), (int) method_str.size());
+	m_snapshot.min_pitch = (int) Settings::get_number(category, "minimum_pitch");
+	m_snapshot.max_pitch = (int) Settings::get_number(category, "maximum_pitch");
+	m_snapshot.time_step = Settings::get_number(category, "time_step");
+	m_snapshot.voicing_threshold = Settings::get_number(category, "voicing_threshold");
+
+	// Praat-specific keys may be missing on fresh installs or old config
+	// files; use the documented defaults as fallbacks.
+	m_snapshot.silence_threshold = readPraatParam(category, "silence_threshold", DEFAULT_SILENCE);
+	m_snapshot.octave_cost       = readPraatParam(category, "octave_cost", DEFAULT_OCTAVE_COST);
+	m_snapshot.octave_jump_cost  = readPraatParam(category, "octave_jump_cost", DEFAULT_OCTAVE_JUMP);
+	m_snapshot.voicing_cost      = readPraatParam(category, "voicing_cost", DEFAULT_VOICING_COST);
+
+	m_snapshot.applied_any = false;
+}
+
+bool PitchSettingsDialog::restoreSnapshot()
+{
+	if (!m_snapshot.applied_any) return false;
+
+	String category("pitch_tracking");
+	Settings::set_value(category, "method", String(m_snapshot.method.toUtf8().constData()));
+	Settings::set_value(category, "minimum_pitch",     intptr_t(m_snapshot.min_pitch));
+	Settings::set_value(category, "maximum_pitch",     intptr_t(m_snapshot.max_pitch));
+	Settings::set_value(category, "time_step",         m_snapshot.time_step);
+	Settings::set_value(category, "voicing_threshold", m_snapshot.voicing_threshold);
+	Settings::set_value(category, "silence_threshold", m_snapshot.silence_threshold);
+	Settings::set_value(category, "octave_cost",       m_snapshot.octave_cost);
+	Settings::set_value(category, "octave_jump_cost",  m_snapshot.octave_jump_cost);
+	Settings::set_value(category, "voicing_cost",      m_snapshot.voicing_cost);
+	return true;
 }
 
 void PitchSettingsDialog::onMethodChanged(int)

@@ -22,18 +22,25 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QDialogButtonBox>
 #include <QMessageBox>
 #include <phon/gui/intensity_settings_dialog.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
 
+// Default values. Must match Settings::reset_intensity() in settings.cpp.
+namespace {
+constexpr int    DEFAULT_MIN_DB    = 50;
+constexpr int    DEFAULT_MAX_DB    = 100;
+constexpr double DEFAULT_TIME_STEP = 0.01;
+} // namespace
+
 IntensitySettingsDialog::IntensitySettingsDialog(QWidget *parent) :
 	QDialog(parent)
 {
 	setWindowTitle(tr("Intensity settings"));
 	setMinimumWidth(350);
+	setWindowFlag(Qt::Tool);
 
 	auto *main_layout = new QVBoxLayout(this);
 
@@ -50,24 +57,68 @@ IntensitySettingsDialog::IntensitySettingsDialog(QWidget *parent) :
 	main_layout->addWidget(m_step_edit);
 
 	// ── Buttons ──────────────────────────────────────
+	// Layout: [Reset]                [Cancel]  [Apply]  [OK]
+	// See formant_settings_dialog.cpp for the full button semantics rationale.
 	main_layout->addSpacing(10);
 	auto *button_layout = new QHBoxLayout;
-	auto *reset_btn = new QPushButton(tr("Reset"));
+	auto *reset_btn = new QPushButton(tr("Reset to defaults"));
 	button_layout->addWidget(reset_btn);
 	button_layout->addStretch();
-	auto *button_box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-	button_layout->addWidget(button_box);
+	auto *cancel_btn = new QPushButton(tr("Cancel"));
+	m_apply_btn = new QPushButton(tr("Apply"));
+	m_ok_btn = new QPushButton(tr("OK"));
+	m_ok_btn->setDefault(true);
+	button_layout->addWidget(cancel_btn);
+	button_layout->addWidget(m_apply_btn);
+	button_layout->addWidget(m_ok_btn);
 	main_layout->addLayout(button_layout);
 
 	// ── Connections ──────────────────────────────────
-	connect(reset_btn, &QPushButton::clicked, this, &IntensitySettingsDialog::onReset);
-	connect(button_box, &QDialogButtonBox::accepted, this, &IntensitySettingsDialog::onOk);
-	connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+	connect(reset_btn, &QPushButton::clicked, this, &IntensitySettingsDialog::onResetToDefaults);
+	connect(m_apply_btn, &QPushButton::clicked, this, &IntensitySettingsDialog::onApply);
+	connect(m_ok_btn, &QPushButton::clicked, this, &IntensitySettingsDialog::onOk);
+	connect(cancel_btn, &QPushButton::clicked, this, &IntensitySettingsDialog::onCancel);
 
-	displayValues();
+	snapshotSettings();
+	displayCurrentValues();
+}
+
+void IntensitySettingsDialog::onApply()
+{
+	if (validateAndCommit()) {
+		m_snapshot.applied_any = true;
+		emit settingsApplied();
+	}
 }
 
 void IntensitySettingsDialog::onOk()
+{
+	if (validateAndCommit()) {
+		m_snapshot.applied_any = true;
+		emit settingsApplied();
+		accept();
+	}
+}
+
+void IntensitySettingsDialog::onCancel()
+{
+	reject();
+}
+
+void IntensitySettingsDialog::onResetToDefaults()
+{
+	displayDefaultValues();
+}
+
+void IntensitySettingsDialog::reject()
+{
+	if (restoreSnapshot()) {
+		emit settingsApplied();
+	}
+	QDialog::reject();
+}
+
+bool IntensitySettingsDialog::validateAndCommit()
 {
 	bool ok;
 	String category("intensity");
@@ -78,7 +129,9 @@ void IntensitySettingsDialog::onOk()
 	if (!ok || min_db < 0)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid minimum intensity"));
-		return;
+		m_min_edit->setFocus();
+		m_min_edit->selectAll();
+		return false;
 	}
 
 	// ── Maximum intensity ────────────────────────────
@@ -87,7 +140,9 @@ void IntensitySettingsDialog::onOk()
 	if (!ok || max_db <= min_db)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid maximum intensity"));
-		return;
+		m_max_edit->setFocus();
+		m_max_edit->selectAll();
+		return false;
 	}
 
 	// ── Time step ────────────────────────────────────
@@ -96,23 +151,19 @@ void IntensitySettingsDialog::onOk()
 	if (!ok || step <= 0.0)
 	{
 		QMessageBox::critical(this, tr("Invalid setting"), tr("Invalid time step"));
-		return;
+		m_step_edit->setFocus();
+		m_step_edit->selectAll();
+		return false;
 	}
 
 	Settings::set_value(category, "minimum_intensity", min_db);
 	Settings::set_value(category, "maximum_intensity", max_db);
 	Settings::set_value(category, "time_step", step);
 
-	accept();
+	return true;
 }
 
-void IntensitySettingsDialog::onReset()
-{
-	Settings::reset_intensity();
-	displayValues();
-}
-
-void IntensitySettingsDialog::displayValues()
+void IntensitySettingsDialog::displayCurrentValues()
 {
 	String category("intensity");
 
@@ -124,6 +175,33 @@ void IntensitySettingsDialog::displayValues()
 
 	auto step = Settings::get_number(category, "time_step");
 	m_step_edit->setText(QString::number(step, 'g'));
+}
+
+void IntensitySettingsDialog::displayDefaultValues()
+{
+	m_min_edit->setText(QString::number(DEFAULT_MIN_DB));
+	m_max_edit->setText(QString::number(DEFAULT_MAX_DB));
+	m_step_edit->setText(QString::number(DEFAULT_TIME_STEP, 'g'));
+}
+
+void IntensitySettingsDialog::snapshotSettings()
+{
+	String category("intensity");
+	m_snapshot.min_db      = (int) Settings::get_number(category, "minimum_intensity");
+	m_snapshot.max_db      = (int) Settings::get_number(category, "maximum_intensity");
+	m_snapshot.time_step   = Settings::get_number(category, "time_step");
+	m_snapshot.applied_any = false;
+}
+
+bool IntensitySettingsDialog::restoreSnapshot()
+{
+	if (!m_snapshot.applied_any) return false;
+
+	String category("intensity");
+	Settings::set_value(category, "minimum_intensity", intptr_t(m_snapshot.min_db));
+	Settings::set_value(category, "maximum_intensity", intptr_t(m_snapshot.max_db));
+	Settings::set_value(category, "time_step",         m_snapshot.time_step);
+	return true;
 }
 
 } // namespace phonometrica

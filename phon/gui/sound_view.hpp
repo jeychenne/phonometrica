@@ -32,6 +32,7 @@
 #include <QMenu>
 #include <QActionGroup>
 #include <QFrame>
+#include <QPointer>
 #include <QVBoxLayout>
 #include <phon/gui/view.hpp>
 #include <phon/gui/time_model.hpp>
@@ -50,6 +51,10 @@ class PitchWidget;
 class IntensityWidget;
 class WaveBar;
 class SoundZoom;
+class FormantSettingsDialog;
+class SpectrogramSettingsDialog;
+class PitchSettingsDialog;
+class IntensitySettingsDialog;
 
 class SoundView : public View
 {
@@ -230,6 +235,15 @@ private:
 
 	// Annotation event info text (e.g. "Layer 2 / Event 5").
 	QString m_annot_status_text;
+
+	// Non-modal, Praat-style settings dialogs. Kept as QPointers so they
+	// auto-null when closed (all four are created with WA_DeleteOnClose).
+	// Re-opening while a dialog is visible raises the existing one instead
+	// of creating a second.
+	QPointer<FormantSettingsDialog>     m_formant_settings_dialog;
+	QPointer<SpectrogramSettingsDialog> m_spectrogram_settings_dialog;
+	QPointer<PitchSettingsDialog>       m_pitch_settings_dialog;
+	QPointer<IntensitySettingsDialog>   m_intensity_settings_dialog;
 };
 
 } // namespace phonometrica

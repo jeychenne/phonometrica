@@ -797,6 +797,16 @@ void ConcordanceView::setupUi()
 		                        String(filter_logic_to_string(m_proxy->logic())));
 	});
 
+	// When a cell edit causes a row to fall out of (or back into) the current
+	// filter, QSortFilterProxyModel re-evaluates filterAcceptsRow dynamically
+	// and emits rowsRemoved/rowsInserted on the proxy — but NOT filterChanged
+	// (that signal is for rule/logic/enabled changes only). Refresh the count
+	// label on those signals so "Showing X of Y" stays in sync with the view.
+	connect(m_proxy, &QAbstractItemModel::rowsInserted, this,
+	        [this](const QModelIndex&, int, int) { updateCountLabel(); });
+	connect(m_proxy, &QAbstractItemModel::rowsRemoved, this,
+	        [this](const QModelIndex&, int, int) { updateCountLabel(); });
+
 	// The filter bar's radio buttons push logic changes to the proxy;
 	// the proxy then fires filterChanged, which the handler above serializes.
 	connect(m_filter_bar, &FilterBar::logicChanged, m_proxy, &DataFilterProxyModel::setLogic);

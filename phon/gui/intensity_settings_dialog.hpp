@@ -15,7 +15,9 @@
  *                                                                                                                     *
  * Created: 23/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Dialog to edit intensity track settings (minimum/maximum dB, time step).                                   *
+ * Purpose: Non-modal, Praat-style dialog to edit intensity track settings (minimum/maximum dB, time step). The dialog *
+ *          stays above its parent window (Qt::Tool) so the user can tweak parameters, click Apply, see the effect,    *
+ *          and iterate. See formant_settings_dialog.hpp for the design precedent.                                     *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -36,18 +38,44 @@ public:
 
 	explicit IntensitySettingsDialog(QWidget *parent = nullptr);
 
+	// Overridden so Escape and the title-bar close button trigger the
+	// snapshot-revert logic (they default to calling reject()).
+	void reject() override;
+
+signals:
+
+	// Emitted after a successful Apply (or a revert-on-Cancel that actually
+	// changed anything). Owners connect this to their view-refresh slot.
+	void settingsApplied();
+
 private slots:
 
 	void onOk();
-	void onReset();
+	void onApply();
+	void onCancel();
+	void onResetToDefaults();
 
 private:
 
-	void displayValues();
+	void displayCurrentValues();
+	void displayDefaultValues();
+	bool validateAndCommit();
+	void snapshotSettings();
+	bool restoreSnapshot();
 
 	QLineEdit *m_min_edit;
 	QLineEdit *m_max_edit;
 	QLineEdit *m_step_edit;
+
+	QPushButton *m_ok_btn;
+	QPushButton *m_apply_btn;
+
+	struct {
+		int    min_db;
+		int    max_db;
+		double time_step;   // seconds
+		bool   applied_any;
+	} m_snapshot;
 };
 
 } // namespace phonometrica

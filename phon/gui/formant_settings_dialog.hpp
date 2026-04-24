@@ -15,8 +15,10 @@
  *                                                                                                                     *
  * Created: 24/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Dialog to edit formant tracking settings (number of formants, max frequency, window length, LPC order,     *
- *          time step).                                                                                                *
+ * Purpose: Non-modal, Praat-style dialog to edit formant tracking settings. The dialog stays above its parent window  *
+ *          (Qt::Tool) so the user can tweak parameters, click Apply, see the effect on the spectrogram, and iterate.  *
+ *          Apply validates and commits to Settings, then emits settingsApplied() so the owner can refresh its views.  *
+ *          Reset fills the fields with defaults but does NOT commit until Apply is clicked.                           *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -37,20 +39,70 @@ public:
 
 	explicit FormantSettingsDialog(QWidget *parent = nullptr);
 
+	// Overridden so Escape and the title-bar close button both trigger the
+	// snapshot-revert logic (they default to calling reject()). Without this,
+	// closing via those paths would silently drop any Apply-committed changes
+	// without reverting — which would contradict the "Cancel means undo"
+	// semantics we want.
+	void reject() override;
+
+signals:
+
+	// Emitted after Apply has validated the fields and written them to the
+	// Settings registry. Owners (e.g. SoundView) connect this to their
+	// view-refresh slot.
+	void settingsApplied();
+
 private slots:
 
 	void onOk();
-	void onReset();
+	void onApply();
+	void onCancel();
+	void onResetToDefaults();
 
 private:
 
-	void displayValues();
+	// Reads the current values from Settings and populates the line edits.
+	void displayCurrentValues();
+
+	// Populates the line edits with Phonometrica's default values WITHOUT
+	// touching the Settings registry. Matches Praat's "Standards" behavior:
+	// the user still has to click Apply to commit.
+	void displayDefaultValues();
+
+	// Parses and validates all fields. On success, writes to Settings and
+	// returns true. On failure, shows an error dialog and returns false.
+	bool validateAndCommit();
+
+	// Captures the current Settings values so Cancel can revert any Apply()
+	// calls made during this dialog's lifetime.
+	void snapshotSettings();
+
+	// Writes the snapshot back to Settings. Returns true iff anything
+	// actually changed (i.e. at least one Apply happened), so the caller
+	// knows whether to emit settingsApplied.
+	bool restoreSnapshot();
 
 	QLineEdit *m_nformant_edit;
 	QLineEdit *m_max_freq_edit;
 	QLineEdit *m_window_edit;
 	QLineEdit *m_lpc_edit;
 	QLineEdit *m_step_edit;
+
+	QPushButton *m_ok_btn;
+	QPushButton *m_apply_btn;
+
+	// Snapshot of Settings at dialog-open time. If the user clicks Apply
+	// (committing new values) and then Cancel, we revert to these. If they
+	// click OK or hit Esc without having Applied, the snapshot is discarded.
+	struct {
+		int    nformant;
+		int    max_freq;
+		double window_size;   // seconds
+		int    lpc_order;
+		double time_step;     // seconds
+		bool   applied_any;   // set true on every successful validateAndCommit
+	} m_snapshot;
 };
 
 } // namespace phonometrica

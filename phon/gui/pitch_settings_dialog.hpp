@@ -15,9 +15,10 @@
  *                                                                                                                     *
  * Created: 24/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Dialog to edit pitch tracking settings (method, min/max pitch, time step, voicing threshold).              *
- *          The voicing threshold has both a text entry and a slider whose range depends on the selected method.        *
- *          Praat-specific parameters are shown only when Praat is selected.                                           *
+ * Purpose: Non-modal, Praat-style dialog to edit pitch tracking settings (method, min/max pitch, time step, voicing   *
+ *          threshold, and — when Praat is selected — its four additional parameters). The dialog stays above its      *
+ *          parent window (Qt::Tool) so the user can tweak parameters, click Apply, see the effect, and iterate.       *
+ *          See formant_settings_dialog.hpp for the design precedent.                                                  *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -30,6 +31,7 @@
 #include <QSlider>
 #include <QLabel>
 #include <QPushButton>
+#include <QString>
 
 namespace phonometrica {
 
@@ -41,17 +43,32 @@ public:
 
 	explicit PitchSettingsDialog(QWidget *parent = nullptr);
 
+	// Overridden so Escape and the title-bar close button trigger the
+	// snapshot-revert logic (they default to calling reject()).
+	void reject() override;
+
+signals:
+
+	void settingsApplied();
+
 private slots:
 
 	void onOk();
-	void onReset();
+	void onApply();
+	void onCancel();
+	void onResetToDefaults();
 	void onMethodChanged(int index);
 	void onSliderMoved(int value);
 	void onVoicingEdited();
 
 private:
 
-	void displayValues();
+	void displayCurrentValues();
+	void displayDefaultValues();
+	bool validateAndCommit();
+	void snapshotSettings();
+	bool restoreSnapshot();
+
 	void updateSliderRange(const QString &method);
 	void setVoicingDefault(const QString &method);
 	void updatePraatFieldsVisibility(const QString &method);
@@ -76,10 +93,31 @@ private:
 	QLabel *m_voicing_cost_label;
 	QLineEdit *m_voicing_cost_edit;
 
+	QPushButton *m_ok_btn;
+	QPushButton *m_apply_btn;
+
 	int m_slider_min = 0;
 	int m_slider_max = 100;
 
 	bool m_updating = false;
+
+	// Snapshot always captures all keys — including the four Praat-specific
+	// ones — regardless of which method is currently selected. That way, a
+	// user who switches method from reaper→praat, clicks Apply (writing the
+	// Praat params), then clicks Cancel gets a full revert to the pre-dialog
+	// state including those Praat params.
+	struct {
+		QString method;
+		int     min_pitch;
+		int     max_pitch;
+		double  time_step;
+		double  voicing_threshold;
+		double  silence_threshold;
+		double  octave_cost;
+		double  octave_jump_cost;
+		double  voicing_cost;
+		bool    applied_any;
+	} m_snapshot;
 };
 
 } // namespace phonometrica
