@@ -128,6 +128,16 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 		updateSaveActions();
 		updateWindowTitle();
 		m_file_manager->refresh();
+		// Also refresh every open tab's title so its modified-state asterisk
+		// stays in sync. This catches modification paths (e.g. cell edits in
+		// concordance, undo/redo of cell edits) that fire the broadcast but
+		// do not emit View::titleChanged themselves.
+		for (int i = 0; i < m_viewer->count(); i++)
+		{
+			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+			if (panel)
+				m_viewer->setTabText(i, panel->label());
+		}
 	});
 
 	updateWindowTitle();

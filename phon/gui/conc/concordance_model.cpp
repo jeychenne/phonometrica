@@ -185,6 +185,10 @@ bool ConcordanceModel::setHeaderData(int section, Qt::Orientation orientation, c
 		m_conc->set_header_alias(default_hdr, new_name);
 	}
 
+	// Both alias mutators set m_content_modified on the concordance; broadcast
+	// so the file manager and all tab titles pick up the asterisk.
+	Document::file_modified();
+
 	emit headerDataChanged(Qt::Horizontal, section, section);
 	return true;
 }
