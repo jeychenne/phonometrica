@@ -674,7 +674,7 @@ void Settings::reset_pitch_tracking()
 	map["time_step"] = 0.01;
 	map["voicing_threshold"] = 0.9;
 	map["octave_jump_cost"] = 0.35;
-	map["voicing_cost"] = 0.45;
+	map["voicing_cost"] = 0.14;
 	map["silence_threshold"] = 0.03;
 	map["octave_cost"] = 0.01;
 	map["use_gaussian"] = false;

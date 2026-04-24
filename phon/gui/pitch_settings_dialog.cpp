@@ -61,7 +61,7 @@ constexpr double DEFAULT_VOICING         = 0.9;   // reaper default
 constexpr double DEFAULT_SILENCE         = 0.03;
 constexpr double DEFAULT_OCTAVE_COST     = 0.01;
 constexpr double DEFAULT_OCTAVE_JUMP     = 0.35;
-constexpr double DEFAULT_VOICING_COST    = 0.45;
+constexpr double DEFAULT_VOICING_COST    = 0.14;
 constexpr bool   DEFAULT_USE_GAUSSIAN    = false;
 } // namespace
 

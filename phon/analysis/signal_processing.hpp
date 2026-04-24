@@ -103,12 +103,12 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 
 Array<double> medfilt1(const Array<double> &signal, int n);
 
-std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.45, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false);
+std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false);
 
 // Praat-style raw autocorrelation pitch tracker.
 // If `use_gaussian` is false (default), a 3-period Hanning window is used, matching Praat's default `To Pitch...`
 // command. If true, a 6-period Gaussian window is used, matching Praat's "very accurate" mode.
-std::vector<double> get_pitch_praat(const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.45, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false);
+std::vector<double> get_pitch_praat(const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false);
 
 // Apply pre-emphasis for formant analysis.
 void pre_emphasis(Array<double> &data, double Fs, double threshold);

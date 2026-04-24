@@ -427,7 +427,7 @@ double Sound::get_mean_pitch(int channel, speech::PitchTracker method, double t1
 	auto last_sample = time_to_frame(t2);
 	auto input = get_channel(channel, first_sample, last_sample);
 	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, time_step, threshold,
-	                             0.35, 0.45, 0.03, 0.01, use_gaussian);
+	                             0.35, 0.14, 0.03, 0.01, use_gaussian);
 	double total = 0;
 	int n = 0;
 

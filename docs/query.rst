@@ -218,7 +218,7 @@ When **Praat** is selected, four additional parameters are revealed, correspondi
 - **Silence threshold** (default 0.03): frames below this relative amplitude are treated as silent.
 - **Octave cost** (default 0.01): favors higher-frequency candidates during path selection.
 - **Octave-jump cost** (default 0.35): penalty for an octave jump between adjacent frames.
-- **Voiced/unvoiced cost** (default 0.45): penalty for a voiced↔unvoiced transition.
+- **Voiced/unvoiced cost** (default 0.14): penalty for a voiced↔unvoiced transition.
 
 Like formant queries, pitch can be measured at the midpoint or as an n-point average. Pitch values in
 Hertz can be converted to **semitones** (relative to a reference) or to **ERB rate** via the Scales menu.

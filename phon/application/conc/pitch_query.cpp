@@ -113,7 +113,7 @@ void PitchQuery::clear()
 	m_voicing_threshold = 0.5;
 	m_time_step = 0.01;
 	m_octave_jump_cost = 0.35;
-	m_voicing_cost = 0.45;
+	m_voicing_cost = 0.14;
 	m_silence_threshold = 0.03;
 	m_octave_cost = 0.01;
 	m_series = true;
@@ -412,7 +412,7 @@ void PitchQuery::load()
 				}
 				else if (child.name() == str("VoicingCost"))
 				{
-					m_voicing_cost = child.text().as_double(0.45);
+					m_voicing_cost = child.text().as_double(0.14);
 				}
 				else if (child.name() == str("SilenceThreshold"))
 				{

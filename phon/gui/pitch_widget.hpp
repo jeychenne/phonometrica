@@ -113,7 +113,7 @@ private:
 	double m_voicing_threshold = 0.9;
 	speech::PitchTracker m_algorithm = speech::PitchTracker::Reaper;
 	double m_octave_jump_cost = 0.35;
-	double m_voicing_cost = 0.45;
+	double m_voicing_cost = 0.14;
 	double m_silence_threshold = 0.03;
 	double m_octave_cost = 0.01;
 	bool m_use_gaussian = false;

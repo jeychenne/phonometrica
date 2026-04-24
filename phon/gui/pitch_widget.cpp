@@ -107,7 +107,7 @@ void PitchWidget::readSettings()
 	try {
 		m_voicing_cost = Settings::get_number(category, "voicing_cost");
 	} catch (...) {
-		m_voicing_cost = 0.45;
+		m_voicing_cost = 0.14;
 	}
 	try {
 		m_silence_threshold = Settings::get_number(category, "silence_threshold");

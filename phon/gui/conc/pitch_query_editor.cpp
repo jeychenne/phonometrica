@@ -243,7 +243,7 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	auto *praat_row_b = new QHBoxLayout;
 	m_voicing_cost_label = new QLabel(tr("Voiced/unvoiced cost:"));
 	praat_row_b->addWidget(m_voicing_cost_label);
-	m_voicing_cost_edit = new QLineEdit("0.45");
+	m_voicing_cost_edit = new QLineEdit("0.14");
 	m_voicing_cost_edit->setFixedWidth(50);
 	praat_row_b->addWidget(m_voicing_cost_edit);
 	praat_row_b->addSpacing(8);

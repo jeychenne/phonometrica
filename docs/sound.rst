@@ -99,7 +99,7 @@ When **Praat** is selected, four additional parameters are exposed, matching Pra
 * ``silence threshold`` (default 0.03): frames below this relative amplitude are treated as silent.
 * ``octave cost`` (default 0.01): favors higher-frequency candidates during path selection.
 * ``octave-jump cost`` (default 0.35): penalty for an octave jump between adjacent frames.
-* ``voiced/unvoiced cost`` (default 0.45): penalty for a voiced↔unvoiced transition.
+* ``voiced/unvoiced cost`` (default 0.14): penalty for a voiced↔unvoiced transition.
 
 You can show or hide the pitch track using the ``Show pitch`` command in the pitch menu.
 
