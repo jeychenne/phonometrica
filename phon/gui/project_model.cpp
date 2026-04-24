@@ -27,6 +27,7 @@
 #include <phon/gui/project_model.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/analysis.hpp>
+#include <phon/application/bookmark.hpp>
 
 namespace phonometrica {
 
@@ -128,6 +129,16 @@ QVariant ProjectModel::data(const QModelIndex &index, int role) const
 
 	case Qt::ToolTipRole:
 	{
+		// Bookmarks provide a rich tooltip (file, match, context, notes) via
+		// Bookmark::tooltip(). This is what lets the user see the bookmarked
+		// match and description by hovering over an item in the file manager.
+		if (auto *bm = dynamic_cast<Bookmark *>(elem))
+		{
+			auto tip = bm->tooltip();
+			if (!tip.empty())
+				return QString::fromUtf8(tip.data(), (int) tip.size());
+			// Fall through to default handling if there is no tooltip text.
+		}
 		auto *doc = dynamic_cast<Document *>(elem);
 		if (doc && doc->has_path())
 		{

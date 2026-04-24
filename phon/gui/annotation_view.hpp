@@ -129,6 +129,11 @@ private slots:
 	void onAnnotReplace();
 	void onAnnotReplaceAll();
 
+	// Bookmark creation from the current event selection (toolbar + Ctrl+B).
+	// Opens the BookmarkEditor dialog and, on accept, adds a TimeStamp bookmark
+	// for the focused layer and current time selection to the project.
+	void onCreateBookmark();
+
 	// ── Undo recording slots ─────────────────────────
 	// Connected to LayerWidget signals; create and record undo commands.
 
@@ -166,6 +171,7 @@ private:
 	QAction *m_link_action = nullptr;
 	QAction *m_add_anchor_action = nullptr;
 	QAction *m_remove_anchor_action = nullptr;
+	QAction *m_bookmark_action = nullptr;
 
 	// Find/replace bar.
 	SearchBar *m_searchbar = nullptr;

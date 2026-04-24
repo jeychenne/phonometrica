@@ -46,6 +46,7 @@
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/conc/concordance_commands.hpp>
 #include <phon/gui/conc/protocol_builder_dialog.hpp>
+#include <phon/gui/bookmark_editor.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
 #include <phon/gui/convert_to_text_dialog.hpp>
@@ -943,8 +944,35 @@ void ConcordanceView::onBookmark()
 	int target = m_target_spin->value();
 	auto context = m_conc->get_context(src + 1);
 
-	String title = match.get_value(target);
-	String notes;
+	// Default title is the match value; the user can edit it in the dialog.
+	String match_value = match.get_value(target);
+	QString default_title = QString::fromUtf8(match_value.data(), (int) match_value.size());
+
+	// Build a human-readable context preview for the dialog header:
+	// "« left »  <match>  « right »" — compact but enough to disambiguate.
+	const auto &left  = context.first;
+	const auto &right = context.second;
+	QString preview;
+	{
+		QString q_left  = QString::fromUtf8(left.data(), (int) left.size()).trimmed();
+		QString q_match = default_title;
+		QString q_right = QString::fromUtf8(right.data(), (int) right.size()).trimmed();
+		preview = tr("Match: %1 %2 %3")
+			.arg(q_left.isEmpty() ? QString()  : QStringLiteral("… ") + q_left)
+			.arg(QStringLiteral("〈") + q_match + QStringLiteral("〉"))
+			.arg(q_right.isEmpty() ? QString() : q_right + QStringLiteral(" …"))
+			.simplified();
+	}
+
+	BookmarkEditor dlg(default_title, QString(), preview, this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	QByteArray t_utf8 = dlg.title().toUtf8();
+	QByteArray n_utf8 = dlg.notes().toUtf8();
+	String title(t_utf8.constData(), t_utf8.size());
+	String notes(n_utf8.constData(), n_utf8.size());
+
 	auto bm = match.to_bookmark(target, title, notes, context);
 	if (bm)
 	{

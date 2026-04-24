@@ -95,12 +95,25 @@ String TimeStamp::tooltip() const
 {
 	String s("File:\n");
 	s.append(filesystem::base_name(m_annot->path()));
-	s.append("\nMatch:\n");
-	s.append(m_context.first);
-	s.append(' ');
-	s.append(m_target);
-	s.append(' ');
-	s.append(m_context.second);
+
+	// Build the "Match:" line. Annotation-view bookmarks have no KWIC context
+	// (m_context.first and m_context.second are both empty), so we only include
+	// the surrounding spaces when there is actually context to show.
+	if (!m_target.empty() || !m_context.first.empty() || !m_context.second.empty())
+	{
+		s.append("\nMatch:\n");
+		if (!m_context.first.empty())
+		{
+			s.append(m_context.first);
+			s.append(' ');
+		}
+		s.append(m_target);
+		if (!m_context.second.empty())
+		{
+			s.append(' ');
+			s.append(m_context.second);
+		}
+	}
 
 	if (!m_notes.empty())
 	{

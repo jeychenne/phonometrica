@@ -30,7 +30,11 @@
 #include <phon/gui/annotation_commands.hpp>
 #include <phon/gui/new_layer_dialog.hpp>
 #include <phon/gui/layer_visibility_dialog.hpp>
+#include <phon/gui/bookmark_editor.hpp>
+#include <phon/application/bookmark.hpp>
+#include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/utils/file_system.hpp>
 #include <phon/runtime/regex.hpp>
 
 namespace phonometrica {
@@ -160,6 +164,18 @@ void AnnotationView::addAnnotationToolbar(QToolBar *toolbar)
 	m_remove_anchor_action = toolbar->addAction(QIcon(":/icons/eraser.svg"), tr("Remove anchors"));
 	m_remove_anchor_action->setCheckable(true);
 	connect(m_remove_anchor_action, &QAction::toggled, this, &AnnotationView::onToggleRemoveAnchor);
+
+	toolbar->addSeparator();
+
+	// Bookmark the current event selection. Uses the same icon as the
+	// concordance view bookmark button for consistency. The Ctrl+B shortcut
+	// is scoped to this view (rather than global) so it doesn't fire in
+	// other views; the status tip is shown in the toolbar tooltip.
+	m_bookmark_action = toolbar->addAction(QIcon(":/icons/book-marked.svg"), tr("Bookmark"));
+	m_bookmark_action->setToolTip(tr("Bookmark the selected event (Ctrl+B)"));
+	m_bookmark_action->setShortcut(QKeySequence(tr("Ctrl+B")));
+	m_bookmark_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	connect(m_bookmark_action, &QAction::triggered, this, &AnnotationView::onCreateBookmark);
 
 	toolbar->addSeparator();
 }
@@ -1261,6 +1277,96 @@ void AnnotationView::onEventTextEdited(intptr_t layer_index, intptr_t event_1bas
 	auto cmd = std::make_unique<EditEventTextCommand>(this, layer_index, event_1based,
 		std::move(old_text), std::move(new_text));
 	record(std::move(cmd));
+}
+
+// ─────────────────────────────────────────────────
+//  Bookmark creation
+// ─────────────────────────────────────────────────
+
+void AnnotationView::onCreateBookmark()
+{
+	// The "selected event" is conveyed through the SoundView's time selection,
+	// which is updated by LayerWidget::eventSelected (see onEventSelected).
+	// A valid selection is an interval with end > start.
+	auto *model = timeModel();
+	double t1 = model->selectionStart();
+	double t2 = model->selectionEnd();
+	if (!(t2 > t1))
+	{
+		QMessageBox::information(this, tr("Bookmark"),
+			tr("Select an event on an annotation layer first."));
+		return;
+	}
+
+	// Locate the focused layer — the bookmark is anchored to it. This mirrors
+	// the pattern used in onEventSelected: walk m_layers and pick the one
+	// whose isFocused() returns true.
+	intptr_t focus_layer = 0;
+	for (auto *w : m_layers)
+	{
+		if (w && w->isFocused())
+		{
+			focus_layer = w->layerIndex();
+			break;
+		}
+	}
+	if (focus_layer <= 0)
+	{
+		QMessageBox::information(this, tr("Bookmark"),
+			tr("Click on an annotation layer to give it focus, then try again."));
+		return;
+	}
+
+	// Fetch the event that contains the selection midpoint. Its text becomes
+	// both the bookmark's target (for tooltip formatting) and the default title
+	// that the user sees in the dialog — so bookmarks from the annotation view
+	// behave analogously to bookmarks from the concordance view, where the
+	// match value seeds the title.
+	double mid = (t1 + t2) / 2;
+	intptr_t ev_idx = m_annot->get_event_at_time(focus_layer, mid);
+	String event_text;
+	if (ev_idx > 0)
+	{
+		event_text = m_annot->get_event(focus_layer, ev_idx).text;
+	}
+
+	QString default_title = QString::fromUtf8(event_text.data(), (int) event_text.size()).trimmed();
+	if (default_title.isEmpty())
+	{
+		// Fall back to a generic label when the selected event has no text
+		// (an empty interval, which is legitimate and common in early annotation work).
+		default_title = tr("Bookmark");
+	}
+
+	// Build a context preview for the dialog header. No KWIC context here
+	// (there is no query) — we show file, layer, and time span instead, which
+	// is the information actually relevant for an annotation-view bookmark.
+	String base = filesystem::base_name(m_annot->path());
+	QString file_name = QString::fromUtf8(base.data(), (int) base.size());
+	QString preview = tr("File: %1  •  Layer %2  •  %3 s – %4 s")
+		.arg(file_name)
+		.arg(focus_layer)
+		.arg(t1, 0, 'f', 3)
+		.arg(t2, 0, 'f', 3);
+
+	BookmarkEditor dlg(default_title, QString(), preview, this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	QByteArray t_utf8 = dlg.title().toUtf8();
+	QByteArray n_utf8 = dlg.notes().toUtf8();
+	String title(t_utf8.constData(), t_utf8.size());
+	String notes(n_utf8.constData(), n_utf8.size());
+
+	// Construct the TimeStamp directly: Match::to_bookmark is only available
+	// when there is a concordance match, which is not the case here. The
+	// context pair is empty; TimeStamp::tooltip() handles that cleanly.
+	auto bm = make_handle<TimeStamp>(nullptr, title, m_annot, (size_t) focus_layer,
+		t1, t2, event_text, std::make_pair(String(), String()));
+	bm->set_notes(notes);
+
+	Project::get()->add_bookmark(std::move(bm));
+	Project::updated();
 }
 
 } // namespace phonometrica
