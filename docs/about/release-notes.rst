@@ -2,6 +2,41 @@ Release notes
 -------------
 
 
+0.9.1 (24/04/2026)
+~~~~~~~~~~~~~~~~~~~
+
+This release features usability improvements and bug fixes.
+
+**General**
+
+- Settings dialogs for formants, pitch, intensity, and spectrograms are now non-modal: you can keep them open while interacting with the sound view and see parameter changes take effect immediately.
+- macOS: fixed communication with Praat when launching files from the file manager, annotation views, and concordance views.
+- macOS: toolbar separators in sound views are now drawn reliably, matching the appearance on other platforms.
+
+**Sound and annotation views**
+
+- Rewritten pitch-tracking algorithm (Praat backend) for improved accuracy and robustness across voice types, with additional parameters exposed in the pitch settings dialog.
+- New keyboard shortcuts for acoustic measurements under the cursor or within a selection: ``F5`` / ``Shift+F5`` for FFT and FFT+LPC spectra; ``F6`` / ``Shift+F6`` for formants and mean formants; ``F7`` / ``Shift+F7`` for pitch and mean pitch; ``F8`` / ``Shift+F8`` for intensity and mean intensity.
+
+**Concordance views**
+
+- Base cells (match text and auxiliary columns) are now editable inline: double-click a cell, or use the column's context menu, to edit it in place. Edits participate in the undo/redo stack.
+- New keyboard shortcuts in the concordance table: ``Space`` plays the selected match, ``Esc`` stops playback, and ``Ctrl+Return`` opens the match in its annotation.
+- Protocol queries: split-field output (one column per protocol field in the concordance) is once again controlled by the coding protocol, matching the documented behaviour.
+- Fixed a bug whereby imported concordance files were filed under the *Scripts* folder instead of *Concordances* in the project tree.
+- Fixed serialization of ``NaN`` values in concordance and dataset files, which could prevent re-opening documents containing missing measurements.
+
+**Bookmarks**
+
+- Creating a bookmark from a concordance now opens a dedicated editor where you can set the bookmark's title and add free-form notes. The title is used as the label in the file manager.
+- Bookmarks can now be created from annotation views: select an event on a focused layer and click the new bookmark button in the toolbar, or press ``Ctrl+B``. The selected event's text seeds the default title.
+- Hovering over a bookmark in the file manager now displays a tooltip showing the file, the match (with KWIC context for concordance bookmarks, or the layer and time span for annotation-view bookmarks), and any notes you entered.
+
+**Scripting**
+
+- Fixed ``String::to_float()`` for a class of numeric strings that previously produced incorrect conversions or failed to parse.
+
+
 0.9.0 (17/04/2026)
 ~~~~~~~~~~~~~
 

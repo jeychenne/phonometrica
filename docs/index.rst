@@ -48,12 +48,12 @@ Phonometrica |release|
 ----------------------
 
 -  Windows:
-   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/setup_phonometrica.exe>`__
+   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.1/setup_phonometrica.exe>`__
 -  macOS:
-   `Phonometrica-0.9.0.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/Phonometrica-0.9.0.dmg>`__
+   `Phonometrica-0.9.1.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.1/Phonometrica-0.9.1.dmg>`__
 -  Linux (Debian/Ubuntu):
-   `phonometrica-0.9.0.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.0/phonometrica_0.9.0-1_amd64.deb>`__
--  source code: `phonometrica-0.9.0.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.0.zip>`__ | `phonometrica-0.9.0.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.0.tar.gz>`__
+   `phonometrica-0.9.1.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.1/phonometrica_0.9.1-1_amd64.deb>`__
+-  source code: `phonometrica-0.9.1.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.1.zip>`__ | `phonometrica-0.9.1.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.1.tar.gz>`__
 
 
 Documentation

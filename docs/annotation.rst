@@ -120,6 +120,27 @@ TextGrid files can be visualized and edited like native annotations, but please 
 You can also export annotations to plain text using ``File > Export > Export annotation(s) to plain text...``.
 
 
+Bookmarking events
+~~~~~~~~~~~~~~~~~~
+
+While working on an annotation, you can bookmark any event so that you (or a collaborator) can
+return to it later. To create a bookmark, click on an event to focus its layer, then click on
+the |bookmark| **Bookmark** button in the toolbar or press ``Ctrl+B``. A dialog opens where you
+can set the bookmark's title (pre-filled with the selected event's text) and add free-form notes
+— for example, a reminder about why the token deserves a second look, or a reference to a
+coding decision.
+
+Bookmarks appear under the **Bookmarks** folder in the project tree. Their title is used as the
+label in the tree, and hovering over an entry displays a tooltip showing the file name, the
+layer and time span, and the notes you entered. Double-clicking a bookmark reopens the
+annotation at the bookmarked location.
+
+Bookmarks created from an annotation view are analogous to those created from a concordance
+(see :ref:`concordance-view`): both are stored in the same folder and serialized to the project
+file. The only difference is that annotation-view bookmarks have no surrounding "keyword in
+context" window — there is no query — so the tooltip shows the layer and time span instead.
+
+
 Opening annotations in Praat
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -156,5 +177,9 @@ References
     :width: 16px
     
 .. |save| image:: ../icons/save.svg
+    :height: 16px
+    :width: 16px
+
+.. |bookmark| image:: ../icons/book-marked.svg
     :height: 16px
     :width: 16px

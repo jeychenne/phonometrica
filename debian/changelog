@@ -1,3 +1,21 @@
+phonometrica (0.9.1-1) unstable; urgency=medium
+
+  * Rewritten pitch-tracking algorithm (Praat backend) for improved accuracy.
+  * Non-modal settings dialogs for formants, pitch, intensity, and spectrograms.
+  * New keyboard shortcuts for acoustic measurements (F5-F8 and Shift+F5-F8) in
+    sound and annotation views, and for playback and navigation in concordance
+    views (Space, Escape, Ctrl+Return).
+  * Inline editing of base cells in concordance views (double-click to edit).
+  * Bookmark editor dialog for setting title and notes on new bookmarks.
+  * Bookmark creation from annotation views (toolbar button and Ctrl+B).
+  * Tooltips on bookmarks in the file manager (file, match, context, notes).
+  * Protocol queries: split-field output restored.
+  * macOS: fixes for Praat interaction and toolbar separator rendering.
+  * Fixes for NaN serialization, String::to_float(), and concordance import
+    folder selection.
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Fri, 24 Apr 2026 12:00:00 +0000
+
 phonometrica (0.9.0-1) unstable; urgency=medium
 
   * Initial Debian packaging.

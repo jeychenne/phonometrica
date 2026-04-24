@@ -54,9 +54,25 @@ Query shortcuts
 Concordance and dataset views
 -----------------------------
 
-Playback, stop, and row deletion are available via the toolbar buttons, right-click context menus,
-and double-click (which plays the match when a sound file is bound). No dedicated key bindings are
-currently registered for these actions in concordance and dataset views.
+.. list-table::
+   :widths: 35 65
+   :header-rows: 1
+
+   * - Shortcut
+     - Action
+   * - ``Space``
+     - Play the selected match (if a sound file is bound)
+   * - ``Escape``
+     - Stop playback
+   * - ``Ctrl+Return``
+     - Open the selected match in its annotation
+   * - ``Double-click`` (row)
+     - Play the match
+   * - ``Double-click`` (base cell)
+     - Edit the cell in place (match text or auxiliary column)
+
+Row deletion and other operations are available via the toolbar buttons and right-click
+context menus.
 
 
 Sound and annotation views
@@ -76,6 +92,14 @@ Sound and annotation views
      - Zoom to the current selection
    * - ``Scroll wheel`` (over wave bar)
      - Shift the visible window forward (scroll down) or backward (scroll up)
+   * - ``F5`` / ``Shift+F5``
+     - View the FFT spectrum / FFT and LPC spectra at the cursor
+   * - ``F6`` / ``Shift+F6``
+     - Get formants at the cursor / mean formants over the selection
+   * - ``F7`` / ``Shift+F7``
+     - Get pitch at the cursor / mean pitch over the selection
+   * - ``F8`` / ``Shift+F8``
+     - Get intensity at the cursor / mean intensity over the selection
 
 
 Annotation editing
@@ -95,6 +119,14 @@ Annotation editing
      - Move to the previous / next event on the same layer
    * - ``Up`` / ``Down``
      - Move to the same event position on the previous / next layer
+   * - ``Ctrl+B``
+     - Bookmark the selected event on the focused layer (opens the bookmark editor)
+
+.. note::
+
+   ``Ctrl+B`` is also used for **Bold** in the note editor. The two shortcuts do not
+   conflict because each is scoped to its own view: inside a note, ``Ctrl+B`` toggles
+   bold; inside an annotation, it opens the bookmark editor.
 
 
 Script editor

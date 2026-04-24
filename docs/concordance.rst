@@ -23,7 +23,7 @@ The toolbar at the top of the concordance view provides the following actions:
 - |csv| **Export to CSV**: export the concordance as a tab-separated text file (CSV) for use in spreadsheet software or R.
 - |play| **Play** / |stop| **Stop**: play (or stop) the sound corresponding to the selected match. If the annotation is bound to a sound file, double-clicking on a row also plays the match.
 - |view| **View in annotation**: open the annotation at the location of the selected match. Depending on the *Display settings* (see below), the annotation opens in a new tab or in a split view beside the concordance.
-- |bookmark| **Bookmark**: bookmark the selected match for later reference. Bookmarks are accessible from the bookmark panel in the bottom left corner of the main window.
+- |bookmark| **Bookmark**: bookmark the selected match for later reference. A dialog opens where you can set the bookmark's title (pre-filled with the match value) and add free-form notes. The title appears as the bookmark's label in the file manager; hovering over the bookmark in the tree shows the match, surrounding context, and any notes. Bookmarks are accessible from the project tree under the **Bookmarks** folder.
 - |edit| **Edit**: edit the text of the event where the match was found in the original annotation.
 - |delete| **Delete rows**: remove the selected row(s) from the concordance.
 - **Open in Praat**: if Praat is configured (see :ref:`praat-integration`), open the sound file and
@@ -127,6 +127,7 @@ Table features
 The concordance table supports the following interactions:
 
 - **Double-click** on a row to play the match (if a sound file is bound).
+- **Double-click** on a base cell (match text or auxiliary column) to edit it in place. Edits are added to the undo/redo stack and can be reverted with ``Ctrl+Z``.
 - **Right-click** on a row to open a context menu with *Play match*, *View in annotation*, *Open in Praat* (if configured), *Bookmark*, *Edit event text*, and *Delete row(s)*.
 - **Right-click on a column header** to access column-level operations: *Sort ascending*, *Sort descending*, *Rename column*, *Recode* (for text columns), and *Transform* (for numeric columns).
 
