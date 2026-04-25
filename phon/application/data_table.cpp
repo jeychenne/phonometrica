@@ -25,6 +25,7 @@
 #include <phon/runtime/regex.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/model_comparison.hpp>
+#include <phon/analysis/mixed_model.hpp>
 #include <phon/application/data_table.hpp>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
@@ -303,6 +304,13 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	if (m.is_student()) {
 		rt.printf("Sigma (scale): %.4f\n", m.sigma);
 		rt.printf("Nu (df): %.4f\n", m.nu);
+		if (!m.laplace_method.empty()) {
+			const char *method_label =
+				(m.laplace_method == "exact")
+				    ? "exact"
+				    : "Fisher-information (robust fallback)";
+			rt.printf("Laplace correction: %s\n", method_label);
+		}
 	}
 	rt.printf("Formula: %s\n", m.formula.data());
 	if (m.is_bayesian()) {
@@ -1072,6 +1080,388 @@ void DataTable::initialize(Runtime &rt)
 		return Variant();
 	};
 
+	// ── Diagnostic Laplace-NLL evaluation ───────────────────────────
+	//
+	// `evaluate(model)`               re-evaluate at the fitted point
+	//                                 (sanity check; should reproduce
+	//                                 model.loglik to machine precision).
+	//
+	// `evaluate(model, opts_table)`   evaluate at a user-supplied point.
+	//   opts_table fields (all optional):
+	//     beta      List of Number,  length nfixed
+	//     Sigma     List of Array,   one q×q symmetric matrix per RE group
+	//     sigma     Number           Gaussian/Student scale
+	//     nu        Number           Student df
+	//     theta_nb  Number           NegBin overdispersion
+	//     phi       Number           Beta precision
+	//     u         List of Number,  flat BLUPs (length J_total, group-major,
+	//                                then j*q+t within group)
+	//     refit_u   Boolean          if true, run PIRLS from u=0
+	//                                (supplied u, if any, is ignored)
+	//
+	// Returns a Table:
+	//   { loglik, laplace_nll, cond_nll, prior_nll, log_det_Huu,
+	//     const_term, u, u_refit }
+
+	auto build_eval_table = [](Runtime &rt, const stats::EvaluationResult &result) -> Variant {
+		if (!result.ok) {
+			throw error("evaluate(): %", result.error);
+		}
+		auto out = make_handle<Table>(&rt);
+		auto &m = out->data();
+		m[String("loglik")]      = -result.laplace_nll;
+		m[String("laplace_nll")] = result.laplace_nll;
+		m[String("cond_nll")]    = result.cond_nll;
+		m[String("prior_nll")]   = result.prior_nll;
+		m[String("log_det_Huu")] = result.log_det_Huu;
+		m[String("const_term")]  = result.const_term;
+		m[String("u_refit")]     = result.u_refit;
+		m[String("laplace_method")] = result.laplace_method;
+
+		Array<Variant> u_items;
+		u_items.reserve(result.u_used.size());
+		for (intptr_t k = 0; k < result.u_used.size(); k++) {
+			u_items.append(result.u_used.data()[k]);
+		}
+		m[String("u")] = make_handle<List>(&rt, std::move(u_items));
+		return out;
+	};
+
+	auto evaluate1 = [build_eval_table](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		stats::EvaluationOverrides ov;
+		auto result = stats::evaluate_at(model, ov);
+		return build_eval_table(rt, result);
+	};
+
+	auto evaluate2 = [build_eval_table](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto &table = cast<Table>(args[1]);
+		auto &map   = table.data();
+
+		// Storage outlasts evaluate_at — declared up front so override
+		// pointers in `ov` stay valid until the call returns.
+		Array<double> beta_arr;
+		Array<double> u_arr;
+		std::vector<Array<double>> sigma_vec;
+
+		stats::EvaluationOverrides ov;
+
+		// beta
+		if (auto it = map.find(String("beta")); it != map.end()) {
+			auto &lst = cast<List>(it->second);
+			beta_arr = Array<double>(lst.size(), 0.0);
+			for (intptr_t k = 0; k < lst.size(); k++) {
+				beta_arr.data()[k] = lst.items().data()[k].get_number();
+			}
+			ov.beta = &beta_arr;
+		}
+
+		// Sigma: List of Array<double> matrices, one per RE group
+		if (auto it = map.find(String("Sigma")); it != map.end()) {
+			auto &lst = cast<List>(it->second);
+			sigma_vec.reserve(lst.size());
+			for (intptr_t k = 0; k < lst.size(); k++) {
+				auto &item = lst.items().data()[k];
+				sigma_vec.push_back(cast<Array<double>>(item));
+			}
+			ov.Sigma = &sigma_vec;
+		}
+
+		// Scalar dispersion overrides
+		if (auto it = map.find(String("sigma")); it != map.end()) {
+			ov.has_sigma = true;
+			ov.sigma_val = it->second.get_number();
+		}
+		if (auto it = map.find(String("nu")); it != map.end()) {
+			ov.has_nu = true;
+			ov.nu_val = it->second.get_number();
+		}
+		if (auto it = map.find(String("theta_nb")); it != map.end()) {
+			ov.has_theta_nb = true;
+			ov.theta_nb_val = it->second.get_number();
+		}
+		if (auto it = map.find(String("phi")); it != map.end()) {
+			ov.has_phi = true;
+			ov.phi_val = it->second.get_number();
+		}
+
+		// u
+		if (auto it = map.find(String("u")); it != map.end()) {
+			auto &lst = cast<List>(it->second);
+			u_arr = Array<double>(lst.size(), 0.0);
+			for (intptr_t k = 0; k < lst.size(); k++) {
+				u_arr.data()[k] = lst.items().data()[k].get_number();
+			}
+			ov.u = &u_arr;
+		}
+
+		// refit_u
+		if (auto it = map.find(String("refit_u")); it != map.end()) {
+			ov.refit_u = cast<bool>(it->second);
+		}
+
+		auto result = stats::evaluate_at(model, ov);
+		return build_eval_table(rt, result);
+	};
+
+	// ── Diagnostic polish ──────────────────────────────────────────
+	//
+	// `polish(model)` returns a Table:
+	//   { delta:    Number,    // polished_loglik - original_loglik
+	//     loglik:   Number,    // polished loglik (same as model.loglik if no improvement)
+	//     ok:       Boolean,   // true iff polish converged
+	//     message:  String }   // diagnostic message
+	//
+	// Re-runs the Student-t outer optimization from the model's
+	// converged σ and ν with tighter L-BFGS gradient tolerance and
+	// FD step size. If the loglik improves, the original convergence
+	// was limited by FD-gradient noise — switching to AD outer
+	// gradients would close the same gap stably.
+	//
+	// Only meaningful for Student-t mixed models. Returns ok=false
+	// for any other family.
+
+	auto polish_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto out = make_handle<Table>(&rt);
+		auto &m = out->data();
+
+		if (model.family != "student") {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("polish() is only meaningful for "
+			                              "Student-t models in the current "
+			                              "iteration.");
+			return out;
+		}
+
+		if (model.X.empty() || model.y.empty()) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("polish() requires a model with "
+			                              "stored X and y.");
+			return out;
+		}
+
+		// Reconstruct GroupingInfo from model.random_effects.
+		std::vector<stats::GroupingInfo> groups;
+		bool re_info_ok = true;
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			auto &re = model.random_effects[g];
+			if (re.indices.empty() || re.Z_design.empty()) {
+				re_info_ok = false;
+				break;
+			}
+			stats::GroupingInfo gi;
+			gi.name = re.group_name;
+			gi.levels = re.level_names;
+			gi.indices = re.indices;
+			gi.nlevels = re.nlevels;
+			gi.nterms = re.nterms;
+			gi.term_names = re.term_names;
+			gi.Z_design = re.Z_design;
+			groups.push_back(std::move(gi));
+		}
+		if (!re_info_ok) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("polish() requires a model fitted "
+			                              "in the current session (Z design "
+			                              "info is not serialized to file).");
+			return out;
+		}
+
+		auto fam = stats::Family::student(model.sigma, model.nu);
+		stats::FitOptions opts;
+		opts.n_starts = 1;     // No multi-start; polish only.
+		opts.polish = true;
+
+		// Drive starting σ and ν from the converged values via overrides.
+		// The wrapper applies polish via InitOverrides internally.
+		stats::InitOverrides ov;
+		ov.has_sigma_init = true;  ov.sigma_init = model.sigma;
+		ov.has_nu_init    = true;  ov.nu_init    = model.nu;
+		ov.tight_tolerance = true;
+
+		try {
+			auto polished = stats::mixed_model(model.y, model.X, groups, fam,
+			                                    nullptr, nullptr, nullptr,
+			                                    200, model.offset, &ov);
+
+			double original_ll = model.loglik;
+			double polished_ll = polished.loglik;
+			double delta = polished_ll - original_ll;
+			bool converged = polished.converged
+			                 && std::isfinite(polished_ll);
+
+			m[String("ok")] = converged;
+			m[String("delta")] = delta;
+			m[String("loglik")] = polished_ll;
+
+			String msg;
+			if (converged) {
+				msg.append(String::format(
+					"Polish: ΔlogLik = %+.4f (original %.4f → polished %.4f). ",
+					delta, original_ll, polished_ll));
+				if (delta > 0.5) {
+					msg.append(String("Significant improvement: original "
+					                  "convergence was likely FD-gradient-"
+					                  "noise-limited."));
+				} else if (delta > 0.05) {
+					msg.append(String("Modest improvement: minor FD-noise "
+					                  "effect on convergence."));
+				} else {
+					msg.append(String("No meaningful improvement: optimum "
+					                  "is at the function-value precision "
+					                  "floor."));
+				}
+			} else {
+				msg.append(String("Polish optimization did not converge."));
+			}
+			m[String("message")] = msg;
+		}
+		catch (std::exception &e) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			String msg("Polish failed: ");
+			msg.append(String(e.what()));
+			m[String("message")] = msg;
+		}
+
+		return out;
+	};
+
+	// ── Diagnostic Phase 2 retry ──────────────────────────────────
+	//
+	// `try_phase2(model)` re-fits the same Student-t model with Phase 2
+	// (joint β + θ + σ + ν optimization) enabled. Phase 2 is normally
+	// skipped for Student-t because the σ-ν correlation can make the
+	// joint Hessian ill-conditioned. This diagnostic tests whether
+	// Phase 2 actually helps on a given dataset.
+	//
+	// Returns a Table:
+	//   { ok:      Boolean,   // true iff Phase 2 converged
+	//     delta:   Number,    // phase2_loglik - original_loglik
+	//     loglik:  Number,    // Phase 2 loglik (NaN if non-convergent)
+	//     message: String }   // diagnostic message
+
+	auto try_phase2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &model = cast<stats::Model>(args[0]);
+		auto out = make_handle<Table>(&rt);
+		auto &m = out->data();
+
+		if (model.family != "student") {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("try_phase2() applies only to "
+			                              "Student-t models.");
+			return out;
+		}
+
+		if (model.X.empty() || model.y.empty()) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("try_phase2() requires a model "
+			                              "with stored X and y.");
+			return out;
+		}
+
+		std::vector<stats::GroupingInfo> groups;
+		bool re_info_ok = true;
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			auto &re = model.random_effects[g];
+			if (re.indices.empty() || re.Z_design.empty()) {
+				re_info_ok = false;
+				break;
+			}
+			stats::GroupingInfo gi;
+			gi.name = re.group_name;
+			gi.levels = re.level_names;
+			gi.indices = re.indices;
+			gi.nlevels = re.nlevels;
+			gi.nterms = re.nterms;
+			gi.term_names = re.term_names;
+			gi.Z_design = re.Z_design;
+			groups.push_back(std::move(gi));
+		}
+		if (!re_info_ok) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			m[String("message")] = String("try_phase2() requires a model "
+			                              "fitted in the current session.");
+			return out;
+		}
+
+		auto fam = stats::Family::student(model.sigma, model.nu);
+
+		stats::InitOverrides ov;
+		ov.has_sigma_init  = true;  ov.sigma_init = model.sigma;
+		ov.has_nu_init     = true;  ov.nu_init    = model.nu;
+		ov.phase2_student  = true;
+
+		try {
+			auto refit = stats::mixed_model(model.y, model.X, groups, fam,
+			                                 nullptr, nullptr, nullptr,
+			                                 200, model.offset, &ov);
+
+			double original_ll = model.loglik;
+			double new_ll = refit.loglik;
+			double delta = new_ll - original_ll;
+			bool ok = refit.converged && std::isfinite(new_ll);
+
+			m[String("ok")] = ok;
+			m[String("delta")] = delta;
+			m[String("loglik")] = new_ll;
+
+			String msg;
+			if (ok) {
+				msg.append(String::format(
+					"Phase 2: ΔlogLik = %+.4f (original %.4f → Phase 2 %.4f). ",
+					delta, original_ll, new_ll));
+				if (delta > 1.0) {
+					msg.append(String("Significant improvement: Phase 2 "
+					                  "joint optimization closes a real gap "
+					                  "left by Phase 1 profiling."));
+				} else if (delta > 0.05) {
+					msg.append(String("Modest improvement."));
+				} else if (delta > -0.05) {
+					msg.append(String("No meaningful change: Phase 1 "
+					                  "profiling was already at the joint "
+					                  "optimum."));
+				} else {
+					msg.append(String("Phase 2 produced a worse fit, "
+					                  "likely due to σ-ν correlation "
+					                  "destabilizing the joint Hessian. "
+					                  "Phase 1 result kept."));
+				}
+			} else {
+				msg.append(String("Phase 2 did not converge. The σ-ν "
+				                  "correlation in this dataset makes the "
+				                  "joint optimization unstable; Phase 1 "
+				                  "result was the right choice."));
+			}
+			m[String("message")] = msg;
+		}
+		catch (std::exception &e) {
+			m[String("ok")] = false;
+			m[String("delta")] = 0.0;
+			m[String("loglik")] = model.loglik;
+			String msg("Phase 2 attempt failed: ");
+			msg.append(String(e.what()));
+			m[String("message")] = msg;
+		}
+
+		return out;
+	};
+
 	// ── Cell and column access ──────────────────────────────────
 
 	auto get_cell = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -1512,6 +1902,10 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("summarize", summarize_model, { CLS(stats::Model) });
 	rt.add_global("get_coef", coef_model, { CLS(stats::Model) });
 	rt.add_global("compare", compare_models, { CLS(stats::Model), CLS(stats::Model) });
+	rt.add_global("evaluate", evaluate1, { CLS(stats::Model) });
+	rt.add_global("evaluate", evaluate2, { CLS(stats::Model), CLS(Table) });
+	rt.add_global("polish", polish_model, { CLS(stats::Model) });
+	rt.add_global("try_phase2", try_phase2, { CLS(stats::Model) });
 
 	// Cell / column access
 	rt.add_global("get_cell", get_cell, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t) });

@@ -482,6 +482,37 @@ inline Vector<double> student_weights(const Vector<double> &y, const Vector<doub
 	return w;
 }
 
+// Exact Hessian weights for the Laplace correction:
+//
+//   w_exact_i = ∂²(-log p(y_i|μ_i))/∂μ² = (ν+1)(νσ² − r_i²) / (νσ² + r_i²)²
+//
+// Differs from student_weights() (the Fisher-information / IRLS form) by
+// the (νσ² − r²) factor in the numerator. For |r_i| > σ√ν, the weight
+// becomes negative — corresponding to the inflection point of the
+// Student-t log-density where outliers reduce, rather than increase,
+// the local posterior precision.
+//
+// Used for the Laplace correction Z'WZ + D⁻¹ at the converged inner
+// mode. The IRLS form (student_weights) is what PIRLS uses for outer
+// iterations; the exact form here gives a tighter Laplace approximation
+// matching glmmTMB / TMB at convergence, when the resulting H_uu is PD.
+// (When it isn't, the engine falls back to student_weights.)
+inline Vector<double> student_laplace_weights(const Vector<double> &y, const Vector<double> &mu,
+                                                double sigma, double nu)
+{
+	intptr_t n = y.size();
+	double nu_sigma2 = nu * sigma * sigma;
+	Vector<double> w(n);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double r = y[i] - mu[i];
+		double r2 = r * r;
+		double denom = nu_sigma2 + r2;
+		w[i] = (nu + 1.0) * (nu_sigma2 - r2) / (denom * denom);
+	}
+	return w;
+}
+
 inline Vector<double> student_deviance_residuals(const Vector<double> &y, const Vector<double> &mu,
                                                   double sigma, double nu)
 {

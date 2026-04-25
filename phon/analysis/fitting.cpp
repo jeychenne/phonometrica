@@ -1101,7 +1101,11 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		}
 		auto fam = Family::from_name(family);
 
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter, off);
+		// Multi-start activates by default for Student-t (n_starts = 4);
+		// other families fall through to a single fit. See the wrapper
+		// in mixed_model.cpp for the perturbation strategy.
+		model = mixed_model_multistart(dm.y, dm.X, groups, fam, progress,
+		                                priors, &dm.coef_names, max_iter, off);
 	}
 	else if (family == "gaussian")
 	{
@@ -1113,7 +1117,8 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		// optimization, ensuring comparable log-likelihoods with mixed models.
 		std::vector<GroupingInfo> groups;
 		auto fam = Family::from_name(family);
-		model = mixed_model(dm.y, dm.X, groups, fam, progress, priors, &dm.coef_names, max_iter, off);
+		model = mixed_model_multistart(dm.y, dm.X, groups, fam, progress,
+		                                priors, &dm.coef_names, max_iter, off);
 	}
 	else
 	{

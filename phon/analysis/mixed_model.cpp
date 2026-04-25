@@ -47,6 +47,7 @@
 #include <cmath>
 #include <cstdio>
 #include <algorithm>
+#include <optional>
 #include <random>
 #include <boost/math/distributions/normal.hpp>
 #include <boost/math/special_functions/trigamma.hpp>
@@ -595,6 +596,160 @@ static double full_log_det_H(const Eigen::VectorXd &w,
 
 	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
 	return ldlt.vectorD().array().log().sum();
+}
+
+
+// =====================================================================
+// Hybrid Student-t Laplace correction
+// =====================================================================
+//
+// For Student-t at the converged inner mode û, the **exact** Hessian
+// of -log p(y|μ) wrt μ is
+//
+//   w_exact_i = (ν+1)(νσ² − r_i²) / (νσ² + r_i²)²
+//
+// which differs from the IRLS / Fisher-information weight
+//
+//   w_fisher_i = (ν+1) / (νσ² + r_i²)
+//
+// by the (νσ²−r²) factor in the numerator. For |r_i| > σ√ν the exact
+// weight is *negative* — at outlying observations, the Student-t
+// log-density curves toward zero (rather than pulling μ toward y), and
+// the local posterior precision *decreases* with the data point.
+//
+// The exact form yields the tighter Laplace approximation that matches
+// glmmTMB / TMB. The downside is that Z'·W_exact·Z + D⁻¹ can fail to
+// be PD on data with severe outliers (|r| > σ√ν dominating D⁻¹).
+//
+// This helper tries the exact form first. If LDLT fails or yields a
+// non-positive D-vector, it falls back to the Fisher form (always PD
+// because all weights are non-negative). The chosen method is reported
+// via `out_method`.
+
+enum class LaplaceMethod { Exact, FisherInfo };
+
+static double student_full_log_det_H_hybrid(
+    const Eigen::VectorXd &y,
+    const Eigen::VectorXd &mu,
+    double sigma, double nu,
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const GroupLayout &lay,
+    intptr_t n,
+    LaplaceMethod &out_method)
+{
+	intptr_t J = lay.J_total;
+	out_method = LaplaceMethod::Exact;
+	if (J == 0) return 0.0;
+
+	double nu_sigma2 = nu * sigma * sigma;
+
+	// Build w_exact per observation.
+	Eigen::VectorXd w_exact(n);
+	for (intptr_t i = 0; i < n; i++) {
+		double r = y[i] - mu[i];
+		double r2 = r * r;
+		double denom = nu_sigma2 + r2;
+		w_exact[i] = (nu + 1.0) * (nu_sigma2 - r2) / (denom * denom);
+	}
+
+	// Try the exact form. Mirrors full_log_det_H structure but inlined
+	// here so we can detect non-PD and fall back atomically.
+	auto try_with_weights = [&](const Eigen::VectorXd &w) -> std::optional<double> {
+		// Single-group fast path
+		if (lay.G == 1) {
+			intptr_t qg = lay.q[0];
+			auto &idx = *lay.group_indices[0];
+			std::vector<Eigen::MatrixXd> blocks(lay.J[0], D_inv[0]);
+
+			for (intptr_t i = 0; i < n; i++) {
+				intptr_t j = idx[i];
+				for (intptr_t t1 = 0; t1 < qg; t1++) {
+					double wz1 = w[i] * lay.Z(0, i, t1);
+					for (intptr_t t2 = t1; t2 < qg; t2++) {
+						double val = wz1 * lay.Z(0, i, t2);
+						blocks[j](t1, t2) += val;
+						if (t1 != t2) blocks[j](t2, t1) += val;
+					}
+				}
+			}
+
+			double ld = 0;
+			for (intptr_t j = 0; j < lay.J[0]; j++) {
+				if (qg == 1) {
+					double d = blocks[j](0, 0);
+					if (!(d > 0) || !std::isfinite(d)) return std::nullopt;
+					ld += std::log(d);
+				} else {
+					Eigen::LDLT<Eigen::MatrixXd> ldlt(blocks[j]);
+					if (ldlt.info() != Eigen::Success) return std::nullopt;
+					Eigen::VectorXd D = ldlt.vectorD();
+					double max_d = D.array().abs().maxCoeff();
+					double tol = 1e-12 * std::max(max_d, 1.0);
+					for (intptr_t k = 0; k < D.size(); k++) {
+						if (!(D[k] > tol) || !std::isfinite(D[k])) return std::nullopt;
+					}
+					ld += D.array().log().sum();
+				}
+			}
+			return ld;
+		}
+
+		// General path: assemble full J × J matrix
+		Eigen::MatrixXd H = Eigen::MatrixXd::Zero(J, J);
+		for (intptr_t g = 0; g < lay.G; g++) {
+			intptr_t qg = lay.q[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++) {
+				intptr_t base = lay.offset[g] + j * qg;
+				for (intptr_t t1 = 0; t1 < qg; t1++) {
+					for (intptr_t t2 = 0; t2 < qg; t2++) {
+						H(base + t1, base + t2) = D_inv[g](t1, t2);
+					}
+				}
+			}
+		}
+		for (intptr_t i = 0; i < n; i++) {
+			for (intptr_t g1 = 0; g1 < lay.G; g1++) {
+				intptr_t qg1 = lay.q[g1];
+				intptr_t base1 = lay.offset[g1] + (*lay.group_indices[g1])[i] * qg1;
+				for (intptr_t t1 = 0; t1 < qg1; t1++) {
+					double wz1 = w[i] * lay.Z(g1, i, t1);
+					for (intptr_t g2 = 0; g2 < lay.G; g2++) {
+						intptr_t qg2 = lay.q[g2];
+						intptr_t base2 = lay.offset[g2] + (*lay.group_indices[g2])[i] * qg2;
+						for (intptr_t t2 = 0; t2 < qg2; t2++) {
+							H(base1 + t1, base2 + t2) += wz1 * lay.Z(g2, i, t2);
+						}
+					}
+				}
+			}
+		}
+
+		Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
+		if (ldlt.info() != Eigen::Success) return std::nullopt;
+		Eigen::VectorXd D = ldlt.vectorD();
+		double max_d = D.array().abs().maxCoeff();
+		double tol = 1e-12 * std::max(max_d, 1.0);
+		for (intptr_t k = 0; k < D.size(); k++) {
+			if (!(D[k] > tol) || !std::isfinite(D[k])) return std::nullopt;
+		}
+		return D.array().log().sum();
+	};
+
+	auto exact_result = try_with_weights(w_exact);
+	if (exact_result.has_value()) {
+		out_method = LaplaceMethod::Exact;
+		return *exact_result;
+	}
+
+	// Fallback: Fisher-info weights (guaranteed PD since w >= 0).
+	Eigen::VectorXd w_fisher(n);
+	for (intptr_t i = 0; i < n; i++) {
+		double r = y[i] - mu[i];
+		w_fisher[i] = (nu + 1.0) / (nu_sigma2 + r * r);
+	}
+	out_method = LaplaceMethod::FisherInfo;
+	double fisher_result = full_log_det_H(w_fisher, D_inv, lay, n);
+	return fisher_result;
 }
 
 
@@ -4759,7 +4914,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const PriorSpec *priors,
                   const Array<String> *coef_names,
                   int max_iter,
-                  const Array<double> &offset)
+                  const Array<double> &offset,
+                  const InitOverrides *init_overrides)
 {
 
 	if (y.ndim() != 1) {
@@ -5311,9 +5467,26 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			double var_resid = std::max(var_total - sum_sigma2_u, 0.01 * var_total);
 
 			// Adjust for t-distribution variance inflation at initial ν.
-			constexpr double nu_init = 5.0;
+			constexpr double nu_init_default = 5.0;
+			double nu_init = nu_init_default;
 			double sigma2_init = var_resid * (nu_init - 2.0) / nu_init;
 			double sigma_init = std::sqrt(std::max(sigma2_init, 1e-4));
+
+			// Apply multi-start overrides if supplied (Student only).
+			if (init_overrides) {
+				if (init_overrides->has_nu_init) {
+					nu_init = std::max(2.5, init_overrides->nu_init);
+					// Re-derive σ from the same residual-variance formula
+					// using the supplied ν, unless σ was *also* overridden.
+					if (!init_overrides->has_sigma_init) {
+						sigma2_init = var_resid * (nu_init - 2.0) / nu_init;
+						sigma_init = std::sqrt(std::max(sigma2_init, 1e-4));
+					}
+				}
+				if (init_overrides->has_sigma_init) {
+					sigma_init = std::max(init_overrides->sigma_init, 1e-3);
+				}
+			}
 
 			theta[n_chol] = std::log(sigma_init);
 			theta[n_chol + 1] = std::log(nu_init);
@@ -5323,7 +5496,20 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p, beta_init, n_chol, priors, coef_names, off_ptr};
 
-		auto newton_res = robust_optimize(pirls_obj, theta, max_iter, 1e-8, progress, 1e-2);
+		// Polish mode (used by multi-start wrapper for diagnostics):
+		// tighten gradient tolerance by ~3 orders and shrink FD step by
+		// 100×. Tests whether the default-tol convergence was limited by
+		// FD gradient noise. If polish moves the loglik appreciably,
+		// switching to AD gradients would close the same gap stably.
+		double pirls_grad_tol = 1e-8;
+		double pirls_h_scale  = 1e-2;
+		if (init_overrides && init_overrides->tight_tolerance) {
+			pirls_grad_tol = 1e-11;
+			pirls_h_scale  = 1e-4;
+		}
+
+		auto newton_res = robust_optimize(pirls_obj, theta, max_iter,
+		                                   pirls_grad_tol, progress, pirls_h_scale);
 		theta = newton_res.theta;
 		niter = newton_res.niter;
 		converged = newton_res.converged;
@@ -5367,8 +5553,67 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			if (is_student)
 			{
-				// Student t: use Phase 1 β̂ directly (no Phase 2).
-				beta_hat = p1_pirls.beta;
+				// Phase 2 is normally skipped for Student-t: the σ-ν
+				// correlation can make the joint (β, σ, ν) Hessian
+				// ill-conditioned, and Phase 1 PIRLS profiling already
+				// gives accurate β̂. The override flag (set via
+				// FitOptions.phase2_student) re-enables Phase 2 for
+				// diagnostic comparison against engines like glmmTMB
+				// that always do joint optimization.
+				bool run_phase2 = (init_overrides
+				                    && init_overrides->phase2_student);
+
+				if (!run_phase2)
+				{
+					beta_hat = p1_pirls.beta;
+				}
+				else
+				{
+					// Build Phase 2 parameter vector: [β, θ_chol, log σ, log ν]
+					intptr_t outer_dim2 = p + (intptr_t)theta.size();
+					Eigen::VectorXd phi2(outer_dim2);
+					phi2.head(p) = p1_pirls.beta;
+					phi2.tail(theta.size()) = theta;
+
+					LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p,
+					                                 n_chol, priors, coef_names, off_ptr};
+					joint_obj.last_u = std::move(p1_pirls.u);
+
+					// Use looser tolerance and FD step than the negbin/beta
+					// Phase 2 above, in case σ-ν correlation makes line
+					// search delicate. If it diverges or fails to improve
+					// over Phase 1, the wrapper will catch it and restore
+					// Phase 1 estimates externally.
+					double phase2_grad_tol = 1e-7;
+					double phase2_h_scale  = 1e-3;
+
+					try
+					{
+						auto res2 = robust_optimize(joint_obj, phi2, max_iter,
+						                             phase2_grad_tol, progress,
+						                             phase2_h_scale);
+
+						if (res2.converged && std::isfinite(res2.theta[0]))
+						{
+							beta_hat = res2.theta.head(p);
+							theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
+							niter += res2.niter;
+							converged = res2.converged;
+							optimizer_used = res2.optimizer;
+						}
+						else
+						{
+							// Phase 2 didn't converge. Fall back to Phase 1
+							// β̂ to avoid contaminating the result with
+							// half-converged values.
+							beta_hat = p1_pirls.beta;
+						}
+					}
+					catch (std::exception &)
+					{
+						beta_hat = p1_pirls.beta;
+					}
+				}
 			}
 			else
 			{
@@ -5992,6 +6237,46 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 
 	model.loglik = -final_inner.laplace_nll;
+
+	// ── Student-t Laplace correction: hybrid exact / Fisher-info ──
+	//
+	// final_inner.laplace_nll was computed inside solve_u_given_beta /
+	// solve_pirls using IRLS / Fisher-information weights. For
+	// Student-t we now recompute ½ log|H_uu| with the hybrid helper:
+	// try the exact Hessian weights first, fall back to Fisher info if
+	// the resulting H_uu is non-PD. This typically gives a tighter
+	// loglik (matching glmmTMB / TMB) without sacrificing robustness.
+	//
+	// Per design (Q2 / 2a), this only affects the *reported* loglik —
+	// optimization itself continues to use IRLS for stability. The
+	// converged (β, θ, σ, ν) values are therefore unchanged; only the
+	// Laplace correction term is replaced.
+	if (fam.name == "student" && lay.J_total > 0)
+	{
+		// Recompute the IRLS log_det at the converged μ, so we know
+		// what to subtract from final_inner.laplace_nll.
+		Eigen::VectorXd w_irls(n);
+		for (intptr_t i = 0; i < n; i++) {
+			double r = ym[i] - final_inner.mu[i];
+			w_irls[i] = (fam_used.nu + 1.0)
+			           / (fam_used.nu * fam_used.sigma * fam_used.sigma + r * r);
+		}
+		double log_det_irls = full_log_det_H(w_irls, D_inv_final, lay, n);
+
+		LaplaceMethod method;
+		double log_det_hybrid = student_full_log_det_H_hybrid(
+			ym, final_inner.mu, fam_used.sigma, fam_used.nu,
+			D_inv_final, lay, n, method);
+
+		// Replace the Laplace term: -½ log_det_irls + ½ log_det_hybrid
+		double delta_nll = 0.5 * (log_det_hybrid - log_det_irls);
+		model.loglik -= delta_nll;
+
+		model.laplace_method = (method == LaplaceMethod::Exact)
+		                        ? String("exact")
+		                        : String("fisher_info");
+	}
+
 	model.compute_information_criteria();
 
 	model.niter = niter;
@@ -6034,6 +6319,575 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	if (!offset.empty()) model.offset = offset;
 
 	return model;
+}
+
+
+// =====================================================================
+// mixed_model_multistart: orchestration wrapper for multi-start fits
+// =====================================================================
+//
+// For families like Student-t where the inner û-problem is non-log-concave,
+// a single PIRLS run from a deterministic start can converge to a local —
+// not global — minimum of the marginal Laplace NLL. This wrapper runs the
+// optimization from N different starting points and returns the deepest
+// converged fit.
+//
+// Perturbation strategy (Student only): vary initial σ and ν, the two
+// parameters most directly responsible for whether the inner problem is
+// heavy-tailed (small ν) or near-Gaussian (large ν). Other families pass
+// through to single-start.
+//
+// Default policy: Student-t gets n_starts = 4 unless the caller overrides;
+// other families always run single-start (n_starts ≤ 1 short-circuits to a
+// direct mixed_model() call).
+//
+// Diagnostic: if multiple starts converge to *different* basins (Laplace
+// NLL spread > 0.01), or if any start fails, a summary is appended to
+// model.fit_warning.
+
+Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
+                              const std::vector<GroupingInfo> &groups, const Family &fam,
+                              FittingCallback progress,
+                              const PriorSpec *priors,
+                              const Array<String> *coef_names,
+                              int max_iter,
+                              const Array<double> &offset,
+                              const FitOptions &opts)
+{
+	int n_starts = opts.n_starts;
+	bool is_student = (fam.name == "student");
+
+	// Family-specific defaults: Student-t gets multi-start by default.
+	if (n_starts == 0) {
+		n_starts = is_student ? 4 : 1;
+	}
+	// Multi-start currently has no perturbation strategy for non-Student
+	// families. Silently clamp.
+	if (!is_student) {
+		n_starts = 1;
+	}
+	if (n_starts < 1) n_starts = 1;
+
+	// Fast path: no multi-start. Exact pre-existing behavior.
+	if (n_starts == 1) {
+		return mixed_model(y, X, groups, fam, progress,
+		                    priors, coef_names, max_iter, offset, nullptr);
+	}
+
+	// ── Perturbation table for Student-t ─────────────────────────────
+	// Index 0 is always the unperturbed default (matches single-start
+	// behavior byte-for-byte). Indices 1..n_starts-1 vary ν across the
+	// regime that matters: from heavy-tailed (ν≈3) to near-Gaussian
+	// (ν≈30). σ is co-derived from the residual-variance formula at
+	// each ν, so explicit σ overrides are not used here.
+	std::vector<double> nu_grid;
+	nu_grid.push_back(0.0);   // sentinel: index 0 = no override
+	if (n_starts >= 2) nu_grid.push_back(3.0);
+	if (n_starts >= 3) nu_grid.push_back(10.0);
+	if (n_starts >= 4) nu_grid.push_back(30.0);
+	// For n_starts > 4, fill remaining slots by interpolating between
+	// 3 and 60 — diminishing returns but available for users who ask.
+	for (int k = 5; k <= n_starts; k++) {
+		double t = double(k - 4) / double(std::max(n_starts - 4, 1));
+		nu_grid.push_back(3.0 + t * 57.0);
+	}
+
+	struct StartResult {
+		Model model;
+		bool succeeded = false;
+		double loglik = -std::numeric_limits<double>::infinity();
+		double nu_init = 0;
+	};
+	std::vector<StartResult> results(n_starts);
+
+	int n_succ = 0;
+	for (int k = 0; k < n_starts; k++)
+	{
+		InitOverrides ov;
+		if (k > 0) {
+			ov.has_nu_init = true;
+			ov.nu_init = nu_grid[k];
+		}
+		results[k].nu_init = (k == 0) ? 5.0 : nu_grid[k];
+
+		try {
+			Model m = mixed_model(y, X, groups, fam,
+			                       (k == 0) ? progress : nullptr,
+			                       priors, coef_names, max_iter, offset,
+			                       k == 0 ? nullptr : &ov);
+			if (m.converged && std::isfinite(m.loglik)) {
+				results[k].model = std::move(m);
+				results[k].loglik = results[k].model.loglik;
+				results[k].succeeded = true;
+				n_succ++;
+			}
+		}
+		catch (std::exception &) {
+			// Leave results[k].succeeded = false. Continue to next start.
+		}
+	}
+
+	if (n_succ == 0) {
+		throw error("All % multi-start fits failed; the model could not be fitted "
+		             "from any tested starting point.", n_starts);
+	}
+
+	// Pick best (highest logLik = lowest Laplace NLL).
+	int best_k = -1;
+	double best_ll = -std::numeric_limits<double>::infinity();
+	for (int k = 0; k < n_starts; k++) {
+		if (results[k].succeeded && results[k].loglik > best_ll) {
+			best_ll = results[k].loglik;
+			best_k = k;
+		}
+	}
+
+	// Cluster successes into basins. Two starts are in the same basin
+	// if their logLiks differ by less than basin_tol.
+	constexpr double basin_tol = 0.01;
+	double min_ll = best_ll, max_ll = best_ll;
+	for (int k = 0; k < n_starts; k++) {
+		if (results[k].succeeded) {
+			min_ll = std::min(min_ll, results[k].loglik);
+			max_ll = std::max(max_ll, results[k].loglik);
+		}
+	}
+	int n_basins;
+	{
+		std::vector<double> sorted_lls;
+		for (int k = 0; k < n_starts; k++) {
+			if (results[k].succeeded) sorted_lls.push_back(results[k].loglik);
+		}
+		std::sort(sorted_lls.begin(), sorted_lls.end());
+		n_basins = sorted_lls.empty() ? 0 : 1;
+		for (size_t i = 1; i < sorted_lls.size(); i++) {
+			if (sorted_lls[i] - sorted_lls[i - 1] > basin_tol) n_basins++;
+		}
+	}
+
+	Model best = std::move(results[best_k].model);
+
+	// ── Diagnostic polish pass (opt-in) ──────────────────────────────
+	// Re-fit from the converged best with tighter gradient tolerance
+	// and FD step. If FD noise was the convergence bottleneck, this
+	// will move the loglik. If it doesn't move, the optimum is genuinely
+	// at the FD-noise-floor of the function value, not the gradient.
+	double polish_delta = 0.0;
+	bool polish_attempted = false;
+	bool polish_succeeded = false;
+	if (opts.polish && is_student) {
+		polish_attempted = true;
+		InitOverrides polish_ov;
+		polish_ov.has_sigma_init = true;
+		polish_ov.sigma_init = best.sigma;
+		polish_ov.has_nu_init = true;
+		polish_ov.nu_init = best.nu;
+		polish_ov.tight_tolerance = true;
+
+		try {
+			Model polished = mixed_model(y, X, groups, fam, nullptr,
+			                              priors, coef_names, max_iter, offset,
+			                              &polish_ov);
+			if (polished.converged && std::isfinite(polished.loglik)) {
+				polish_delta = polished.loglik - best.loglik;
+				if (polished.loglik > best.loglik) {
+					// Polish improved on the multi-start best.
+					best = std::move(polished);
+				}
+				polish_succeeded = true;
+			}
+		}
+		catch (std::exception &) {
+			// Polish failed; keep the unpolished best. We'll note this
+			// in fit_warning below.
+		}
+	}
+
+	// Attach diagnostic summary if relevant.
+	bool emit_summary = (n_basins > 1) || (n_succ < n_starts)
+	                    || opts.report_starts || polish_attempted;
+	if (emit_summary) {
+		String msg;
+		msg.append(String::format(
+			"Multi-start fit: %d of %d starts converged; %d distinct basin(s); "
+			"logLik range [",
+			n_succ, n_starts, n_basins));
+		msg.append(String::format("%.4f", min_ll));
+		msg.append(String(", "));
+		msg.append(String::format("%.4f", max_ll));
+		msg.append(String("]; selected start "));
+		msg.append(String::format("%d (initial nu = %.1f).",
+			best_k, results[best_k].nu_init));
+
+		if (polish_attempted) {
+			if (polish_succeeded) {
+				msg.append(String::format(
+					" Polish: ΔlogLik = %+.4f.", polish_delta));
+			} else {
+				msg.append(String(" Polish: failed."));
+			}
+		}
+
+		if (!best.fit_warning.empty()) {
+			best.fit_warning.append(String("\n"));
+		}
+		best.fit_warning.append(msg);
+	}
+
+	return best;
+}
+
+
+// =====================================================================
+// evaluate_at: diagnostic Laplace-NLL evaluation harness
+// =====================================================================
+//
+// Computes the four Laplace components at a user-supplied (β, θ, û)
+// without running outer optimization. The four components sum to the
+// Laplace NLL:
+//
+//   laplace_nll = cond_nll + prior_nll + ½ log|H_uu| + (-½ J log 2π)
+//
+// Used to cross-validate against reference R packages: feed glmmTMB's
+// converged parameters in and read which component differs to localize
+// any formula discrepancy.
+
+EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
+{
+	EvaluationResult res;
+
+	// ── Validate model state ─────────────────────────────────────────
+	intptr_t G = model.random_effects.size();
+	intptr_t n = model.nobs;
+	intptr_t p = model.nfixed;
+
+	if (model.X.empty() || model.y.empty() || n == 0 || p == 0) {
+		res.error = "evaluate() requires a model with stored X and y.";
+		return res;
+	}
+
+	// Z_design / indices are NOT serialized. Required to assemble Zu.
+	for (intptr_t g = 1; g <= G; g++)
+	{
+		auto &re = model.random_effects[g];
+		if (re.indices.empty() || re.Z_design.empty()) {
+			res.error = "evaluate() requires a model fitted in the current "
+			            "session (Z design info is not serialized to file).";
+			return res;
+		}
+	}
+
+	// ── Build GroupLayout from model.random_effects ──────────────────
+	GroupLayout lay;
+	lay.G = G;
+	lay.J_total = 0;
+	lay.J.resize(G);
+	lay.q.resize(G);
+	lay.offset.resize(G);
+	lay.group_indices.resize(G);
+	lay.Z_data.resize(G);
+	lay.n_obs = n;
+
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &re = model.random_effects[g + 1];   // 1-based Array
+		lay.offset[g] = lay.J_total;
+		lay.J[g] = re.nlevels;
+		lay.q[g] = re.nterms;
+		lay.J_total += lay.J[g] * lay.q[g];
+		lay.group_indices[g] = &re.indices;
+		lay.Z_data[g] = re.Z_design.data();
+	}
+
+	intptr_t J_total = lay.J_total;
+
+	// ── Build Eigen maps over X, y ───────────────────────────────────
+	Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+	Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+
+	// ── Override fixed effects (β) ───────────────────────────────────
+	Eigen::VectorXd beta(p);
+	if (ov.beta) {
+		if (ov.beta->size() != p) {
+			res.error = String::format(
+				"beta override has length %lld; expected %lld.",
+				(long long)ov.beta->size(), (long long)p);
+			return res;
+		}
+		for (intptr_t i = 0; i < p; i++) beta[i] = ov.beta->data()[i];
+	} else {
+		for (intptr_t i = 0; i < p; i++) beta[i] = model.beta.data()[i];
+	}
+
+	// ── Build D_inv and log_det_Dg per group ────────────────────────
+	std::vector<Eigen::MatrixXd> D_inv(G);
+	std::vector<double> log_det_Dg(G);
+
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &re = model.random_effects[g + 1];
+		intptr_t qg = lay.q[g];
+		Eigen::MatrixXd Sigma_g(qg, qg);
+
+		bool have_override = (ov.Sigma != nullptr
+		                      && (intptr_t)ov.Sigma->size() > g
+		                      && !(*ov.Sigma)[g].empty());
+
+		if (have_override)
+		{
+			const Array<double> &S = (*ov.Sigma)[g];
+			intptr_t total = S.size();
+			if (total != qg * qg) {
+				res.error = String::format(
+					"Sigma[%lld] has %lld elements; expected %lld (q_g = %lld).",
+					(long long)g, (long long)total,
+					(long long)(qg * qg), (long long)qg);
+				return res;
+			}
+			// Σ is symmetric, so layout (row- vs column-major) does not
+			// matter. Read element-by-element using column-major
+			// indexing (Phonometrica's 2D Array convention).
+			const double *sd = S.data();
+			for (intptr_t r = 0; r < qg; r++) {
+				for (intptr_t c = 0; c < qg; c++) {
+					Sigma_g(r, c) = sd[c * qg + r];
+				}
+			}
+			Sigma_g = 0.5 * (Sigma_g + Sigma_g.transpose());
+		}
+		else
+		{
+			// Reconstruct Σ_g from packed cov_chol: Σ = L L'.
+			// cov_chol is 1-indexed, packed row-by-row.
+			const Array<double> &cc = re.cov_chol;
+			Eigen::MatrixXd L = Eigen::MatrixXd::Zero(qg, qg);
+			for (intptr_t r = 0; r < qg; r++) {
+				for (intptr_t c = 0; c <= r; c++) {
+					intptr_t idx = r * (r + 1) / 2 + c + 1;
+					if (idx <= cc.size()) L(r, c) = cc[idx];
+				}
+			}
+			Sigma_g = L * L.transpose();
+		}
+
+		// D_inv = Σ⁻¹ via Cholesky; log_det_Dg = 2 Σ log L_kk.
+		Eigen::LLT<Eigen::MatrixXd> llt(Sigma_g);
+		if (llt.info() != Eigen::Success) {
+			res.error = String::format(
+				"Sigma[%lld] is not positive-definite.", (long long)g);
+			return res;
+		}
+		Eigen::MatrixXd L = llt.matrixL();
+		Eigen::MatrixXd Linv = L.triangularView<Eigen::Lower>().solve(
+			Eigen::MatrixXd::Identity(qg, qg));
+		D_inv[g] = Linv.transpose() * Linv;
+		double ld = 0;
+		for (intptr_t r = 0; r < qg; r++) ld += std::log(L(r, r));
+		log_det_Dg[g] = 2.0 * ld;
+	}
+
+	// ── Build Family with overrides applied ─────────────────────────
+	Family fam;
+	if (model.family == "gaussian") {
+		fam = Family::gaussian();
+	} else if (model.family == "binomial") {
+		fam = Family::binomial();
+	} else if (model.family == "poisson") {
+		fam = Family::poisson();
+	} else if (model.family == "negbin") {
+		double th = ov.has_theta_nb ? ov.theta_nb_val : model.theta;
+		fam = Family::negbin(th);
+	} else if (model.family == "beta") {
+		double phi = ov.has_phi ? ov.phi_val : model.phi;
+		fam = Family::beta(phi);
+	} else if (model.family == "student") {
+		double sigma = ov.has_sigma ? ov.sigma_val : model.sigma;
+		double nu    = ov.has_nu    ? ov.nu_val    : model.nu;
+		fam = Family::student(sigma, nu);
+	} else {
+		String msg("evaluate() does not support family: ");
+		msg.append(model.family);
+		res.error = std::move(msg);
+		return res;
+	}
+
+	bool is_gaussian = (fam.name == "gaussian");
+
+	// For Gaussian, σ² appears explicitly in cond_nll and in W = (1/σ²)I.
+	double sigma2_gauss = 0;
+	if (is_gaussian) {
+		double sigma = ov.has_sigma ? ov.sigma_val : model.rse;
+		sigma2_gauss = sigma * sigma;
+	}
+
+	// Refit-u for Gaussian needs the σ²-aware Henderson u-only solve,
+	// not yet wired in here. Reject explicitly to avoid silently
+	// returning a σ²=1 result.
+	if (ov.refit_u && is_gaussian) {
+		res.error = "evaluate() with refit_u=true is not supported for "
+		            "Gaussian models in this iteration.";
+		return res;
+	}
+
+	// ── Determine û ──────────────────────────────────────────────────
+	Eigen::VectorXd u(J_total);
+
+	if (ov.refit_u)
+	{
+		// PIRLS from u=0 at the supplied (β, θ).
+		ProfiledResult pr = solve_u_given_beta(D_inv, log_det_Dg, fam,
+		                                        Xm, ym, lay, n, p, beta);
+		u = pr.u;
+		res.u_refit = true;
+	}
+	else if (ov.u)
+	{
+		if (ov.u->size() != J_total) {
+			res.error = String::format(
+				"u override has length %lld; expected %lld.",
+				(long long)ov.u->size(), (long long)J_total);
+			return res;
+		}
+		for (intptr_t i = 0; i < J_total; i++) u[i] = ov.u->data()[i];
+		res.u_refit = false;
+	}
+	else
+	{
+		// Fall through to the model's stored conditional_modes.
+		// re.conditional_modes is row-major j*q + t (raw 0-based via data()).
+		intptr_t off_u = 0;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			auto &re = model.random_effects[g + 1];
+			intptr_t qg = lay.q[g];
+			intptr_t Jg = lay.J[g];
+			const Array<double> &cm = re.conditional_modes;
+			if (cm.size() < Jg * qg) {
+				res.error = String::format(
+					"Group %lld: conditional_modes has %lld entries; "
+					"expected %lld.",
+					(long long)(g + 1), (long long)cm.size(),
+					(long long)(Jg * qg));
+				return res;
+			}
+			for (intptr_t k = 0; k < Jg * qg; k++) {
+				u[off_u + k] = cm.data()[k];
+			}
+			off_u += Jg * qg;
+		}
+		res.u_refit = false;
+	}
+
+	// ── Offset support ──────────────────────────────────────────────
+	Eigen::VectorXd offset_vec;
+	const Eigen::VectorXd *off_ptr = nullptr;
+	if (!model.offset.empty()) {
+		offset_vec = Eigen::Map<const Eigen::VectorXd>(
+			model.offset.data(), model.offset.size());
+		off_ptr = &offset_vec;
+	}
+
+	// ── η = Xβ + Zu + offset, then μ ────────────────────────────────
+	Eigen::VectorXd eta = Xm * beta;
+	if (off_ptr) eta += *off_ptr;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &idx = *lay.group_indices[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++) {
+				eta[i] += lay.Z(g, i, t) * u[base + t];
+			}
+		}
+	}
+	Eigen::VectorXd mu = (fam.link_name == "identity")
+	    ? fam.linkinv(eta)
+	    : fam.linkinv(eta.cwiseMax(-30.0).cwiseMin(30.0));
+
+	// ── cond_nll = -log p(y | β, û) ─────────────────────────────────
+	double cond_nll;
+	if (is_gaussian) {
+		double rss = (ym - mu).squaredNorm();
+		cond_nll = rss / (2.0 * sigma2_gauss)
+		           + 0.5 * n * std::log(2.0 * M_PI * sigma2_gauss);
+	} else {
+		cond_nll = -fam.loglik(ym, mu);
+	}
+
+	// ── prior_nll = -log p(û | θ) ───────────────────────────────────
+	double prior_nll = 0;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					quad += u[base + t1] * D_inv[g](t1, t2) * u[base + t2];
+				}
+			}
+			prior_nll += quad / 2.0;
+		}
+		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI)
+		                          + 0.5 * log_det_Dg[g]);
+	}
+
+	// ── ½ log|H_uu| (Laplace correction) ────────────────────────────
+	double half_log_det_Huu;
+	bool is_student = (fam.name == "student");
+
+	if (is_student && J_total > 0) {
+		// Hybrid: try exact Hessian first, fall back to Fisher info.
+		LaplaceMethod method;
+		double log_det = student_full_log_det_H_hybrid(
+			ym, mu, fam.sigma, fam.nu, D_inv, lay, n, method);
+		half_log_det_Huu = 0.5 * log_det;
+		res.laplace_method = (method == LaplaceMethod::Exact)
+		                      ? String("exact")
+		                      : String("fisher_info");
+	}
+	else {
+		// Non-Student: use the standard IRLS-style weights as before.
+		Eigen::VectorXd w_final(n);
+		if (is_gaussian) {
+			w_final.setConstant(1.0 / sigma2_gauss);
+		} else if (fam.custom_weights) {
+			w_final = fam.custom_weights(ym, mu);
+		} else {
+			Eigen::VectorXd V  = fam.variance(mu);
+			Eigen::VectorXd me = fam.mu_eta(mu);
+			for (intptr_t i = 0; i < n; i++) {
+				double v = std::max(V[i], 1e-10);
+				double d = std::max(me[i], 1e-10);
+				w_final[i] = d * d / v;
+			}
+		}
+		half_log_det_Huu = 0.5 * full_log_det_H(w_final, D_inv, lay, n);
+	}
+
+	// ── Constant term ───────────────────────────────────────────────
+	double const_term = -0.5 * J_total * std::log(2.0 * M_PI);
+
+	// ── Assemble ─────────────────────────────────────────────────────
+	double laplace_nll = cond_nll + prior_nll + half_log_det_Huu + const_term;
+
+	res.ok           = true;
+	res.cond_nll     = cond_nll;
+	res.prior_nll    = prior_nll;
+	res.log_det_Huu  = half_log_det_Huu;
+	res.const_term   = const_term;
+	res.laplace_nll  = laplace_nll;
+
+	res.u_used = Array<double>(J_total, 0.0);
+	for (intptr_t i = 0; i < J_total; i++) {
+		res.u_used.data()[i] = u[i];
+	}
+
+	return res;
 }
 
 } // namespace phonometrica::stats

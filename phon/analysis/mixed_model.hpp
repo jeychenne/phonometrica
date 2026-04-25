@@ -84,6 +84,66 @@ struct GroupingInfo
 };
 
 
+//─────────────────────────────────────────────────────────────────────
+// Multi-start support for Student-t (and any family with non-convex
+// inner Laplace problems). The Student-t inner û-problem is not
+// log-concave for low ν, so a single PIRLS run from a deterministic
+// start can land in a local — not global — minimum of the marginal
+// NLL. mixed_model_multistart() runs the optimization from N
+// different starting points and returns the deepest one.
+//
+// For Student-t, the perturbations vary the initial σ and ν, which
+// are the most basin-determining parameters. Other families currently
+// fall through to single-start (n_starts is silently clamped to 1).
+//─────────────────────────────────────────────────────────────────────
+
+struct FitOptions
+{
+	int n_starts = 0;            // 0 = use family default; 1 = no multi-start;
+	                              // ≥ 2 = run that many starts and keep best.
+	uint64_t seed = 42;          // Reserved for future β-jitter; current
+	                              // perturbations are deterministic per-k.
+	bool report_starts = false;  // If true, attach multi-start summary to
+	                              // model.fit_warning even on clean unimodal
+	                              // convergence. Diagnostic / debugging.
+
+	// Diagnostic: after picking the best-of-N, run an additional polishing
+	// pass from that point with tighter FD step (h_scale 10× smaller) and
+	// stricter gradient tolerance. If the polish improves loglik
+	// noticeably, the original convergence was FD-noise-limited and AD
+	// gradients would help. Adds one more outer optimization to the cost.
+	// The improvement is reported in fit_warning.
+	bool polish = false;
+
+	// Diagnostic / experimental: for Student-t, run Phase 2 (joint
+	// β + θ + σ + ν optimization) instead of skipping it. Phase 2 is
+	// skipped by default for Student-t because the σ-ν correlation
+	// can make the joint Hessian ill-conditioned, but on some
+	// datasets it converges and gives a tighter fit.
+	bool phase2_student = false;
+};
+
+// Internal helper: per-start initialization overrides supplied by the
+// multi-start wrapper to the inner single-start fitter. Each override
+// is opt-in via a has_* flag; unset fields fall through to the
+// function's normal deterministic initialization.
+struct InitOverrides
+{
+	bool has_sigma_init = false;  double sigma_init = 0;   // Student scale start
+	bool has_nu_init    = false;  double nu_init    = 0;   // Student df start
+
+	// Polish mode: if set, the inner Student-t L-BFGS uses a tighter FD
+	// step and gradient tolerance, intended to be combined with a warm
+	// start near the converged optimum. Used by FitOptions.polish.
+	bool tight_tolerance = false;
+
+	// Experimental: enable Phase 2 (joint β/θ/σ/ν optimization) for
+	// Student-t models. Skipped by default due to σ-ν correlation
+	// concerns; this flag overrides the skip. Used by
+	// FitOptions.phase2_student.
+	bool phase2_student = false;
+};
+
 //! Fit a mixed-effects model via Laplace approximation.
 //!
 //! Supports random intercepts and random slopes with a Cholesky-parameterised
@@ -107,7 +167,83 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const PriorSpec *priors = nullptr,
                   const Array<String> *coef_names = nullptr,
                   int max_iter = 200,
-                  const Array<double> &offset = Array<double>());
+                  const Array<double> &offset = Array<double>(),
+                  const InitOverrides *init_overrides = nullptr);
+
+
+// Multi-start orchestration entry point. For n_starts ≤ 1 (or for
+// families without a multi-start default), this is equivalent to a
+// single mixed_model() call.
+Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
+                              const std::vector<GroupingInfo> &groups, const Family &fam,
+                              FittingCallback progress = nullptr,
+                              const PriorSpec *priors = nullptr,
+                              const Array<String> *coef_names = nullptr,
+                              int max_iter = 200,
+                              const Array<double> &offset = Array<double>(),
+                              const FitOptions &opts = FitOptions{});
+
+
+//─────────────────────────────────────────────────────────────────────
+// Diagnostic evaluation harness: compute the four Laplace-NLL
+// components at a user-supplied (β, θ, û) WITHOUT running outer
+// optimization. Used for cross-engine validation against reference
+// packages (lme4, glmmTMB) — feed in their converged parameters and
+// read back which component (cond_nll, prior_nll, log_det_Huu,
+// const_term) accounts for any logLik discrepancy.
+//
+// This iteration: mixed models only. GAMs and any model loaded from
+// a saved file (where Z_design / indices were not preserved) are
+// rejected with EvaluationResult.ok = false. Gaussian + refit_u is
+// also rejected for now (the σ²-aware Henderson u-only solve is not
+// yet wired in here; non-Gaussian PIRLS handles σ² internally and
+// works fine).
+//─────────────────────────────────────────────────────────────────────
+
+// Override values: any field set to non-empty / has_*=true overrides
+// the corresponding fitted value; otherwise the model's stored value
+// is used. For overriding β alone, leave Sigma / dispersion / u all
+// null.
+struct EvaluationOverrides
+{
+	const Array<double> *beta = nullptr;             // length nfixed
+	// One full q_g × q_g matrix per RE group, in fitted group order.
+	// Σ is symmetric — layout-agnostic. nullptr or empty entry means
+	// fall back to the fitted Σ_g (reconstructed from cov_chol).
+	const std::vector<Array<double>> *Sigma = nullptr;
+	bool has_sigma = false;     double sigma_val = 0;     // Gaussian/Student scale
+	bool has_nu = false;        double nu_val = 0;        // Student df
+	bool has_theta_nb = false;  double theta_nb_val = 0;  // NB overdispersion
+	bool has_phi = false;       double phi_val = 0;       // Beta precision
+	const Array<double> *u = nullptr;                // length J_total, group-major
+	                                                  //   then j*q + t within group
+	bool refit_u = false;                            // re-run PIRLS from u = 0
+};
+
+// Components of the Laplace approximation to the marginal NLL.
+//   laplace_nll = cond_nll + prior_nll + log_det_Huu + const_term
+struct EvaluationResult
+{
+	bool ok = false;             // false if model state is incomplete or invalid
+	String error;                // populated when ok = false
+	double laplace_nll = 0;
+	double cond_nll = 0;         // -log p(y | β, û)
+	double prior_nll = 0;        // -log p(û | θ)
+	double log_det_Huu = 0;      // ½ log|H_uu|
+	double const_term = 0;       // -½ J_total log(2π)
+	Array<double> u_used;        // the û actually used (refit or supplied)
+	bool u_refit = false;        // true if PIRLS was re-run from u = 0
+
+	// Student-t only: which Hessian formula was used in the Laplace
+	// correction. "exact" if the exact Student-t Hessian gave a PD
+	// H_uu at this point; "fisher_info" if the engine fell back to
+	// the IRLS / Fisher-information form. Empty for non-Student
+	// families.
+	String laplace_method;
+};
+
+// Compute Laplace NLL components at a user-supplied parameter point.
+EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov);
 
 } // namespace phonometrica::stats
 

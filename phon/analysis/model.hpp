@@ -257,6 +257,26 @@ struct Model
 	bool well_identified = true;
 	String fit_warning;        // human-readable explanation when well_identified is false
 
+	// ---- Student-t Laplace method ----
+	// Records which Hessian formula was used in the Laplace correction
+	// at convergence. Two options:
+	//   "exact"        — w_exact = (ν+1)(νσ²−r²)/(νσ²+r²)² per observation,
+	//                    yielding an exact Hessian of -log p(y|μ) at û.
+	//                    Tighter Laplace approximation but can produce a
+	//                    non-PD H_uu when the data has severe outliers
+	//                    (|r| > σ√ν for enough observations to overwhelm
+	//                    the prior precision D⁻¹).
+	//   "fisher_info"  — w_fisher = (ν+1)/(νσ²+r²) per observation, the
+	//                    expected-information / IRLS form. Always yields
+	//                    a PD H_uu, slightly less tight than exact, but
+	//                    robust on heavy-tailed data.
+	// The engine tries "exact" first and falls back to "fisher_info" if
+	// the resulting H_uu is not numerically PD. Recorded for
+	// reproducibility — different methods yield different reported
+	// log-likelihoods (typically within ~10–20 units on real data).
+	// Empty for non-Student families (no choice involved).
+	String laplace_method;
+
 	// ---- Prior-scale diagnostic (Bayesian only) ----
 	// Set to a human-readable message when the fit appears to have been
 	// distorted by a prior whose scale does not match the response scale.

@@ -4485,10 +4485,45 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	// Random effects table (if any)
 	if (m.has_random_effects())
 	{
+		// Same Corr-column logic as the text display: only show if any
+		// group has random slopes (q > 1). For q = 1 throughout we keep
+		// the legacy 4-column tabular.
+		bool show_corr = false;
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+			if (m.random_effects[g].term_names.size() > 1) {
+				show_corr = true;
+				break;
+			}
+		}
+
+		// cov_chol is the packed lower-triangular raw Cholesky factor L
+		// (NOT log-diagonal), stored 1-indexed, row by row. Element (r, c)
+		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c + 1].
+		auto chol_at = [](const Array<double> &cc, intptr_t r0, intptr_t c0) -> double {
+			intptr_t idx = r0 * (r0 + 1) / 2 + c0 + 1;
+			return (idx <= cc.size()) ? cc[idx] : 0.0;
+		};
+		auto cov_st = [&](const Array<double> &cc, intptr_t s0, intptr_t t0) -> double {
+			if (s0 > t0) std::swap(s0, t0);
+			double sum = 0.0;
+			for (intptr_t k = 0; k <= s0; k++) {
+				sum += chol_at(cc, s0, k) * chol_at(cc, t0, k);
+			}
+			return sum;
+		};
+
 		tex += QStringLiteral("\\medskip\n");
-		tex += QStringLiteral("\\begin{tabular}{lrrr}\n");
+		if (show_corr) {
+			tex += QStringLiteral("\\begin{tabular}{lrrrr}\n");
+		} else {
+			tex += QStringLiteral("\\begin{tabular}{lrrr}\n");
+		}
 		tex += QStringLiteral("\\hline\n");
-		tex += QStringLiteral("Group & Variance & Std.~Dev. & Levels \\\\\n");
+		if (show_corr) {
+			tex += QStringLiteral("Group & Variance & Std.~Dev. & Levels & Corr \\\\\n");
+		} else {
+			tex += QStringLiteral("Group & Variance & Std.~Dev. & Levels \\\\\n");
+		}
 		tex += QStringLiteral("\\hline\n");
 
 		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
@@ -4503,27 +4538,61 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 				double sd = std::sqrt(std::max(var, 0.0));
 
 				if (t == 1) {
-					tex += QStringLiteral("%1 & %2 & %3 & %4 \\\\\n")
-						.arg(gname)
-						.arg(var, 0, 'f', 4)
-						.arg(sd, 0, 'f', 4)
-						.arg(re.nlevels);
+					if (show_corr) {
+						tex += QStringLiteral("%1 & %2 & %3 & %4 & \\\\\n")
+							.arg(gname)
+							.arg(var, 0, 'f', 4)
+							.arg(sd, 0, 'f', 4)
+							.arg(re.nlevels);
+					} else {
+						tex += QStringLiteral("%1 & %2 & %3 & %4 \\\\\n")
+							.arg(gname)
+							.arg(var, 0, 'f', 4)
+							.arg(sd, 0, 'f', 4)
+							.arg(re.nlevels);
+					}
 				} else {
 					QString tname = QString::fromUtf8(re.term_names[t].data(),
 					                                   (int)re.term_names[t].size());
 					tname.replace('_', QStringLiteral("\\_"));
-					tex += QStringLiteral("\\quad %1 & %2 & %3 & \\\\\n")
-						.arg(tname)
-						.arg(var, 0, 'f', 4)
-						.arg(sd, 0, 'f', 4);
+
+					if (show_corr) {
+						// For q ≥ 3, multiple corrs go in a single Corr cell,
+						// comma-separated. For q = 2, just one value.
+						QString corrs;
+						for (intptr_t s = 1; s < t; s++) {
+							double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
+							double denom = std::sqrt(std::max(var_s, 1e-30)
+							                       * std::max(var,   1e-30));
+							double corr = cov_st(re.cov_chol, s - 1, t - 1) / denom;
+							if (s > 1) corrs += QStringLiteral(", ");
+							corrs += QString::number(corr, 'f', 4);
+						}
+						tex += QStringLiteral("\\quad %1 & %2 & %3 & & %4 \\\\\n")
+							.arg(tname)
+							.arg(var, 0, 'f', 4)
+							.arg(sd, 0, 'f', 4)
+							.arg(corrs);
+					} else {
+						tex += QStringLiteral("\\quad %1 & %2 & %3 & \\\\\n")
+							.arg(tname)
+							.arg(var, 0, 'f', 4)
+							.arg(sd, 0, 'f', 4);
+					}
 				}
 			}
 		}
 
 		if (m.is_gaussian()) {
-			tex += QStringLiteral("Residual & %1 & %2 & \\\\\n")
-				.arg(m.rse * m.rse, 0, 'f', 4)
-				.arg(m.rse, 0, 'f', 4);
+			if (show_corr) {
+				tex += QStringLiteral("Residual & %1 & %2 & & \\\\\n")
+					.arg(m.rse * m.rse, 0, 'f', 4)
+					.arg(m.rse, 0, 'f', 4);
+			} else {
+				tex += QStringLiteral("Residual & %1 & %2 & \\\\\n")
+					.arg(m.rse * m.rse, 0, 'f', 4)
+					.arg(m.rse, 0, 'f', 4);
+			}
 		}
 
 		tex += QStringLiteral("\\hline\n");
@@ -4663,6 +4732,12 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	}
 	if (m.is_student()) {
 		tex += QStringLiteral("; $\\sigma$ = %1; $\\nu$ = %2").arg(m.sigma, 0, 'f', 4).arg(m.nu, 0, 'f', 4);
+		if (!m.laplace_method.empty()) {
+			QString label = (m.laplace_method == "exact")
+			    ? QStringLiteral("exact")
+			    : QStringLiteral("Fisher-info");
+			tex += QStringLiteral("; Laplace = %1").arg(label);
+		}
 	}
 
 	tex += QStringLiteral("\\\\\n");
@@ -4859,6 +4934,13 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	if (m.is_student()) {
 		text += QString::asprintf("Sigma (scale): %.4f\n", m.sigma);
 		text += QString::asprintf("Nu (df): %.4f\n", m.nu);
+		if (!m.laplace_method.empty()) {
+			const char *method_label =
+				(m.laplace_method == "exact")
+				    ? "exact"
+				    : "Fisher-information (robust fallback)";
+			text += QString::asprintf("Laplace correction: %s\n", method_label);
+		}
 	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
@@ -5036,9 +5118,42 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	if (m.has_random_effects())
 	{
+		// Show a "Corr" column when any group has q > 1 (random slopes).
+		// Pure intercept-only models keep the legacy 4-column header.
+		bool show_corr = false;
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+			if (m.random_effects[g].term_names.size() > 1) {
+				show_corr = true;
+				break;
+			}
+		}
+
+		// cov_chol is the packed lower-triangular raw Cholesky factor L
+		// (NOT log-diagonal), stored 1-indexed, row by row. Element (r, c)
+		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c + 1].
+		// Covariance Σ(s, t) = Σ_{k ≤ min(s,t)} L(s,k) · L(t,k).
+		// Same helpers as the scripting summarize() in data_table.cpp.
+		auto chol_at = [](const Array<double> &cc, intptr_t r0, intptr_t c0) -> double {
+			intptr_t idx = r0 * (r0 + 1) / 2 + c0 + 1;
+			return (idx <= cc.size()) ? cc[idx] : 0.0;
+		};
+		auto cov_st = [&](const Array<double> &cc, intptr_t s0, intptr_t t0) -> double {
+			if (s0 > t0) std::swap(s0, t0);
+			double sum = 0.0;
+			for (intptr_t k = 0; k <= s0; k++) {
+				sum += chol_at(cc, s0, k) * chol_at(cc, t0, k);
+			}
+			return sum;
+		};
+
 		text += QStringLiteral("Random effects:\n");
-		text += QString::asprintf("%-20s %12s %12s %8s\n",
-		                           "Group", "Variance", "Std.Dev.", "Levels");
+		if (show_corr) {
+			text += QString::asprintf("%-20s %12s %12s %8s   %s\n",
+			                           "Group", "Variance", "Std.Dev.", "Levels", "Corr");
+		} else {
+			text += QString::asprintf("%-20s %12s %12s %8s\n",
+			                           "Group", "Variance", "Std.Dev.", "Levels");
+		}
 
 		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
 		{
@@ -5050,14 +5165,24 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
 				double sd = std::sqrt(std::max(var, 0.0));
 
-				// Show group name and level count only on the first row
 				if (t == 1) {
+					// First row: group name, level count, no corr.
 					text += QString::asprintf("%-20s %12.4f %12.4f %8ld\n",
 					                           gname, var, sd, (long)re.nlevels);
 				} else {
+					// Slope row: indented term name, blank Levels slot,
+					// then one corr per previous term in the same group.
 					const char *tname = re.term_names[t].data();
-					text += QString::asprintf("  %-18s %12.4f %12.4f\n",
-					                           tname, var, sd);
+					text += QString::asprintf("  %-18s %12.4f %12.4f %8s",
+					                           tname, var, sd, "");
+					for (intptr_t s = 1; s < t; s++) {
+						double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
+						double denom = std::sqrt(std::max(var_s, 1e-30)
+						                       * std::max(var,   1e-30));
+						double corr = cov_st(re.cov_chol, s - 1, t - 1) / denom;
+						text += QString::asprintf(" %+7.4f", corr);
+					}
+					text += QStringLiteral("\n");
 				}
 			}
 		}
