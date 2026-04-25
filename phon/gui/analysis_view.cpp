@@ -1802,13 +1802,15 @@ void AnalysisView::onCompareModels()
 // Column interaction (formula building)
 // =====================================================================
 
-// Wrap a column name in single quotes if it contains spaces.
+// Wrap a column name in single quotes whenever the formula tokenizer would
+// not parse it as a bare name. Delegates to stats::quote_name so that GUI
+// insertion and backend round-trips (Formula::to_string) agree on which
+// names need quoting.
 static QString quoteIfNeeded(const QString &name)
 {
-	if (name.contains(' ')) {
-		return QStringLiteral("'") + name + QStringLiteral("'");
-	}
-	return name;
+	auto bytes = name.toUtf8();
+	auto quoted = stats::quote_name(String(bytes.constData(), bytes.size()));
+	return QString::fromUtf8(quoted.data(), (int) quoted.size());
 }
 
 void AnalysisView::onColumnDoubleClicked(QListWidgetItem *item)

@@ -35,6 +35,16 @@
 
 namespace phonometrica::stats {
 
+// Wrap a column/variable name in single quotes if it contains any character
+// that the formula tokenizer would not accept as part of a name token (i.e.
+// anything outside [A-Za-z0-9_.] and Unicode letters), or if it starts with a
+// digit, or if it is empty. Names that are already valid identifiers in the
+// tokenizer's sense are returned unchanged. This is the single source of
+// truth for "needs quoting" used by both the formula serialiser and the GUI
+// variable selector.
+String quote_name(const String &name);
+
+
 // A single fixed-effects term.
 // Simple term:      variables = {"vowel"}
 // Interaction term: variables = {"vowel", "context"}  (represents vowel:context)

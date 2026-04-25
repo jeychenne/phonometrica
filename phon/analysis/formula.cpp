@@ -47,20 +47,56 @@ bool FixedTerm::operator==(const FixedTerm &other) const
 	return true;
 }
 
-// Quote a variable name if it contains spaces or other non-syntactic characters.
-static String quote_name(const String &name)
+// Quote a variable name if it contains any character outside the formula
+// tokenizer's name alphabet ([A-Za-z0-9_.] + Unicode letters), if it starts
+// with a digit, or if it is empty. This is the single source of truth used
+// by the serialiser below and re-exposed via formula.hpp for the GUI.
+String quote_name(const String &name)
 {
+	auto is_name_start = [](char32_t cp) -> bool {
+		if (cp < 0x80) {
+			char c = static_cast<char>(cp);
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+		}
+		return String::is_letter(cp);
+	};
+
+	auto is_name_cont = [](char32_t cp) -> bool {
+		if (cp < 0x80) {
+			char c = static_cast<char>(cp);
+			return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			       (c >= '0' && c <= '9') || c == '_' || c == '.';
+		}
+		return String::is_letter(cp);
+	};
+
 	bool needs_quoting = false;
-	auto it = name.begin();
-	auto end = name.end();
-	while (it < end)
+
+	if (name.empty())
 	{
-		char32_t cp = name.next_codepoint(it);
-		if (cp == U' ' || cp == U'\t') {
+		needs_quoting = true;
+	}
+	else
+	{
+		auto it = name.begin();
+		auto end = name.end();
+		char32_t first = name.next_codepoint(it);
+		if (!is_name_start(first)) {
 			needs_quoting = true;
-			break;
+		}
+		else
+		{
+			while (it < end)
+			{
+				char32_t cp = name.next_codepoint(it);
+				if (!is_name_cont(cp)) {
+					needs_quoting = true;
+					break;
+				}
+			}
 		}
 	}
+
 	if (!needs_quoting) return name;
 
 	String result("'");
@@ -166,11 +202,123 @@ String Formula::to_string() const
 
 	bool need_plus = false;
 
-	for (intptr_t i = 1; i <= fixed.size(); i++)
+	// Walk the fixed-effects array in order, collapsing any pattern where a
+	// two-variable interaction {a, b} is accompanied by both singletons {a}
+	// and {b} into "a * b". The * notation is only used when all three terms
+	// are present so that we never silently introduce or drop main effects:
+	//   a + b + a:b   →  a * b
+	//   a + b         →  a + b      (no a:b, no collapse)
+	//   a:b           →  a:b        (no main effects, no collapse)
+	// We anchor the emitted "a * b" at the position of whichever of the three
+	// appeared first, so the user's reading order is preserved across
+	// parse → to_string round-trips. Three-way and higher interactions stay
+	// as colon notation (collapsing is conservative on purpose).
+	const intptr_t n_fixed = fixed.size();
+	Array<bool> consumed;
+	for (intptr_t i = 1; i <= n_fixed; i++)
+		consumed.append(false);
+
+	auto find_singleton = [&](const String &v) -> intptr_t {
+		for (intptr_t k = 1; k <= n_fixed; k++) {
+			if (consumed[k]) continue;
+			const auto &t = fixed[k];
+			if (t.variables.size() == 1 && t.variables[1] == v)
+				return k;
+		}
+		return -1;
+	};
+
+	auto find_pair = [&](const String &v1, const String &v2) -> intptr_t {
+		for (intptr_t k = 1; k <= n_fixed; k++) {
+			if (consumed[k]) continue;
+			const auto &t = fixed[k];
+			if (t.variables.size() != 2) continue;
+			if ((t.variables[1] == v1 && t.variables[2] == v2) ||
+			    (t.variables[1] == v2 && t.variables[2] == v1))
+				return k;
+		}
+		return -1;
+	};
+
+	for (intptr_t i = 1; i <= n_fixed; i++)
 	{
+		if (consumed[i]) continue;
+
+		const auto &term = fixed[i];
+
+		// Try to detect a "main effect of a" that participates in a full
+		// {a, b, a:b} triple.
+		if (term.variables.size() == 1)
+		{
+			const String &a = term.variables[1];
+
+			// Look ahead among non-consumed terms for any interaction
+			// {a, b} whose other singleton {b} is also present.
+			intptr_t collapse_pair_idx = -1;
+			intptr_t collapse_singleton_idx = -1;
+			String b_var;
+
+			for (intptr_t k = 1; k <= n_fixed; k++)
+			{
+				if (k == i || consumed[k]) continue;
+				const auto &t = fixed[k];
+				if (t.variables.size() != 2) continue;
+				if (t.variables[1] == a) {
+					b_var = t.variables[2];
+				} else if (t.variables[2] == a) {
+					b_var = t.variables[1];
+				} else {
+					continue;
+				}
+				intptr_t s = find_singleton(b_var);
+				if (s != -1) {
+					collapse_pair_idx = k;
+					collapse_singleton_idx = s;
+					break;
+				}
+			}
+
+			if (collapse_pair_idx != -1)
+			{
+				if (need_plus) result.append(" + ");
+				result.append(quote_name(a));
+				result.append(" * ");
+				result.append(quote_name(b_var));
+				need_plus = true;
+				consumed[i] = true;
+				consumed[collapse_pair_idx] = true;
+				consumed[collapse_singleton_idx] = true;
+				continue;
+			}
+		}
+		// Try to detect a two-way interaction {a, b} whose main effects are
+		// both present (i.e. user wrote "a:b + a + b" in some order).
+		else if (term.variables.size() == 2)
+		{
+			const String &a = term.variables[1];
+			const String &b = term.variables[2];
+			intptr_t sa = find_singleton(a);
+			intptr_t sb = find_singleton(b);
+			if (sa != -1 && sb != -1)
+			{
+				if (need_plus) result.append(" + ");
+				result.append(quote_name(a));
+				result.append(" * ");
+				result.append(quote_name(b));
+				need_plus = true;
+				consumed[i] = true;
+				consumed[sa] = true;
+				consumed[sb] = true;
+				continue;
+			}
+		}
+
+		// Default: emit this term as-is (single var, lone interaction, or
+		// any higher-order term).
 		if (need_plus) result.append(" + ");
-		result.append(fixed[i].to_string());
+		result.append(term.to_string());
 		need_plus = true;
+		consumed[i] = true;
 	}
 
 	for (intptr_t i = 1; i <= smooth.size(); i++)
