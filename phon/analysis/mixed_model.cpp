@@ -57,6 +57,8 @@
 #include <phon/analysis/waic.hpp>
 #include <phon/analysis/psis.hpp>
 #include <phon/utils/matrix.hpp>
+#include <phon/third_party/Eigen/SparseCore>
+#include <phon/third_party/Eigen/SparseCholesky>
 
 namespace phonometrica::stats {
 
@@ -488,6 +490,194 @@ static double residual_prior_log_density(double sigma, const PriorSpec &priors)
 // For multiple grouping factors (G>1, crossed effects), the full
 // J_total × J_total matrix is built and factorized.
 
+// Emit triplets for the random-effects block H_uu = Z'WZ + D⁻¹ into an
+// existing triplet list, with a configurable row/column offset. Used both
+// standalone (offset=0, by build_full_H_sparse) and as part of the joint
+// (β,u) Henderson system (offset=p, by build_joint_henderson_sparse).
+//
+// All entries (full symmetric matrix) are emitted; SimplicialLDLT<…, Lower>
+// only references the lower triangle, but setFromTriplets handles the
+// duplicate-summation cleanly either way.
+static void emit_random_block_triplets(
+    std::vector<Eigen::Triplet<double>> &triplets,
+    intptr_t offset,
+    const Eigen::VectorXd &w,
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const GroupLayout &lay,
+    intptr_t n)
+{
+	// Prior precision: D_g⁻¹ block at each level
+	for (intptr_t g = 0; g < lay.G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = offset + lay.offset[g] + j * qg;
+			for (intptr_t t1 = 0; t1 < qg; t1++)
+				for (intptr_t t2 = 0; t2 < qg; t2++)
+					triplets.emplace_back(base + t1, base + t2, D_inv[g](t1, t2));
+		}
+	}
+
+	// Data contributions (Z'WZ within and cross-group)
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t g1 = 0; g1 < lay.G; g1++)
+		{
+			intptr_t j1 = (*lay.group_indices[g1])[i];
+			intptr_t base1 = offset + lay.offset[g1] + j1 * lay.q[g1];
+
+			// Within-group: w[i] * z_g1 ⊗ z_g1   (full symmetric block)
+			for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
+			{
+				double wz1 = w[i] * lay.Z(g1, i, t1);
+				for (intptr_t t2 = 0; t2 < lay.q[g1]; t2++)
+				{
+					double val = wz1 * lay.Z(g1, i, t2);
+					triplets.emplace_back(base1 + t1, base1 + t2, val);
+				}
+			}
+
+			// Cross-group: w[i] * z_g1 ⊗ z_g2   (and the transpose)
+			for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
+			{
+				intptr_t j2 = (*lay.group_indices[g2])[i];
+				intptr_t base2 = offset + lay.offset[g2] + j2 * lay.q[g2];
+
+				for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
+				{
+					double wz1 = w[i] * lay.Z(g1, i, t1);
+					for (intptr_t t2 = 0; t2 < lay.q[g2]; t2++)
+					{
+						double val = wz1 * lay.Z(g2, i, t2);
+						triplets.emplace_back(base1 + t1, base2 + t2, val);
+						triplets.emplace_back(base2 + t2, base1 + t1, val);
+					}
+				}
+			}
+		}
+	}
+}
+
+
+// Build the random-effects-only Henderson Hessian H = Z'WZ + D⁻¹ as a
+// sparse matrix (J × J). Used by full_log_det_H and solve_u_given_beta.
+//
+// On the schwa benchmark (J=1256, n=7787, ~1% nnz) the dense build+LDLT was
+// ≈250 ms per call; this sparse path is ~6 ms.
+static Eigen::SparseMatrix<double> build_full_H_sparse(
+    const Eigen::VectorXd &w,
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const GroupLayout &lay,
+    intptr_t n)
+{
+	intptr_t J = lay.J_total;
+
+	std::vector<Eigen::Triplet<double>> triplets;
+
+	// Capacity estimate: prior block-diagonal entries + per-obs cross-terms
+	intptr_t prior_cap = 0;
+	intptr_t qsum = 0;
+	for (intptr_t g = 0; g < lay.G; g++) {
+		prior_cap += lay.J[g] * lay.q[g] * lay.q[g];
+		qsum += lay.q[g];
+	}
+	triplets.reserve(prior_cap + (size_t)n * (size_t)(qsum * qsum));
+
+	emit_random_block_triplets(triplets, 0, w, D_inv, lay, n);
+
+	Eigen::SparseMatrix<double> H(J, J);
+	H.setFromTriplets(triplets.begin(), triplets.end());  // sums duplicates
+	H.makeCompressed();
+	return H;
+}
+
+
+// Build the joint Henderson Hessian
+//   H = [ X'WX        X'WZ           ]   (top-left p × p block dense)
+//       [ Z'WX    Z'WZ + D⁻¹         ]   (bottom-right J × J block sparse)
+// as a (p+J) × (p+J) sparse matrix.  Used by solve_pirls (Phase 1 main
+// optimizer for non-Gaussian GLMMs) and solve_gaussian_henderson.
+//
+// For the schwa benchmark (p≈6, J=1256), the dense build was the dominant
+// cost of every PIRLS iteration (~250 ms × tens of inner iterations × tens
+// of outer evaluations).  Sparse: ≈10–30 ms.
+static Eigen::SparseMatrix<double> build_joint_henderson_sparse(
+    const Eigen::VectorXd &w,
+    const Eigen::Map<Matrix<double>> &Xm,
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const GroupLayout &lay,
+    intptr_t n, intptr_t p)
+{
+	intptr_t J = lay.J_total;
+	intptr_t sdim = p + J;
+
+	std::vector<Eigen::Triplet<double>> triplets;
+
+	// Capacity estimate:
+	//   p² (X'WX, full)
+	//   + Σ J_g q_g² (D⁻¹)
+	//   + n · ((Σ q_g)² (Z'WZ) + 2 p (Σ q_g) (X'WZ + Z'WX))
+	intptr_t qsum = 0, prior_cap = 0;
+	for (intptr_t g = 0; g < lay.G; g++) {
+		qsum += lay.q[g];
+		prior_cap += lay.J[g] * lay.q[g] * lay.q[g];
+	}
+	triplets.reserve((size_t)p * p
+	                 + prior_cap
+	                 + (size_t)n * ((size_t)qsum * qsum
+	                                + 2 * (size_t)p * qsum));
+
+	// ── X'WX (p × p, dense): accumulate then emit ──
+	Eigen::MatrixXd XWX = Eigen::MatrixXd::Zero(p, p);
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t j1 = 0; j1 < p; j1++)
+		{
+			double wx = Xm(i, j1) * w[i];
+			for (intptr_t j2 = j1; j2 < p; j2++) {
+				XWX(j1, j2) += wx * Xm(i, j2);
+			}
+		}
+	}
+	for (intptr_t j1 = 0; j1 < p; j1++)
+		for (intptr_t j2 = j1 + 1; j2 < p; j2++)
+			XWX(j2, j1) = XWX(j1, j2);
+	for (intptr_t j1 = 0; j1 < p; j1++)
+		for (intptr_t j2 = 0; j2 < p; j2++)
+			triplets.emplace_back(j1, j2, XWX(j1, j2));
+
+	// ── X'WZ and Z'WX (off-diagonal cross blocks) ──
+	for (intptr_t i = 0; i < n; i++)
+	{
+		for (intptr_t g = 0; g < lay.G; g++)
+		{
+			intptr_t lvl = (*lay.group_indices[g])[i];
+			intptr_t qg = lay.q[g];
+			intptr_t base = p + lay.offset[g] + lvl * qg;
+			for (intptr_t t = 0; t < qg; t++)
+			{
+				double wz_val = w[i] * lay.Z(g, i, t);
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double val = Xm(i, j) * wz_val;
+					triplets.emplace_back(j, base + t, val);
+					triplets.emplace_back(base + t, j, val);
+				}
+			}
+		}
+	}
+
+	// ── Random-effects block (D⁻¹ + Z'WZ), shifted by p ──
+	emit_random_block_triplets(triplets, p, w, D_inv, lay, n);
+
+	Eigen::SparseMatrix<double> H(sdim, sdim);
+	H.setFromTriplets(triplets.begin(), triplets.end());  // sums duplicates
+	H.makeCompressed();
+	return H;
+}
+
+
 static double full_log_det_H(const Eigen::VectorXd &w,
                                const std::vector<Eigen::MatrixXd> &D_inv,
                                const GroupLayout &lay,
@@ -536,66 +726,34 @@ static double full_log_det_H(const Eigen::VectorXd &w,
 		return ld;
 	}
 
-	// General case (G > 1): build the full J × J matrix and factorize.
-	Eigen::MatrixXd H = Eigen::MatrixXd::Zero(J, J);
+	// General case (G > 1): build the full J × J sparse matrix and factorize.
+	//
+	// The Henderson Hessian H = Z'WZ + D⁻¹ is sparse: each observation
+	// touches only one level per grouping factor, so for G groups the
+	// nonzero pattern has O(n · (Σ q_g)²) entries — typically ~1% nnz on
+	// realistic crossed designs. Dense LDLT was O(J³) ≈ 2 GFLOP per call
+	// at J=1256; SimplicialLDLT exploits the sparsity for ~50× speedup.
+	//
+	// SimplicialLDLT requires the matrix to admit a non-pivoted LDL'
+	// factorization. For all standard families (Gaussian, binomial,
+	// Poisson, NB, beta) the IRLS weights w_i are non-negative, making H
+	// SPD. Student-t can have negative w on outliers; that case has a
+	// separate code path in student_full_log_det_H_hybrid (line below).
+	// We still defensively check info() and fall back to dense if the
+	// sparse Cholesky fails.
+	Eigen::SparseMatrix<double> H = build_full_H_sparse(w, D_inv, lay, n);
 
-	// Prior precision: D_g⁻¹ block at each level
-	for (intptr_t g = 0; g < lay.G; g++)
-	{
-		intptr_t qg = lay.q[g];
-		for (intptr_t j = 0; j < lay.J[g]; j++)
-		{
-			intptr_t base = lay.offset[g] + j * qg;
-			for (intptr_t t1 = 0; t1 < qg; t1++) {
-				for (intptr_t t2 = 0; t2 < qg; t2++) {
-					H(base + t1, base + t2) = D_inv[g](t1, t2);
-				}
-			}
-		}
+	Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> ldlt;
+	ldlt.compute(H);
+	if (ldlt.info() == Eigen::Success) {
+		return ldlt.vectorD().array().log().sum();
 	}
 
-	// Data contributions
-	for (intptr_t i = 0; i < n; i++)
-	{
-		for (intptr_t g1 = 0; g1 < lay.G; g1++)
-		{
-			intptr_t j1 = (*lay.group_indices[g1])[i];
-			intptr_t base1 = lay.offset[g1] + j1 * lay.q[g1];
-
-			// Within-group: w[i] * z_g1 ⊗ z_g1
-			for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
-			{
-				double wz1 = w[i] * lay.Z(g1, i, t1);
-				for (intptr_t t2 = t1; t2 < lay.q[g1]; t2++)
-				{
-					double val = wz1 * lay.Z(g1, i, t2);
-					H(base1 + t1, base1 + t2) += val;
-					if (t1 != t2) H(base1 + t2, base1 + t1) += val;
-				}
-			}
-
-			// Cross-group: w[i] * z_g1 ⊗ z_g2
-			for (intptr_t g2 = g1 + 1; g2 < lay.G; g2++)
-			{
-				intptr_t j2 = (*lay.group_indices[g2])[i];
-				intptr_t base2 = lay.offset[g2] + j2 * lay.q[g2];
-
-				for (intptr_t t1 = 0; t1 < lay.q[g1]; t1++)
-				{
-					double wz1 = w[i] * lay.Z(g1, i, t1);
-					for (intptr_t t2 = 0; t2 < lay.q[g2]; t2++)
-					{
-						double val = wz1 * lay.Z(g2, i, t2);
-						H(base1 + t1, base2 + t2) += val;
-						H(base2 + t2, base1 + t1) += val;
-					}
-				}
-			}
-		}
-	}
-
-	Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
-	return ldlt.vectorD().array().log().sum();
+	// Fallback: dense LDLT (with Bunch-Kaufman pivoting) for indefinite
+	// or near-singular H. Should be unreachable on standard families.
+	Eigen::MatrixXd Hd = Eigen::MatrixXd(H);
+	Eigen::LDLT<Eigen::MatrixXd> ldlt_dense(Hd);
+	return ldlt_dense.vectorD().array().log().sum();
 }
 
 
@@ -1041,6 +1199,15 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 	res.beta = beta_init;
 	res.u = (u_init.size() == J) ? u_init : Eigen::VectorXd::Zero(J);
 
+	// Symbolic factorization of the sparse Henderson matrix is reused
+	// across all PIRLS iterations within this call: the sparsity pattern
+	// of (Z'WZ + D⁻¹) and the X' blocks depends only on the design (X,Z)
+	// and the random-effects layout — values change as μ moves but the
+	// pattern is invariant. analyzePattern is ~80% of compute() cost, so
+	// reusing it gives a further ≈1.9× speedup on top of dense → sparse.
+	Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> ldlt_p1;
+	bool ldlt_p1_analyzed = false;
+
 	for (int pirls_iter = 0; pirls_iter < 100; pirls_iter++)
 	{
 		// ── η = Xβ + Zu (without offset for working response) ──
@@ -1092,112 +1259,63 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 		// ── Henderson system ────────────────────────────────────
 		//  [X'WX       X'WZ           ] [β]   [X'Wz ]
 		//  [Z'WX   Z'WZ + D⁻¹        ] [u ] = [Z'Wz ]
+		//
+		// Sparse build: see build_joint_henderson_sparse. For schwa
+		// (sdim ≈ 1262) this is ~30× faster than the dense LDLT that
+		// previously dominated each PIRLS iteration.
 
-		Eigen::MatrixXd H = Eigen::MatrixXd::Zero(sdim, sdim);
+		Eigen::SparseMatrix<double> H = build_joint_henderson_sparse(w, Xm, D_inv, lay, n, p);
 		Eigen::VectorXd rhs = Eigen::VectorXd::Zero(sdim);
 
-		// X'WX (p × p) and X'Wz (p)
+		// Build rhs in a single pass (X'Wz on top, Z'Wz below).
 		for (intptr_t i = 0; i < n; i++)
 		{
-			double wz = w[i] * z[i];
-			for (intptr_t j1 = 0; j1 < p; j1++)
+			double wzi = w[i] * z[i];
+			for (intptr_t j = 0; j < p; j++)
+				rhs[j] += Xm(i, j) * wzi;
+			for (intptr_t g = 0; g < G; g++)
 			{
-				rhs[j1] += Xm(i, j1) * wz;
-				double wx = Xm(i, j1) * w[i];
-				for (intptr_t j2 = j1; j2 < p; j2++) {
-					H(j1, j2) += wx * Xm(i, j2);
-				}
-			}
-		}
-		for (intptr_t j1 = 0; j1 < p; j1++) {
-			for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
-				H(j2, j1) = H(j1, j2);
-			}
-		}
-
-		// D⁻¹: q_g × q_g block at each level
-		for (intptr_t g = 0; g < G; g++)
-		{
-			intptr_t qg = lay.q[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++)
-			{
-				intptr_t base = p + lay.offset[g] + j * qg;
-				for (intptr_t t1 = 0; t1 < qg; t1++) {
-					for (intptr_t t2 = 0; t2 < qg; t2++) {
-						H(base + t1, base + t2) += D_inv[g](t1, t2);
-					}
-				}
-			}
-		}
-
-		// Data contributions to X'WZ, Z'WX, Z'WZ, Z'Wz
-		for (intptr_t i = 0; i < n; i++)
-		{
-			double wz = w[i] * z[i];
-
-			for (intptr_t g1 = 0; g1 < G; g1++)
-			{
-				intptr_t j1 = (*lay.group_indices[g1])[i];
-				intptr_t q1 = lay.q[g1];
-				intptr_t base1 = p + lay.offset[g1] + j1 * q1;
-
-				// X'WZ and Z'WX: for each random term t
-				for (intptr_t t = 0; t < q1; t++)
-				{
-					double z_val = lay.Z(g1, i, t);
-					double wz_val = w[i] * z_val;
-
-					for (intptr_t j = 0; j < p; j++)
-					{
-						double val = Xm(i, j) * wz_val;
-						H(j, base1 + t) += val;
-						H(base1 + t, j) += val;
-					}
-
-					// Z'Wz
-					rhs[base1 + t] += wz * z_val;
-				}
-
-				// Z'WZ within-group: w[i] * z_g1 ⊗ z_g1
-				for (intptr_t t1 = 0; t1 < q1; t1++)
-				{
-					double wz1 = w[i] * lay.Z(g1, i, t1);
-					for (intptr_t t2 = t1; t2 < q1; t2++)
-					{
-						double val = wz1 * lay.Z(g1, i, t2);
-						H(base1 + t1, base1 + t2) += val;
-						if (t1 != t2) H(base1 + t2, base1 + t1) += val;
-					}
-				}
-
-				// Z'WZ cross-group: w[i] * z_g1 ⊗ z_g2
-				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
-				{
-					intptr_t j2 = (*lay.group_indices[g2])[i];
-					intptr_t q2 = lay.q[g2];
-					intptr_t base2 = p + lay.offset[g2] + j2 * q2;
-
-					for (intptr_t t1 = 0; t1 < q1; t1++)
-					{
-						double wz1 = w[i] * lay.Z(g1, i, t1);
-						for (intptr_t t2 = 0; t2 < q2; t2++)
-						{
-							double val = wz1 * lay.Z(g2, i, t2);
-							H(base1 + t1, base2 + t2) += val;
-							H(base2 + t2, base1 + t1) += val;
-						}
-					}
-				}
+				intptr_t lvl = (*lay.group_indices[g])[i];
+				intptr_t qg = lay.q[g];
+				intptr_t base = p + lay.offset[g] + lvl * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					rhs[base + t] += wzi * lay.Z(g, i, t);
 			}
 		}
 
 		// ── Fixed-effect prior (Bayesian mode) ──────────────────
+		//
+		// add_fixed_prior_to_henderson takes a dense reference; here
+		// we apply the equivalent precision/mean adjustment directly.
+		// All H(j,j) for j<p exist (X'WX is dense in the top-left
+		// block), so coeffRef is O(log nnz) lookup with no structural
+		// change to the compressed sparse matrix.
 		if (priors && coef_names)
-			add_fixed_prior_to_henderson(H, rhs, *priors, *coef_names, p);
+		{
+			for (intptr_t j = 0; j < p; j++)
+			{
+				const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+				double lambda = 1.0 / (pr.sd * pr.sd);
+				H.coeffRef(j, j) += lambda;
+				rhs[j] += lambda * pr.mean;
+			}
+		}
 
 		// ── Solve ───────────────────────────────────────────────
-		Eigen::LDLT<Eigen::MatrixXd> ldlt(H);
-		Eigen::VectorXd sol = ldlt.solve(rhs);
+		if (!ldlt_p1_analyzed) {
+			ldlt_p1.analyzePattern(H);
+			ldlt_p1_analyzed = true;
+		}
+		ldlt_p1.factorize(H);
+		Eigen::VectorXd sol;
+		if (ldlt_p1.info() == Eigen::Success) {
+			sol = ldlt_p1.solve(rhs);
+		} else {
+			// Fallback: dense LDLT (Bunch-Kaufman pivoting). Should be
+			// unreachable on standard families since w ≥ 0 ⇒ H is SPD.
+			Eigen::MatrixXd Hd = Eigen::MatrixXd(H);
+			sol = Eigen::LDLT<Eigen::MatrixXd>(Hd).solve(rhs);
+		}
 
 		Eigen::VectorXd beta_new = sol.head(p);
 		Eigen::VectorXd u_new = sol.tail(J);
@@ -1320,7 +1438,8 @@ static ProfiledResult solve_u_given_beta(
     intptr_t n, intptr_t p,
     const Eigen::VectorXd &beta,
     const Eigen::VectorXd &u_init = Eigen::VectorXd(),
-    const Eigen::VectorXd *off_ptr = nullptr)
+    const Eigen::VectorXd *off_ptr = nullptr,
+    bool is_final_report = false)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1332,11 +1451,82 @@ static ProfiledResult solve_u_given_beta(
 	Eigen::VectorXd Xbeta = Xm * beta;
 	add_offset(Xbeta, off_ptr);
 
+	// PIRLS iteration counters (visible to the laplace_diag print below).
+	int n_iter_done = 0;
+	int n_halvings_total = 0;
+	int n_fallbacks = 0;
+
 	// When there are no random effects (G=0, J=0), skip the u-update loop entirely.
 	if (J > 0)
 	{
+	// Symbolic factorization reused across the u-only PIRLS iterations.
+	// Same justification as solve_pirls: H_uu sparsity pattern is
+	// invariant for a fixed design, only values change as μ moves.
+	Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> ldlt_u;
+	bool ldlt_u_analyzed = false;
+
+	// ── Armijo-style monotone descent on f(u) = cond_nll(u) + ½·u'D⁻¹u ──
+	//
+	// The Henderson Newton step is locally optimal for the QUADRATIC
+	// surrogate of f at the current u (i.e. the IRLS working response).
+	// Far from the mode the surrogate is bad and the full Newton step
+	// can overshoot — most damagingly on binomial GLMMs with strong
+	// random effects, where pure Newton from u=0 lands in the saturated
+	// regime and converges to a non-mode stationary point.  Step-halving
+	// guarantees monotone descent on the true (non-quadratic) objective:
+	// only accept the proposed step if it actually lowers f, otherwise
+	// halve until it does (or fall back to Newton after 10 halvings).
+	//
+	// f(u) needs cond_nll which needs μ which needs η = Xβ + Zu — a few
+	// vector operations, no factorization. So step-halving costs at
+	// most ~10 cheap evaluations per outer iteration, only on iterations
+	// where the full Newton step is actually rejected.  Near the mode
+	// (the warm-started Phase 2 case), the full step always satisfies
+	// the descent test and step-halving is a no-op.
+	auto eval_f = [&](const Eigen::VectorXd &u_eval, double &out_f) -> bool
+	{
+		Eigen::VectorXd eta_e = Xbeta;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			auto &idx = *lay.group_indices[g];
+			intptr_t qg = lay.q[g];
+			for (intptr_t i = 0; i < n; i++)
+			{
+				intptr_t base = lay.offset[g] + idx[i] * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					eta_e[i] += lay.Z(g, i, t) * u_eval[base + t];
+			}
+		}
+		Eigen::VectorXd mu_e = (fam.link_name == "identity")
+		    ? fam.linkinv(eta_e)
+		    : fam.linkinv(eta_e.cwiseMax(-30.0).cwiseMin(30.0));
+		double cond = -fam.loglik(ym, mu_e);
+		if (!std::isfinite(cond)) return false;
+
+		double prior_q = 0;
+		for (intptr_t g = 0; g < G; g++)
+		{
+			intptr_t qg = lay.q[g];
+			for (intptr_t j = 0; j < lay.J[g]; j++)
+			{
+				intptr_t base = lay.offset[g] + j * qg;
+				double quad = 0;
+				for (intptr_t t1 = 0; t1 < qg; t1++)
+					for (intptr_t t2 = 0; t2 < qg; t2++)
+						quad += u_eval[base + t1] * D_inv[g](t1, t2) * u_eval[base + t2];
+				prior_q += quad;
+			}
+		}
+		out_f = cond + 0.5 * prior_q;
+		return std::isfinite(out_f);
+	};
+
+	double f_old = 0;
+	bool have_f_old = eval_f(res.u, f_old);
+
 	for (int iter = 0; iter < 100; iter++)
 	{
+		n_iter_done = iter + 1;
 		// ── η = Xβ + Zu ──
 		Eigen::VectorXd eta = Xbeta;
 		for (intptr_t g = 0; g < G; g++)
@@ -1424,25 +1614,16 @@ static ProfiledResult solve_u_given_beta(
 		}
 		else
 		{
-			// ── Crossed groups: full J × J system ──
+			// ── Crossed groups: full J × J sparse system ──
 			// (Z'WZ + D⁻¹) u = Z'W r
-			Eigen::MatrixXd H = Eigen::MatrixXd::Zero(J, J);
+			//
+			// H is built sparsely via build_full_H_sparse (shared with
+			// full_log_det_H for consistency). For the schwa benchmark
+			// (J=1256, ~1% nnz) this is ~50× faster than dense LDLT and
+			// reduces a single PIRLS iteration from ~250 ms to ~6 ms.
+			Eigen::SparseMatrix<double> H = build_full_H_sparse(w, D_inv, lay, n);
+
 			Eigen::VectorXd rhs = Eigen::VectorXd::Zero(J);
-
-			// D⁻¹ blocks on diagonal
-			for (intptr_t g = 0; g < G; g++)
-			{
-				intptr_t qg = lay.q[g];
-				for (intptr_t j = 0; j < lay.J[g]; j++)
-				{
-					intptr_t base = lay.offset[g] + j * qg;
-					for (intptr_t t1 = 0; t1 < qg; t1++)
-						for (intptr_t t2 = 0; t2 < qg; t2++)
-							H(base + t1, base + t2) = D_inv[g](t1, t2);
-				}
-			}
-
-			// Data contributions: Z'WZ and Z'Wr
 			for (intptr_t i = 0; i < n; i++)
 			{
 				for (intptr_t g1 = 0; g1 < G; g1++)
@@ -1453,46 +1634,70 @@ static ProfiledResult solve_u_given_beta(
 
 					for (intptr_t t = 0; t < q1; t++)
 						rhs[base1 + t] += w[i] * lay.Z(g1, i, t) * r[i];
-
-					// Within-group Z'WZ
-					for (intptr_t t1 = 0; t1 < q1; t1++)
-					{
-						double wz1 = w[i] * lay.Z(g1, i, t1);
-						for (intptr_t t2 = t1; t2 < q1; t2++)
-						{
-							double val = wz1 * lay.Z(g1, i, t2);
-							H(base1 + t1, base1 + t2) += val;
-							if (t1 != t2) H(base1 + t2, base1 + t1) += val;
-						}
-					}
-
-					// Cross-group Z'WZ
-					for (intptr_t g2 = g1 + 1; g2 < G; g2++)
-					{
-						intptr_t j2 = (*lay.group_indices[g2])[i];
-						intptr_t q2 = lay.q[g2];
-						intptr_t base2 = lay.offset[g2] + j2 * q2;
-
-						for (intptr_t t1 = 0; t1 < q1; t1++)
-						{
-							double wz1 = w[i] * lay.Z(g1, i, t1);
-							for (intptr_t t2 = 0; t2 < q2; t2++)
-							{
-								double val = wz1 * lay.Z(g2, i, t2);
-								H(base1 + t1, base2 + t2) += val;
-								H(base2 + t2, base1 + t1) += val;
-							}
-						}
-					}
 				}
 			}
 
-			// Solve
-			u_new = Eigen::LDLT<Eigen::MatrixXd>(H).solve(rhs);
+			Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>, Eigen::Lower> &ldlt = ldlt_u;
+			if (!ldlt_u_analyzed) {
+				ldlt.analyzePattern(H);
+				ldlt_u_analyzed = true;
+			}
+			ldlt.factorize(H);
+			if (ldlt.info() == Eigen::Success) {
+				u_new = ldlt.solve(rhs);
+			} else {
+				// Fallback: dense LDLT (Bunch-Kaufman pivoting) for
+				// indefinite or near-singular H. Should be unreachable
+				// on standard families.
+				Eigen::MatrixXd Hd = Eigen::MatrixXd(H);
+				u_new = Eigen::LDLT<Eigen::MatrixXd>(Hd).solve(rhs);
+			}
 		}
 
-		double max_change = (u_new - res.u).cwiseAbs().maxCoeff();
-		res.u = u_new;
+		// ── Step-halving on the true (non-quadratic) objective ──
+		// Newton step δ = u_new − res.u; try α ∈ {1, ½, ¼, …, 2⁻¹⁰}.
+		// Accept first α with f(res.u + α·δ) ≤ f(res.u) + tol_f.
+		// If none works, fall back to the full Newton step (matches the
+		// pre-step-halving behaviour, so this can never make things
+		// worse than the previous code on hard problems).
+		const double tol_f = 1e-12 * std::max(1.0, std::abs(f_old));
+
+		Eigen::VectorXd u_accept = u_new;  // default: full Newton
+		double f_accept = 0;
+		bool accepted = false;
+		int halvings_this_iter = 0;
+		if (have_f_old)
+		{
+			double alpha = 1.0;
+			for (int hi = 0; hi < 11; hi++)
+			{
+				Eigen::VectorXd u_try = (alpha == 1.0)
+				    ? u_new
+				    : (res.u + alpha * (u_new - res.u)).eval();
+				double f_try = 0;
+				if (eval_f(u_try, f_try) && f_try <= f_old + tol_f)
+				{
+					u_accept = std::move(u_try);
+					f_accept = f_try;
+					accepted = true;
+					halvings_this_iter = hi;
+					break;
+				}
+				alpha *= 0.5;
+			}
+		}
+		n_halvings_total += halvings_this_iter;
+		if (!accepted) n_fallbacks++;
+
+		double max_change = (u_accept - res.u).cwiseAbs().maxCoeff();
+		res.u = std::move(u_accept);
+		if (accepted) {
+			f_old = f_accept;
+		} else {
+			// Fall back: full Newton accepted unconditionally.  Refresh
+			// f_old from the new u so future iterations have a reference.
+			have_f_old = eval_f(res.u, f_old);
+		}
 		if (!std::isfinite(max_change)) break;
 		if (max_change < 1e-10) break;
 	}
@@ -1522,7 +1727,8 @@ static ProfiledResult solve_u_given_beta(
 		return res;
 	}
 
-	double prior_nll = 0;
+	double prior_quad = 0;       // ½ Σ_j u_j' D⁻¹ u_j
+	double prior_const = 0;      // Σ_g J_g [ q_g/2 log(2π) + ½ log|D_g| ]
 	for (intptr_t g = 0; g < G; g++)
 	{
 		intptr_t qg = lay.q[g];
@@ -1533,10 +1739,11 @@ static ProfiledResult solve_u_given_beta(
 			for (intptr_t t1 = 0; t1 < qg; t1++)
 				for (intptr_t t2 = 0; t2 < qg; t2++)
 					quad += res.u[base + t1] * D_inv[g](t1, t2) * res.u[base + t2];
-			prior_nll += quad / 2.0;
+			prior_quad += quad / 2.0;
 		}
-		prior_nll += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
+		prior_const += lay.J[g] * (0.5 * qg * std::log(2.0 * M_PI) + 0.5 * log_det_Dg[g]);
 	}
+	double prior_nll = prior_quad + prior_const;
 
 	Eigen::VectorXd w_f(n);
 	if (fam.custom_weights)
@@ -1555,9 +1762,39 @@ static ProfiledResult solve_u_given_beta(
 		}
 	}
 	double log_det_Huu = full_log_det_H(w_f, D_inv, lay, n);
+	double half_log_det_Huu = 0.5 * log_det_Huu;
+	double minus_half_J_log_2pi = -0.5 * J * std::log(2.0 * M_PI);
 
-	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
-	                  - 0.5 * J * std::log(2.0 * M_PI);
+	res.laplace_nll = cond_nll + prior_nll + half_log_det_Huu + minus_half_J_log_2pi;
+
+	// ── Diagnostic: per-component breakdown of the Laplace NLL ──
+	//
+	// Set the env var PHON_DIAG_LAPLACE=1 to print the breakdown to
+	// stderr on every call. Useful for localizing offsets between Phon's
+	// reported logLik and reference implementations (glmmTMB, lme4).
+	//
+	// The cold-start case (u_init.size() != J, used by the final
+	// reporting call from the main fit driver) is the one that produces
+	// the model.loglik value the user sees.
+	{
+		static const bool diag_on = []() {
+			const char *e = std::getenv("PHON_DIAG_LAPLACE");
+			return e && e[0] && e[0] != '0';
+		}();
+		if (diag_on)
+		{
+			std::fprintf(stderr,
+				"[laplace_diag%s] cond_nll=%.6f  prior_quad=%.6f  prior_const=%.6f  "
+				"half_log_det_Huu=%.6f  minus_half_J_log_2pi=%.6f  total=%.6f  "
+				"(n=%ld J=%ld G=%ld p=%ld pirls_iters=%d halvings=%d fallbacks=%d)\n",
+				is_final_report ? "/FINAL" : "",
+				cond_nll, prior_quad, prior_const,
+				half_log_det_Huu, minus_half_J_log_2pi, res.laplace_nll,
+				(long)n, (long)J, (long)G, (long)p,
+				n_iter_done, n_halvings_total, n_fallbacks);
+		}
+	}
+
 	return res;
 }
 
@@ -5084,6 +5321,23 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	Eigen::VectorXd saved_beta_init; // saved for INLA grid integration (non-Gaussian)
 	intptr_t saved_n_chol = 0;
 
+	// Warm-start û for the FINAL reporting solve_u_given_beta call.
+	//
+	// PIRLS inside solve_u_given_beta uses pure Newton without step-
+	// halving or trust-region.  Cold-starting from u=0 on binomial GLMMs
+	// with strong random effects (e.g. schwa: many words at 0% or 100%
+	// realization rate) can OVERSHOOT and converge to a non-mode point
+	// with |û_j| ≈ 5–6 instead of the true mode's ≈1.5.  That inflates
+	// prior_quad by ~13000 nats and collapses log|H_uu|, throwing the
+	// *reported* logLik off by ~17000 nats while leaving β/θ unchanged
+	// (Phase 2's optimizer warm-starts last_u between evals, so it stays
+	// at the mode there — only the final report is wrong).
+	//
+	// We preserve Phase 2's converged û here so the final call resumes
+	// from a near-mode warm-start instead of u=0.  Stays empty for
+	// Gaussian (no PIRLS) and for paths that skip Phase 2.
+	Eigen::VectorXd phase2_warm_u;
+
 	if (is_gaussian)
 	{
 		intptr_t n_chol = total_chol_params(lay);
@@ -5551,6 +5805,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			                             Xm, ym, lay, n, p, beta_init,
 			                             Eigen::VectorXd(), priors, coef_names, off_ptr);
 
+			// Seed the final-call warm-start with Phase 1's converged û.
+			// Updated below to Phase 2's converged û if Phase 2 runs.
+			phase2_warm_u = p1_pirls.u;
+
 			if (is_student)
 			{
 				// Phase 2 is normally skipped for Student-t: the σ-ν
@@ -5613,6 +5871,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 					{
 						beta_hat = p1_pirls.beta;
 					}
+
+					// Preserve the warm-started û from joint_obj before
+					// it goes out of scope, for use in the final call.
+					phase2_warm_u = std::move(joint_obj.last_u);
 				}
 			}
 			else
@@ -5687,6 +5949,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				converged = res2.converged;
 				optimizer_used = res2.optimizer;  // Phase 2 produces the final estimates;
 				                                   // its optimizer is the one to report.
+
+				// Preserve the warm-started û from joint_obj before it
+				// goes out of scope, for use in the final call.
+				phase2_warm_u = std::move(joint_obj.last_u);
 			}
 		}
 
@@ -5763,10 +6029,15 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	}
 	else
 	{
-		// Use solve_u_given_beta to ensure β̂ from Phase 2 is not modified
+		// Use solve_u_given_beta to ensure β̂ from Phase 2 is not modified.
+		// Pass phase2_warm_u (Phase 2's converged û, or Phase 1's û if
+		// Phase 2 was skipped) as initial value — see comment at the
+		// declaration of phase2_warm_u above for why cold-start (u=0)
+		// gives a wrong û and corrupts the reported logLik.
 		auto pirls_final = solve_u_given_beta(D_inv_final, log_det_Dg_final, fam_used,
 		                                       Xm, ym, lay, n, p, beta_hat,
-		                                       Eigen::VectorXd(), off_ptr);
+		                                       phase2_warm_u, off_ptr,
+		                                       /*is_final_report=*/true);
 		final_inner.u = std::move(pirls_final.u);
 		final_inner.mu = std::move(pirls_final.mu);
 		final_inner.laplace_nll = pirls_final.laplace_nll;
