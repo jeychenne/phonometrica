@@ -5626,13 +5626,63 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
 				joint_obj.last_u = std::move(p1_pirls.u);
 
+				// ── Per-coordinate FD scaling for β coords ──────────
+				// The default rule h_j = h_scale × max(|β_j|, 1) is
+				// adequate when predictors X_·j are O(1), but breaks
+				// when columns span several orders of magnitude (e.g.
+				// formant frequencies in Hz where |X| ≈ 3000 produces
+				// ∂³f/∂β_j³ ~ Σ X_ij³ ~ 10¹¹ for binomial logit). The
+				// resulting FD truncation (h²/6)·∂³f swamps the
+				// gradient signal at the optimum. Just shrinking
+				// h_scale uniformly doesn't help — truncation drops
+				// O(h²) but signal drops O(h), and arithmetic noise
+				// rises O(1/h).
+				//
+				// We rescale each β coord by its column-max-abs so
+				// that all β coords become roughly O(1) in the rescaled
+				// parameterization. The existing h_scale rule then
+				// produces well-conditioned FD steps regardless of
+				// predictor units. θ coords pass through unchanged
+				// (scale = 1) — the log-Cholesky and log-dispersion
+				// parameterizations already give O(1) magnitude.
+				//
+				// Column-max ≈ 1/SE for binomial GLMMs (where SE ≈
+				// 1/(sqrt(n)·||X_j||_RMS·sqrt(p̄(1−p̄)))), so this is
+				// a cheap proxy for the principled choice of scaling
+				// each coord by its posterior precision.
+				Eigen::VectorXd scale = Eigen::VectorXd::Ones(outer_dim2);
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double col_max = Xm.col(j).cwiseAbs().maxCoeff();
+					scale[j] = std::max(col_max, 1.0);
+				}
+				Eigen::VectorXd inv_scale = scale.cwiseInverse();
+
+				// Wrapper: optimizer works in scaled coords; we map
+				// back inside eval (one cwiseProduct per call, cheap
+				// vs. the inner PIRLS solve) and at the end.
+				struct ScaledJoint
+				{
+					const LaplaceJointObjective &base;
+					const Eigen::VectorXd &inv_scale;
+					double eval(const Eigen::VectorXd &phi_s) const
+					{
+						return base.eval(phi_s.cwiseProduct(inv_scale));
+					}
+				};
+				ScaledJoint scaled_obj{joint_obj, inv_scale};
+				Eigen::VectorXd phi2_scaled = phi2.cwiseProduct(scale);
+
 				// Phase 2 outer dimension p + n_chol + n_disp is effectively
 				// always > 3, so robust_optimize routes this to L-BFGS.
-				auto res2 = robust_optimize(joint_obj, phi2, max_iter, 1e-8, progress, 1e-2);
+				auto res2 = robust_optimize(scaled_obj, phi2_scaled, max_iter, 1e-8, progress, 1e-2);
+
+				// Unscale converged estimate back to original coords.
+				Eigen::VectorXd phi2_final = res2.theta.cwiseProduct(inv_scale);
 
 				// Update β and θ from Phase 2
-				beta_hat = res2.theta.head(p);
-				theta = Eigen::VectorXd(res2.theta.tail(theta.size()));
+				beta_hat = phi2_final.head(p);
+				theta = Eigen::VectorXd(phi2_final.tail(theta.size()));
 				niter += res2.niter;
 				converged = res2.converged;
 				optimizer_used = res2.optimizer;  // Phase 2 produces the final estimates;
