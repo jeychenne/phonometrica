@@ -135,6 +135,15 @@ void DatasetView::setupUi()
 	m_proxy = new DataFilterProxyModel(this);
 	m_proxy->setSourceModel(m_model);
 
+	// Refresh column layout when a script appends a column (Project::updated()
+	// fires notify_update; the scoped_connection auto-disconnects on destruction).
+	if (auto *project = Project::get()) {
+		m_project_update_conn = project->notify_update.connect([this]() {
+			m_model->refreshAll();
+			m_table->resizeColumnsToContents();
+		});
+	}
+
 	m_filter_bar = new FilterBar(m_proxy, this);
 	m_filter_bar->hide();
 	setupFilterBar();

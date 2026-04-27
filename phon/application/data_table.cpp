@@ -1539,6 +1539,181 @@ void DataTable::initialize(Runtime &rt)
 		return String("unknown");
 	};
 
+	// ── get_column by name (DataTable, String) ──────────────────
+	//
+	// Resolves a column header to a 1-based index, then returns:
+	//   • Array<double>  if the column is (or auto-detects as) numeric
+	//   • List<String>   otherwise
+	//
+	// For Dataset, numeric detection uses the typed column metadata
+	// (Dataset::is_numeric) so that columns flagged numeric at load
+	// time are always returned as Array<double> even when every cell
+	// happens to look like a number. For Concordance and any other
+	// DataTable subtype the cells are read via get_cell() and we try
+	// to parse every cell as a double; a single non-parseable,
+	// non-missing cell forces the List path.
+
+	auto get_column_by_name = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0]);
+		auto &name  = cast<String>(args[1]);
+		table.open();
+		auto j = table.find_column(name);
+		if (j == 0)
+			throw error("[Index error] Table has no column named \"%\"", name);
+
+		// ── Dataset: use typed column metadata ───────────────
+		if (table.is<Dataset>()) {
+			auto &ds = static_cast<Dataset &>(table);
+			if (ds.is_numeric(j)) {
+				auto span = ds.numeric_column(j);
+				Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
+				for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++)
+					result[i + 1] = span[i];
+				return make_handle<Array<double>>(std::move(result));
+			} else {
+				Array<Variant> items;
+				for (intptr_t i = 1; i <= ds.row_count(); i++)
+					items.append(ds.get_cell(i, j));
+				return make_handle<List>(&rt, std::move(items));
+			}
+		}
+
+		// ── Generic path: Concordance and future subtypes ────
+		// Auto-detect: if every cell is parseable or a recognised
+		// missing-value sentinel, return Array<double>; otherwise List.
+		auto nrow = table.row_count();
+		Array<double> nums(nrow, 0.0);
+		bool all_numeric = true;
+		for (intptr_t i = 1; i <= nrow && all_numeric; i++) {
+			auto cell = table.get_cell(i, j);
+			auto sv   = std::string_view(cell.data(), (size_t)cell.size());
+			if (DataTable::is_missing_value_token(sv)) {
+				nums[i] = std::nan("");
+			} else {
+				bool ok;
+				double v = cell.to_float(&ok);
+				if (ok)  nums[i] = v;
+				else     all_numeric = false;
+			}
+		}
+		if (all_numeric)
+			return make_handle<Array<double>>(std::move(nums));
+		Array<Variant> items;
+		for (intptr_t i = 1; i <= nrow; i++)
+			items.append(table.get_cell(i, j));
+		return make_handle<List>(&rt, std::move(items));
+	};
+
+	// ── get_column by index for Concordance ─────────────────────
+	//
+	// Same auto-numeric detection as the generic path above, but
+	// takes an integer index. This mirrors get_column(Dataset, int)
+	// for concordance columns, where the index space includes system
+	// columns (file, match, context, metadata) as well as any
+	// auxiliary measurement columns.
+
+	auto get_column_conc = [](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &conc = cast<Concordance>(args[0]);
+		auto j = cast<intptr_t>(args[1]);
+		conc.open();
+		if (j < 1 || j > conc.column_count())
+			throw error("Column index % is out of range", j);
+
+		auto nrow = conc.row_count();
+		Array<double> nums(nrow, 0.0);
+		bool all_numeric = true;
+		for (intptr_t i = 1; i <= nrow && all_numeric; i++) {
+			auto cell = conc.get_cell(i, j);
+			auto sv   = std::string_view(cell.data(), (size_t)cell.size());
+			if (DataTable::is_missing_value_token(sv)) {
+				nums[i] = std::nan("");
+			} else {
+				bool ok;
+				double v = cell.to_float(&ok);
+				if (ok)  nums[i] = v;
+				else     all_numeric = false;
+			}
+		}
+		if (all_numeric)
+			return make_handle<Array<double>>(std::move(nums));
+		Array<Variant> items;
+		for (intptr_t i = 1; i <= nrow; i++)
+			items.append(conc.get_cell(i, j));
+		return make_handle<List>(&rt, std::move(items));
+	};
+
+	// ── append(DataTable, List, String) ─────────────────────
+	//
+	// Appends a new text column built from a scripting List. Each
+	// element is converted to a String via Variant::to_string(). The
+	// list must have exactly row_count() elements.
+	//
+	// For Dataset the column is appended after all existing columns.
+	// For Concordance it is appended as a new auxiliary text column
+	// (i.e. after all existing aux columns), which is the natural
+	// extension point that leaves the fixed system columns unchanged.
+
+	auto add_column_list = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0].unshare());
+		auto &list  = cast<List>(args[1]);
+		auto &name  = cast<String>(args[2]);
+		table.open();
+		auto nrow = table.row_count();
+		if (list.size() != nrow)
+			throw error("add_column: list has % elements but table has % rows",
+			            list.size(), nrow);
+
+		// Copy 1-based List items into std::vector<String> for the application layer.
+		std::vector<String> values;
+		values.reserve((size_t)nrow);
+		for (intptr_t i = 1; i <= nrow; i++)
+			values.push_back(list[i].to_string());
+
+		if (table.is<Dataset>())
+			static_cast<Dataset &>(table).add_text_column(name, values);
+		else if (table.is<Concordance>())
+			static_cast<Concordance &>(table).add_text_column(name, values);
+		else
+			throw error("append: unsupported table type");
+
+		Project::updated();
+		return Variant();
+	};
+
+	// ── append(DataTable, Array, String) ────────────────────
+	//
+	// Appends a new numeric column from a scripting Array<double>.
+	// The array must have exactly row_count() elements.
+	// NaN values are preserved and round-trip through the table's
+	// standard missing-value serialization ("nan").
+
+	auto add_column_array = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &table = cast<DataTable>(args[0].unshare());
+		auto &arr   = cast<Array<double>>(args[1]);
+		auto &name  = cast<String>(args[2]);
+		table.open();
+		auto nrow = table.row_count();
+		if (arr.size() != nrow)
+			throw error("append: array has % elements but table has % rows",
+			            arr.size(), nrow);
+
+		// Copy 1-based Array<double> into std::vector<double> for the application layer.
+		std::vector<double> values;
+		values.reserve((size_t)nrow);
+		for (intptr_t i = 1; i <= nrow; i++)
+			values.push_back(arr[i]);
+
+		if (table.is<Dataset>())
+			static_cast<Dataset &>(table).add_numeric_column(name, values);
+		else if (table.is<Concordance>())
+			static_cast<Concordance &>(table).add_numeric_column(name, values);
+		else
+			throw error("append: unsupported table type");
+
+		Project::updated();
+		return Variant();
+	};
+
 	// ── CSV export ──────────────────────────────────────────────
 
 	auto to_csv2 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -1891,7 +2066,7 @@ void DataTable::initialize(Runtime &rt)
 	};
 
 #define CLS(T) phonometrica::get_class<T>()
-
+#define REF(bits) ParamBitset(bits)
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
 	rt.add_global("fit", fit3, { CLS(String), CLS(DataTable), CLS(String) });
 	rt.add_global("fit", fit_bayes2, { CLS(String), CLS(DataTable), CLS(stats::PriorSpec) });
@@ -1911,8 +2086,12 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("get_cell", get_cell, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t) });
 	rt.add_global("set_cell", set_cell_func, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t), CLS(String) });
 	rt.add_global("get_header", get_header, { CLS(DataTable), CLS(intptr_t) });
-	rt.add_global("get_column", get_column, { CLS(Dataset), CLS(intptr_t) });
+	rt.add_global("get_column", get_column,          { CLS(Dataset), CLS(intptr_t) });
+	rt.add_global("get_column", get_column_by_name,  { CLS(DataTable), CLS(String) });
+	rt.add_global("get_column", get_column_conc,     { CLS(Concordance), CLS(intptr_t) });
 	rt.add_global("get_column_type", column_type_func, { CLS(Dataset), CLS(intptr_t) });
+	rt.add_global("append", add_column_list,  { CLS(DataTable), CLS(List), CLS(String) }, REF("01"));
+	rt.add_global("append", add_column_array, { CLS(DataTable), CLS(Array<double>), CLS(String) }, REF("01"));
 
 	// CSV export
 	rt.add_global("to_csv", to_csv2, { CLS(DataTable), CLS(String) });
@@ -1960,6 +2139,7 @@ void DataTable::initialize(Runtime &rt)
 	conc_cls->add_method(rt.get_field_string, conc_get_field, { CLS(Concordance), CLS(String) });
 
 #undef CLS
+#undef REF
 }
 
 } // namespace phonometrica

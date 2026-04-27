@@ -91,7 +91,7 @@ void Dataset::load()
 
 void Dataset::write()
 {
-
+	to_csv(m_path, m_separator);
 }
 
 void Dataset::set_separator(String sep)

@@ -34,6 +34,7 @@
 #include <phon/gui/filter_bar.hpp>
 #include <phon/gui/outlier_dialog.hpp>
 #include <phon/application/conc/concordance.hpp>
+#include <phon/third_party/sigslot/signal.hpp>
 
 namespace phonometrica {
 
@@ -107,6 +108,10 @@ private:
 	Handle<DataTable> pickDataTable(const QString &title);
 
 	DatasetModel *m_model = nullptr;
+
+	// Auto-disconnects when the view is destroyed, so scripts that call
+	// append() and trigger Project::updated() will refresh this view.
+	sigslot::scoped_connection m_project_update_conn;
 	DataFilterProxyModel *m_proxy = nullptr;
 	FilterBar *m_filter_bar = nullptr;
 	QTableView *m_table = nullptr;
