@@ -114,10 +114,6 @@ TranscribeDialog::TranscribeDialog(QWidget *parent) :
 		m_language_combo->addItem(QString::fromUtf8(entry.label), QString::fromUtf8(entry.code));
 	form->addRow(tr("Language:"), m_language_combo);
 
-	// --- Translate ---
-	m_translate_check = new QCheckBox(tr("Translate to English"), this);
-	form->addRow(QString(), m_translate_check);
-
 	// --- Layer label ---
 	m_layer_edit = new QLineEdit(this);
 	m_layer_edit->setText(tr("transcription"));
@@ -168,8 +164,6 @@ TranscribeDialog::TranscribeDialog(QWidget *parent) :
 	auto saved_lang = settings.value("transcribe/language", "auto").toString();
 	int idx = m_language_combo->findData(saved_lang);
 	m_language_combo->setCurrentIndex(idx >= 0 ? idx : 0);
-
-	m_translate_check->setChecked(settings.value("transcribe/translate", false).toBool());
 }
 
 void TranscribeDialog::onBrowseModel()
@@ -201,8 +195,6 @@ Transcriber::Options TranscribeDialog::options() const
 	auto lang = m_language_combo->currentData().toString();
 	opts.language = String(lang.toUtf8().constData());
 
-	opts.translate = m_translate_check->isChecked();
-
 	auto label = m_layer_edit->text().trimmed();
 	if (label.isEmpty()) label = QStringLiteral("transcription");
 	opts.layer_label = String(label.toUtf8().constData());
@@ -211,7 +203,6 @@ Transcriber::Options TranscribeDialog::options() const
 	QSettings settings;
 	settings.setValue("transcribe/model_path", model_path);
 	settings.setValue("transcribe/language",   lang);
-	settings.setValue("transcribe/translate",  opts.translate);
 
 	return opts;
 }

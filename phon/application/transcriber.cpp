@@ -227,7 +227,7 @@ Layer Transcriber::transcribe(Sound &sound, const Options &opts, ProgressCallbac
 	wparams.print_progress   = false;
 	wparams.print_timestamps = false;
 	wparams.print_special    = false;
-	wparams.translate        = opts.translate;
+	wparams.translate        = false;
 	wparams.single_segment   = false;
 	wparams.no_context       = true;
 	wparams.suppress_blank   = true;

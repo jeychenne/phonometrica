@@ -59,7 +59,6 @@ private:
 	QLineEdit *m_model_edit;
 	QPushButton *m_browse_button;
 	QComboBox *m_language_combo;
-	QCheckBox *m_translate_check;
 	QLineEdit *m_layer_edit;
 
 	Array<Handle<Sound>> m_sounds;

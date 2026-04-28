@@ -42,9 +42,6 @@ public:
 		// ISO 639-1 language code (e.g. "en", "fr"). Empty or "auto" triggers automatic detection.
 		String language;
 
-		// If true, transcribe and translate to English in the same pass.
-		bool translate = false;
-
 		// Number of threads for inference. 0 means use hardware concurrency (bounded).
 		int n_threads = 0;
 
