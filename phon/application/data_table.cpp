@@ -1654,7 +1654,7 @@ void DataTable::initialize(Runtime &rt)
 	// extension point that leaves the fixed system columns unchanged.
 
 	auto add_column_list = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0].unshare());
+		auto &table = cast<DataTable>(args[0]); // no need to unshare because data tables are not clonable
 		auto &list  = cast<List>(args[1]);
 		auto &name  = cast<String>(args[2]);
 		table.open();
@@ -1688,7 +1688,7 @@ void DataTable::initialize(Runtime &rt)
 	// standard missing-value serialization ("nan").
 
 	auto add_column_array = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0].unshare());
+		auto &table = cast<DataTable>(args[0]); // no need to unshare because data tables are not clonable
 		auto &arr   = cast<Array<double>>(args[1]);
 		auto &name  = cast<String>(args[2]);
 		table.open();

@@ -61,6 +61,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<Script> : std::false_type { };
+template<> struct is_clonable<Script> : std::false_type { };
 }
 
 } // namespace phonometrica

@@ -1,7 +1,7 @@
 Annotations
 ===========
 
-This page documents the ``Annotation`` type, which corresponds to a time-aligned annotation of a sound file, on one or more layers.
+This page documents the ``Annotation`` type, which corresponds to a time-aligned annotation of a sound file, on one or more layers. ``Annotation`` is :ref:`non-clonable <clonability>`.
 
 
 Functions

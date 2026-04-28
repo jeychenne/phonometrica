@@ -159,6 +159,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<SpectralMomentsQuery> : std::false_type { };
+template<> struct is_clonable<SpectralMomentsQuery> : std::false_type { };
 }
 
 } // namespace phonometrica

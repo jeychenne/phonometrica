@@ -169,6 +169,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<Sound> : std::false_type { };
+template<> struct is_clonable<Sound> : std::false_type { };
 }
 } // namespace phonometrica
 

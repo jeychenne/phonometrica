@@ -3,7 +3,7 @@
 Sounds
 ======
 
-This page documents the ``Sound`` type, which represents a sound file loaded in memory, and related functions.
+This page documents the ``Sound`` type, which represents a sound file loaded in memory, and related functions. ``Sound`` is :ref:`non-clonable <clonability>`.
 
 
 Functions

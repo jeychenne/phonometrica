@@ -58,6 +58,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<Note> : std::false_type { };
+template<> struct is_clonable<Note> : std::false_type { };
 }
 
 } // namespace phonometrica

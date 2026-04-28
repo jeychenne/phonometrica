@@ -195,6 +195,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<FormantQuery> : std::false_type { };
+template<> struct is_clonable<FormantQuery> : std::false_type { };
 }
 
 } // namespace phonometrica

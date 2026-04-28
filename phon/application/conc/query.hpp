@@ -189,6 +189,7 @@ protected:
 
 namespace traits {
 template<> struct maybe_cyclic<Query> : std::false_type { };
+template<> struct is_clonable<Query> : std::false_type { };
 }
 
 } // namespace phonometrica

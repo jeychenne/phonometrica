@@ -2,7 +2,8 @@ Documents
 =========
 
 This page documents the ``Document`` type: this is an abstract base class for all files in a project that can be stored on disk and represented by a path. Subclasses include Annotation, Sound,
-Dataset, Concordance and Script. 
+Dataset, Concordance and Script. ``Document`` and all its subclasses are :ref:`non-clonable <clonability>`: each value represents a unique entry in the project, and assignment shares
+the underlying object rather than copying it.
 
 
 Functions

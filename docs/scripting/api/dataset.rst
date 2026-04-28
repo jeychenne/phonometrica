@@ -4,6 +4,8 @@ Datasets and concordances
 This page documents the ``Dataset`` and ``Concordance`` types, which represent tabular data in Phonometrica.
 Both types inherit from ``DataTable`` and share common functions for cell access and export. A ``Dataset``
 is typically a CSV file imported into the project, while a ``Concordance`` is the result of a query.
+Both ``Dataset`` and ``Concordance`` are :ref:`non-clonable <clonability>`: assignment shares the underlying
+project document rather than producing an independent copy.
 
 
 Functions

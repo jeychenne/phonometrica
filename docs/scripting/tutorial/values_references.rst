@@ -43,9 +43,10 @@ ensures that modifying one variable will not affect the other. Consider the foll
 
 
 As we can see, at first ``s1`` and ``s2`` have the same value, but after we modify ``s1``, ``s2`` retains the same value. Types that behave in
-this way are said to have *value semantics*. All clonable types in Phonometrica have value semantics, and most buitin types are clonable. 
-The only two exceptions are ``Regex`` and ``File``, which are *non-clonable*. Non-clonable types have *reference semantics*, which means that 
-when we assign a variable to another one, they share the same value: modifying one modifies the other:
+this way are said to have *value semantics*. All clonable types in Phonometrica have value semantics, and most builtin types are clonable. 
+The non-clonable types are ``Regex``, ``File``, and ``Document`` together with all of its subclasses (``Annotation``, ``Sound``, ``Dataset``, 
+``Concordance``, ``Note``, ``Script``, ``Spectrum``, and the various query types). Non-clonable types have *reference semantics*, which means 
+that when we assign a variable to another one, they share the same value: modifying one modifies the other:
 
 .. code:: phon
 
@@ -56,7 +57,23 @@ when we assign a variable to another one, they share the same value: modifying o
         print group(re2, 1), "_", group(re2, 2), "_", group(re2, 3)
     end
     
-As you can, ``re1`` and ``re2`` refer to the same regular expression, so these variables can be considered as two *aliases* for the same value. 
+As you can see, ``re1`` and ``re2`` refer to the same regular expression, so these variables can be considered as two *aliases* for the same value. 
+
+The same applies to documents in the current project. Each ``Document`` represents a unique resource: a file at a specific path, possibly bound 
+to an open view and registered with the project. Cloning such a value would produce a detached copy with no clear identity (no path, no project 
+membership, no view), so Phonometrica treats documents as references throughout. When you obtain a document from the project — for example with 
+``load``, ``get_dataset`` or ``get_concordance`` — assignments and function calls all share the same underlying object, and any modification is 
+visible to the project, to any open view of the document, and to every variable that refers to it:
+
+.. code:: phon
+
+    let d1 = load("subjects.csv")
+    let d2 = d1
+    add_column(d1, "age", @[42, 37, 51])
+    print d2.ncol  # the new column is visible through d2 as well
+
+If you genuinely want a detached working copy of a document — say, to run a destructive transformation without affecting the original — the 
+right approach is to save it to a new path or otherwise create a new document explicitly, rather than relying on assignment to make a copy.
 
 
 

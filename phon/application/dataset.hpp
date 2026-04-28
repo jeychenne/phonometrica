@@ -254,6 +254,7 @@ private:
 
 namespace traits {
 template<> struct maybe_cyclic<Dataset> : std::false_type { };
+template<> struct is_clonable<Dataset> : std::false_type { };
 }
 
 } // namespace phonometrica
