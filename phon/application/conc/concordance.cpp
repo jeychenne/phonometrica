@@ -2170,19 +2170,98 @@ void Concordance::modify()
 	m_content_modified = true;
 }
 
-AutoMatch Concordance::remove_match(intptr_t row)
+Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 {
-	auto m = m_matches.at(row).release();
+	RemovedRow rr;
+	rr.match = AutoMatch(m_matches.at(row).release());
 	m_matches.remove_at(row);
+
+	// Context cache is sized in lock-step with m_matches whenever the
+	// concordance has KWIC or labels context. Drop the parallel entry.
+	if (row >= 1 && row <= m_context.size())
+	{
+		rr.had_context = true;
+		rr.context = m_context[row];
+		m_context.remove_at(row);
+	}
+
+	// Auxiliary columns: one cell per match per column. We must remove the
+	// row from each column's data array so subsequent rows stay aligned with
+	// the matches. Without this, row N below the removed row would display
+	// the aux value that originally belonged to row N+1.
+	rr.aux_text.reserve(m_aux_columns.size());
+	rr.aux_num.reserve(m_aux_columns.size());
+	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	{
+		auto &col = m_aux_columns[c];
+		if (col.type == AuxColumnType::Text)
+		{
+			String saved;
+			if (row >= 1 && row <= col.text_data.size())
+			{
+				saved = col.text_data[row];
+				col.text_data.remove_at(row);
+			}
+			rr.aux_text.push_back(std::move(saved));
+			rr.aux_num.push_back(std::nan(""));
+		}
+		else
+		{
+			double saved = std::nan("");
+			if (row >= 1 && row <= col.num_data.size())
+			{
+				saved = col.num_data[row];
+				col.num_data.remove_at(row);
+			}
+			rr.aux_text.emplace_back();
+			rr.aux_num.push_back(saved);
+		}
+	}
+
 	modify();
 	file_modified();
 
-	return AutoMatch(m);
+	return rr;
 }
 
-void Concordance::restore_match(intptr_t row, AutoMatch m)
+void Concordance::restore_match(intptr_t row, RemovedRow data)
 {
-	m_matches.insert(row, std::move(m));
+	m_matches.insert(row, std::move(data.match));
+
+	// Restore the context-cache entry. We trust had_context as the source of
+	// truth: it is true iff there was an entry to remove at remove time.
+	if (data.had_context)
+	{
+		if (row > m_context.size())
+			m_context.append(std::move(data.context));
+		else
+			m_context.insert(row, std::move(data.context));
+	}
+
+	// Restore the aux-column cells. The number of aux columns at restore time
+	// must match the number captured at remove time; if it differs (e.g. a
+	// column was added or removed in the interim) we restore as much as we can.
+	auto n_cols = std::min<intptr_t>(m_aux_columns.size(),
+	                                 (intptr_t) data.aux_text.size());
+	for (intptr_t c = 1; c <= n_cols; c++)
+	{
+		auto &col = m_aux_columns[c];
+		if (col.type == AuxColumnType::Text)
+		{
+			if (row > col.text_data.size())
+				col.text_data.append(std::move(data.aux_text[c - 1]));
+			else
+				col.text_data.insert(row, std::move(data.aux_text[c - 1]));
+		}
+		else
+		{
+			if (row > col.num_data.size())
+				col.num_data.append(data.aux_num[c - 1]);
+			else
+				col.num_data.insert(row, data.aux_num[c - 1]);
+		}
+	}
+
 	modify();
 	file_modified();
 }

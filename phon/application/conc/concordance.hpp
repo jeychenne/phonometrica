@@ -69,6 +69,22 @@ public:
 		double semitone_ref = 100; // semitone reference Hz (PitchHz only)
 	};
 
+	/// Snapshot of everything tied to a single match row, captured by remove_match()
+	/// and consumed by restore_match() to support undo. Beyond the match itself we
+	/// must save the context cache entry (if any) and the aux-column cell that lives
+	/// in each auxiliary column at that row, since all of these are indexed in
+	/// lock-step with m_matches.
+	struct RemovedRow
+	{
+		AutoMatch match;
+		bool had_context = false;
+		std::pair<String, String> context;
+		// One entry per aux column, in column order. Only the field matching the
+		// column's type carries data; the other holds a default-constructed value.
+		std::vector<String> aux_text;
+		std::vector<double> aux_num;
+	};
+
 	Concordance(Directory *parent, const String &path);
 
 	Concordance(intptr_t target_count, Context ctx, intptr_t context_length, Array<AutoMatch> matches, Directory *parent,
@@ -268,9 +284,15 @@ public:
 
 	void modify();
 
-	AutoMatch remove_match(intptr_t row);
+	/// Remove the match at 1-based `row` along with its parallel context-cache
+	/// entry and aux-column cells. Returns a RemovedRow that captures every part
+	/// needed by restore_match() to put the row back exactly as it was.
+	RemovedRow remove_match(intptr_t row);
 
-	void restore_match(intptr_t row, AutoMatch m);
+	/// Reinsert a row previously captured by remove_match() at 1-based `row`,
+	/// restoring the match, the context cache entry (if any), and the aux-column
+	/// cells in each auxiliary column.
+	void restore_match(intptr_t row, RemovedRow data);
 
 	Handle<Concordance> unite(const Concordance &other, const String &label) const;
 

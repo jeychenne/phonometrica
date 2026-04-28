@@ -79,6 +79,21 @@ optionally grouped by a categorical variable. The available metrics are:
 The computed metric is added as a new column. You can optionally create an automatic filter rule (e.g. keep only
 rows where the absolute z-score is less than 3) to identify and exclude outliers.
 
+.. note::
+
+    Because the squared Mahalanobis distance (D²) follows a chi-squared distribution
+    with *k* degrees of freedom — where *k* is the number of columns included in the
+    computation — a principled outlier threshold can be derived from that distribution.
+    For a two-dimensional vowel space (F1 × F2, *k* = 2), the 95 % and 99 % critical
+    values are D ≈ 2.45 and D ≈ 3.03, respectively. For a three-dimensional space
+    (F1 × F2 × F3, *k* = 3), the corresponding thresholds are D ≈ 2.80 (95 %) and
+    D ≈ 3.37 (99 %). Tokens whose Mahalanobis distance exceeds the chosen threshold
+    lie outside the expected ellipsoid for that confidence level and are typically
+    flagged as potential measurement errors or atypical realizations. A 95 % threshold offers a
+    reasonable balance between sensitivity and specificity for most phonetic datasets;
+    the 99 % threshold is more conservative and should be preferred when the category
+    genuinely contains peripheral tokens that should not be discarded.
+
 Vowel normalization
 ~~~~~~~~~~~~~~~~~~~
 

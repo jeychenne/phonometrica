@@ -51,11 +51,12 @@ public:
 
 	Qt::ItemFlags flags(const QModelIndex &index) const override;
 
-	// Remove a match and notify the view. Returns the removed match for undo support.
-	AutoMatch removeMatch(int row);
+	// Remove a match and notify the view. Returns the removed match data
+	// (match + context cache + aux-column cells) for undo support.
+	Concordance::RemovedRow removeMatch(int row);
 
 	// Restore a previously removed match.
-	void restoreMatch(int row, AutoMatch m);
+	void restoreMatch(int row, Concordance::RemovedRow data);
 
 	// Refresh a single row (e.g. after editing an event).
 	void refreshRow(int row);

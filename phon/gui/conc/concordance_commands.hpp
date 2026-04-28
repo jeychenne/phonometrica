@@ -44,8 +44,8 @@ public:
 
 	struct RemovedMatch
 	{
-		int source_row;     // 0-based row in the source model
-		AutoMatch match;
+		int source_row;                 // 0-based row in the source model
+		Concordance::RemovedRow data;   // match + context + aux cells
 	};
 
 	DeleteMatchesCommand(ConcordanceView *view, std::vector<RemovedMatch> removed) :

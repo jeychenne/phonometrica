@@ -33,7 +33,7 @@ bool DeleteMatchesCommand::execute()
 	// Called on redo. Remove the same rows again (in reverse order).
 	auto *model = m_view->concModel();
 	for (int i = (int) m_removed.size() - 1; i >= 0; i--)
-		m_removed[i].match = model->removeMatch(m_removed[i].source_row);
+		m_removed[i].data = model->removeMatch(m_removed[i].source_row);
 
 	m_view->refreshAfterRowChange();
 	return true;
@@ -44,7 +44,7 @@ void DeleteMatchesCommand::undo()
 	// Restore rows in ascending order so that row indices stay valid.
 	auto *model = m_view->concModel();
 	for (auto &rm : m_removed)
-		model->restoreMatch(rm.source_row, std::move(rm.match));
+		model->restoreMatch(rm.source_row, std::move(rm.data));
 
 	m_view->refreshAfterRowChange();
 }
