@@ -184,6 +184,12 @@ String &String::operator=(String &&other) noexcept
 	return *this;
 }
 
+String String::operator+(const char* other) const
+{
+	String result(*this);
+	return result.append(other);
+}
+
 String &String::append(Substring suffix)
 {
 	auto new_size = intptr_t(this->size() + suffix.size());

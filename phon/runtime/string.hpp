@@ -133,6 +133,8 @@ public:
 	String &operator=(const String &other);
 	String &operator=(String &&other) noexcept;
 
+	String operator+(const char *other) const;
+
 	intptr_t size() const { return impl->end - impl->data; }
 
 	intptr_t grapheme_count() const;
