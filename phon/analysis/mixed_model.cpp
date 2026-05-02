@@ -172,25 +172,111 @@ static intptr_t chol_offset(const GroupLayout &lay, intptr_t g)
 	return off;
 }
 
-// Unpack a Cholesky parameter slice into a lower-triangular Eigen matrix.
+// =====================================================================
+// (τ, ω) parameterization of the random-effects covariance D
+// =====================================================================
+//
+// The outer optimizer parameterizes D via separate scale (σ) and
+// correlation (R) factors:
+//
+//     D = diag(σ) · R · diag(σ),   R = L_R · L_R'
+//
+// The unconstrained parameter slice for group g of size q has layout
+//
+//     theta_g = [ τ_0, τ_1, ..., τ_{q-1},                // log scales
+//                 ω_0, ω_1, ..., ω_{q(q-1)/2 - 1} ]      // stickbreaking
+//
+// where τ_t = log σ_t and ω parameterizes L_R via Stan's stickbreaking
+// transform: traverse the lower-triangle of L_R row by row in (i, j)
+// order, set z_{i,j} = tanh(ω_k), then
+//
+//     L_R[i, j] = z_{i,j} · sqrt(1 − Σ_{k<j} L_R[i, k]²)        (j < i)
+//     L_R[i, i] = sqrt(1 − Σ_{k<i} L_R[i, k]²)
+//     L_R[0, 0] = 1
+//
+// For q == 1 the layout is just [τ_0] (no ω), and the (τ, ω) form
+// reduces exactly to the previous log-Cholesky form (since L_R = [[1]]
+// and L = σ_0).
+//
+// `unpack_cholesky` returns L = diag(σ) · L_R, the lower Cholesky factor
+// of D.  All downstream consumers see the same shape of L as before, so
+// the parameterization change is localised to this section and to
+// `variance_prior_log_density` / theta initialisation sites.
+
+// Unpack a (τ, ω) parameter slice into the lower-triangular Cholesky
+// factor L of D = diag(σ) · L_R · L_R' · diag(σ).
 // theta_g: packed vector of length q(q+1)/2.
-// Returns the q × q lower Cholesky factor L (with exp applied to diagonal).
+// Returns q × q lower-triangular L with positive diagonal.
 static Eigen::MatrixXd unpack_cholesky(const double *theta_g, intptr_t q)
 {
+	// Build σ from log scales.
+	Eigen::VectorXd sigma(q);
+	for (intptr_t t = 0; t < q; t++) {
+		sigma[t] = std::exp(theta_g[t]);
+	}
+
+	// Build L_R via stickbreaking; L_R[0,0] = 1, all other entries
+	// derived from the q(q-1)/2 ω parameters.
+	Eigen::MatrixXd L_R = Eigen::MatrixXd::Zero(q, q);
+	if (q > 0) L_R(0, 0) = 1.0;
+	intptr_t omega_idx = q;
+	for (intptr_t i = 1; i < q; i++) {
+		double remaining = 1.0;
+		for (intptr_t j = 0; j < i; j++) {
+			double z = std::tanh(theta_g[omega_idx++]);
+			L_R(i, j) = z * std::sqrt(std::max(remaining, 0.0));
+			remaining -= L_R(i, j) * L_R(i, j);
+			if (remaining < 0.0) remaining = 0.0; // numerical safety
+		}
+		L_R(i, i) = std::sqrt(std::max(remaining, 0.0));
+	}
+
+	// L = diag(σ) · L_R.
 	Eigen::MatrixXd L = Eigen::MatrixXd::Zero(q, q);
-	for (intptr_t r = 0; r < q; r++)
-	{
-		for (intptr_t c = 0; c <= r; c++)
-		{
-			intptr_t idx = r * (r + 1) / 2 + c;
-			if (r == c) {
-				L(r, c) = std::exp(theta_g[idx]); // diagonal: exponentiate
-			} else {
-				L(r, c) = theta_g[idx];            // off-diagonal: as-is
-			}
+	for (intptr_t i = 0; i < q; i++) {
+		for (intptr_t j = 0; j <= i; j++) {
+			L(i, j) = sigma[i] * L_R(i, j);
 		}
 	}
 	return L;
+}
+
+// Pack a physical Cholesky factor L (= chol(D), positive diagonal) into
+// the (τ, ω) parameter layout. Used by warm-start paths that take a
+// previously-fitted covariance and seed the optimizer with it.
+//
+// Output: writes q(q+1)/2 entries into theta_g.
+static void pack_chol_to_theta(const Eigen::MatrixXd &L,
+                                double *theta_g,
+                                intptr_t q)
+{
+	// σ_t = L_t,t · sqrt(1 + ...)  — actually σ_t = sqrt(D_tt) = sqrt(Σ_k L²_tk).
+	// L_R[t, k] = L[t, k] / σ_t.
+	for (intptr_t t = 0; t < q; t++) {
+		double row_norm_sq = 0.0;
+		for (intptr_t k = 0; k <= t; k++) row_norm_sq += L(t, k) * L(t, k);
+		double sigma_t = std::sqrt(std::max(row_norm_sq, 1e-20));
+		theta_g[t] = std::log(sigma_t);
+	}
+
+	intptr_t omega_idx = q;
+	for (intptr_t i = 1; i < q; i++) {
+		// Recompute σ_i for this row, then walk the off-diagonals.
+		double row_norm_sq = 0.0;
+		for (intptr_t k = 0; k <= i; k++) row_norm_sq += L(i, k) * L(i, k);
+		double sigma_i = std::sqrt(std::max(row_norm_sq, 1e-20));
+
+		double remaining = 1.0;  // = 1 − Σ_{k<j} L_R[i, k]²
+		for (intptr_t j = 0; j < i; j++) {
+			double L_R_ij = L(i, j) / sigma_i;
+			double v_j = std::sqrt(std::max(remaining, 1e-20));
+			double z = L_R_ij / v_j;
+			z = std::clamp(z, -1.0 + 1e-12, 1.0 - 1e-12);
+			theta_g[omega_idx++] = std::atanh(z);
+			remaining -= L_R_ij * L_R_ij;
+			if (remaining < 0.0) remaining = 0.0;
+		}
+	}
 }
 
 // Compute D = L L' from the Cholesky factor.
@@ -207,12 +293,24 @@ static Eigen::MatrixXd cholesky_to_precision(const Eigen::MatrixXd &L)
 	return Linv.transpose() * Linv;
 }
 
-// log|D| = 2 Σ log L_kk = 2 Σ θ_diag (since diag elements are stored as log).
+// log|D| = 2 Σ log L_kk where L is the Cholesky factor returned by
+// `unpack_cholesky`. Under the (τ, ω) parameterization:
+//
+//     L_kk = σ_k · L_R[k, k] = exp(τ_k) · sqrt(1 − Σ_{j<k} L_R[k, j]²)
+//
+// so log L_kk = τ_k + (1/2) Σ_{j<k} log(1 − z_{k,j}²) and
+// log|D| = 2 Σ τ_k + Σ_k Σ_{j<k} log(1 − z_{k,j}²).
 static double log_det_D(const double *theta_g, intptr_t q)
 {
-	double ld = 0;
-	for (intptr_t r = 0; r < q; r++) {
-		ld += theta_g[r * (r + 1) / 2 + r]; // the log L_rr value
+	double ld = 0.0;
+	for (intptr_t t = 0; t < q; t++) ld += theta_g[t];   // 2 Σ τ_t
+
+	intptr_t omega_idx = q;
+	for (intptr_t i = 1; i < q; i++) {
+		for (intptr_t j = 0; j < i; j++) {
+			double z = std::tanh(theta_g[omega_idx++]);
+			ld += 0.5 * std::log(std::max(1.0 - z * z, 1e-20));
+		}
 	}
 	return 2.0 * ld;
 }
@@ -431,40 +529,101 @@ static double fixed_prior_nll(const Eigen::VectorXd &beta,
 // Compute the variance-component prior contribution (log-density + Jacobian).
 // Returns a value to be SUBTRACTED from the negative log-posterior.
 // D_cov[g] is the q_g × q_g covariance matrix for group g.
+//
+// Under the (τ, ω) parameterization (see header at unpack_cholesky), this
+// function computes the change-of-variables-corrected prior in φ = (τ, ω)
+// coordinates:
+//
+//   log p(φ)  =  Σ_t log π(σ_t)                     // PC / Student-t / etc.
+//             + Σ_t log σ_t                          // τ → σ Jacobian
+//             + Σ_i (q-i-1+2(η-1)) · log L_R[i,i]    // LKJ-Cholesky density
+//             + Σ_{i,j<i} [log(1−z²_{i,j})
+//                          + (1/2) log(1 − Σ_{k<j} L_R[i,k]²)]   // ω → L_R Jac
+//
+// where σ_t = sqrt(D_tt), L_R = diag(σ)⁻¹ · chol(D), and z_{i,j} are the
+// stickbreaking parameters recoverable from L_R. Since this function only
+// receives D_cov (not theta), we recompute σ and L_R via Cholesky locally;
+// q is small (typically ≤ 4) so the cost is negligible.
+//
+// For q == 1: the L_R / stickbreaking pieces are empty and this collapses
+// to log π(σ_0) + log σ_0 — identical to the previous q=1 form.
+//
+// For q ≥ 2 with η == 1: the LKJ-Cholesky term is zero only at i=0
+// (where L_R[0,0]=1) and at i=q-1 (where the exponent is zero); inner
+// rows (1 ≤ i ≤ q-2) contribute (q-i-1)·log L_R[i,i].
+//
+// This formula matches the prior brms/Stan apply when configured with
+// independent SD priors and lkj_corr_cholesky(η). Verified against
+// finite-difference Jacobians for the stickbreaking transform up to q=5.
 static double variance_prior_log_density(const std::vector<Eigen::MatrixXd> &D_cov,
                                           const PriorSpec &priors,
                                           const GroupLayout &lay)
 {
-	double lp = 0;
+	double lp = 0.0;
 	for (intptr_t g = 0; g < lay.G; g++)
 	{
 		intptr_t qg = lay.q[g];
 
-		// Marginal prior on each random-effect SD (plus log-σ Jacobian).
-		for (intptr_t t = 0; t < qg; t++)
-		{
-			double sd = std::sqrt(std::max(D_cov[g](t, t), 1e-20));
-			// Prior on SD + Jacobian for the exp transform (log σ → σ).
-			lp += priors.variance_components.log_density(sd) + std::log(sd);
+		// ── Recover σ and L_R from D_cov[g] ──────────────────────────
+		Eigen::VectorXd sigma(qg);
+		for (intptr_t t = 0; t < qg; t++) {
+			sigma[t] = std::sqrt(std::max(D_cov[g](t, t), 1e-20));
 		}
 
-		// LKJ-style prior on the correlation structure when q_g ≥ 2.
-		// Density: p(R | η) ∝ |R|^(η − 1) where R is the correlation matrix
-		// obtained from D = σ R σ, so R_ij = D_ij / (σ_i σ_j) and therefore
-		//     |R| = |D| / ∏_i D_ii.
-		// Taking logs:  log|R| = log|D| − Σ_i log D_ii.
-		// With η = 1 (the default), this contribution is identically zero,
-		// so we skip the computation entirely — preserves exact backward
-		// compatibility when the user does not set an LKJ prior.
-		if (qg >= 2 && priors.lkj_eta != 1.0)
-		{
-			double log_det_D = std::log(std::max(D_cov[g].determinant(), 1e-20));
-			double log_det_diag = 0;
-			for (intptr_t t = 0; t < qg; t++) {
-				log_det_diag += std::log(std::max(D_cov[g](t, t), 1e-20));
+		Eigen::MatrixXd L_R = Eigen::MatrixXd::Zero(qg, qg);
+		bool L_R_ok = true;
+		if (qg >= 1) L_R(0, 0) = 1.0;
+		if (qg >= 2) {
+			Eigen::LLT<Eigen::MatrixXd> llt(D_cov[g]);
+			if (llt.info() == Eigen::Success) {
+				Eigen::MatrixXd L = llt.matrixL();
+				for (intptr_t i = 0; i < qg; i++) {
+					for (intptr_t j = 0; j <= i; j++) {
+						L_R(i, j) = L(i, j) / sigma[i];
+					}
+				}
+			} else {
+				// D_cov is singular — set L_R = identity as a safe fallback.
+				// Means we treat the correlation structure as zero at this
+				// boundary point, which costs us the LKJ contribution but
+				// keeps the optimizer well-behaved.
+				L_R.setIdentity(qg, qg);
+				L_R_ok = false;
 			}
-			double log_det_R = log_det_D - log_det_diag;
-			lp += (priors.lkj_eta - 1.0) * log_det_R;
+		}
+
+		// ── Marginal SD prior + τ → σ Jacobian (per dim) ────────────
+		for (intptr_t t = 0; t < qg; t++) {
+			double s = sigma[t];
+			lp += priors.variance_components.log_density(s) + std::log(s);
+		}
+
+		if (qg < 2) continue;
+
+		// ── LKJ-Cholesky density on L_R ──────────────────────────────
+		// Stan's formula (1-indexed k=1..q): exponent = q − k + 2η − 2.
+		// In 0-indexed i = k−1, that's q − i − 1 + 2(η − 1).
+		// L_R[0,0] = 1 always so the i=0 contribution vanishes.
+		// For η = 1 and i = q-1 the exponent is also 0.
+		for (intptr_t i = 1; i < qg; i++) {
+			double exp_i = double(qg - i - 1) + 2.0 * (priors.lkj_eta - 1.0);
+			if (std::abs(exp_i) > 1e-15) {
+				lp += exp_i * std::log(std::max(L_R(i, i), 1e-20));
+			}
+		}
+
+		// ── Stickbreaking ω → L_R Jacobian ──────────────────────────
+		if (!L_R_ok) continue;  // skip Jacobian at the singular boundary
+		for (intptr_t i = 1; i < qg; i++) {
+			double sum_sq = 0.0;          // Σ_{k<j} L_R[i, k]²
+			for (intptr_t j = 0; j < i; j++) {
+				double v_j_sq = std::max(1.0 - sum_sq, 1e-20);
+				double v_j    = std::sqrt(v_j_sq);
+				double z      = L_R(i, j) / v_j;
+				z = std::clamp(z, -1.0 + 1e-12, 1.0 - 1e-12);
+				lp += std::log(1.0 - z * z) + 0.5 * std::log(v_j_sq);
+				sum_sq += L_R(i, j) * L_R(i, j);
+			}
 		}
 	}
 	return lp;
@@ -2897,6 +3056,13 @@ static GridPointResult eval_gaussian_grid_point(
 //
 // The neg-log-posterior is computed from the PIRLS result + prior terms
 // to avoid a redundant PIRLS solve (which PirlsObjective::eval would do).
+//
+// u_init: if size == lay.J_total, used as warm start for the inner PIRLS
+// solver. Cold-starting from u=0 on binomial GLMMs with strong random
+// effects can OVERSHOOT to a non-mode point (see comment at the
+// declaration of phase2_warm_u in the public mixed_model entry point);
+// passing the joint optimizer's converged û here keeps PIRLS at the
+// true conditional mode.
 static GridPointResult eval_pirls_grid_point(
 	const Eigen::VectorXd &theta,
 	const Family &fam,
@@ -2907,7 +3073,8 @@ static GridPointResult eval_pirls_grid_point(
 	const Eigen::VectorXd &beta_init,
 	const PriorSpec *priors,
 	const Array<String> *coef_names,
-	const Eigen::VectorXd *off_ptr = nullptr)
+	const Eigen::VectorXd *off_ptr = nullptr,
+	const Eigen::VectorXd &u_init = Eigen::VectorXd())
 {
 	GridPointResult gpr;
 	intptr_t G = lay.G;
@@ -2932,14 +3099,14 @@ static GridPointResult eval_pirls_grid_point(
 		double theta_nb = std::exp(theta[n_chol]);
 		auto fam_nb = Family::negbin(theta_nb);
 		res = solve_pirls(D_inv, log_det_Dg, fam_nb, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
+		                   beta_init, u_init, priors, coef_names, off_ptr);
 	}
 	else if (fam.name == "beta")
 	{
 		double phi_beta = std::exp(theta[n_chol]);
 		auto fam_beta = Family::beta(phi_beta);
 		res = solve_pirls(D_inv, log_det_Dg, fam_beta, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
+		                   beta_init, u_init, priors, coef_names, off_ptr);
 	}
 	else if (fam.name == "student")
 	{
@@ -2947,13 +3114,13 @@ static GridPointResult eval_pirls_grid_point(
 		double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
 		auto fam_t = Family::student(sigma_t, nu_t);
 		res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
+		                   beta_init, u_init, priors, coef_names, off_ptr);
 	}
 	else
 	{
 		// Binomial, Poisson: no extra dispersion parameters.
 		res = solve_pirls(D_inv, log_det_Dg, fam, Xm, ym, lay, n, p,
-		                   beta_init, Eigen::VectorXd(), priors, coef_names, off_ptr);
+		                   beta_init, u_init, priors, coef_names, off_ptr);
 	}
 
 	gpr.beta = res.beta;
@@ -4371,31 +4538,33 @@ static void inla_grid_integrate_gaussian(
 		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
 	}
 
-#ifdef PHON_INLA_DEBUG
-	// ── Diagnostic dump (compile with -DPHON_INLA_DEBUG) ────────────
+	// ── Diagnostic dump (set env var PHON_DIAG_GRID=1 to enable) ────
 	//
-	// Two hypotheses under investigation:
+	// Built-in, runtime-toggled diagnostic for INLA grid integration.
+	// Same idiom as PHON_DIAG_LAPLACE: compiled in always, zero cost
+	// when off, no recompile required to enable.
 	//
-	//   (1) p_WAIC inflation: is the posterior approximation used by
-	//       compute_grid_waic (mixture of N(β̂_k, Σ_β(θ_k))) under-
-	//       representing the β↔β ridge correlations that MCMC captures?
+	// Useful for diagnosing:
+	//   (1) p_WAIC inflation: per-grid-point correlation matrices of
+	//       Σ_β(θ_k) and the mixture correlation matrix reveal whether
+	//       the β↔β ridge correlations MCMC captures are present.
+	//   (2) hyperparameter posterior collapse: if all the weight ends
+	//       up at one grid point, hyper Post.SD will be 0 and any
+	//       coefficient with a wildly displaced β̂(θ_k) at that point
+	//       will dominate the mixture mean.
+	//   (3) σ truncation: if the grid does not give weight to the
+	//       posterior tail, the marginal σ posterior under-shrinks.
 	//
-	//       Inspect per-grid-point correlation matrices of Σ_β(θ_k)
-	//       and the mixture correlation matrix. If the ridge between
-	//       (Intercept, genderM) exists, corr(β_0, β_gender) should
-	//       be strongly negative in one or both.
-	//
-	//   (2) σ_u under-shrinkage vs brms: does the CCD grid give any
-	//       weight to the right tail of log σ_u, or does it truncate?
-	//
-	//       Inspect the per-grid-point σ values and weights.  If the
-	//       largest σ in the grid has σ < post.mean and w < 0.01, the
-	//       grid is truncating.
-	//
-	// Pipe the run through `2> inla_debug.log` to capture.
+	// Pipe the run through `2> grid_diag.log` to capture.
 	{
+		static const bool diag_grid_on = []() {
+			const char *e = std::getenv("PHON_DIAG_GRID");
+			return e && e[0] && e[0] != '0';
+		}();
+		if (diag_grid_on)
+		{
 		std::fprintf(stderr,
-			"\n=== PHON_INLA_DEBUG: inla_grid_integrate_gaussian ===\n");
+			"\n=== PHON_DIAG_GRID: inla_grid_integrate_gaussian ===\n");
 		std::fprintf(stderr, "d=%ld  n_grid=%ld  n_chol=%ld  p=%ld  G=%ld\n",
 			(long)d, (long)n_grid, (long)n_chol, (long)p, (long)lay.G);
 
@@ -4403,6 +4572,13 @@ static void inla_grid_integrate_gaussian(
 		std::fprintf(stderr, "H eigenvalues (clamped): ");
 		for (intptr_t j = 0; j < d; j++)
 			std::fprintf(stderr, "%.4g ", eigenvalues[j]);
+		std::fprintf(stderr, "\n");
+
+		// T column norms (= 1/√λ each), the per-axis step in θ-space
+		// produced by a unit step in z-space.
+		std::fprintf(stderr, "T column norms (axial θ step per unit z): ");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%.4g ", T.col(j).norm());
 		std::fprintf(stderr, "\n");
 
 		// θ* (the mode, in log-σ / Cholesky coords)
@@ -4447,6 +4623,33 @@ static void inla_grid_integrate_gaussian(
 			for (intptr_t j = 0; j < p; j++)
 				std::fprintf(stderr, " %-9.3f", results[k].beta[j]);
 			std::fprintf(stderr, "\n");
+		}
+
+		// ── Per-coefficient mixture mean breakdown ─────────────────
+		// For each fixed effect j, list w_k · β_k[j] across k so that
+		// Σ_k w_k · β_k[j] = mix_mean[j] is visible term-by-term.
+		// Critical for diagnosing cases where mix_mean != β̂(θ*) but
+		// no single grid point looks dominant.
+		std::fprintf(stderr,
+			"\nper-coefficient mixture mean breakdown (Σ_k w_k · β_k[j]):\n");
+		for (intptr_t j = 0; j < p; j++)
+		{
+			const char *cname = "?";
+			std::string cname_buf;
+			if (coef_names && (intptr_t)(j + 1) <= coef_names->size()) {
+				cname_buf = std::string((*coef_names)[j + 1].data(),
+				                          (*coef_names)[j + 1].size());
+				cname = cname_buf.c_str();
+			}
+			std::fprintf(stderr, "  β[%ld]=%s:  mode=%+.4f  mean=%+.4f\n",
+				(long)j, cname, results[0].beta[j], mix_mean[j]);
+			for (intptr_t k = 0; k < n_grid; k++) {
+				if (std::abs(w[k]) < 1e-12) continue;
+				std::fprintf(stderr,
+					"    k=%-3ld w=%.4f  β_k=%+.4f  contrib=%+.4f\n",
+					(long)k, w[k], results[k].beta[j],
+					w[k] * results[k].beta[j]);
+			}
 		}
 
 		// ── Per-grid-point correlation matrices of Σ_β(θ_k) ─────────
@@ -4503,9 +4706,9 @@ static void inla_grid_integrate_gaussian(
 			}
 			std::fprintf(stderr, "\n");
 		}
-		std::fprintf(stderr, "=== end PHON_INLA_DEBUG ===\n\n");
+		std::fprintf(stderr, "=== end PHON_DIAG_GRID ===\n\n");
+		}
 	}
-#endif
 
 	// ── 7. Mixture CDF, quantiles, and posterior summaries ──────
 
@@ -4711,6 +4914,14 @@ static void inla_grid_integrate_gaussian(
 //
 // Outer θ layout: (chol_1, ..., chol_G, [log disp...])
 // where n_disp = 0 (binomial/Poisson), 1 (NB/beta), or 2 (Student t).
+//
+// u_warm_init: if size == lay.J_total, used as a warm start for both the
+// FD-Hessian objective evaluations (via PirlsObjective::last_u) and the
+// inner PIRLS solve at each grid point. The PIRLS Newton iterations have
+// no step-halving or trust-region, so cold-starting from u=0 on binomial
+// GLMMs with strong random effects can OVERSHOOT to a non-mode point;
+// passing the joint optimizer's converged û keeps us on the correct mode
+// and gives a sensible outer Hessian.
 static void inla_grid_integrate_pirls(
 	Model &model,
 	const PirlsObjective &obj,
@@ -4723,7 +4934,8 @@ static void inla_grid_integrate_pirls(
 	const Eigen::VectorXd &beta_init,
 	const PriorSpec *priors,
 	const Array<String> *coef_names,
-	const Eigen::VectorXd *off_ptr = nullptr)
+	const Eigen::VectorXd *off_ptr = nullptr,
+	const Eigen::VectorXd &u_warm_init = Eigen::VectorXd())
 {
 	intptr_t d = theta_star.size();  // n_chol + n_disp
 
@@ -4736,6 +4948,21 @@ static void inla_grid_integrate_pirls(
 			"(size=%). Mode-finding failed silently upstream — this is a "
 			"bug in the Bayesian optimizer path, not in the model spec.",
 			(long) d);
+	}
+
+	// ── Seed the PirlsObjective warm-start ───────────────────────────
+	// PirlsObjective::eval uses last_u as the inner u_init for solve_pirls
+	// and overwrites last_u with the converged u for the next eval. Without
+	// a seed it starts from an empty vector → solve_pirls cold-starts u=0,
+	// which on this regime (binomial + strong RE) overshoots to a non-mode
+	// point and produces astronomical FD Hessians (observed: λ ≈ 1e17,
+	// causing T = 1/√λ ≈ 1e-9 so the grid collapses to the mode and σ
+	// hyperparameter posteriors collapse to a delta).
+	//
+	// last_u is mutable on a const PirlsObjective &, by design — see the
+	// declaration in struct PirlsObjective.
+	if (u_warm_init.size() == lay.J_total) {
+		obj.last_u = u_warm_init;
 	}
 
 	// ── 1. Hessian at the mode ───────────────────────────────────
@@ -4766,7 +4993,8 @@ static void inla_grid_integrate_pirls(
 		Eigen::VectorXd theta_k = theta_star + T * z_points[k];
 		results[k] = eval_pirls_grid_point(theta_k, fam, Xm, ym, lay,
 		                                    n, p, n_chol, beta_init,
-		                                    priors, coef_names, off_ptr);
+		                                    priors, coef_names, off_ptr,
+		                                    u_warm_init);
 		log_posterior[k] = -results[k].neg_log_posterior;
 	}
 
@@ -4860,6 +5088,194 @@ static void inla_grid_integrate_pirls(
 	{
 		Eigen::VectorXd diff = sla_beta[k] - mix_mean;
 		mix_var += w[k] * (results[k].vcov_beta + diff * diff.transpose());
+	}
+
+	// ── Diagnostic dump (set env var PHON_DIAG_GRID=1 to enable) ────
+	//
+	// Built-in, runtime-toggled diagnostic for INLA grid integration in
+	// the non-Gaussian (PIRLS) path. Same idiom as PHON_DIAG_LAPLACE:
+	// compiled in always, zero cost when off, no recompile required.
+	//
+	// Useful for diagnosing:
+	//   (1) hyperparameter posterior collapse (Post.SD = 0): if a single
+	//       grid point gets all the weight, the σ marginal collapses to
+	//       a delta. Verify by inspecting the w column.
+	//   (2) mix_mean displaced from β̂(θ*) without any grid point
+	//       looking dominant: the per-coefficient breakdown shows
+	//       w_k · β_k[j] term-by-term so the displacement source is
+	//       visible directly.
+	//   (3) PIRLS divergence at axial points: extreme |β| at large |z|
+	//       paired with finite log_post indicates the inner solver
+	//       converged to a numerically unreasonable mode rather than
+	//       the conditional posterior mode at θ_k.
+	//
+	// Pipe the run through `2> grid_diag.log` to capture.
+	{
+		static const bool diag_grid_on = []() {
+			const char *e = std::getenv("PHON_DIAG_GRID");
+			return e && e[0] && e[0] != '0';
+		}();
+		if (diag_grid_on)
+		{
+		intptr_t n_disp = d - n_chol;
+		std::fprintf(stderr,
+			"\n=== PHON_DIAG_GRID: inla_grid_integrate_pirls ===\n");
+		std::fprintf(stderr,
+			"family=%s  d=%ld  n_grid=%ld  n_chol=%ld  n_disp=%ld  p=%ld  G=%ld\n",
+			std::string(fam.name.data(), fam.name.size()).c_str(),
+			(long)d, (long)n_grid, (long)n_chol, (long)n_disp,
+			(long)p, (long)lay.G);
+
+		// Outer Hessian eigenvalues (clamped to ≥1e-6 already)
+		std::fprintf(stderr, "H eigenvalues (clamped): ");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%.4g ", eigenvalues[j]);
+		std::fprintf(stderr, "\n");
+
+		// T column norms (= 1/√λ each), the per-axis step in θ-space
+		// produced by a unit step in z-space.
+		std::fprintf(stderr, "T column norms (axial θ step per unit z): ");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%.4g ", T.col(j).norm());
+		std::fprintf(stderr, "\n");
+
+		// θ* (the mode, in log-σ Cholesky [+ log dispersion] coords)
+		std::fprintf(stderr, "theta_star = [");
+		for (intptr_t j = 0; j < d; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "", theta_star[j]);
+		std::fprintf(stderr, "]\n");
+
+		// ── Per-grid-point table ────────────────────────────────────
+		std::fprintf(stderr, "\nper-grid-point summary:\n");
+		std::fprintf(stderr, "%-3s %-8s %-9s %-11s %-8s",
+		             "k", "|z|", "w_ccd", "log_post", "w");
+		for (intptr_t g = 0; g < lay.G; g++)
+			for (intptr_t t = 0; t < lay.q[g]; t++)
+				std::fprintf(stderr, " sd[g%ld,t%ld]", (long)g, (long)t);
+		// Dispersion columns vary by family
+		for (intptr_t j = 0; j < n_disp; j++)
+			std::fprintf(stderr, " %-9s", "disp");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, " %-9s", "beta");
+		std::fprintf(stderr, "\n");
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+			std::fprintf(stderr, "%-3ld %-8.3f %-9.4g %-11.4f %-8.4f",
+			             (long)k, z_points[k].norm(), w_ccd[k],
+			             std::isfinite(log_posterior[k]) ? log_posterior[k] : NAN,
+			             w[k]);
+
+			// Recover σ values from θ_k for each RE diag term
+			intptr_t cp = 0;
+			for (intptr_t g = 0; g < lay.G; g++) {
+				intptr_t qg = lay.q[g];
+				Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + cp, qg);
+				Eigen::MatrixXd D = cholesky_to_cov(L);
+				for (intptr_t t = 0; t < qg; t++)
+					std::fprintf(stderr, " %-10.3f",
+					             std::sqrt(std::max(D(t, t), 0.0)));
+				cp += n_chol_params(qg);
+			}
+
+			// Dispersion parameters: NB θ_nb=exp(θ[n_chol]); Beta φ=exp(θ[n_chol]);
+			// Student σ=exp(θ[n_chol]), ν=clamp(exp(θ[n_chol+1]), 2, 200).
+			for (intptr_t j = 0; j < n_disp; j++) {
+				double dv = std::exp(theta_k[n_chol + j]);
+				if (fam.name == "student" && j == 1)
+					dv = std::clamp(dv, 2.0, 200.0);
+				std::fprintf(stderr, " %-9.3f", dv);
+			}
+
+			for (intptr_t j = 0; j < p; j++)
+				std::fprintf(stderr, " %-9.3f", results[k].beta[j]);
+			std::fprintf(stderr, "\n");
+		}
+
+		// ── Per-coefficient mixture mean breakdown ─────────────────
+		// For each fixed effect j, list w_k · β_k[j] across k so that
+		// Σ_k w_k · β_k[j] = mix_mean[j] is visible term-by-term.
+		// Critical for diagnosing cases where mix_mean != β̂(θ*) but
+		// no single grid point looks dominant.
+		std::fprintf(stderr,
+			"\nper-coefficient mixture mean breakdown (Σ_k w_k · β_k[j]):\n");
+		for (intptr_t j = 0; j < p; j++)
+		{
+			const char *cname = "?";
+			std::string cname_buf;
+			if (coef_names && (intptr_t)(j + 1) <= coef_names->size()) {
+				cname_buf = std::string((*coef_names)[j + 1].data(),
+				                          (*coef_names)[j + 1].size());
+				cname = cname_buf.c_str();
+			}
+			std::fprintf(stderr, "  β[%ld]=%s:  mode=%+.4f  mean=%+.4f\n",
+				(long)j, cname, results[0].beta[j], mix_mean[j]);
+			for (intptr_t k = 0; k < n_grid; k++) {
+				if (std::abs(w[k]) < 1e-12) continue;
+				std::fprintf(stderr,
+					"    k=%-3ld w=%.4f  β_k=%+.4f  contrib=%+.4f\n",
+					(long)k, w[k], results[k].beta[j],
+					w[k] * results[k].beta[j]);
+			}
+		}
+
+		// ── Per-grid-point correlation matrices of Σ_β(θ_k) ─────────
+		// Only show grid points with non-negligible weight.
+		std::fprintf(stderr,
+			"\nper-grid-point correlation matrix of Σ_β(θ_k)  (coef_names: ");
+		if (coef_names) {
+			for (intptr_t j = 1; j <= p; j++)
+				std::fprintf(stderr, "%s%s", j > 1 ? ", " : "",
+				             std::string((*coef_names)[j].data(),
+				                         (*coef_names)[j].size()).c_str());
+		} else {
+			std::fprintf(stderr, "unavailable");
+		}
+		std::fprintf(stderr, "):\n");
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			if (w[k] < 1e-6) continue;
+			std::fprintf(stderr, "  k=%ld  (w=%.4f):\n", (long)k, w[k]);
+			for (intptr_t i = 0; i < p; i++)
+			{
+				std::fprintf(stderr, "   ");
+				for (intptr_t j = 0; j < p; j++)
+				{
+					double dii = std::max(results[k].vcov_beta(i, i), 1e-30);
+					double djj = std::max(results[k].vcov_beta(j, j), 1e-30);
+					double corr = results[k].vcov_beta(i, j)
+					            / std::sqrt(dii * djj);
+					std::fprintf(stderr, " %7.3f", corr);
+				}
+				std::fprintf(stderr, "\n");
+			}
+		}
+
+		// ── Mixture posterior summary ───────────────────────────────
+		std::fprintf(stderr, "\nmixture posterior for β:\n  mean = [");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "", mix_mean[j]);
+		std::fprintf(stderr, "]\n  sd   = [");
+		for (intptr_t j = 0; j < p; j++)
+			std::fprintf(stderr, "%s%.4f", j ? ", " : "",
+			             std::sqrt(std::max(mix_var(j, j), 0.0)));
+		std::fprintf(stderr, "]\n  correlation matrix:\n");
+		for (intptr_t i = 0; i < p; i++)
+		{
+			std::fprintf(stderr, "   ");
+			for (intptr_t j = 0; j < p; j++)
+			{
+				double dii = std::max(mix_var(i, i), 1e-30);
+				double djj = std::max(mix_var(j, j), 1e-30);
+				double corr = mix_var(i, j) / std::sqrt(dii * djj);
+				std::fprintf(stderr, " %7.3f", corr);
+			}
+			std::fprintf(stderr, "\n");
+		}
+		std::fprintf(stderr, "=== end PHON_DIAG_GRID ===\n\n");
+		}
 	}
 
 	// ── 7. Mixture CDF, quantiles, and posterior summaries ──────
@@ -5345,8 +5761,15 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
 
-		// ── Initialize Cholesky from ANOVA variance estimates ──
+		// ── Initialize (τ, ω) parameters from ANOVA variance estimates ──
+		// New layout per group: [τ_0, ..., τ_{q-1}, ω_0, ..., ω_{q(q-1)/2-1}].
+		// First q entries hold log σ_t (initialised from ANOVA s²_init,
+		// with non-leading random-effect terms shrunk by 0.1 — same heuristic
+		// as the previous log-Cholesky form). Remaining entries are 0,
+		// which under stickbreaking corresponds to zero correlations
+		// (tanh(0) = 0).
 		Eigen::VectorXd theta(outer_dim_gauss);
+		theta.setZero();
 		{
 			intptr_t chol_pos = 0;
 			for (intptr_t g = 0; g < G; g++)
@@ -5354,18 +5777,9 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				intptr_t qg = lay.q[g];
 				intptr_t np = n_chol_params(qg);
 				double s2_init = std::exp(2.0 * phi[p + g]);
-				for (intptr_t r = 0; r < qg; r++)
-				{
-					for (intptr_t c = 0; c <= r; c++)
-					{
-						intptr_t idx = chol_pos + r * (r + 1) / 2 + c;
-						if (r == c) {
-							double var_init = (r == 0) ? s2_init : s2_init * 0.1;
-							theta[idx] = 0.5 * std::log(std::max(var_init, 1e-4));
-						} else {
-							theta[idx] = 0.0;
-						}
-					}
+				for (intptr_t t = 0; t < qg; t++) {
+					double var_init = (t == 0) ? s2_init : s2_init * 0.1;
+					theta[chol_pos + t] = 0.5 * std::log(std::max(var_init, 1e-4));
 				}
 				chol_pos += np;
 			}
@@ -5598,7 +6012,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				beta_init[i] = pois_model.beta[i + 1];
 			}
 
-			// Use Poisson Cholesky as starting outer theta
+			// Use Poisson covariance as starting outer theta — convert
+			// physical L = chol(D) into the (τ, ω) layout via pack_chol_to_theta.
 			intptr_t chol_pos = 0;
 			for (intptr_t g = 0; g < G; g++)
 			{
@@ -5606,43 +6021,34 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				intptr_t np = n_chol_params(qg);
 				auto &re = pois_model.random_effects[g + 1]; // 1-based Array
 
-				for (intptr_t r = 0; r < qg; r++)
-				{
-					for (intptr_t c = 0; c <= r; c++)
-					{
+				// Reconstruct physical L from re.cov_chol (1-based, packed
+				// row-by-row lower triangle, stored as the actual Cholesky
+				// factor of D — parameterization-independent).
+				Eigen::MatrixXd L_phys = Eigen::MatrixXd::Zero(qg, qg);
+				for (intptr_t r = 0; r < qg; r++) {
+					for (intptr_t c = 0; c <= r; c++) {
 						intptr_t pack_idx = r * (r + 1) / 2 + c;
-						double val = re.cov_chol[pack_idx + 1]; // 1-based Array
-						if (r == c) {
-							theta[chol_pos + pack_idx] = std::log(std::max(val, 1e-6));
-						} else {
-							theta[chol_pos + pack_idx] = val;
-						}
+						L_phys(r, c) = re.cov_chol[pack_idx + 1];
 					}
 				}
+				pack_chol_to_theta(L_phys, theta.data() + chol_pos, qg);
 				chol_pos += np;
 			}
 		}
 		else
 		{
 			// Standard initialization: ANOVA variance decomposition.
+			// (τ, ω) layout: first q entries log σ_t, rest zero (no corr).
 			intptr_t chol_pos = 0;
 			for (intptr_t g = 0; g < G; g++)
 			{
 				intptr_t qg = lay.q[g];
 				intptr_t np = n_chol_params(qg);
+				for (intptr_t i = 0; i < np; i++) theta[chol_pos + i] = 0.0;
 				double s2_init = std::exp(2.0 * phi[p + g]);
-				for (intptr_t r = 0; r < qg; r++)
-				{
-					for (intptr_t c = 0; c <= r; c++)
-					{
-						intptr_t idx = chol_pos + r * (r + 1) / 2 + c;
-						if (r == c) {
-							double var_init = (r == 0) ? s2_init : s2_init * 0.1;
-							theta[idx] = 0.5 * std::log(std::max(var_init, 1e-4));
-						} else {
-							theta[idx] = 0.0;
-						}
-					}
+				for (intptr_t t = 0; t < qg; t++) {
+					double var_init = (t == 0) ? s2_init : s2_init * 0.1;
+					theta[chol_pos + t] = 0.5 * std::log(std::max(var_init, 1e-4));
 				}
 				chol_pos += np;
 			}
@@ -5993,13 +6399,6 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 
 		// beta_hat already set by Phase 2
-
-		// Assemble full φ = (β̂, θ̂) for SE computation
-		phi.resize(outer_dim);
-		phi.head(p) = beta_hat;
-		for (intptr_t g = 0; g < G; g++) {
-			phi[p + g] = theta[g];
-		}
 
 		// Save for INLA grid integration (after Model is built).
 		// Use converged beta_hat as the PIRLS warm-start for grid
@@ -6631,9 +7030,19 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		{
 			PirlsObjective pirls_obj{fam, Xm, ym, lay, n, p,
 			                          saved_beta_init, saved_n_chol, priors, coef_names, off_ptr};
+			// Warm-start û from the joint optimizer's converged value
+			// (final_inner.u, populated above by solve_u_given_beta).
+			// Without this, both compute_fd_hessian and the per-grid-point
+			// solve_pirls calls cold-start at u=0, which on binomial GLMMs
+			// with strong random effects overshoots to a non-mode point —
+			// inflating the FD Hessian (eigenvalues ~1e17 observed) so
+			// T = 1/√λ collapses to 0, all grid points degenerate to θ*,
+			// and conditional β̂(θ_k) lands at the overshoot mode rather
+			// than the true MAP.  See the declaration of phase2_warm_u.
 			inla_grid_integrate_pirls(model, pirls_obj, saved_theta,
 			                           fam, Xm, ym, lay, n, p, saved_n_chol,
-			                           saved_beta_init, priors, coef_names, off_ptr);
+			                           saved_beta_init, priors, coef_names, off_ptr,
+			                           final_inner.u);
 		}
 	}
 
