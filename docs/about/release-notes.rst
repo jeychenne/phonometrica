@@ -2,6 +2,15 @@ Release notes
 -------------
 
 
+0.9.2 (unreleased)
+~~~~~~~~~~~~~~~~~~
+
+**Scripting**
+
+- New Python-style triple-quoted string literals (``"""..."""`` and ``'''...'''``) for writing multi-line strings without manual concatenation. Line breaks and isolated occurrences of the delimiter are part of the content; the string is closed by three delimiter characters in a row. Escape sequences are processed as in single-line strings.
+- Single-quoted and double-quoted strings now report a syntax error when a literal line break is encountered before the closing delimiter. The error message points to the triple-quoted form. This matches the behaviour of most mainstream scripting languages and is a one-time, intentional break in compatibility with previous versions.
+
+
 0.9.1 (24/04/2026)
 ~~~~~~~~~~~~~~~~~~~
 

@@ -94,6 +94,12 @@ private:
 
     void scan_string(char32_t end);
 
+    void scan_triple_string(char32_t end);
+
+    // Return the next codepoint without advancing the scanner state. Reaches across
+    // line boundaries when needed. Returns Token::ETX past end of source.
+    char32_t peek_char() const;
+
 	// Same as isspace(), but does not consider '\n' as a space since it's used by the parser.
 	static bool check_space(char32_t c);
 };

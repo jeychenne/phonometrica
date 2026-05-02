@@ -144,8 +144,28 @@ void Scanner::scan_string(char32_t end)
     intptr_t start_line = m_line_no;
     skip();
 
+    // If the character following the opening delimiter is the same delimiter, and the one
+    // after that is also the same, this is the opener of a triple-quoted (multi-line) string.
+    if (m_char == end && peek_char() == end)
+    {
+        skip(); // second delimiter
+        skip(); // third delimiter
+        scan_triple_string(end);
+        return;
+    }
+
     while (m_char != end && m_char != Token::ETX)
     {
+        // Single-line strings cannot span lines: a raw newline before the closing delimiter
+        // is an error. Use triple quotes (""" or ''') for multi-line strings.
+        if (m_char == U'\n')
+        {
+            auto message = utils::format("[Syntax error] File \"%\" at line %\n"
+                                         "Newline in string literal (use triple quotes \"\"\" or ''' for multi-line strings)",
+                                         m_source->filename(), start_line);
+            throw RuntimeError(start_line, message);
+        }
+
         if (m_char == '\\')
         {
             // Skip for now. It may be restored if it's not a special character.
@@ -212,6 +232,86 @@ void Scanner::scan_string(char32_t end)
                                      m_source->filename(), start_line);
         throw RuntimeError(start_line, message);
     }
+}
+
+void Scanner::scan_triple_string(char32_t end)
+{
+    // Triple-quoted strings ("""..."""  or  '''...''') may span multiple lines.
+    // Newlines and single occurrences of the delimiter are part of the content;
+    // the string is closed only by three delimiters in a row. Escape sequences
+    // are processed exactly as in single-line strings.
+    intptr_t start_line = m_line_no;
+
+    while (m_char != Token::ETX)
+    {
+        if (m_char == end)
+        {
+            // Tentatively consume up to two more delimiters. If we find a third in a row,
+            // this is the closing triple. Otherwise, the one or two delimiters we consumed
+            // belong to the string content and must be appended literally.
+            skip();
+            if (m_char == end)
+            {
+                skip();
+                if (m_char == end)
+                {
+                    skip();
+                    return;
+                }
+                m_spelling.append(end);
+                m_spelling.append(end);
+                continue;
+            }
+            m_spelling.append(end);
+            continue;
+        }
+
+        if (m_char == '\\')
+        {
+            skip();
+
+            if      (m_char == 'n')  { m_char = '\n'; }
+            else if (m_char == 't')  { m_char = '\t'; }
+            else if (m_char == 'r')  { m_char = '\r'; }
+            else if (m_char == '\\') { m_char = '\\'; }
+            else if (m_char == '\'') { m_char = '\''; }
+            else if (m_char == '"')  { m_char = '\"'; }
+            else if (m_char == 'v')  { m_char = '\v'; }
+            else if (m_char == 'a')  { m_char = '\a'; }
+            else if (m_char == 'b')  { m_char = '\b'; }
+            else if (m_char == 'f')  { m_char = '\f'; }
+            else
+            {
+                m_spelling.push_back('\\');
+            }
+        }
+        accept();
+    }
+
+    auto message = utils::format("[Syntax error] File \"%\" at line %\nUnterminated triple-quoted string literal",
+                                 m_source->filename(), start_line);
+    throw RuntimeError(start_line, message);
+}
+
+char32_t Scanner::peek_char() const
+{
+    // Look at the next codepoint without advancing scanner state. If we are at the
+    // end of the current line, peek at the first codepoint of the next line.
+    if (m_pos != nullptr && m_pos != m_line.end())
+    {
+        auto pos = m_pos;
+        return m_line.next_codepoint(pos);
+    }
+    if (m_line_no < m_source->size())
+    {
+        const String next = m_source->get_line(m_line_no + 1);
+        if (!next.empty())
+        {
+            auto pos = next.begin();
+            return next.next_codepoint(pos);
+        }
+    }
+    return Token::ETX;
 }
 
 

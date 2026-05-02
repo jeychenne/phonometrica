@@ -136,6 +136,51 @@ one character, even though it is composed of the letter ``e`` and an acute accen
 
 Internally, strings are encoded as UTF-8, which is the most widespread Unicode encoding. Source files are also expected to be encoded in UTF-8. 
 
+A single-quoted or double-quoted string must be terminated on the same line where it begins: a literal line break inside such a string is reported as a syntax error. For multi-line strings, use a *triple-quoted* string, which is enclosed between three double quotes (``"""``) or three single quotes (``'''``):
+
+.. code:: phon
+
+    let message = """Dear participant,
+
+    Please read the following sentences aloud,
+    at a comfortable speaking rate.
+
+    Thank you."""
+    print message
+
+Inside a triple-quoted string, line breaks and isolated occurrences of the delimiter character are part of the content; the string ends only when three delimiter characters appear in a row. This is convenient for embedding longer pieces of text (instructions, prompts, formatted reports) without having to concatenate strings line by line.
+
+You can include special characters in a string with *escape sequences*. An escape sequence starts with a backslash (``\``) followed by a single character, and is interpreted as shown below:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
+
+   * - Sequence
+     - Character
+   * - ``\n``
+     - line feed (newline)
+   * - ``\t``
+     - horizontal tab
+   * - ``\r``
+     - carriage return
+   * - ``\\``
+     - backslash
+   * - ``\'``
+     - single quote
+   * - ``\"``
+     - double quote
+   * - ``\v``
+     - vertical tab
+   * - ``\b``
+     - backspace
+   * - ``\f``
+     - form feed
+   * - ``\a``
+     - bell
+
+Escape sequences are processed inside both single-line and triple-quoted strings. A backslash followed by any other character is left untouched in the string.
+
 You can use the concatenation operator ``&`` to concatenate two or more values. If they are not strings, they will automatically 
  be converted to strings, if possible.
 
