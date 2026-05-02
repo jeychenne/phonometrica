@@ -871,7 +871,7 @@ void DataTable::initialize(Runtime &rt)
 		return make_handle<Array<double>>(cast<stats::Model>(args[0]).beta);
 	};
 
-	auto model_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto model_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &model = cast<stats::Model>(args[0]);
 		auto &key = cast<String>(args[1]);
 		if (key == "formula") return model.formula;
@@ -917,6 +917,73 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "ci_lower") return make_handle<Array<double>>(model.ci_lower);
 		if (key == "ci_upper") return make_handle<Array<double>>(model.ci_upper);
 		if (key == "pd") return make_handle<Array<double>>(model.pd);
+
+		// ── Fixed-effect inference (frequentist) ─────────────────────
+		if (key == "se") return make_handle<Array<double>>(model.se);
+		if (key == "stat") return make_handle<Array<double>>(model.stat);
+		if (key == "p") return make_handle<Array<double>>(model.p);
+
+		// ── Names: coefficients and (Bayesian) hyperparameters ───────
+		if (key == "coef_names")
+		{
+			Array<Variant> items;
+			for (intptr_t i = 1; i <= model.coef_names.size(); i++)
+				items.append(model.coef_names[i]);
+			return make_handle<List>(&rt, std::move(items));
+		}
+		if (key == "hyper_names")
+		{
+			Array<Variant> items;
+			for (intptr_t i = 1; i <= model.hyper_names.size(); i++)
+				items.append(model.hyper_names[i]);
+			return make_handle<List>(&rt, std::move(items));
+		}
+
+		// ── Hyperparameter posteriors (Bayesian mixed/Gaussian only) ─
+		if (key == "hyper_posterior_mean") return make_handle<Array<double>>(model.hyper_posterior_mean);
+		if (key == "hyper_posterior_sd") return make_handle<Array<double>>(model.hyper_posterior_sd);
+		if (key == "hyper_ci_lower") return make_handle<Array<double>>(model.hyper_ci_lower);
+		if (key == "hyper_ci_upper") return make_handle<Array<double>>(model.hyper_ci_upper);
+
+		// ── Random-effects summary (frequentist mixed models) ────────
+		// Flat layout parallel to hyper_* so test code can compare engines.
+		// Names are "sd(term|group)" plus a final "sd(residual)" for Gaussian.
+		if (key == "ranef_names")
+		{
+			Array<Variant> items;
+			for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+			{
+				auto &re = model.random_effects[g];
+				for (intptr_t t = 1; t <= re.term_names.size(); t++)
+				{
+					std::string name = "sd("
+						+ std::string(re.term_names[t].data(), re.term_names[t].size())
+						+ "|"
+						+ std::string(re.group_name.data(), re.group_name.size())
+						+ ")";
+					items.append(String(name));
+				}
+			}
+			if (model.is_gaussian() && model.has_random_effects())
+				items.append(String("sd(residual)"));
+			return make_handle<List>(&rt, std::move(items));
+		}
+		if (key == "ranef_sd")
+		{
+			Array<double> sds;
+			for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+			{
+				auto &re = model.random_effects[g];
+				for (intptr_t t = 1; t <= re.term_names.size(); t++)
+				{
+					double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+					sds.append(std::sqrt(std::max(var, 0.0)));
+				}
+			}
+			if (model.is_gaussian() && model.has_random_effects())
+				sds.append(model.rse);
+			return make_handle<Array<double>>(std::move(sds));
+		}
 		throw error("[Index error] Model type has no member named \"%\"", key);
 	};
 
