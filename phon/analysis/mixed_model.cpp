@@ -4294,6 +4294,60 @@ static DiagNllBreakdown diag_eval_gaussian_breakdown(
 #endif  // PHON_INLA_BAYES_DIAG
 
 
+// =====================================================================
+// Lognormal posterior summary for positive-supported hyperparameters
+// =====================================================================
+//
+// Under the Laplace approximation, the unconstrained θ vector (chol
+// parameters and log-dispersion entries) is jointly Gaussian, so every
+// hyperparameter X = exp(linear function of θ) is exactly lognormal:
+//   * RE SDs: σ_{g,t} = exp(θ_chol[g][t]) holds for both q=1 and q≥2 —
+//     L_R has unit row norms by stickbreaking construction, so
+//     D_tt = σ_t² regardless of correlation.
+//   * Residual SD (Gaussian): exp(θ[n_chol]).
+//   * NB θ, Beta φ, Student σ: exp(θ[n_chol]).
+//   * Student ν: exp(θ[n_chol+1]) (clamped to [2, 200]).
+//
+// Computing moments of X directly over the grid and reporting a symmetric
+// CI E[X] ± z·SD[X] is wrong: for any non-trivial CV, the lognormal is
+// right-skewed, the symmetric form pulls the lower bound below the
+// support of X (forcing a max(0, …) clamp), and the upper bound is
+// systematically too tight. The correct route is to accumulate moments
+// of log X — which CCD captures well because log X is approximately
+// linear in θ — then back-transform analytically:
+//
+//   E[X]    = exp(μ + σ²/2)
+//   Var[X]  = (exp(σ²) − 1) · exp(2μ + σ²)
+//   95% CI  = [exp(μ − z·σ), exp(μ + z·σ)]   (symmetric in log space)
+//
+// `lower_bound` / `upper_bound` clamp the final summary to the parameter's
+// support; relevant only for Student ν ∈ [2, 200].
+static void write_lognormal_hyper(Model &model, intptr_t idx,
+                                    const String &name,
+                                    double log_mean, double log_sd,
+                                    double z_975,
+                                    double lower_bound = 0.0,
+                                    double upper_bound = std::numeric_limits<double>::infinity())
+{
+	double s2 = log_sd * log_sd;
+	double mean_X = std::exp(log_mean + 0.5 * s2);
+	double var_X  = (std::exp(s2) - 1.0) * std::exp(2.0 * log_mean + s2);
+	double sd_X   = std::sqrt(std::max(var_X, 0.0));
+	double lo     = std::exp(log_mean - z_975 * log_sd);
+	double up     = std::exp(log_mean + z_975 * log_sd);
+
+	mean_X = std::clamp(mean_X, lower_bound, upper_bound);
+	lo     = std::clamp(lo,     lower_bound, upper_bound);
+	up     = std::clamp(up,     lower_bound, upper_bound);
+
+	model.hyper_names[idx]          = name;
+	model.hyper_posterior_mean[idx] = mean_X;
+	model.hyper_posterior_sd[idx]   = sd_X;
+	model.hyper_ci_lower[idx]       = lo;
+	model.hyper_ci_upper[idx]       = up;
+}
+
+
 // Main INLA grid integration for Gaussian LMMs.
 // Populates the Model's posterior fields with mixture-based estimates.
 static void inla_grid_integrate_gaussian(
@@ -5086,49 +5140,48 @@ static void inla_grid_integrate_gaussian(
 				// Name: "sd(term|group)"
 				std::string name = "sd(" + std::string(re.term_names[t + 1].data(), re.term_names[t + 1].size())
 				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
-				model.hyper_names[idx] = String(name);
 
-				// Marginal posterior of σ_{g,t}
-				double mean_sd = 0, mean_sd2 = 0;
+				// Marginal posterior of log σ_{g,t}.
+				// θ_k[chol_pos_base + t] = log σ_{g,t} for both q=1 and q≥2
+				// (L_R has unit row norms by construction → D_tt = σ_t²).
+				// Accumulating in log space lets write_lognormal_hyper
+				// back-transform analytically; see its header for the
+				// rationale vs σ-space moments + symmetric CI.
+				double mean_log_sd = 0, mean_log_sd2 = 0;
 				for (intptr_t k = 0; k < n_grid; k++)
 				{
 					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-					Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + chol_pos_base, qg);
-					Eigen::MatrixXd D = cholesky_to_cov(L);
-					double sd_val = std::sqrt(std::max(D(t, t), 0.0));
-					mean_sd += w[k] * sd_val;
-					mean_sd2 += w[k] * sd_val * sd_val;
+					double log_sd_val = theta_k[chol_pos_base + t];
+					mean_log_sd  += w[k] * log_sd_val;
+					mean_log_sd2 += w[k] * log_sd_val * log_sd_val;
 				}
-				double var_sd = mean_sd2 - mean_sd * mean_sd;
-				double sd_sd = (var_sd > 0) ? std::sqrt(var_sd) : 0.0;
+				double var_log_sd = mean_log_sd2 - mean_log_sd * mean_log_sd;
+				double log_sd     = (var_log_sd > 0) ? std::sqrt(var_log_sd) : 0.0;
 
-				model.hyper_posterior_mean[idx] = mean_sd;
-				model.hyper_posterior_sd[idx] = sd_sd;
-				model.hyper_ci_lower[idx] = std::max(0.0, mean_sd - z_975 * sd_sd);
-				model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
+				write_lognormal_hyper(model, idx, String(name),
+				                       mean_log_sd, log_sd, z_975);
 				idx++;
 			}
 			chol_pos_base += n_chol_params(qg);
 		}
 
-		// Residual SD
-		model.hyper_names[idx] = "sd(residual)";
+		// Residual SD: θ_k[n_chol] = log σ_resid (parameterised log-scale,
+		// approximately Gaussian under Laplace). Accumulate log-moments
+		// and back-transform via the lognormal closed form.
 		{
-			double mean_sd = 0, mean_sd2 = 0;
+			double mean_log_sd = 0, mean_log_sd2 = 0;
 			for (intptr_t k = 0; k < n_grid; k++)
 			{
 				Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-				double sd_val = std::exp(theta_k[n_chol]);
-				mean_sd += w[k] * sd_val;
-				mean_sd2 += w[k] * sd_val * sd_val;
+				double log_sd_val = theta_k[n_chol];
+				mean_log_sd  += w[k] * log_sd_val;
+				mean_log_sd2 += w[k] * log_sd_val * log_sd_val;
 			}
-			double var_sd = mean_sd2 - mean_sd * mean_sd;
-			double sd_sd = (var_sd > 0) ? std::sqrt(var_sd) : 0.0;
+			double var_log_sd = mean_log_sd2 - mean_log_sd * mean_log_sd;
+			double log_sd     = (var_log_sd > 0) ? std::sqrt(var_log_sd) : 0.0;
 
-			model.hyper_posterior_mean[idx] = mean_sd;
-			model.hyper_posterior_sd[idx] = sd_sd;
-			model.hyper_ci_lower[idx] = std::max(0.0, mean_sd - z_975 * sd_sd);
-			model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
+			write_lognormal_hyper(model, idx, String("sd(residual)"),
+			                       mean_log_sd, log_sd, z_975);
 		}
 	}
 
@@ -5642,6 +5695,9 @@ static void inla_grid_integrate_pirls(
 		intptr_t chol_pos_base = 0;
 
 		// ── Random-effect SDs ──────────────────────────────────────
+		// θ_k[chol_pos_base + t] = log σ_{g,t}; accumulate log-moments
+		// and back-transform via write_lognormal_hyper. See its header
+		// for why this beats σ-space moments + symmetric CI.
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			intptr_t qg = lay.q[g];
@@ -5650,106 +5706,106 @@ static void inla_grid_integrate_pirls(
 			{
 				std::string name = "sd(" + std::string(re.term_names[t + 1].data(), re.term_names[t + 1].size())
 				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
-				model.hyper_names[idx] = String(name);
 
-				double mean_sd = 0, mean_sd2 = 0;
+				double mean_log_sd = 0, mean_log_sd2 = 0;
 				for (intptr_t k = 0; k < n_grid; k++)
 				{
 					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-					Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + chol_pos_base, qg);
-					Eigen::MatrixXd D = cholesky_to_cov(L);
-					double sd_val = std::sqrt(std::max(D(t, t), 0.0));
-					mean_sd += w[k] * sd_val;
-					mean_sd2 += w[k] * sd_val * sd_val;
+					double log_sd_val = theta_k[chol_pos_base + t];
+					mean_log_sd  += w[k] * log_sd_val;
+					mean_log_sd2 += w[k] * log_sd_val * log_sd_val;
 				}
-				double var_sd = mean_sd2 - mean_sd * mean_sd;
-				double sd_sd = (var_sd > 0) ? std::sqrt(var_sd) : 0.0;
+				double var_log_sd = mean_log_sd2 - mean_log_sd * mean_log_sd;
+				double log_sd     = (var_log_sd > 0) ? std::sqrt(var_log_sd) : 0.0;
 
-				model.hyper_posterior_mean[idx] = mean_sd;
-				model.hyper_posterior_sd[idx] = sd_sd;
-				model.hyper_ci_lower[idx] = std::max(0.0, mean_sd - z_975 * sd_sd);
-				model.hyper_ci_upper[idx] = mean_sd + z_975 * sd_sd;
+				write_lognormal_hyper(model, idx, String(name),
+				                       mean_log_sd, log_sd, z_975);
 				idx++;
 			}
 			chol_pos_base += n_chol_params(qg);
 		}
 
 		// ── Family-specific dispersion hyperparameters ─────────────
+		// All dispersion params are stored as log values in θ:
+		//   NB:      θ[n_chol]   = log θ_NB
+		//   Beta:    θ[n_chol]   = log φ
+		//   Student: θ[n_chol]   = log σ,  θ[n_chol+1] = log ν
+		// Accumulate log-moments and let write_lognormal_hyper handle
+		// the back-transform and (for ν) the support clamp.
 		if (fam.name == "negbin")
 		{
-			model.hyper_names[idx] = "theta(NB)";
-			double mean_v = 0, mean_v2 = 0;
+			double mean_log_v = 0, mean_log_v2 = 0;
 			for (intptr_t k = 0; k < n_grid; k++)
 			{
 				Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-				double val = std::exp(theta_k[n_chol]);
-				mean_v += w[k] * val;
-				mean_v2 += w[k] * val * val;
+				double log_v_val = theta_k[n_chol];
+				mean_log_v  += w[k] * log_v_val;
+				mean_log_v2 += w[k] * log_v_val * log_v_val;
 			}
-			double var_v = mean_v2 - mean_v * mean_v;
-			double sd_v = (var_v > 0) ? std::sqrt(var_v) : 0.0;
-			model.hyper_posterior_mean[idx] = mean_v;
-			model.hyper_posterior_sd[idx] = sd_v;
-			model.hyper_ci_lower[idx] = std::max(0.0, mean_v - z_975 * sd_v);
-			model.hyper_ci_upper[idx] = mean_v + z_975 * sd_v;
+			double var_log_v = mean_log_v2 - mean_log_v * mean_log_v;
+			double log_sd_v  = (var_log_v > 0) ? std::sqrt(var_log_v) : 0.0;
+
+			write_lognormal_hyper(model, idx, String("theta(NB)"),
+			                       mean_log_v, log_sd_v, z_975);
 		}
 		else if (fam.name == "beta")
 		{
-			model.hyper_names[idx] = "phi(beta)";
-			double mean_v = 0, mean_v2 = 0;
+			double mean_log_v = 0, mean_log_v2 = 0;
 			for (intptr_t k = 0; k < n_grid; k++)
 			{
 				Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-				double val = std::exp(theta_k[n_chol]);
-				mean_v += w[k] * val;
-				mean_v2 += w[k] * val * val;
+				double log_v_val = theta_k[n_chol];
+				mean_log_v  += w[k] * log_v_val;
+				mean_log_v2 += w[k] * log_v_val * log_v_val;
 			}
-			double var_v = mean_v2 - mean_v * mean_v;
-			double sd_v = (var_v > 0) ? std::sqrt(var_v) : 0.0;
-			model.hyper_posterior_mean[idx] = mean_v;
-			model.hyper_posterior_sd[idx] = sd_v;
-			model.hyper_ci_lower[idx] = std::max(0.0, mean_v - z_975 * sd_v);
-			model.hyper_ci_upper[idx] = mean_v + z_975 * sd_v;
+			double var_log_v = mean_log_v2 - mean_log_v * mean_log_v;
+			double log_sd_v  = (var_log_v > 0) ? std::sqrt(var_log_v) : 0.0;
+
+			write_lognormal_hyper(model, idx, String("phi(beta)"),
+			                       mean_log_v, log_sd_v, z_975);
 		}
 		else if (fam.name == "student")
 		{
-			// σ (scale)
-			model.hyper_names[idx] = "sigma(student)";
+			// σ (scale) — unbounded positive
 			{
-				double mean_v = 0, mean_v2 = 0;
+				double mean_log_v = 0, mean_log_v2 = 0;
 				for (intptr_t k = 0; k < n_grid; k++)
 				{
 					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-					double val = std::exp(theta_k[n_chol]);
-					mean_v += w[k] * val;
-					mean_v2 += w[k] * val * val;
+					double log_v_val = theta_k[n_chol];
+					mean_log_v  += w[k] * log_v_val;
+					mean_log_v2 += w[k] * log_v_val * log_v_val;
 				}
-				double var_v = mean_v2 - mean_v * mean_v;
-				double sd_v = (var_v > 0) ? std::sqrt(var_v) : 0.0;
-				model.hyper_posterior_mean[idx] = mean_v;
-				model.hyper_posterior_sd[idx] = sd_v;
-				model.hyper_ci_lower[idx] = std::max(0.0, mean_v - z_975 * sd_v);
-				model.hyper_ci_upper[idx] = mean_v + z_975 * sd_v;
+				double var_log_v = mean_log_v2 - mean_log_v * mean_log_v;
+				double log_sd_v  = (var_log_v > 0) ? std::sqrt(var_log_v) : 0.0;
+
+				write_lognormal_hyper(model, idx, String("sigma(student)"),
+				                       mean_log_v, log_sd_v, z_975);
 			}
 			idx++;
 
-			// ν (degrees of freedom)
-			model.hyper_names[idx] = "nu(student)";
+			// ν (degrees of freedom) ∈ [2, 200]. Clamp log-values during
+			// accumulation to [log 2, log 200] so the moments reflect the
+			// constrained support — matches the previous σ-space code's
+			// clamp(exp(θ), 2, 200) before accumulation. The helper then
+			// clamps the back-transformed mean/CI to the same support.
 			{
-				double mean_v = 0, mean_v2 = 0;
+				static const double log_lo = std::log(2.0);
+				static const double log_hi = std::log(200.0);
+				double mean_log_v = 0, mean_log_v2 = 0;
 				for (intptr_t k = 0; k < n_grid; k++)
 				{
 					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
-					double val = std::clamp(std::exp(theta_k[n_chol + 1]), 2.0, 200.0);
-					mean_v += w[k] * val;
-					mean_v2 += w[k] * val * val;
+					double log_v_val = std::clamp(theta_k[n_chol + 1],
+					                                log_lo, log_hi);
+					mean_log_v  += w[k] * log_v_val;
+					mean_log_v2 += w[k] * log_v_val * log_v_val;
 				}
-				double var_v = mean_v2 - mean_v * mean_v;
-				double sd_v = (var_v > 0) ? std::sqrt(var_v) : 0.0;
-				model.hyper_posterior_mean[idx] = mean_v;
-				model.hyper_posterior_sd[idx] = sd_v;
-				model.hyper_ci_lower[idx] = std::max(0.0, mean_v - z_975 * sd_v);
-				model.hyper_ci_upper[idx] = mean_v + z_975 * sd_v;
+				double var_log_v = mean_log_v2 - mean_log_v * mean_log_v;
+				double log_sd_v  = (var_log_v > 0) ? std::sqrt(var_log_v) : 0.0;
+
+				write_lognormal_hyper(model, idx, String("nu(student)"),
+				                       mean_log_v, log_sd_v, z_975, 2.0, 200.0);
 			}
 		}
 	}
@@ -5958,32 +6014,11 @@ static void no_re_bayesian_laplace(
 
 	// ── 5. Dispersion posterior summaries (lognormal approximation) ──
 	//
-	// log X ~ N(μ, σ_log²) ⇒ X ~ Lognormal:
-	//   E[X]   = exp(μ + σ_log²/2)
-	//   Var[X] = (exp(σ_log²) − 1) · exp(2μ + σ_log²)
-	// Median = exp(μ); CI = exp(μ ∓ z·σ_log) (symmetric on log scale,
-	// asymmetric on direct scale — appropriate for positive params).
-	auto fill_lognormal = [&](intptr_t idx, double log_mean, double log_sd,
-	                          const String &name, double lower_bound = 0.0,
-	                          double upper_bound = std::numeric_limits<double>::infinity())
-	{
-		double s2 = log_sd * log_sd;
-		double mean_X = std::exp(log_mean + 0.5 * s2);
-		double var_X  = (std::exp(s2) - 1.0) * std::exp(2.0 * log_mean + s2);
-		double sd_X   = std::sqrt(std::max(var_X, 0.0));
-		double lo     = std::exp(log_mean - z_975 * log_sd);
-		double up     = std::exp(log_mean + z_975 * log_sd);
-		// Respect any clamp bounds (relevant for ν ∈ [2, 200]).
-		mean_X = std::clamp(mean_X, lower_bound, upper_bound);
-		lo     = std::clamp(lo,     lower_bound, upper_bound);
-		up     = std::clamp(up,     lower_bound, upper_bound);
-
-		model.hyper_names[idx]          = name;
-		model.hyper_posterior_mean[idx] = mean_X;
-		model.hyper_posterior_sd[idx]   = sd_X;
-		model.hyper_ci_lower[idx]       = lo;
-		model.hyper_ci_upper[idx]       = up;
-	};
+	// Each dispersion parameter is parameterised on the log scale and is
+	// approximately Gaussian under the joint Laplace approximation, so it
+	// is exactly lognormal in linear space. write_lognormal_hyper handles
+	// the back-transform, the CI, and (for ν) the support clamp; see its
+	// header for the full derivation.
 
 	intptr_t n_hyper = n_disp;
 	model.hyper_names           = Array<String>(n_hyper, String());
@@ -5996,13 +6031,15 @@ static void no_re_bayesian_laplace(
 	{
 		double log_th  = saved_theta[0];
 		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
-		fill_lognormal(1, log_th, log_sd, String("theta(NB)"), 1e-10);
+		write_lognormal_hyper(model, 1, String("theta(NB)"),
+		                       log_th, log_sd, z_975, 1e-10);
 	}
 	else if (fam.name == "beta")
 	{
 		double log_phi = saved_theta[0];
 		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
-		fill_lognormal(1, log_phi, log_sd, String("phi(beta)"), 1e-10);
+		write_lognormal_hyper(model, 1, String("phi(beta)"),
+		                       log_phi, log_sd, z_975, 1e-10);
 	}
 	else if (fam.name == "student")
 	{
@@ -6010,13 +6047,15 @@ static void no_re_bayesian_laplace(
 		{
 			double log_sigma = saved_theta[0];
 			double log_sd    = std::sqrt(std::max(Sigma(p, p), 0.0));
-			fill_lognormal(1, log_sigma, log_sd, String("sigma(student)"), 1e-10);
+			write_lognormal_hyper(model, 1, String("sigma(student)"),
+			                       log_sigma, log_sd, z_975, 1e-10);
 		}
 		// ν ∈ [2, 200] (the same clamp solve_pirls / LaplaceJointObjective use).
 		{
 			double log_nu = saved_theta[1];
 			double log_sd = std::sqrt(std::max(Sigma(p + 1, p + 1), 0.0));
-			fill_lognormal(2, log_nu, log_sd, String("nu(student)"), 2.0, 200.0);
+			write_lognormal_hyper(model, 2, String("nu(student)"),
+			                       log_nu, log_sd, z_975, 2.0, 200.0);
 		}
 	}
 
