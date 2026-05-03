@@ -3179,6 +3179,68 @@ static GridPointResult eval_pirls_grid_point(
 			D_cov[g] = D_inv[g].inverse();
 		nll -= variance_prior_log_density(D_cov, *priors, lay);
 	}
+
+	// ── Student-t: replace IRLS log_det_Huu with observed-Hessian ──
+	//
+	// solve_pirls computes the Laplace correction ½ log|H_uu| using
+	// `fam.custom_weights`, which for Student-t returns the IRLS form
+	//
+	//   w_PIRLS = (ν+1) / (νσ² + r²)
+	//
+	// Despite its name, this is neither the Fisher information nor the
+	// observed Hessian — it's the score-equation linearization weight
+	// PIRLS iterates with, chosen so that w·(z − μ) reproduces the score
+	// for an identity link. For canonical-link exponential-family models
+	// (Gaussian, Poisson with log link, NB with log link, binomial with
+	// logit link), w_PIRLS coincides with the observed Hessian at the
+	// score-equation root, so the Laplace approximation is correct as
+	// computed by solve_pirls. For Student-t — which is not an exponential
+	// family — w_PIRLS differs from the observed Hessian
+	//
+	//   w_obs = (ν+1)(νσ² − r²) / (νσ² + r²)²
+	//
+	// at every observation, even at the mode. The Laplace approximation
+	// to ∫ p(y, u | β, θ) du is the **observed Hessian** form by the
+	// standard derivation (second-order Taylor expansion of -log p around
+	// û). Using w_PIRLS in its place biases log p(y | θ) by an amount
+	// that varies with ν: the bias is most negative at small ν (more
+	// outlier mass with |r| > σ√ν makes w_obs and w_PIRLS diverge most),
+	// so the marginal posterior of ν is systematically biased UPWARD.
+	// Empirically: ~8% upward at moderate complexity, ~20% on crossed
+	// random-effects designs (validated against brms HMC).
+	//
+	// We therefore replace the IRLS Laplace term with the observed-Hessian
+	// (hybrid: observed where PD, Fisher fallback otherwise) form at every
+	// CCD grid point. This mirrors the post-fit correction at the bottom
+	// of mixed_model() that was previously applied only to model.loglik —
+	// extending it to the integrand makes the marginal posterior of θ
+	// internally consistent with the reported point estimate.
+	//
+	// Cost: two extra log-det evaluations per grid point. For typical
+	// phonetic data (J ≲ 100, n_grid ≲ 100), this is microseconds.
+	if (fam.name == "student" && lay.J_total > 0)
+	{
+		double sigma_t = std::exp(theta[n_chol]);
+		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+		double nu_sigma2 = nu_t * sigma_t * sigma_t;
+
+		// Recompute IRLS log_det at the converged μ — this is what's
+		// implicitly included in res.laplace_nll.
+		Eigen::VectorXd w_irls(n);
+		for (intptr_t i = 0; i < n; i++) {
+			double r = ym[i] - res.mu[i];
+			w_irls[i] = (nu_t + 1.0) / (nu_sigma2 + r * r);
+		}
+		double log_det_irls = full_log_det_H(w_irls, D_inv, lay, n);
+
+		LaplaceMethod method;
+		double log_det_hybrid = student_full_log_det_H_hybrid(
+		    ym, res.mu, sigma_t, nu_t, D_inv, lay, n, method);
+
+		// Replace the Laplace term: -½ log_det_irls + ½ log_det_hybrid
+		nll += 0.5 * (log_det_hybrid - log_det_irls);
+	}
+
 	gpr.neg_log_posterior = nll;
 
 	// ── Conditional Var(β|θ) from Henderson inverse ──────────────
@@ -5751,6 +5813,287 @@ static void inla_grid_integrate_pirls(
 }
 
 
+// =====================================================================
+// No-random-effects Bayesian Laplace approximation for non-Gaussian families
+// =====================================================================
+//
+// For Student-t / NB / Beta with no random effects (G == 0), the existing
+// INLA grid integration paths in mixed_model() are gated on G > 0. Without
+// a substitute, the model returned by mixed_model() has β at the joint MAP
+// but everything downstream is partial:
+//
+//   • model.vcov is the Henderson conditional vcov(β | σ̂, ν̂), not the
+//     marginal posterior covariance of β over dispersion.
+//   • model.hyper_posterior_* is empty — no SD or CI for σ, ν, θ_NB, φ_β.
+//   • model.log_marginal is NaN.
+//   • The downstream bayesian_summaries() in fitting.cpp draws S samples of
+//     β but reads m.sigma / m.nu / m.theta / m.phi fixed across draws,
+//     undercounting p_waic by the number of dispersion params (~6 vs ~3
+//     in the validation case for Student-t fits).
+//
+// This helper closes all four gaps by running a full Laplace approximation
+// on the joint parameter vector φ = [β, log dispersion(s)] using the same
+// LaplaceJointObjective the optimizer converged on. We compute the joint
+// FD Hessian H_full at φ̂, invert to get the joint posterior covariance Σ,
+// and read off:
+//
+//   • β posterior moments: top-left p×p block of Σ, marginal over dispersion.
+//   • Dispersion posterior moments: trailing block, transformed back from
+//     log scale via the lognormal closed form (E[X], Var[X], symmetric CI
+//     on log scale).
+//   • log_marginal: standard Laplace formula
+//                   log p(y) ≈ -joint_NLP(φ̂) + (D/2) log 2π - ½ log det H_full
+//   • WAIC and LOO: draw S=1000 joint samples from N(φ̂, Σ), compute
+//                   pointwise log-likelihood with per-draw dispersion via
+//                   the explicit-disp overload of pointwise_loglik in
+//                   waic.hpp. This is the actual WAIC bug fix.
+//
+// Setting model.posterior_mean here makes fitting.cpp:1657's
+// `if (model.posterior_mean.empty()) bayesian_summaries(...)` skip the
+// buggy fallback. No change to fitting.cpp is needed.
+//
+// **Prior caveat.** LaplaceJointObjective applies the β prior and the
+// variance-component prior (the latter empty for G==0), but does NOT apply
+// the residual / dispersion prior on log σ, log ν, log θ_NB, log φ_β. The
+// optimizer converges to (β̂, log disp̂) under flat improper priors on the
+// log-dispersion parameters; this helper's Hessian is consistent with that
+// objective. The mixed-RE path (inla_grid_integrate_pirls) does the same
+// thing — it doesn't apply the dispersion prior in the optimization either,
+// only in CCD reweighting, so the no-RE behaviour is internally consistent
+// with how Phon currently treats dispersion priors throughout. Tightening
+// the dispersion-prior treatment is a separate concern.
+static void no_re_bayesian_laplace(
+    Model &model,
+    const Family &fam,
+    const Eigen::Map<Matrix<double>> &Xm,
+    const Eigen::Map<Vector<double>> &ym,
+    const GroupLayout &lay,           // G == 0 expected
+    intptr_t n, intptr_t p,
+    intptr_t saved_n_chol,            // 0 for G == 0
+    const Eigen::VectorXd &saved_theta, // [log dispersion(s)]
+    const Eigen::VectorXd &beta_hat,
+    const PriorSpec *priors,
+    const Array<String> *coef_names,
+    const Eigen::VectorXd *off_ptr)
+{
+	intptr_t n_disp = saved_theta.size();
+	if (n_disp <= 0) return;            // No dispersion params — nothing to do.
+
+	// ── 1. Assemble φ̂ = [β̂, log dispersion(s)] ────────────────────
+	intptr_t D = p + n_disp;
+	Eigen::VectorXd phi_hat(D);
+	for (intptr_t j = 0; j < p; j++) phi_hat[j] = beta_hat[j];
+	for (intptr_t k = 0; k < n_disp; k++) phi_hat[p + k] = saved_theta[k];
+
+	// ── 2. Joint FD Hessian on the negative log-posterior ─────────
+	// Same h_scale (1e-3) used by the random-slopes block at line ~7019.
+	// last_u stays empty: solve_u_given_beta short-circuits when J == 0,
+	// so the eval cost is just the unweighted neg-log-likelihood.
+	LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p,
+	                                 saved_n_chol, priors, coef_names, off_ptr};
+
+	Eigen::MatrixXd H_full = compute_fd_hessian(joint_obj, phi_hat, 1e-3);
+	Eigen::LDLT<Eigen::MatrixXd> ldlt_full(H_full);
+	if (ldlt_full.info() != Eigen::Success || !ldlt_full.isPositive())
+	{
+		// Hessian not PD — leave model.posterior_mean empty so the
+		// downstream bayesian_summaries fallback runs. WAIC will then
+		// have the documented dispersion-fixed bug for this fit, but
+		// at least β posterior is still reported.
+		return;
+	}
+
+	Eigen::MatrixXd Sigma = ldlt_full.solve(Eigen::MatrixXd::Identity(D, D));
+	if (!Sigma.allFinite()) return;
+
+	// ── 3. β posterior covariance (marginal over dispersion) ──────
+	// Replaces the Henderson conditional vcov(β | dispersion).
+	Eigen::MatrixXd vcov_beta = Sigma.topLeftCorner(p, p);
+	bool ok_vcov = vcov_beta.allFinite();
+	for (intptr_t j = 0; ok_vcov && j < p; j++)
+		if (vcov_beta(j, j) <= 0) ok_vcov = false;
+	if (ok_vcov)
+	{
+		for (intptr_t i = 0; i < p; i++)
+			for (intptr_t j = 0; j < p; j++)
+				model.vcov(i + 1, j + 1) = vcov_beta(i, j);
+	}
+
+	// ── 4. β posterior summaries ────────────────────────────────
+	boost::math::normal_distribution<double> normal;
+	double z_975 = boost::math::quantile(normal, 0.975);
+
+	model.posterior_mean   = Array<double>(p, 0.0);
+	model.posterior_mode   = Array<double>(p, 0.0);
+	model.posterior_median = Array<double>(p, 0.0);
+	model.posterior_sd     = Array<double>(p, 0.0);
+	model.ci_lower         = Array<double>(p, 0.0);
+	model.ci_upper         = Array<double>(p, 0.0);
+	model.pd               = Array<double>(p, 0.0);
+
+	for (intptr_t j = 0; j < p; j++)
+	{
+		double mean = beta_hat[j];                                        // joint MAP
+		double sd   = std::sqrt(std::max(vcov_beta(j, j), 0.0));
+		model.posterior_mean[j + 1]   = mean;
+		model.posterior_mode[j + 1]   = mean;                              // Gaussian: mode = mean
+		model.posterior_median[j + 1] = mean;                              // Gaussian: median = mean
+		model.posterior_sd[j + 1]     = sd;
+		model.ci_lower[j + 1]         = mean - z_975 * sd;
+		model.ci_upper[j + 1]         = mean + z_975 * sd;
+		model.pd[j + 1]               = (sd > 0)
+		                                  ? boost::math::cdf(normal, std::abs(mean) / sd)
+		                                  : 1.0;
+	}
+
+	// Update se / stat / p for compatibility with older display code.
+	for (intptr_t j = 0; j < p; j++)
+	{
+		model.se[j + 1]   = model.posterior_sd[j + 1];
+		model.stat[j + 1] = (model.se[j + 1] > 0)
+		                      ? model.beta[j + 1] / model.se[j + 1]
+		                      : 0.0;
+		model.p[j + 1]    = std::numeric_limits<double>::quiet_NaN();
+	}
+
+	// ── 5. Dispersion posterior summaries (lognormal approximation) ──
+	//
+	// log X ~ N(μ, σ_log²) ⇒ X ~ Lognormal:
+	//   E[X]   = exp(μ + σ_log²/2)
+	//   Var[X] = (exp(σ_log²) − 1) · exp(2μ + σ_log²)
+	// Median = exp(μ); CI = exp(μ ∓ z·σ_log) (symmetric on log scale,
+	// asymmetric on direct scale — appropriate for positive params).
+	auto fill_lognormal = [&](intptr_t idx, double log_mean, double log_sd,
+	                          const String &name, double lower_bound = 0.0,
+	                          double upper_bound = std::numeric_limits<double>::infinity())
+	{
+		double s2 = log_sd * log_sd;
+		double mean_X = std::exp(log_mean + 0.5 * s2);
+		double var_X  = (std::exp(s2) - 1.0) * std::exp(2.0 * log_mean + s2);
+		double sd_X   = std::sqrt(std::max(var_X, 0.0));
+		double lo     = std::exp(log_mean - z_975 * log_sd);
+		double up     = std::exp(log_mean + z_975 * log_sd);
+		// Respect any clamp bounds (relevant for ν ∈ [2, 200]).
+		mean_X = std::clamp(mean_X, lower_bound, upper_bound);
+		lo     = std::clamp(lo,     lower_bound, upper_bound);
+		up     = std::clamp(up,     lower_bound, upper_bound);
+
+		model.hyper_names[idx]          = name;
+		model.hyper_posterior_mean[idx] = mean_X;
+		model.hyper_posterior_sd[idx]   = sd_X;
+		model.hyper_ci_lower[idx]       = lo;
+		model.hyper_ci_upper[idx]       = up;
+	};
+
+	intptr_t n_hyper = n_disp;
+	model.hyper_names           = Array<String>(n_hyper, String());
+	model.hyper_posterior_mean  = Array<double>(n_hyper, 0.0);
+	model.hyper_posterior_sd    = Array<double>(n_hyper, 0.0);
+	model.hyper_ci_lower        = Array<double>(n_hyper, 0.0);
+	model.hyper_ci_upper        = Array<double>(n_hyper, 0.0);
+
+	if (fam.name == "negbin")
+	{
+		double log_th  = saved_theta[0];
+		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
+		fill_lognormal(1, log_th, log_sd, String("theta(NB)"), 1e-10);
+	}
+	else if (fam.name == "beta")
+	{
+		double log_phi = saved_theta[0];
+		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
+		fill_lognormal(1, log_phi, log_sd, String("phi(beta)"), 1e-10);
+	}
+	else if (fam.name == "student")
+	{
+		// σ ∈ (0, ∞)
+		{
+			double log_sigma = saved_theta[0];
+			double log_sd    = std::sqrt(std::max(Sigma(p, p), 0.0));
+			fill_lognormal(1, log_sigma, log_sd, String("sigma(student)"), 1e-10);
+		}
+		// ν ∈ [2, 200] (the same clamp solve_pirls / LaplaceJointObjective use).
+		{
+			double log_nu = saved_theta[1];
+			double log_sd = std::sqrt(std::max(Sigma(p + 1, p + 1), 0.0));
+			fill_lognormal(2, log_nu, log_sd, String("nu(student)"), 2.0, 200.0);
+		}
+	}
+
+	// ── 6. Laplace log marginal likelihood ─────────────────────
+	{
+		static const double log_2pi = std::log(2.0 * M_PI);
+		double nlp = joint_obj.eval(phi_hat);                              // -log p(y, φ̂)
+		double log_det_H = 0;
+		Eigen::VectorXd diag_D = ldlt_full.vectorD();
+		for (intptr_t j = 0; j < D; j++)
+			log_det_H += std::log(std::max(diag_D[j], 1e-30));
+		model.log_marginal = -nlp + 0.5 * D * log_2pi - 0.5 * log_det_H;
+	}
+
+	// ── 7. WAIC and LOO via joint posterior sampling ──────────
+	//
+	// The actual bug fix: previous behaviour drew β only from
+	// N(β̂, vcov_β), holding dispersion fixed across S draws — so
+	// p_waic counted only β uncertainty (~p_waic ≈ p) and missed the
+	// 1–2 extra dispersion parameters. Now we draw [β, log disp]
+	// jointly and pass per-draw disp to pointwise_loglik(family, disp[]).
+	constexpr int S = 1000;
+	constexpr unsigned int SEED = 12345;
+
+	Eigen::LLT<Eigen::MatrixXd> chol_post(Sigma);
+	if (chol_post.info() != Eigen::Success) return;
+
+	std::function<double(double)> linkinv_fn;
+	if (fam.name == "beta") {
+		linkinv_fn = [](double eta) { return 1.0 / (1.0 + std::exp(-eta)); };
+	} else if (fam.name == "negbin") {
+		linkinv_fn = [](double eta) { return std::exp(std::clamp(eta, -30.0, 30.0)); };
+	} else {
+		// Student: identity link
+		linkinv_fn = [](double eta) { return eta; };
+	}
+
+	std::vector<double> loglik_matrix(static_cast<size_t>(n) * S);
+	std::mt19937 rng(SEED);
+	std::normal_distribution<double> std_normal(0.0, 1.0);
+
+	for (int s = 0; s < S; s++)
+	{
+		// Draw φ^(s) ~ N(φ̂, Σ).
+		Eigen::VectorXd z(D);
+		for (intptr_t j = 0; j < D; j++) z[j] = std_normal(rng);
+		Eigen::VectorXd phi_s = phi_hat + chol_post.matrixL() * z;
+
+		Eigen::VectorXd beta_s = phi_s.head(p);
+
+		double disp[2] = {0.0, 0.0};
+		if (fam.name == "negbin" || fam.name == "beta")
+		{
+			disp[0] = std::max(std::exp(phi_s[p]), 1e-10);
+		}
+		else if (fam.name == "student")
+		{
+			disp[0] = std::max(std::exp(phi_s[p]),     1e-10);             // σ
+			disp[1] = std::clamp(std::exp(phi_s[p + 1]), 2.0, 200.0);      // ν
+		}
+
+		Eigen::VectorXd eta = Xm * beta_s;
+		if (off_ptr) eta += *off_ptr;
+
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double mu_i = linkinv_fn(eta[i]);
+			loglik_matrix[static_cast<size_t>(i) * S + s] =
+				pointwise_loglik(ym[i], mu_i, fam.name, disp);
+		}
+	}
+
+	compute_waic_from_loglik(model, loglik_matrix, n, S);
+	compute_loo_from_loglik(model, loglik_matrix, n, S);
+}
+
+
 } // anonymous namespace
 
 
@@ -7240,6 +7583,32 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			                           fam, Xm, ym, lay, n, p, saved_n_chol,
 			                           saved_beta_init, priors, coef_names, off_ptr,
 			                           final_inner.u);
+		}
+		else if (!is_gaussian && saved_theta.size() > 0 && G == 0)
+		{
+			// Fixed-effects-only Bayesian non-Gaussian (Student-t, NB, Beta).
+			// The INLA paths above are gated on G > 0 because the CCD grid
+			// integrates over (chol_params, log dispersion) — for G == 0
+			// chol_params is empty and the grid would be 1-D (NB/Beta) or
+			// 2-D (Student-t) over log-dispersion only.
+			//
+			// Rather than degenerate inla_grid_integrate_pirls, run a
+			// dedicated joint Laplace approximation on φ = [β, log disp]
+			// directly (see no_re_bayesian_laplace for details). This
+			// fixes the WAIC dispersion-fixed bug — previously
+			// bayesian_summaries() in fitting.cpp drew β samples but read
+			// model.sigma / model.nu / model.theta / model.phi unchanged
+			// across all S draws, undercounting p_waic by the number of
+			// dispersion params.
+			no_re_bayesian_laplace(model, fam, Xm, ym, lay, n, p,
+			                        saved_n_chol, saved_theta, beta_hat,
+			                        priors, coef_names, off_ptr);
+			// On success, model.posterior_mean is now non-empty, which
+			// short-circuits fitting.cpp:1657's bayesian_summaries fallback.
+			// On failure (Hessian non-PD), we leave model.posterior_mean
+			// empty so fitting.cpp falls back to the previous β-only WAIC
+			// (with the documented underestimate). This preserves at-least
+			// existing behaviour rather than silently producing nothing.
 		}
 	}
 

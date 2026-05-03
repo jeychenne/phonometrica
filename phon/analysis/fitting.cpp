@@ -1378,8 +1378,6 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 		}
 	}
 
-	// log_marginal is not computed here — it requires the outer Hessian
-	// (w.r.t. θ) which is not available after the optimization completes.
 	// This path is only reached for NB/beta/Student without random effects;
 	// the grid integration paths and bayesian_adjust cover the common cases.
 
