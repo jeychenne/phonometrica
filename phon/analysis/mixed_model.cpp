@@ -2655,11 +2655,54 @@ struct GridPointResult
 	// Populated only for non-Gaussian PIRLS grid points; empty otherwise.
 	// Used by compute_grid_waic to sample u from its Laplace-approximate
 	// conditional posterior u|β,θ,y, matching the Gaussian closed-form path.
-	//   working_weights[i] = μ'(η̂_i)² / V(μ̂_i)   (IRLS weight at convergence)
+	//   working_weights[i] = μ'(η̂_i)² / V(μ̂_i)   (IRLS / Fisher weight at
+	//     convergence; what PIRLS iterates with — always non-negative)
 	//   working_response[i] = η̂_i + (y_i − μ̂_i) / μ'(η̂_i)   (without offset,
 	//     on the Xβ+Zu scale matching solve_pirls convention)
 	Eigen::VectorXd working_weights;
 	Eigen::VectorXd working_response;
+
+	// Student-t only: the **observed-Hessian** (a.k.a. exact Laplace) weights
+	// at the grid point's mode,
+	//
+	//   w_L_i = (ν+1)(νσ² − r_i²) / (νσ² + r_i²)²
+	//
+	// vs the Fisher / IRLS form (ν+1)/(νσ²+r²) stored in working_weights.
+	// Used by compute_grid_waic to build the M_k that defines the
+	// posterior covariance of u | β, θ, y in the Laplace approximation.
+	// This matches the convention of student_full_log_det_H_hybrid (used by
+	// the optimizer's Laplace correction): observed Hessian where PD,
+	// Fisher fallback elsewhere — keeping both code paths consistent.
+	//
+	// Fisher weights overestimate u-precision when |r| < σ√ν (which is the
+	// typical residual regime), shrinking u^(s) draws toward the mode and
+	// inflating WAIC's lppd. Using observed-Hessian weights here closes
+	// most of the documented WAIC gap vs brms HMC for Student-t fits.
+	//
+	// `hessian_response` is the matching pseudo-response z_L such that
+	//   M_L⁻¹ Z' W_L (z_L − X β̂_k)  =  û_k
+	// at the grid point's mode, with M_L = Z' W_L Z + D_k⁻¹. The closed
+	// form for Student-t (identity link) is
+	//   z_L_i = (X β̂_k + Z û_k)_i + r̂_i · (νσ² + r_i²) / (νσ² − r_i²)
+	// on the no-offset scale, matching working_response. Using this with
+	// the matching W_L makes Z' W_L (z_L − μ̂_k) = D⁻¹ û_k via the score
+	// equation, recovering û_k as required.
+	//
+	// **Outliers and PD-ness.** For |r_i| > σ√ν, w_L_i is negative —
+	// individual observations contribute negatively to M_L. This is fine:
+	// M_L = Z' W_L Z + D_k⁻¹ can still be PD if the prior precision D_k⁻¹
+	// dominates the negative pile. eval_pirls_grid_point therefore
+	// populates these fields *unconditionally* for Student-t, and
+	// compute_grid_waic does the runtime PD check via Cholesky on the
+	// resulting M_k (falling back to working_weights when LDLT fails).
+	// The closed-form z_L is numerically robust thanks to lim_{r²→νσ²}
+	// w_L · z_L being finite (= w_F · r̂ + w_L · μ̂); a defensive
+	// epsilon in the divisor prevents exact-zero IEEE pathology.
+	//
+	// Both vectors are empty for non-Student families. compute_grid_waic
+	// must use working_weights/working_response when either is empty.
+	Eigen::VectorXd hessian_weights;
+	Eigen::VectorXd hessian_response;
 };
 
 
@@ -3321,25 +3364,106 @@ static GridPointResult eval_pirls_grid_point(
 		gpr.working_weights = w_gp;
 	}
 
+	// ── Working response for IRLS / Fisher Laplace u-sampling ──────
+	//
+	// `eta_hat` here is X β̂ + Z û WITHOUT offset, matching solve_pirls's
+	// internal convention. compute_grid_waic adds the offset back when
+	// reconstructing η at sampling time, so the working response stored
+	// here must also be on the no-offset scale.
+	//
+	// Same `eta_hat` is reused below for the Student-t Hessian-form
+	// pseudo-response `z_L` so we can avoid recomputing the X β̂ + Z û
+	// linear combination.
+	Eigen::VectorXd eta_hat = Xm * res.beta;
+	for (intptr_t g = 0; g < G; g++)
 	{
-		Eigen::VectorXd eta_hat = Xm * res.beta;
-		for (intptr_t g = 0; g < G; g++)
+		auto &idx = *lay.group_indices[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
 		{
-			auto &idx = *lay.group_indices[g];
-			intptr_t qg = lay.q[g];
-			for (intptr_t i = 0; i < n; i++)
-			{
-				intptr_t base = lay.offset[g] + idx[i] * qg;
-				for (intptr_t t = 0; t < qg; t++)
-					eta_hat[i] += lay.Z(g, i, t) * res.u[base + t];
-			}
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++)
+				eta_hat[i] += lay.Z(g, i, t) * res.u[base + t];
 		}
+	}
+
+	{
 		Eigen::VectorXd me_z = fam_gp.mu_eta(res.mu);
 		gpr.working_response = Eigen::VectorXd(n);
 		for (intptr_t i = 0; i < n; i++)
 		{
 			double d = std::max(me_z[i], 1e-10);
 			gpr.working_response[i] = eta_hat[i] + (ym[i] - res.mu[i]) / d;
+		}
+	}
+
+	// ── Student-t: observed-Hessian Laplace data for WAIC u-sampling ──
+	//
+	// `working_weights` above are the Fisher-information / IRLS form
+	//   w_F_i = (ν+1) / (νσ² + r_i²)
+	// always non-negative — that's what PIRLS iterates with. But the
+	// **observed Hessian** of -log p(y|μ) at the converged mode is
+	//   w_L_i = (ν+1)(νσ² − r_i²) / (νσ² + r_i²)²
+	// which is the form glmmTMB / TMB use for the Laplace correction
+	// at convergence (see also student_full_log_det_H_hybrid).
+	//
+	// For |r_i| < σ√ν we have w_L_i > 0; for |r_i| > σ√ν, w_L_i is
+	// negative. Crucially, `M = Z' diag(w_L) Z + D_k⁻¹` can still be
+	// PD with a few negative w_L_i as long as D_k⁻¹ dominates the
+	// negative contribution. We therefore populate these fields
+	// *unconditionally* for Student-t and let compute_grid_waic do
+	// the runtime PD check via Cholesky. The fraction of observations
+	// with |r| > σ√ν is non-trivial at finite ν (≈ 10% at ν=4), so
+	// the obs-level non-negativity check would defeat the purpose of
+	// this fix on typical Student-t fits.
+	//
+	// The two forms agree at r=0 and as ν → ∞ (Gaussian limit).
+	// For typical residuals (small r), w_L < w_F, so the Fisher form
+	// **overestimates** the posterior precision of u | β, θ, y, leaving
+	// the WAIC u-sampling concentration too tight around û_k. The
+	// observable consequence is too-low p_waic and too-low WAIC, which
+	// is exactly the validation gap vs brms HMC documented for the F2
+	// random-effects fit.
+	//
+	// **Hessian pseudo-response.** We need z_L such that
+	//     M_L⁻¹ Z' W_L (z_L − X β̂_k) = û_k
+	// at the grid point's mode. The closed form
+	//     z_L_i = (Xβ̂_k + Zû_k)_i + r̂_i · (νσ² + r²) / (νσ² − r²)
+	// gives Z' W_L (z_L − μ̂_k) = Z' W_F r̂ = D⁻¹ û_k (the score
+	// equation, satisfied at convergence), recovering û_k as required.
+	// On the no-offset scale matching working_response.
+	//
+	// Numerical robustness: the formula divides by (νσ² − r²) which
+	// can be near zero for observations exactly at |r_i| = σ√ν. The
+	// product w_L · z_L stays bounded in the limit (it cancels to
+	// w_F · r̂_i + w_L · (Xβ̂+Zû)_i), but exact division by zero would
+	// produce Inf in IEEE 754. We floor |denom| at a tiny epsilon to
+	// keep z_L finite; this preserves the product to within rounding
+	// because w_L → 0 in lockstep with denom.
+
+	if (fam.name == "student")
+	{
+		double sigma_t = std::exp(theta[n_chol]);
+		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+		double nu_sigma2 = nu_t * sigma_t * sigma_t;
+
+		// Defensive epsilon to prevent exact division by zero in the
+		// closed-form z_L when r² == νσ². See block comment above for
+		// why this preserves the limit value of w_L · z_L.
+		const double denom_floor = std::max(nu_sigma2, 1.0) * 1e-300;
+
+		gpr.hessian_weights  = Eigen::VectorXd(n);
+		gpr.hessian_response = Eigen::VectorXd(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double r    = ym[i] - res.mu[i];
+			double r2   = r * r;
+			double sum  = nu_sigma2 + r2;
+			double diff = nu_sigma2 - r2;
+			if (std::abs(diff) < denom_floor)
+				diff = (diff >= 0 ? 1.0 : -1.0) * denom_floor;
+			gpr.hessian_weights[i]  = (nu_t + 1.0) * diff / (sum * sum);
+			gpr.hessian_response[i] = eta_hat[i] + r * sum / diff;
 		}
 	}
 
@@ -3660,6 +3784,25 @@ static void compute_grid_waic(
 		//   aux_y[k] = M_k⁻¹ · Z' W_k z_k
 		//   aux_X[k] = M_k⁻¹ · Z' W_k X
 		//   M_k = Z' W_k Z + D_k⁻¹
+		//
+		// **Weight choice (Student-t).** For Student-t, the IRLS / Fisher
+		// weights w_F = (ν+1)/(νσ²+r²) are always non-negative and what
+		// PIRLS iterates with, but they overestimate posterior precision
+		// vs the **observed Hessian** form
+		//   w_L = (ν+1)(νσ²−r²) / (νσ²+r²)²
+		// at the mode. Using w_F here shrinks u^(s) too tightly toward û_k
+		// and inflates lppd (concretely: a ~32-unit WAIC gap against brms
+		// HMC on the F2 random-effects fit).
+		//
+		// We try the observed-Hessian form first (using hessian_weights /
+		// hessian_response stored at each grid point), falling back to
+		// the Fisher form per grid point when the LDLT factorization of
+		// the resulting M_L = Z'W_L Z + D_k⁻¹ fails. Individual
+		// observations with |r| > σ√ν contribute w_L < 0; M_L can still
+		// be PD if D_k⁻¹ dominates the negative pile, otherwise Cholesky
+		// detects indefiniteness and we fall through. Non-Student
+		// families have hessian_* empty by construction and always use
+		// the Fisher form, preserving existing behaviour.
 
 		J_cond = lay_cond_u->J_total;
 		u_llt.resize(n_grid);
@@ -3667,16 +3810,26 @@ static void compute_grid_waic(
 		aux_X.resize(n_grid);
 		u_llt_ok.assign(n_grid, false);
 
-		for (intptr_t k = 0; k < n_grid; k++)
-		{
-			const Eigen::VectorXd &w_k = results[k].working_weights;
-			const Eigen::VectorXd &z_k = results[k].working_response;
+		// Diagnostic: count how many grid points used Hessian vs Fisher
+		// when family is Student-t, exposed via PHON_DIAG_STUDENT_WAIC=1.
+		// hessian_used + fisher_used + (failed both) == n_grid; the third
+		// bucket is rare (both factorizations failing means the grid
+		// point was already invalid).
+		int hessian_used = 0;
+		int fisher_used = 0;
 
+		// Inner builder: assemble Z'Wz, Z'WX, M = Z'WZ + D_k⁻¹ at grid
+		// point k from the supplied weights/pseudo-response and try the
+		// LLT factorization. On success, populates u_llt[k] / aux_y[k] /
+		// aux_X[k] and returns true.
+		auto try_build_grid_point = [&](intptr_t k,
+		                                 const Eigen::VectorXd &w_k,
+		                                 const Eigen::VectorXd &z_k) -> bool
+		{
 			Eigen::VectorXd ZtWz = Eigen::VectorXd::Zero(J_cond);
 			Eigen::MatrixXd ZtWX = Eigen::MatrixXd::Zero(J_cond, p);
-			Eigen::MatrixXd M = Eigen::MatrixXd::Zero(J_cond, J_cond);
+			Eigen::MatrixXd M    = Eigen::MatrixXd::Zero(J_cond, J_cond);
 
-			// Single pass over observations: accumulate Z'Wz, Z'WX, Z'WZ
 			for (intptr_t i = 0; i < n; i++)
 			{
 				double wi = w_k[i];
@@ -3736,11 +3889,55 @@ static void compute_grid_waic(
 			}
 
 			u_llt[k].compute(M);
-			u_llt_ok[k] = (u_llt[k].info() == Eigen::Success);
-			if (u_llt_ok[k])
+			if (u_llt[k].info() != Eigen::Success)
+				return false;
+
+			aux_y[k] = u_llt[k].solve(ZtWz);
+			aux_X[k] = u_llt[k].solve(ZtWX);
+			return true;
+		};
+
+		const bool is_student = (model.family == "student");
+
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			bool ok = false;
+
+			// Try observed-Hessian Laplace first for Student-t.
+			if (is_student
+			    && results[k].hessian_weights.size()  == n
+			    && results[k].hessian_response.size() == n)
 			{
-				aux_y[k] = u_llt[k].solve(ZtWz);
-				aux_X[k] = u_llt[k].solve(ZtWX);
+				ok = try_build_grid_point(k,
+				                          results[k].hessian_weights,
+				                          results[k].hessian_response);
+				if (ok) hessian_used++;
+			}
+
+			// Fall back to Fisher / IRLS form (also the default path for
+			// non-Student non-Gaussian families).
+			if (!ok)
+			{
+				ok = try_build_grid_point(k,
+				                          results[k].working_weights,
+				                          results[k].working_response);
+				if (is_student && ok) fisher_used++;
+			}
+
+			u_llt_ok[k] = ok;
+		}
+
+		if (is_student)
+		{
+			static const bool diag_student_waic = []() {
+				const char *e = std::getenv("PHON_DIAG_STUDENT_WAIC");
+				return e && e[0] && e[0] != '0';
+			}();
+			if (diag_student_waic)
+			{
+				std::fprintf(stderr,
+					"[student WAIC] u-Laplace per grid point: hessian=%d  fisher_fallback=%d  (n_grid=%ld)\n",
+					hessian_used, fisher_used, (long)n_grid);
 			}
 		}
 	}
