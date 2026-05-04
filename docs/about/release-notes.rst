@@ -2,13 +2,45 @@ Release notes
 -------------
 
 
-0.9.2 (unreleased)
+0.9.2 (04/05/2026)
 ~~~~~~~~~~~~~~~~~~
+
+**General**
+
+- Support for drag'n drop in a running instance
+- Save dialogs propose the document's label as the default filename, falling back to ``untitled`` when no label has been set.
+
+**Sound and annotation views**
+
+- The mouse cursor is now tracked across linked sound plots while dragging an anchor on an annotation layer.
+
+**Concordance views**
+
+- The tab title now reliably shows the modified-state asterisk for all concordance edits — editing match text, editing the underlying annotation event, toggling the Wide/Long layout, and cell-level changes via undo/redo.
+- Fixed a bug whereby filter rules could appear duplicated (sometimes many times over) after reopening a project, and where clearing a filter via the toolbar did not persist across reopens. Filter rules are now stored exclusively in the project file; existing concordance files with stale or duplicated rules are silently cleaned up the next time they are saved.
+- Fixed row removal in concordances containing auxiliary columns.
+
+**Statistical analysis**
+
+- Improved accuracy and speed of binomial (logistic) regression, with further improvements to Bayesian logistic models that include random slopes.
+- Improved accuracy of robust (Student-t) regression in both frequentist and Bayesian fits.
+- Improved accuracy of Bayesian negative binomial models.
+- Bayesian models now report a posterior summary for random-effect correlations.
+- Random-slope terms can now contain interactions (e.g. ``(1 + x:y | g)``).
+- Variables with parentheses in their names are now properly quoted in formulas; main effects and interactions are kept in shorthand form (e.g. ``x*y`` rather than ``x + y + x:y``) in formula summaries.
+- Column-width formatting in model summary tables now adapts to the longest coefficient or hyperparameter name, so long names no longer push value columns out of alignment.
+
+**Speech**
+
+- Audio transcription no longer offers a translation option; transcription is performed in the source language only.
 
 **Scripting**
 
 - New Python-style triple-quoted string literals (``"""..."""`` and ``'''...'''``) for writing multi-line strings without manual concatenation. Line breaks and isolated occurrences of the delimiter are part of the content; the string is closed by three delimiter characters in a row. Escape sequences are processed as in single-line strings.
 - Single-quoted and double-quoted strings now report a syntax error when a literal line break is encountered before the closing delimiter. The error message points to the triple-quoted form. This matches the behaviour of most mainstream scripting languages and is a one-time, intentional break in compatibility with previous versions.
+- New ``get_column(datatable, name)`` to retrieve a column by name from a dataset or concordance, complementing the existing index-based form, as well as ``append(datatable, column, name)`` to add a column to a data table.
+- Additional model-checking accessors exposed for analyses (fixed-effect inference, coefficient and hyperparameter names, hyperparameter posteriors, random-effects summaries).
+- Documents (annotations, concordances, datasets, notes, scripts, sounds, spectra) are now explicitly non-clonable.
 
 
 0.9.1 (24/04/2026)
