@@ -58,6 +58,38 @@ inline void setLastDirectory(const QString &path)
 
 // ── Wrappers ──────────────────────────────────────────────────────────────────
 
+// Normalize a document's label() for use as a save-dialog filename base.
+//
+// Document::label(), Note::label(), Script::label() etc. all return a
+// human-readable placeholder ("Untitled", "Untitled note", "Untitled script")
+// when the document has neither a path nor a user-set label.  Those strings
+// are fine in the file browser but would surface in save dialogs as
+// suggestions like "Untitled script.phon" — capitalized, with a redundant
+// type word.  This helper folds every such placeholder back to a single
+// lowercase "untitled" so all save dialogs propose the same fallback when
+// no real label exists.  Real labels (e.g. "schwa coding") pass through
+// unchanged.
+inline QString normalizedSaveLabel(const String &label)
+{
+    auto q = QString::fromUtf8(label.data(), (int) label.size());
+    if (q.isEmpty()
+        || q == QLatin1String("Untitled")
+        || q.startsWith(QLatin1String("Untitled "), Qt::CaseInsensitive))
+    {
+        q = QStringLiteral("untitled");
+    }
+    return q;
+}
+
+// Convenience: normalizedSaveLabel(label) + extension.  Most callers want
+// "<label>.<ext>"; the few that need to compare the chosen base name to
+// the suggested base (e.g. ConcordanceView::save) call normalizedSaveLabel
+// directly so they can do the comparison without parsing the extension off.
+inline QString defaultSaveName(const String &label, const QString &extension)
+{
+    return normalizedSaveLabel(label) + extension;
+}
+
 inline QString getOpenFileName(QWidget *parent,
                                const QString &caption,
                                const QString &filter = QString())

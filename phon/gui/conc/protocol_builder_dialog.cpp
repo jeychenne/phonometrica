@@ -754,7 +754,8 @@ void ProtocolBuilderDialog::onSave()
 	}
 
 	auto qpath = getSaveFileName(this, tr("Save coding protocol"),
-		tr("Coding protocols (*.json)"));
+		tr("Coding protocols (*.json)"),
+		m_name_edit->text().trimmed() + QStringLiteral(".json"));
 	if (qpath.isEmpty()) return;
 	if (!qpath.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
 		qpath += QStringLiteral(".json");

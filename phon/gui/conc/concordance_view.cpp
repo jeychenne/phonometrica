@@ -852,8 +852,10 @@ bool ConcordanceView::save()
 
 	if (is_new)
 	{
-		// Offer the current label as candidate filename.
-		auto current_label = QString::fromUtf8(m_conc->label().data(), (int) m_conc->label().size());
+		// Offer the current label as candidate filename; placeholder labels
+		// like "Untitled" collapse to lowercase "untitled" so all save
+		// dialogs propose the same fallback (see file_dialog.hpp).
+		auto current_label = normalizedSaveLabel(m_conc->label());
 		auto suggested = current_label + QStringLiteral(".phon-conc");
 
 		auto path = getSaveFileName(this, tr("Save concordance..."),
@@ -1195,7 +1197,8 @@ void ConcordanceView::onEditMatchText()
 void ConcordanceView::onExportCsv()
 {
 	auto path = getSaveFileName(this, tr("Export to CSV..."),
-		tr("CSV files (*.csv *.txt)"));
+		tr("CSV files (*.csv *.txt)"),
+		defaultSaveName(m_conc->label(), QStringLiteral(".csv")));
 	if (path.isEmpty()) return;
 
 	try

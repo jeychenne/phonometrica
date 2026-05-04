@@ -154,7 +154,7 @@ bool NoteView::save()
 	{
 		auto path = getSaveFileName(this, tr("Save note as..."),
 			tr("Research note (*%1)").arg(QStringLiteral(PHON_EXT_NOTE)),
-			QStringLiteral("untitled") + QStringLiteral(PHON_EXT_NOTE));
+			defaultSaveName(m_note->label(), QStringLiteral(PHON_EXT_NOTE)));
 
 		if (path.isEmpty())
 			return false;

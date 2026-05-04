@@ -157,7 +157,8 @@ bool AnalysisView::save()
 	if (firstSave)
 	{
 		auto path = getSaveFileName(this, tr("Save analysis as..."),
-			tr("Phonometrica analysis (*.phon-analysis)"), QStringLiteral("untitled.phon-analysis"));
+			tr("Phonometrica analysis (*.phon-analysis)"),
+			defaultSaveName(m_analysis->label(), QStringLiteral(".phon-analysis")));
 
 		if (path.isEmpty())
 			return false;
@@ -5068,9 +5069,22 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	if (m.is_bayesian() && !m.hyper_names.empty())
 	{
+		// First-column width: fit longest hyperparameter name (e.g.
+		// "cor(Intercept,man.dist:subsystem[vowels]|language)") so that
+		// value columns don't get pushed out of alignment.
+		int hyper_w = 36; // minimum
+		for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+		{
+			int len = (int)m.hyper_names[i].size() + 2;
+			if (len > hyper_w) hyper_w = len;
+		}
+		std::string hyper_fmt = "%-" + std::to_string(hyper_w) + "s";
+
 		text += QStringLiteral("Hyperparameters (posterior):\n");
-		text += QString::asprintf("%-36s %12s %12s %12s %12s\n",
+		text += QString::asprintf((hyper_fmt + " %12s %12s %12s %12s\n").c_str(),
 		                           "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
+
+		std::string hyper_row = hyper_fmt + " %12.4f %12.4f %12.4f %12.4f\n";
 
 		for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
 		{
@@ -5080,7 +5094,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			double lo = (i <= m.hyper_ci_lower.size()) ? m.hyper_ci_lower[i] : 0.0;
 			double hi = (i <= m.hyper_ci_upper.size()) ? m.hyper_ci_upper[i] : 0.0;
 
-			text += QString::asprintf("%-36s %12.4f %12.4f %12.4f %12.4f\n",
+			text += QString::asprintf(hyper_row.c_str(),
 			                           name, mean, sd, lo, hi);
 		}
 		text += QStringLiteral("\n");
@@ -5090,13 +5104,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	if (m.has_smooth_terms())
 	{
-		text += QStringLiteral("Approximate significance of smooth terms:\n");
-		text += QString::asprintf("%-20s %8s %8s %10s %12s\n",
-		                           "", "edf", "Ref.df", "F", "p-value");
-
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
-		{
-			auto &sm = m.smooth_terms[i];
+		// Build labels first so we can both size the column and reuse them.
+		auto build_label = [](const auto &sm) -> String {
 			String label("s(");
 			label.append(sm.variable);
 			if (sm.basis == "re") {
@@ -5109,6 +5118,27 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			} else {
 				label.append(")");
 			}
+			return label;
+		};
+
+		Array<String> labels;
+		int sm_w = 20;
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+			labels.append(build_label(m.smooth_terms[i]));
+			int len = (int)labels[i].size() + 2;
+			if (len > sm_w) sm_w = len;
+		}
+		std::string sm_fmt = "%-" + std::to_string(sm_w) + "s";
+
+		text += QStringLiteral("Approximate significance of smooth terms:\n");
+		text += QString::asprintf((sm_fmt + " %8s %8s %10s %12s\n").c_str(),
+		                           "", "edf", "Ref.df", "F", "p-value");
+
+		std::string sm_row = sm_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
+
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
 
 			char pbuf[16];
 			if (sm.p_value < 0.001)
@@ -5122,8 +5152,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			else if (sm.p_value < 0.05) stars = " *";
 			else if (sm.p_value < 0.1) stars = " .";
 
-			text += QString::asprintf("%-20s %8.3f %8.3f %10.2f %12s%s\n",
-			                           label.data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
+			text += QString::asprintf(sm_row.c_str(),
+			                           labels[i].data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
 		}
 
 		text += QStringLiteral("---\n");
@@ -5162,14 +5192,40 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			return sum;
 		};
 
+		// Compute first-column width.  Two kinds of labels share this slot:
+		// the (un-indented) group name and the (indented by 2) term names.
+		// We need w ≥ max(min, longest_group + pad, 2 + longest_term + pad)
+		// so values stay aligned regardless of which row holds the longest
+		// label.  "Residual" (8 chars) trivially fits any min ≥ 10.
+		constexpr int re_min_w = 20;
+		constexpr int re_pad = 2;
+		constexpr int re_indent = 2;
+		int re_w = re_min_w;
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+			int gw = (int)re.group_name.size() + re_pad;
+			if (gw > re_w) re_w = gw;
+			for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+				int tw = re_indent + (int)re.term_names[t].size() + re_pad;
+				if (tw > re_w) re_w = tw;
+			}
+		}
+		int re_term_w = re_w - re_indent;
+		std::string re_grp_fmt  = "%-" + std::to_string(re_w) + "s";
+		std::string re_term_fmt = "%-" + std::to_string(re_term_w) + "s";
+
 		text += QStringLiteral("Random effects:\n");
 		if (show_corr) {
-			text += QString::asprintf("%-20s %12s %12s %8s   %s\n",
+			text += QString::asprintf((re_grp_fmt + " %12s %12s %8s   %s\n").c_str(),
 			                           "Group", "Variance", "Std.Dev.", "Levels", "Corr");
 		} else {
-			text += QString::asprintf("%-20s %12s %12s %8s\n",
+			text += QString::asprintf((re_grp_fmt + " %12s %12s %8s\n").c_str(),
 			                           "Group", "Variance", "Std.Dev.", "Levels");
 		}
+
+		std::string re_grp_row  = re_grp_fmt + " %12.4f %12.4f %8ld\n";
+		std::string re_term_row = "  " + re_term_fmt + " %12.4f %12.4f %8s";
 
 		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
 		{
@@ -5183,13 +5239,13 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 				if (t == 1) {
 					// First row: group name, level count, no corr.
-					text += QString::asprintf("%-20s %12.4f %12.4f %8ld\n",
+					text += QString::asprintf(re_grp_row.c_str(),
 					                           gname, var, sd, (long)re.nlevels);
 				} else {
 					// Slope row: indented term name, blank Levels slot,
 					// then one corr per previous term in the same group.
 					const char *tname = re.term_names[t].data();
-					text += QString::asprintf("  %-18s %12.4f %12.4f %8s",
+					text += QString::asprintf(re_term_row.c_str(),
 					                           tname, var, sd, "");
 					for (intptr_t s = 1; s < t; s++) {
 						double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
@@ -5204,7 +5260,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		}
 
 		if (m.is_gaussian()) {
-			text += QString::asprintf("%-20s %12.4f %12.4f\n",
+			std::string re_res_fmt = re_grp_fmt + " %12.4f %12.4f\n";
+			text += QString::asprintf(re_res_fmt.c_str(),
 			                           "Residual", m.rse * m.rse, m.rse);
 		}
 
@@ -5241,8 +5298,18 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 				text += QStringLiteral("Conditional modes for %1:\n")
 					.arg(QString::fromUtf8(re.group_name.data(), (int)re.group_name.size()));
 
+				// First-column width: fit "Level" header plus longest level
+				// label.  Level labels are e.g. subject IDs or language names
+				// that can easily run past the legacy 20-char field.
+				int lvl_w = 20;
+				for (intptr_t j = 1; j <= re.level_names.size(); j++) {
+					int len = (int)re.level_names[j].size() + 2;
+					if (len > lvl_w) lvl_w = len;
+				}
+				std::string lvl_fmt = "%-" + std::to_string(lvl_w) + "s";
+
 				// Header: Level, then each term name
-				text += QString::asprintf("%-20s", "Level");
+				text += QString::asprintf(lvl_fmt.c_str(), "Level");
 				for (intptr_t t = 1; t <= q; t++) {
 					text += QString::asprintf(" %12s", re.term_names[t].data());
 				}
@@ -5258,7 +5325,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 					else
 						level_label = QString::number(j + 1);
 
-					text += QString::asprintf("%-20s", level_label.toUtf8().constData());
+					text += QString::asprintf(lvl_fmt.c_str(), level_label.toUtf8().constData());
 
 					for (intptr_t t = 0; t < q; t++)
 					{

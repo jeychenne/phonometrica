@@ -805,8 +805,13 @@ void FormantQueryEditor::onSave()
 
 void FormantQueryEditor::onSaveAs()
 {
+	auto name = m_name_edit->text().trimmed();
+	if (name.isEmpty()) name = m_name_edit->placeholderText();
+	auto suggested = defaultSaveName(String(name.toUtf8().constData()),
+	                                 QStringLiteral(".phon-query"));
+
 	auto path = getSaveFileName(this, tr("Save formant query..."),
-		tr("Phonometrica query (*.phon-query)"));
+		tr("Phonometrica query (*.phon-query)"), suggested);
 	if (path.isEmpty()) return;
 
 	bool is_new = m_query->path().empty();

@@ -360,19 +360,28 @@ inline std::string format_prior_summary(const PriorSpec &p, const String &family
 
 	// Fixed effects.
 	{
-		char buf[80];
+		char buf[256];
 		snprintf(buf, sizeof(buf), "  Fixed effects:  N(%.4g, %.4g)%s\n",
 		         p.fixed_effects.mean, p.fixed_effects.sd,
 		         p.fixed_auto ? " *" : "");
 		s += buf;
 
-		// Per-coefficient overrides.
+		// Per-coefficient overrides.  Width fits the longest "name:" label so
+		// long coefficient names like "subsystem[vowels]:man.dist" don't push
+		// the prior expression out of alignment.
+		int label_w = 14; // minimum
+		for (auto &[name, prior] : p.coefficient_priors)
+		{
+			int len = (int)name.size() + 1; // +1 for trailing colon
+			if (len > label_w) label_w = len;
+		}
+
 		for (auto &[name, prior] : p.coefficient_priors)
 		{
 			std::string label(name.data(), name.size());
 			label += ":";
-			snprintf(buf, sizeof(buf), "    %-14s N(%.4g, %.4g)\n",
-			         label.c_str(), prior.mean, prior.sd);
+			snprintf(buf, sizeof(buf), "    %-*s N(%.4g, %.4g)\n",
+			         label_w, label.c_str(), prior.mean, prior.sd);
 			s += buf;
 		}
 	}

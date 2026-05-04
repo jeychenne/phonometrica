@@ -179,7 +179,8 @@ bool ScriptView::save()
 	if (firstSave)
 	{
 		auto path = getSaveFileName(this, tr("Save script as..."),
-			tr("Phonometrica script (*.phon)"), QStringLiteral("untitled.phon"));
+			tr("Phonometrica script (*.phon)"),
+			defaultSaveName(m_script->label(), QStringLiteral(".phon")));
 
 		if (path.isEmpty())
 			return false;

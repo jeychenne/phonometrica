@@ -383,7 +383,7 @@ bool DatasetView::save()
 
 	if (is_new)
 	{
-		auto current_label = QString::fromUtf8(m_ds->label().data(), (int) m_ds->label().size());
+		auto current_label = normalizedSaveLabel(m_ds->label());
 		auto suggested = current_label + QStringLiteral(".csv");
 
 		auto path = getSaveFileName(this, tr("Save dataset..."),
@@ -505,7 +505,8 @@ void DatasetView::onDeleteColumns()
 void DatasetView::onExportCsv()
 {
 	auto path = getSaveFileName(this, tr("Export to CSV..."),
-		tr("CSV files (*.csv *.txt)"));
+		tr("CSV files (*.csv *.txt)"),
+		defaultSaveName(m_ds->label(), QStringLiteral(".csv")));
 	if (path.isEmpty()) return;
 
 	try

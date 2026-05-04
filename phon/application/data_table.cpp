@@ -287,6 +287,24 @@ static Variant make_headers_list(Runtime &rt, DataTable &table)
 // Summarize a fitted model: format and print to console.
 // =====================================================================
 
+// First-column width helper for printf-style summary tables.
+//
+// Returns max(min_w, longest_name + pad).  Names is a 1-indexed
+// Array<String> per Phonometrica convention.  All summary tables
+// (fixed effects, hyperparameters, smooth terms, random effects, …)
+// use this so a long term name like
+// "cor(Intercept,man.dist:subsystem[vowels]|language)" no longer
+// pushes value columns out of alignment.
+static int summary_column_width(const Array<String> &names, int min_w, int pad = 2)
+{
+	int w = min_w;
+	for (intptr_t i = 1; i <= names.size(); i++) {
+		int len = (int)names[i].size() + pad;
+		if (len > w) w = len;
+	}
+	return w;
+}
+
 static void print_model_summary(Runtime &rt, const stats::Model &m)
 {
 	const char *family_display = m.family.data();
@@ -340,17 +358,23 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		bool has_mode = !m.posterior_mode.empty();
 		bool has_median = !m.posterior_median.empty();
 
+		int name_w = summary_column_width(m.coef_names, 24);
+		std::string lbl_fmt = "%-" + std::to_string(name_w) + "s";
+
 		if (has_mode && has_median)
 		{
-			rt.printf("%-24s %12s %12s %12s %12s %12s %12s %8s\n",
+			rt.printf((lbl_fmt + " %12s %12s %12s %12s %12s %12s %8s\n").c_str(),
 			          "", "Post.Mean", "Post.Mode", "Post.Median",
 			          "Post.SD", "CI.lower", "CI.upper", "pd");
 		}
 		else
 		{
-			rt.printf("%-24s %12s %12s %12s %12s %8s\n",
+			rt.printf((lbl_fmt + " %12s %12s %12s %12s %8s\n").c_str(),
 			          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper", "pd");
 		}
+
+		std::string row_full = lbl_fmt + " %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %8s%s\n";
+		std::string row_brief = lbl_fmt + " %12.4f %12.4f %12.4f %12.4f %8s%s\n";
 
 		for (intptr_t i = 1; i <= m.nfixed; i++)
 		{
@@ -368,7 +392,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 			if (has_mode && has_median)
 			{
-				rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %8s%s\n",
+				rt.printf(row_full.c_str(),
 				          name,
 				          m.posterior_mean[i], m.posterior_mode[i], m.posterior_median[i],
 				          m.posterior_sd[i],
@@ -377,7 +401,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			}
 			else
 			{
-				rt.printf("%-24s %12.4f %12.4f %12.4f %12.4f %8s%s\n",
+				rt.printf(row_brief.c_str(),
 				          name,
 				          m.posterior_mean[i], m.posterior_sd[i],
 				          m.ci_lower[i], m.ci_upper[i],
@@ -395,15 +419,19 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			                 && m.hyper_posterior_sd.size() == m.hyper_names.size()
 			                 && !std::isnan(m.hyper_posterior_sd[1]);
 
+			int hyper_w = summary_column_width(m.hyper_names, 30);
+			std::string hyper_fmt = "%-" + std::to_string(hyper_w) + "s";
+
 			if (has_hyper_sd)
 			{
 				rt.printf("Hyperparameters (posterior):\n");
-				rt.printf("%-30s %12s %12s %12s %12s\n",
+				rt.printf((hyper_fmt + " %12s %12s %12s %12s\n").c_str(),
 				          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
 
+				std::string hyper_row = hyper_fmt + " %12.4f %12.4f %12.4f %12.4f\n";
 				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
 				{
-					rt.printf("%-30s %12.4f %12.4f %12.4f %12.4f\n",
+					rt.printf(hyper_row.c_str(),
 					          m.hyper_names[i].data(),
 					          m.hyper_posterior_mean[i], m.hyper_posterior_sd[i],
 					          m.hyper_ci_lower[i], m.hyper_ci_upper[i]);
@@ -412,11 +440,12 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			else
 			{
 				rt.printf("Hyperparameters (posterior):\n");
-				rt.printf("%-30s %12s\n", "", "Post.Mean");
+				rt.printf((hyper_fmt + " %12s\n").c_str(), "", "Post.Mean");
 
+				std::string hyper_row = hyper_fmt + " %12.4f\n";
 				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
 				{
-					rt.printf("%-30s %12.4f\n",
+					rt.printf(hyper_row.c_str(),
 					          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
 				}
 			}
@@ -428,7 +457,14 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		// ── Frequentist summary ─────────────────────────────────
 		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
 		rt.printf("Fixed effects:\n");
-		rt.printf("%-24s %12s %12s %12s %12s\n", "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
+
+		int name_w = summary_column_width(m.coef_names, 24);
+		std::string lbl_fmt = "%-" + std::to_string(name_w) + "s";
+
+		rt.printf((lbl_fmt + " %12s %12s %12s %12s\n").c_str(),
+		          "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
+
+		std::string row_fmt = lbl_fmt + " %12.4f %12.4f %12.3f %12s%s\n";
 
 		for (intptr_t i = 1; i <= m.nfixed; i++)
 		{
@@ -443,7 +479,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			else if (m.p[i] < 0.05) stars = " *";
 			else if (m.p[i] < 0.1) stars = " .";
 
-			rt.printf("%-24s %12.4f %12.4f %12.3f %12s%s\n",
+			rt.printf(row_fmt.c_str(),
 			          name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
 		}
 
@@ -457,16 +493,10 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	// linear, GLM, and mixed-model fits.
 	if (m.has_smooth_terms())
 	{
-		rt.printf("Approximate significance of smooth terms:\n");
-		rt.printf("%-24s %8s %8s %10s %12s\n",
-		          "", "edf", "Ref.df", "F", "p-value");
-
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
-		{
-			auto &sm = m.smooth_terms[i];
-
-			// mgcv-style labels: s(x), s(x, bs=re), s(group):slope for
-			// random slopes s(group, by=x, bs=re).
+		// Build labels first so we can both size the column and reuse them.
+		// mgcv-style labels: s(x), s(x, bs=re), s(group):slope for
+		// random slopes s(group, by=x, bs=re).
+		auto build_label = [](const auto &sm) -> String {
 			String label("s(");
 			label.append(sm.variable);
 			if (sm.basis == "re") {
@@ -479,6 +509,26 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			} else {
 				label.append(")");
 			}
+			return label;
+		};
+
+		Array<String> labels;
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+			labels.append(build_label(m.smooth_terms[i]));
+		}
+
+		int name_w = summary_column_width(labels, 24);
+		std::string lbl_fmt = "%-" + std::to_string(name_w) + "s";
+
+		rt.printf("Approximate significance of smooth terms:\n");
+		rt.printf((lbl_fmt + " %8s %8s %10s %12s\n").c_str(),
+		          "", "edf", "Ref.df", "F", "p-value");
+
+		std::string row_fmt = lbl_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
+
+		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
 
 			char pbuf[16];
 			if (sm.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
@@ -490,8 +540,8 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			else if (sm.p_value < 0.05) stars = " *";
 			else if (sm.p_value < 0.1) stars = " .";
 
-			rt.printf("%-24s %8.3f %8.3f %10.2f %12s%s\n",
-			          label.data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
+			rt.printf(row_fmt.c_str(),
+			          labels[i].data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
 		}
 		rt.printf("---\n");
 		rt.printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
@@ -526,14 +576,40 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			return sum;
 		};
 
+		// Compute first-column width.  Two kinds of labels share this slot:
+		// the (un-indented) group name and the (indented by 2) term names.
+		// We need w ≥ max(min, longest_group + pad, 2 + longest_term + pad)
+		// so values stay aligned regardless of which row holds the longest
+		// label.  "Residual" (8 chars) trivially fits any min ≥ 10.
+		constexpr int re_min_w = 20;
+		constexpr int re_pad = 2;
+		constexpr int re_indent = 2;
+		int name_w = re_min_w;
+		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+			int gw = (int)re.group_name.size() + re_pad;
+			if (gw > name_w) name_w = gw;
+			for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+				int tw = re_indent + (int)re.term_names[t].size() + re_pad;
+				if (tw > name_w) name_w = tw;
+			}
+		}
+		int term_w = name_w - re_indent;
+		std::string grp_fmt  = "%-" + std::to_string(name_w) + "s";
+		std::string term_fmt = "%-" + std::to_string(term_w) + "s";
+
 		rt.printf("Random effects:\n");
 		if (show_corr) {
-			rt.printf("%-20s %12s %12s %8s   %s\n",
+			rt.printf((grp_fmt + " %12s %12s %8s   %s\n").c_str(),
 				"Group", "Variance", "Std.Dev.", "Levels", "Corr");
 		} else {
-			rt.printf("%-20s %12s %12s %8s\n",
+			rt.printf((grp_fmt + " %12s %12s %8s\n").c_str(),
 				"Group", "Variance", "Std.Dev.", "Levels");
 		}
+
+		std::string grp_row  = grp_fmt + " %12.4f %12.4f %8ld\n";
+		std::string term_row = "  " + term_fmt + " %12.4f %12.4f %8s";
 
 		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
 		{
@@ -545,12 +621,12 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 				double sd = std::sqrt(std::max(var, 0.0));
 
 				if (t == 1) {
-					rt.printf("%-20s %12.4f %12.4f %8ld\n",
+					rt.printf(grp_row.c_str(),
 						re.group_name.data(), var, sd, (long)re.nlevels);
 				} else {
 					// Indented term name, blank Levels slot, then one corr per
 					// previous term in the same group.
-					rt.printf("  %-18s %12.4f %12.4f %8s",
+					rt.printf(term_row.c_str(),
 						re.term_names[t].data(), var, sd, "");
 					for (intptr_t s = 1; s < t; s++) {
 						double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
@@ -564,7 +640,10 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 			}
 		}
 
-		if (m.is_gaussian()) rt.printf("%-20s %12.4f %12.4f\n", "Residual", m.rse * m.rse, m.rse);
+		if (m.is_gaussian()) {
+			std::string res_fmt = grp_fmt + " %12.4f %12.4f\n";
+			rt.printf(res_fmt.c_str(), "Residual", m.rse * m.rse, m.rse);
+		}
 		rt.printf("\n");
 	}
 	else if (m.is_gaussian() && !m.is_bayesian())
