@@ -4348,6 +4348,57 @@ static void write_lognormal_hyper(Model &model, intptr_t idx,
 }
 
 
+// =====================================================================
+// Fisher-z (atanh) posterior summary for correlation hyperparameters
+// =====================================================================
+//
+// Random-effect correlations in q≥2 groups live in (−1, 1). Computing
+// moments of ρ directly and reporting a symmetric CI ρ ± z·SD has the
+// same pathology as σ-space symmetric CIs for variance components: it
+// pulls the bound past the support clamp at ±1 whenever the posterior
+// is wide.
+//
+// Under the (τ, ω) parameterization, ω_{i,j} = θ_chol[chol_pos_base+q+...]
+// is exactly Gaussian under Laplace, and for q=2 the single correlation
+// is ρ = tanh(ω_{1,0}) — i.e. atanh(ρ) is exactly the Gaussian quantity.
+// For q≥3, ρ_{i,j} is a non-trivial function of multiple ω's, but
+// atanh-space accumulation is still a strong approximation: it maps
+// the bounded support (−1, 1) to all of ℝ, symmetrising the posterior
+// around its mode in the same spirit as Fisher's z transform.
+//
+// Computes (with z ≡ atanh(ρ) and atanh(ρ) ~ N(μ_z, σ_z²)):
+//   median = tanh(μ_z)
+//   95% CI = (tanh(μ_z − z·σ_z), tanh(μ_z + z·σ_z))
+//   SD via delta method: Var(tanh(Z)) ≈ (1−tanh²(μ_z))² · σ_z² for
+//   small σ_z. The mean is approximated by the median; this is exact
+//   to O(σ_z²) since atanh is approximately symmetric and tanh is
+//   antisymmetric around the mode in the informative regime.
+static void write_fisher_z_hyper(Model &model, intptr_t idx,
+                                   const String &name,
+                                   double mean_z, double sd_z,
+                                   double z_975)
+{
+	double mean_rho = std::tanh(mean_z);
+	double sech2    = 1.0 - mean_rho * mean_rho;
+	double sd_rho   = sech2 * sd_z;                  // delta method
+	double lo       = std::tanh(mean_z - z_975 * sd_z);
+	double up       = std::tanh(mean_z + z_975 * sd_z);
+
+	// Clamp to (−1, 1) as defense against floating-point edge cases;
+	// tanh is mathematically bounded but rounding can put values on
+	// the boundary which then displays as ±1.000.
+	mean_rho = std::clamp(mean_rho, -1.0, 1.0);
+	lo       = std::clamp(lo,       -1.0, 1.0);
+	up       = std::clamp(up,       -1.0, 1.0);
+
+	model.hyper_names[idx]          = name;
+	model.hyper_posterior_mean[idx] = mean_rho;
+	model.hyper_posterior_sd[idx]   = sd_rho;
+	model.hyper_ci_lower[idx]       = lo;
+	model.hyper_ci_upper[idx]       = up;
+}
+
+
 // Main INLA grid integration for Gaussian LMMs.
 // Populates the Model's posterior fields with mixture-based estimates.
 static void inla_grid_integrate_gaussian(
@@ -5112,11 +5163,16 @@ static void inla_grid_integrate_gaussian(
 	// ── 8. Hyperparameter posteriors ─────────────────────────────
 	//
 	// From the grid weights, compute marginal posterior mean and SD
-	// for each variance component SD and the residual SD.
+	// for each variance component SD, each off-diagonal RE correlation
+	// (q ≥ 2 groups), and the residual SD.
 
 	intptr_t n_hyper = 0;
 	for (intptr_t g = 0; g < lay.G; g++)
-		n_hyper += lay.q[g];
+	{
+		intptr_t qg = lay.q[g];
+		n_hyper += qg;                      // σ entries
+		n_hyper += qg * (qg - 1) / 2;       // ρ entries (off-diagonals)
+	}
 	n_hyper += 1;  // residual SD (Gaussian)
 
 	model.hyper_names = Array<String>(n_hyper, String());
@@ -5162,6 +5218,64 @@ static void inla_grid_integrate_gaussian(
 				                       mean_log_sd, log_sd, z_975);
 				idx++;
 			}
+
+			// ── Off-diagonal correlations for q ≥ 2 groups ───────────
+			// For q ≥ 2, accumulate moments of atanh(ρ_{i,j}) over the
+			// grid and back-transform via tanh; see write_fisher_z_hyper
+			// for the rationale. q = 1 groups skip this block (no
+			// correlations to report).
+			if (qg >= 2)
+			{
+				intptr_t n_corr_g = qg * (qg - 1) / 2;
+				std::vector<double> mean_z(n_corr_g, 0.0);
+				std::vector<double> mean_z2(n_corr_g, 0.0);
+
+				for (intptr_t k = 0; k < n_grid; k++)
+				{
+					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+					Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + chol_pos_base, qg);
+					Eigen::MatrixXd D = cholesky_to_cov(L);
+
+					intptr_t pair = 0;
+					for (intptr_t i = 1; i < qg; i++)
+					{
+						for (intptr_t j = 0; j < i; j++)
+						{
+							double denom = std::sqrt(std::max(D(i, i) * D(j, j), 1e-30));
+							double rho   = D(i, j) / denom;
+							rho = std::clamp(rho, -1.0 + 1e-12, 1.0 - 1e-12);
+							double zval  = std::atanh(rho);
+							mean_z[pair]  += w[k] * zval;
+							mean_z2[pair] += w[k] * zval * zval;
+							pair++;
+						}
+					}
+				}
+
+				intptr_t pair = 0;
+				for (intptr_t i = 1; i < qg; i++)
+				{
+					for (intptr_t j = 0; j < i; j++)
+					{
+						double var_z = mean_z2[pair] - mean_z[pair] * mean_z[pair];
+						double sd_z  = (var_z > 0) ? std::sqrt(var_z) : 0.0;
+
+						std::string cname = "cor("
+						    + std::string(re.term_names[j + 1].data(), re.term_names[j + 1].size())
+						    + ","
+						    + std::string(re.term_names[i + 1].data(), re.term_names[i + 1].size())
+						    + "|"
+						    + std::string(re.group_name.data(), re.group_name.size())
+						    + ")";
+
+						write_fisher_z_hyper(model, idx, String(cname),
+						                      mean_z[pair], sd_z, z_975);
+						idx++;
+						pair++;
+					}
+				}
+			}
+
 			chol_pos_base += n_chol_params(qg);
 		}
 
@@ -5676,7 +5790,11 @@ static void inla_grid_integrate_pirls(
 
 	intptr_t n_re_hyper = 0;
 	for (intptr_t g = 0; g < lay.G; g++)
-		n_re_hyper += lay.q[g];
+	{
+		intptr_t qg = lay.q[g];
+		n_re_hyper += qg;                      // σ entries
+		n_re_hyper += qg * (qg - 1) / 2;       // ρ entries (off-diagonals)
+	}
 
 	intptr_t n_disp = fam.n_dispersion_params();
 
@@ -5722,6 +5840,62 @@ static void inla_grid_integrate_pirls(
 				                       mean_log_sd, log_sd, z_975);
 				idx++;
 			}
+
+			// ── Off-diagonal correlations for q ≥ 2 groups ───────────
+			// Mirrors the corresponding block in inla_grid_integrate_gaussian;
+			// see write_fisher_z_hyper for the rationale.
+			if (qg >= 2)
+			{
+				intptr_t n_corr_g = qg * (qg - 1) / 2;
+				std::vector<double> mean_z(n_corr_g, 0.0);
+				std::vector<double> mean_z2(n_corr_g, 0.0);
+
+				for (intptr_t k = 0; k < n_grid; k++)
+				{
+					Eigen::VectorXd theta_k = theta_star + T * z_points[k];
+					Eigen::MatrixXd L = unpack_cholesky(theta_k.data() + chol_pos_base, qg);
+					Eigen::MatrixXd D = cholesky_to_cov(L);
+
+					intptr_t pair = 0;
+					for (intptr_t i = 1; i < qg; i++)
+					{
+						for (intptr_t j = 0; j < i; j++)
+						{
+							double denom = std::sqrt(std::max(D(i, i) * D(j, j), 1e-30));
+							double rho   = D(i, j) / denom;
+							rho = std::clamp(rho, -1.0 + 1e-12, 1.0 - 1e-12);
+							double zval  = std::atanh(rho);
+							mean_z[pair]  += w[k] * zval;
+							mean_z2[pair] += w[k] * zval * zval;
+							pair++;
+						}
+					}
+				}
+
+				intptr_t pair = 0;
+				for (intptr_t i = 1; i < qg; i++)
+				{
+					for (intptr_t j = 0; j < i; j++)
+					{
+						double var_z = mean_z2[pair] - mean_z[pair] * mean_z[pair];
+						double sd_z  = (var_z > 0) ? std::sqrt(var_z) : 0.0;
+
+						std::string cname = "cor("
+						    + std::string(re.term_names[j + 1].data(), re.term_names[j + 1].size())
+						    + ","
+						    + std::string(re.term_names[i + 1].data(), re.term_names[i + 1].size())
+						    + "|"
+						    + std::string(re.group_name.data(), re.group_name.size())
+						    + ")";
+
+						write_fisher_z_hyper(model, idx, String(cname),
+						                      mean_z[pair], sd_z, z_975);
+						idx++;
+						pair++;
+					}
+				}
+			}
+
 			chol_pos_base += n_chol_params(qg);
 		}
 
