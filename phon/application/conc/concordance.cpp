@@ -1214,7 +1214,12 @@ void Concordance::preload()
 	{
 		if (node.name() == str("Metadata"))
 		{
-			metadata_from_xml(node);
+			// Read only Document-level metadata (description, properties) from
+			// the .phon-conc file. Filter rules live exclusively in the project
+			// file — see metadata_to_xml in Concordance::write below for the
+			// matching write side. This avoids the .phon-conc reasserting stale
+			// or accumulated filter rules over the project's authoritative state.
+			Document::metadata_from_xml(node);
 		}
 	}
 }
@@ -1797,7 +1802,12 @@ void Concordance::write()
 	}
 	root.append_attribute("type").set_value("text");
 	auto metadata_node = root.append_child("Metadata");
-	metadata_to_xml(metadata_node);
+	// Skip filter rules in the .phon-conc file: they are view metadata that
+	// lives exclusively in the project file. Calling Document::metadata_to_xml
+	// directly bypasses DataTable's filter-rule serialization, so the .phon-conc
+	// never accumulates stale rules and never overrides the project's
+	// authoritative state on reload (see Concordance::preload above).
+	Document::metadata_to_xml(metadata_node);
 
 	auto option_node = root.append_child("Options");
 	auto ctx_node = option_node.append_child("Context");

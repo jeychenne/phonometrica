@@ -173,6 +173,35 @@ void DataTable::metadata_from_xml(xml_node meta_node)
 			m_filter_rules.append(std::move(rule));
 		}
 	}
+
+	// Defensive deduplication: legacy data (from earlier versions, or any
+	// future path that produces duplicates) can leave m_filter_rules with
+	// repeated entries — typically the same rule N times. Drop exact dupes
+	// while preserving first-occurrence order. O(n²) but n is tiny in practice.
+	if (m_filter_rules.size() > 1)
+	{
+		Array<FilterRuleData> deduped;
+		for (intptr_t i = 1; i <= m_filter_rules.size(); i++)
+		{
+			auto &candidate = m_filter_rules[i];
+			bool seen = false;
+			for (intptr_t j = 1; j <= deduped.size(); j++)
+			{
+				auto &existing = deduped[j];
+				if (existing.column == candidate.column &&
+				    existing.op == candidate.op &&
+				    existing.value == candidate.value &&
+				    existing.set_values == candidate.set_values)
+				{
+					seen = true;
+					break;
+				}
+			}
+			if (!seen) deduped.append(candidate);
+		}
+		if (deduped.size() != m_filter_rules.size())
+			m_filter_rules = std::move(deduped);
+	}
 }
 
 void DataTable::set_filter_rules(Array<FilterRuleData> rules, bool enabled, const String &logic)
@@ -180,8 +209,10 @@ void DataTable::set_filter_rules(Array<FilterRuleData> rules, bool enabled, cons
 	m_filter_rules = std::move(rules);
 	m_filter_enabled = enabled;
 	m_filter_logic = (logic == "or") ? String("or") : String("and");
-	// Intentionally no modified flag: filter rules are view metadata,
-	// not data changes. They are silently persisted when the project is saved.
+	// Intentionally no modified flag: filter rules are view metadata, not data
+	// changes. They live exclusively in the project file — see
+	// Concordance::write/preload, which bypass filter-rule serialization in the
+	// .phon-conc file. They are silently persisted when the project is saved.
 }
 
 void DataTable::clear_filter_rules()
