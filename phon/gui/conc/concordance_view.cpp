@@ -1148,6 +1148,13 @@ void ConcordanceView::onEditEvent()
 		match.update(i, modified);
 	}
 
+	// match.update wrote new values into the in-memory concordance, so its
+	// state has diverged from the .phon-conc on disk — mark it modified too.
+	// Document::file_modified is then the single broadcast that refreshes
+	// both the annotation tab and the concordance tab in one go.
+	m_conc->modify();
+	Document::file_modified();
+	emit titleChanged(label());
 	m_model->refreshRow(src);
 	Project::get()->modify();
 }
@@ -1188,6 +1195,11 @@ void ConcordanceView::onEditMatchText()
 		return;
 
 	m_conc->modify();
+	// Broadcast the modification so MainWindow refreshes the file manager
+	// and every open tab's title (the modified-state asterisk in particular).
+	// Also emit the per-view signal as a direct fast path.
+	Document::file_modified();
+	emit titleChanged(label());
 	m_model->refreshRow(src);
 	Project::get()->modify();
 }
@@ -1509,6 +1521,12 @@ void ConcordanceView::onToggleLayout(bool long_format)
 	emit undoRedoChanged(false, false);
 
 	m_conc->set_layout(long_format ? Concordance::Layout::Long : Concordance::Layout::Wide);
+	// set_layout is an inline header setter that does NOT touch m_content_modified;
+	// the layout is persisted to XML on save, so the GUI must drive the flag here
+	// (and broadcast so the tab title's modified-asterisk shows up).
+	m_conc->modify();
+	Document::file_modified();
+	emit titleChanged(label());
 	m_model->refreshAll();
 	updateCountLabel();
 	updateColumnVisibility();
