@@ -117,6 +117,113 @@ String FixedTerm::to_string() const
 }
 
 
+// Helper: append a list of FixedTerms to `result`, collapsing any pattern
+// where the singletons {a} and {b} appear together with the two-way
+// interaction {a, b} back into the compact "a * b" form. Two-way collapse
+// only; three-way and higher interactions stay in colon notation, matching
+// the conservative policy documented in Formula::to_string. Used by both
+// the fixed-effects serialiser and the random-slope serialiser so that
+// `a*b` round-trips identically in both contexts.
+//
+// `need_plus`: in/out. If true on entry, emits " + " before the first
+// term. Set to true on exit if any terms were emitted.
+static void append_term_array(String &result,
+                              const Array<FixedTerm> &terms,
+                              bool &need_plus)
+{
+	const intptr_t n = terms.size();
+	Array<bool> consumed;
+	for (intptr_t i = 1; i <= n; i++)
+		consumed.append(false);
+
+	auto find_singleton = [&](const String &v) -> intptr_t {
+		for (intptr_t k = 1; k <= n; k++) {
+			if (consumed[k]) continue;
+			const auto &t = terms[k];
+			if (t.variables.size() == 1 && t.variables[1] == v)
+				return k;
+		}
+		return -1;
+	};
+
+	for (intptr_t i = 1; i <= n; i++)
+	{
+		if (consumed[i]) continue;
+		const auto &term = terms[i];
+
+		// Pattern A: singleton {a}; look ahead for an interaction {a, b}
+		// whose other singleton {b} is also present.
+		if (term.variables.size() == 1)
+		{
+			const String &a = term.variables[1];
+			intptr_t collapse_pair_idx = -1;
+			intptr_t collapse_singleton_idx = -1;
+			String b_var;
+
+			for (intptr_t k = 1; k <= n; k++)
+			{
+				if (k == i || consumed[k]) continue;
+				const auto &t = terms[k];
+				if (t.variables.size() != 2) continue;
+				if (t.variables[1] == a) {
+					b_var = t.variables[2];
+				} else if (t.variables[2] == a) {
+					b_var = t.variables[1];
+				} else {
+					continue;
+				}
+				intptr_t s = find_singleton(b_var);
+				if (s != -1) {
+					collapse_pair_idx = k;
+					collapse_singleton_idx = s;
+					break;
+				}
+			}
+
+			if (collapse_pair_idx != -1)
+			{
+				if (need_plus) result.append(" + ");
+				result.append(quote_name(a));
+				result.append(" * ");
+				result.append(quote_name(b_var));
+				need_plus = true;
+				consumed[i] = true;
+				consumed[collapse_pair_idx] = true;
+				consumed[collapse_singleton_idx] = true;
+				continue;
+			}
+		}
+		// Pattern B: interaction {a, b}; look for both singletons.
+		else if (term.variables.size() == 2)
+		{
+			const String &a = term.variables[1];
+			const String &b = term.variables[2];
+			intptr_t sa = find_singleton(a);
+			intptr_t sb = find_singleton(b);
+			if (sa != -1 && sb != -1)
+			{
+				if (need_plus) result.append(" + ");
+				result.append(quote_name(a));
+				result.append(" * ");
+				result.append(quote_name(b));
+				need_plus = true;
+				consumed[i] = true;
+				consumed[sa] = true;
+				consumed[sb] = true;
+				continue;
+			}
+		}
+
+		// Default: emit this term as-is (lone singleton, lone interaction,
+		// or any higher-order term).
+		if (need_plus) result.append(" + ");
+		result.append(term.to_string());
+		need_plus = true;
+		consumed[i] = true;
+	}
+}
+
+
 // =====================================================================
 // SmoothTerm
 // =====================================================================
@@ -153,11 +260,9 @@ String RandomTerm::to_string() const
 {
 	String result("(");
 	result.append(intercept ? "1" : "0");
-	for (intptr_t i = 1; i <= slopes.size(); i++)
-	{
-		result.append(" + ");
-		result.append(slopes[i].to_string());
-	}
+	// Either "1" or "0" was always emitted, so any slope must be preceded by " + ".
+	bool need_plus = true;
+	append_term_array(result, slopes, need_plus);
 	result.append(" | ");
 	result.append(quote_name(group));
 	result.append(")");
@@ -190,124 +295,18 @@ String Formula::to_string() const
 
 	bool need_plus = false;
 
-	// Walk the fixed-effects array in order, collapsing any pattern where a
-	// two-variable interaction {a, b} is accompanied by both singletons {a}
-	// and {b} into "a * b". The * notation is only used when all three terms
-	// are present so that we never silently introduce or drop main effects:
+	// Walk the fixed-effects array, collapsing any pattern where a two-way
+	// interaction {a, b} is accompanied by both singletons {a} and {b} into
+	// "a * b". The * notation is only used when all three terms are present
+	// so that we never silently introduce or drop main effects:
 	//   a + b + a:b   →  a * b
 	//   a + b         →  a + b      (no a:b, no collapse)
 	//   a:b           →  a:b        (no main effects, no collapse)
-	// We anchor the emitted "a * b" at the position of whichever of the three
-	// appeared first, so the user's reading order is preserved across
-	// parse → to_string round-trips. Three-way and higher interactions stay
-	// as colon notation (collapsing is conservative on purpose).
-	const intptr_t n_fixed = fixed.size();
-	Array<bool> consumed;
-	for (intptr_t i = 1; i <= n_fixed; i++)
-		consumed.append(false);
-
-	auto find_singleton = [&](const String &v) -> intptr_t {
-		for (intptr_t k = 1; k <= n_fixed; k++) {
-			if (consumed[k]) continue;
-			const auto &t = fixed[k];
-			if (t.variables.size() == 1 && t.variables[1] == v)
-				return k;
-		}
-		return -1;
-	};
-
-	auto find_pair = [&](const String &v1, const String &v2) -> intptr_t {
-		for (intptr_t k = 1; k <= n_fixed; k++) {
-			if (consumed[k]) continue;
-			const auto &t = fixed[k];
-			if (t.variables.size() != 2) continue;
-			if ((t.variables[1] == v1 && t.variables[2] == v2) ||
-			    (t.variables[1] == v2 && t.variables[2] == v1))
-				return k;
-		}
-		return -1;
-	};
-
-	for (intptr_t i = 1; i <= n_fixed; i++)
-	{
-		if (consumed[i]) continue;
-
-		const auto &term = fixed[i];
-
-		// Try to detect a "main effect of a" that participates in a full
-		// {a, b, a:b} triple.
-		if (term.variables.size() == 1)
-		{
-			const String &a = term.variables[1];
-
-			// Look ahead among non-consumed terms for any interaction
-			// {a, b} whose other singleton {b} is also present.
-			intptr_t collapse_pair_idx = -1;
-			intptr_t collapse_singleton_idx = -1;
-			String b_var;
-
-			for (intptr_t k = 1; k <= n_fixed; k++)
-			{
-				if (k == i || consumed[k]) continue;
-				const auto &t = fixed[k];
-				if (t.variables.size() != 2) continue;
-				if (t.variables[1] == a) {
-					b_var = t.variables[2];
-				} else if (t.variables[2] == a) {
-					b_var = t.variables[1];
-				} else {
-					continue;
-				}
-				intptr_t s = find_singleton(b_var);
-				if (s != -1) {
-					collapse_pair_idx = k;
-					collapse_singleton_idx = s;
-					break;
-				}
-			}
-
-			if (collapse_pair_idx != -1)
-			{
-				if (need_plus) result.append(" + ");
-				result.append(quote_name(a));
-				result.append(" * ");
-				result.append(quote_name(b_var));
-				need_plus = true;
-				consumed[i] = true;
-				consumed[collapse_pair_idx] = true;
-				consumed[collapse_singleton_idx] = true;
-				continue;
-			}
-		}
-		// Try to detect a two-way interaction {a, b} whose main effects are
-		// both present (i.e. user wrote "a:b + a + b" in some order).
-		else if (term.variables.size() == 2)
-		{
-			const String &a = term.variables[1];
-			const String &b = term.variables[2];
-			intptr_t sa = find_singleton(a);
-			intptr_t sb = find_singleton(b);
-			if (sa != -1 && sb != -1)
-			{
-				if (need_plus) result.append(" + ");
-				result.append(quote_name(a));
-				result.append(" * ");
-				result.append(quote_name(b));
-				need_plus = true;
-				consumed[i] = true;
-				consumed[sa] = true;
-				consumed[sb] = true;
-				continue;
-			}
-		}
-
-		// Default: emit this term as-is (single var, lone interaction, or
-		// any higher-order term).
-		if (need_plus) result.append(" + ");
-		result.append(term.to_string());
-		need_plus = true;
-		consumed[i] = true;
-	}
+	// Three-way and higher interactions stay as colon notation (collapsing
+	// is conservative on purpose). The same logic is applied to random-slope
+	// arrays in RandomTerm::to_string via the shared `append_term_array`
+	// helper, so `a*b` round-trips identically in both contexts.
+	append_term_array(result, fixed, need_plus);
 
 	for (intptr_t i = 1; i <= smooth.size(); i++)
 	{
