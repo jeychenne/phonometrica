@@ -39,6 +39,10 @@
 #include <QProgressDialog>
 #include <QAction>
 #include <QMenu>
+#include <QStringList>
+
+class QDragEnterEvent;
+class QDropEvent;
 
 namespace phonometrica {
 
@@ -66,6 +70,21 @@ public:
 	// Called after show() — loads plugins and startup scripts.
 	void postInitialize();
 
+	// Open one or more file paths. Project files (.phon-project) trigger a
+	// project switch (with the usual "save before closing?" prompt); other
+	// recognized files are imported into the current project. Folders are
+	// imported via Project::import_directory(). Errors per-path are surfaced
+	// via QMessageBox; the file manager refresh is batched at the end. Safe to
+	// call from drag-drop handlers, the macOS file-open event filter, or
+	// (indirectly, via setPendingArgvPaths) from cold-start argv.
+	void openPaths(const QStringList &paths);
+
+	// Stash file paths from the command line so they get processed once the
+	// event loop is running. Schedules a queued openPaths() call. Posting this
+	// before postInitialize() ensures the cold-start paths run before the
+	// "autoload most recent project" logic, which itself is now deferred.
+	void setPendingArgvPaths(const QStringList &paths);
+
 	// Access to installed plugins, needed by dialogs that enumerate protocols (e.g. the
 	// protocol builder's "Load" menu). Phonometrica is a single-MainWindow application, so the
 	// static instance pointer is set in the constructor body and cleared in the destructor.
@@ -75,6 +94,16 @@ public:
 protected:
 
 	void closeEvent(QCloseEvent *event) override;
+
+	// Drag-and-drop of OS file URLs onto the window. Accepts any drag carrying
+	// at least one local file URL; routes the drop to openPaths().
+	void dragEnterEvent(QDragEnterEvent *event) override;
+	void dropEvent(QDropEvent *event) override;
+
+	// Application-level event filter, installed on qApp in the constructor.
+	// Catches QFileOpenEvent on macOS (Dock-icon drop, "Open With", or
+	// double-click on an associated file) and routes the path to openPaths().
+	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
 
@@ -282,6 +311,11 @@ private:
 
 	// Default dock layout state, captured at construction before restoreWindowState().
 	QByteArray m_default_state;
+
+	// File paths from cold-start argv waiting to be opened once the event loop
+	// is running. Drained by a queued openPaths() invocation scheduled in
+	// setPendingArgvPaths().
+	QStringList m_pending_argv_paths;
 
 	// Single-instance pointer used by MainWindow::instance(). Set in the constructor body,
 	// cleared in the destructor. Phonometrica is not designed to run multiple MainWindows.

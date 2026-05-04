@@ -38,6 +38,12 @@
 #include <QProcess>
 #include <QThread>
 #include <QMetaObject>
+#include <QTimer>
+#include <QMimeData>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileOpenEvent>
+#include <QFileInfo>
 #include <phon/gui/main_window.hpp>
 #include <phon/gui/start_view.hpp>
 #include <phon/gui/file_manager.hpp>
@@ -68,6 +74,7 @@
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/application/constants.hpp>
 #include <phon/application/praat.hpp>
 #include <phon/application/transcriber.hpp>
 #include <phon/application/silence_detector.hpp>
@@ -145,6 +152,18 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 	// Capture the default dock layout before any user customization is applied.
 	m_default_state = QMainWindow::saveState();
 	restoreWindowState();
+
+	// Accept file drops on the window. Drops over child widgets that don't
+	// claim them (file manager tree, viewer tabs, status bar) propagate up to
+	// MainWindow::dropEvent(). Drops over the Scintilla script editor are
+	// consumed by the editor (it inserts the URL as text), which matches user
+	// expectations.
+	setAcceptDrops(true);
+
+	// Application-level filter so we catch QFileOpenEvent on macOS regardless
+	// of which widget has focus. Uses qApp because QFileOpenEvent is delivered
+	// to the QApplication object, not to any widget.
+	qApp->installEventFilter(this);
 }
 
 void MainWindow::createMenus()
@@ -1094,6 +1113,187 @@ bool MainWindow::clearForProjectSwitch()
 	m_file_manager->refresh();
 
 	return true;
+}
+
+// ---------------------------------------------------------------------------
+//  External file opening: drag-drop, macOS QFileOpenEvent, cold-start argv.
+// ---------------------------------------------------------------------------
+
+void MainWindow::openPaths(const QStringList &paths)
+{
+	if (paths.isEmpty())
+		return;
+
+	// Partition into a single project file (if any) and the rest. We only act
+	// on at most one project per call: if the drop contains multiple .phon-project
+	// files, we open the first and treat the others as plain files (which will
+	// fail import — but that's a clearer signal than silently picking one).
+	QString project_path;
+	QStringList other_paths;
+	other_paths.reserve(paths.size());
+
+	for (const auto &p : paths)
+	{
+		QFileInfo info(p);
+		// Detect project files by extension. PHON_EXT_PROJECT includes the leading dot.
+		if (p.endsWith(QLatin1String(PHON_EXT_PROJECT), Qt::CaseInsensitive))
+		{
+			if (project_path.isEmpty())
+				project_path = info.absoluteFilePath();
+			else
+				other_paths.append(p); // multiple projects: keep only the first
+		}
+		else
+		{
+			other_paths.append(p);
+		}
+	}
+
+	// 1. Project switch first, if a project was dropped. clearForProjectSwitch()
+	//    handles the "save unsaved tabs?" prompt and bails on cancel.
+	if (!project_path.isEmpty())
+	{
+		if (!clearForProjectSwitch())
+			return;
+
+		try
+		{
+			auto native = String(project_path.toUtf8().constData());
+			Project::get()->open(native);
+			m_file_manager->refresh();
+			updateRecentProjects(native);
+			updateWindowTitle();
+			statusBar()->showMessage(tr("Opened project: %1").arg(project_path), 3000);
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Error"),
+				tr("Could not open project: %1").arg(e.what()));
+			return;
+		}
+	}
+
+	// 2. Import any non-project paths into the current project. This includes
+	//    the case where no project was dropped — files just go into whatever
+	//    project is currently open (which may be the empty default project
+	//    that exists at startup).
+	if (other_paths.isEmpty())
+		return;
+
+	auto *project = Project::get();
+	int added = 0;
+	int failed = 0;
+
+	for (const auto &p : other_paths)
+	{
+		try
+		{
+			auto native = String(QFileInfo(p).absoluteFilePath().toUtf8().constData());
+
+			if (filesystem::is_directory(native))
+				project->import_directory(native);
+			else
+				project->import_file(native);
+
+			added++;
+		}
+		catch (std::exception &e)
+		{
+			failed++;
+			QMessageBox::warning(this, tr("Import error"),
+				tr("Could not import \"%1\": %2").arg(p, e.what()));
+		}
+	}
+
+	m_file_manager->refresh();
+	updateWindowTitle();
+	if (added > 0)
+		statusBar()->showMessage(tr("Added %1 file(s)").arg(added), 3000);
+}
+
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+	const auto *mime = event->mimeData();
+	if (!mime || !mime->hasUrls())
+		return; // default: ignore — Qt will not deliver dropEvent.
+
+	// Accept if at least one URL is a local file. We don't probe the file system
+	// here (drag-enter must be cheap); per-path validation happens in openPaths().
+	for (const auto &url : mime->urls())
+	{
+		if (url.isLocalFile())
+		{
+			event->acceptProposedAction();
+			return;
+		}
+	}
+}
+
+void MainWindow::dropEvent(QDropEvent *event)
+{
+	const auto *mime = event->mimeData();
+	if (!mime || !mime->hasUrls())
+		return;
+
+	QStringList paths;
+	paths.reserve(mime->urls().size());
+	for (const auto &url : mime->urls())
+	{
+		if (url.isLocalFile())
+			paths.append(url.toLocalFile());
+	}
+
+	if (paths.isEmpty())
+		return;
+
+	event->acceptProposedAction();
+
+	// Defer the actual work: dropEvent runs inside the OS drag-drop loop, and
+	// modal dialogs (the "save unsaved tabs?" prompt from clearForProjectSwitch,
+	// or per-file error boxes) opened from inside that loop misbehave on macOS.
+	// Posting through the event loop is also more consistent with how
+	// QFileOpenEvent and the argv path arrive.
+	QTimer::singleShot(0, this, [this, paths]() { openPaths(paths); });
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+	if (event->type() == QEvent::FileOpen)
+	{
+		// macOS-only in practice. Fired on Dock-icon drop, "Open With ->
+		// Phonometrica", or double-click on a file with a registered association
+		// (CFBundleDocumentTypes in Info.plist). Delivered to qApp, hence the
+		// app-level filter. Defer to the event loop for the same reason as
+		// dropEvent: avoids reentrancy issues with modal dialogs.
+		auto *fe = static_cast<QFileOpenEvent *>(event);
+		QString path = fe->file();
+		if (!path.isEmpty())
+		{
+			QTimer::singleShot(0, this, [this, path]() {
+				openPaths(QStringList{path});
+			});
+			return true;
+		}
+	}
+	return QMainWindow::eventFilter(watched, event);
+}
+
+void MainWindow::setPendingArgvPaths(const QStringList &paths)
+{
+	m_pending_argv_paths = paths;
+	if (m_pending_argv_paths.isEmpty())
+		return;
+
+	// Drain on the next event-loop turn. By that time the constructor has
+	// returned, show() has been called, and postInitialize() has run — meaning
+	// plugins are loaded and the autoload-recent-project logic (now also
+	// deferred, see postInitialize) has had a chance to either skip itself
+	// (because m_pending_argv_paths was non-empty) or run before us.
+	QTimer::singleShot(0, this, [this]() {
+		auto paths = std::move(m_pending_argv_paths);
+		m_pending_argv_paths.clear();
+		openPaths(paths);
+	});
 }
 
 void MainWindow::onMaximizeViewer()
@@ -3011,8 +3211,13 @@ void MainWindow::postInitialize()
 	loadPluginsAndScripts(resources_dir);
 	loadPluginsAndScripts(user_dir);
 
-	// Autoload the most recent project if the preference is enabled.
-	if (Settings::get_boolean("autoload"))
+	// Autoload the most recent project if the preference is enabled — but
+	// skip it entirely when argv supplied files. Cold-start "open file with
+	// Phonometrica" should land in that file, not in the previous session's
+	// project. setPendingArgvPaths() ran before postInitialize(), so at this
+	// point the queued openPaths() lambda has not fired yet (that needs the
+	// event loop) and m_pending_argv_paths is still populated.
+	if (Settings::get_boolean("autoload") && m_pending_argv_paths.isEmpty())
 	{
 		try
 		{

@@ -22,10 +22,14 @@
 #ifdef PHON_GUI
 #include <clocale>
 #include <QFile>
+#include <QString>
+#include <QStringList>
+#include <QFileInfo>
 #include <QApplication>
 #include <phon/gui/main_window.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/constants.hpp>
 #else
 #include <phon/runtime.hpp>
 #endif
@@ -40,6 +44,41 @@ static void show_usage()
 	std::cout << " -r\t(run)\texecute file" << std::endl;
 	std::cout << " -a\t(all)\tdisassemble and execute file" << std::endl;
 }
+
+#ifdef PHON_GUI
+// Decide whether the argv invocation is a script-interpreter call (handled in
+// text mode) or a "open these files in the GUI" call. Script-interpreter mode
+// is restricted to:
+//   * `phonometrica -l|-r|-a <script>`  (explicit switches)
+//   * `phonometrica <script.phon>`      (bare .phon file, no other args)
+// Everything else — including any .phon-project, .phon-annot, .wav, .csv,
+// directories, or multiple paths — goes to the GUI.
+static bool argv_is_script_invocation(int argc, char **argv)
+{
+	if (argc <= 1)
+		return false;
+
+	String first(argv[1]);
+	if (first == "-l" || first == "-r" || first == "-a")
+		return true;
+
+	// Bare single argument: only treat as a script if it actually has the
+	// .phon extension. A .phon-project, .phon-annot, etc. is NOT a script —
+	// those are project assets that should open in the GUI.
+	if (argc == 2)
+	{
+		auto qpath = QString::fromUtf8(argv[1]);
+		QFileInfo info(qpath);
+		// QFileInfo::suffix() is the chars after the LAST dot. For "foo.phon"
+		// → "phon"; for "foo.phon-project" → "phon-project". So a strict equality
+		// check on "phon" naturally excludes the compound extensions.
+		if (info.suffix().compare(QLatin1String("phon"), Qt::CaseInsensitive) == 0)
+			return true;
+	}
+
+	return false;
+}
+#endif
 
 static void initialize(Runtime &rt)
 {
@@ -81,8 +120,16 @@ static void finalize(Runtime &)
 
 int main(int argc, char **argv)
 {
-	// If we have command-line arguments (beyond the program name), run in text mode.
-	if (argc > 1)
+#ifdef PHON_GUI
+	// Decide upfront: text mode (script interpreter) vs GUI mode (with
+	// optional argv file paths). The GUI is the default when arguments are
+	// passed; only -l/-r/-a switches and bare .phon scripts opt into text mode.
+	bool text_mode = argv_is_script_invocation(argc, argv);
+#else
+	bool text_mode = (argc > 1);
+#endif
+
+	if (text_mode)
 	{
 		Runtime runtime(argv[0]);
 		runtime.set_text_mode(true);
@@ -145,7 +192,7 @@ int main(int argc, char **argv)
 		return error_code;
 	}
 
-	// No arguments: launch the GUI.
+	// GUI mode (with or without argv file paths).
 #ifdef PHON_GUI
 	QApplication app(argc, argv);
 
@@ -174,12 +221,36 @@ int main(int argc, char **argv)
 #ifndef PHON_MACOS
 	app.setWindowIcon(QIcon(":/icons/phonometrica.svg"));
 #endif
+
+	// Collect any file paths from argv. argv_is_script_invocation() returned
+	// false, so anything from argv[1] onward is a path to open. On macOS, file
+	// associations are dispatched as QFileOpenEvents (handled by MainWindow's
+	// event filter), not via argv — but if someone runs the binary from the
+	// shell with a path, we still pick it up here.
+	QStringList argv_paths;
+	for (int i = 1; i < argc; i++)
+	{
+		QString p = QString::fromUtf8(argv[i]);
+		if (p.isEmpty())
+			continue;
+		// Skip any leftover -psn_* args macOS sometimes passes to launched
+		// bundles. Defensive — current macOS versions don't, but old ones did.
+		if (p.startsWith(QLatin1String("-psn_")))
+			continue;
+		argv_paths.append(p);
+	}
+
 	Runtime runtime(argv[0]);
 	runtime.set_text_mode(false);
 	initialize(runtime);
 
 	MainWindow window(runtime);
 	window.show();
+
+	// Queue argv paths BEFORE postInitialize() so the autoload-recent-project
+	// logic can see them and skip itself.
+	if (!argv_paths.isEmpty())
+		window.setPendingArgvPaths(argv_paths);
 
 	Settings::post_initialize();
 	window.postInitialize();
