@@ -45,12 +45,17 @@ namespace phonometrica::stats {
 String quote_name(const String &name);
 
 
-// A single fixed-effects term.
+// A single fixed-effects term, also reused as a random-slope term.
 // Simple term:      variables = {"vowel"}
 // Interaction term: variables = {"vowel", "context"}  (represents vowel:context)
 struct FixedTerm
 {
 	Array<String> variables;
+
+	FixedTerm() = default;
+
+	// Convenience constructor for a single-variable (main-effect) term.
+	explicit FixedTerm(const String &name) { variables.append(name); }
 
 	bool operator==(const FixedTerm &other) const;
 
@@ -84,12 +89,15 @@ struct SmoothTerm
 };
 
 
-// A random-effects term: (1 + slope1 + slope2 | group)
+// A random-effects term: (1 + slope1 + slope2:slope3 | group)
+// Slopes may be main effects (single variable) or interactions (multiple
+// variables, joined with ':'). The * operator expands at parse time exactly
+// as on the fixed side: (1 + a*b | g) → (1 + a + b + a:b | g).
 struct RandomTerm
 {
-	String group;            // grouping factor, e.g. "speaker"
-	Array<String> slopes;    // random slope variables (may be empty for intercept-only)
-	bool intercept = true;   // whether a random intercept is included
+	String group;              // grouping factor, e.g. "speaker"
+	Array<FixedTerm> slopes;   // random slope terms (each may be main effect or interaction)
+	bool intercept = true;     // whether a random intercept is included
 
 	String to_string() const;
 };
@@ -121,6 +129,8 @@ struct Formula
 	//   (1 | group)               random intercept
 	//   (1 + slope | group)       random intercept + slope
 	//   (0 + slope | group)       random slope only (no intercept)
+	//   (1 + a:b | group)         random interaction slope
+	//   (1 + a*b | group)         expands to (1 + a + b + a:b | group)
 	// Throws on parse error.
 	static Formula parse(const String &text);
 

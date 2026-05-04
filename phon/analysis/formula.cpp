@@ -152,23 +152,11 @@ String SmoothTerm::to_string() const
 String RandomTerm::to_string() const
 {
 	String result("(");
-	if (intercept)
+	result.append(intercept ? "1" : "0");
+	for (intptr_t i = 1; i <= slopes.size(); i++)
 	{
-		result.append("1");
-		for (intptr_t i = 1; i <= slopes.size(); i++)
-		{
-			result.append(" + ");
-			result.append(quote_name(slopes[i]));
-		}
-	}
-	else
-	{
-		result.append("0");
-		for (intptr_t i = 1; i <= slopes.size(); i++)
-		{
-			result.append(" + ");
-			result.append(quote_name(slopes[i]));
-		}
+		result.append(" + ");
+		result.append(slopes[i].to_string());
 	}
 	result.append(" | ");
 	result.append(quote_name(group));
@@ -383,7 +371,10 @@ Array<String> Formula::all_variables() const
 		auto &rt = random[i];
 		add_unique(rt.group);
 		for (intptr_t j = 1; j <= rt.slopes.size(); j++) {
-			add_unique(rt.slopes[j]);
+			auto &st = rt.slopes[j];
+			for (intptr_t v = 1; v <= st.variables.size(); v++) {
+				add_unique(st.variables[v]);
+			}
 		}
 	}
 
@@ -714,6 +705,66 @@ private:
 		parse_fixed_term(f);
 	}
 
+	// Helper: given the first variable name (already consumed), continue
+	// parsing a chain "a", "a:b:c", or "a*b*c" and expand * to the set of
+	// all subsets (lme4 semantics on both fixed and random sides).
+	// Returns one FixedTerm per resulting expanded term.
+	Array<FixedTerm> expand_term_chain(const String &first)
+	{
+		Array<String> vars;
+		vars.append(first);
+		bool has_star = false;
+
+		while (m_current.type == TokenType::Star || m_current.type == TokenType::Colon)
+		{
+			if (m_current.type == TokenType::Star) {
+				has_star = true;
+			}
+			advance();
+
+			expect(TokenType::Name, "Expected variable name after '*' or ':'");
+			vars.append(m_current.text);
+			advance();
+		}
+
+		Array<FixedTerm> result;
+
+		if (vars.size() == 1)
+		{
+			result.append(FixedTerm(vars[1]));
+		}
+		else if (has_star)
+		{
+			// "a * b" expands to "a + b + a:b"
+			// "a * b * c" expands to "a + b + c + a:b + a:c + b:c + a:b:c"
+			intptr_t n = vars.size();
+			intptr_t total = (1 << n); // 2^n subsets
+
+			for (intptr_t mask = 1; mask < total; mask++)
+			{
+				FixedTerm t;
+				for (intptr_t bit = 0; bit < n; bit++)
+				{
+					if (mask & (1 << bit)) {
+						t.variables.append(vars[bit + 1]); // 1-based
+					}
+				}
+				result.append(std::move(t));
+			}
+		}
+		else
+		{
+			// Pure colon interaction: "a:b:c" — just the interaction, no main effects
+			FixedTerm t;
+			for (intptr_t i = 1; i <= vars.size(); i++) {
+				t.variables.append(vars[i]);
+			}
+			result.append(std::move(t));
+		}
+
+		return result;
+	}
+
 	// fixed_term := name (('*' | ':') name)*
 	// Special case: if name is "s" and followed by '(', parse as smooth term.
 	// "a * b" expands to: a, b, a:b
@@ -738,61 +789,9 @@ private:
 			return;
 		}
 
-		// Simple term (no operator following, or next is + - ) end)
-		if (m_current.type != TokenType::Star && m_current.type != TokenType::Colon)
-		{
-			FixedTerm t;
-			t.variables.append(first);
-			add_term(f, std::move(t));
-			return;
-		}
-
-		// Collect all variables in the chain: a * b * c or a : b : c
-		// We track which operators were used.
-		Array<String> vars;
-		vars.append(first);
-		bool has_star = false;
-
-		while (m_current.type == TokenType::Star || m_current.type == TokenType::Colon)
-		{
-			if (m_current.type == TokenType::Star) {
-				has_star = true;
-			}
-			advance();
-
-			expect(TokenType::Name, "Expected variable name after '*' or ':'");
-			vars.append(m_current.text);
-			advance();
-		}
-
-		if (has_star)
-		{
-			// "a * b" expands to "a + b + a:b"
-			// "a * b * c" expands to "a + b + c + a:b + a:c + b:c + a:b:c"
-			// We generate all subsets of size 1..n
-			intptr_t n = vars.size();
-			intptr_t total = (1 << n); // 2^n subsets
-
-			for (intptr_t mask = 1; mask < total; mask++)
-			{
-				FixedTerm t;
-				for (intptr_t bit = 0; bit < n; bit++)
-				{
-					if (mask & (1 << bit)) {
-						t.variables.append(vars[bit + 1]); // 1-based
-					}
-				}
-				add_term(f, std::move(t));
-			}
-		}
-		else
-		{
-			// Pure colon interaction: "a:b:c" — just the interaction, no main effects
-			FixedTerm t;
-			for (intptr_t i = 1; i <= vars.size(); i++) {
-				t.variables.append(vars[i]);
-			}
-			add_term(f, std::move(t));
+		auto terms = expand_term_chain(first);
+		for (intptr_t i = 1; i <= terms.size(); i++) {
+			add_term(f, std::move(terms[i]));
 		}
 	}
 
@@ -905,7 +904,12 @@ private:
 
 	// random_term := '(' random_inner '|' name ')'
 	// random_inner := elem ('+' elem)*
-	// elem := '0' | '1' | name
+	// elem := '0' | '1' | term_chain
+	// term_chain := name (('*' | ':') name)*
+	//
+	// '*' expands at parse time exactly as on the fixed side, matching lme4
+	// semantics: (1 + a*b | g) → (1 + a + b + a:b | g).
+	// Duplicate slope terms are silently dropped: (1 + a + a | g) → (1 + a | g).
 	void parse_random_term(Formula &f)
 	{
 		expect(TokenType::LParen, "Expected '(' for random effects term");
@@ -914,7 +918,15 @@ private:
 		RandomTerm rt;
 		rt.intercept = true;
 
-		// Parse inner elements: "1 + vowel" or "0 + vowel" or just "1"
+		// Helper to dedupe: append a slope only if not already present.
+		auto add_slope_unique = [&rt](FixedTerm &&t)
+		{
+			for (intptr_t i = 1; i <= rt.slopes.size(); i++) {
+				if (rt.slopes[i] == t) return;
+			}
+			rt.slopes.append(std::move(t));
+		};
+
 		while (m_current.type != TokenType::Pipe)
 		{
 			if (m_current.type == TokenType::Number)
@@ -922,12 +934,18 @@ private:
 				if (m_current.value == 0) {
 					rt.intercept = false;
 				}
+				// "1" is a no-op (intercept is the default)
 				advance();
 			}
 			else if (m_current.type == TokenType::Name)
 			{
-				rt.slopes.append(m_current.text);
+				String first = m_current.text;
 				advance();
+
+				auto terms = expand_term_chain(first);
+				for (intptr_t i = 1; i <= terms.size(); i++) {
+					add_slope_unique(std::move(terms[i]));
+				}
 			}
 			else if (m_current.type == TokenType::End)
 			{

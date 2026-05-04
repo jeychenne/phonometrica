@@ -570,16 +570,49 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 	for (intptr_t s = 1; s <= rt.slopes.size(); s++)
 	{
-		intptr_t scol = find_column(data, rt.slopes[s]);
-		if (scol == 0) {
-			throw error("Slope variable '%' not found in data", rt.slopes[s]);
-		}
+		const auto &st = rt.slopes[s];
 
-		auto ev = expand_variable(data, scol, rows, reference_levels, !rt.intercept);
-		for (auto &dc : ev.columns)
+		if (st.variables.size() == 1)
 		{
-			gi.term_names.append(dc.name);
-			z_columns.push_back(std::move(dc.values));
+			// Main-effect slope.
+			intptr_t scol = find_column(data, st.variables[1]);
+			if (scol == 0) {
+				throw error("Slope variable '%' not found in data", st.variables[1]);
+			}
+
+			auto ev = expand_variable(data, scol, rows, reference_levels, !rt.intercept);
+			for (auto &dc : ev.columns)
+			{
+				gi.term_names.append(dc.name);
+				z_columns.push_back(std::move(dc.values));
+			}
+		}
+		else
+		{
+			// Interaction slope: cross-product of treatment-coded components,
+			// mirroring the fixed-side build_design_matrix logic. Components
+			// are always treatment-coded for interactions, regardless of
+			// whether a random intercept is included — the (0 + a:b | g)
+			// "cell-means" form would need different handling and is not
+			// currently supported.
+			std::vector<ExpandedVariable> components;
+			components.reserve(st.variables.size());
+
+			for (intptr_t v = 1; v <= st.variables.size(); v++)
+			{
+				intptr_t vcol = find_column(data, st.variables[v]);
+				if (vcol == 0) {
+					throw error("Slope variable '%' not found in data", st.variables[v]);
+				}
+				components.push_back(expand_variable(data, vcol, rows, reference_levels, /*full_rank=*/false));
+			}
+
+			auto interaction_cols = build_interaction(components, n);
+			for (auto &dc : interaction_cols)
+			{
+				gi.term_names.append(dc.name);
+				z_columns.push_back(std::move(dc.values));
+			}
 		}
 	}
 
@@ -587,6 +620,23 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 	if (gi.nterms == 0) {
 		throw error("Random-effects term for '%' has no terms (no intercept and no slopes)", rt.group);
+	}
+
+	// Soft warning for high-dimensional random-effects blocks. The covariance
+	// matrix Σ has q(q+1)/2 free hyperparameters, and the CCD integration grid
+	// grows rapidly with q. q > 4 is rarely well-identified in practice.
+	if (gi.nterms > 4)
+	{
+		intptr_t nhyper = gi.nterms * (gi.nterms + 1) / 2;
+		std::fprintf(stderr,
+			"Warning: random-effects block for '%.*s' has q=%ld terms (uncharted territory).\n"
+			"         The %ld-dimensional covariance matrix has %ld free hyperparameters,\n"
+			"         which may not be well identified, and the integration grid grows\n"
+			"         rapidly with q. Consider simplifying the random-effects structure\n"
+			"         (e.g., dropping correlations, removing interaction slopes, or\n"
+			"         splitting into separate random-effects blocks).\n",
+			(int) rt.group.size(), rt.group.data(), (long) gi.nterms,
+			(long) gi.nterms, (long) nhyper);
 	}
 
 	// Pack into row-major Z_design: n × nterms
@@ -691,17 +741,21 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 		for (intptr_t j = 1; j <= rt.slopes.size(); j++)
 		{
-			intptr_t scol = find_column(data, rt.slopes[j]);
-			if (scol == 0) {
-				throw error("Variable '%' not found in data", rt.slopes[j]);
-			}
-			found = false;
-			for (intptr_t c : all_col_indices)
+			auto &st = rt.slopes[j];
+			for (intptr_t v = 1; v <= st.variables.size(); v++)
 			{
-				if (c == scol) { found = true; break; }
-			}
-			if (!found) {
-				all_col_indices.push_back(scol);
+				intptr_t scol = find_column(data, st.variables[v]);
+				if (scol == 0) {
+					throw error("Variable '%' not found in data", st.variables[v]);
+				}
+				bool found2 = false;
+				for (intptr_t c : all_col_indices)
+				{
+					if (c == scol) { found2 = true; break; }
+				}
+				if (!found2) {
+					all_col_indices.push_back(scol);
+				}
 			}
 		}
 	}

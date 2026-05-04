@@ -1742,7 +1742,8 @@ void AnalysisView::onCompareModels()
 	{
 		int idx_a = indices[result.rows[pair.index_a].original_index];
 		int idx_b = indices[result.rows[pair.index_b].original_index];
-		int len = (modelDisplayLabel(idx_a) + " vs " + modelDisplayLabel(idx_b)).toUtf8().size();
+		// Label is built complex-vs-simpler (idx_b vs idx_a).
+		int len = (modelDisplayLabel(idx_b) + " vs " + modelDisplayLabel(idx_a)).toUtf8().size();
 		if (len + 2 > fpw) fpw = len + 2;
 	}
 	std::string fpw_fmt = "%-" + std::to_string(fpw) + "s";
@@ -1755,7 +1756,8 @@ void AnalysisView::onCompareModels()
 	{
 		int idx_a = indices[result.rows[pair.index_a].original_index];
 		int idx_b = indices[result.rows[pair.index_b].original_index];
-		QString plabel = modelDisplayLabel(idx_a) + QStringLiteral(" vs ") + modelDisplayLabel(idx_b);
+		// Complex-vs-simpler order: significant test favours the model named first.
+		QString plabel = modelDisplayLabel(idx_b) + QStringLiteral(" vs ") + modelDisplayLabel(idx_a);
 
 		if (pair.df_diff > 0)
 		{
@@ -1779,6 +1781,7 @@ void AnalysisView::onCompareModels()
 	}
 
 	text += QStringLiteral("---\nSignif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n");
+	text += QStringLiteral("Note: a significant test favours the more complex model (named first).\n");
 
 	// ── Warnings (if any) ────────────────────────────────────────────
 
@@ -1967,10 +1970,16 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 			auto group_q = QString::fromUtf8(rt.group.data(), (int)rt.group.size());
 
 			// Correlated slope: check if this variable is already a slope in this term.
+			// Only a main-effect (singleton) slope counts; an interaction slope like
+			// a:b does not satisfy "a is already a slope".
 			auto *corr_action = corr_slope_menu->addAction(group_q);
 			bool already_slope = false;
 			for (intptr_t s = 1; s <= rt.slopes.size(); s++) {
-				if (rt.slopes[s] == name_s) { already_slope = true; break; }
+				const auto &st = rt.slopes[s];
+				if (st.variables.size() == 1 && st.variables[1] == name_s) {
+					already_slope = true;
+					break;
+				}
 			}
 			corr_action->setEnabled(!already_slope);
 			corr_action->setData(group_q);
@@ -2399,7 +2408,7 @@ void AnalysisView::addRandomSlope(const QString &variable, const QString &group,
 		{
 			// Add the slope to the existing term: (1 | group) → (1 + X | group).
 			// This estimates the correlation between intercept and slope.
-			rt.slopes.append(var_s);
+			rt.slopes.append(stats::FixedTerm(var_s));
 		}
 		else if (rt.slopes.empty())
 		{
@@ -2407,7 +2416,7 @@ void AnalysisView::addRandomSlope(const QString &variable, const QString &group,
 			// (1 | group) → (0 + X | group).
 			// The user can re-add a random intercept separately if needed.
 			rt.intercept = false;
-			rt.slopes.append(var_s);
+			rt.slopes.append(stats::FixedTerm(var_s));
 		}
 		else
 		{
@@ -2416,7 +2425,7 @@ void AnalysisView::addRandomSlope(const QString &variable, const QString &group,
 			// (1 + Y | group) → (1 + Y | group) + (0 + X | group).
 			stats::RandomTerm new_rt;
 			new_rt.group = group_s;
-			new_rt.slopes.append(var_s);
+			new_rt.slopes.append(stats::FixedTerm(var_s));
 			new_rt.intercept = false;
 			parsed->random.append(std::move(new_rt));
 		}
@@ -2463,9 +2472,16 @@ void AnalysisView::removeFromFormula(const QString &name)
 			continue;
 		}
 
-		// Remove as slope.
+		// Remove as slope: drop any slope that mentions this variable, whether
+		// as a main effect or as a component of an interaction. Mirrors the
+		// fixed-side removal logic above.
 		for (intptr_t s = rt.slopes.size(); s >= 1; s--) {
-			if (rt.slopes[s] == name_s) {
+			const auto &st = rt.slopes[s];
+			bool contains_s = false;
+			for (intptr_t v = 1; v <= st.variables.size(); v++) {
+				if (st.variables[v] == name_s) { contains_s = true; break; }
+			}
+			if (contains_s) {
 				rt.slopes.remove_at(s);
 			}
 		}

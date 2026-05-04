@@ -1134,14 +1134,16 @@ void DataTable::initialize(Runtime &rt)
 				else if (p.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
 				else snprintf(pbuf, sizeof(pbuf), "%.6f", p.p_value);
 
+				// Label in complex-vs-simpler order: a significant test favours
+				// the model named first.
 				char label[32];
 				snprintf(label, sizeof(label), "%d vs %d",
-				         result.rows[p.index_a].original_index + 1,
-				         result.rows[p.index_b].original_index + 1);
+				         result.rows[p.index_b].original_index + 1,
+				         result.rows[p.index_a].original_index + 1);
 				rt.printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
 				          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
 			}
-			rt.printf("\n");
+			rt.printf("---\nNote: a significant test favours the more complex model (named first).\n\n");
 		}
 
 		return Variant();
