@@ -1,3 +1,11 @@
+phonometrica (0.9.2) unstable; urgency=medium
+
+  * bug fixes and usability enhancements
+  * improved accuracy in regression modelling
+  * try/catch statement in scripting engine
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Fri, 24 Apr 2026 12:00:00 +0000
+
 phonometrica (0.9.1-1) unstable; urgency=medium
 
   * Rewritten pitch-tracking algorithm (Praat backend) for improved accuracy.
