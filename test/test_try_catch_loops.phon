@@ -1,0 +1,439 @@
+# =====================================================================
+# Stress test: break / continue interaction with try/catch.
+#
+# The compiler emits one PopHandler instruction per `try` whose body
+# contains a `break` or `continue` that exits one or more enclosing
+# tries within the current loop. If that count is wrong (off by one,
+# missing, or extra) the runtime's handler stack ends up out of sync
+# with the static program structure. This file is designed to detect
+# any such mismatch.
+#
+# Detection strategy. After each break/continue, we throw a value
+# whose ONLY plausible handler is one OUTSIDE the function that did
+# the break/continue. If the inner handler was correctly popped, the
+# throw escapes the function and the OUTER catch sees the value. If
+# the inner handler was NOT popped, the stale handler is still on top
+# of the runtime's handler_stack and will catch the throw, producing a
+# different observable (a sentinel return value).
+#
+# Each test asserts the expected observable. A failed assertion
+# triggers a runtime error and the script aborts with a clear line
+# number, so any regression localizes immediately.
+# =====================================================================
+
+print "==== break/continue x try/catch stress test ===="
+
+
+# ---------------------------------------------------------------------
+# Test 1. Single try inside while: break must pop one handler.
+#   Stack at break: [outer, inner]
+#   loop_try_depths.back() = 0 (try_depth at while's start)
+#   try_depth at break     = 1
+#   Expected pops          = 1
+# ---------------------------------------------------------------------
+function t1_break_while()
+    let i = 0
+    while i < 5 do
+        try
+            if i == 2 then
+                break
+            end
+            i = i + 1
+        catch e
+            return "INNER_FIRED"
+        end
+    end
+    # If the inner handler was popped at break, this throw escapes.
+    # If not, the stale inner catch fires and we return "INNER_FIRED".
+    throw "after-loop"
+end
+
+let r1 = "init"
+try
+    t1_break_while()
+catch e
+    r1 = e
+end
+assert r1 == "after-loop", "T1 break-while: expected \"after-loop\", got " & str(r1)
+print "T1 break inside while: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 2. Single try inside while: continue must pop one handler per
+# iteration. Without popping, handlers accumulate iteration after
+# iteration, so 5 iterations leave 5 stale handlers in addition to the
+# active one. The post-loop throw would then dispatch to one of them.
+# ---------------------------------------------------------------------
+function t2_continue_while()
+    let i = 0
+    while i < 5 do
+        try
+            i = i + 1
+            continue
+        catch e
+            return "INNER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r2 = "init"
+try
+    t2_continue_while()
+catch e
+    r2 = e
+end
+assert r2 == "after-loop", "T2 continue-while: expected \"after-loop\", got " & str(r2)
+print "T2 continue inside while: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 3. Nested try inside while: break must pop TWO handlers.
+#   try_depth at break         = 2
+#   loop_try_depths.back()     = 0
+#   Expected pops              = 2
+# A single missed pop (off-by-one) would leave one stale handler whose
+# catch returns -1; the post-loop throw would then return -1.
+# ---------------------------------------------------------------------
+function t3_break_nested_try_in_while()
+    let i = 0
+    while i < 5 do
+        try
+            try
+                if i == 2 then
+                    break
+                end
+                i = i + 1
+            catch e
+                return "INNER_FIRED"
+            end
+        catch e
+            return "OUTER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r3 = "init"
+try
+    t3_break_nested_try_in_while()
+catch e
+    r3 = e
+end
+assert r3 == "after-loop", "T3 break-nested-while: expected \"after-loop\", got " & str(r3)
+print "T3 break out of doubly-nested try in while: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 4. Nested try inside while: continue must pop TWO handlers.
+# ---------------------------------------------------------------------
+function t4_continue_nested_try_in_while()
+    let i = 0
+    while i < 5 do
+        try
+            try
+                i = i + 1
+                continue
+            catch e
+                return "INNER_FIRED"
+            end
+        catch e
+            return "OUTER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r4 = "init"
+try
+    t4_continue_nested_try_in_while()
+catch e
+    r4 = e
+end
+assert r4 == "after-loop", "T4 continue-nested-while: expected \"after-loop\", got " & str(r4)
+print "T4 continue out of doubly-nested try in while: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 5. try OUTSIDE the loop, no try inside the loop.
+#   try_depth at break         = 1
+#   loop_try_depths.back()     = 1   (loop entered while inside try)
+#   Expected pops              = 0
+# The outer try's handler must remain live after break.
+# ---------------------------------------------------------------------
+function t5_break_outer_try_only()
+    try
+        let i = 0
+        while i < 5 do
+            if i == 2 then
+                break
+            end
+            i = i + 1
+        end
+        # The outer try is still active — this throw must hit it.
+        throw "outer-caught"
+    catch e
+        return e
+    end
+end
+
+assert t5_break_outer_try_only() == "outer-caught", "T5 break with outer try only failed"
+print "T5 break with outer try only (zero pops expected): OK"
+
+
+# ---------------------------------------------------------------------
+# Test 6. try OUTSIDE the loop AND try INSIDE the loop.
+#   try_depth at break         = 2
+#   loop_try_depths.back()     = 1   (loop entered while inside outer try)
+#   Expected pops              = 1   (just the inner)
+# A wrong count of 2 would pop the outer too, and the post-loop throw
+# would not be caught.
+# ---------------------------------------------------------------------
+function t6_break_with_outer_try()
+    try
+        let i = 0
+        while i < 5 do
+            try
+                if i == 2 then
+                    break
+                end
+                i = i + 1
+            catch e
+                return "INNER_FIRED"
+            end
+        end
+        throw "outer-caught"
+    catch e
+        return e
+    end
+end
+
+assert t6_break_with_outer_try() == "outer-caught", "T6 break with outer try failed"
+print "T6 break with outer try + inner try in loop: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 7. for-loop variant. Same logic as T1 but with a `for`.
+# ---------------------------------------------------------------------
+function t7_break_for()
+    for i = 1 to 10 do
+        try
+            if i == 3 then
+                break
+            end
+        catch e
+            return "INNER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r7 = "init"
+try
+    t7_break_for()
+catch e
+    r7 = e
+end
+assert r7 == "after-loop", "T7 break-for: expected \"after-loop\", got " & str(r7)
+print "T7 break inside for: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 8. for-loop continue variant.
+# ---------------------------------------------------------------------
+function t8_continue_for()
+    for i = 1 to 5 do
+        try
+            continue
+        catch e
+            return "INNER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r8 = "init"
+try
+    t8_continue_for()
+catch e
+    r8 = e
+end
+assert r8 == "after-loop", "T8 continue-for: expected \"after-loop\", got " & str(r8)
+print "T8 continue inside for: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 9. foreach-loop variant.
+# ---------------------------------------------------------------------
+function t9_break_foreach()
+    foreach v in [10, 20, 30, 40] do
+        try
+            if v == 20 then
+                break
+            end
+        catch e
+            return "INNER_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r9 = "init"
+try
+    t9_break_foreach()
+catch e
+    r9 = e
+end
+assert r9 == "after-loop", "T9 break-foreach: expected \"after-loop\", got " & str(r9)
+print "T9 break inside foreach: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 10. repeat-until variant.
+# ---------------------------------------------------------------------
+function t10_break_repeat()
+    let i = 0
+    repeat
+        try
+            if i == 2 then
+                break
+            end
+            i = i + 1
+        catch e
+            return "INNER_FIRED"
+        end
+    until i >= 5
+    throw "after-loop"
+end
+
+let r10 = "init"
+try
+    t10_break_repeat()
+catch e
+    r10 = e
+end
+assert r10 == "after-loop", "T10 break-repeat: expected \"after-loop\", got " & str(r10)
+print "T10 break inside repeat-until: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 11. Nested loops: break out of inner loop's try, outer loop
+# must continue normally (its own handlers, if any, must be intact).
+# ---------------------------------------------------------------------
+function t11_break_inner_loop_only()
+    let outer_count = 0
+    let i = 0
+    while i < 3 do
+        let j = 0
+        while j < 5 do
+            try
+                if j == 2 then
+                    break
+                end
+                j = j + 1
+            catch e
+                return "INNER_FIRED"
+            end
+        end
+        outer_count = outer_count + 1
+        i = i + 1
+    end
+    return outer_count
+end
+
+assert t11_break_inner_loop_only() == 3, "T11 nested-loops break failed"
+print "T11 break inner only, outer loop completes: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 12. continue inside loop, then a real `throw` on a later
+# iteration. Confirms the per-iteration push/pop of handlers is
+# correctly cycled.
+# ---------------------------------------------------------------------
+function t12_continue_then_throw()
+    let i = 0
+    let caught = "none"
+    while i < 5 do
+        try
+            i = i + 1
+            if i == 3 then
+                throw "iter3"
+            end
+            continue
+        catch e
+            caught = e
+        end
+    end
+    return caught
+end
+
+assert t12_continue_then_throw() == "iter3", "T12 continue+throw failed"
+print "T12 continue then throw on later iteration: OK"
+
+
+# ---------------------------------------------------------------------
+# Test 13. break from inner of try-inside-try, where ONLY the inner
+# `try` is inside the loop (outer try wraps the loop itself).
+#   try_depth at break         = 2
+#   loop_try_depths.back()     = 1
+#   Expected pops              = 1
+# ---------------------------------------------------------------------
+function t13_break_inner_of_two_tries()
+    try
+        for i = 1 to 5 do
+            try
+                if i == 3 then
+                    break
+                end
+            catch e
+                return "INNER_FIRED"
+            end
+        end
+        # Outer try still active.
+        throw "outer-caught"
+    catch e
+        return e
+    end
+end
+
+assert t13_break_inner_of_two_tries() == "outer-caught", "T13 break inner-of-two failed"
+print "T13 break inner-of-two-tries (one inside loop, one outside): OK"
+
+
+# ---------------------------------------------------------------------
+# Test 14. Triple-nested try inside loop: break must pop THREE.
+# ---------------------------------------------------------------------
+function t14_break_triple_nested()
+    let i = 0
+    while i < 5 do
+        try
+            try
+                try
+                    if i == 1 then
+                        break
+                    end
+                    i = i + 1
+                catch e
+                    return "L3_FIRED"
+                end
+            catch e
+                return "L2_FIRED"
+            end
+        catch e
+            return "L1_FIRED"
+        end
+    end
+    throw "after-loop"
+end
+
+let r14 = "init"
+try
+    t14_break_triple_nested()
+catch e
+    r14 = e
+end
+assert r14 == "after-loop", "T14 break triple-nested: expected \"after-loop\", got " & str(r14)
+print "T14 break out of triple-nested try in loop: OK"
+
+
+print "==== ALL break/continue x try/catch TESTS PASSED ===="

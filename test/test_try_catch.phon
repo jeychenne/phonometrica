@@ -1,0 +1,104 @@
+# Smoke test for try/catch in the scripting language.
+# Run this from Phonometrica's script runner; each block prints a banner so failures are localized.
+
+# 1. Basic catch of a string-valued throw.
+print "--- 1. basic throw/catch ---"
+try
+    throw "oops"
+catch e
+    print "caught:", e   # expected: caught: oops
+end
+
+# 2. Catch of a non-string thrown value (the runtime should preserve the original Variant).
+print "--- 2. typed throw ---"
+try
+    throw 42
+catch e
+    print "caught int:", e, "(", type(e), ")"   # expected: caught int: 42 ( Number )
+end
+
+# 3. Catch with no identifier — value is discarded.
+print "--- 3. anonymous catch ---"
+try
+    throw "ignored"
+catch
+    print "reached anonymous catch body"
+end
+
+# 4. Native runtime error caught by user code.
+print "--- 4. native error ---"
+try
+    let xs = [1, 2, 3]
+    let bad = xs[100]   # out-of-bounds: native code raises std::runtime_error
+catch e
+    print "caught native:", e
+end
+
+# 5. Throw from inside a called function — handler in the caller's frame.
+print "--- 5. cross-frame ---"
+function inner()
+    throw "from inner"
+end
+try
+    inner()
+catch e
+    print "caught across frame:", e
+end
+
+# 6. Nested try — inner catch handles, outer never sees it.
+print "--- 6. nested try ---"
+try
+    try
+        throw "inner"
+    catch e
+        print "inner caught:", e
+        throw "rethrown"
+    end
+catch e
+    print "outer caught:", e
+end
+
+# 7. `return` from inside a try body — handler stack must not leak.
+print "--- 7. return inside try ---"
+function f()
+    try
+        return 7
+    catch e
+        # Unreachable.
+        return 0
+    end
+end
+print "f() =", f()
+# A subsequent throw must NOT be caught by the (popped) handler from f.
+try
+    throw "after f"
+catch e
+    print "post-f caught:", e
+end
+
+# 8. `break` out of a loop from inside a try body.
+print "--- 8. break inside try ---"
+let i = 0
+while i < 5 do
+    try
+        if i == 2 then
+            break
+        end
+        i = i + 1
+    catch e
+        print "should not happen"
+    end
+end
+print "i =", i   # expected: 2
+# Verify the handler stack is clean: another throw must reach the top-level.
+try
+    throw "after break"
+catch e
+    print "post-break caught:", e
+end
+
+# 9. Uncaught throw still surfaces a sensible error message at the top level.
+# (Comment this out unless you want the script to abort here.)
+# throw "uncaught"
+
+print "--- all done ---"
