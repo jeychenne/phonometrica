@@ -21,6 +21,7 @@
 
 #include <phon/error.hpp>
 #include <phon/string.hpp>
+#include <phon/runtime/variant.hpp>
 
 namespace phonometrica {
 
@@ -34,4 +35,38 @@ RuntimeError::RuntimeError(intptr_t line, const String &s) :
 {
 
 }
+
+ScriptException::ScriptException(intptr_t line, const String &msg, Variant value) :
+	RuntimeError(line, msg),
+	m_value(std::make_unique<Variant>(std::move(value)))
+{
+
+}
+
+ScriptException::ScriptException(const ScriptException &other) :
+	RuntimeError(other),
+	m_value(std::make_unique<Variant>(*other.m_value))
+{
+
+}
+
+ScriptException::ScriptException(ScriptException &&other) noexcept :
+	RuntimeError(other),
+	m_value(std::move(other.m_value))
+{
+
+}
+
+ScriptException::~ScriptException() = default;
+
+const Variant &ScriptException::value() const
+{
+	return *m_value;
+}
+
+Variant ScriptException::take_value()
+{
+	return std::move(*m_value);
+}
+
 } // namespace phonometrica

@@ -31,7 +31,13 @@
 #include <phon/utils/file_system.hpp>
 
 
-#define CATCH_ERROR catch (std::runtime_error &e) { RUNTIME_ERROR(e.what()); }
+// Convert a generic std::runtime_error caught at an opcode boundary into a RuntimeError
+// carrying the current bytecode line. ScriptException must pass through unchanged so
+// that the carried Variant survives until the catch handler can inspect it; rewrapping
+// it as a plain RuntimeError would discard the value and leave only the message.
+#define CATCH_ERROR \
+	catch (ScriptException &) { throw; } \
+	catch (std::runtime_error &e) { RUNTIME_ERROR(e.what()); }
 #define RUNTIME_ERROR(...) throw RuntimeError(get_current_line(), __VA_ARGS__)
 
 #if 0
@@ -514,11 +520,13 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 
 	while (true)
 	{
-		auto op = static_cast<Opcode>(*ip++);
-
-		switch (op)
+		try
 		{
-			case Opcode::Add:
+			auto op = static_cast<Opcode>(*ip++);
+
+			switch (op)
+			{
+				case Opcode::Add:
 			{
 				trace_op();
 				math_op('+');
@@ -1161,6 +1169,17 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				pop();
 				break;
 			}
+			case Opcode::PopHandler:
+			{
+				trace_op();
+				// We never reach this opcode unless the corresponding `try` body completed
+				// successfully; the dispatch path in the surrounding `catch` already pops
+				// the handler entry on its own. An empty handler stack here would mean the
+				// compiler emitted PopHandler without a matching PushHandler.
+				assert(!handler_stack.empty());
+				handler_stack.pop_back();
+				break;
+			}
 			case Opcode::Power:
 			{
 				trace_op();
@@ -1252,6 +1271,17 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				trace_op();
 				double value = routine.get_float(*ip++);
 				push(value);
+				break;
+			}
+			case Opcode::PushHandler:
+			{
+				trace_op();
+				int catch_pc = Code::read_integer(ip);
+				handler_stack.push_back(ExceptionHandler{
+					int(current_frame - frames),
+					intptr_t(top - stack.begin()),
+					catch_pc
+				});
 				break;
 			}
 			case Opcode::PushInteger:
@@ -1408,16 +1438,68 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 			case Opcode::Throw:
 			{
 				trace_op();
-				String msg;
+				// Preserve the thrown value so a `catch` clause can bind it. We compute a
+				// string form for the exception's `what()` so that uncaught throws still
+				// surface a human-readable message at the top level; if `to_string` itself
+				// fails (e.g. a user-defined `to_string` method raises), we fall back to a
+				// generic placeholder rather than masking the original throw.
+				Variant value;
 				try {
-					msg = to_string(peek());
+					value = std::move(peek());
 					pop();
 				}
 				CATCH_ERROR
-				RUNTIME_ERROR("[Runtime error] %", msg);
+				String msg;
+				try { msg = utils::format("[Runtime error] %", to_string(value)); }
+				catch (...) { msg = String("[Runtime error] thrown value"); }
+				throw ScriptException(get_current_line(), msg, std::move(value));
 			}
 			default:
 				throw error("[Internal error] Invalid opcode: %", (int)op);
+		}
+		}
+		catch (std::exception &e)
+		{
+			// `needs_ref` and `calling_method` are reset at the foot of opcode handlers
+			// (Call, Precall, GetField...). When one of those handlers throws, that reset
+			// is bypassed; restore sane defaults here so a successful catch dispatch — or
+			// a later opcode in this same frame — doesn't observe stale flags.
+			needs_ref = false;
+			calling_method = false;
+
+			int current_idx = int(current_frame - frames);
+			if (!handler_stack.empty() && handler_stack.back().frame_index == current_idx)
+			{
+				// Topmost handler belongs to this frame: dispatch.
+				auto h = handler_stack.back();
+				handler_stack.pop_back();
+
+				// Pop the value stack down to the depth recorded at PushHandler time.
+				intptr_t cur = top - stack.begin();
+				if (cur > h.stack_size) {
+					pop(int(cur - h.stack_size));
+				}
+
+				// Push the thrown value: the original Variant when the throw came from
+				// the script's `throw` statement, otherwise a String holding the error
+				// message (so `catch e` can still bind something meaningful for runtime
+				// errors raised by native code).
+				if (auto se = dynamic_cast<ScriptException*>(&e)) {
+					push(se->take_value());
+				}
+				else {
+					push(String(e.what()));
+				}
+
+				// Resume at the catch landing pad.
+				ip = code->data() + h.catch_pc;
+				continue;
+			}
+
+			// No matching handler in this frame: clean up our frame and rethrow so the
+			// caller's interpret() invocation can dispatch (or propagate further).
+			unwind_call_frame_for_throw();
+			throw;
 		}
 	}
 
@@ -1790,6 +1872,10 @@ size_t Runtime::disassemble_instruction(const Routine &routine, size_t offset)
 		{
 			return print_simple_instruction("POP");
 		}
+		case Opcode::PopHandler:
+		{
+			return print_simple_instruction("POP_HANDLER");
+		}
 		case Opcode::Power:
 		{
 			return print_simple_instruction("POWER");
@@ -1821,6 +1907,13 @@ size_t Runtime::disassemble_instruction(const Routine &routine, size_t offset)
 			double value = routine.get_float(index);
 			printf("PUSH_FLOAT     %-5d      ; %f\n", index, value);
 			return 2;
+		}
+		case Opcode::PushHandler:
+		{
+			auto ptr = routine.code.data() + offset + 1;
+			int addr = Code::read_integer(ptr);
+			printf("PUSH_HANDLER   %-5d\n", addr);
+			return 1 + Code::IntSize;
 		}
 		case Opcode::PushInteger:
 		{
@@ -1967,6 +2060,9 @@ void Runtime::push_call_frame(TObject<Closure> *closure, int nlocal)
 	current_frame->current_closure = closure;
 	current_frame->locals = top;
 	current_frame->nlocal = nlocal;
+	// Snapshot the handler stack so that any try/catch handler this frame leaves behind
+	// (e.g. via `return` inside a `try` body) is automatically dropped on frame exit.
+	current_frame->handler_stack_size = intptr_t(handler_stack.size());
 	int argc = current_routine->arg_count();
 	top += argc;
 	for (int i = argc; i < nlocal; i++) {
@@ -1999,6 +2095,10 @@ Variant Runtime::pop_call_frame()
 		pop(n-current_routine->local_count());
 	}
 
+	// Drop any try/catch handlers this frame leaked behind (e.g. via `return` from
+	// inside a `try` body that never executed its matching PopHandler).
+	handler_stack.resize(current_frame->handler_stack_size);
+
 	// Restore previous frame.
 	current_frame--;
 
@@ -2015,6 +2115,44 @@ Variant Runtime::pop_call_frame()
 	}
 
 	return result;
+}
+
+void Runtime::unwind_call_frame_for_throw()
+{
+	// Pop everything this frame put on the value stack so that the caller's interpret()
+	// invocation sees a consistent state when the C++ exception reaches it. The shape
+	// mirrors pop_call_frame minus the result-extraction step.
+	auto n = int(top - current_frame->locals);
+	if (n < 0) n = 0;
+
+	if (calling_function_on_stack)
+	{
+		// Locals + the function slot below the locals.
+		pop(n + 1);
+	}
+	else
+	{
+		// Locals were transferred from the caller's stack and the caller will pop them
+		// (or our enclosing dispatch will, when it pops down to the handler's recorded
+		// stack depth). We only need to drop any temporaries this frame pushed above
+		// its locals.
+		int extras = n - current_routine->local_count();
+		if (extras > 0) pop(extras);
+	}
+
+	// Drop any handlers this frame registered. After this resize, handler_stack.back()
+	// (if non-empty) belongs to the caller's frame or further out.
+	handler_stack.resize(current_frame->handler_stack_size);
+
+	// Restore previous frame.
+	current_frame--;
+	if (current_frame < frames)
+	{
+		throw error("[Internal error] Call frame underflow");
+	}
+	code = &current_frame->previous_routine->code;
+	current_routine = current_frame->previous_routine;
+	ip = current_frame->ip;
 }
 
 void Runtime::add_global(String name, Variant value)
@@ -2292,13 +2430,20 @@ Variant Runtime::call_method(Handle<Closure> &c, std::span<Variant> args)
 	}
 	else
 	{
-		auto flag_method = calling_function_on_stack;
-		calling_function_on_stack = false;
-		top -= args.size();
-		auto v = interpret(c);
-		calling_function_on_stack = flag_method;
+		// Use RAII so the flag is restored even if interpret() throws. Without this,
+		// an exception escaping the inner interpret() would leave `calling_function_on_stack`
+		// stuck at false, causing pop_call_frame / unwind_call_frame_for_throw at the
+		// next level out to pop the wrong number of stack slots.
+		struct FlagGuard
+		{
+			bool &flag;
+			bool saved;
+			FlagGuard(bool &f, bool new_val) : flag(f), saved(f) { flag = new_val; }
+			~FlagGuard() { flag = saved; }
+		} guard(calling_function_on_stack, false);
 
-		return v;
+		top -= args.size();
+		return interpret(c);
 	}
 }
 

@@ -39,6 +39,7 @@ struct Token final
 		As,
 		Assert,
 		Break,
+		Catch,
 		Class,
 		Continue,
 		Debug,
@@ -75,6 +76,7 @@ struct Token final
 		Throw,
 		To,
 		True,
+		Try,
 		Until,
 		While,
 

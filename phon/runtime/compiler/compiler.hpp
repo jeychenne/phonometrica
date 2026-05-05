@@ -54,6 +54,7 @@ public:
 	void visit_print_statement(PrintStatement *node) override;
 	void visit_debug_statement(DebugStatement *node) override;
 	void visit_throw_statement(ThrowStatement *node) override;
+	void visit_try_statement(TryStatement *node) override;
 	void visit_call(CallExpression *node) override;
 	void visit_parameter(RoutineParameter *node) override;
 	void visit_routine(RoutineDefinition *node) override;
@@ -143,6 +144,18 @@ private:
 	bool visiting_indexed_lhs = false;
 
 	bool visiting_assigned_lhs = false;
+
+	// Number of `try` blocks whose body is currently being compiled. Incremented when
+	// we enter a try-body and decremented when we leave it. Used to emit the right
+	// number of PopHandler instructions before any `break`/`continue` that exits one
+	// or more enclosing try blocks within the current loop.
+	int try_depth = 0;
+
+	// Saved value of `try_depth` at the start of each enclosing loop. visit_loop_exit
+	// uses the top of this stack to compute how many handlers were pushed inside the
+	// current loop and therefore must be popped before jumping out of (or back to the
+	// top of) the loop.
+	std::vector<int> loop_try_depths;
 };
 
 } // namespace phonometrica

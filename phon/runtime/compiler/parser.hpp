@@ -173,6 +173,8 @@ private:
 
 	AutoAst parse_throw_statement();
 
+	AutoAst parse_try_statement();
+
 
 	// Instance of the scanner (reads one token at a time).
 	Scanner scanner;

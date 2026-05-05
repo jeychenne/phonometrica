@@ -23,13 +23,15 @@
 #define PHONOMETRICA_ERROR_HPP
 
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <phon/utils/print.hpp>
 
 namespace phonometrica {
 
-// Forward declaration.
+// Forward declarations.
 class String;
+class Variant;
 
 template<typename T, typename... Args>
 std::runtime_error error(const char *fmt, const T &value, Args... args)
@@ -86,6 +88,41 @@ public:
 private:
 
 	intptr_t line;
+};
+
+
+//---------------------------------------------------------------------------------------------------------------------
+
+// Exception raised by the scripting language's `throw` statement. Carries an arbitrary
+// scripted value alongside the error message, so that a user's `catch` clause can bind
+// the original thrown value rather than only its string representation. When uncaught,
+// it behaves like a regular RuntimeError (the message holds the value's string form).
+//
+// The carried value is held via a heap-allocated Variant in order to keep this header
+// free of <variant.hpp>; all special members are defined out-of-line in error.cpp where
+// Variant is complete.
+class ScriptException : public RuntimeError
+{
+public:
+
+	ScriptException(intptr_t line, const String &msg, Variant value);
+
+	ScriptException(const ScriptException &other);
+
+	ScriptException(ScriptException &&other) noexcept;
+
+	~ScriptException() override;
+
+	ScriptException &operator=(const ScriptException &) = delete;
+	ScriptException &operator=(ScriptException &&) = delete;
+
+	const Variant &value() const;
+
+	Variant take_value();
+
+private:
+
+	std::unique_ptr<Variant> m_value;
 };
 
 } // namespace phonometrica

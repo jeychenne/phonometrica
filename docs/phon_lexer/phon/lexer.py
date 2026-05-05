@@ -30,10 +30,10 @@ class PhonLexer(RegexLexer):
             # Please note that keyword and operator are case insensitive.
             (r'(?i)(true|false|null|undefined)\b', Keyword.Constant),
             (words((
-                'and', 'as', 'assert', 'break', 'class', 'continue', 'debug', 'do', 'downto', 'else', 'elsif', 
+                'and', 'as', 'assert', 'break', 'catch', 'class', 'continue', 'debug', 'do', 'downto', 'else', 'elsif',
                 'end', 'for', 'foreach', 'function', 'if',
                 'in', 'inherits', 'let', 'local', 'method', 'not', 'or', 'option', 'pass', 'print', 'ref', 'repeat',
-                'return', 'step', 'then', 'throw', 'to', 'until', 'while'), prefix=r'(?i)\b', suffix=r'\b'),
+                'return', 'step', 'then', 'throw', 'to', 'try', 'until', 'while'), prefix=r'(?i)\b', suffix=r'\b'),
              Keyword.Reserved),
             (r'"\[(([^\]%]|\n)|%(.|\n)|\][^"])*?\]"', String),
             (r'"([^"%\n]|%.)*?"', String),

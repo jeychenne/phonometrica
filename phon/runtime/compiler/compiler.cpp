@@ -651,6 +651,7 @@ void Compiler::visit_while_statement(WhileStatement *node)
 	int previous_break_count = break_count;
 	int previous_continue_count = continue_count;
 	break_count = continue_count = 0;
+	loop_try_depths.push_back(try_depth);
 	int loop_start = code->get_current_offset();
 	node->cond->visit(*this);
 	int exit_jump = code->append_jump(node->line_no, Opcode::JumpFalse);
@@ -659,6 +660,7 @@ void Compiler::visit_while_statement(WhileStatement *node)
 	code->append_jump(node->line_no, Opcode::Jump, loop_start);
 	code->backpatch(exit_jump);
 	backpatch_breaks(previous_break_count);
+	loop_try_depths.pop_back();
 }
 
 void Compiler::visit_repeat_statement(RepeatStatement *node)
@@ -667,6 +669,7 @@ void Compiler::visit_repeat_statement(RepeatStatement *node)
 	int previous_break_count = break_count;
 	int previous_continue_count = continue_count;
 	break_count = continue_count = 0;
+	loop_try_depths.push_back(try_depth);
 	int loop_start = code->get_current_offset();
 	node->body->visit(*this);
 	node->cond->visit(*this);
@@ -680,6 +683,7 @@ void Compiler::visit_repeat_statement(RepeatStatement *node)
 		code->backpatch(addr, loop_start);
 	}
 	continue_count = previous_continue_count;
+	loop_try_depths.pop_back();
 	close_scope(scope);
 }
 
@@ -690,6 +694,7 @@ void Compiler::visit_for_statement(ForStatement *node)
 	int previous_break_count = break_count;
 	int previous_continue_count = continue_count;
 	break_count = continue_count = 0;
+	loop_try_depths.push_back(try_depth);
 
 	// Initialize loop variable
 	auto ident = dynamic_cast<Variable*>(node->var.get());
@@ -747,6 +752,7 @@ void Compiler::visit_for_statement(ForStatement *node)
 	code->backpatch(jump_end);
 	backpatch_breaks(previous_break_count);
 
+	loop_try_depths.pop_back();
 	close_scope(scope);
 }
 
@@ -757,6 +763,7 @@ void Compiler::visit_foreach_statement(ForeachStatement *node)
 	int previous_break_count = break_count;
 	int previous_continue_count = continue_count;
 	break_count = continue_count = 0;
+	loop_try_depths.push_back(try_depth);
 
 	// Create the loop variables. The key is optional, the value is always there.
 	auto key_index = (std::numeric_limits<Instruction>::max)();
@@ -814,6 +821,7 @@ void Compiler::visit_foreach_statement(ForeachStatement *node)
 	code->backpatch(jump_end);
 	backpatch_breaks(previous_break_count);
 
+	loop_try_depths.pop_back();
 	close_scope(scope);
 }
 
@@ -830,6 +838,15 @@ void Compiler::backpatch_breaks(int previous)
 
 void Compiler::visit_loop_exit(LoopExitStatement *node)
 {
+	// If we are exiting (or restarting) a loop from inside one or more `try` blocks
+	// that were entered AFTER the loop began, those handlers must be popped first;
+	// otherwise the runtime's handler stack would still contain them after the jump.
+	int loop_depth = loop_try_depths.empty() ? 0 : loop_try_depths.back();
+	for (int i = try_depth; i > loop_depth; --i)
+	{
+		EMIT(Opcode::PopHandler);
+	}
+
 	int addr = code->append_jump(node->line_no, Opcode::Jump);
 
 	if (node->lex == Lexeme::Break)
@@ -1096,6 +1113,70 @@ void Compiler::visit_throw_statement(ThrowStatement *node)
 {
 	node->expr->visit(*this);
 	EMIT(Opcode::Throw);
+}
+
+void Compiler::visit_try_statement(TryStatement *node)
+{
+	/*
+	  Compilation scheme for:
+
+	      try
+	          BODY
+	      catch [name]
+	          CATCH_BODY
+	      end
+
+	  PushHandler installs a runtime entry pointing at the catch landing pad. On
+	  successful completion of BODY we pop the handler and unconditionally jump
+	  past the catch clause. On any error during BODY (a `throw` from the script
+	  or a runtime error from a native operation) the runtime dispatches to the
+	  landing pad with the thrown value pushed on top of the stack.
+
+	      PushHandler @catch        ; placeholder, backpatched to @catch
+	      [BODY]
+	      PopHandler
+	      Jump @after               ; placeholder, backpatched to @after
+	  @catch:
+	      DefineLocal slot          ; or Pop, if no catch identifier
+	      [CATCH_BODY]
+	  @after:
+	*/
+
+	// PushHandler with placeholder address; record the offset for backpatching.
+	int handler_jump = code->append_jump(node->line_no, Opcode::PushHandler);
+
+	// The body opens its own scope (the StatementList created by the parser was
+	// constructed with open_scope=true), so we just visit it.
+	++try_depth;
+	node->body->visit(*this);
+	--try_depth;
+
+	// On normal exit from the body, drop the handler and skip the catch clause.
+	EMIT(Opcode::PopHandler);
+	int after_jump = code->append_jump(node->line_no, Opcode::Jump);
+
+	// Catch landing pad starts here.
+	code->backpatch(handler_jump);
+
+	// Open a fresh scope for the catch clause so the bound identifier (if any) is
+	// scoped to the clause body.
+	int previous_scope = open_scope();
+	if (!node->name.empty())
+	{
+		auto slot = add_local(node->name);
+		EMIT(Opcode::DefineLocal, slot);
+	}
+	else
+	{
+		// The dispatcher always pushes the thrown value; discard it when the user
+		// did not request a binding.
+		EMIT(Opcode::Pop);
+	}
+	node->catch_body->visit(*this);
+	close_scope(previous_scope);
+
+	// After the catch clause, both paths converge here.
+	code->backpatch(after_jump);
 }
 
 void Compiler::visit_set(SetLiteral *node)

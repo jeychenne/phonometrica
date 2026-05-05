@@ -44,9 +44,9 @@ const char *PhonLexer::keywords(int set) const
 {
 	if (set == 1)
 	{
-		return "and as assert break class continue debug do downto else elsif end false field for foreach function "
+		return "and as assert break catch class continue debug do downto else elsif end false field for foreach function "
 		       "if in inherits let local method nan not null option or pass print ref repeat return step super then this throw "
-		       "to true until while";
+		       "to true try until while";
 	}
 
 	if (set == 2)

@@ -223,6 +223,10 @@ AutoAst Parser::parse_statement()
 	{
 		return parse_throw_statement();
 	}
+	else if (accept(Lexeme::Try))
+	{
+		return parse_try_statement();
+	}
 	else if (accept(Lexeme::Pass))
 	{
 		// Stuff this in constant literal to avoid creating a new AST node. This is a no-op anyway.
@@ -1161,6 +1165,52 @@ AutoAst Parser::parse_throw_statement()
 {
 	trace_ast();
 	return make<ThrowStatement>(parse_expression());
+}
+
+AutoAst Parser::parse_try_statement()
+{
+	trace_ast();
+	auto line = get_line();
+
+	// Try body: collect statements until we hit `catch`.
+	AstList body_stmts;
+	skip_empty_lines();
+	while (!check(Lexeme::Catch) && !check(Lexeme::Eot))
+	{
+		body_stmts.push_back(parse_statement());
+		while (token.is_separator()) accept();
+	}
+	if (!check(Lexeme::Catch)) {
+		report_error("Expected \"catch\" in \"try\" statement");
+	}
+	auto body = std::make_unique<StatementList>(line, std::move(body_stmts), true);
+
+	// Consume `catch`.
+	expect(Lexeme::Catch, "in \"try\" statement");
+
+	// Optional exception identifier.
+	String name;
+	if (check(Lexeme::Identifier))
+	{
+		name = runtime->intern_string(token.spelling);
+		accept();
+	}
+	skip_empty_lines();
+
+	// Catch body: collect statements until `end`. The compiler opens the scope for the
+	// catch clause itself (so the bound identifier is local to that scope), therefore we
+	// pass open_scope=false here.
+	AstList catch_stmts;
+	auto catch_line = get_line();
+	while (!check(Lexeme::End) && !check(Lexeme::Eot))
+	{
+		catch_stmts.push_back(parse_statement());
+		while (token.is_separator()) accept();
+	}
+	expect(Lexeme::End, "in \"try\" statement");
+	auto catch_body = std::make_unique<StatementList>(catch_line, std::move(catch_stmts), false);
+
+	return std::make_unique<TryStatement>(line, std::move(body), std::move(name), std::move(catch_body));
 }
 
 void Parser::clear()

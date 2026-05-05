@@ -754,8 +754,12 @@ This means that ``f`` is now a function (the function ``inner``). When we call i
 Errors
 ------
 
-It is sometimes necessary to interrupt a script because it can no longer proceed further. To signal an error, use the keyword ``throw`` 
-followed by an error message. Here is an example:
+Throwing errors
+~~~~~~~~~~~~~~~
+
+It is sometimes necessary to interrupt a script because it can no longer proceed further. To signal an error, use the keyword ``throw``
+followed by a value that describes the error. The value is most often a string, but you can throw any value (a number, a list, a table, an
+instance of a user-defined class) — whatever is most convenient for the caller to inspect. Here is a typical example:
 
 .. code:: phon
 
@@ -766,6 +770,104 @@ followed by an error message. Here is an example:
 
         return x * y
     end
+
+
+When a ``throw`` is not handled by an enclosing ``try`` block (see below), it terminates the script and prints an error message
+that includes the thrown value's textual form and the line where the error was raised.
+
+
+Catching errors
+~~~~~~~~~~~~~~~
+
+When you call code that may fail — a built-in operation that could be misused, a function that uses ``throw``, or any expression that
+might raise a runtime error such as an out-of-bounds index or a failed type conversion — you can intercept the error using a ``try`` block.
+The general form is::
+
+    try
+        <statements that may fail>
+    catch <name>
+        <statements that handle the error>
+    end
+
+If everything in the body of ``try`` succeeds, the ``catch`` clause is skipped. If anything in the body raises an error, control jumps
+immediately to the ``catch`` clause and the variable named after ``catch`` is bound to a value describing the error. The bound name
+is local to the ``catch`` clause: it is not visible outside it. Execution then resumes after ``end``.
+
+The value bound by ``catch`` depends on where the error came from:
+
+- For an error raised by ``throw``, ``catch`` binds the value that was thrown, with its original type preserved.
+- For a runtime error raised by the language itself (an invalid index, a missing field, a failed type check), ``catch`` binds a
+  ``String`` describing the error.
+
+The following example illustrates both cases:
+
+.. code:: phon
+
+    # User-defined throw: e is bound to the integer 42.
+    try
+        throw 42
+    catch e
+        print "caught code", e   # prints: caught code 42
+    end
+
+    # Built-in error: e is bound to a string describing the failure.
+    let xs = [10, 20, 30]
+    try
+        let bad = xs[100]
+    catch e
+        print "caught:", e
+    end
+
+
+If you do not need the bound value, you can omit the identifier entirely:
+
+.. code:: phon
+
+    try
+        risky_operation()
+    catch
+        print "something went wrong, ignoring"
+    end
+
+
+``try`` blocks may be nested. When an error is raised, the most recently entered ``try`` is given the chance to handle it; if its
+``catch`` clause itself raises (for example by re-throwing the value), the next enclosing ``try`` takes over.
+
+.. code:: phon
+
+    try
+        try
+            throw "first"
+        catch e
+            print "inner caught", e
+            throw "second"   # re-thrown, handled by the outer catch
+        end
+    catch e
+        print "outer caught", e
+    end
+
+
+An error raised inside a function call propagates back through the call stack until it reaches a matching ``try``. This means you
+can wrap a single ``try`` around a high-level operation and catch errors raised deep inside the functions it calls, without having
+to add error handling to every intermediate function.
+
+
+Interaction with control flow
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``return``, ``break``, and ``continue`` inside the body of a ``try`` block work the way you would expect: they leave the ``try``
+silently (the ``catch`` clause is not entered) and the corresponding return / loop-exit takes effect. In particular, you can use
+``break`` to leave a loop from inside a ``try`` block without disturbing any error handling registered outside the loop, and you
+can use ``return`` to leave a function from inside a ``try`` without leaking its error handling into the caller.
+
+
+When NOT to use try/catch
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``try`` blocks are useful when an operation has multiple plausible failure modes that the calling code wants to recover from
+distinctly. For routine input validation, prefer an explicit check, an early ``return``, or an ``assert``: these communicate the
+contract more directly and are cheaper at runtime. Use ``try`` for the cases where you genuinely want the script to keep running
+after a failure.
 
 
 Assertions

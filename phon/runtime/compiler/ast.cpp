@@ -193,6 +193,11 @@ void ThrowStatement::visit(AstVisitor &v)
 	VISIT(throw_statement);
 }
 
+void TryStatement::visit(AstVisitor &v)
+{
+	VISIT(try_statement);
+}
+
 void RepeatStatement::visit(AstVisitor &v)
 {
 	VISIT(repeat_statement);

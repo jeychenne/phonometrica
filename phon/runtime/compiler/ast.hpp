@@ -267,6 +267,27 @@ struct ThrowStatement final : public Ast
 	AutoAst expr;
 };
 
+struct TryStatement final : public Ast
+{
+	TryStatement(int line, AutoAst body, String name, AutoAst catch_body) :
+		Ast(line), body(std::move(body)), name(std::move(name)), catch_body(std::move(catch_body)) { }
+
+	void visit(AstVisitor &v) override;
+
+	// Statements protected by the try clause. The body opens its own scope so that
+	// any locals declared inside it are not visible from the catch clause.
+	AutoAst body;
+
+	// Name of the bound exception variable (empty when the catch clause is `catch ... end`
+	// without an identifier).
+	String name;
+
+	// Body of the catch clause. The compiler opens a fresh scope for the catch clause
+	// (in which `name` is added as a local), so the catch body itself does NOT open a
+	// scope of its own at the AST level.
+	AutoAst catch_body;
+};
+
 struct AssertStatement final : public Ast
 {
 	AssertStatement(int line, AutoAst e, AutoAst msg) : Ast(line), expr(std::move(e)), msg(std::move(msg)) { }
@@ -452,6 +473,7 @@ public:
 	virtual void visit_print_statement(PrintStatement *node) = 0;
 	virtual void visit_debug_statement(DebugStatement *node) = 0;
 	virtual void visit_throw_statement(ThrowStatement *node) = 0;
+	virtual void visit_try_statement(TryStatement *node) = 0;
 	virtual void visit_call(CallExpression *node) = 0;
 	virtual void visit_parameter(RoutineParameter *node) = 0;
 	virtual void visit_routine(RoutineDefinition *node) = 0;

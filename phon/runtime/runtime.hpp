@@ -330,6 +330,29 @@ private:
 
 		// Number of local variables.
 		int nlocal = -1;
+
+		// Size of the handler stack at the moment this frame was pushed. On a normal
+		// return (or on exception unwind) we resize back to this value, which drops
+		// any try/catch handlers registered by this frame and never popped (e.g.
+		// because the function returned from inside a `try` block).
+		intptr_t handler_stack_size = 0;
+	};
+
+	// Single entry on the runtime's exception-handler stack. Each PushHandler instruction
+	// records one of these; PopHandler removes the most recent. When the VM catches an
+	// exception, it dispatches to the topmost handler whose `frame_index` matches the
+	// current call frame.
+	struct ExceptionHandler
+	{
+		// `current_frame - frames` at the time PushHandler executed.
+		int frame_index = 0;
+
+		// `top - stack.data()` at the time PushHandler executed; the dispatcher pops
+		// the stack back down to this size before pushing the thrown value.
+		intptr_t stack_size = 0;
+
+		// Offset (within the routine that pushed this handler) of the catch landing pad.
+		int catch_pc = 0;
 	};
 
 	friend class Object;
@@ -372,6 +395,16 @@ private:
 	void push_call_frame(TObject<Closure> *closure, int nlocal);
 
 	Variant pop_call_frame();
+
+	// Cleanup helper invoked by the catch path of `interpret()` when the topmost
+	// exception handler does not belong to the current call frame. Pops everything
+	// this frame put on the value stack (locals + the function slot, or just the
+	// extras pushed above the locals when `calling_function_on_stack` is false),
+	// truncates the handler stack to this frame's saved size, and decrements
+	// `current_frame`, restoring `code`/`current_routine`/`ip` to those of the
+	// caller. After this returns, the caller's `interpret()` invocation can rethrow
+	// (or, if its frame matches the next handler, dispatch).
+	void unwind_call_frame_for_throw();
 
 	void get_index(int count, bool by_ref);
 
@@ -446,6 +479,11 @@ private:
 
 	// Current call frame.
 	CallFrame *current_frame = nullptr;
+
+	// Stack of active try/catch handlers. Pushed by the PushHandler opcode and popped
+	// either by the PopHandler opcode (normal exit from a try body), by a successful
+	// catch dispatch, or implicitly via the call-frame's saved size on return/unwind.
+	std::vector<ExceptionHandler> handler_stack;
 
 	// Root for garbage collection
 	Collectable *gc_root = nullptr;
