@@ -23,6 +23,7 @@
 #ifndef PHONOMETRICA_PLOT_WIDGET_HPP
 #define PHONOMETRICA_PLOT_WIDGET_HPP
 
+#include <cstdint>
 #include <vector>
 #include <QWidget>
 #include <QPixmap>
@@ -35,6 +36,16 @@ class PlotWidget : public QWidget
 
 public:
 
+	/// Sentinel for a point that has no single source-row provenance (e.g.
+	/// pooled aggregates in grouped scatter, or any caller that did not
+	/// supply source_rows). pointClicked is never emitted for these.
+	static constexpr intptr_t INVALID_ROW = -1;
+
+	/// Pixel tolerance for click-to-point hit testing. Set generously so the
+	/// affordance feels forgiving on dense plots; the nearest target wins
+	/// among all targets within this radius.
+	static constexpr double HIT_TOLERANCE_PX = 6.0;
+
 	enum class RefLine
 	{
 		None,
@@ -43,15 +54,28 @@ public:
 		Diagonal
 	};
 
+	/// One clickable point in screen-pixel coordinates. Populated during
+	/// rebuildCache when m_collect_hits is true; cleared on every rebuild.
+	struct HitTarget
+	{
+		QPointF pos;       // pixel center on the cached pixmap
+		intptr_t source_row = INVALID_ROW;
+	};
+
+
 	explicit PlotWidget(QWidget *parent = nullptr);
 
 	/// Scatter plot. reverse_x / reverse_y invert the corresponding axis
 	/// (useful for formant charts where higher values go left/down).
+	/// source_rows, when non-empty, must align 1:1 with x/y. Each entry is
+	/// a 0-based source-table row index used by pointClicked. Pass an
+	/// empty vector to disable click-to-source for this plot.
 	void setData(std::vector<double> x, std::vector<double> y,
 	             const QString &x_label, const QString &y_label,
 	             const QString &title, RefLine ref = RefLine::None,
 	             bool reverse_x = false, bool reverse_y = false,
-	             std::vector<QString> point_labels = {});
+	             std::vector<QString> point_labels = {},
+	             std::vector<intptr_t> source_rows = {});
 
 	/// Grouped scatter plot. Each point belongs to a named group (groups[i]).
 	/// Optionally shows per-group mean markers and confidence ellipses.
@@ -65,6 +89,10 @@ public:
 	/// encodes the style group (style_groups[i]). Ellipses are computed for
 	/// each (group, style_group) combination; same-vowel ellipses share a
 	/// color but differ in dash pattern and marker shape.
+	///
+	/// source_rows, when non-empty, must align 1:1 with x/y/groups (etc.) and
+	/// carries the source-table row index for each input point. Pass an empty
+	/// vector to disable click-to-source (e.g. for pooled cell aggregates).
 	void setGroupedScatterData(std::vector<QString> groups,
 	                           std::vector<double> x, std::vector<double> y,
 	                           const QString &x_label, const QString &y_label,
@@ -73,12 +101,16 @@ public:
 	                           double chi2_scale = 2.2946,
 	                           bool reverse_x = false, bool reverse_y = false,
 	                           std::vector<QString> point_labels = {},
-	                           std::vector<QString> style_groups = {});
+	                           std::vector<QString> style_groups = {},
+	                           std::vector<intptr_t> source_rows = {});
 
 	/// Box plot: groups[i] is the group label for values[i].
+	/// source_rows, when non-empty, aligns 1:1 with values; only outliers
+	/// become click targets (the box body is not a single observation).
 	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
 	                    const QString &x_label, const QString &y_label,
-	                    const QString &title);
+	                    const QString &title,
+	                    std::vector<intptr_t> source_rows = {});
 
 	/// Histogram: a single array of numeric values. nbins=0 means auto (Sturges' rule).
 	void setHistogramData(std::vector<double> values,
@@ -167,10 +199,28 @@ public:
 
 	QSize sizeHint() const override { return {500, 400}; }
 
+Q_SIGNALS:
+
+	/// Emitted when the user left-clicks within HIT_TOLERANCE_PX of a plotted
+	/// point that has a known source-table row (i.e. caller passed source_rows
+	/// to the matching set*Data). source_row is 0-based. Never emitted for
+	/// histogram bins, bar-chart bars, box bodies, density curves, regression
+	/// lines, or pooled grouped-scatter cells.
+	void pointClicked(intptr_t source_row);
+
 protected:
 
 	void paintEvent(QPaintEvent *event) override;
 	void resizeEvent(QResizeEvent *event) override;
+
+	// Click-to-source hit testing. mousePressEvent picks the nearest hit
+	// target inside HIT_TOLERANCE_PX and emits pointClicked. mouseMoveEvent
+	// changes the cursor to PointingHandCursor when over a target so the
+	// affordance is discoverable. leaveEvent restores the default cursor when
+	// the pointer exits the widget.
+	void mousePressEvent(QMouseEvent *event) override;
+	void mouseMoveEvent(QMouseEvent *event) override;
+	void leaveEvent(QEvent *event) override;
 
 private:
 
@@ -185,6 +235,9 @@ private:
 		double whisker_lo = 0;
 		double whisker_hi = 0;
 		std::vector<double> outliers;
+		// Per-outlier source row, aligned 1:1 with `outliers`. Populated
+		// only when computeBoxStats was given source_rows; empty otherwise.
+		std::vector<intptr_t> outlier_rows;
 	};
 
 	struct HistBin
@@ -210,6 +263,12 @@ private:
 		double ellipse_b = 0;     // semi-axis along minor direction
 		bool ellipse_valid = false; // false when n < 3 or singular covariance
 
+		// Per-point source row, aligned 1:1 with x/y. Populated only when
+		// buildGroups was given source_rows (not for pooled aggregates);
+		// empty otherwise. INVALID_ROW for any index that runs past the
+		// source_rows vector (defensive; should not occur in practice).
+		std::vector<intptr_t> source_rows;
+
 		// Two-factor grouping indices.
 		// color_index selects into GROUP_PALETTE (base group, e.g. vowel).
 		// style_index selects into STYLE_PENS (condition).
@@ -232,7 +291,8 @@ private:
 	void rebuildCache();
 
 	static std::vector<BoxStats> computeBoxStats(const std::vector<QString> &groups,
-	                                              const std::vector<double> &values);
+	                                              const std::vector<double> &values,
+	                                              const std::vector<intptr_t> &source_rows = {});
 	static std::vector<HistBin> computeBins(const std::vector<double> &values, int nbins = 0);
 	static double quantile_sorted(const std::vector<double> &sorted, double p);
 	static std::vector<GroupData> buildGroups(const std::vector<QString> &labels,
@@ -240,7 +300,8 @@ private:
 	                                          const std::vector<double> &y,
 	                                          double chi2_scale,
 	                                          const std::vector<QString> &point_labels = {},
-	                                          const std::vector<QString> &style_groups = {});
+	                                          const std::vector<QString> &style_groups = {},
+	                                          const std::vector<intptr_t> &source_rows = {});
 
 	/// Draw a marker shape at (px, py) based on style_index.
 	/// 0 = circle, 1 = triangle-up, 2 = diamond, 3 = square.
@@ -252,6 +313,8 @@ private:
 	std::vector<double> m_x;
 	std::vector<double> m_y;
 	std::vector<QString> m_point_labels; // per-point text labels for plain scatter (empty = draw circles)
+	// Aligned 1:1 with m_x/m_y when click-to-source is enabled; empty otherwise.
+	std::vector<intptr_t> m_source_rows;
 	RefLine m_ref_line = RefLine::None;
 	bool m_reverse_x = false;
 	bool m_reverse_y = false;
@@ -309,6 +372,18 @@ private:
 
 	QPixmap m_cache;
 	bool m_cache_valid = false;
+
+	// Click-to-source hit cache. Populated during rebuildCache (which sets
+	// m_collect_hits true around the renderPlot call); never populated by
+	// export paths (savePNG/PDF/SVG) since they render at different scales.
+	// Mouse handlers gate on m_cache_valid before consulting the cache.
+	std::vector<HitTarget> m_hit_targets;
+	bool m_collect_hits = false;
+
+	// Tracks whether the cursor is currently over a hit target so we only
+	// call setCursor() on transitions, not on every mouseMove. Also keeps
+	// non-pickable plots (Diagnostics, Effects) from churning the cursor.
+	bool m_hover_on_target = false;
 };
 
 } // namespace phonometrica

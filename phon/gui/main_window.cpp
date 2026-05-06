@@ -2555,13 +2555,80 @@ void MainWindow::openAnalysis(Handle<DataTable> source)
 {
 	auto analysis = make_handle<Analysis>(nullptr, std::move(source));
 	auto *view = new AnalysisView(std::move(analysis));
+	connect(view, &AnalysisView::requestOpenSourceRow,
+	        this, &MainWindow::revealSourceRow);
 	addViewTab(view);
 }
 
 void MainWindow::openAnalysis(Handle<Analysis> analysis)
 {
 	auto *view = new AnalysisView(std::move(analysis));
+	connect(view, &AnalysisView::requestOpenSourceRow,
+	        this, &MainWindow::revealSourceRow);
 	addViewTab(view);
+}
+
+void MainWindow::revealSourceRow(Handle<DataTable> source, intptr_t source_row)
+{
+	if (!source || source_row < 0)
+		return;
+
+	Document *doc = source.get();
+
+	// Search every panel/view for an existing view of this DataTable. We use
+	// pointer-based identity (matches onDocumentRequested's in-memory path)
+	// because the source is always a live Handle.
+	for (int i = 0; i < m_viewer->count(); i++)
+	{
+		auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
+		if (!panel)
+			continue;
+
+		for (auto *v : panel->views())
+		{
+			if (v->document() != doc)
+				continue;
+
+			m_viewer->setCurrentIndex(i);
+
+			bool ok = false;
+			if (auto *dv = qobject_cast<DatasetView *>(v))
+				ok = dv->selectSourceRow((int) source_row);
+			else if (auto *cv = qobject_cast<ConcordanceView *>(v))
+				ok = cv->selectSourceRow((int) source_row);
+
+			if (!ok) {
+				QMessageBox::information(this, tr("Row not visible"),
+					tr("The selected observation is hidden by the current filter "
+					   "in the data view. Clear the filter to inspect this row."));
+			}
+			return;
+		}
+	}
+
+	// No existing view — open a new one keyed on the concrete source type,
+	// then select the row. openDataset / openConcordance schedule the new
+	// tab as the current widget; the new view is the most recently added.
+	if (doc->is<Dataset>()) {
+		auto *ds = static_cast<Dataset *>(doc);
+		openDataset(Handle<Dataset>(ds));
+	}
+	else if (doc->is<Concordance>()) {
+		auto *conc = static_cast<Concordance *>(doc);
+		openConcordance(Handle<Concordance>(conc));
+	}
+	else {
+		return;  // Unknown source type — nothing to open.
+	}
+
+	auto *panel = qobject_cast<ViewPanel *>(m_viewer->currentWidget());
+	if (!panel) return;
+	for (auto *v : panel->views()) {
+		if (auto *dv = qobject_cast<DatasetView *>(v))
+			dv->selectSourceRow((int) source_row);
+		else if (auto *cv = qobject_cast<ConcordanceView *>(v))
+			cv->selectSourceRow((int) source_row);
+	}
 }
 
 AnnotationView *MainWindow::createAnnotationView(const Handle<Annotation> &annot)

@@ -72,6 +72,17 @@ public:
 	bool save() override;
 	void discardChanges() override;
 
+signals:
+
+	// Emitted when the user clicks an observation in the EDA plot. MainWindow
+	// connects this in openAnalysis() to find or open the source view, then
+	// scroll/select the corresponding row.
+	//
+	// `source` is the analysis source (Dataset or Concordance, both
+	// DataTable subclasses); `source_row` is a 0-based source-model row
+	// index. Never emitted with INVALID_ROW.
+	void requestOpenSourceRow(Handle<DataTable> source, intptr_t source_row);
+
 private slots:
 
 	void onFit();

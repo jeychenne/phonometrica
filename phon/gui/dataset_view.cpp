@@ -1615,4 +1615,26 @@ void DatasetView::adjustFiltersAfterColumnMove(int from, int to)
 	m_filter_bar->rebuild();
 }
 
+bool DatasetView::selectSourceRow(int source_row)
+{
+	if (!m_model || !m_proxy || !m_table)
+		return false;
+	if (source_row < 0 || source_row >= m_model->rowCount())
+		return false;
+
+	QModelIndex src_index = m_model->index(source_row, 0);
+	QModelIndex proxy_index = m_proxy->mapFromSource(src_index);
+	if (!proxy_index.isValid()) {
+		// The row is hidden by an active filter. Caller surfaces the error;
+		// here we just refuse to select a non-visible row.
+		return false;
+	}
+
+	m_table->clearSelection();
+	m_table->selectRow(proxy_index.row());
+	m_table->scrollTo(proxy_index, QAbstractItemView::PositionAtCenter);
+	m_table->setFocus();
+	return true;
+}
+
 } // namespace phonometrica

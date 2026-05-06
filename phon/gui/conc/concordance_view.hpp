@@ -73,6 +73,14 @@ public:
 	void refreshAfterRowChange();
 	void refreshAfterStructuralChange();
 
+	// Select and scroll to a specific source-model row (0-based) and focus
+	// the table. Used by AnalysisView's click-to-source flow on the EDA
+	// plot. If the row is currently filtered out by an active filter, no
+	// selection is made and the function returns false; the caller is
+	// expected to surface a message to the user. Returns true on success.
+	// Out-of-range row indices are silently ignored (returns false).
+	bool selectSourceRow(int source_row);
+
 	// Filter adjustment after column structural changes (0-based column indices).
 	void adjustFiltersAfterColumnRemove(int col);
 	void adjustFiltersAfterColumnInsert(int col);

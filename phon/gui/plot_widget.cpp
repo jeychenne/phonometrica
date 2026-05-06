@@ -22,6 +22,7 @@
 #include <cmath>
 #include <algorithm>
 #include <map>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPrinter>
@@ -113,6 +114,9 @@ static void axis_range(const std::vector<double> &vals, double &lo, double &hi)
 PlotWidget::PlotWidget(QWidget *parent) : QWidget(parent)
 {
 	setMinimumSize(200, 150);
+	// Enable hover tracking so we can change the cursor when over a clickable
+	// point even before the user presses a button.
+	setMouseTracking(true);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 }
 
@@ -165,12 +169,14 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
                           const QString &x_label, const QString &y_label,
                           const QString &title, RefLine ref,
                           bool reverse_x, bool reverse_y,
-                          std::vector<QString> point_labels)
+                          std::vector<QString> point_labels,
+                          std::vector<intptr_t> source_rows)
 {
 	m_mode = Mode::Scatter;
 	m_x = std::move(x);
 	m_y = std::move(y);
 	m_point_labels = std::move(point_labels);
+	m_source_rows = std::move(source_rows);
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
@@ -195,10 +201,12 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
                                         double chi2_scale,
                                         bool reverse_x, bool reverse_y,
                                         std::vector<QString> point_labels,
-                                        std::vector<QString> style_groups)
+                                        std::vector<QString> style_groups,
+                                        std::vector<intptr_t> source_rows)
 {
 	m_mode = Mode::GroupedScatter;
-	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels, style_groups);
+	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels,
+	                           style_groups, source_rows);
 	m_show_means = show_means;
 	m_show_ellipses = show_ellipses;
 	m_use_labels = !point_labels.empty();
@@ -210,6 +218,7 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 	m_x.clear();
 	m_y.clear();
 	m_point_labels.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -250,16 +259,18 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 
 void PlotWidget::setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
                                  const QString &x_label, const QString &y_label,
-                                 const QString &title)
+                                 const QString &title,
+                                 std::vector<intptr_t> source_rows)
 {
 	m_mode = Mode::BoxPlot;
-	m_boxes = computeBoxStats(groups, values);
+	m_boxes = computeBoxStats(groups, values, source_rows);
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
 	m_bins.clear();
+	m_source_rows.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -278,6 +289,7 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
@@ -301,6 +313,7 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_group_data.clear();
@@ -322,6 +335,7 @@ void PlotWidget::setLinePlotData(std::vector<LineCurve> curves,
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -407,6 +421,7 @@ void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
 	m_x.clear();
 	m_y.clear();
 	m_point_labels.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -427,6 +442,7 @@ void PlotWidget::clear()
 	m_x.clear();
 	m_y.clear();
 	m_point_labels.clear();
+	m_source_rows.clear();
 	m_boxes.clear();
 	m_bins.clear();
 	m_bar_labels.clear();
@@ -450,6 +466,7 @@ void PlotWidget::clear()
 	m_eff_caption.clear();
 	m_fixed_y_ticks.clear();
 	m_cache_valid = false;
+	m_hit_targets.clear();
 	update();
 }
 
@@ -473,28 +490,45 @@ double PlotWidget::quantile_sorted(const std::vector<double> &sorted, double p)
 }
 
 std::vector<PlotWidget::BoxStats> PlotWidget::computeBoxStats(
-	const std::vector<QString> &groups, const std::vector<double> &values)
+	const std::vector<QString> &groups, const std::vector<double> &values,
+	const std::vector<intptr_t> &source_rows)
 {
+	bool has_rows = !source_rows.empty();
+
+	// (value, source_row) pairs let us keep the row association across the
+	// per-group sort that whisker/outlier extraction needs. INVALID_ROW is
+	// used as a fill value when the caller didn't supply rows or when a
+	// point's index runs past source_rows.size().
+	using Pair = std::pair<double, intptr_t>;
+
 	// Collect values per group, preserving first-seen order.
 	std::vector<QString> order;
-	std::map<QString, std::vector<double>> grouped;
+	std::map<QString, std::vector<Pair>> grouped;
 
-	for (size_t i = 0; i < groups.size() && i < values.size(); i++)
+	size_t n = std::min(groups.size(), values.size());
+	for (size_t i = 0; i < n; i++)
 	{
 		auto &g = groups[i];
 		if (grouped.find(g) == grouped.end()) {
 			order.push_back(g);
 		}
-		grouped[g].push_back(values[i]);
+		intptr_t row = (has_rows && i < source_rows.size()) ? source_rows[i] : INVALID_ROW;
+		grouped[g].push_back({values[i], row});
 	}
 
 	std::vector<BoxStats> result;
 	for (auto &label : order)
 	{
-		auto &vals = grouped[label];
-		if (vals.empty()) continue;
+		auto &pairs = grouped[label];
+		if (pairs.empty()) continue;
 
-		std::sort(vals.begin(), vals.end());
+		std::sort(pairs.begin(), pairs.end(),
+		          [](const Pair &a, const Pair &b) { return a.first < b.first; });
+
+		// Build a value-only view for the existing whisker / quantile logic.
+		std::vector<double> vals;
+		vals.reserve(pairs.size());
+		for (auto &p : pairs) vals.push_back(p.first);
 
 		BoxStats bs;
 		bs.label = label;
@@ -524,11 +558,13 @@ std::vector<PlotWidget::BoxStats> PlotWidget::computeBoxStats(
 			}
 		}
 
-		// Outliers
-		for (double v : vals)
+		// Outliers — keep the source-row association so click-to-source can
+		// dispatch correctly when the user clicks an outlier dot.
+		for (auto &pair : pairs)
 		{
-			if (v < fence_lo || v > fence_hi) {
-				bs.outliers.push_back(v);
+			if (pair.first < fence_lo || pair.first > fence_hi) {
+				bs.outliers.push_back(pair.first);
+				bs.outlier_rows.push_back(pair.second);
 			}
 		}
 
@@ -583,8 +619,11 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 	const std::vector<double> &y,
 	double chi2_scale,
 	const std::vector<QString> &point_labels,
-	const std::vector<QString> &style_groups)
+	const std::vector<QString> &style_groups,
+	const std::vector<intptr_t> &source_rows)
 {
+	bool has_source_rows = !source_rows.empty();
+
 	// Partition points into groups, preserving first-seen order.
 	std::vector<QString> order;
 	std::map<QString, size_t> index_map;
@@ -652,6 +691,10 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 		groups[gi].y.push_back(y[i]);
 		if (has_labels && i < point_labels.size())
 			groups[gi].symbols.push_back(point_labels[i]);
+		if (has_source_rows) {
+			intptr_t row = (i < source_rows.size()) ? source_rows[i] : INVALID_ROW;
+			groups[gi].source_rows.push_back(row);
+		}
 	}
 
 	// Compute per-group statistics: mean and covariance → ellipse.
@@ -902,7 +945,11 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	}
 
 	// Points
+	bool track_hits = m_collect_hits && !m_source_rows.empty();
 	size_t n = std::min(m_x.size(), m_y.size());
+	if (track_hits)
+		m_hit_targets.reserve(m_hit_targets.size() + n);
+
 	if (m_use_labels && !m_point_labels.empty())
 	{
 		QFont label_font;
@@ -918,6 +965,13 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 			const auto &sym = (i < m_point_labels.size()) ? m_point_labels[i] : QString();
 			int tw = lfm.horizontalAdvance(sym);
 			p.drawText(int(x) - tw / 2, int(y) + lfm.ascent() / 2, sym);
+			if (track_hits && i < m_source_rows.size()
+			    && m_source_rows[i] != INVALID_ROW) {
+				HitTarget ht;
+				ht.pos = QPointF(x, y);
+				ht.source_row = m_source_rows[i];
+				m_hit_targets.push_back(ht);
+			}
 		}
 	}
 	else
@@ -928,6 +982,13 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 			double x = dataToX(m_x[i]);
 			double y = dataToY(m_y[i]);
 			p.drawEllipse(QPointF(x, y), POINT_RADIUS, POINT_RADIUS);
+			if (track_hits && i < m_source_rows.size()
+			    && m_source_rows[i] != INVALID_ROW) {
+				HitTarget ht;
+				ht.pos = QPointF(x, y);
+				ht.source_row = m_source_rows[i];
+				m_hit_targets.push_back(ht);
+			}
 		}
 	}
 	p.setClipping(false);
@@ -1107,6 +1168,11 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 		size_t gn = std::min(gd.x.size(), gd.y.size());
 		bool has_symbols = !gd.symbols.empty();
 
+		// Click-to-source is enabled per group only when buildGroups received
+		// a source_rows vector (i.e. setGroupedScatterData was called with
+		// non-empty source_rows). Pooled-aggregate plots leave it empty.
+		bool track_hits = m_collect_hits && !gd.source_rows.empty();
+
 		if (has_symbols)
 		{
 			// Render text labels at each data point.
@@ -1124,6 +1190,13 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 				const auto &sym = (i < gd.symbols.size()) ? gd.symbols[i] : gd.label;
 				int tw = lfm.horizontalAdvance(sym);
 				p.drawText(int(px) - tw / 2, int(py) + lfm.ascent() / 2, sym);
+				if (track_hits && i < gd.source_rows.size()
+				    && gd.source_rows[i] != INVALID_ROW) {
+					HitTarget ht;
+					ht.pos = QPointF(px, py);
+					ht.source_row = gd.source_rows[i];
+					m_hit_targets.push_back(ht);
+				}
 			}
 		}
 		else
@@ -1138,6 +1211,13 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 					drawMarker(p, px, py, POINT_RADIUS, gd.style_index);
 				} else {
 					p.drawEllipse(QPointF(px, py), POINT_RADIUS, POINT_RADIUS);
+				}
+				if (track_hits && i < gd.source_rows.size()
+				    && gd.source_rows[i] != INVALID_ROW) {
+					HitTarget ht;
+					ht.pos = QPointF(px, py);
+					ht.source_row = gd.source_rows[i];
+					m_hit_targets.push_back(ht);
 				}
 			}
 		}
@@ -1448,8 +1528,17 @@ void PlotWidget::renderBoxPlot(QPainter &p, int left, int top, int pw, int ph)
 		// Outliers
 		p.setPen(Qt::NoPen);
 		p.setBrush(POINT_COLOR);
-		for (double o : b.outliers) {
-			p.drawEllipse(QPointF(cx, dataToY(o)), POINT_RADIUS, POINT_RADIUS);
+		bool track_hits = m_collect_hits && !b.outlier_rows.empty();
+		for (size_t k = 0; k < b.outliers.size(); k++) {
+			double oy = dataToY(b.outliers[k]);
+			p.drawEllipse(QPointF(cx, oy), POINT_RADIUS, POINT_RADIUS);
+			if (track_hits && k < b.outlier_rows.size()
+			    && b.outlier_rows[k] != INVALID_ROW) {
+				HitTarget ht;
+				ht.pos = QPointF(cx, oy);
+				ht.source_row = b.outlier_rows[k];
+				m_hit_targets.push_back(ht);
+			}
 		}
 
 		// Group label (below x-axis)
@@ -2236,6 +2325,12 @@ void PlotWidget::rebuildCache()
 	m_cache = QPixmap(QSize(w, h) * devicePixelRatioF());
 	m_cache.setDevicePixelRatio(devicePixelRatioF());
 
+	// Hit targets are populated only during on-screen rendering (here),
+	// never during exports — savePNG/PDF/SVG render at different scales and
+	// would corrupt the screen-space cache.
+	m_hit_targets.clear();
+	m_collect_hits = true;
+
 	QPainter painter(&m_cache);
 	if (m_mode == Mode::Empty) {
 		m_cache.fill(BG_COLOR);
@@ -2243,6 +2338,7 @@ void PlotWidget::rebuildCache()
 		renderPlot(painter, w, h);
 	}
 
+	m_collect_hits = false;
 	m_cache_valid = true;
 }
 
@@ -2259,6 +2355,73 @@ void PlotWidget::paintEvent(QPaintEvent *)
 void PlotWidget::resizeEvent(QResizeEvent *)
 {
 	m_cache_valid = false;
+}
+
+
+// ── Click-to-source hit testing ─────────────────────────────────────
+//
+// The hit cache is rebuilt from scratch on every paintEvent that triggers a
+// rebuildCache; mouse handlers gate on m_cache_valid so a hover that arrives
+// after a resize and before the next paint doesn't consult stale positions.
+
+static bool find_nearest_hit(const std::vector<PlotWidget::HitTarget> &targets,
+                             const QPointF &cursor, double tolerance,
+                             intptr_t &out_row)
+{
+	double best_d2 = tolerance * tolerance;
+	bool found = false;
+	for (auto &t : targets) {
+		double dx = t.pos.x() - cursor.x();
+		double dy = t.pos.y() - cursor.y();
+		double d2 = dx * dx + dy * dy;
+		if (d2 <= best_d2) {
+			best_d2 = d2;
+			out_row = t.source_row;
+			found = true;
+		}
+	}
+	return found;
+}
+
+void PlotWidget::mousePressEvent(QMouseEvent *event)
+{
+	if (event->button() != Qt::LeftButton || !m_cache_valid || m_hit_targets.empty()) {
+		QWidget::mousePressEvent(event);
+		return;
+	}
+
+	intptr_t row = INVALID_ROW;
+	if (find_nearest_hit(m_hit_targets, event->position(), HIT_TOLERANCE_PX, row)) {
+		event->accept();
+		emit pointClicked(row);
+		return;
+	}
+	QWidget::mousePressEvent(event);
+}
+
+void PlotWidget::mouseMoveEvent(QMouseEvent *event)
+{
+	bool over = false;
+	if (m_cache_valid && !m_hit_targets.empty()) {
+		intptr_t row = INVALID_ROW;
+		over = find_nearest_hit(m_hit_targets, event->position(),
+		                        HIT_TOLERANCE_PX, row);
+	}
+	if (over != m_hover_on_target) {
+		m_hover_on_target = over;
+		if (over) setCursor(Qt::PointingHandCursor);
+		else      unsetCursor();
+	}
+	QWidget::mouseMoveEvent(event);
+}
+
+void PlotWidget::leaveEvent(QEvent *event)
+{
+	if (m_hover_on_target) {
+		m_hover_on_target = false;
+		unsetCursor();
+	}
+	QWidget::leaveEvent(event);
 }
 
 

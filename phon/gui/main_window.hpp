@@ -212,6 +212,15 @@ private:
 	void openAnalysis(Handle<DataTable> source);
 	void openAnalysis(Handle<Analysis> analysis);
 
+	// Bring the source data view to the front and select a specific row.
+	// Used by AnalysisView's click-to-source on the EDA plot. If a view for
+	// the source is already open, switches to its tab; otherwise opens a new
+	// DatasetView/ConcordanceView (dispatched on the source's concrete type)
+	// and then selects the row. If the row is hidden by an active filter in
+	// the open view, displays an information dialog and makes no selection.
+	// No-op for null sources or out-of-range rows.
+	void revealSourceRow(Handle<DataTable> source, intptr_t source_row);
+
 	// Show a dialog to pick a concordance or dataset from the project.
 	// Returns a null handle if the user cancels or there are no data tables.
 	Handle<DataTable> selectDataTable();

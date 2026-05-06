@@ -1187,6 +1187,28 @@ void AnalysisView::setupUi()
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_formant_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
+
+	// Click-to-source on the EDA plot: forward to MainWindow with the current
+	// analysis source. PlotWidget never emits INVALID_ROW, so no extra guard
+	// is needed beyond checking that we still have a source.
+	connect(m_eda_plot, &PlotWidget::pointClicked, this, [this](intptr_t row) {
+		if (!m_analysis->has_source())
+			return;
+		emit requestOpenSourceRow(m_analysis->source(), row);
+	});
+
+	// Click-to-source on the Diagnostics plot: same as EDA. Source-row
+	// vectors are populated by plotResidualsVsFitted / plotQQ /
+	// plotScaledResidualsVsFitted / plotScaledResidualQQ when the model
+	// carries source_rows; if it doesn't (e.g. older .phon-analysis files),
+	// the plot is silently inert. Posterior-density plots are line plots
+	// with no per-observation points, so they're inert by construction.
+	connect(m_plot, &PlotWidget::pointClicked, this, [this](intptr_t row) {
+		if (!m_analysis->has_source())
+			return;
+		emit requestOpenSourceRow(m_analysis->source(), row);
+	});
+
 	connect(eda_detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
 	connect(diag_detach_action, &QAction::triggered, this, &AnalysisView::onDetachDiagPlot);
 	connect(effects_detach_action, &QAction::triggered, this, &AnalysisView::onDetachEffectsPlot);
@@ -2894,10 +2916,22 @@ void AnalysisView::plotResidualsVsFitted(const stats::Model &m)
 		y[i] = m.residuals[i + 1];
 	}
 
+	// Click-to-source: each plotted point is the i-th fitted observation,
+	// whose source row is m.source_rows[i] (1-based DataTable row → 0-based
+	// for the Qt model). Empty source_rows means the feature is silently
+	// disabled (older saved analyses).
+	std::vector<intptr_t> rows;
+	if (m.has_source_rows()) {
+		rows.reserve(n);
+		for (intptr_t i = 0; i < n; i++)
+			rows.push_back(m.source_rows[(size_t) i] - 1);
+	}
+
 	m_plot->setData(std::move(x), std::move(y),
 	                tr("Fitted values"), tr("Residuals"),
 	                tr("Residuals vs Fitted"),
-	                PlotWidget::RefLine::HorizontalAtZero);
+	                PlotWidget::RefLine::HorizontalAtZero,
+	                false, false, {}, std::move(rows));
 	m_plot->clearFixedYTicks();
 }
 
@@ -2943,10 +2977,20 @@ void AnalysisView::plotQQ(const stats::Model &m)
 		sample[i] = resid[idx[i]];
 	}
 
+	// Click-to-source: plot point i corresponds to the idx[i]-th fitted
+	// observation (the one with the i-th smallest standardised residual).
+	std::vector<intptr_t> rows;
+	if (m.has_source_rows()) {
+		rows.reserve(n);
+		for (intptr_t i = 0; i < n; i++)
+			rows.push_back(m.source_rows[(size_t) idx[i]] - 1);
+	}
+
 	m_plot->setData(std::move(theoretical), std::move(sample),
 	                tr("Theoretical Quantiles"), tr("Sample Quantiles"),
 	                tr("Normal Q-Q"),
-	                PlotWidget::RefLine::Diagonal);
+	                PlotWidget::RefLine::Diagonal,
+	                false, false, {}, std::move(rows));
 	m_plot->clearFixedYTicks();
 }
 
@@ -3027,10 +3071,21 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 		i = j;
 	}
 
+	// Click-to-source: plot point i corresponds to the i-th fitted
+	// observation, whose source row is m.source_rows[i] (1-based). Empty
+	// vector means click-to-source is silently disabled.
+	std::vector<intptr_t> rows;
+	if (m.has_source_rows()) {
+		rows.reserve(n);
+		for (intptr_t k = 0; k < n; k++)
+			rows.push_back(m.source_rows[(size_t) k] - 1);
+	}
+
 	m_plot->setData(std::move(x), std::move(y),
 	                tr("Model predictions (rank transformed)"), tr("Scaled residual"),
 	                tr("Scaled Residuals vs Predicted"),
-	                PlotWidget::RefLine::HorizontalAtHalf);
+	                PlotWidget::RefLine::HorizontalAtHalf,
+	                false, false, {}, std::move(rows));
 	m_plot->setFixedYTicks({0.0, 0.25, 0.50, 0.75, 1.0});
 
 	updateTestResults(*sr);
@@ -3046,21 +3101,37 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 
 	intptr_t n = m.nobs;
 
-	// Sort residuals for the QQ plot against U(0,1).
+	// Indexed sort so we can map each plot point back to the original
+	// observation (and hence to its source row). idx[i] is the 0-based
+	// fitted-observation index whose residual lands at sorted-position i.
+	std::vector<intptr_t> idx(n);
+	std::iota(idx.begin(), idx.end(), 0);
+	std::sort(idx.begin(), idx.end(), [&](intptr_t a, intptr_t b) {
+		return sr->residuals[a + 1] < sr->residuals[b + 1];
+	});
+
 	std::vector<double> sorted(n);
 	for (intptr_t i = 0; i < n; i++)
-		sorted[i] = sr->residuals[i + 1];
-	std::sort(sorted.begin(), sorted.end());
+		sorted[i] = sr->residuals[idx[i] + 1];
 
 	// Theoretical quantiles: (i + 0.5) / n
 	std::vector<double> theoretical(n);
 	for (intptr_t i = 0; i < n; i++)
 		theoretical[i] = (i + 0.5) / n;
 
+	// Click-to-source: plot point i corresponds to fitted obs idx[i].
+	std::vector<intptr_t> rows;
+	if (m.has_source_rows()) {
+		rows.reserve(n);
+		for (intptr_t i = 0; i < n; i++)
+			rows.push_back(m.source_rows[(size_t) idx[i]] - 1);
+	}
+
 	m_plot->setData(std::move(theoretical), std::move(sorted),
 	                tr("Theoretical (Uniform)"), tr("Sample"),
 	                tr("Scaled Residuals Q-Q"),
-	                PlotWidget::RefLine::Diagonal);
+	                PlotWidget::RefLine::Diagonal,
+	                false, false, {}, std::move(rows));
 	m_plot->setFixedYTicks({0.0, 0.25, 0.50, 0.75, 1.0});
 
 	updateTestResults(*sr);
@@ -3924,9 +3995,11 @@ void AnalysisView::updateEdaPlot()
 			std::vector<QString> gv;
 			std::vector<QString> lv;
 			std::vector<QString> sv;
+			std::vector<intptr_t> rows;
 			xv.reserve(nr);
 			yv.reserve(nr);
 			gv.reserve(nr);
+			rows.reserve(nr);
 			if (l_col > 0) lv.reserve(nr);
 			if (s_col > 0) sv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
@@ -3944,6 +4017,7 @@ void AnalysisView::updateEdaPlot()
 				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
+					rows.push_back((intptr_t)(r - 1));
 					gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
 					if (l_col > 0) {
 						auto vl = dt->get_cell(r, l_col);
@@ -4010,7 +4084,11 @@ void AnalysisView::updateEdaPlot()
 				}
 
 				// Replace the raw vectors with one averaged point per cell.
+				// Pooled aggregates have no single source row — leave `rows`
+				// empty so click-to-source is disabled in this branch (per
+				// design: pooled cells are means of N source rows).
 				xv.clear(); yv.clear(); gv.clear(); lv.clear(); sv.clear();
+				rows.clear();
 				for (auto &key : cell_order) {
 					auto &c = cells[key];
 					if (c.n == 0) continue;
@@ -4053,7 +4131,7 @@ void AnalysisView::updateEdaPlot()
 				std::move(gv), std::move(xv), std::move(yv),
 				x_name_q, y_name_q, title,
 				show_means, show_ellipses, chi2_scale, formant, formant,
-				std::move(lv), std::move(sv));
+				std::move(lv), std::move(sv), std::move(rows));
 		}
 		else
 		{
@@ -4070,8 +4148,10 @@ void AnalysisView::updateEdaPlot()
 
 			std::vector<double> xv, yv;
 			std::vector<QString> lv;
+			std::vector<intptr_t> rows;
 			xv.reserve(nr);
 			yv.reserve(nr);
+			rows.reserve(nr);
 			if (l_col > 0) lv.reserve(nr);
 			for (intptr_t r = 1; r <= nr; r++)
 			{
@@ -4085,6 +4165,7 @@ void AnalysisView::updateEdaPlot()
 				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
+					rows.push_back((intptr_t)(r - 1));
 					if (l_col > 0) {
 						auto vl = dt->get_cell(r, l_col);
 						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
@@ -4126,7 +4207,7 @@ void AnalysisView::updateEdaPlot()
 
 			m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
 			                     title, PlotWidget::RefLine::None, formant, formant,
-			                     std::move(lv));
+			                     std::move(lv), std::move(rows));
 
 			if (reg_valid)
 				m_eda_plot->setRegressionLine(reg_intercept, reg_slope, reg_r2);
@@ -4157,8 +4238,10 @@ void AnalysisView::updateEdaPlot()
 
 		std::vector<QString> groups;
 		std::vector<double> vals;
+		std::vector<intptr_t> rows;
 		groups.reserve(nr);
 		vals.reserve(nr);
+		rows.reserve(nr);
 		for (intptr_t r = 1; r <= nr; r++)
 		{
 			auto vx = xc(r);
@@ -4169,11 +4252,13 @@ void AnalysisView::updateEdaPlot()
 			if (!ok || !std::isfinite(dy)) continue;
 			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
 			vals.push_back(dy);
+			rows.push_back((intptr_t)(r - 1));
 		}
 		if (vals.empty()) { m_eda_plot->clear(); return; }
 		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
 		                            x_name_q, y_name_q,
-		                            y_name_q + QStringLiteral(" ~ ") + x_name_q);
+		                            y_name_q + QStringLiteral(" ~ ") + x_name_q,
+		                            std::move(rows));
 	}
 	else
 	{

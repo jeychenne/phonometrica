@@ -586,6 +586,13 @@ menu lets you choose between four plot types:
   should be uniformly distributed between 0 and 1 regardless of the model family.
 - **Scaled Residuals Q-Q**: a Q-Q plot of the scaled residuals against the uniform distribution.
 
+As in the EDA tab, the points in all four diagnostic plots are linked to the source dataset
+or concordance the model was fitted on. **Left-clicking** a residual or quantile point opens
+the source data table and selects the corresponding observation, which is useful for
+identifying which rows produce unusually large residuals or sit at the extremes of a Q-Q plot.
+Click-to-source is unavailable for analyses loaded from ``.phon-analysis`` files saved before
+this feature was introduced; in that case the cursor stays as a normal arrow.
+
 
 Scaled residuals
 ~~~~~~~~~~~~~~~~
@@ -677,9 +684,12 @@ Plot types
 
 The plot type is determined automatically by the types of the selected variables:
 
-- **Numeric × Numeric**: scatter plot with optional regression line.
+- **Numeric × Numeric**: scatter plot (or grouped scatter when a Group variable is set),
+  with optional regression line, mean markers, and confidence ellipses.
 - **Numeric × (none)**: histogram with adjustable bin count and optional kernel density curve.
-- **Numeric × Categorical**: grouped scatter plot (strip chart) colored by group.
+- **Categorical × Numeric**: box plot (median, quartiles, whiskers, and outlier dots) for each
+  level of the categorical variable.
+- **Categorical × (none)**: bar chart of category counts.
 
 Scatter plot options
 ~~~~~~~~~~~~~~~~~~~~
@@ -712,6 +722,30 @@ min, max) for the plotted variables, broken down by group if applicable.
 
 The EDA plot can be **detached** into a resizable floating window using the maximize button
 in the toolbar. It can be exported to PNG, PDF, or SVG via the **Save as...** menu.
+
+
+Navigating from a plotted point to its source row
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each plotted observation in the EDA tab is linked back to the row of the source dataset or
+concordance it was drawn from. Hovering over a clickable point changes the cursor to a hand,
+and **left-clicking** the point opens the source data table — switching to its tab if it is
+already open, or creating a new tab otherwise — and selects, scrolls to, and highlights the
+corresponding row. This is useful for inspecting outliers, suspicious points, or any
+observation whose context you want to verify before refining the analysis.
+
+Which points are clickable depends on the plot type:
+
+- **Scatter** and **grouped scatter**: every plotted point is clickable.
+- **Box plot**: only the outlier dots are clickable. The box body itself summarises many
+  observations and has no single source row.
+- **Histogram** and **bar chart**: not clickable. Each bin or bar aggregates many rows.
+- **Pooled grouped scatter** (when a *Pool by* variable is set): not clickable. Each plotted
+  point is the mean of *N* source rows, so there is no single observation to highlight.
+
+If the source data table is open with an active filter and the clicked observation is hidden
+by that filter, Phonometrica displays a brief notice; clear the filter from the data view's
+toolbar to inspect the row.
 
 
 Supported model types
