@@ -59,6 +59,8 @@
 #include <phon/gui/font_helpers.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/analysis/model_comparison.hpp>
+#include <phon/analysis/predict.hpp>
+#include <phon/application/dataset.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 
@@ -749,6 +751,54 @@ void AnalysisView::setupUi()
 	m_right_tabs->addTab(diag_widget, tr("Diagnostics"));
 	m_right_tabs->setTabToolTip(2, tr("Residual plots to check model assumptions"));
 
+	// ── Effects tab ──────────────────────────────────────────────
+	auto *effects_widget = new QWidget;
+	auto *effects_layout = new QVBoxLayout(effects_widget);
+	effects_layout->setContentsMargins(4, 4, 4, 4);
+	effects_layout->setSpacing(4);
+
+	auto *effects_top = new QHBoxLayout;
+	effects_top->addWidget(new QLabel(tr("Predictor:")));
+	m_effects_focal_combo = new QComboBox;
+	m_effects_focal_combo->setToolTip(
+		tr("Predictor to vary on the x-axis. Other predictors are held fixed."));
+	m_effects_focal_combo->setMinimumWidth(140);
+	effects_top->addWidget(m_effects_focal_combo);
+
+	effects_top->addSpacing(8);
+	effects_top->addWidget(new QLabel(tr("By:")));
+	m_effects_by_combo = new QComboBox;
+	m_effects_by_combo->setToolTip(
+		tr("Optional categorical predictor to stratify the curves. "
+		   "One curve per level of this predictor."));
+	m_effects_by_combo->setMinimumWidth(120);
+	effects_top->addWidget(m_effects_by_combo);
+
+	effects_top->addStretch();
+	auto *effects_export_btn = new QPushButton(tr("Export..."));
+	m_effects_export_button = effects_export_btn;
+	effects_top->addWidget(effects_export_btn);
+	effects_layout->addLayout(effects_top);
+
+	m_effects_plot = new PlotWidget;
+	effects_layout->addWidget(m_effects_plot, 1);
+
+	// Message label, shown when the plot can't be drawn (unsupported model
+	// type, missing source data, etc.). Hidden by default.
+	m_effects_message = new QLabel;
+	m_effects_message->setWordWrap(true);
+	m_effects_message->setAlignment(Qt::AlignCenter);
+	m_effects_message->setStyleSheet(QStringLiteral(
+		"QLabel { color: #555; padding: 12px; font-style: italic; }"));
+	m_effects_message->setVisible(false);
+	effects_layout->addWidget(m_effects_message);
+
+	m_right_tabs->addTab(effects_widget, tr("Effects"));
+	m_right_tabs->setTabToolTip(3, tr(
+		"Model-implied effect of a focal predictor with confidence intervals. "
+		"Other categorical predictors held at their reference level; "
+		"other numeric predictors at their observed mean."));
+
 	// EDA tab
 	auto *eda_widget = new QWidget;
 	auto *eda_layout = new QVBoxLayout(eda_widget);
@@ -1012,6 +1062,15 @@ void AnalysisView::setupUi()
 	connect(m_posthoc_conf_spin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, &AnalysisView::onPostHocChanged);
 	connect(posthoc_copy_button, &QPushButton::clicked, this, &AnalysisView::onExportPostHoc);
 	connect(posthoc_latex_button, &QPushButton::clicked, this, &AnalysisView::onExportPostHocLatex);
+
+	connect(m_effects_focal_combo,
+	        QOverload<int>::of(&QComboBox::currentIndexChanged),
+	        this, &AnalysisView::onEffectsFocalChanged);
+	connect(m_effects_by_combo,
+	        QOverload<int>::of(&QComboBox::currentIndexChanged),
+	        this, &AnalysisView::onEffectsFocalChanged);
+	connect(effects_export_btn, &QPushButton::clicked,
+	        this, &AnalysisView::onExportEffectsPlot);
 }
 
 
@@ -1247,6 +1306,8 @@ void AnalysisView::displayModel(int index)
 	m_summary->setPlainText(formatSummary(m));
 	updateDiagnosticPlot();
 	populatePostHocFactors();
+	populateEffectsFocalCombo();
+	updateEffectsPlot();
 	refreshEdaVirtualColumns();
 	updateAddToDataButton();
 }
@@ -4798,6 +4859,487 @@ void AnalysisView::onExportPlot()
 		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
 			path += QStringLiteral(".png");
 		m_plot->savePNG(path);
+	}
+}
+
+
+// =====================================================================
+// Effects tab
+// =====================================================================
+//
+// Phase 2 MVP: numeric focal → line + CI ribbon (100-point grid across
+// the observed range); categorical focal → markers + error bars (one
+// per level). All other categorical predictors held at their reference
+// level (vi.levels[1]); other numerics held at their observed mean.
+// Mixed-effects, Bayesian, by-factor smooths, and re-smooths are
+// refused with a message in the plot area.
+
+namespace {
+
+// Iterate the source DataTable and compute, for each numeric column,
+// the mean of parseable values together with the observed range
+// (min/max) used to lay out the focal grid. Empty / "nan" / "NaN" /
+// "NA" cells are skipped. Categorical columns are not summarised here:
+// they are held at their reference level (vi.levels[1]), which the
+// model already knows about and which matches ggpredict's default.
+struct SourceStats
+{
+	std::map<std::string, double> numeric_mean;
+	std::map<std::string, double> numeric_lo;
+	std::map<std::string, double> numeric_hi;
+};
+
+static bool parse_cell_double(const String &cell, double &out)
+{
+	if (cell.empty() || cell == "nan" || cell == "NaN" || cell == "NA") return false;
+	bool ok = false;
+	out = cell.to_float(&ok);
+	return ok && !std::isnan(out);
+}
+
+static SourceStats compute_source_stats(const DataTable &dt,
+                                        const std::vector<String> &numeric_cols)
+{
+	SourceStats s;
+
+	auto find_col = [&](const String &name) -> intptr_t {
+		intptr_t nc = dt.column_count();
+		for (intptr_t j = 1; j <= nc; j++) {
+			if (dt.get_header(j) == name) return j;
+		}
+		return 0;
+	};
+
+	intptr_t nr = dt.row_count();
+
+	for (auto &name : numeric_cols)
+	{
+		intptr_t col = find_col(name);
+		if (col == 0) continue;
+		std::string key(name.data(), name.size());
+
+		double sum = 0;
+		intptr_t cnt = 0;
+		double lo = 1e300, hi = -1e300;
+
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			double v;
+			if (!parse_cell_double(dt.get_cell(r, col), v)) continue;
+			sum += v;
+			cnt++;
+			if (v < lo) lo = v;
+			if (v > hi) hi = v;
+		}
+		if (cnt > 0) {
+			s.numeric_mean[key] = sum / (double) cnt;
+			s.numeric_lo[key]   = lo;
+			s.numeric_hi[key]   = hi;
+		}
+	}
+
+	return s;
+}
+
+} // anonymous namespace
+
+
+void AnalysisView::populateEffectsFocalCombo()
+{
+	m_effects_focal_combo->blockSignals(true);
+	m_effects_by_combo->blockSignals(true);
+	m_effects_focal_combo->clear();
+	m_effects_by_combo->clear();
+	m_effects_by_combo->addItem(tr("(None)"));
+
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count()) {
+		m_effects_focal_combo->blockSignals(false);
+		m_effects_by_combo->blockSignals(false);
+		return;
+	}
+
+	auto &m = m_analysis->model(m_current_model);
+
+	// Focal: fixed-effects predictors (categorical with ≥ 2 levels, or numeric).
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	{
+		auto &vi = m.variable_info[i];
+		if (!vi.numeric && vi.levels.size() < 2) continue;
+		auto qname = QString::fromUtf8(vi.name.data(), (int) vi.name.size());
+		m_effects_focal_combo->addItem(qname);
+	}
+
+	// Focal: smooth covariates. Not in variable_info (fitting.cpp expands
+	// only the fixed-effects loop into variable_info), but they are valid
+	// focal predictors — the smooth basis is replayed by predict().
+	// Skip names already added.
+	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+	{
+		auto &sm = m.smooth_terms[i];
+		auto qname = QString::fromUtf8(sm.variable.data(), (int) sm.variable.size());
+		if (m_effects_focal_combo->findText(qname) < 0) {
+			m_effects_focal_combo->addItem(qname);
+		}
+	}
+
+	// By: every categorical predictor with ≥ 2 levels (whether or not the
+	// formula contains an interaction with the focal). For purely additive
+	// models this produces parallel curves — informative as a visual sanity
+	// check that there's no interaction.
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	{
+		auto &vi = m.variable_info[i];
+		if (vi.numeric || vi.levels.size() < 2) continue;
+		auto qname = QString::fromUtf8(vi.name.data(), (int) vi.name.size());
+		m_effects_by_combo->addItem(qname);
+	}
+
+	m_effects_focal_combo->blockSignals(false);
+	m_effects_by_combo->blockSignals(false);
+}
+
+
+void AnalysisView::onEffectsFocalChanged()
+{
+	updateEffectsPlot();
+}
+
+
+void AnalysisView::updateEffectsPlot()
+{
+	auto show_message = [this](const QString &msg) {
+		m_effects_plot->clear();
+		m_effects_plot->setVisible(false);
+		m_effects_message->setText(msg);
+		m_effects_message->setVisible(true);
+	};
+	auto show_plot = [this]() {
+		m_effects_message->setVisible(false);
+		m_effects_plot->setVisible(true);
+	};
+
+	if (m_current_model < 0 || m_current_model >= m_analysis->model_count()) {
+		show_message(tr("Select a model to view effects plots."));
+		return;
+	}
+
+	auto &m = m_analysis->model(m_current_model);
+
+	// Phase 2 refusals — match the underlying predict_at() refusals so the
+	// user sees a clear explanation rather than an obscure error.
+	if (m.is_bayesian()) {
+		show_message(tr(
+			"Effects plots are not yet supported for Bayesian models. "
+			"This will be added in a future release."));
+		return;
+	}
+	if (m.has_random_effects()) {
+		show_message(tr(
+			"Effects plots are not yet supported for mixed-effects models "
+			"(formulas with random-effects terms such as (1|speaker)). "
+			"This will be added in a future release."));
+		return;
+	}
+	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+		auto &sm = m.smooth_terms[i];
+		if (!sm.by.empty()) {
+			show_message(tr(
+				"Effects plots are not yet supported for models with "
+				"by-factor smooths (s(x, by=...)). "
+				"This will be added in a future release."));
+			return;
+		}
+		if (sm.basis == "re") {
+			show_message(tr(
+				"Effects plots are not yet supported for models with "
+				"random-effect smooths (s(g, bs=\"re\"))."));
+			return;
+		}
+	}
+
+	if (!m_analysis->has_source()) {
+		show_message(tr(
+			"Effects plots require access to the source data. "
+			"Reopen the dataset that was used to fit this model."));
+		return;
+	}
+
+	if (m_effects_focal_combo->count() == 0
+	    || m_effects_focal_combo->currentIndex() < 0) {
+		show_message(tr(
+			"This model has no predictors that can be used as a focal "
+			"variable for an effects plot."));
+		return;
+	}
+
+	QString focal_qname = m_effects_focal_combo->currentText();
+	String focal_name(focal_qname.toUtf8().constData());
+
+	// Resolve focal type (numeric / categorical) and, for categorical, the
+	// level set. Smooth covariates are always numeric and not in
+	// variable_info, so we have to check both.
+	bool focal_is_numeric = true;
+	Array<String> focal_levels;
+
+	bool found = false;
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+		if (m.variable_info[i].name == focal_name) {
+			focal_is_numeric = m.variable_info[i].numeric;
+			focal_levels = m.variable_info[i].levels;
+			found = true;
+			break;
+		}
+	}
+	if (!found) {
+		// Smooth covariate — numeric by construction.
+		focal_is_numeric = true;
+	}
+
+	auto *src = m_analysis->data();
+
+	// Collect numeric predictor names (we'll need their means / observed
+	// ranges from the source data). Categoricals don't need a source-data
+	// pass — they are held at vi.levels[1] (treatment-contrast reference),
+	// which is already on the model.
+	std::vector<String> all_numeric;
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+		auto &vi = m.variable_info[i];
+		if (vi.numeric) all_numeric.push_back(vi.name);
+	}
+	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+		auto &sm = m.smooth_terms[i];
+		bool already = false;
+		for (auto &n : all_numeric) if (n == sm.variable) { already = true; break; }
+		if (!already) all_numeric.push_back(sm.variable);
+	}
+
+	auto src_stats = compute_source_stats(*src, all_numeric);
+
+	// ── Resolve the by-factor (optional categorical predictor) ──────
+	// "(None)" at index 0 means no by-factor; everything else is a level
+	// from a categorical predictor in variable_info. We refuse silently if
+	// the user picked the same variable for focal and by — defensive check;
+	// the combo could in principle offer focal=A, by=A simultaneously.
+	String by_name;
+	Array<String> by_levels;
+	bool has_by = (m_effects_by_combo->currentIndex() > 0);
+	if (has_by)
+	{
+		String candidate(m_effects_by_combo->currentText().toUtf8().constData());
+		if (candidate == focal_name) {
+			has_by = false;  // ignore — same variable on both axes
+		} else {
+			for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+				auto &vi = m.variable_info[i];
+				if (vi.name == candidate && !vi.numeric && vi.levels.size() >= 2) {
+					by_name = vi.name;
+					by_levels = vi.levels;
+					break;
+				}
+			}
+			if (by_levels.empty()) has_by = false;
+		}
+	}
+
+	// ── Build the reference grid ────────────────────────────────────
+	// We build a single Dataset with n_grid × n_by_levels rows (or n_grid
+	// rows when there's no by-factor). Each "block" of n_grid consecutive
+	// rows corresponds to one by-level; the by-column carries that level
+	// across all rows in the block. After predict() runs, we slice the
+	// returned vectors back into per-curve segments.
+	intptr_t n_grid = focal_is_numeric ? 100
+	                                   : (intptr_t) focal_levels.size();
+	if (n_grid < 2) {
+		show_message(tr("Cannot construct a reference grid for this predictor."));
+		return;
+	}
+	intptr_t n_by = has_by ? (intptr_t) by_levels.size() : 1;
+	intptr_t n_rows = n_grid * n_by;
+
+	auto grid = Dataset::create_empty(n_rows);
+
+	// Focal column (repeated n_by times across blocks).
+	std::vector<double> focal_x(n_grid, 0.0);
+	if (focal_is_numeric)
+	{
+		std::string key(focal_name.data(), focal_name.size());
+		auto lo_it = src_stats.numeric_lo.find(key);
+		auto hi_it = src_stats.numeric_hi.find(key);
+		if (lo_it == src_stats.numeric_lo.end() || hi_it == src_stats.numeric_hi.end()
+		    || hi_it->second <= lo_it->second) {
+			show_message(tr(
+				"Cannot determine the range of '%1' from the source data.")
+				.arg(focal_qname));
+			return;
+		}
+		double lo = lo_it->second;
+		double hi = hi_it->second;
+		double step = (hi - lo) / (double) (n_grid - 1);
+		for (intptr_t i = 0; i < n_grid; i++) focal_x[(size_t) i] = lo + step * i;
+
+		std::vector<double> col_vals((size_t) n_rows);
+		for (intptr_t b = 0; b < n_by; b++)
+			for (intptr_t i = 0; i < n_grid; i++)
+				col_vals[(size_t)(b * n_grid + i)] = focal_x[(size_t) i];
+		grid->add_numeric_column(focal_name, col_vals);
+	}
+	else
+	{
+		std::vector<String> col_vals((size_t) n_rows);
+		for (intptr_t i = 0; i < n_grid; i++) focal_x[(size_t) i] = (double) i;
+		for (intptr_t b = 0; b < n_by; b++)
+			for (intptr_t i = 0; i < n_grid; i++)
+				col_vals[(size_t)(b * n_grid + i)] = focal_levels[i + 1];
+		grid->add_text_column(focal_name, col_vals);
+	}
+
+	// By-factor column: each block fills with that block's by-level.
+	if (has_by)
+	{
+		std::vector<String> col_vals((size_t) n_rows);
+		for (intptr_t b = 0; b < n_by; b++) {
+			String level = by_levels[b + 1];
+			for (intptr_t i = 0; i < n_grid; i++)
+				col_vals[(size_t)(b * n_grid + i)] = level;
+		}
+		grid->add_text_column(by_name, col_vals);
+	}
+
+	// Other numeric predictors at their mean (constant across all rows).
+	for (auto &name : all_numeric)
+	{
+		if (name == focal_name) continue;
+		std::string key(name.data(), name.size());
+		auto mit = src_stats.numeric_mean.find(key);
+		if (mit == src_stats.numeric_mean.end()) {
+			show_message(tr(
+				"Could not compute mean for '%1' (no numeric values in source).")
+				.arg(QString::fromUtf8(name.data(), (int) name.size())));
+			return;
+		}
+		std::vector<double> vals((size_t) n_rows, mit->second);
+		grid->add_numeric_column(name, vals);
+	}
+
+	// Other categorical predictors at their reference level (vi.levels[1]).
+	// Skip the focal and by-variable; for everything else, fill the same
+	// reference value across all n_rows.
+	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	{
+		auto &vi = m.variable_info[i];
+		if (vi.numeric) continue;
+		if (vi.name == focal_name) continue;
+		if (has_by && vi.name == by_name) continue;
+		if (vi.levels.empty()) {
+			show_message(tr(
+				"Categorical predictor '%1' has no recorded levels.")
+				.arg(QString::fromUtf8(vi.name.data(), (int) vi.name.size())));
+			return;
+		}
+		std::vector<String> vals((size_t) n_rows, vi.levels[1]);
+		grid->add_text_column(vi.name, vals);
+	}
+	grid->mark_loaded();
+
+	// ── Run predict ─────────────────────────────────────────────────
+	stats::PredictOptions opts;
+	opts.scale = "response";
+	opts.bare = true;
+	auto pr = stats::predict_at(m, *grid, opts);
+	if (!pr.ok) {
+		show_message(QString::fromUtf8(pr.error.data(), (int) pr.error.size()));
+		return;
+	}
+
+	// ── Build the curve list, slicing by by-level ───────────────────
+	// All by-curves share the same x positions (no horizontal dodge): the
+	// markers and error bars sit directly above each focal-level axis tick,
+	// so the user can read "what value at this level?" by looking straight
+	// up from the label. Connecting lines and color distinguish curves
+	// from one another. If two by-curves happen to land at exactly the
+	// same y at a given focal level, their markers and error bars overlap
+	// — that's an honest visual signal that the curves cross there.
+
+	std::vector<PlotWidget::EffectsCurve> curves;
+	curves.reserve((size_t) n_by);
+
+	for (intptr_t b = 0; b < n_by; b++)
+	{
+		PlotWidget::EffectsCurve cv;
+		// Curve label: by-level text (only when has_by; single-curve case
+		// uses an empty label so the legend is suppressed).
+		if (has_by) {
+			cv.label = QString::fromUtf8(by_levels[b + 1].data(),
+			                             (int) by_levels[b + 1].size());
+		}
+
+		cv.x.resize((size_t) n_grid);
+		cv.fit.resize((size_t) n_grid);
+		cv.ci_lower.resize((size_t) n_grid);
+		cv.ci_upper.resize((size_t) n_grid);
+
+		intptr_t off = b * n_grid;
+		for (intptr_t i = 0; i < n_grid; i++) {
+			cv.x[(size_t) i] = focal_x[(size_t) i];
+			cv.fit[(size_t) i]      = pr.fit.data()[off + i];
+			cv.ci_lower[(size_t) i] = pr.ci_lower.data()[off + i];
+			cv.ci_upper[(size_t) i] = pr.ci_upper.data()[off + i];
+		}
+		curves.push_back(std::move(cv));
+	}
+
+	// ── Feed PlotWidget ─────────────────────────────────────────────
+	QString y_label = tr("Predicted ") + QString::fromUtf8(
+		m.formula.data(), (int) m.formula.size()).section('~', 0, 0).trimmed();
+
+	QString title;
+	if (has_by) {
+		title = tr("Effect of %1 by %2")
+			.arg(focal_qname)
+			.arg(QString::fromUtf8(by_name.data(), (int) by_name.size()));
+	} else {
+		title = tr("Effect of %1").arg(focal_qname);
+	}
+	QString caption = tr("Other categorical predictors at reference level; "
+	                     "numerics at mean");
+
+	std::vector<QString> level_labels;
+	if (!focal_is_numeric) {
+		level_labels.reserve((size_t) n_grid);
+		for (intptr_t i = 1; i <= focal_levels.size(); i++) {
+			level_labels.push_back(QString::fromUtf8(
+				focal_levels[i].data(), (int) focal_levels[i].size()));
+		}
+	}
+
+	m_effects_plot->setEffectsPlotData(
+		std::move(curves),
+		focal_qname, y_label, title, caption, std::move(level_labels));
+
+	show_plot();
+}
+
+
+void AnalysisView::onExportEffectsPlot()
+{
+	if (!m_effects_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
+	}
+
+	QString path = getSaveFileName(this,
+		tr("Export plot"),
+		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+
+	if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+		m_effects_plot->savePDF(path);
+	else if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
+		m_effects_plot->saveSVG(path);
+	else {
+		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+			path += QStringLiteral(".png");
+		m_effects_plot->savePNG(path);
 	}
 }
 

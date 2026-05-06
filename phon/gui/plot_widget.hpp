@@ -101,6 +101,45 @@ public:
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
 
+	/// Effects plot: one or more fitted curves (or sets of points), each with
+	/// its own confidence-interval ribbon (or vertical error bars). Used to
+	/// visualise the model-implied effect of a focal predictor while other
+	/// predictors are held fixed; with two or more curves, an additional by-
+	/// factor (the curve label) shows how the focal effect varies across
+	/// levels of a second predictor.
+	///
+	/// Each EffectsCurve holds its own x / fit / ci_lower / ci_upper vectors
+	/// (all the same length within a curve). Across curves the lengths can
+	/// differ, but in practice all curves share a common grid layout.
+	///
+	/// Numeric focal: x is the focal variable's continuous value, the same
+	/// across all curves. Each curve renders as a coloured line with a
+	/// translucent CI ribbon. level_labels must be empty.
+	///
+	/// Categorical focal: x carries integer focal positions (with optional
+	/// per-curve dodge offset, e.g. 0.0 ± 0.15 to separate by-curves
+	/// horizontally). level_labels has the focal-level text labels (one per
+	/// focal level, drawn at integer positions on the x-axis). Each curve
+	/// renders as connected markers with vertical error-bar caps.
+	///
+	/// caption is an optional one-line annotation drawn under the title;
+	/// pass an empty string for no caption.
+	///
+	/// curve.label is shown in a top-right legend; if all curves have empty
+	/// labels, no legend is drawn (single-curve case).
+	struct EffectsCurve {
+		QString label;
+		std::vector<double> x;
+		std::vector<double> fit;
+		std::vector<double> ci_lower;
+		std::vector<double> ci_upper;
+	};
+	void setEffectsPlotData(std::vector<EffectsCurve> curves,
+	                        const QString &x_label, const QString &y_label,
+	                        const QString &title,
+	                        const QString &caption = QString(),
+	                        std::vector<QString> level_labels = {});
+
 	/// Set (or clear) an OLS regression line to overlay on scatter plots.
 	/// The line is y = intercept + slope * x, and r2 is displayed as an annotation.
 	void setRegressionLine(double intercept, double slope, double r2);
@@ -133,7 +172,7 @@ protected:
 
 private:
 
-	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot };
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot };
 
 	struct BoxStats
 	{
@@ -185,6 +224,7 @@ private:
 	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
 	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
 	void renderLinePlot(QPainter &p, int left, int top, int pw, int ph);
+	void renderEffectsPlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderTitle(QPainter &p, int left, int pw, int top);
 	void renderLegend(QPainter &p, int left, int top, int pw, int ph);
 	void rebuildCache();
@@ -252,6 +292,11 @@ private:
 
 	// Line plot data (multiple curves)
 	std::vector<LineCurve> m_line_curves;
+
+	// Effects plot data (one or more curves, each with its own x/fit/CI bounds)
+	std::vector<EffectsCurve> m_eff_curves;
+	std::vector<QString> m_eff_level_labels;  // empty for numeric focal
+	QString m_eff_caption;
 
 	// Shared
 	QString m_x_label;

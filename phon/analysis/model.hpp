@@ -39,6 +39,7 @@
 #include <phon/array.hpp>
 #include <phon/utils/matrix.hpp>
 #include <phon/analysis/prior.hpp>
+#include <phon/analysis/smooth.hpp>
 
 namespace phonometrica::stats {
 
@@ -310,6 +311,16 @@ struct Model
 		double p_value = 1;    // approximate p-value
 		intptr_t col_start = 0; // 0-based starting column in X for this smooth's basis
 		intptr_t col_count = 0; // number of basis columns
+
+		// Persisted basis state for prediction at new x-values.
+		// Populated by fit() and round-tripped through .phon-analysis. The
+		// large per-observation training matrices (B, S) are NOT serialised
+		// — only the small reusable artifacts predict() needs:
+		//   - "cr" smooths: knots, F_deriv2, Z_absorb (≈ k×k doubles each)
+		//   - "re" smooths: levels (the J fitted group-level names)
+		// basis_data.type is empty on models loaded from older saves; the
+		// predict path uses that as the "refit required" sentinel.
+		SmoothBasis basis_data;
 	};
 	Array<SmoothResult> smooth_terms;
 

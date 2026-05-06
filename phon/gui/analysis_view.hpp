@@ -95,6 +95,8 @@ private slots:
 	void onPostHocChanged();
 	void onExportPostHoc();
 	void onExportPostHocLatex();
+	void onEffectsFocalChanged();
+	void onExportEffectsPlot();
 
 private:
 
@@ -137,6 +139,10 @@ private:
 	const stats::ScaledResidualResult *ensureScaledResiduals(const stats::Model &m);
 	void updateTestResults(const stats::ScaledResidualResult &sr);
 	void clearTestResults();
+
+	// Effects tab plumbing.
+	void populateEffectsFocalCombo();
+	void updateEffectsPlot();
 	void updateEdaPlot();
 	void updateEdaSummary();
 	bool isColumnNumeric(const String &col_name) const;
@@ -233,6 +239,19 @@ private:
 	PlotWidget *m_plot = nullptr;
 	QGroupBox *m_test_results_group = nullptr;
 	QTextEdit *m_test_results_text = nullptr;
+
+	// Effects tab — model-implied effect of a focal predictor with CI ribbon
+	// (numeric focal) or points + error bars (categorical focal). Phase 2
+	// MVP: single focal, others held fixed at reference level / mean.
+	// Optional By-factor combo (Phase 2.5) shows one curve per level of a
+	// second categorical predictor, revealing how the focal effect differs
+	// across by-levels. Refuses cleanly for mixed-effects, Bayesian,
+	// by-factor smooths, re-smooths.
+	QComboBox *m_effects_focal_combo = nullptr;
+	QComboBox *m_effects_by_combo = nullptr;
+	PlotWidget *m_effects_plot = nullptr;
+	QLabel *m_effects_message = nullptr;
+	QPushButton *m_effects_export_button = nullptr;
 
 	// EDA tab
 	QComboBox *m_eda_y_combo = nullptr;

@@ -1144,6 +1144,25 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 					"θ and report it separately.");
 			}
 		}
+
+		// Persist per-smooth basis state on the returned model so predict()
+		// can replay the basis at new x-values after a save/load round trip.
+		// smooth_slices and model.smooth_terms are populated in the same
+		// formula order (one slice per by-level for by-factor smooths, one
+		// per smooth otherwise), so a simple parallel walk is correct.
+		// We deliberately drop the n × k_eff training basis B and the
+		// k_eff × k_eff penalty S — neither is consulted by SmoothBasis::predict,
+		// and keeping them would bloat .phon-analysis files for no gain.
+		if (smooth_slices.size() == (size_t) model.smooth_terms.size())
+		{
+			for (intptr_t i = 0; i < (intptr_t) smooth_slices.size(); i++)
+			{
+				SmoothBasis &sb = smooth_slices[i].basis;
+				sb.B = Array<double>();   // training-only, drop for storage
+				sb.S = Array<double>();   // penalty, not needed at predict
+				model.smooth_terms[i + 1].basis_data = std::move(sb);
+			}
+		}
 	}
 	else if (formula.has_random_effects())
 	{

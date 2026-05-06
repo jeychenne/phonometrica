@@ -518,6 +518,26 @@ void Analysis::write()
 				add_data_node(sn, "PValue", format_scalar(sm.p_value));
 				add_data_node(sn, "ColStart", String::convert(sm.col_start));
 				add_data_node(sn, "ColCount", String::convert(sm.col_count));
+
+				// Persisted basis state for predict() at new x-values.
+				// Emitted only when non-empty: omitted for empty basis_data
+				// (e.g. models built directly without going through fit()).
+				auto &bd = sm.basis_data;
+				if (!bd.type.empty())
+				{
+					add_data_node(sn, "BasisType", bd.type);
+					add_data_node(sn, "BasisKEff", String::convert(bd.k_eff));
+					add_data_node(sn, "BasisPenaltyRank", String::convert(bd.penalty_rank));
+					add_data_node(sn, "BasisNullDim", String::convert(bd.null_dim));
+					if (bd.knots.size() > 0)
+						add_data_node(sn, "BasisKnots", doubles_to_string(bd.knots));
+					if (bd.F_deriv2.size() > 0)
+						add_data_node(sn, "BasisFDeriv2", doubles_to_string(bd.F_deriv2));
+					if (bd.Z_absorb.size() > 0)
+						add_data_node(sn, "BasisZAbsorb", doubles_to_string(bd.Z_absorb));
+					if (bd.levels.size() > 0)
+						add_data_node(sn, "BasisLevels", strings_to_csv(bd.levels));
+				}
 			}
 		}
 
@@ -741,6 +761,20 @@ void Analysis::load()
 
 							stats::Model::SmoothResult sm;
 
+							// Buffers for basis fields. We can't reshape until
+							// k and k_eff have been read from the same XML node,
+							// and the order in which children appear is not
+							// guaranteed by pugixml.
+							Array<double> flat_knots;
+							Array<double> flat_fderiv2;
+							Array<double> flat_zabsorb;
+							Array<String> bd_levels;
+							String bd_type;
+							intptr_t bd_k_eff = 0;
+							intptr_t bd_penalty_rank = 0;
+							intptr_t bd_null_dim = 0;
+							bool have_basis_data = false;
+
 							for (auto sf = sn.first_child(); sf; sf = sf.next_sibling())
 							{
 								auto sfn = str(sf.name());
@@ -756,6 +790,53 @@ void Analysis::load()
 								else if (sfn == "PValue")    sm.p_value = parse_double_safe(sft);
 								else if (sfn == "ColStart")  sm.col_start = String(sft).to_int();
 								else if (sfn == "ColCount")  sm.col_count = String(sft).to_int();
+								else if (sfn == "BasisType")        { bd_type = sft; have_basis_data = true; }
+								else if (sfn == "BasisKEff")        bd_k_eff = String(sft).to_int();
+								else if (sfn == "BasisPenaltyRank") bd_penalty_rank = String(sft).to_int();
+								else if (sfn == "BasisNullDim")     bd_null_dim = String(sft).to_int();
+								else if (sfn == "BasisKnots")       flat_knots = parse_doubles(sft);
+								else if (sfn == "BasisFDeriv2")     flat_fderiv2 = parse_doubles(sft);
+								else if (sfn == "BasisZAbsorb")     flat_zabsorb = parse_doubles(sft);
+								else if (sfn == "BasisLevels")      bd_levels = parse_csv_strings(sft);
+							}
+
+							// Reconstruct basis_data if a BasisType was present.
+							// Older save files predate this and yield an empty
+							// basis_data; predict() will treat that as a refit
+							// signal rather than crashing.
+							if (have_basis_data)
+							{
+								auto &bd = sm.basis_data;
+								bd.type = bd_type;
+								bd.variable = sm.variable;
+								bd.k = sm.k;
+								bd.k_eff = bd_k_eff;
+								bd.penalty_rank = bd_penalty_rank;
+								bd.null_dim = bd_null_dim;
+
+								// knots: 1D length k
+								if (flat_knots.size() == sm.k)
+									bd.knots = flat_knots;
+
+								// F_deriv2: k × k
+								if (sm.k > 0 && flat_fderiv2.size() == sm.k * sm.k)
+								{
+									bd.F_deriv2 = Array<double>(sm.k, sm.k, 0.0);
+									for (intptr_t kk = 1; kk <= flat_fderiv2.size(); kk++)
+										bd.F_deriv2.data()[kk - 1] = flat_fderiv2[kk];
+								}
+
+								// Z_absorb: k × k_eff
+								if (sm.k > 0 && bd_k_eff > 0
+								    && flat_zabsorb.size() == sm.k * bd_k_eff)
+								{
+									bd.Z_absorb = Array<double>(sm.k, bd_k_eff, 0.0);
+									for (intptr_t kk = 1; kk <= flat_zabsorb.size(); kk++)
+										bd.Z_absorb.data()[kk - 1] = flat_zabsorb[kk];
+								}
+
+								// Levels: re-basis only.
+								bd.levels = bd_levels;
 							}
 
 							m.smooth_terms.append(std::move(sm));

@@ -113,6 +113,20 @@ public:
 	/// The values vector must have exactly row_count() elements.
 	void add_text_column(const String &header, const std::vector<String> &values);
 
+	/// Factory: construct an empty in-memory Dataset with the given row count
+	/// and zero columns. Use add_numeric_column / add_text_column to populate.
+	/// Useful for building computed Datasets (e.g. predict() output) where
+	/// there is no source table to clone from.
+	static Handle<Dataset> create_empty(intptr_t nrow);
+
+	/// Mark this Dataset as already in memory and not requiring a load() call.
+	/// Use after constructing via the copy constructor (which leaves m_loaded
+	/// at the default false), or any other in-memory construction path.
+	/// Without this, a subsequent .ncol / .nrow access in scripting would
+	/// trigger Document::open() → Dataset::load() with an empty m_path,
+	/// failing with "Cannot load spreadsheet with '' extension".
+	void mark_loaded() { m_loaded = true; }
+
 	/// Check that this dataset has the same columns (count and names) as `other`.
 	/// Throws an error with a descriptive message if the columns are incompatible.
 	void check_columns_compatible(const Dataset &other) const;

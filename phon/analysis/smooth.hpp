@@ -85,6 +85,15 @@ struct SmoothBasis
 	// Needed for prediction at new points.
 	Array<double> Z_absorb;
 
+	// Levels seen at fit time. Populated only for type == "re": carries the
+	// sorted unique levels of the grouping factor (1-based Array, in the
+	// same order used to build the indicator columns of B). Needed at
+	// predict time to map new-data category strings back to the column
+	// indices that correspond to known levels — and to detect unseen levels
+	// so the predict path can refuse them when allow_new_levels is false.
+	// Empty for non-"re" bases.
+	Array<String> levels;
+
 	// Evaluate the constrained basis at new x-values (for prediction and plotting).
 	// Returns an n_new × k_eff matrix.
 	Array<double> predict(const std::vector<double> &x_new) const;

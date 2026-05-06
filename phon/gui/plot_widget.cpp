@@ -383,6 +383,40 @@ void PlotWidget::clearFixedYTicks()
 	update();
 }
 
+void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
+                                     const QString &x_label, const QString &y_label,
+                                     const QString &title,
+                                     const QString &caption,
+                                     std::vector<QString> level_labels)
+{
+	m_mode = Mode::EffectsPlot;
+	m_eff_curves = std::move(curves);
+	m_eff_level_labels = std::move(level_labels);
+	m_eff_caption = caption;
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+
+	// Wipe any state that other modes might have left behind, so a tab
+	// switch from (e.g.) GroupedScatter to EffectsPlot doesn't show stale
+	// ellipses or legend entries.
+	m_x.clear();
+	m_y.clear();
+	m_point_labels.clear();
+	m_boxes.clear();
+	m_bins.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_line_curves.clear();
+	m_show_regression = false;
+	m_show_density = false;
+	m_cache_valid = false;
+	update();
+}
+
 void PlotWidget::clear()
 {
 	m_mode = Mode::Empty;
@@ -407,6 +441,9 @@ void PlotWidget::clear()
 	m_density_x.clear();
 	m_density_y.clear();
 	m_line_curves.clear();
+	m_eff_curves.clear();
+	m_eff_level_labels.clear();
+	m_eff_caption.clear();
 	m_fixed_y_ticks.clear();
 	m_cache_valid = false;
 	update();
@@ -700,6 +737,7 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 	case Mode::Histogram:      renderHistogram(p, left, top, pw, ph); break;
 	case Mode::BarChart:       renderBarChart(p, left, top, pw, ph); break;
 	case Mode::LinePlot:       renderLinePlot(p, left, top, pw, ph); break;
+	case Mode::EffectsPlot:    renderEffectsPlot(p, left, top, pw, ph); break;
 	default: break;
 	}
 }
@@ -1802,6 +1840,352 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 			           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
 			           m_line_curves[c].name);
 		}
+	}
+}
+
+
+// ── Effects plot rendering ──────────────────────────────────────────
+//
+// One or more curves (numeric focal: lines + ribbons; categorical focal:
+// connected markers + error bars), each colored from GROUP_PALETTE in
+// curve order. NaN entries in fit/ci are skipped — they correspond to
+// rows of the reference grid that predict() refused (unseen levels,
+// missing predictors). Multi-curve plots get a top-right legend keyed
+// on EffectsCurve::label.
+
+void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_eff_curves.empty()) return;
+
+	const bool categorical = !m_eff_level_labels.empty();
+	const int  ncurves = (int) m_eff_curves.size();
+
+	// Only show a legend when at least one curve carries a label. Single
+	// curves with empty labels (the original Phase 2 behaviour) get no
+	// legend.
+	bool any_label = false;
+	for (auto &c : m_eff_curves) if (!c.label.isEmpty()) { any_label = true; break; }
+
+	int bottom = top + ph;
+	int right  = left + pw;
+
+	// ── Compute axis ranges across all curves ───────────────────────
+	double xlo = 1e300, xhi = -1e300;
+	double ylo = 1e300, yhi = -1e300;
+	for (auto &c : m_eff_curves)
+	{
+		if (c.fit.size() != c.x.size()
+		    || c.ci_lower.size() != c.x.size()
+		    || c.ci_upper.size() != c.x.size())
+			continue;
+
+		for (size_t i = 0; i < c.x.size(); i++)
+		{
+			if (std::isnan(c.fit[i])) continue;
+			if (categorical) {
+				xlo = std::min(xlo, c.x[i] - 0.5);
+				xhi = std::max(xhi, c.x[i] + 0.5);
+			} else {
+				xlo = std::min(xlo, c.x[i]);
+				xhi = std::max(xhi, c.x[i]);
+			}
+			double lo = std::isnan(c.ci_lower[i]) ? c.fit[i] : c.ci_lower[i];
+			double hi = std::isnan(c.ci_upper[i]) ? c.fit[i] : c.ci_upper[i];
+			ylo = std::min(ylo, std::min(lo, c.fit[i]));
+			yhi = std::max(yhi, std::max(hi, c.fit[i]));
+		}
+	}
+	if (xlo == 1e300 || ylo == 1e300) return; // all NaN / empty
+
+	if (xhi <= xlo) { xlo -= 1; xhi += 1; }
+	if (yhi <= ylo) { yhi = ylo + 1; }
+
+	double xrange = xhi - xlo;
+	double yrange = yhi - ylo;
+	double xpad = xrange * 0.04;
+	double ypad = yrange * 0.08;
+	if (!categorical) { xlo -= xpad; xhi += xpad; }
+	ylo -= ypad; yhi += ypad;
+
+	xrange = xhi - xlo;
+	yrange = yhi - ylo;
+	if (xrange <= 0) xrange = 1;
+	if (yrange <= 0) yrange = 1;
+
+	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
+	auto dataToY = [&](double v) -> double { return bottom - ((v - ylo) / yrange) * ph; };
+
+	// ── Frame ───────────────────────────────────────────────────────
+	p.setPen(QPen(AXIS_COLOR, 1));
+	p.drawRect(left, top, pw, ph);
+
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	// ── X axis ──────────────────────────────────────────────────────
+	if (categorical)
+	{
+		// Tick + label per focal level (one entry per integer position).
+		for (size_t i = 0; i < m_eff_level_labels.size(); i++) {
+			double x = dataToX((double) i);
+			p.setPen(QPen(AXIS_COLOR, 1));
+			p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+			const QString &lbl = m_eff_level_labels[i];
+			int lw = fm.horizontalAdvance(lbl);
+			p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, lbl);
+		}
+	}
+	else
+	{
+		double xtick = nice_tick(xrange);
+		double x0 = std::ceil(xlo / xtick) * xtick;
+		p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+		for (double v = x0; v <= xhi; v += xtick) {
+			double x = dataToX(v);
+			if (x > left + 1 && x < right - 1)
+				p.drawLine(QPointF(x, top), QPointF(x, bottom));
+		}
+		p.setPen(QPen(AXIS_COLOR, 1));
+		for (double v = x0; v <= xhi; v += xtick) {
+			double x = dataToX(v);
+			if (x < left - 2 || x > right + 2) continue;
+			p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+			QString label = QString::number(v, 'g', 4);
+			int lw = fm.horizontalAdvance(label);
+			p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, label);
+		}
+	}
+	{
+		int tw = fm.horizontalAdvance(m_x_label);
+		p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, m_x_label);
+	}
+
+	// ── Y axis ──────────────────────────────────────────────────────
+	double ytick = nice_tick(yrange);
+	double y0 = std::ceil(ylo / ytick) * ytick;
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y > top + 1 && y < bottom - 1)
+			p.drawLine(QPointF(left, y), QPointF(right, y));
+	}
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y < top - 2 || y > bottom + 2) continue;
+		p.drawLine(QPointF(left - 4, y), QPointF(left, y));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(left - 6 - lw, int(y) + fm.ascent() / 2 - 1, label);
+	}
+	{
+		p.save(); p.translate(14, top + ph / 2); p.rotate(-90);
+		int tw = fm.horizontalAdvance(m_y_label);
+		p.drawText(-tw / 2, 0, m_y_label);
+		p.restore();
+	}
+
+	// ── Title + caption ─────────────────────────────────────────────
+	renderTitle(p, left, pw, top);
+
+	if (!m_eff_caption.isEmpty())
+	{
+		QFont capFont;
+		capFont.setPixelSize(10);
+		capFont.setItalic(true);
+		p.setFont(capFont);
+		p.setPen(QColor(110, 110, 110));
+		QFontMetrics cfm(capFont);
+		int cw = cfm.horizontalAdvance(m_eff_caption);
+		p.drawText(left + (pw - cw) / 2, top + cfm.ascent() + 2, m_eff_caption);
+		p.setFont(font);
+	}
+
+	// ── Curves ──────────────────────────────────────────────────────
+	p.setClipRect(left, top, pw, ph);
+
+	// With overlapping ribbons we lower the alpha so multiple translucent
+	// fills don't stack into opacity. Single-curve uses the original alpha.
+	int ribbon_alpha = (ncurves > 1) ? 35 : 50;
+
+	if (categorical)
+	{
+		// For categorical focal, also draw a connecting polyline across
+		// focal levels for each curve when there are 2+ curves — this is
+		// where the by-factor visual makes interaction patterns visible.
+		// Single-curve categorical stays as disconnected points + bars.
+		bool draw_connectors = (ncurves > 1);
+
+		const double cap_half = 5.0;
+		const double r = 3.5;
+
+		for (int c = 0; c < ncurves; c++)
+		{
+			auto &cv = m_eff_curves[(size_t) c];
+			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+
+			// Connector line: through (x, fit), skipping NaN entries.
+			if (draw_connectors)
+			{
+				QPolygonF line;
+				for (size_t i = 0; i < cv.x.size(); i++) {
+					if (std::isnan(cv.fit[i])) continue;
+					line << QPointF(dataToX(cv.x[i]), dataToY(cv.fit[i]));
+				}
+				if (line.size() >= 2) {
+					p.setPen(QPen(color, 1.5));
+					p.setBrush(Qt::NoBrush);
+					p.drawPolyline(line);
+				}
+			}
+
+			// Error bars + markers per point.
+			for (size_t i = 0; i < cv.x.size(); i++) {
+				if (std::isnan(cv.fit[i])) continue;
+				double x  = dataToX(cv.x[i]);
+				double yf = dataToY(cv.fit[i]);
+				bool have_lo = !std::isnan(cv.ci_lower[i]);
+				bool have_hi = !std::isnan(cv.ci_upper[i]);
+
+				if (have_lo && have_hi) {
+					double ylo_px = dataToY(cv.ci_lower[i]);
+					double yhi_px = dataToY(cv.ci_upper[i]);
+					p.setPen(QPen(color, 1.5));
+					p.drawLine(QPointF(x, ylo_px), QPointF(x, yhi_px));
+					p.drawLine(QPointF(x - cap_half, ylo_px), QPointF(x + cap_half, ylo_px));
+					p.drawLine(QPointF(x - cap_half, yhi_px), QPointF(x + cap_half, yhi_px));
+				}
+				p.setPen(QPen(color, 1.0));
+				p.setBrush(color);
+				p.drawEllipse(QPointF(x, yf), r, r);
+				p.setBrush(Qt::NoBrush);
+			}
+		}
+	}
+	else
+	{
+		// Numeric focal: ribbons first (back-to-front in palette order),
+		// then lines on top so curve colours stay distinguishable even where
+		// ribbons overlap.
+		for (int c = 0; c < ncurves; c++)
+		{
+			auto &cv = m_eff_curves[(size_t) c];
+			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+			QColor ribbon_color = color;
+			ribbon_color.setAlpha(ribbon_alpha);
+
+			std::vector<bool> ok(cv.x.size());
+			for (size_t i = 0; i < cv.x.size(); i++) {
+				ok[i] = !std::isnan(cv.fit[i])
+				     && !std::isnan(cv.ci_lower[i])
+				     && !std::isnan(cv.ci_upper[i]);
+			}
+
+			size_t i = 0;
+			while (i < cv.x.size())
+			{
+				while (i < cv.x.size() && !ok[i]) i++;
+				size_t s = i;
+				while (i < cv.x.size() && ok[i]) i++;
+				size_t e = i;
+				if (e - s < 2) continue;
+
+				QPolygonF seg;
+				for (size_t k = s; k < e; k++)
+					seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_upper[k]));
+				for (size_t k = e; k-- > s; )
+					seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_lower[k]));
+
+				p.setPen(Qt::NoPen);
+				p.setBrush(ribbon_color);
+				p.drawPolygon(seg);
+			}
+		}
+
+		// Now draw all the lines on top.
+		for (int c = 0; c < ncurves; c++)
+		{
+			auto &cv = m_eff_curves[(size_t) c];
+			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+
+			std::vector<bool> ok(cv.x.size());
+			for (size_t i = 0; i < cv.x.size(); i++) {
+				ok[i] = !std::isnan(cv.fit[i])
+				     && !std::isnan(cv.ci_lower[i])
+				     && !std::isnan(cv.ci_upper[i]);
+			}
+
+			size_t i = 0;
+			while (i < cv.x.size())
+			{
+				while (i < cv.x.size() && !ok[i]) i++;
+				size_t s = i;
+				while (i < cv.x.size() && ok[i]) i++;
+				size_t e = i;
+				if (e - s < 2) continue;
+
+				QPolygonF line;
+				for (size_t k = s; k < e; k++)
+					line << QPointF(dataToX(cv.x[k]), dataToY(cv.fit[k]));
+				p.setPen(QPen(color, 2.0));
+				p.setBrush(Qt::NoBrush);
+				p.drawPolyline(line);
+			}
+		}
+	}
+
+	// ── Legend ──────────────────────────────────────────────────────
+	if (any_label)
+	{
+		QFont lfont;
+		lfont.setPixelSize(10);
+		p.setFont(lfont);
+		QFontMetrics lfm(lfont);
+
+		int swatch = 14;
+		int spacing = 4;
+		int line_h = std::max(lfm.height(), swatch) + 2;
+		int padding = 6;
+
+		int max_w = 0;
+		for (auto &c : m_eff_curves)
+			max_w = std::max(max_w, lfm.horizontalAdvance(c.label));
+
+		int legend_w = padding + swatch + spacing + max_w + padding;
+		int legend_h = padding + ncurves * line_h + padding;
+
+		// Place at top-right inside the plot area, with a small inset so it
+		// doesn't touch the frame.
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+		// If a caption is present, push the legend down so the two don't
+		// collide.
+		if (!m_eff_caption.isEmpty()) ly += 14;
+
+		QColor bg(255, 255, 255, 220);
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.setBrush(bg);
+		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+		for (int c = 0; c < ncurves; c++)
+		{
+			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+			int ey = ly + padding + c * line_h;
+			// Short coloured line as the swatch (matches "line + ribbon"
+			// rendering for numeric, "connected markers" for categorical).
+			int sx = lx + padding;
+			int sy = ey + line_h / 2;
+			p.setPen(QPen(color, 2.0));
+			p.drawLine(QPointF(sx, sy), QPointF(sx + swatch, sy));
+
+			p.setPen(AXIS_COLOR);
+			p.drawText(sx + swatch + spacing,
+			           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
+			           m_eff_curves[(size_t) c].label);
+		}
+		p.setFont(font);
 	}
 }
 

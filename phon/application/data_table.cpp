@@ -27,10 +27,12 @@
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/analysis/mixed_model.hpp>
 #include <phon/application/data_table.hpp>
+#include <phon/application/dataset.hpp>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/emmeans.hpp>
+#include <phon/analysis/predict.hpp>
 #include <phon/analysis/scaled_residuals.hpp>
 #include <phon/analysis/statistics.hpp>
 
@@ -1641,6 +1643,148 @@ void DataTable::initialize(Runtime &rt)
 		return out;
 	};
 
+	// ── predict() — fitted values, SE, and CIs at training rows or new data ─
+	//
+	// `predict(model)`               at training rows; in-session only,
+	//                                returns a Dataset with prediction
+	//                                columns (no input echo). Errors after
+	//                                save/reload because the design matrix
+	//                                X is not persisted.
+	//
+	// `predict(model, newdata)`      at the rows of newdata; returns a
+	//                                Dataset that echoes ALL columns of
+	//                                newdata, with prediction columns
+	//                                appended.
+	//
+	// `predict(model, newdata, opts)`  with an options table:
+	//   type      String   "ci" (default).  "pi" / "both" deferred.
+	//   scale     String   "response" (default) or "link".
+	//   bare      Boolean  if true, do not echo newdata's columns.
+	//   ci_level  Number   coverage probability (default 0.95).
+	//
+	// Output columns (always added; "Fit", "SE fit", "CI lower", "CI upper"):
+	//   Fit         predicted mean (response or link scale per opts.scale)
+	//   SE fit      standard error on the link scale
+	//   CI lower    confidence-interval lower bound (transformed to response
+	//               scale if requested; identity otherwise)
+	//   CI upper    confidence-interval upper bound
+	//
+	// Per-row failures (missing values, unseen factor levels, non-numeric
+	// cells in numeric predictors) emit NaN in all four prediction columns
+	// for that row. Structural failures (missing columns, unparseable
+	// formula, mixed-effects models, Bayesian models, by-factor smooths,
+	// PI requests) raise an error explaining what is not yet supported.
+	//
+	// Phase 1 MVP does not support:
+	//   - Mixed-effects models (random-effects terms).
+	//   - By-factor smooths (s(x, by=...)) and re-smooths (s(g, bs="re")).
+	//   - Bayesian estimation.
+	//   - Prediction intervals (type = "pi" or "both").
+	// All of these refuse cleanly with a message naming the limitation.
+
+	auto build_predict_options = [](Table &opts_tbl) -> stats::PredictOptions {
+		stats::PredictOptions opts;
+		auto &map = opts_tbl.data();
+		if (auto it = map.find(String("type")); it != map.end()) {
+			opts.type = cast<String>(it->second);
+		}
+		if (auto it = map.find(String("scale")); it != map.end()) {
+			opts.scale = cast<String>(it->second);
+		}
+		if (auto it = map.find(String("bare")); it != map.end()) {
+			opts.bare = cast<bool>(it->second);
+		}
+		if (auto it = map.find(String("ci_level")); it != map.end()) {
+			opts.ci_level = it->second.get_number();
+		}
+		return opts;
+	};
+
+	// Append the four prediction columns to a Dataset (which already has
+	// row_count() == result.fit.size() rows).
+	auto append_prediction_columns = [](Dataset &ds, const stats::PredictResult &result)
+	{
+		intptr_t n = result.fit.size();
+		std::vector<double> fit(n), se(n), lo(n), hi(n);
+		for (intptr_t i = 0; i < n; i++) {
+			fit[(size_t) i] = result.fit.data()[i];
+			se [(size_t) i] = result.se_fit.data()[i];
+			lo [(size_t) i] = result.ci_lower.data()[i];
+			hi [(size_t) i] = result.ci_upper.data()[i];
+		}
+		ds.add_numeric_column(String("Fit"),      fit);
+		ds.add_numeric_column(String("SE fit"),   se);
+		ds.add_numeric_column(String("CI lower"), lo);
+		ds.add_numeric_column(String("CI upper"), hi);
+	};
+
+	auto register_result_dataset = [](Handle<Dataset> ds, const String &label)
+	{
+		ds->set_label(label, false);
+		auto parent = Project::get()->data().get();
+		parent->append(ds, false);
+		return ds;
+	};
+
+	auto predict1 = [append_prediction_columns, register_result_dataset]
+	                (Runtime &, std::span<Variant> args) -> Variant
+	{
+		auto &model = cast<stats::Model>(args[0]);
+		stats::PredictOptions opts;
+		auto result = stats::predict_at_training(model, opts);
+		if (!result.ok) throw error("predict(): %", result.error);
+
+		auto ds = Dataset::create_empty(result.fit.size());
+		append_prediction_columns(*ds, result);
+		return register_result_dataset(std::move(ds), String("predict(model)"));
+	};
+
+	auto predict2 = [append_prediction_columns, register_result_dataset]
+	                (Runtime &, std::span<Variant> args) -> Variant
+	{
+		auto &model = cast<stats::Model>(args[0]);
+		auto &newdata = cast<Dataset>(args[1]);
+		stats::PredictOptions opts;
+		auto result = stats::predict_at(model, newdata, opts);
+		if (!result.ok) throw error("predict(): %", result.error);
+
+		// bare=false (default): clone newdata to echo all input columns,
+		// then append predictions. The copy constructor leaves m_loaded
+		// at the default false; mark_loaded() prevents .ncol / .nrow
+		// access from triggering a spurious load().
+		Handle<Dataset> ds;
+		if (opts.bare) {
+			ds = Dataset::create_empty(result.fit.size());
+		} else {
+			ds = make_handle<Dataset>(newdata);
+			ds->mark_loaded();
+		}
+		append_prediction_columns(*ds, result);
+		return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
+	};
+
+	auto predict3 = [build_predict_options, append_prediction_columns,
+	                 register_result_dataset]
+	                (Runtime &, std::span<Variant> args) -> Variant
+	{
+		auto &model = cast<stats::Model>(args[0]);
+		auto &newdata = cast<Dataset>(args[1]);
+		auto &opts_tbl = cast<Table>(args[2]);
+		auto opts = build_predict_options(opts_tbl);
+		auto result = stats::predict_at(model, newdata, opts);
+		if (!result.ok) throw error("predict(): %", result.error);
+
+		Handle<Dataset> ds;
+		if (opts.bare) {
+			ds = Dataset::create_empty(result.fit.size());
+		} else {
+			ds = make_handle<Dataset>(newdata);
+			ds->mark_loaded();
+		}
+		append_prediction_columns(*ds, result);
+		return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
+	};
+
 	// ── Cell and column access ──────────────────────────────────
 
 	auto get_cell = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -2260,6 +2404,10 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_global("evaluate", evaluate2, { CLS(stats::Model), CLS(Table) });
 	rt.add_global("polish", polish_model, { CLS(stats::Model) });
 	rt.add_global("try_phase2", try_phase2, { CLS(stats::Model) });
+
+	rt.add_global("predict", predict1, { CLS(stats::Model) });
+	rt.add_global("predict", predict2, { CLS(stats::Model), CLS(Dataset) });
+	rt.add_global("predict", predict3, { CLS(stats::Model), CLS(Dataset), CLS(Table) });
 
 	// Cell / column access
 	rt.add_global("get_cell", get_cell, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t) });

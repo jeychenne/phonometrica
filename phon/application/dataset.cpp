@@ -850,4 +850,14 @@ void Dataset::add_text_column(const String &header, const std::vector<String> &v
 	m_content_modified = true;
 }
 
+Handle<Dataset> Dataset::create_empty(intptr_t nrow)
+{
+	auto result = make_handle<Dataset>(nullptr);
+	result->nrow = nrow;
+	result->ncol = 0;
+	result->m_loaded = true;
+	result->m_content_modified = true;
+	return result;
+}
+
 } // namespace phonometrica

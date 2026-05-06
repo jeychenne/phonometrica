@@ -470,6 +470,7 @@ SmoothBasis build_re_basis(const Array<String> &levels,
 	SmoothBasis sb;
 	sb.type = "re";
 	sb.variable = "";    // set by caller after construction
+	sb.levels = levels;  // preserved for predict-time level lookup
 
 	if (has_slope)
 	{
