@@ -630,19 +630,73 @@ AutoAst Parser::parse_primary_expression()
 AstList Parser::parse_arguments()
 {
 	trace_ast();
+	// Positional arguments accumulate in `args`; named arguments are collected
+	// into `named_keys`/`named_values` and packed into a single trailing
+	// TableLiteral once the argument list is fully parsed. This is a parse-time
+	// desugaring:
+	//
+	//     f(a, b, x = "hello", y = "world")
+	//
+	// is equivalent to:
+	//
+	//     f(a, b, { "x": "hello", "y": "world" })
+	//
+	// A named argument is recognized when an argument expression is a bare
+	// identifier (Variable) immediately followed by '='. Once the first named
+	// argument has been seen, every remaining argument must also be named.
 	AstList args;
+	AstList named_keys, named_values;
+	int named_line = 0;
 
 	if (accept(Lexeme::RParen))
 	{
 		return args;
 	}
-	args.push_back(parse_expression());
 
-	while (accept(Lexeme::Comma))
+	do
 	{
-		args.push_back(parse_expression());
-	}
+		auto e = parse_expression();
+
+		if (check(Lexeme::OpAssign))
+		{
+			auto var = dynamic_cast<Variable *>(e.get());
+			if (!var) {
+				report_error("Left-hand side of named argument must be a simple identifier");
+			}
+			String name = var->name;
+			int line = e->line_no;
+			// Reject duplicate keys at parse time so the user gets a clearer
+			// error than "second value silently wins" at runtime.
+			for (auto &k : named_keys)
+			{
+				auto lit = dynamic_cast<StringLiteral *>(k.get());
+				if (lit && lit->value == name)
+				{
+					auto msg = utils::format("Duplicate named argument \"%\"", name);
+					report_error(msg);
+				}
+			}
+			if (named_keys.empty()) named_line = line;
+			accept(); // consume '='
+			auto value = parse_expression();
+			named_keys.push_back(std::make_unique<StringLiteral>(line, std::move(name)));
+			named_values.push_back(std::move(value));
+		}
+		else
+		{
+			if (!named_keys.empty()) {
+				report_error("Positional argument cannot follow a named argument");
+			}
+			args.push_back(std::move(e));
+		}
+	} while (accept(Lexeme::Comma));
+
 	expect(Lexeme::RParen, "in argument list");
+
+	if (!named_keys.empty()) {
+		args.push_back(std::make_unique<TableLiteral>(named_line,
+			std::move(named_keys), std::move(named_values)));
+	}
 
 	return args;
 }

@@ -118,6 +118,8 @@ however, we strongly encourage you to add type information because it will make 
 intended use of your functions.
 
 
+.. _function-overloading:
+
 Function overloading
 --------------------
 
@@ -277,6 +279,90 @@ This is achieved by adding the keyword ``ref`` before the corresponding paramete
     let lst = [1, 2, 3, 4]
     append_item(lst, 5)
     print lst # prints [1, 2, 3, 4, 5]
+
+
+
+.. _named_arguments:
+
+Named arguments
+---------------
+
+Many functions need a handful of optional settings in addition to their main inputs.
+A common pattern is to collect those settings in a ``Table`` and pass it as the
+last argument. This is what the rest of this section calls an *options table*.
+
+Suppose we want a function that prints a value with some formatting options
+(a prefix, a suffix, and whether to upper-case the value). We can write it like
+this:
+
+.. code:: phon
+
+    function show(text as String, options as Table)
+        let prefix = get(options, "prefix", ">>")
+        let suffix = get(options, "suffix", "")
+        let upper  = get(options, "upper",  false)
+
+        if upper then
+            text = to_upper(text)
+        end
+
+        print prefix & " " & text & suffix
+    end
+
+
+One way to call ``show`` is to build the options table with a *table literal*, assign it to a variable
+and pass that variable as an argument:
+
+.. code:: phon
+
+    let opts = {
+        "prefix": "==>",
+        "upper": true
+    }
+    show("hello", opts)             # prints: ==> HELLO
+
+
+This is clear but verbose. A slightly shorter form passes the table literal directly at the call site:
+
+.. code:: phon
+
+    show("hello", { "prefix": "==>", "upper": true })   # prints: ==> HELLO
+
+
+This is more compact, but still has noise the reader has to skip past: the
+braces, the quotes around each key, and a colon between every key and value.
+Phonometrica therefore lets you write the options as **named arguments**:
+
+.. code:: phon
+
+    show("hello", prefix = "==>", upper = true)         # prints: ==> HELLO
+
+
+Behind the scenes, this third form is *exactly equivalent* to the second one:
+the parser collects all trailing ``name = value`` pairs and packs them into a
+single ``Table`` that becomes the last argument of the call. Because the
+desugaring happens at parse time, there is no runtime cost compared to passing
+the table by hand, and the function on the receiving side does not need to do
+anything special — it just declares its last parameter as a ``Table``, exactly
+as before.
+
+A few rules to keep in mind:
+
+* The key on the left of ``=`` must be a simple identifier, not an expression
+  or a string literal: ``f(x = 1)`` is valid, but ``f("x" = 1)`` and
+  ``f(obj.x = 1)`` are syntax errors.
+* Once you start using named arguments, any further argument must also be
+  named: ``f(1, x = "hi", 99)`` is rejected, but ``f(1, x = "hi", y = 99)``
+  is fine.
+* Each name may appear at most once in a single call: ``f(x = 1, x = 2)``
+  is a parse error.
+* The value on the right of ``=`` can be any expression, including another
+  function call: ``f(label = to_upper(name))``.
+
+Named arguments interact cleanly with :ref:`function overloading <function-overloading>`:
+because the syntax just builds a ``Table``, the call site behaves as if you had
+written the table literal yourself, so dispatch picks the overload whose last
+parameter is ``Table`` (or ``Object``).
 
 
 
