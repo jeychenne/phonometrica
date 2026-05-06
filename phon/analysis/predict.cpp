@@ -39,16 +39,21 @@ namespace {
 
 // ─── Refusal helpers ─────────────────────────────────────────────────
 
-// Validate the model and options against the Phase 1 + 1.5 scope.
+// Validate the model and options against the supported scope.
 // Returns empty string if OK, otherwise a human-readable refusal message.
 // The script-side binding wraps the message with "predict(): %", so messages
 // here should not include their own "predict()" prefix.
+//
+// Bayesian models are supported via the same arithmetic as Frequentist:
+// model.beta and model.vcov hold the posterior mean and posterior
+// covariance (set by bayesian_adjust / mixture summaries / etc.), so
+// `η = X·β` and `SE² = x'·V·x` already produce the posterior mean of η
+// and its posterior SD under the Gaussian/Laplace approximation. The
+// resulting "CI" interval is a 95% credible interval (or whatever
+// ci_level requests). This matches what INLA / brms posterior_interval
+// return under the same Gaussian marginal-posterior assumption.
 static String validate_scope(const Model &model, const PredictOptions &opts)
 {
-	if (model.is_bayesian()) {
-		return String("does not yet support Bayesian models. "
-		              "This will be added in a future release.");
-	}
 	// Mixed-effects: only re_form == "none" is implemented (population-level
 	// prediction, η = X·β with u=0). Conditional prediction using the
 	// fitted BLUPs is deferred — it requires Z_new construction and the

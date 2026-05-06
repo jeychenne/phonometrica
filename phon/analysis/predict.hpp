@@ -15,21 +15,24 @@
  *                                                                                                                     *
  * Created: 05/05/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: predict() — produce fitted values, standard errors, and confidence intervals from a fitted Model on        *
- *          training rows or new data.                                                                                 *
+ * Purpose: predict() — produce fitted values, standard errors, and confidence/credible intervals from a fitted Model  *
+ *          on training rows or new data.                                                                              *
  *                                                                                                                     *
- *          Phase 1 + 1.5 scope:                                                                                       *
+ *          Supported scope:                                                                                           *
  *            - Fixed-effects models, all six families.                                                                *
  *            - Mixed-effects models: population-level prediction (re_form = "none", default).                         *
  *              Conditional prediction (re_form = "all", using BLUPs) is deferred.                                     *
  *            - GAM smooths via persisted basis_data.                                                                  *
- *            - Confidence intervals only (no prediction intervals yet).                                               *
- *            - Frequentist estimation only (Bayesian deferred).                                                       *
+ *            - Both Frequentist and Bayesian estimation. For Bayesian models, the same X·β / x'Vx arithmetic          *
+ *              produces posterior mean and posterior SD because model.beta and model.vcov are populated with          *
+ *              the posterior mean and posterior covariance (set by bayesian_adjust / mixture summaries). The          *
+ *              "CI" interval is interpreted as a credible interval; the column names ("Fit", "SE fit", "CI lower",   *
+ *              "CI upper") stay the same so script consumers don't need to branch on estimation type.                 *
+ *            - Confidence/credible intervals only (no prediction intervals yet).                                      *
  *                                                                                                                     *
  *          Documented refusals (clear errors when invoked):                                                           *
  *            - re_form = "all" on a mixed-effects model: conditional prediction not yet implemented.                  *
  *            - By-factor smooths (s(x, by=f)) and re-smooths (s(g, bs="re")): not yet supported.                      *
- *            - Bayesian estimation: deferred to a later release.                                                      *
  *            - type = "pi" or "both": prediction intervals deferred to a later release.                               *
  *                                                                                                                     *
  ***********************************************************************************************************************/

@@ -795,11 +795,11 @@ void AnalysisView::setupUi()
 
 	m_right_tabs->addTab(effects_widget, tr("Effects"));
 	m_right_tabs->setTabToolTip(3, tr(
-		"Model-implied effect of a focal predictor with confidence intervals. "
-		"Other categorical predictors held at their reference level; "
-		"other numeric predictors at their observed mean. "
+		"Model-implied effect of a focal predictor with confidence or "
+		"credible intervals. Other categorical predictors held at their "
+		"reference level; other numeric predictors at their observed mean. "
 		"Mixed-effects models: population-level prediction (random effects "
-		"set to zero)."));
+		"set to zero). Bayesian models: posterior mean and credible interval."));
 
 	// EDA tab
 	auto *eda_widget = new QWidget;
@@ -5029,14 +5029,9 @@ void AnalysisView::updateEffectsPlot()
 
 	// Refusals — match the underlying predict_at() refusals so the user
 	// sees a clear explanation rather than an obscure error. Mixed-effects
-	// models are now supported (population-level prediction with u=0); the
-	// caption is amended below to flag this.
-	if (m.is_bayesian()) {
-		show_message(tr(
-			"Effects plots are not yet supported for Bayesian models. "
-			"This will be added in a future release."));
-		return;
-	}
+	// and Bayesian models are now both supported (population-level prediction
+	// with u=0; posterior mean and credible interval for Bayesian); the
+	// caption below adapts to the model type.
 	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
 		auto &sm = m.smooth_terms[i];
 		if (!sm.by.empty()) {
@@ -5297,8 +5292,22 @@ void AnalysisView::updateEffectsPlot()
 	} else {
 		title = tr("Effect of %1").arg(focal_qname);
 	}
+	// Caption adapts to the model type. The "fixed-others" rule (categoricals
+	// at reference level, numerics at mean) applies in all four cases. The
+	// model-type-dependent prefix tells the user what the central line and
+	// band represent: posterior mean + 95% CrI for Bayesian, predicted mean
+	// + 95% CI for Frequentist; with a "population-level" qualifier when
+	// the model has random effects (u set to 0).
 	QString caption;
-	if (m.has_random_effects()) {
+	bool bayesian = m.is_bayesian();
+	bool mixed    = m.has_random_effects();
+	if (bayesian && mixed) {
+		caption = tr("Population-level posterior mean (95% credible interval); "
+		             "other categoricals at reference level; numerics at mean");
+	} else if (bayesian) {
+		caption = tr("Posterior mean (95% credible interval); "
+		             "other categoricals at reference level; numerics at mean");
+	} else if (mixed) {
 		caption = tr("Population-level (random effects = 0); "
 		             "other categoricals at reference level; numerics at mean");
 	} else {

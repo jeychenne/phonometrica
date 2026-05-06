@@ -225,6 +225,125 @@ Example::
    emtrends(m, "group", "frequency", "holm")
 
 
+Prediction
+----------
+
+.. function:: predict(model as Model)
+
+Returns a ``Dataset`` of model predictions at the training rows used to fit ``model``.
+Equivalent in spirit to ``predict(model)`` in R for a freshly fit model.
+
+The result has one row per observation in the original data and four columns:
+
+* ``Fit``: predicted mean (on the response scale by default).
+* ``SE fit``: standard error of the linear predictor.
+* ``CI lower``, ``CI upper``: 95% confidence interval (frequentist models) or 95% credible
+  interval (Bayesian models). The bounds are computed on the link scale and then transformed
+  by the inverse link, so for non-identity-link models the interval is asymmetric on the
+  response scale.
+
+This call relies on the design matrix that was built when ``model`` was fit. The design
+matrix is **not persisted** in ``.phon-analysis`` files (it can be many megabytes for large
+datasets), so ``predict(model)`` is only available in the same session in which the model
+was fit. After saving and reloading a project, call ``predict(model, data)`` instead — see
+the next overload.
+
+Example::
+
+   let ds = load("vowel_data.csv")
+   let m = fit("f1 ~ vowel + gender", ds)
+   let p = predict(m)
+   print get_header(p, 1)        # "Fit"
+   print get_column(p, "Fit")[1] # predicted F1 for the first row
+
+------------
+
+.. function:: predict(model as Model, newdata as Dataset)
+
+Returns a ``Dataset`` of model predictions at the rows of ``newdata``. The result echoes all
+of ``newdata``'s columns, followed by the four prediction columns described above.
+
+``newdata`` must contain a column for every predictor in the model formula. Other columns are
+copied through unchanged. This is the form to use after saving and reloading a project, or
+to predict on a held-out dataset.
+
+If a row in ``newdata`` cannot be predicted — for example, the value of a categorical
+predictor is a level that was not seen at fit time, or a cell in a numeric predictor is
+empty or non-numeric — the four prediction columns get ``NaN`` for that row, while the
+echoed columns are passed through normally.
+
+Errors are raised (no ``NaN`` fallback) for structural problems: a predictor column missing
+from ``newdata``, an unparseable formula, or a model type that is not yet supported (see
+**Limitations** below).
+
+Example::
+
+   let ds = load("vowel_data.csv")
+   let m = fit("f1 ~ vowel + gender", ds)
+   let p = predict(m, ds)
+   # p has all of ds's columns plus Fit, SE fit, CI lower, CI upper
+
+------------
+
+.. function:: predict(model as Model, newdata as Dataset, options as Table)
+
+As above, but with an ``options`` table that controls the output. All fields are optional:
+
+* ``type`` (``String``, default ``"ci"``): the kind of interval to compute. Currently only
+  ``"ci"`` is supported. ``"pi"`` (prediction intervals for a new observation, including
+  residual variance) and ``"both"`` will be added in a future release.
+* ``scale`` (``String``, default ``"response"``): the scale of ``Fit`` and the CI bounds.
+  ``"response"`` returns predictions on the natural response scale (probabilities for
+  binomial, counts for Poisson, etc.). ``"link"`` returns them on the linear-predictor
+  scale (logit, log, identity, etc.). ``SE fit`` is always on the link scale.
+* ``bare`` (``Boolean``, default ``false``): if ``true``, drop the echoed columns of
+  ``newdata`` and return only the four prediction columns.
+* ``ci_level`` (``Number``, default ``0.95``): coverage probability for the confidence /
+  credible interval. Must be strictly between 0 and 1.
+* ``re_form`` (``String``, default ``"none"``): how to handle random effects in mixed
+  models. Only ``"none"`` is currently implemented (population-level prediction with random
+  effects set to zero); ``"all"`` (conditional on the BLUPs) is reserved for a future
+  release.
+
+Example::
+
+   let ds = load("vowel_data.csv")
+   let m = fit("schwa ~ position + gender", ds, "binomial")
+
+   # Prediction on the link (logit) scale, 99% CI, no echoed columns
+   let opts = {}
+   opts["scale"] = "link"
+   opts["ci_level"] = 0.99
+   opts["bare"] = true
+   let p = predict(m, ds, opts)
+
+------------
+
+**Mixed-effects models.** ``predict()`` returns the **population-level** prediction:
+``η = X·β`` with the random effects set to zero. This is what ``ggpredict`` returns by
+default, and what most users want for "what does the model say in general?". The ``Fit``
+values for a mixed model do **not** match ``model.fitted``, which is the conditional mean
+including the BLUP contribution per group.
+
+**Bayesian models.** The same arithmetic produces the posterior mean of the predicted value
+and the posterior SD, because for Bayesian fits ``model.beta`` and ``model.vcov`` hold the
+posterior mean and posterior covariance respectively. The ``CI lower`` and ``CI upper``
+columns are then 95% **credible intervals**. The column names stay the same so script code
+does not need to branch on estimation type — the interpretation comes from the model.
+
+**Limitations.** The function refuses cleanly, with an explanatory error message, in the
+following cases:
+
+* Models with **by-factor smooths** (``s(x, by=...)``) or **random-effect smooths**
+  (``s(g, bs="re")``).
+* ``opts["type"] = "pi"`` or ``"both"``: prediction intervals are not yet implemented.
+* ``opts["re_form"] = "all"`` on a mixed-effects model: conditional prediction with BLUPs
+  is not yet implemented.
+
+For visualizing predictions interactively, use the **Effects** tab in the analysis view
+(see :ref:`analysis-view`); it calls into ``predict()`` internally.
+
+
 Diagnostics
 -----------
 

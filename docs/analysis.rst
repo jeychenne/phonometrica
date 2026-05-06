@@ -400,6 +400,126 @@ computed (Df = 0). The table shows ``--`` for these pairs.
    warnings. If you know your models are nested, you can safely ignore the warning.
 
 
+Effects plots
+-------------
+
+Once a model has been fit, the **Effects** tab in the analysis view shows the model's
+implied effect of each predictor on the response, together with a confidence or credible
+interval. Effects plots are typically the most intuitive way to interpret what a model says:
+rather than reading off coefficient estimates from a table, you see the predicted response
+at each value of a predictor of interest, with an error band around it.
+
+Each plot answers a question of the form: *"Holding the other predictors fixed at typical
+values, how does the response change as predictor X varies?"*
+
+To see an effects plot, click the **Effects** tab on the right side of the analysis view
+after fitting a model.
+
+Choosing a predictor
+~~~~~~~~~~~~~~~~~~~~
+
+The **Predictor** drop-down at the top of the tab lists all the predictors in the model:
+categorical predictors (such as ``vowel`` or ``gender``), numeric predictors (such as
+``duration`` or ``age``), and any smooth covariates (terms entered as ``s(...)``). Pick one
+and the plot updates immediately.
+
+For a **categorical predictor**, the plot shows one point per level with a vertical error
+bar at each. For a **numeric predictor** (or a smooth), it shows a curve with a translucent
+band around it. The curve is evaluated at 100 evenly-spaced values across the observed
+range of the predictor.
+
+What "the others held fixed" means
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Computing the effect of one predictor requires a choice for every other predictor in the
+model. A small italic caption under the plot title spells out what that choice is:
+
+- **Numeric predictors** are held at their *observed mean* in your data.
+- **Categorical predictors** are held at their *reference level* — the level that the model's
+  intercept is built around (typically the first level alphabetically). This matches what
+  R's ``ggpredict`` does by default.
+
+These choices are deterministic from the model and the data: if you re-fit on the same data
+and click the same predictor, you get the same plot.
+
+Comparing levels of another factor: the **By** option
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The **By** drop-down (next to **Predictor**) lets you split the plot by the levels of a
+second categorical predictor. Instead of holding that predictor fixed, you get one curve
+per level, drawn in different colours.
+
+This is the most useful way to **visualize an interaction**. For a model like
+``F2 ~ Position * Sexe``:
+
+- Pick ``Position`` as the **Predictor** and ``Sexe`` as **By**.
+- The plot shows two lines — one for each level of ``Sexe`` — across the levels of
+  ``Position``.
+- If the lines are *parallel* (same slope), there is essentially no interaction between
+  ``Position`` and ``Sexe``: the difference between the sexes is the same at every position.
+- If the lines *diverge or cross*, there is an interaction: how ``Position`` affects ``F2``
+  depends on which sex you look at.
+
+The **By** option is useful even when the model is purely additive (no ``*`` or ``:`` in the
+formula): it produces parallel curves, which is itself an informative sanity check.
+
+How to read the error band
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The shaded band (numeric predictor) or the vertical bar (categorical predictor) shows a
+95% interval around the predicted value. By default this is a 95% interval; the underlying
+``predict()`` function lets you change the coverage (see the scripting documentation).
+
+The interpretation of the interval depends on the model:
+
+- For **Frequentist** models, the interval is a 95% **confidence interval** for the mean
+  response at that predictor value: under repeated sampling, an interval computed this way
+  would contain the true mean about 95% of the time.
+- For **Bayesian** models, the interval is a 95% **credible interval**: there is a 95%
+  posterior probability that the true mean lies in this range, given the data and the
+  priors.
+
+The caption under the title flags which interpretation applies.
+
+Mixed-effects models
+~~~~~~~~~~~~~~~~~~~~
+
+For models with random effects (terms like ``(1|speaker)``), the plot shows what is called
+a **population-level prediction**: the predicted response for an "average" speaker, in the
+sense that the random effects are set to zero. This represents what the model expects on
+average across the population sampled, and is the right summary for a question like *"How
+does F1 vary with vowel, in general?"*.
+
+It is *not* the predicted value for any specific speaker. If you want predictions for a
+specific speaker (using their estimated random-effects deviation), this is not yet supported
+in v1.0 and will be added in a future release.
+
+The caption under the plot title says *"Population-level (random effects = 0)"* whenever
+this applies.
+
+Exporting
+~~~~~~~~~
+
+Click **Export...** to save the current plot as a PNG image, a PDF document, or an SVG
+vector graphic. PDF and SVG produce sharp output suitable for publication; PNG is convenient
+for slides and web pages.
+
+When the tab is unavailable
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A few model types are not yet supported. The Effects tab will show a short explanatory
+message instead of a plot in these cases:
+
+- Models with **by-factor smooths** (terms like ``s(x, by=group)``).
+- Models with **random-effect smooths** (terms like ``s(g, bs="re")``).
+
+For other limitations or for use cases not covered by the GUI, see the :func:`predict`
+function in the scripting reference, which exposes the same machinery with finer-grained
+control (custom reference grids, link-scale output, joining the predictions back into a
+dataset, and so on).
+
+
+
 Diagnostics tab
 ---------------
 
