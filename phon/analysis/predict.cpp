@@ -39,43 +39,55 @@ namespace {
 
 // ─── Refusal helpers ─────────────────────────────────────────────────
 
-// Validate the model and options against the Phase 1 MVP scope.
+// Validate the model and options against the Phase 1 + 1.5 scope.
 // Returns empty string if OK, otherwise a human-readable refusal message.
+// The script-side binding wraps the message with "predict(): %", so messages
+// here should not include their own "predict()" prefix.
 static String validate_scope(const Model &model, const PredictOptions &opts)
 {
 	if (model.is_bayesian()) {
-		return String("predict() does not yet support Bayesian models. "
+		return String("does not yet support Bayesian models. "
 		              "This will be added in a future release.");
 	}
-	if (model.has_random_effects()) {
-		return String("predict() does not yet support mixed-effects models "
-		              "(random-effects terms). This will be added in a "
-		              "future release.");
+	// Mixed-effects: only re_form == "none" is implemented (population-level
+	// prediction, η = X·β with u=0). Conditional prediction using the
+	// fitted BLUPs is deferred — it requires Z_new construction and the
+	// joint vcov V_{β,u}, which is not stored on Model.
+	if (model.has_random_effects() && opts.re_form != "none") {
+		return String::format(
+			"conditional prediction with random effects "
+			"(re_form = \"%s\") is not yet implemented. "
+			"Pass re_form = \"none\" for a population-level prediction "
+			"(u set to 0), which is the default.",
+			std::string(opts.re_form.data(), opts.re_form.size()).c_str());
 	}
 	for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
 		if (!sm.by.empty()) {
-			return String("predict() does not yet support by-factor smooths "
+			return String("does not yet support by-factor smooths "
 			              "(s(x, by=...)). This will be added in a future "
 			              "release.");
 		}
 		if (sm.basis == "re") {
-			return String("predict() does not yet support random-effect "
+			return String("does not yet support random-effect "
 			              "smooths (s(g, bs=\"re\")). This will be added in "
 			              "a future release.");
 		}
 	}
 	if (opts.type != "ci") {
-		return String("predict() currently supports type=\"ci\" only. "
+		return String("currently supports type=\"ci\" only. "
 		              "Prediction intervals (\"pi\", \"both\") will be added "
 		              "in a future release.");
 	}
 	if (opts.scale != "response" && opts.scale != "link") {
-		return String("predict(): scale must be either \"response\" or \"link\".");
+		return String("scale must be either \"response\" or \"link\".");
 	}
 	if (opts.ci_level <= 0.0 || opts.ci_level >= 1.0) {
-		return String("predict(): ci_level must be strictly between 0 and 1.");
+		return String("ci_level must be strictly between 0 and 1.");
+	}
+	if (opts.re_form != "none" && opts.re_form != "all") {
+		return String("re_form must be \"none\" or \"all\".");
 	}
 	return String();
 }
@@ -580,11 +592,11 @@ PredictResult predict_at_training(const Model &model, const PredictOptions &opts
 	if (!err.empty()) { out.error = err; return out; }
 
 	if (model.beta.empty()) {
-		out.error = String("predict(): model has no fitted coefficients.");
+		out.error = String("model has no fitted coefficients.");
 		return out;
 	}
 	if (!model.has_vcov()) {
-		out.error = String("predict(): model has no vcov; cannot compute SE.");
+		out.error = String("model has no vcov; cannot compute SE.");
 		return out;
 	}
 	if (model.X.empty()) {
@@ -653,15 +665,15 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 	if (!err.empty()) { out.error = err; return out; }
 
 	if (model.beta.empty()) {
-		out.error = String("predict(): model has no fitted coefficients.");
+		out.error = String("model has no fitted coefficients.");
 		return out;
 	}
 	if (!model.has_vcov()) {
-		out.error = String("predict(): model has no vcov; cannot compute SE.");
+		out.error = String("model has no vcov; cannot compute SE.");
 		return out;
 	}
 	if (model.formula.empty()) {
-		out.error = String("predict(): model has no formula stored.");
+		out.error = String("model has no formula stored.");
 		return out;
 	}
 

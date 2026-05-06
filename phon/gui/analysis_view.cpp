@@ -797,7 +797,9 @@ void AnalysisView::setupUi()
 	m_right_tabs->setTabToolTip(3, tr(
 		"Model-implied effect of a focal predictor with confidence intervals. "
 		"Other categorical predictors held at their reference level; "
-		"other numeric predictors at their observed mean."));
+		"other numeric predictors at their observed mean. "
+		"Mixed-effects models: population-level prediction (random effects "
+		"set to zero)."));
 
 	// EDA tab
 	auto *eda_widget = new QWidget;
@@ -5025,18 +5027,13 @@ void AnalysisView::updateEffectsPlot()
 
 	auto &m = m_analysis->model(m_current_model);
 
-	// Phase 2 refusals — match the underlying predict_at() refusals so the
-	// user sees a clear explanation rather than an obscure error.
+	// Refusals — match the underlying predict_at() refusals so the user
+	// sees a clear explanation rather than an obscure error. Mixed-effects
+	// models are now supported (population-level prediction with u=0); the
+	// caption is amended below to flag this.
 	if (m.is_bayesian()) {
 		show_message(tr(
 			"Effects plots are not yet supported for Bayesian models. "
-			"This will be added in a future release."));
-		return;
-	}
-	if (m.has_random_effects()) {
-		show_message(tr(
-			"Effects plots are not yet supported for mixed-effects models "
-			"(formulas with random-effects terms such as (1|speaker)). "
 			"This will be added in a future release."));
 		return;
 	}
@@ -5300,8 +5297,14 @@ void AnalysisView::updateEffectsPlot()
 	} else {
 		title = tr("Effect of %1").arg(focal_qname);
 	}
-	QString caption = tr("Other categorical predictors at reference level; "
-	                     "numerics at mean");
+	QString caption;
+	if (m.has_random_effects()) {
+		caption = tr("Population-level (random effects = 0); "
+		             "other categoricals at reference level; numerics at mean");
+	} else {
+		caption = tr("Other categorical predictors at reference level; "
+		             "numerics at mean");
+	}
 
 	std::vector<QString> level_labels;
 	if (!focal_is_numeric) {

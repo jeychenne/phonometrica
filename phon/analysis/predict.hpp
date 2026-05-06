@@ -18,14 +18,16 @@
  * Purpose: predict() — produce fitted values, standard errors, and confidence intervals from a fitted Model on        *
  *          training rows or new data.                                                                                 *
  *                                                                                                                     *
- *          Phase 1 MVP scope:                                                                                         *
- *            - Non-mixed models only (no random effects).                                                             *
- *            - Fixed-effects terms + plain s(x) smooths (cubic regression splines).                                   *
+ *          Phase 1 + 1.5 scope:                                                                                       *
+ *            - Fixed-effects models, all six families.                                                                *
+ *            - Mixed-effects models: population-level prediction (re_form = "none", default).                         *
+ *              Conditional prediction (re_form = "all", using BLUPs) is deferred.                                     *
+ *            - GAM smooths via persisted basis_data.                                                                  *
  *            - Confidence intervals only (no prediction intervals yet).                                               *
  *            - Frequentist estimation only (Bayesian deferred).                                                       *
  *                                                                                                                     *
  *          Documented refusals (clear errors when invoked):                                                           *
- *            - Mixed-effects models: random terms not yet supported.                                                  *
+ *            - re_form = "all" on a mixed-effects model: conditional prediction not yet implemented.                  *
  *            - By-factor smooths (s(x, by=f)) and re-smooths (s(g, bs="re")): not yet supported.                      *
  *            - Bayesian estimation: deferred to a later release.                                                      *
  *            - type = "pi" or "both": prediction intervals deferred to a later release.                               *
@@ -51,7 +53,15 @@ struct PredictOptions
 	String scale = "response";   // "response" | "link"
 	bool   bare = false;         // if true, drop echoed input columns
 	double ci_level = 0.95;      // coverage probability for the CI
-	// re_form, allow_new_levels: deferred (mixed-effects path is refused)
+
+	// Mixed-effects: how to treat the random-effects contribution.
+	//   "none" (default) — population-level prediction: η = X·β with u=0.
+	//                      Variance from V_β alone. Matches what
+	//                      ggpredict / predict.glmmTMB(re.form = NA) return.
+	//   "all"            — conditional on the BLUPs: deferred. Will refuse.
+	String re_form = "none";
+
+	// allow_new_levels: deferred (mixed-effects path is refused regardless)
 };
 
 struct PredictResult

@@ -1697,6 +1697,9 @@ void DataTable::initialize(Runtime &rt)
 		if (auto it = map.find(String("ci_level")); it != map.end()) {
 			opts.ci_level = it->second.get_number();
 		}
+		if (auto it = map.find(String("re_form")); it != map.end()) {
+			opts.re_form = cast<String>(it->second);
+		}
 		return opts;
 	};
 
