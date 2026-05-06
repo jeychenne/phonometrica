@@ -1037,22 +1037,23 @@ pairwise contrasts using posterior-based inference:
 Diagnostics tab (Bayesian mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The diagnostic plots work the same way in Bayesian mode, but the residual tests use
-**posterior predictive checking** (PPC) instead of frequentist simulation:
+The diagnostic plots and residual tests work identically in Bayesian and frequentist
+modes. Both estimation methods use the same DHARMa-style simulation-based scaled
+residuals — for mixed-effects models, simulation is unconditional (random effects are
+re-drawn from their estimated covariance for each replicate) — and the same Kolmogorov–
+Smirnov, dispersion, and outlier tests are applied to those residuals. The reported
+*p*-values are frequentist p-values from the simulation reference distribution; their
+interpretation (and the threshold for concern) is the same regardless of how the model
+was fit.
 
-1. For each of 200 replicates, a new coefficient vector β\ :sup:`(r)` is drawn from the
-   posterior (sampling a grid point with probability proportional to its weight, then drawing
-   from the conditional Gaussian at that grid point).
-2. A new response vector is simulated from the model using β\ :sup:`(r)` (plus the
-   conditional random-effects modes and dispersion parameters from the sampled grid point).
-3. The same KS, dispersion, and outlier test statistics are computed on the simulated data.
-4. The proportion of replicates where the simulated test statistic exceeds the observed value
-   is the **Bayesian p-value** — a measure of how well the model's predictions match the
-   observed data.
+.. note::
 
-A Bayesian p-value near 0.5 indicates good calibration; values near 0 or 1 indicate
-systematic discrepancy between the model and the data. Unlike frequentist *p*-values, these
-do not reject a null hypothesis; they measure predictive adequacy.
+   Earlier versions of Phonometrica reported posterior predictive p-values for Bayesian
+   fits. That layer has been removed: the test statistic it used was based on
+   conditional PIT residuals against the posterior-mean BLUP, which carried a built-in
+   upward bias on the KS statistic (false-positive rate above nominal even when the
+   marginal residuals were clean). The current diagnostics avoid this asymmetry by
+   using the same unconditional reference distribution for both estimation methods.
 
 
 Model comparison (Bayesian mode)

@@ -712,7 +712,9 @@ void AnalysisView::setupUi()
 	m_plot_type_combo->addItem(tr("Normal Q-Q"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals vs Fitted"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals Q-Q"));
-	m_plot_type_combo->addItem(tr("Posterior Densities"));
+	// "Posterior Densities" is appended dynamically in updateDiagnosticPlot()
+	// when a Bayesian model is selected, so the option only appears when it
+	// can do something useful.
 	diag_top->addWidget(m_plot_type_combo);
 
 	// Predictor selector for the posterior-densities plot. Hidden unless that
@@ -2828,6 +2830,27 @@ void AnalysisView::updateDiagnosticPlot()
 	}
 
 	auto &m = m_analysis->model(m_current_model);
+
+	// Add or remove the "Posterior Densities" plot type based on whether the
+	// current model is Bayesian. The item is the last entry when present.
+	{
+		QSignalBlocker blocker(m_plot_type_combo);
+		const QString posterior_label = tr("Posterior Densities");
+		int posterior_index = m_plot_type_combo->findText(posterior_label);
+		if (m.is_bayesian())
+		{
+			if (posterior_index < 0)
+				m_plot_type_combo->addItem(posterior_label);
+		}
+		else if (posterior_index >= 0)
+		{
+			// If currently selected, fall back to the first plot type before removal.
+			if (m_plot_type_combo->currentIndex() == posterior_index)
+				m_plot_type_combo->setCurrentIndex(0);
+			m_plot_type_combo->removeItem(posterior_index);
+		}
+	}
+
 	int plot_type = m_plot_type_combo->currentIndex();
 
 	// The predictor selector is relevant only for the posterior-densities plot
@@ -2929,24 +2952,34 @@ void AnalysisView::plotQQ(const stats::Model &m)
 
 const stats::ScaledResidualResult *AnalysisView::ensureScaledResiduals(const stats::Model &m)
 {
-	if (m_scaled_residuals && m_scaled_residuals_model == m_current_model)
-		return &*m_scaled_residuals;
+	// Cache hit: this model has already been processed for the current
+	// session. Return the cached result if computation succeeded, or
+	// nullptr if it failed previously — the failure reason was recorded
+	// in m_scaled_residuals_error and will be shown inline in the
+	// scaled-residual plot views.
+	if (m_scaled_residuals_model == m_current_model)
+		return m_scaled_residuals ? &*m_scaled_residuals : nullptr;
 
 	if (m.nobs == 0 || m.y.empty() || m.fitted.empty())
+	{
+		m_scaled_residuals.reset();
+		m_scaled_residuals_model = m_current_model;
+		m_scaled_residuals_error = tr("Residual diagnostics are not available: this model carries no fitted data.");
 		return nullptr;
+	}
 
 	try
 	{
 		m_scaled_residuals = stats::compute_scaled_residuals(m);
 		m_scaled_residuals_model = m_current_model;
+		m_scaled_residuals_error.clear();
 		return &*m_scaled_residuals;
 	}
 	catch (std::exception &e)
 	{
 		m_scaled_residuals.reset();
-		m_scaled_residuals_model = -1;
-		QMessageBox::warning(this, tr("Scaled residuals"),
-			tr("Could not compute scaled residuals:\n%1").arg(QString::fromUtf8(e.what())));
+		m_scaled_residuals_model = m_current_model;
+		m_scaled_residuals_error = QString::fromUtf8(e.what());
 		return nullptr;
 	}
 }
@@ -2955,8 +2988,7 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 {
 	auto *sr = ensureScaledResiduals(m);
 	if (!sr) {
-		m_plot->clear();
-		clearTestResults();
+		showResidualUnavailable();
 		return;
 	}
 
@@ -3008,8 +3040,7 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 {
 	auto *sr = ensureScaledResiduals(m);
 	if (!sr) {
-		m_plot->clear();
-		clearTestResults();
+		showResidualUnavailable();
 		return;
 	}
 
@@ -3038,13 +3069,12 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 
 void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 {
+	// Defensive guard. The "Posterior Densities" plot type is added to the
+	// combo only for Bayesian models in updateDiagnosticPlot(), so this branch
+	// is normally unreachable from the GUI; keep it as a safety net.
 	if (!m.is_bayesian())
 	{
 		m_plot->clear();
-		QMessageBox::information(this, tr("Posterior Densities"),
-			tr("Posterior density plots are only available for Bayesian models.\n\n"
-			   "To fit a Bayesian model, select \"Bayesian\" in the Estimation dropdown\n"
-			   "before fitting, or pass a Prior object to fit() in a script."));
 		return;
 	}
 
@@ -3180,62 +3210,28 @@ void AnalysisView::updateTestResults(const stats::ScaledResidualResult &sr)
 
 	QString text;
 
-	if (sr.is_ppc)
+	text += QStringLiteral("Kolmogorov\u2013Smirnov test for uniformity (H\u2080: residuals ~ U(0,1)):  D = %1,  p = %2\n")
+		.arg(sr.ks_statistic, 0, 'f', 4)
+		.arg(format_p(sr.ks_pvalue));
+
+	text += QStringLiteral("Dispersion test:  ratio = %1,  p = %2")
+		.arg(sr.dispersion_ratio, 0, 'f', 4)
+		.arg(format_p(sr.dispersion_pvalue));
+
+	if (sr.dispersion_pvalue < 0.05)
 	{
-		// ── Posterior predictive checks ──────────────────────────
-		auto ppc_label = [](double pp) -> const char * {
-			return (pp < 0.05) ? "check model" : "good";
-		};
-
-		text += QStringLiteral("Posterior predictive checks\n\n");
-
-		text += QStringLiteral("Uniformity:    KS D = %1  (Bayesian p-value = %2, %3)\n")
-			.arg(sr.ks_statistic, 0, 'f', 4)
-			.arg(format_p(sr.ks_pvalue))
-			.arg(QString::fromUtf8(ppc_label(sr.ks_pvalue)));
-
-		text += QStringLiteral("Dispersion:    ratio = %1  (Bayesian p-value = %2, %3)")
-			.arg(sr.dispersion_ratio, 0, 'f', 4)
-			.arg(format_p(sr.dispersion_pvalue))
-			.arg(QString::fromUtf8(ppc_label(sr.dispersion_pvalue)));
-
-		if (sr.dispersion_pvalue < 0.05)
-		{
-			if (sr.dispersion_ratio > 1.0)
-				text += QStringLiteral("  \u2014 overdispersion");
-			else if (sr.dispersion_ratio < 1.0)
-				text += QStringLiteral("  \u2014 underdispersion");
-		}
-
-		text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
-			.arg(sr.n_outliers)
-			.arg(format_p(sr.outlier_pvalue));
+		if (sr.dispersion_ratio > 1.0)
+			text += QStringLiteral("  (potential overdispersion)");
+		else if (sr.dispersion_ratio < 1.0)
+			text += QStringLiteral("  (potential underdispersion)");
 	}
-	else
-	{
-		// ── Frequentist tests (existing display) ────────────────
-		text += QStringLiteral("Kolmogorov\u2013Smirnov test for uniformity (H\u2080: residuals ~ U(0,1)):  D = %1,  p = %2\n")
-			.arg(sr.ks_statistic, 0, 'f', 4)
-			.arg(format_p(sr.ks_pvalue));
 
-		text += QStringLiteral("Dispersion test:  ratio = %1,  p = %2")
-			.arg(sr.dispersion_ratio, 0, 'f', 4)
-			.arg(format_p(sr.dispersion_pvalue));
-
-		if (sr.dispersion_pvalue < 0.05)
-		{
-			if (sr.dispersion_ratio > 1.0)
-				text += QStringLiteral("  (potential overdispersion)");
-			else if (sr.dispersion_ratio < 1.0)
-				text += QStringLiteral("  (potential underdispersion)");
-		}
-
-		text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
-			.arg(sr.n_outliers)
-			.arg(format_p(sr.outlier_pvalue));
-	}
+	text += QStringLiteral("\nOutlier test:  %1 outlier(s) detected,  p = %2")
+		.arg(sr.n_outliers)
+		.arg(format_p(sr.outlier_pvalue));
 
 	m_test_results_text->setPlainText(text);
+	m_test_results_group->setTitle(tr("Residual tests"));
 	m_test_results_group->setVisible(true);
 }
 
@@ -3243,6 +3239,22 @@ void AnalysisView::clearTestResults()
 {
 	m_test_results_group->setVisible(false);
 	m_test_results_text->clear();
+}
+
+void AnalysisView::showResidualUnavailable()
+{
+	// Inline message used in place of a modal popup when scaled residuals
+	// can't be computed for the current model. Confined to the scaled-residual
+	// plot views; other diagnostics and the model summary are unaffected.
+	m_plot->clear();
+
+	QString message = m_scaled_residuals_error.isEmpty()
+		? tr("Residual diagnostics are not available for this model.")
+		: m_scaled_residuals_error;
+
+	m_test_results_text->setPlainText(message);
+	m_test_results_group->setTitle(tr("Residual diagnostics"));
+	m_test_results_group->setVisible(true);
 }
 
 

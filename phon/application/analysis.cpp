@@ -28,6 +28,8 @@
 #include <phon/application/project.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/conc/concordance.hpp>
+#include <phon/analysis/fitting.hpp>
+#include <phon/analysis/formula.hpp>
 #include <phon/utils/xml.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -319,6 +321,82 @@ Array<double> parse_doubles(const char *text)
 	return result;
 }
 
+// Overload of doubles_to_string for std::vector<double>. Used for serialising
+// the Z_design field of RandomEffectGroup, which is stored as a flat vector
+// rather than an Array.
+String doubles_to_string(const std::vector<double> &vec)
+{
+	std::ostringstream oss;
+	oss << std::setprecision(17);
+	for (size_t i = 0; i < vec.size(); i++)
+	{
+		if (i > 0) oss << ' ';
+		double v = vec[i];
+		if (std::isnan(v))
+			oss << "nan";
+		else if (std::isinf(v))
+			oss << (v < 0 ? "-inf" : "inf");
+		else
+			oss << v;
+	}
+	return String(oss.str());
+}
+
+// Counterpart reader returning std::vector<double>.
+std::vector<double> parse_doubles_vector(const char *text)
+{
+	std::vector<double> result;
+	std::istringstream iss(text);
+	std::string token;
+	while (iss >> token)
+	{
+		if (token == "nan" || token == "-nan" || token == "NaN" || token == "-NaN")
+			result.push_back(std::nan(""));
+		else if (token == "inf" || token == "Inf")
+			result.push_back(std::numeric_limits<double>::infinity());
+		else if (token == "-inf" || token == "-Inf")
+			result.push_back(-std::numeric_limits<double>::infinity());
+		else
+		{
+			try {
+				result.push_back(std::stod(token));
+			} catch (...) {
+				result.push_back(std::nan(""));
+			}
+		}
+	}
+	return result;
+}
+
+// Write a vector of intptr_t as space-separated decimal text. Used for the
+// per-observation level indices of RandomEffectGroup.
+String intptr_vector_to_string(const std::vector<intptr_t> &vec)
+{
+	std::ostringstream oss;
+	for (size_t i = 0; i < vec.size(); i++)
+	{
+		if (i > 0) oss << ' ';
+		oss << vec[i];
+	}
+	return String(oss.str());
+}
+
+std::vector<intptr_t> parse_intptr_vector(const char *text)
+{
+	std::vector<intptr_t> result;
+	std::istringstream iss(text);
+	std::string token;
+	while (iss >> token)
+	{
+		try {
+			result.push_back((intptr_t) std::stoll(token));
+		} catch (...) {
+			// Skip malformed tokens silently — robust against partial files.
+		}
+	}
+	return result;
+}
+
 // Write a 0-indexed vector of intptr_t as space-separated integers.
 String intptrs_to_string(const std::vector<intptr_t> &arr)
 {
@@ -442,6 +520,23 @@ void Analysis::write()
 		if (!m.source_rows.empty())
 			add_data_node(mn, "SourceRows", intptrs_to_string(m.source_rows));
 
+		// Fixed-effects design matrix. Saving X lets the reload path reach
+		// residual diagnostics through the same Eigen X·β + offset pipeline
+		// as a freshly-fit model — important for Bayesian fits where m.beta
+		// is the posterior mean (not the MAP β baked into m.fitted), so
+		// reconstructing η_fixed via link(fitted) − Z·u_BLUP would silently
+		// use the MAP β and produce slightly different residuals.
+		if (!m.X.empty() && m.X.ndim() == 2)
+		{
+			auto x_node = mn.append_child("X");
+			x_node.append_attribute("nrow").set_value(
+				std::to_string((long long) m.X.nrow()).c_str());
+			x_node.append_attribute("ncol").set_value(
+				std::to_string((long long) m.X.ncol()).c_str());
+			auto pcdata = x_node.append_child(node_pcdata);
+			pcdata.set_value(doubles_to_string(m.X).data());
+		}
+
 		add_data_node(mn, "LogLik", format_scalar(m.loglik));
 		add_data_node(mn, "AIC", format_scalar(m.aic));
 		add_data_node(mn, "BIC", format_scalar(m.bic));
@@ -496,6 +591,15 @@ void Analysis::write()
 				add_data_node(gn, "Variance", doubles_to_string(re.variance));
 				add_data_node(gn, "CovChol", doubles_to_string(re.cov_chol));
 				add_data_node(gn, "ConditionalModes", doubles_to_string(re.conditional_modes));
+
+				// Z design info needed for unconditional residual simulation.
+				// Saving these makes diagnostic output reproducible across save/
+				// load cycles. Old saves without these fields fall back to the
+				// conditional simulation path.
+				if (!re.Z_design.empty())
+					add_data_node(gn, "ZDesign", doubles_to_string(re.Z_design));
+				if (!re.indices.empty())
+					add_data_node(gn, "Indices", intptr_vector_to_string(re.indices));
 			}
 		}
 
@@ -700,6 +804,23 @@ void Analysis::load()
 					else if (name == "Residuals") m.residuals = parse_doubles(text);
 					else if (name == "Y")        m.y = parse_doubles(text);
 					else if (name == "SourceRows") m.source_rows = parse_intptrs(text);
+					else if (name == "X")
+					{
+						auto nrow_attr = field.attribute("nrow");
+						auto ncol_attr = field.attribute("ncol");
+						if (nrow_attr && ncol_attr)
+						{
+							intptr_t nr = std::atoll(nrow_attr.as_string());
+							intptr_t nc = std::atoll(ncol_attr.as_string());
+							auto values = parse_doubles_vector(text);
+							if (nr > 0 && nc > 0
+							    && (intptr_t) values.size() == nr * nc)
+							{
+								m.X = Array<double>(nr, nc);
+								std::copy(values.begin(), values.end(), m.X.data());
+							}
+						}
+					}
 					else if (name == "LogLik")   m.loglik = parse_double_safe(text);
 					else if (name == "AIC")      m.aic = parse_double_safe(text);
 					else if (name == "BIC")      m.bic = parse_double_safe(text);
@@ -750,6 +871,8 @@ void Analysis::load()
 								else if (gfn == "Variance")        re.variance = parse_doubles(gft);
 								else if (gfn == "CovChol")         re.cov_chol = parse_doubles(gft);
 								else if (gfn == "ConditionalModes") re.conditional_modes = parse_doubles(gft);
+								else if (gfn == "ZDesign")         re.Z_design = parse_doubles_vector(gft);
+								else if (gfn == "Indices")         re.indices  = parse_intptr_vector(gft);
 							}
 
 							// Defensive: derive `nterms` and `nlevels` from the
@@ -987,6 +1110,68 @@ void Analysis::load()
 
 	// Try to resolve the source
 	resolve_source();
+
+	// Reconstruct random-effects design info (Z_design, indices) for any
+	// model that lacks it — typically because it was loaded from a save file
+	// written before these fields were serialised. Reconstruction needs the
+	// source data, the formula, and SourceRows; if any of those are missing
+	// or malformed, the affected fields stay empty and residual diagnostics
+	// will report unavailability when the user asks for them.
+	if (m_source)
+	{
+		for (auto &m : m_models)
+		{
+			if (m.random_effects.empty()) continue;
+			if (m.source_rows.empty()) continue;
+
+			// Skip the model if every group already has its design info.
+			bool any_missing = false;
+			for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+				const auto &re = m.random_effects[g];
+				if (re.indices.empty() || re.Z_design.empty()) {
+					any_missing = true;
+					break;
+				}
+			}
+			if (!any_missing) continue;
+
+			try
+			{
+				auto formula = stats::Formula::parse(m.formula);
+
+				// SourceRows is std::vector<intptr_t> already — exactly what
+				// build_re_design_info expects.
+				const std::vector<intptr_t> &rows = m.source_rows;
+
+				for (intptr_t rt_idx = 1; rt_idx <= formula.random.size(); rt_idx++)
+				{
+					const auto &rt = formula.random[rt_idx];
+
+					// Match this random term to an RE group by name; rebuild
+					// only the groups whose design info is missing.
+					for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+					{
+						auto &re = m.random_effects[g];
+						if (re.group_name != rt.group) continue;
+						if (!re.indices.empty() && !re.Z_design.empty()) break;
+
+						auto gi = stats::build_re_design_info(*m_source, rt, rows, m_reference_levels);
+						re.indices = std::move(gi.indices);
+						re.Z_design = std::move(gi.Z_design);
+						re.nterms = gi.nterms;
+						break;
+					}
+				}
+			}
+			catch (...)
+			{
+				// Reconstruction failed — formula won't parse, columns
+				// missing, level names changed in the source, etc. Leave
+				// fields empty; the residual-diagnostic code will report
+				// unavailability when (and only when) the user asks for it.
+			}
+		}
+	}
 
 	m_modified = false;
 }

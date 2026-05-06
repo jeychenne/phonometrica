@@ -61,9 +61,11 @@ struct RandomEffectGroup
 	Array<double> conditional_modes;
 
 	// ---- Z design info (for simulation-based diagnostics) ----
-	// These are populated at fitting time from GroupingInfo and are NOT serialised.
-	// If the model is loaded from file, they will be empty, and the diagnostic
-	// code falls back to the analytical (conditional) path.
+	// Populated at fitting time from GroupingInfo and serialised to disk so
+	// that residual diagnostics on a reloaded model produce the same
+	// unconditional simulation as a freshly-fit one. If empty (e.g. model
+	// loaded from a save file written before these fields were serialised),
+	// the diagnostic code falls back to the conditional path.
 	intptr_t nterms = 1;                    // q_g: number of random terms per level
 	std::vector<intptr_t> indices;           // n_obs: per-observation level index [0, nlevels)
 	std::vector<double> Z_design;            // n_obs × nterms, row-major

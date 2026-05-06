@@ -104,19 +104,13 @@ struct ScaledResidualResult
 	// Under H0, P(outlier) = 2/(nsim+1) per observation.
 	int n_outliers = 0;
 	double outlier_pvalue = 1;
-
-	// When true, the p-values above are posterior predictive p-values
-	// rather than frequentist p-values.  Posterior predictive p-values
-	// represent the proportion of replicate datasets (drawn from the
-	// posterior predictive distribution) that produce a test statistic
-	// at least as extreme as the observed one.
-	bool is_ppc = false;
 };
 
 // Compute DHARMa-style simulation-based scaled residuals for a fitted model.
 // For mixed models, simulation is unconditional (re-draws random effects),
 // matching DHARMa's default.  For discrete families (binomial, Poisson, NB),
 // randomized PIT is used; for continuous families (Gaussian), midpoint PIT.
+// The same diagnostics apply to frequentist and Bayesian fits.
 ScaledResidualResult compute_scaled_residuals(const Model &m);
 
 } // namespace phonometrica::stats

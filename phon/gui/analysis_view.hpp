@@ -150,6 +150,10 @@ private:
 	const stats::ScaledResidualResult *ensureScaledResiduals(const stats::Model &m);
 	void updateTestResults(const stats::ScaledResidualResult &sr);
 	void clearTestResults();
+	// Inline replacement for the old modal "could not compute residuals"
+	// popup. Confined to plotScaledResiduals* views — clears the plot and
+	// shows m_scaled_residuals_error in the test-results text area.
+	void showResidualUnavailable();
 
 	// Effects tab plumbing.
 	void populateEffectsFocalCombo();
@@ -232,6 +236,9 @@ private:
 	// Scaled residual cache (lazy, invalidated on model change).
 	int m_scaled_residuals_model = -1;
 	std::optional<stats::ScaledResidualResult> m_scaled_residuals;
+	// When residual computation fails, this carries the explanation that
+	// is shown inline in the scaled-residual plot views (no modal popup).
+	QString m_scaled_residuals_error;
 
 	// Top bar
 	QLineEdit *m_formula_edit = nullptr;

@@ -146,7 +146,6 @@ This is a major release. Phonometrica has gained substantial new functionality f
 - Model comparison: AIC/BIC table, pairwise likelihood ratio tests with automatic nestedness checking.
 - Approximate Bayesian inference (INLA-style): data-dependent weakly informative priors, posterior summaries (mean, credible intervals, probability of direction), customizable priors.
 - Bayesian model comparison: WAIC, PSIS-LOO-IC with Pareto *k* diagnostics, log Bayes factors.
-- Posterior predictive checks (PPC) for Bayesian models.
 - Estimated marginal means (EMMs) and pairwise contrasts with Holm/Bonferroni adjustment; emtrends mode for testing slopes across groups. Bayesian EMMs report credible intervals and probability of direction.
 - Reference level setting for categorical variables.
 - DHARMa-style simulation-based scaled residuals for all model families.

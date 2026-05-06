@@ -395,11 +395,11 @@ are performed:
 For **frequentist models**, the simulations are drawn from the fitted model (conditional
 simulation with 1000 replicates).
 
-For **Bayesian models**, the function performs posterior predictive checking (PPC) for the uniformity and dispersion tests: coefficient
-vectors are drawn from the posterior (200 replicates), new response vectors are simulated, and
-the test statistics are compared between observed and simulated data. The resulting *p*-values
-are Bayesian *p*-values (proportion of replicates where the simulated statistic exceeds the
-observed).
+For **Bayesian models**, the same DHARMa-style diagnostics are used: scaled residuals are
+computed from the marginal predictive distribution at the posterior mean (with random effects
+re-drawn from their estimated covariance for mixed-effects models), and the reported
+*p*-values are frequentist p-values from the simulation reference distribution. The
+interpretation is the same as for frequentist fits.
 
 Example::
 

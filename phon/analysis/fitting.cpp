@@ -656,6 +656,18 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 
 // =====================================================================
+// Public reconstruction helper
+// =====================================================================
+
+GroupingInfo build_re_design_info(const DataTable &data, const RandomTerm &rt,
+                                   const std::vector<intptr_t> &rows,
+                                   const std::map<String, String> &reference_levels)
+{
+	return build_grouping(data, rt, rows, reference_levels);
+}
+
+
+// =====================================================================
 // Public fit() entry point
 // =====================================================================
 

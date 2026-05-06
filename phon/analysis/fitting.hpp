@@ -35,6 +35,7 @@
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/formula.hpp>
 #include <phon/analysis/prior.hpp>
+#include <phon/analysis/mixed_model.hpp>
 #include <phon/application/data_table.hpp>
 
 namespace phonometrica::stats {
@@ -61,6 +62,17 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
           const std::map<String, String> &reference_levels = {},
           FittingCallback progress = nullptr,
           int max_iter = 200);
+
+//! Reconstruct the design info (Z_design, indices, nterms) for a single random
+//! term from source data. Mirrors what fit() does internally — provided so
+//! that residual diagnostics on a model loaded from disk can rebuild the
+//! design info that wasn't serialised (only conditional_modes/cov_chol etc.
+//! are saved). Throws on column lookup or formula errors; the caller is
+//! expected to swallow such failures and fall back to "diagnostics
+//! unavailable" reporting.
+GroupingInfo build_re_design_info(const DataTable &data, const RandomTerm &rt,
+                                   const std::vector<intptr_t> &rows,
+                                   const std::map<String, String> &reference_levels);
 
 } // namespace phonometrica::stats
 

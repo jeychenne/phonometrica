@@ -33,7 +33,7 @@ The implementation of Phonometrica's scripting engine was partly inspired by Rob
 
 Portions of the statistical estimation logic — including negative binomial regression, mixed-effects models,
 generalized additive models, DHARMa-style residual diagnostics, estimated marginal means, approximate
-Bayesian inference (INLA-style), WAIC, PSIS-LOO, and posterior predictive checks — were developed with the
+Bayesian inference (INLA-style), WAIC, and PSIS-LOO — were developed with the
 assistance of Claude Opus 4.6 (Anthropic), based on published statistical literature and reference R
 implementations. All AI-assisted logic was manually audited, refactored, and validated against reference R
 packages (glmmTMB, mgcv, emmeans, MuMIn, DHARMa, loo, brms) to ensure mathematical accuracy and
