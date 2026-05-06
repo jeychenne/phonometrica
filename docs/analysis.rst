@@ -728,13 +728,15 @@ Phonometrica's statistical engine supports the following model families:
   rate or proportion. The precision parameter φ is estimated jointly with the regression
   coefficients; higher φ indicates less variability around the mean proportion.
 - **Student t** (identity link): robust regression and robust mixed models for continuous
-  outcomes with heavy-tailed residuals. Useful when automatic measurements (e.g. formant
-  tracking) produce occasional large errors that would unduly influence a Gaussian model.
-  The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
+  outcomes with heavy-tailed residuals. Useful when more observations are in the tails than would be expected
+   under a Gaussian model. The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
   parameter ν that controls the tail heaviness. Observations with large residuals receive lower
   weight, so the fixed-effects estimates are robust to outliers. As ν → ∞ the model reduces to
-  Gaussian regression; in practice, ν < 10 indicates meaningful departure from normality. Select
-  **Continuous (robust)** in the Outcome dropdown to use this family, or pass ``"student"`` to
+  Gaussian regression; in practice, ν < 10 indicates meaningful departure from normality.
+  The engine fits Student-t models from multiple starting values for ν (covering the heavy-tailed-to-near-Gaussian range)
+  and keeps the best converged fit, so users do not need to specify initial values for ν or σ. If a fit produces an unusually
+  large ν (≥ 199), Phonometrica issues a warning indicating that the data are essentially Gaussian and recommends switching to the Gaussian family.
+  Select **Continuous (robust)** in the Outcome dropdown to use this family, or pass ``"student"`` to
   the ``fit()`` scripting function.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
   smooths, per-smooth significance tests, and random intercepts and random slopes via ``bs=re``

@@ -728,8 +728,30 @@ void AnalysisView::setupUi()
 	diag_top->addWidget(m_posterior_predictors_combo);
 
 	diag_top->addStretch();
-	auto *export_button = new QPushButton(tr("Export..."));
-	diag_top->addWidget(export_button);
+
+	// Save... popup menu (PNG / PDF / SVG) and Detach action, mirroring
+	// the EDA toolbar idiom but rendered as inline QToolButtons in the
+	// existing controls row (the Diagnostics panel doesn't have enough
+	// other controls to justify a separate toolbar row).
+	auto *diag_save_menu = new QMenu(this);
+	diag_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportDiagPNG);
+	diag_save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportDiagPDF);
+	diag_save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportDiagSVG);
+	auto *diag_save_btn = new QToolButton;
+	diag_save_btn->setIcon(QIcon(":/icons/save.svg"));
+	diag_save_btn->setToolTip(tr("Save the plot as PNG, PDF, or SVG"));
+	diag_save_btn->setMenu(diag_save_menu);
+	diag_save_btn->setPopupMode(QToolButton::InstantPopup);
+	diag_top->addWidget(diag_save_btn);
+
+	auto *diag_detach_btn = new QToolButton;
+	diag_detach_btn->setIcon(QIcon(":/icons/maximize.svg"));
+	diag_detach_btn->setToolTip(tr("Open the plot in a resizable window"));
+	auto *diag_detach_action = new QAction(QIcon(":/icons/maximize.svg"),
+	                                        tr("Detach plot"), this);
+	diag_detach_btn->setDefaultAction(diag_detach_action);
+	diag_top->addWidget(diag_detach_btn);
+
 	diag_layout->addLayout(diag_top);
 
 	m_plot = new PlotWidget;
@@ -747,6 +769,21 @@ void AnalysisView::setupUi()
 	test_layout->addWidget(m_test_results_text);
 	m_test_results_group->setVisible(false);
 	diag_layout->addWidget(m_test_results_group);
+
+	// Wire the diagnostics DetachablePlot. The plot lives at index 1
+	// of diag_layout (index 0 is diag_top, index 2 is the test-results
+	// group); on reattach we re-insert at that same index.
+	m_diag_detach.plot          = m_plot;
+	m_diag_detach.home_layout   = diag_layout;
+	m_diag_detach.home_index    = 1;
+	m_diag_detach.home_stretch  = 1;
+	m_diag_detach.window_title  = tr("Diagnostic plot");
+	m_diag_detach.detach_action = diag_detach_action;
+	m_diag_detach.placeholder_text = tr(
+	    "Plot detached — close the floating window or click Reattach to return it here.");
+	m_diag_detach.save_png = [this]() { onExportDiagPNG(); };
+	m_diag_detach.save_pdf = [this]() { onExportDiagPDF(); };
+	m_diag_detach.save_svg = [this]() { onExportDiagSVG(); };
 
 	m_right_tabs->addTab(diag_widget, tr("Diagnostics"));
 	m_right_tabs->setTabToolTip(2, tr("Residual plots to check model assumptions"));
@@ -817,9 +854,28 @@ void AnalysisView::setupUi()
 	effects_top->addWidget(m_effects_show_legend_check);
 
 	effects_top->addStretch();
-	auto *effects_export_btn = new QPushButton(tr("Export..."));
-	m_effects_export_button = effects_export_btn;
-	effects_top->addWidget(effects_export_btn);
+
+	// Save... popup menu and Detach action — same idiom as the
+	// Diagnostics panel above.
+	auto *effects_save_menu = new QMenu(this);
+	effects_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEffectsPNG);
+	effects_save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEffectsPDF);
+	effects_save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportEffectsSVG);
+	auto *effects_save_btn = new QToolButton;
+	effects_save_btn->setIcon(QIcon(":/icons/save.svg"));
+	effects_save_btn->setToolTip(tr("Save the plot as PNG, PDF, or SVG"));
+	effects_save_btn->setMenu(effects_save_menu);
+	effects_save_btn->setPopupMode(QToolButton::InstantPopup);
+	effects_top->addWidget(effects_save_btn);
+
+	auto *effects_detach_btn = new QToolButton;
+	effects_detach_btn->setIcon(QIcon(":/icons/maximize.svg"));
+	effects_detach_btn->setToolTip(tr("Open the plot in a resizable window"));
+	auto *effects_detach_action = new QAction(QIcon(":/icons/maximize.svg"),
+	                                           tr("Detach plot"), this);
+	effects_detach_btn->setDefaultAction(effects_detach_action);
+	effects_top->addWidget(effects_detach_btn);
+
 	effects_layout->addLayout(effects_top);
 
 	m_effects_plot = new PlotWidget;
@@ -834,6 +890,24 @@ void AnalysisView::setupUi()
 		"QLabel { color: #555; padding: 12px; font-style: italic; }"));
 	m_effects_message->setVisible(false);
 	effects_layout->addWidget(m_effects_message);
+
+	// Wire the effects DetachablePlot. The plot lives at index 1 of
+	// effects_layout (index 0 is effects_top, index 2 is the message
+	// label); on reattach we re-insert at that same index. The message
+	// label and the plot are mutually exclusive — updateEffectsPlot()
+	// auto-reattaches when entering message mode so the user sees the
+	// explanation in the home tab rather than an empty floating window.
+	m_effects_detach.plot          = m_effects_plot;
+	m_effects_detach.home_layout   = effects_layout;
+	m_effects_detach.home_index    = 1;
+	m_effects_detach.home_stretch  = 1;
+	m_effects_detach.window_title  = tr("Effects plot");
+	m_effects_detach.detach_action = effects_detach_action;
+	m_effects_detach.placeholder_text = tr(
+	    "Plot detached — close the floating window or click Reattach to return it here.");
+	m_effects_detach.save_png = [this]() { onExportEffectsPNG(); };
+	m_effects_detach.save_pdf = [this]() { onExportEffectsPDF(); };
+	m_effects_detach.save_svg = [this]() { onExportEffectsSVG(); };
 
 	m_right_tabs->addTab(effects_widget, tr("Effects"));
 	m_right_tabs->setTabToolTip(3, tr(
@@ -872,9 +946,9 @@ void AnalysisView::setupUi()
 	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	eda_toolbar->addWidget(spacer);
 
-	auto *detach_action = new QAction(QIcon(":/icons/maximize.svg"), tr("Detach plot"), this);
-	detach_action->setToolTip(tr("Open the plot in a resizable window"));
-	eda_toolbar->addAction(detach_action);
+	auto *eda_detach_action = new QAction(QIcon(":/icons/maximize.svg"), tr("Detach plot"), this);
+	eda_detach_action->setToolTip(tr("Open the plot in a resizable window"));
+	eda_toolbar->addAction(eda_detach_action);
 
 	eda_layout->addWidget(eda_toolbar);
 
@@ -1010,11 +1084,26 @@ void AnalysisView::setupUi()
 
 	// ── Assemble: splitter between (plot + controls) and stats ──
 	auto *eda_top = new QWidget;
-	m_eda_top_layout = new QVBoxLayout(eda_top);
-	m_eda_top_layout->setContentsMargins(0, 0, 0, 0);
-	m_eda_top_layout->setSpacing(4);
-	m_eda_top_layout->addWidget(m_eda_plot, 1);
-	m_eda_top_layout->addWidget(eda_controls_widget);
+	auto *eda_top_layout = new QVBoxLayout(eda_top);
+	eda_top_layout->setContentsMargins(0, 0, 0, 0);
+	eda_top_layout->setSpacing(4);
+	eda_top_layout->addWidget(m_eda_plot, 1);
+	eda_top_layout->addWidget(eda_controls_widget);
+
+	// Wire the EDA DetachablePlot. The plot lives at index 0 of
+	// eda_top_layout (above eda_controls_widget); on reattach we
+	// re-insert at that same index.
+	m_eda_detach.plot          = m_eda_plot;
+	m_eda_detach.home_layout   = eda_top_layout;
+	m_eda_detach.home_index    = 0;
+	m_eda_detach.home_stretch  = 1;
+	m_eda_detach.window_title  = tr("EDA plot");
+	m_eda_detach.detach_action = eda_detach_action;
+	m_eda_detach.placeholder_text = tr(
+	    "Plot detached — close the floating window or click Reattach to return it here.");
+	m_eda_detach.save_png = [this]() { onExportEdaPNG(); };
+	m_eda_detach.save_pdf = [this]() { onExportEdaPDF(); };
+	m_eda_detach.save_svg = [this]() { onExportEdaSVG(); };
 
 	auto *eda_splitter = new QSplitter(Qt::Vertical);
 	eda_splitter->addWidget(eda_top);
@@ -1062,7 +1151,6 @@ void AnalysisView::setupUi()
 	connect(m_plot_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPlotTypeChanged);
 	connect(m_posterior_predictors_combo, &CheckableComboBox::checkedItemsChanged,
 	        this, [this](const QStringList &) { updateDiagnosticPlot(); });
-	connect(export_button, &QPushButton::clicked, this, &AnalysisView::onExportPlot);
 	connect(copy_action, &QAction::triggered, this, &AnalysisView::onCopySummary);
 	connect(save_txt_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryText);
 	connect(save_latex_action, &QAction::triggered, this, &AnalysisView::onSaveSummaryLatex);
@@ -1097,7 +1185,9 @@ void AnalysisView::setupUi()
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_formant_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
-	connect(detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
+	connect(eda_detach_action, &QAction::triggered, this, &AnalysisView::onDetachEdaPlot);
+	connect(diag_detach_action, &QAction::triggered, this, &AnalysisView::onDetachDiagPlot);
+	connect(effects_detach_action, &QAction::triggered, this, &AnalysisView::onDetachEffectsPlot);
 	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
 	connect(m_posthoc_factor_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_by_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
@@ -1128,8 +1218,12 @@ void AnalysisView::setupUi()
 	// "Show legend" checkbox: re-render with the new flag.
 	connect(m_effects_show_legend_check, &QCheckBox::toggled,
 	        this, [this](bool) { updateEffectsPlot(); });
-	connect(effects_export_btn, &QPushButton::clicked,
-	        this, &AnalysisView::onExportEffectsPlot);
+
+	// Initial enabled state for the three detach actions. Plots have
+	// no data yet, so all three start disabled; updateDetachActionsEnabled()
+	// is called whenever a plot is populated or cleared to keep this
+	// in sync.
+	updateDetachActionsEnabled();
 }
 
 
@@ -1422,8 +1516,12 @@ void AnalysisView::onDeleteModel()
 		m_posthoc_contrast_table->clear();
 		m_posthoc_contrast_table->setRowCount(0);
 		m_posthoc_contrast_table->setColumnCount(0);
+		// Effects panel goes through its standard "no model" path, which
+		// auto-reattaches a detached float window if one is up.
+		updateEffectsPlot();
 		refreshEdaVirtualColumns();
 		updateAddToDataButton();
+		updateDetachActionsEnabled();
 	}
 
 	emit titleChanged(label());
@@ -2725,6 +2823,7 @@ void AnalysisView::updateDiagnosticPlot()
 		clearTestResults();
 		m_posterior_predictors_label->setVisible(false);
 		m_posterior_predictors_combo->setVisible(false);
+		updateDetachActionsEnabled();
 		return;
 	}
 
@@ -2754,6 +2853,8 @@ void AnalysisView::updateDiagnosticPlot()
 	// Show test results only for scaled residual plots.
 	if (plot_type < 2 || plot_type >= 4)
 		clearTestResults();
+
+	updateDetachActionsEnabled();
 }
 
 void AnalysisView::plotResidualsVsFitted(const stats::Model &m)
@@ -3153,6 +3254,7 @@ void AnalysisView::onEdaChanged()
 {
 	updateEdaPlot();
 	updateEdaSummary();
+	updateDetachActionsEnabled();
 }
 
 void AnalysisView::onExportEdaPNG()
@@ -3197,37 +3299,52 @@ void AnalysisView::onExportEdaSVG()
 	m_eda_plot->saveSVG(path);
 }
 
-void AnalysisView::onDetachEdaPlot()
+// ── Detach / reattach implementation ─────────────────────────────────
+//
+// The detachPlot()/reattachPlot() helpers carry the full mechanism.
+// The per-panel slots are thin wrappers: they hand the corresponding
+// DetachablePlot struct to the helper, which migrates the plot widget
+// into a floating QWidget (with its own toolbar exposing the same
+// Save... menu the home toolbar provides, plus a Reattach action) and
+// inserts a placeholder into the home layout. eventFilter dispatches
+// Close events on any of the three floating windows back to the
+// matching reattach slot, so closing the window mirrors clicking
+// Reattach.
+
+void AnalysisView::detachPlot(DetachablePlot &dp)
 {
-	if (m_eda_float_window) {
+	if (dp.float_window) {
 		// Already detached — just raise the window.
-		m_eda_float_window->raise();
-		m_eda_float_window->activateWindow();
+		dp.float_window->raise();
+		dp.float_window->activateWindow();
 		return;
 	}
 
-	// Create a floating window. Parent is `this` with Qt::Window so it
-	// floats independently but is destroyed when the AnalysisView closes.
-	m_eda_float_window = new QWidget(this, Qt::Window);
-	m_eda_float_window->setWindowTitle(tr("EDA Plot"));
-	m_eda_float_window->setAttribute(Qt::WA_DeleteOnClose, false);
-	m_eda_float_window->installEventFilter(this);
+	// Floating window. Parent is `this` with Qt::Window so it floats
+	// independently but is destroyed when the AnalysisView closes.
+	dp.float_window = new QWidget(this, Qt::Window);
+	dp.float_window->setWindowTitle(dp.window_title);
+	dp.float_window->setAttribute(Qt::WA_DeleteOnClose, false);
+	dp.float_window->installEventFilter(this);
 
-	auto *layout = new QVBoxLayout(m_eda_float_window);
+	auto *layout = new QVBoxLayout(dp.float_window);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
-	// Toolbar with export actions and a reattach button.
+	// Toolbar: Save... popup menu + Reattach action.
 	auto *toolbar = new QToolBar;
 	toolbar->setIconSize(QSize(20, 20));
 	toolbar->setMovable(false);
 
-	auto *save_menu = new QMenu(m_eda_float_window);
-	save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
-	save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEdaPDF);
-	save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportEdaSVG);
+	auto *save_menu = new QMenu(dp.float_window);
+	if (dp.save_png)
+		save_menu->addAction(tr("Save as PNG..."), this, [&dp]() { if (dp.save_png) dp.save_png(); });
+	if (dp.save_pdf)
+		save_menu->addAction(tr("Save as PDF..."), this, [&dp]() { if (dp.save_pdf) dp.save_pdf(); });
+	if (dp.save_svg)
+		save_menu->addAction(tr("Save as SVG..."), this, [&dp]() { if (dp.save_svg) dp.save_svg(); });
 
-	auto *save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), m_eda_float_window);
+	auto *save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), dp.float_window);
 	save_action->setMenu(save_menu);
 	toolbar->addAction(save_action);
 	if (auto *btn = qobject_cast<QToolButton *>(toolbar->widgetForAction(save_action)))
@@ -3235,64 +3352,105 @@ void AnalysisView::onDetachEdaPlot()
 
 	toolbar->addSeparator();
 	auto *reattach_action = toolbar->addAction(QIcon(":/icons/minimize.svg"), tr("Reattach"));
-	reattach_action->setToolTip(tr("Return the plot to the EDA tab"));
-	connect(reattach_action, &QAction::triggered, this, &AnalysisView::onReattachEdaPlot);
+	reattach_action->setToolTip(tr("Return the plot to the analysis tab"));
+	// Dispatch through the matching slot so eventFilter and explicit
+	// reattach clicks share one code path.
+	if (&dp == &m_eda_detach)
+		connect(reattach_action, &QAction::triggered, this, &AnalysisView::onReattachEdaPlot);
+	else if (&dp == &m_diag_detach)
+		connect(reattach_action, &QAction::triggered, this, &AnalysisView::onReattachDiagPlot);
+	else if (&dp == &m_effects_detach)
+		connect(reattach_action, &QAction::triggered, this, &AnalysisView::onReattachEffectsPlot);
 
 	layout->addWidget(toolbar);
 
-	// Move the plot widget into the floating window.
-	m_eda_top_layout->removeWidget(m_eda_plot);
-	layout->addWidget(m_eda_plot, 1);
-	m_eda_plot->show();
+	// Migrate the plot widget into the floating window.
+	dp.home_layout->removeWidget(dp.plot);
+	layout->addWidget(dp.plot, 1);
+	dp.plot->show();
 
-	// Insert a placeholder into the EDA tab.
-	m_eda_placeholder = new QLabel(tr("Plot detached — close the floating window or click Reattach to return it here."));
-	m_eda_placeholder->setAlignment(Qt::AlignCenter);
-	m_eda_placeholder->setWordWrap(true);
-	QPalette pal = m_eda_placeholder->palette();
+	// Placeholder in the home tab where the plot used to live.
+	dp.placeholder = new QLabel(dp.placeholder_text);
+	dp.placeholder->setAlignment(Qt::AlignCenter);
+	dp.placeholder->setWordWrap(true);
+	QPalette pal = dp.placeholder->palette();
 	pal.setColor(QPalette::WindowText, pal.color(QPalette::Disabled, QPalette::WindowText));
-	m_eda_placeholder->setPalette(pal);
-	m_eda_top_layout->insertWidget(0, m_eda_placeholder, 1);
+	dp.placeholder->setPalette(pal);
+	dp.home_layout->insertWidget(dp.home_index, dp.placeholder, dp.home_stretch);
 
-	// Size the floating window to something reasonable.
-	m_eda_float_window->resize(700, 500);
-	m_eda_float_window->show();
-	m_eda_float_window->raise();
+	dp.float_window->resize(700, 500);
+	dp.float_window->show();
+	dp.float_window->raise();
+
+	updateDetachActionsEnabled();
 }
 
-void AnalysisView::onReattachEdaPlot()
+void AnalysisView::reattachPlot(DetachablePlot &dp)
 {
-	if (!m_eda_float_window) return;
+	if (!dp.float_window) return;
 
-	// Remove the plot from the floating window and return it to the EDA tab.
-	auto *float_layout = m_eda_float_window->layout();
+	auto *float_layout = dp.float_window->layout();
 	if (float_layout)
-		float_layout->removeWidget(m_eda_plot);
+		float_layout->removeWidget(dp.plot);
 
-	// Remove the placeholder.
-	if (m_eda_placeholder) {
-		m_eda_top_layout->removeWidget(m_eda_placeholder);
-		delete m_eda_placeholder;
-		m_eda_placeholder = nullptr;
+	if (dp.placeholder) {
+		dp.home_layout->removeWidget(dp.placeholder);
+		delete dp.placeholder;
+		dp.placeholder = nullptr;
 	}
 
-	// Reinsert the plot at index 0 (above the controls bar).
-	m_eda_top_layout->insertWidget(0, m_eda_plot, 1);
-	m_eda_plot->show();
+	dp.home_layout->insertWidget(dp.home_index, dp.plot, dp.home_stretch);
+	dp.plot->show();
 
-	// Destroy the floating window.
-	m_eda_float_window->removeEventFilter(this);
-	m_eda_float_window->hide();
-	m_eda_float_window->deleteLater();
-	m_eda_float_window = nullptr;
+	dp.float_window->removeEventFilter(this);
+	dp.float_window->hide();
+	dp.float_window->deleteLater();
+	dp.float_window = nullptr;
+
+	updateDetachActionsEnabled();
 }
+
+void AnalysisView::updateDetachActionsEnabled()
+{
+	// Enable each detach action iff the corresponding plot has data
+	// AND it is not already detached. While detached we leave the
+	// action enabled so it acts as a "raise the window" shortcut
+	// (see the early-out in detachPlot()).
+	auto gate = [](const DetachablePlot &dp) {
+		if (!dp.detach_action || !dp.plot) return;
+		bool detached = (dp.float_window != nullptr);
+		dp.detach_action->setEnabled(detached || dp.plot->hasData());
+	};
+	gate(m_eda_detach);
+	gate(m_diag_detach);
+	gate(m_effects_detach);
+}
+
+void AnalysisView::onDetachEdaPlot()      { detachPlot(m_eda_detach); }
+void AnalysisView::onReattachEdaPlot()    { reattachPlot(m_eda_detach); }
+void AnalysisView::onDetachDiagPlot()     { detachPlot(m_diag_detach); }
+void AnalysisView::onReattachDiagPlot()   { reattachPlot(m_diag_detach); }
+void AnalysisView::onDetachEffectsPlot()  { detachPlot(m_effects_detach); }
+void AnalysisView::onReattachEffectsPlot(){ reattachPlot(m_effects_detach); }
 
 bool AnalysisView::eventFilter(QObject *obj, QEvent *event)
 {
-	// When the floating plot window is closed, reattach the plot.
-	if (obj == m_eda_float_window && event->type() == QEvent::Close) {
-		onReattachEdaPlot();
-		return true; // event handled
+	// When any of the floating plot windows is closed, reattach the
+	// matching plot — closing the window is treated as an implicit
+	// Reattach.
+	if (event->type() == QEvent::Close) {
+		if (obj == m_eda_detach.float_window) {
+			onReattachEdaPlot();
+			return true;
+		}
+		if (obj == m_diag_detach.float_window) {
+			onReattachDiagPlot();
+			return true;
+		}
+		if (obj == m_effects_detach.float_window) {
+			onReattachEffectsPlot();
+			return true;
+		}
 	}
 	return View::eventFilter(obj, event);
 }
@@ -4895,30 +5053,53 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 
 
 // =====================================================================
-// Export plot
+// Export diagnostic plot (Save... menu actions: PNG / PDF / SVG)
 // =====================================================================
+//
+// Mirrors the EDA panel: each format has its own slot, both wired into
+// the home toolbar's Save... popup menu and into the floating window's
+// toolbar (via the DetachablePlot save_* callbacks).
 
-void AnalysisView::onExportPlot()
+void AnalysisView::onExportDiagPNG()
 {
 	if (!m_plot->hasData()) {
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-
 	QString path = getSaveFileName(this,
-		tr("Export plot"),
-		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
+		tr("Export plot as PNG"), tr("PNG image (*.png)"));
 	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+		path += QStringLiteral(".png");
+	m_plot->savePNG(path);
+}
 
-	if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
-		m_plot->savePDF(path);
-	else if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
-		m_plot->saveSVG(path);
-	else {
-		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
-			path += QStringLiteral(".png");
-		m_plot->savePNG(path);
+void AnalysisView::onExportDiagPDF()
+{
+	if (!m_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
 	}
+	QString path = getSaveFileName(this,
+		tr("Export plot as PDF"), tr("PDF document (*.pdf)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+		path += QStringLiteral(".pdf");
+	m_plot->savePDF(path);
+}
+
+void AnalysisView::onExportDiagSVG()
+{
+	if (!m_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
+	}
+	QString path = getSaveFileName(this,
+		tr("Export plot as SVG"), tr("SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
+		path += QStringLiteral(".svg");
+	m_plot->saveSVG(path);
 }
 
 
@@ -5158,14 +5339,23 @@ void AnalysisView::onEffectsFocalChanged()
 void AnalysisView::updateEffectsPlot()
 {
 	auto show_message = [this](const QString &msg) {
+		// If the plot is currently detached, reattach it before
+		// showing the message — otherwise the user sees an empty
+		// floating window and the explanation renders out of view in
+		// the home tab. The message label and the plot are mutually
+		// exclusive, and the message lives only in the home tab.
+		if (m_effects_detach.float_window)
+			reattachPlot(m_effects_detach);
 		m_effects_plot->clear();
 		m_effects_plot->setVisible(false);
 		m_effects_message->setText(msg);
 		m_effects_message->setVisible(true);
+		updateDetachActionsEnabled();
 	};
 	auto show_plot = [this]() {
 		m_effects_message->setVisible(false);
 		m_effects_plot->setVisible(true);
+		updateDetachActionsEnabled();
 	};
 
 	if (m_current_model < 0 || m_current_model >= m_analysis->model_count()) {
@@ -5552,27 +5742,46 @@ void AnalysisView::updateEffectsPlot()
 }
 
 
-void AnalysisView::onExportEffectsPlot()
+void AnalysisView::onExportEffectsPNG()
 {
 	if (!m_effects_plot->hasData()) {
 		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
 		return;
 	}
-
 	QString path = getSaveFileName(this,
-		tr("Export plot"),
-		tr("PNG image (*.png);;PDF document (*.pdf);;SVG image (*.svg)"));
+		tr("Export plot as PNG"), tr("PNG image (*.png)"));
 	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+		path += QStringLiteral(".png");
+	m_effects_plot->savePNG(path);
+}
 
-	if (path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
-		m_effects_plot->savePDF(path);
-	else if (path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
-		m_effects_plot->saveSVG(path);
-	else {
-		if (!path.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
-			path += QStringLiteral(".png");
-		m_effects_plot->savePNG(path);
+void AnalysisView::onExportEffectsPDF()
+{
+	if (!m_effects_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
 	}
+	QString path = getSaveFileName(this,
+		tr("Export plot as PDF"), tr("PDF document (*.pdf)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".pdf"), Qt::CaseInsensitive))
+		path += QStringLiteral(".pdf");
+	m_effects_plot->savePDF(path);
+}
+
+void AnalysisView::onExportEffectsSVG()
+{
+	if (!m_effects_plot->hasData()) {
+		QMessageBox::information(this, tr("Export"), tr("No plot to export."));
+		return;
+	}
+	QString path = getSaveFileName(this,
+		tr("Export plot as SVG"), tr("SVG image (*.svg)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
+		path += QStringLiteral(".svg");
+	m_effects_plot->saveSVG(path);
 }
 
 

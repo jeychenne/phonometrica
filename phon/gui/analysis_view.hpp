@@ -23,6 +23,7 @@
 #ifndef PHONOMETRICA_ANALYSIS_VIEW_HPP
 #define PHONOMETRICA_ANALYSIS_VIEW_HPP
 
+#include <functional>
 #include <optional>
 #include <QLineEdit>
 #include <QComboBox>
@@ -42,6 +43,7 @@
 #include <QGroupBox>
 #include <QTextEdit>
 #include <QIcon>
+#include <QAction>
 #include <phon/gui/view.hpp>
 #include <phon/gui/plot_widget.hpp>
 #include <phon/gui/checkable_combo_box.hpp>
@@ -82,7 +84,6 @@ private slots:
 	void onColumnDoubleClicked(QListWidgetItem *item);
 	void onColumnContextMenu(const QPoint &pos);
 	void onPlotTypeChanged(int index);
-	void onExportPlot();
 	void onCopySummary();
 	void onSaveSummaryText();
 	void onSaveSummaryLatex();
@@ -92,12 +93,21 @@ private slots:
 	void onExportEdaSVG();
 	void onDetachEdaPlot();
 	void onReattachEdaPlot();
+	void onExportDiagPNG();
+	void onExportDiagPDF();
+	void onExportDiagSVG();
+	void onDetachDiagPlot();
+	void onReattachDiagPlot();
+	void onExportEffectsPNG();
+	void onExportEffectsPDF();
+	void onExportEffectsSVG();
+	void onDetachEffectsPlot();
+	void onReattachEffectsPlot();
 	void onPostHocChanged();
 	void onExportPostHoc();
 	void onExportPostHocLatex();
 	void onEffectsFocalChanged();
 	void onEffectsRandomChanged();
-	void onExportEffectsPlot();
 
 private:
 
@@ -179,6 +189,43 @@ private:
 	void updatePriorResidualVisibility();
 	void updatePriorPcAlphaVisibility();
 
+	// ── Detachable-plot helper ───────────────────────────────────────
+	//
+	// All three plot panels (EDA, Diagnostics, Effects) share one
+	// detach/reattach mechanism. Each panel owns one DetachablePlot
+	// describing its plot widget, the layout that holds it, and the
+	// per-format export callbacks used by the floating window's Save…
+	// menu. detachPlot() migrates the plot into a top-level QWindow
+	// with its own toolbar; reattachPlot() returns it to the home
+	// layout. The detach action is gated on plot->hasData() across
+	// the three panels via updateDetachActionsEnabled().
+	struct DetachablePlot
+	{
+		PlotWidget  *plot         = nullptr;   // widget being migrated
+		QBoxLayout  *home_layout  = nullptr;   // layout it lives in
+		int          home_index   = 0;         // re-insertion index
+		int          home_stretch = 1;         // re-insertion stretch
+		QString      window_title;             // floating-window title
+		QAction     *detach_action = nullptr;  // home-toolbar trigger
+		QWidget     *float_window  = nullptr;  // populated when detached
+		QLabel      *placeholder   = nullptr;  // shown in home tab while detached
+		QString      placeholder_text;         // localised placeholder message
+		// Save callbacks for the floating window's Save… menu. Each
+		// bound to the corresponding per-format slot (PNG / PDF / SVG)
+		// of the parent panel so the float window's exports go through
+		// exactly the same paths as the home toolbar.
+		std::function<void()> save_png;
+		std::function<void()> save_pdf;
+		std::function<void()> save_svg;
+	};
+
+	void detachPlot(DetachablePlot &dp);
+	void reattachPlot(DetachablePlot &dp);
+	// Enable/disable each panel's detach action based on the current
+	// plot state (hasData()). Called whenever a plot is populated or
+	// cleared so the action greys out cleanly.
+	void updateDetachActionsEnabled();
+
 	Handle<Analysis> m_analysis;
 	int m_current_model = -1;
 
@@ -257,7 +304,6 @@ private:
 	QCheckBox *m_effects_show_legend_check = nullptr;
 	PlotWidget *m_effects_plot = nullptr;
 	QLabel *m_effects_message = nullptr;
-	QPushButton *m_effects_export_button = nullptr;
 
 	// EDA tab
 	QComboBox *m_eda_y_combo = nullptr;
@@ -283,9 +329,14 @@ private:
 	QCheckBox *m_eda_formant_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
 	QTableWidget *m_eda_summary = nullptr;
-	QVBoxLayout *m_eda_top_layout = nullptr;
-	QWidget *m_eda_float_window = nullptr;
-	QLabel *m_eda_placeholder = nullptr;
+
+	// Detach state for each plot panel. The DetachablePlot struct
+	// captures the home-layout / floating-window / placeholder / save-
+	// callback wiring that all three panels share; see the helper
+	// declarations above (detachPlot / reattachPlot).
+	DetachablePlot m_eda_detach;
+	DetachablePlot m_diag_detach;
+	DetachablePlot m_effects_detach;
 
 	// Column list check mark icon for variables used in the formula.
 	QIcon m_check_icon;
