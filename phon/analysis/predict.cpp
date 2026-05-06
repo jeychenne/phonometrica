@@ -52,20 +52,15 @@ namespace {
 // resulting "CI" interval is a 95% credible interval (or whatever
 // ci_level requests). This matches what INLA / brms posterior_interval
 // return under the same Gaussian marginal-posterior assumption.
+//
+// Mixed-effects models are supported with re_form set to:
+//   - "none"        : population-level prediction (u = 0). Default.
+//   - "all"         : sum BLUPs across all random-effects groups present.
+//   - "<group>"     : use BLUPs for the named group only; others stay at u=0.
+// The set of valid group-name values depends on the model and is therefore
+// validated inside predict_at_training / predict_at, not here.
 static String validate_scope(const Model &model, const PredictOptions &opts)
 {
-	// Mixed-effects: only re_form == "none" is implemented (population-level
-	// prediction, η = X·β with u=0). Conditional prediction using the
-	// fitted BLUPs is deferred — it requires Z_new construction and the
-	// joint vcov V_{β,u}, which is not stored on Model.
-	if (model.has_random_effects() && opts.re_form != "none") {
-		return String::format(
-			"conditional prediction with random effects "
-			"(re_form = \"%s\") is not yet implemented. "
-			"Pass re_form = \"none\" for a population-level prediction "
-			"(u set to 0), which is the default.",
-			std::string(opts.re_form.data(), opts.re_form.size()).c_str());
-	}
 	for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
@@ -90,9 +85,6 @@ static String validate_scope(const Model &model, const PredictOptions &opts)
 	}
 	if (opts.ci_level <= 0.0 || opts.ci_level >= 1.0) {
 		return String("ci_level must be strictly between 0 and 1.");
-	}
-	if (opts.re_form != "none" && opts.re_form != "all") {
-		return String("re_form must be \"none\" or \"all\".");
 	}
 	return String();
 }
@@ -582,6 +574,151 @@ vcov_view(const Model &model, intptr_t p)
 }
 
 
+// ─── Random-effects (conditional prediction) ─────────────────────────
+//
+// One spec per resolved random-effects group. The Z·u contribution for a
+// row in `newdata` is: sum_t  x_row[term_x_col[t]] * conditional_modes[L*nterms + t]
+// where L is the row's level index in this group's level_names. For the
+// "Intercept" random term, the matching x_row entry is always 1.0 (column
+// 0), so the formula above handles intercepts uniformly with slopes.
+struct REGroupSpec
+{
+	intptr_t group_idx = 0;          // 1-based index into model.random_effects
+	intptr_t newdata_col = 0;        // 1-based column index of the grouping factor in newdata (0 if N/A)
+	std::map<String, intptr_t> level_idx;   // level name → 0-based row in conditional_modes
+	std::vector<intptr_t> term_x_col;       // 0-based X column for each random term
+	intptr_t nterms = 0;
+};
+
+
+// Parse opts.re_form against model.random_effects. On success, fills `specs`
+// (empty for "none" / no random effects) and returns true. On failure sets
+// `error_message` and returns false. `col_idx` may be empty when called from
+// predict_at_training (where the lookup is by saved per-row index instead
+// of a newdata column).
+//
+// We accept three values for opts.re_form:
+//   "none"  → empty specs (population-level)
+//   "all"   → one spec per random-effect group
+//   "<name>"→ one spec for the group with that group_name
+static bool resolve_re_groups(const Model &model, const PredictOptions &opts,
+                              const std::map<String, intptr_t> *col_idx,
+                              std::vector<REGroupSpec> &specs,
+                              String &error_message)
+{
+	specs.clear();
+
+	if (opts.re_form == "none" || !model.has_random_effects()) {
+		return true;
+	}
+
+	std::vector<intptr_t> wanted;  // 1-based group indices
+	if (opts.re_form == "all") {
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			wanted.push_back(g);
+		}
+	} else {
+		intptr_t found = 0;
+		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			if (model.random_effects[g].group_name == opts.re_form) {
+				found = g; break;
+			}
+		}
+		if (found == 0) {
+			std::string valid = "\"none\", \"all\"";
+			for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+				valid += ", \"";
+				valid += std::string(model.random_effects[g].group_name.data(),
+				                     (size_t) model.random_effects[g].group_name.size());
+				valid += "\"";
+			}
+			error_message = String::format(
+				"re_form must be one of %s. Got \"%s\".",
+				valid.c_str(),
+				std::string(opts.re_form.data(), (size_t) opts.re_form.size()).c_str());
+			return false;
+		}
+		wanted.push_back(found);
+	}
+
+	// Build the parametric coef-name → X column index map.
+	intptr_t parametric_end = parametric_end_of(model);
+	auto coef_idx = build_coef_index(model, parametric_end);
+
+	for (intptr_t g : wanted)
+	{
+		auto &re = model.random_effects[g];
+		REGroupSpec spec;
+		spec.group_idx = g;
+		spec.nterms = re.nterms;
+
+		// Locate grouping-column in newdata when we have a column map.
+		if (col_idx) {
+			auto it = col_idx->find(re.group_name);
+			if (it == col_idx->end()) {
+				error_message = String::format(
+					"newdata is missing the random-effects grouping column '%s'.",
+					std::string(re.group_name.data(), (size_t) re.group_name.size()).c_str());
+				return false;
+			}
+			spec.newdata_col = it->second;
+		}
+
+		// level name → 0-based row
+		for (intptr_t l = 1; l <= re.level_names.size(); l++) {
+			spec.level_idx[re.level_names[l]] = l - 1;
+		}
+
+		// Each random term must match a fixed-effect coefficient name (the
+		// random side reuses the fixed-side expand_variable / build_interaction
+		// machinery, so the name strings agree exactly when the random term
+		// has a fixed-effect counterpart).
+		spec.term_x_col.reserve((size_t) re.term_names.size());
+		for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+			std::string tname(re.term_names[t].data(), (size_t) re.term_names[t].size());
+			auto it_c = coef_idx.find(tname);
+			if (it_c == coef_idx.end()) {
+				error_message = String::format(
+					"random-effects term '%s' (in group '%s') has no matching "
+					"fixed-effect coefficient. Conditional prediction currently "
+					"requires every random term to correspond to a fixed-effect "
+					"column. This will be relaxed in a future release.",
+					tname.c_str(),
+					std::string(re.group_name.data(), (size_t) re.group_name.size()).c_str());
+				return false;
+			}
+			spec.term_x_col.push_back(it_c->second);
+		}
+
+		// Refuse cleanly if BLUPs are not populated on this group, or if
+		// nlevels / nterms are inconsistent with the BLUP block size. The
+		// load path derives nterms / nlevels from term_names / level_names
+		// when the file lacks those integer fields, so this check should
+		// only fire on a genuinely broken model — not on an older save
+		// file that's just missing the redundant <Nterms>/<Nlevels> tags.
+		if (re.nterms <= 0 || re.nlevels <= 0
+		    || re.conditional_modes.size() != re.nlevels * re.nterms)
+		{
+			error_message = String::format(
+				"random-effects group '%s' has no usable BLUPs "
+				"(conditional_modes.size = %d, nlevels = %d, nterms = %d; "
+				"expected %d). The model may not have been fully fitted, "
+				"or the saved file is corrupt. Refit the model.",
+				std::string(re.group_name.data(), (size_t) re.group_name.size()).c_str(),
+				(int) re.conditional_modes.size(),
+				(int) re.nlevels,
+				(int) re.nterms,
+				(int)(re.nlevels * re.nterms));
+			return false;
+		}
+
+		specs.push_back(std::move(spec));
+	}
+
+	return true;
+}
+
+
 } // anonymous namespace
 
 
@@ -636,6 +773,36 @@ PredictResult predict_at_training(const Model &model, const PredictOptions &opts
 	auto V = vcov_view(model, p);
 	auto beta = beta_view(model);
 
+	// Resolve random-effects groups for conditional prediction. For
+	// training-row prediction the per-row level lookup uses the saved
+	// `indices` vector populated at fit time (NOT the newdata cell, since
+	// we have no DataTable here). `indices` is not serialised: a model
+	// loaded from file has empty `indices` and conditional prediction
+	// needs to be done via predict(model, source_data) instead.
+	std::vector<REGroupSpec> re_specs;
+	{
+		String re_err;
+		if (!resolve_re_groups(model, opts, /*col_idx=*/nullptr, re_specs, re_err)) {
+			out.error = re_err;
+			return out;
+		}
+	}
+	if (!re_specs.empty())
+	{
+		for (auto &spec : re_specs) {
+			auto &re = model.random_effects[spec.group_idx];
+			if ((intptr_t) re.indices.size() != n) {
+				out.error = String::format(
+					"predict(): conditional prediction at training rows is "
+					"unavailable for group '%s' because per-row level indices "
+					"are not persisted across save/load. Call predict(model, "
+					"source_data, opts) instead, passing the original dataset.",
+					std::string(re.group_name.data(), (size_t) re.group_name.size()).c_str());
+				return out;
+			}
+		}
+	}
+
 	std::vector<double> eta((size_t) n, 0.0);
 	std::vector<double> se((size_t) n, 0.0);
 
@@ -646,8 +813,24 @@ PredictResult predict_at_training(const Model &model, const PredictOptions &opts
 		// .row(i) returns a row expression; .transpose() makes it a column
 		// vector for dot/matrix-vector ops.
 		Eigen::VectorXd xi = Xmap.row(i).transpose();
-		eta[(size_t) i] = xi.dot(beta);
+		double eta_row = xi.dot(beta);
 		double q = xi.dot(V * xi);
+
+		// Conditional prediction: add Σ_g  z_i(g)' · u_blup(g, level_i(g)).
+		// Same formula as in predict_at — only the level lookup differs
+		// (saved indices vs newdata cell).
+		for (auto &spec : re_specs) {
+			auto &re = model.random_effects[spec.group_idx];
+			intptr_t L = re.indices[(size_t) i];  // 0-based already
+			double zu = 0.0;
+			for (intptr_t t = 0; t < spec.nterms; t++) {
+				intptr_t xc = spec.term_x_col[(size_t) t];
+				zu += xi[xc] * re.conditional_modes[L * spec.nterms + t + 1]; // 1-based
+			}
+			eta_row += zu;
+		}
+
+		eta[(size_t) i] = eta_row;
 		se[(size_t) i] = (q > 0) ? std::sqrt(q) : 0.0;
 	}
 
@@ -741,6 +924,19 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 	auto V = vcov_view(model, p);
 	auto beta = beta_view(model);
 
+	// Resolve random-effects groups for conditional prediction. Empty `re_specs`
+	// means population-level (η = X·β with u=0); non-empty means we add Z·u
+	// per row using saved BLUPs. The `col_idx` map is needed here so the row
+	// loop can look up each row's grouping-factor cell.
+	std::vector<REGroupSpec> re_specs;
+	{
+		String re_err;
+		if (!resolve_re_groups(model, opts, &col_idx, re_specs, re_err)) {
+			out.error = re_err;
+			return out;
+		}
+	}
+
 	intptr_t n_new = newdata.row_count();
 	std::vector<double> eta((size_t) n_new, std::nan(""));
 	std::vector<double> se((size_t) n_new, std::nan(""));
@@ -775,8 +971,43 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 		}
 
 		Eigen::Map<const Eigen::VectorXd> xv(x_row.data(), p);
-		eta[(size_t)(row - 1)] = xv.dot(beta);
+		double eta_row = xv.dot(beta);
 		double q = xv.dot(V * xv);
+
+		// Add Σ_g  z_row(g)' · u_blup(g, level_for_this_row)  to η.
+		// SE is unchanged: under conditional prediction we treat u as fixed
+		// at the BLUP, matching lme4's predict.merMod / glmmTMB's
+		// predict(re.form=NULL) defaults — both ignore u uncertainty in the
+		// SE calculation. A future release may add a "type=both" mode that
+		// propagates u uncertainty via the joint vcov V_{β,u}.
+		bool re_ok = true;
+		for (auto &spec : re_specs)
+		{
+			auto &re = model.random_effects[spec.group_idx];
+
+			// Look up the row's grouping cell. Empty / unseen → NaN this row.
+			String cell = newdata.get_cell(row, spec.newdata_col);
+			if (cell.empty()) { re_ok = false; break; }
+			auto it_l = spec.level_idx.find(cell);
+			if (it_l == spec.level_idx.end()) { re_ok = false; break; }
+			intptr_t L = it_l->second;
+
+			// Σ_t  x_row[term_x_col[t]] · conditional_modes[L*nterms + t]
+			double zu = 0.0;
+			for (intptr_t t = 0; t < spec.nterms; t++) {
+				intptr_t xc = spec.term_x_col[(size_t) t];
+				zu += x_row[(size_t) xc]
+				      * re.conditional_modes[L * spec.nterms + t + 1]; // 1-based
+			}
+			eta_row += zu;
+		}
+		if (!re_ok) {
+			eta[(size_t)(row - 1)] = std::nan("");
+			se[(size_t)(row - 1)] = std::nan("");
+			continue;
+		}
+
+		eta[(size_t)(row - 1)] = eta_row;
 		se[(size_t)(row - 1)] = (q > 0) ? std::sqrt(q) : 0.0;
 	}
 

@@ -301,9 +301,23 @@ As above, but with an ``options`` table that controls the output. All fields are
 * ``ci_level`` (``Number``, default ``0.95``): coverage probability for the confidence /
   credible interval. Must be strictly between 0 and 1.
 * ``re_form`` (``String``, default ``"none"``): how to handle random effects in mixed
-  models. Only ``"none"`` is currently implemented (population-level prediction with random
-  effects set to zero); ``"all"`` (conditional on the BLUPs) is reserved for a future
-  release.
+  models.
+
+  - ``"none"`` (default): **population-level prediction**. The random effects ``u`` are set
+    to zero, giving ``η = X·β``. This is what ``ggpredict`` and ``predict.glmmTMB(re.form
+    = NA)`` return by default.
+  - ``"all"``: **conditional prediction**, summing the BLUPs across all random-effects
+    groups present in the model. ``η = X·β + Σ_g Z_g·u_g``.
+  - A specific group name (e.g. ``"speaker"``): conditional on that group only, with
+    other random-effects groups set to ``u = 0``. This is how the **Effects** tab's
+    ``Random`` drop-down builds per-speaker curves.
+
+  For conditional prediction, ``newdata`` must contain a column named after the grouping
+  factor with values matching the levels seen at fit time. Rows whose grouping cell is
+  empty or names a level not present in the fitted model get ``NaN`` for that row's
+  prediction. The standard error treats the BLUPs as fixed (matching ``lme4``'s
+  ``predict.merMod`` default behaviour); a future release will add an option to propagate
+  ``u`` uncertainty into the interval.
 
 Example::
 
@@ -317,13 +331,32 @@ Example::
    opts["bare"] = true
    let p = predict(m, ds, opts)
 
+Example (conditional prediction)::
+
+   let ds = load("schwa.csv")
+   let m = fit("realized ~ position + (1|speaker)", ds, "binomial")
+
+   # Population-level: predicted probability for an "average" speaker
+   let p_pop = predict(m, ds)
+
+   # Conditional on speaker: per-speaker BLUPs added to η
+   let opts = {}
+   opts["re_form"] = "speaker"
+   let p_cond = predict(m, ds, opts)
+
+   # For training rows, p_cond["Fit"] matches m.fitted exactly.
+   # The same call on a held-out dataset gives per-speaker predicted
+   # probabilities for whichever speakers appear in newdata.
+
 ------------
 
-**Mixed-effects models.** ``predict()`` returns the **population-level** prediction:
-``η = X·β`` with the random effects set to zero. This is what ``ggpredict`` returns by
-default, and what most users want for "what does the model say in general?". The ``Fit``
-values for a mixed model do **not** match ``model.fitted``, which is the conditional mean
-including the BLUP contribution per group.
+**Mixed-effects models.** With the default ``re_form = "none"``, ``predict()`` returns the
+**population-level** prediction: ``η = X·β`` with the random effects set to zero. This is
+what ``ggpredict`` returns by default, and what most users want for "what does the model
+say in general?". The ``Fit`` values do **not** match ``model.fitted``, which is the
+conditional mean including the BLUP contribution per group. With a non-default
+``re_form`` (``"all"`` or a specific group name), the BLUPs are folded in and ``Fit`` on
+the response scale matches ``model.fitted`` at training rows.
 
 **Bayesian models.** The same arithmetic produces the posterior mean of the predicted value
 and the posterior SD, because for Bayesian fits ``model.beta`` and ``model.vcov`` hold the
@@ -337,11 +370,12 @@ following cases:
 * Models with **by-factor smooths** (``s(x, by=...)``) or **random-effect smooths**
   (``s(g, bs="re")``).
 * ``opts["type"] = "pi"`` or ``"both"``: prediction intervals are not yet implemented.
-* ``opts["re_form"] = "all"`` on a mixed-effects model: conditional prediction with BLUPs
-  is not yet implemented.
+* ``opts["re_form"]`` set to anything other than ``"none"``, ``"all"``, or the name of a
+  random-effects group present in the fitted model.
 
 For visualizing predictions interactively, use the **Effects** tab in the analysis view
-(see :ref:`analysis-view`); it calls into ``predict()`` internally.
+(see :ref:`analysis-view`); it calls into ``predict()`` internally, including for
+conditional per-group prediction.
 
 
 Diagnostics

@@ -387,12 +387,16 @@ void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
                                      const QString &x_label, const QString &y_label,
                                      const QString &title,
                                      const QString &caption,
-                                     std::vector<QString> level_labels)
+                                     std::vector<QString> level_labels,
+                                     bool show_ci,
+                                     bool show_legend)
 {
 	m_mode = Mode::EffectsPlot;
 	m_eff_curves = std::move(curves);
 	m_eff_level_labels = std::move(level_labels);
 	m_eff_caption = caption;
+	m_eff_show_ci = show_ci;
+	m_eff_show_legend = show_legend;
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
@@ -2049,7 +2053,7 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 				bool have_lo = !std::isnan(cv.ci_lower[i]);
 				bool have_hi = !std::isnan(cv.ci_upper[i]);
 
-				if (have_lo && have_hi) {
+				if (m_eff_show_ci && have_lo && have_hi) {
 					double ylo_px = dataToY(cv.ci_lower[i]);
 					double yhi_px = dataToY(cv.ci_upper[i]);
 					p.setPen(QPen(color, 1.5));
@@ -2068,43 +2072,48 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 	{
 		// Numeric focal: ribbons first (back-to-front in palette order),
 		// then lines on top so curve colours stay distinguishable even where
-		// ribbons overlap.
-		for (int c = 0; c < ncurves; c++)
+		// ribbons overlap. With m_eff_show_ci == false (e.g. busy conditional
+		// plots with many random-effect levels) we draw lines only.
+		if (m_eff_show_ci)
 		{
-			auto &cv = m_eff_curves[(size_t) c];
-			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
-			QColor ribbon_color = color;
-			ribbon_color.setAlpha(ribbon_alpha);
-
-			std::vector<bool> ok(cv.x.size());
-			for (size_t i = 0; i < cv.x.size(); i++) {
-				ok[i] = !std::isnan(cv.fit[i])
-				     && !std::isnan(cv.ci_lower[i])
-				     && !std::isnan(cv.ci_upper[i]);
-			}
-
-			size_t i = 0;
-			while (i < cv.x.size())
+			for (int c = 0; c < ncurves; c++)
 			{
-				while (i < cv.x.size() && !ok[i]) i++;
-				size_t s = i;
-				while (i < cv.x.size() && ok[i]) i++;
-				size_t e = i;
-				if (e - s < 2) continue;
+				auto &cv = m_eff_curves[(size_t) c];
+				QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
+				QColor ribbon_color = color;
+				ribbon_color.setAlpha(ribbon_alpha);
 
-				QPolygonF seg;
-				for (size_t k = s; k < e; k++)
-					seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_upper[k]));
-				for (size_t k = e; k-- > s; )
-					seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_lower[k]));
+				std::vector<bool> ok(cv.x.size());
+				for (size_t i = 0; i < cv.x.size(); i++) {
+					ok[i] = !std::isnan(cv.fit[i])
+					     && !std::isnan(cv.ci_lower[i])
+					     && !std::isnan(cv.ci_upper[i]);
+				}
 
-				p.setPen(Qt::NoPen);
-				p.setBrush(ribbon_color);
-				p.drawPolygon(seg);
+				size_t i = 0;
+				while (i < cv.x.size())
+				{
+					while (i < cv.x.size() && !ok[i]) i++;
+					size_t s = i;
+					while (i < cv.x.size() && ok[i]) i++;
+					size_t e = i;
+					if (e - s < 2) continue;
+
+					QPolygonF seg;
+					for (size_t k = s; k < e; k++)
+						seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_upper[k]));
+					for (size_t k = e; k-- > s; )
+						seg << QPointF(dataToX(cv.x[k]), dataToY(cv.ci_lower[k]));
+
+					p.setPen(Qt::NoPen);
+					p.setBrush(ribbon_color);
+					p.drawPolygon(seg);
+				}
 			}
 		}
 
-		// Now draw all the lines on top.
+		// Now draw all the lines on top. The "ok" mask uses fit-only when
+		// show_ci is off, so a curve with empty CI bounds still draws.
 		for (int c = 0; c < ncurves; c++)
 		{
 			auto &cv = m_eff_curves[(size_t) c];
@@ -2112,9 +2121,13 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 
 			std::vector<bool> ok(cv.x.size());
 			for (size_t i = 0; i < cv.x.size(); i++) {
-				ok[i] = !std::isnan(cv.fit[i])
-				     && !std::isnan(cv.ci_lower[i])
-				     && !std::isnan(cv.ci_upper[i]);
+				if (m_eff_show_ci) {
+					ok[i] = !std::isnan(cv.fit[i])
+					     && !std::isnan(cv.ci_lower[i])
+					     && !std::isnan(cv.ci_upper[i]);
+				} else {
+					ok[i] = !std::isnan(cv.fit[i]);
+				}
 			}
 
 			size_t i = 0;
@@ -2137,7 +2150,10 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 	}
 
 	// ── Legend ──────────────────────────────────────────────────────
-	if (any_label)
+	// Suppressed when too many curves to display readably (set by
+	// setEffectsPlotData based on curve count). Color-cycling still
+	// distinguishes the lines.
+	if (any_label && m_eff_show_legend)
 	{
 		QFont lfont;
 		lfont.setPixelSize(10);

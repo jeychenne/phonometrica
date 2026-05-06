@@ -96,6 +96,7 @@ private slots:
 	void onExportPostHoc();
 	void onExportPostHocLatex();
 	void onEffectsFocalChanged();
+	void onEffectsRandomChanged();
 	void onExportEffectsPlot();
 
 private:
@@ -245,10 +246,15 @@ private:
 	// MVP: single focal, others held fixed at reference level / mean.
 	// Optional By-factor combo (Phase 2.5) shows one curve per level of a
 	// second categorical predictor, revealing how the focal effect differs
-	// across by-levels. Refuses cleanly for mixed-effects, Bayesian,
-	// by-factor smooths, re-smooths.
+	// across by-levels. Refuses cleanly for by-factor smooths and re-smooths.
+	// Conditional-prediction controls (Phase B) let the user pick a random-
+	// effects group to condition on, with a checkable list of levels.
 	QComboBox *m_effects_focal_combo = nullptr;
 	QComboBox *m_effects_by_combo = nullptr;
+	QComboBox *m_effects_re_combo = nullptr;
+	CheckableComboBox *m_effects_re_levels = nullptr;
+	QCheckBox *m_effects_show_ci_check = nullptr;
+	QCheckBox *m_effects_show_legend_check = nullptr;
 	PlotWidget *m_effects_plot = nullptr;
 	QLabel *m_effects_message = nullptr;
 	QPushButton *m_effects_export_button = nullptr;

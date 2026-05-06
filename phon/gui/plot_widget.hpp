@@ -138,7 +138,9 @@ public:
 	                        const QString &x_label, const QString &y_label,
 	                        const QString &title,
 	                        const QString &caption = QString(),
-	                        std::vector<QString> level_labels = {});
+	                        std::vector<QString> level_labels = {},
+	                        bool show_ci = true,
+	                        bool show_legend = true);
 
 	/// Set (or clear) an OLS regression line to overlay on scatter plots.
 	/// The line is y = intercept + slope * x, and r2 is displayed as an annotation.
@@ -297,6 +299,8 @@ private:
 	std::vector<EffectsCurve> m_eff_curves;
 	std::vector<QString> m_eff_level_labels;  // empty for numeric focal
 	QString m_eff_caption;
+	bool m_eff_show_ci = true;   // when false, ribbons / error bars are suppressed
+	bool m_eff_show_legend = true; // suppressed automatically when many curves
 
 	// Shared
 	QString m_x_label;

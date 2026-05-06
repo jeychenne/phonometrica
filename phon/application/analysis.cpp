@@ -492,6 +492,7 @@ void Analysis::write()
 				add_data_node(gn, "TermNames", strings_to_csv(re.term_names));
 				add_data_node(gn, "LevelNames", strings_to_csv(re.level_names));
 				add_data_node(gn, "Nlevels", String::convert(re.nlevels));
+				add_data_node(gn, "Nterms", String::convert(re.nterms));
 				add_data_node(gn, "Variance", doubles_to_string(re.variance));
 				add_data_node(gn, "CovChol", doubles_to_string(re.cov_chol));
 				add_data_node(gn, "ConditionalModes", doubles_to_string(re.conditional_modes));
@@ -745,9 +746,31 @@ void Analysis::load()
 								else if (gfn == "TermNames")      re.term_names = parse_csv_strings(gft);
 								else if (gfn == "LevelNames")     re.level_names = parse_csv_strings(gft);
 								else if (gfn == "Nlevels")         re.nlevels = String(gft).to_int();
+								else if (gfn == "Nterms")          re.nterms  = String(gft).to_int();
 								else if (gfn == "Variance")        re.variance = parse_doubles(gft);
 								else if (gfn == "CovChol")         re.cov_chol = parse_doubles(gft);
 								else if (gfn == "ConditionalModes") re.conditional_modes = parse_doubles(gft);
+							}
+
+							// Defensive: derive `nterms` and `nlevels` from the
+							// canonical name lists if the corresponding integer
+							// elements are missing from the file (older saves) or
+							// returned nonsensical values. The struct defaults
+							// (nterms = 1, nlevels = 0) would silently give the
+							// wrong layout for any random-slope model. term_names
+							// and level_names are the canonical sources — they're
+							// always written and their lengths determine the
+							// per-level BLUP block size and group cardinality
+							// respectively.
+							if (re.nterms <= 0
+							    || re.nterms != re.term_names.size())
+							{
+								re.nterms = re.term_names.size();
+							}
+							if (re.nlevels <= 0
+							    || re.nlevels != re.level_names.size())
+							{
+								re.nlevels = re.level_names.size();
 							}
 
 							m.random_effects.append(std::move(re));

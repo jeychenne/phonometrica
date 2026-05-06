@@ -774,6 +774,48 @@ void AnalysisView::setupUi()
 	m_effects_by_combo->setMinimumWidth(120);
 	effects_top->addWidget(m_effects_by_combo);
 
+	// Conditional prediction controls. The Random combobox lists the model's
+	// random-effects groups (only populated for mixed-effects models; remains
+	// "(None)" otherwise). Selecting a group switches the plot to one curve
+	// per group level, using the saved BLUPs (Z·u contribution per row), and
+	// disables the By dropdown — these two faceting modes don't compose.
+	effects_top->addSpacing(8);
+	effects_top->addWidget(new QLabel(tr("Random:")));
+	m_effects_re_combo = new QComboBox;
+	m_effects_re_combo->setToolTip(
+		tr("Optional random-effects group to condition on. "
+		   "Selecting a group shows one curve per level of that group, "
+		   "using the saved BLUPs."));
+	m_effects_re_combo->setMinimumWidth(110);
+	effects_top->addWidget(m_effects_re_combo);
+
+	effects_top->addSpacing(4);
+	effects_top->addWidget(new QLabel(tr("Levels:")));
+	m_effects_re_levels = new CheckableComboBox;
+	m_effects_re_levels->setToolTip(
+		tr("Levels of the random-effects group to draw. All levels are "
+		   "selected by default."));
+	m_effects_re_levels->setMinimumWidth(110);
+	m_effects_re_levels->setEnabled(false);
+	effects_top->addWidget(m_effects_re_levels);
+
+	effects_top->addSpacing(8);
+	m_effects_show_ci_check = new QCheckBox(tr("Show CI"));
+	m_effects_show_ci_check->setChecked(true);
+	m_effects_show_ci_check->setToolTip(
+		tr("Toggle the confidence/credible-interval band. Useful with many "
+		   "random-effects levels, where overlapping ribbons get visually "
+		   "noisy."));
+	effects_top->addWidget(m_effects_show_ci_check);
+
+	m_effects_show_legend_check = new QCheckBox(tr("Show legend"));
+	m_effects_show_legend_check->setChecked(true);
+	m_effects_show_legend_check->setToolTip(
+		tr("Toggle the legend that names each curve. Off by default when "
+		   "more than eight curves are drawn — the legend would otherwise "
+		   "consume too much of the plot."));
+	effects_top->addWidget(m_effects_show_legend_check);
+
 	effects_top->addStretch();
 	auto *effects_export_btn = new QPushButton(tr("Export..."));
 	m_effects_export_button = effects_export_btn;
@@ -1071,6 +1113,21 @@ void AnalysisView::setupUi()
 	connect(m_effects_by_combo,
 	        QOverload<int>::of(&QComboBox::currentIndexChanged),
 	        this, &AnalysisView::onEffectsFocalChanged);
+	// Random-group combobox: when the user switches groups, repopulate the
+	// levels checklist and toggle the By-combo enabled state. Also triggers
+	// a re-render via onEffectsFocalChanged at the end.
+	connect(m_effects_re_combo,
+	        QOverload<int>::of(&QComboBox::currentIndexChanged),
+	        this, &AnalysisView::onEffectsRandomChanged);
+	// Levels checklist: re-render whenever the user toggles a level.
+	connect(m_effects_re_levels, &CheckableComboBox::checkedItemsChanged,
+	        this, [this](const QStringList &) { updateEffectsPlot(); });
+	// "Show CI" checkbox: re-render with the new flag.
+	connect(m_effects_show_ci_check, &QCheckBox::toggled,
+	        this, [this](bool) { updateEffectsPlot(); });
+	// "Show legend" checkbox: re-render with the new flag.
+	connect(m_effects_show_legend_check, &QCheckBox::toggled,
+	        this, [this](bool) { updateEffectsPlot(); });
 	connect(effects_export_btn, &QPushButton::clicked,
 	        this, &AnalysisView::onExportEffectsPlot);
 }
@@ -4950,13 +5007,21 @@ void AnalysisView::populateEffectsFocalCombo()
 {
 	m_effects_focal_combo->blockSignals(true);
 	m_effects_by_combo->blockSignals(true);
+	m_effects_re_combo->blockSignals(true);
+	m_effects_re_levels->blockSignals(true);
 	m_effects_focal_combo->clear();
 	m_effects_by_combo->clear();
+	m_effects_re_combo->clear();
+	m_effects_re_levels->setItems(QStringList());
+	m_effects_re_levels->setEnabled(false);
 	m_effects_by_combo->addItem(tr("(None)"));
+	m_effects_re_combo->addItem(tr("(None)"));
 
 	if (m_current_model < 0 || m_current_model >= m_analysis->model_count()) {
 		m_effects_focal_combo->blockSignals(false);
 		m_effects_by_combo->blockSignals(false);
+		m_effects_re_combo->blockSignals(false);
+		m_effects_re_levels->blockSignals(false);
 		return;
 	}
 
@@ -4996,8 +5061,91 @@ void AnalysisView::populateEffectsFocalCombo()
 		m_effects_by_combo->addItem(qname);
 	}
 
+	// Random: every random-effects group on the model. Only meaningful for
+	// mixed-effects models; for fixed-effects-only models the combo stays at
+	// "(None)". Switching to a group repopulates the levels checklist via
+	// onEffectsRandomChanged().
+	for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+	{
+		auto &re = m.random_effects[g];
+		auto qname = QString::fromUtf8(re.group_name.data(), (int) re.group_name.size());
+		m_effects_re_combo->addItem(qname);
+	}
+
 	m_effects_focal_combo->blockSignals(false);
 	m_effects_by_combo->blockSignals(false);
+	m_effects_re_combo->blockSignals(false);
+	m_effects_re_levels->blockSignals(false);
+}
+
+
+void AnalysisView::onEffectsRandomChanged()
+{
+	// Repopulate the levels checklist based on the chosen group, toggle the
+	// By-combo enabled state (Random and By are mutually exclusive faceting
+	// modes), set a sensible default for the Show CI checkbox, and refresh
+	// the plot.
+	m_effects_re_levels->blockSignals(true);
+	m_effects_re_levels->setItems(QStringList());
+
+	bool re_active = (m_effects_re_combo->currentIndex() > 0);
+
+	if (!re_active) {
+		// Population-level mode: levels disabled, By enabled, CI default on,
+		// legend default on (typically 1-2 curves, well within the readable
+		// legend threshold).
+		m_effects_re_levels->setEnabled(false);
+		m_effects_by_combo->setEnabled(true);
+		m_effects_show_ci_check->blockSignals(true);
+		m_effects_show_ci_check->setChecked(true);
+		m_effects_show_ci_check->blockSignals(false);
+		m_effects_show_legend_check->blockSignals(true);
+		m_effects_show_legend_check->setChecked(true);
+		m_effects_show_legend_check->blockSignals(false);
+	}
+	else {
+		// Conditional mode: populate levels (all checked), disable By,
+		// default CI off (busy plots). Legend default is auto-rule based
+		// on level count: ≤ 8 → on, > 8 → off. Once the user expresses
+		// an opinion (toggles the checkbox), we don't override it again
+		// until they switch random group or back to (None).
+		intptr_t n_levels_default = 0;
+		if (m_current_model >= 0 && m_current_model < m_analysis->model_count())
+		{
+			auto &m = m_analysis->model(m_current_model);
+			QString gname = m_effects_re_combo->currentText();
+
+			intptr_t found = 0;
+			for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+				auto &re = m.random_effects[g];
+				QString rg_q = QString::fromUtf8(re.group_name.data(),
+				                                (int) re.group_name.size());
+				if (rg_q == gname) { found = g; break; }
+			}
+			if (found > 0) {
+				auto &re = m.random_effects[found];
+				QStringList lvls;
+				for (intptr_t l = 1; l <= re.level_names.size(); l++) {
+					lvls << QString::fromUtf8(re.level_names[l].data(),
+					                          (int) re.level_names[l].size());
+				}
+				m_effects_re_levels->setItems(lvls);
+				m_effects_re_levels->setCheckedItems(lvls);
+				n_levels_default = (intptr_t) lvls.size();
+			}
+		}
+		m_effects_re_levels->setEnabled(true);
+		m_effects_by_combo->setEnabled(false);
+		m_effects_show_ci_check->blockSignals(true);
+		m_effects_show_ci_check->setChecked(false);
+		m_effects_show_ci_check->blockSignals(false);
+		m_effects_show_legend_check->blockSignals(true);
+		m_effects_show_legend_check->setChecked(n_levels_default <= 8);
+		m_effects_show_legend_check->blockSignals(false);
+	}
+
+	m_effects_re_levels->blockSignals(false);
+	updateEffectsPlot();
 }
 
 
@@ -5133,6 +5281,38 @@ void AnalysisView::updateEffectsPlot()
 		}
 	}
 
+	// ── Resolve the random-effects group (optional, mutually exclusive
+	//    with the By-factor: when re_active, has_by is forced false). The
+	//    selected levels come from the checklist; the predict() call below
+	//    receives re_form = re_group_name and includes the group's BLUPs in
+	//    each row's prediction. By-curves and RE-curves don't compose in
+	//    this release — that's what the deferred "subplots per level"
+	//    feature is for.
+	bool re_active = (m_effects_re_combo->currentIndex() > 0);
+	String re_group_name;
+	Array<String> re_selected_levels;
+	if (re_active)
+	{
+		has_by = false;
+		by_name = String();
+		by_levels = Array<String>();
+
+		QString gname_q = m_effects_re_combo->currentText();
+		re_group_name = String(gname_q.toUtf8().constData());
+
+		QStringList sel = m_effects_re_levels->checkedItems();
+		if (sel.isEmpty()) {
+			show_message(tr(
+				"No random-effects levels selected. "
+				"Pick at least one level from the Levels list, or set "
+				"Random back to (None) for a population-level plot."));
+			return;
+		}
+		for (auto &q : sel) {
+			re_selected_levels.append(String(q.toUtf8().constData()));
+		}
+	}
+
 	// ── Build the reference grid ────────────────────────────────────
 	// We build a single Dataset with n_grid × n_by_levels rows (or n_grid
 	// rows when there's no by-factor). Each "block" of n_grid consecutive
@@ -5145,7 +5325,10 @@ void AnalysisView::updateEffectsPlot()
 		show_message(tr("Cannot construct a reference grid for this predictor."));
 		return;
 	}
-	intptr_t n_by = has_by ? (intptr_t) by_levels.size() : 1;
+	intptr_t n_by;
+	if (re_active)      n_by = (intptr_t) re_selected_levels.size();
+	else if (has_by)    n_by = (intptr_t) by_levels.size();
+	else                n_by = 1;
 	intptr_t n_rows = n_grid * n_by;
 
 	auto grid = Dataset::create_empty(n_rows);
@@ -5196,6 +5379,19 @@ void AnalysisView::updateEffectsPlot()
 		}
 		grid->add_text_column(by_name, col_vals);
 	}
+	// Random-effects grouping column: each block carries the level identifier
+	// for that block. predict() reads this column to look up the BLUP row to
+	// add to η for each grid point (Z·u contribution).
+	else if (re_active)
+	{
+		std::vector<String> col_vals((size_t) n_rows);
+		for (intptr_t b = 0; b < n_by; b++) {
+			String level = re_selected_levels[b + 1];
+			for (intptr_t i = 0; i < n_grid; i++)
+				col_vals[(size_t)(b * n_grid + i)] = level;
+		}
+		grid->add_text_column(re_group_name, col_vals);
+	}
 
 	// Other numeric predictors at their mean (constant across all rows).
 	for (auto &name : all_numeric)
@@ -5237,20 +5433,22 @@ void AnalysisView::updateEffectsPlot()
 	stats::PredictOptions opts;
 	opts.scale = "response";
 	opts.bare = true;
+	if (re_active) {
+		// Tell predict() to add Z·u from this group's BLUPs per row.
+		opts.re_form = re_group_name;
+	}
 	auto pr = stats::predict_at(m, *grid, opts);
 	if (!pr.ok) {
 		show_message(QString::fromUtf8(pr.error.data(), (int) pr.error.size()));
 		return;
 	}
 
-	// ── Build the curve list, slicing by by-level ───────────────────
-	// All by-curves share the same x positions (no horizontal dodge): the
-	// markers and error bars sit directly above each focal-level axis tick,
-	// so the user can read "what value at this level?" by looking straight
-	// up from the label. Connecting lines and color distinguish curves
-	// from one another. If two by-curves happen to land at exactly the
-	// same y at a given focal level, their markers and error bars overlap
-	// — that's an honest visual signal that the curves cross there.
+	// ── Build the curve list, slicing by block ──────────────────────
+	// Each block in the grid produced n_grid prediction rows. We slice
+	// pr.fit / ci_lower / ci_upper into one EffectsCurve per block. The
+	// curve's label depends on which mode is active: by-level when has_by,
+	// random-effects level when re_active, empty otherwise (suppresses
+	// legend for the single-curve population-level case).
 
 	std::vector<PlotWidget::EffectsCurve> curves;
 	curves.reserve((size_t) n_by);
@@ -5258,11 +5456,12 @@ void AnalysisView::updateEffectsPlot()
 	for (intptr_t b = 0; b < n_by; b++)
 	{
 		PlotWidget::EffectsCurve cv;
-		// Curve label: by-level text (only when has_by; single-curve case
-		// uses an empty label so the legend is suppressed).
 		if (has_by) {
 			cv.label = QString::fromUtf8(by_levels[b + 1].data(),
 			                             (int) by_levels[b + 1].size());
+		} else if (re_active) {
+			cv.label = QString::fromUtf8(re_selected_levels[b + 1].data(),
+			                             (int) re_selected_levels[b + 1].size());
 		}
 
 		cv.x.resize((size_t) n_grid);
@@ -5285,23 +5484,40 @@ void AnalysisView::updateEffectsPlot()
 		m.formula.data(), (int) m.formula.size()).section('~', 0, 0).trimmed();
 
 	QString title;
-	if (has_by) {
+	if (re_active) {
+		title = tr("Effect of %1 by %2 (conditional)")
+			.arg(focal_qname)
+			.arg(QString::fromUtf8(re_group_name.data(),
+			                       (int) re_group_name.size()));
+	} else if (has_by) {
 		title = tr("Effect of %1 by %2")
 			.arg(focal_qname)
 			.arg(QString::fromUtf8(by_name.data(), (int) by_name.size()));
 	} else {
 		title = tr("Effect of %1").arg(focal_qname);
 	}
-	// Caption adapts to the model type. The "fixed-others" rule (categoricals
-	// at reference level, numerics at mean) applies in all four cases. The
-	// model-type-dependent prefix tells the user what the central line and
-	// band represent: posterior mean + 95% CrI for Bayesian, predicted mean
-	// + 95% CI for Frequentist; with a "population-level" qualifier when
-	// the model has random effects (u set to 0).
+	// Caption adapts to the model type and to whether conditional prediction
+	// is active. The "fixed-others" rule (categoricals at reference level,
+	// numerics at mean) applies in all cases. Conditional mode displaces the
+	// usual population-level wording with a "Conditional on <group>" prefix.
 	QString caption;
 	bool bayesian = m.is_bayesian();
 	bool mixed    = m.has_random_effects();
-	if (bayesian && mixed) {
+	if (re_active)
+	{
+		QString gq = QString::fromUtf8(re_group_name.data(),
+		                               (int) re_group_name.size());
+		int sel = (int) re_selected_levels.size();
+		QString head = tr("Conditional on %1 (%2 level%3)")
+			.arg(gq).arg(sel).arg(sel == 1 ? QString() : tr("s"));
+		QString interval = bayesian
+			? tr("posterior mean")
+			: tr("predicted mean");
+		caption = tr("%1 — %2; other categoricals at reference level; "
+		             "numerics at mean")
+			.arg(head).arg(interval);
+	}
+	else if (bayesian && mixed) {
 		caption = tr("Population-level posterior mean (95% credible interval); "
 		             "other categoricals at reference level; numerics at mean");
 	} else if (bayesian) {
@@ -5324,9 +5540,13 @@ void AnalysisView::updateEffectsPlot()
 		}
 	}
 
+	bool show_ci = m_effects_show_ci_check->isChecked();
+	bool show_legend = m_effects_show_legend_check->isChecked();
+
 	m_effects_plot->setEffectsPlotData(
 		std::move(curves),
-		focal_qname, y_label, title, caption, std::move(level_labels));
+		focal_qname, y_label, title, caption,
+		std::move(level_labels), show_ci, show_legend);
 
 	show_plot();
 }

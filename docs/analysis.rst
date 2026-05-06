@@ -484,18 +484,70 @@ The caption under the title flags which interpretation applies.
 Mixed-effects models
 ~~~~~~~~~~~~~~~~~~~~
 
-For models with random effects (terms like ``(1|speaker)``), the plot shows what is called
-a **population-level prediction**: the predicted response for an "average" speaker, in the
-sense that the random effects are set to zero. This represents what the model expects on
-average across the population sampled, and is the right summary for a question like *"How
-does F1 vary with vowel, in general?"*.
+For models with random effects (terms like ``(1|speaker)``), the default plot shows what is
+called a **population-level prediction**: the predicted response for an "average" speaker,
+in the sense that the random effects are set to zero. This represents what the model
+expects on average across the population sampled, and is the right summary for a question
+like *"How does F1 vary with vowel, in general?"*.
 
-It is *not* the predicted value for any specific speaker. If you want predictions for a
-specific speaker (using their estimated random-effects deviation), this is not yet supported
-in v1.0 and will be added in a future release.
+It is *not* the predicted value for any specific speaker. To see per-speaker predictions,
+use the **Random** and **Levels** controls described below.
 
 The caption under the plot title says *"Population-level (random effects = 0)"* whenever
-this applies.
+the population-level prediction is shown.
+
+Conditional prediction: per-group curves
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The **Random** drop-down lets you switch from population-level prediction to a
+**conditional prediction**, where each curve corresponds to a specific level of a
+random-effects grouping factor (for example, one curve per speaker). This is the right
+mode for answering questions like *"How much do speakers differ from each other?"* or
+*"Does the effect of position go in the same direction for every speaker?"*.
+
+To use it: pick a grouping factor from the **Random** drop-down (e.g. ``speaker``). The
+**Levels** checklist next to it then shows every level of that factor — every speaker, in
+the running example. By default all levels are checked. Uncheck individual levels to
+declutter the plot, for example to compare half a dozen specific speakers in detail.
+
+When **Random** is set to a grouping factor:
+
+- The **By** drop-down is disabled. Stratifying the plot by a fixed-effect category and
+  by random-effect levels at the same time produces a 2D grid of curves that doesn't fit
+  on a single set of axes — that's a planned future feature ("subplots per level"), not a
+  v1.0 capability.
+- The **Show CI** checkbox is unchecked by default, because overlapping confidence ribbons
+  for many speakers quickly become visually unreadable. Re-check it when you want to see
+  each curve's uncertainty (typically with a small number of selected levels).
+- The **Show legend** checkbox is checked by default when the group has eight or fewer
+  selected levels, and unchecked when there are more (a long legend would consume too much
+  of the plot). You can override either default.
+
+The plot title flips to ``Effect of <focal> by <group> (conditional)``, and the caption
+under it reads ``Conditional on <group> (N levels) — predicted/posterior mean; …``,
+reminding you which interpretation applies.
+
+What conditional prediction means precisely
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For each level of the random-effects grouping factor (each speaker, say), Phonometrica
+computes the predicted value as ``X·β + Z·u``, where ``Z·u`` is the speaker's contribution
+from the fitted BLUPs (Best Linear Unbiased Predictors — the model's estimate of how this
+particular speaker deviates from the population mean). This is the same calculation that
+``lme4``'s ``predict.merMod`` and ``glmmTMB``'s ``predict(re.form = NULL)`` perform by
+default. The uncertainty interval treats the BLUPs as fixed and reflects only fixed-effect
+uncertainty, matching those packages' default behaviour.
+
+For a model with a **random intercept only** (e.g. ``f1 ~ vowel + (1|speaker)``), the
+per-speaker curves are vertically translated copies of each other — they have the same
+shape, just shifted up or down by each speaker's intercept BLUP. Speakers with positive
+BLUPs sit above the population-level curve; speakers with negative BLUPs sit below.
+
+For a model with **random slopes** (e.g. ``f2 ~ position + (1+position|speaker)``), the
+per-speaker curves are no longer parallel — they fan out, because each speaker has both
+their own intercept *and* their own slope on the focal predictor. This is exactly the
+visualization to use to answer *"Do all speakers shift their F2 in the same way across
+positions, or does the magnitude of the effect vary by speaker?"*.
 
 Exporting
 ~~~~~~~~~
