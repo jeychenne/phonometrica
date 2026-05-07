@@ -352,12 +352,46 @@ Token Scanner::read_token()
         accept();
         scan_digits();
 
+        bool is_float = false;
+
         if (m_char == U'.')
         {
             accept();
             scan_digits();
-			return Token(Token::Lexeme::FloatLiteral, m_spelling, m_line_no);
+            is_float = true;
         }
+
+        // Optional scientific-notation exponent: [eE][+-]?[0-9_]+
+        // Examples: 1e10, 1.5e-3, 2.3E+05. The resulting token is always a
+        // FloatLiteral (to_float() already accepts scientific notation via
+        // std::from_chars). We commit to consuming the exponent only if its
+        // first significant character (after an optional sign) is a digit;
+        // otherwise we leave 'e'/'E' for the next token, so e.g. an
+        // identifier 'e2' immediately following a literal would still parse
+        // as it did before. Scientific-notation literals never span lines.
+        if (m_char == U'e' || m_char == U'E')
+        {
+            auto pos = m_pos;
+            char32_t c1 = (pos != nullptr && pos != m_line.end())
+                          ? m_line.next_codepoint(pos) : Token::ETX;
+            bool has_sign = (c1 == U'+' || c1 == U'-');
+            char32_t lead = c1;
+            if (has_sign)
+            {
+                lead = (pos != m_line.end()) ? m_line.next_codepoint(pos) : Token::ETX;
+            }
+
+            if (isdigit(lead))
+            {
+                accept();              // 'e' or 'E'
+                if (has_sign) accept(); // '+' or '-'
+                scan_digits();         // exponent digits
+                is_float = true;
+            }
+        }
+
+        if (is_float)
+            return Token(Token::Lexeme::FloatLiteral, m_spelling, m_line_no);
 
         return Token(Token::Lexeme::IntegerLiteral, m_spelling, m_line_no);
     }
