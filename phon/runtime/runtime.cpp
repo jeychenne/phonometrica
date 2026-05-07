@@ -2023,8 +2023,13 @@ Variant Runtime::do_file(const String &path)
 
 Variant Runtime::do_string(const String &code)
 {
+	return do_string(code, String());
+}
+
+Variant Runtime::do_string(const String &code, const String &path)
+{
 	auto old_path = current_path;
-	current_path = String();
+	current_path = path;
 	auto closure = compile_string(code);
 	auto result = interpret(closure);
 	current_path = old_path;

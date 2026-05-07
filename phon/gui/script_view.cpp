@@ -272,9 +272,15 @@ void ScriptView::execute()
 
 	auto bytes = code.toUtf8();
 
+	// If the script has a saved path, pass it through so get_script_path()
+	// inside the chunk returns the file's location and import-relative
+	// resolution works. For an unsaved buffer we pass an empty path, which
+	// matches the legacy do_string(code) behaviour.
+	String chunk_path = m_script->has_path() ? m_script->path() : String();
+
 	try
 	{
-		m_runtime.do_string(String(bytes.constData(), bytes.size()));
+		m_runtime.do_string(String(bytes.constData(), bytes.size()), chunk_path);
 	}
 	catch (RuntimeError &e)
 	{

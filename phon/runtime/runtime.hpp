@@ -250,6 +250,14 @@ public:
 
 	Variant do_string(const String &code);
 
+	// Like do_string, but tags the chunk with a virtual path. Callers
+	// that have a known on-disk source for the chunk (the GUI script
+	// editor running a saved file, for instance) should pass it here
+	// so get_script_path() and import-relative path resolution work
+	// from within the chunk. Passing an empty path is equivalent to
+	// the single-argument overload.
+	Variant do_string(const String &code, const String &path);
+
 	Handle<Closure> compile_file(const String &path);
 
 	Handle<Closure> compile_string(const String &code);
