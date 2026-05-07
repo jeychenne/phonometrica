@@ -1,0 +1,36 @@
+# =====================================================================
+# test_binomial.phon — validates Phonometrica's frequentist binomial
+# regression engine against reference_binomial.json (produced by
+# gen_reference_binomial.R).
+#
+# Five models on the synthetic schwa-realisation data (5400 obs):
+#   M1 — realized ~ position * style                    (interaction)
+#   M2 — realized ~ position + style + (1|speaker)
+#   M3 — realized ~ position + style + (1+style|speaker)
+#   M4 — realized ~ position + style + (1|speaker) + (1|word)
+#   M5 — realized ~ position + style + (1+style|speaker) + (1|word)
+#
+# All five reference fits converge cleanly; tolerances are tightest
+# for the fixed-only and single-RE models, slightly loosened for the
+# random-slope ones where the optimiser may land at alternative
+# corners of the random-effect covariance.
+# =====================================================================
+
+let A = import("../lib/assert")
+
+let DATA = A.resolve_data_path("binomial_schwa.csv")
+let REF  = A.resolve_sibling("reference_binomial.json")
+
+let refs_root = A.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+A.start_section("BINOMIAL")
+
+A.fit_and_check("M1", "realized ~ position * style", d, "binomial", refs["M1"], 0.001, 0.001, 0.01)
+A.fit_and_check("M2", "realized ~ position + style + (1|speaker)", d, "binomial", refs["M2"], 0.005, 0.005, 0.05)
+A.fit_and_check("M3", "realized ~ position + style + (1+style|speaker)", d, "binomial", refs["M3"], 0.01, 0.01, 0.1)
+A.fit_and_check("M4", "realized ~ position + style + (1|speaker) + (1|word)", d, "binomial", refs["M4"], 0.005, 0.005, 0.05)
+A.fit_and_check("M5", "realized ~ position + style + (1+style|speaker) + (1|word)", d, "binomial", refs["M5"], 0.01, 0.01, 0.1)
+
+A.end_section()

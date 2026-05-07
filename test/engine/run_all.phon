@@ -1,0 +1,40 @@
+# =====================================================================
+# engine/run_all.phon — runs every test_*.phon under engine/.
+# =====================================================================
+# Run from the engine/ directory:
+#     phonometrica run_all.phon
+# or from anywhere using an absolute path:
+#     phonometrica /path/to/test/engine/run_all.phon
+#
+# Each test_*.phon is self-contained: it uses the built-in `assert`
+# statement and aborts on the first failure with a clear message and
+# line number. There are no shared counters, so this orchestrator is
+# just a sequential `import` of every test file in this directory.
+#
+# A regression in any test surfaces as the script aborting at the
+# offending line — `phonometrica` returns a non-zero exit code, which
+# CI can pick up.
+#
+# This file is engine-tests-only. Statistics validation lives under
+# ../statistics/ and uses the JSON-reference + assertion-helper
+# pattern; the two suites are intentionally kept apart.
+# =====================================================================
+
+print "######################################################################"
+print "# Phonometrica engine regression suite"
+print "######################################################################"
+
+# Order matters only insofar as a failure prints a clear localised
+# message; tests are otherwise independent. We run the simplest
+# scanner/parser tests first, then the more involved compiler ones.
+
+import("test_scientific_notation")
+import("test_compound_assignment")
+import("test_upvalues")
+import("test_try_catch")
+import("test_try_catch_loops")
+
+print ""
+print "######################################################################"
+print "# All engine tests passed."
+print "######################################################################"

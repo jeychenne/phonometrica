@@ -1,0 +1,68 @@
+# =====================================================================
+# test_upvalues.phon
+# =====================================================================
+# Regression test for upvalue capture across `local function`
+# definitions. A function that closes over a String defined in the
+# enclosing scope must see and propagate mutations performed via
+# native helpers like `append`.
+#
+# Each block prints a banner so a regression localises clearly. The
+# script aborts on the first failed assertion.
+# =====================================================================
+
+print "==== upvalue capture x mutating natives ===="
+
+# 1. Local function appending to an enclosing String through `append`.
+#    The bug surface this is guarding against: the upvalue holds the
+#    String by reference, and append() mutates in place — both
+#    callers must see the updated value after the call.
+print "--- 1. append into upvalue String ---"
+let s1 = "hello"
+local function test_string_append()
+    # Two locals, then a mutation of the upvalue. Locals shouldn't
+    # interfere with the upvalue resolution.
+    let s2 = "blabla"
+    let s3 = " world"
+    append(s1, s3)
+end
+assert s1 == "hello", "before call: expected 'hello', got " & s1
+test_string_append()
+assert s1 == "hello world", "after call: expected 'hello world', got " & s1
+
+# 2. Repeated mutation. Each call must see the previous one.
+print "--- 2. repeated append ---"
+let s4 = "x"
+local function add_y()
+    append(s4, "y")
+end
+add_y()
+add_y()
+add_y()
+assert s4 == "xyyy", "after 3 calls: expected 'xyyy', got " & s4
+
+# 3. Same mechanism on a List upvalue with `append`.
+print "--- 3. append into upvalue List ---"
+let xs = [1, 2]
+local function push_three()
+    append(xs, 3)
+end
+push_three()
+assert len(xs) == 3, "List length: expected 3, got " & len(xs)
+assert xs[3] == 3, "List element: expected 3, got " & xs[3]
+
+# 4. Two functions sharing the same upvalue.
+print "--- 4. shared upvalue ---"
+let counter = 0
+local function inc()
+    counter += 1
+end
+local function read_counter()
+    return counter
+end
+inc()
+inc()
+inc()
+assert read_counter() == 3, "shared counter: expected 3, got " & read_counter()
+
+print ""
+print "==== ALL upvalue tests passed ===="

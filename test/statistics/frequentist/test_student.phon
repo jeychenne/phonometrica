@@ -1,0 +1,33 @@
+# =====================================================================
+# test_student.phon — Student-t regression validation.
+#
+# Status: DISABLED for the v1.0 frequentist suite. The reference
+# produced by gen_reference_student.R is not trustworthy for any
+# of the ten models (5 robust + 5 mild):
+#
+#   * Robust block — every model has converged = false. M2's speaker
+#     SD is reported as ~574 (orders of magnitude wrong). M4's sigma
+#     collapses to 2e-9. M5's slope SDs are < 1e-5 (boundary).
+#   * Mild block — only M4 produces a finite logLik. M1 didn't
+#     converge. M2/M3/M5 converged numerically but glmmTMB declined
+#     to compute logLik.
+#
+# Comparing Phonometrica's Student-t engine against this reference
+# would tell us nothing: a passing test would mean we're matching a
+# broken fit, and a failing test would be ambiguous.
+#
+# The right way to validate Student-t (when we get to it) is against
+# brms HMC, where the May 2026 fixes brought Phonometrica to within
+# 0.17 brms-SD-units on every fit (project memory entry "Student-t
+# Bayesian, May 2026 fixes"). That belongs in the Bayesian suite.
+#
+# This file is intentionally a no-op so run_all.phon can list it
+# without producing failures or warnings. To re-enable when a clean
+# frequentist reference is available: delete the early `return` and
+# write per-block A.fit_and_check calls following the patterns in
+# the other test_<family>.phon files.
+# =====================================================================
+
+let A = import("../lib/assert")
+A.record_note("test_student.phon: SKIPPED — Student-t reference not reliable; see banner comment")
+return null

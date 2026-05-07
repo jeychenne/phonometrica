@@ -1,0 +1,128 @@
+# =====================================================================
+# test_compound_assignment.phon
+# =====================================================================
+# Regression suite for compound-assignment lowering in the compiler.
+#
+# History. A bug present before May 2026 caused `m.field += value`
+# (dot-notation, compound op, on a Module field) to silently lose the
+# compound part: the compiler emitted SetField with just the rhs as
+# the value, so `m.n += 1` became `m.n = 1`. The first call from a
+# zero-initialised field looked correct (because 0 + 1 == 1) but
+# every subsequent call kept overwriting the field with the same rhs.
+# The bracket form (`m["n"] += 1`), local variables, and Table
+# subscripts were unaffected; only dot notation on Module fields had
+# the issue.
+#
+# The fix in compiler.cpp's visit_assignment mirrors the
+# IndexedExpression branch's handling: re-visit the LHS in
+# non-assigned mode to emit GetField, then push the rhs and the op,
+# then SetField.
+#
+# Each block below targets one operator on Module-field LHSs. A
+# regression in the lowering would surface as one of the asserts
+# failing — the script aborts at that point with a clear message.
+# Local-variable and Table-subscript checks at the end guard against
+# accidental over-correction breaking the cases that were already
+# working.
+# =====================================================================
+
+print "==== compound assignment x dot notation ===="
+
+let m = Module("test")
+
+# 1. += on a numeric field, repeated. The pre-fix bug made this
+#    stay at 1 forever after the first call.
+print "--- 1. m.n += 1 (x3) ---"
+m.n = 0
+m.n += 1
+m.n += 1
+m.n += 1
+assert m.n == 3, "T1: expected 3, got " & m.n
+
+# 2. -= on a numeric field, repeated.
+print "--- 2. m.x -= 1 (x3) ---"
+m.x = 10
+m.x -= 1
+m.x -= 1
+m.x -= 1
+assert m.x == 7, "T2: expected 7, got " & m.x
+
+# 3. *= on a numeric field, repeated.
+print "--- 3. m.y *= 2 (x3) ---"
+m.y = 1
+m.y *= 2
+m.y *= 2
+m.y *= 2
+assert m.y == 8, "T3: expected 8, got " & m.y
+
+# 4. /= on a numeric field, repeated.
+print "--- 4. m.z /= 2 (x2) ---"
+m.z = 100
+m.z /= 2
+m.z /= 2
+assert m.z == 25, "T4: expected 25, got " & m.z
+
+# 5. ^= on a numeric field.
+print "--- 5. m.p ^= 2 ---"
+m.p = 3
+m.p ^= 2
+assert m.p == 9, "T5: expected 9, got " & m.p
+
+# 6. %= on a numeric field.
+print "--- 6. m.q %= 4 ---"
+m.q = 13
+m.q %= 4
+assert m.q == 1, "T6: expected 1, got " & m.q
+
+# 7. &= on a string field, repeated.
+print "--- 7. m.s &= ... (x2) ---"
+m.s = "a"
+m.s &= "b"
+m.s &= "c"
+assert m.s == "abc", "T7: expected abc, got " & m.s
+
+# 8. += inside a closure that captured the module. Confirms that
+#    the fix works through indirection (the value is read from the
+#    field, not from a snapshot taken at closure creation).
+print "--- 8. closure m.n += 1 (x3) ---"
+m.bump = function ()
+    m.n += 1
+end
+m.bump()
+m.bump()
+m.bump()
+assert m.n == 6, "T8: expected 6, got " & m.n
+
+# 9. Mixed read-after-write: confirm the post-state is observable.
+print "--- 9. read-after-write ---"
+m.k = 5
+m.k += 7
+let after = m.k
+assert after == 12, "T9: expected 12 after read, got " & after
+
+# 10. Bracket form still works (regression guard for the case that
+#     was always correct, in case of accidental over-correction).
+print "--- 10. bracket m['n'] += 1 (x2) ---"
+m.bn = 0
+m["bn"] += 1
+m["bn"] += 1
+assert m.bn == 2, "T10: expected 2, got " & m.bn
+
+# 11. Table subscript still works (the bug never affected Tables).
+print "--- 11. t['k'] += 1 (x3) ---"
+let t = {"k": 0}
+t["k"] += 1
+t["k"] += 1
+t["k"] += 1
+assert t["k"] == 3, "T11: expected 3, got " & t["k"]
+
+# 12. Local variable still works.
+print "--- 12. local n += 1 (x3) ---"
+let n = 0
+n += 1
+n += 1
+n += 1
+assert n == 3, "T12: expected 3, got " & n
+
+print ""
+print "==== ALL compound-assignment tests passed ===="

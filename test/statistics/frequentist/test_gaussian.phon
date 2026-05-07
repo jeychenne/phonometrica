@@ -1,0 +1,51 @@
+# =====================================================================
+# test_gaussian.phon — validates Phonometrica's frequentist Gaussian
+# regression engine against reference_gaussian.json (produced by
+# gen_reference_gaussian.R from a 300-student subsample of
+# lme4::InstEval).
+#
+# Why InstEval (and not synthetic data):
+#   * Real, well-known dataset; Bates et al. 2015 use it as the
+#     canonical crossed-RE example.
+#   * Crossed grouping factors: students (s) × lecturers (d). 97% of
+#     students see varying values of `service`, so the random slope
+#     (1+service|s) has real (non-zero) variance — every model in
+#     the suite converges cleanly under glmmTMB, no boundary fits.
+#
+# Five models:
+#   M1 — y ~ studage * service                                 [vs lm]
+#   M2 — y ~ studage + lectage + service + (1|s)               [vs glmmTMB ML]
+#   M3 — y ~ studage + lectage + service + (1+service|s)       [vs glmmTMB ML]
+#   M4 — y ~ studage + lectage + service + (1|s) + (1|d)       [vs glmmTMB ML]
+#   M5 — y ~ studage + lectage + service + (1+service|s) + (1|d)
+# =====================================================================
+
+let A = import("../lib/assert")
+
+let DATA = A.resolve_data_path("inst_eval.csv")
+let REF  = A.resolve_sibling("reference_gaussian.json")
+
+let refs_root = A.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+A.start_section("GAUSSIAN")
+
+# M1 — closed-form OLS, near-machine-precision tolerances.
+A.fit_and_check("M1", "y ~ studage * service", d, "gaussian", refs["M1"], 0.000001, 0.00001, 0.00001)
+
+# M2 — single random intercept on student.
+A.fit_and_check("M2", "y ~ studage + lectage + service + (1|s)", d, "gaussian", refs["M2"], 0.001, 0.001, 0.01)
+
+# M3 — random intercept + service slope on student. Real (non-zero)
+# slope variance in the data, so the (β, θ) optimiser has a clean
+# interior optimum to converge to.
+A.fit_and_check("M3", "y ~ studage + lectage + service + (1+service|s)", d, "gaussian", refs["M3"], 0.005, 0.005, 0.05)
+
+# M4 — crossed random intercepts on student and lecturer.
+A.fit_and_check("M4", "y ~ studage + lectage + service + (1|s) + (1|d)", d, "gaussian", refs["M4"], 0.001, 0.001, 0.01)
+
+# M5 — full menagerie: crossed random intercepts plus service slope on student.
+A.fit_and_check("M5", "y ~ studage + lectage + service + (1+service|s) + (1|d)", d, "gaussian", refs["M5"], 0.005, 0.005, 0.05)
+
+A.end_section()
