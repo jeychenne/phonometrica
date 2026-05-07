@@ -343,6 +343,34 @@ void PlotWidget::setLinePlotData(std::vector<LineCurve> curves,
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
+	m_ppc_points.clear();
+	m_show_regression = false;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setPpcDiscreteData(std::vector<PpcBarPoint> points,
+                                     const QString &x_label, const QString &y_label,
+                                     const QString &title,
+                                     bool integer_x_ticks)
+{
+	m_mode = Mode::PpcDiscrete;
+	m_ppc_points = std::move(points);
+	m_ppc_integer_ticks = integer_x_ticks;
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+	m_x.clear();
+	m_y.clear();
+	m_source_rows.clear();
+	m_boxes.clear();
+	m_bins.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_line_curves.clear();
 	m_show_regression = false;
 	m_cache_valid = false;
 	update();
@@ -430,6 +458,7 @@ void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
 	m_color_labels.clear();
 	m_style_labels.clear();
 	m_line_curves.clear();
+	m_ppc_points.clear();
 	m_show_regression = false;
 	m_show_density = false;
 	m_cache_valid = false;
@@ -464,6 +493,8 @@ void PlotWidget::clear()
 	m_eff_curves.clear();
 	m_eff_level_labels.clear();
 	m_eff_caption.clear();
+	m_ppc_points.clear();
+	m_ppc_integer_ticks = false;
 	m_fixed_y_ticks.clear();
 	m_cache_valid = false;
 	m_hit_targets.clear();
@@ -784,6 +815,7 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 	case Mode::Histogram:      renderHistogram(p, left, top, pw, ph); break;
 	case Mode::BarChart:       renderBarChart(p, left, top, pw, ph); break;
 	case Mode::LinePlot:       renderLinePlot(p, left, top, pw, ph); break;
+	case Mode::PpcDiscrete:    renderPpcDiscrete(p, left, top, pw, ph); break;
 	case Mode::EffectsPlot:    renderEffectsPlot(p, left, top, pw, ph); break;
 	default: break;
 	}
@@ -1853,18 +1885,58 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 	// Title
 	renderTitle(p, left, pw, top);
 
-	// Draw curves
+	// Partition curves into background (highlight = false) and highlight
+	// (highlight = true). Backgrounds render first, beneath the highlight
+	// layer, so highlight curves remain visible on top of overlays.
+	std::vector<int> bg_idx, hl_idx;
+	bg_idx.reserve(m_line_curves.size());
+	hl_idx.reserve(m_line_curves.size());
+	for (int c = 0; c < (int)m_line_curves.size(); c++)
+	{
+		if (m_line_curves[(size_t)c].highlight)
+			hl_idx.push_back(c);
+		else
+			bg_idx.push_back(c);
+	}
+
 	p.setClipRect(left, top, pw, ph);
 
-	int ncurves = (int)m_line_curves.size();
-	for (int c = 0; c < ncurves; c++)
+	// ── Background pass ─────────────────────────────────────────────
+	// Posterior-predictive replicate curves: drawn in a single muted blue,
+	// thin and translucent, with no fill. Many overlapping replicates form
+	// a soft band that the bold observed curve sits on top of.
+	if (!bg_idx.empty())
 	{
-		auto &curve = m_line_curves[c];
+		QColor bg_color = GROUP_PALETTE[0];   // blue
+		bg_color.setAlpha(70);
+		QPen bg_pen(bg_color, 1.0, Qt::SolidLine);
+		p.setPen(bg_pen);
+		p.setBrush(Qt::NoBrush);
+		for (int c : bg_idx)
+		{
+			auto &curve = m_line_curves[(size_t)c];
+			if (curve.x.size() < 2) continue;
+			for (size_t i = 1; i < curve.x.size(); i++)
+				p.drawLine(QPointF(dataToX(curve.x[i-1]), dataToY(curve.y[i-1])),
+				           QPointF(dataToX(curve.x[i]),   dataToY(curve.y[i])));
+		}
+	}
+
+	// ── Highlight pass ──────────────────────────────────────────────
+	// Each highlight curve uses a distinct palette colour with translucent
+	// fill, matching the original posterior-density appearance.
+	for (size_t hi = 0; hi < hl_idx.size(); hi++)
+	{
+		auto &curve = m_line_curves[(size_t)hl_idx[hi]];
 		if (curve.x.size() < 2) continue;
 
-		QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
-		p.setPen(QPen(color, 2.0, Qt::SolidLine));
-		p.setBrush(Qt::NoBrush);
+		// When all curves are highlights (e.g. posterior densities), keep
+		// per-curve palette colours so the user can distinguish coefficients.
+		// When highlights coexist with backgrounds (PPC), just use blue so
+		// the focal "y" curve reads as the salient one.
+		QColor color = bg_idx.empty()
+		             ? GROUP_PALETTE[(int)hi % NUM_PALETTE_COLORS]
+		             : QColor(20, 50, 110);
 
 		// Translucent fill under the curve.
 		QPainterPath path;
@@ -1875,7 +1947,7 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 		path.closeSubpath();
 
 		QColor fill_color = color;
-		fill_color.setAlpha(30);
+		fill_color.setAlpha(bg_idx.empty() ? 30 : 22);
 		p.setPen(Qt::NoPen);
 		p.setBrush(fill_color);
 		p.drawPath(path);
@@ -1885,13 +1957,19 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 		p.setPen(QPen(color, 2.0, Qt::SolidLine));
 		for (size_t i = 1; i < curve.x.size(); i++)
 			p.drawLine(QPointF(dataToX(curve.x[i-1]), dataToY(curve.y[i-1])),
-			           QPointF(dataToX(curve.x[i]), dataToY(curve.y[i])));
+			           QPointF(dataToX(curve.x[i]),   dataToY(curve.y[i])));
 	}
 
 	p.setClipping(false);
 
-	// Legend
-	if (ncurves > 1)
+	// ── Legend ──────────────────────────────────────────────────────
+	// When backgrounds exist, the legend collapses to two entries: the
+	// observed-curve highlights (named individually) and a single "y_rep"
+	// row representing the entire replicate overlay.
+	bool show_legend_bg = !bg_idx.empty();
+	int legend_entries = (int)hl_idx.size() + (show_legend_bg ? 1 : 0);
+
+	if (legend_entries >= 2)
 	{
 		font.setPixelSize(10);
 		p.setFont(font);
@@ -1903,11 +1981,15 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 		int line_h = std::max(lfm.height(), 4) + 2;
 
 		int max_label_w = 0;
-		for (auto &curve : m_line_curves)
-			max_label_w = std::max(max_label_w, lfm.horizontalAdvance(curve.name));
+		for (int c : hl_idx)
+			max_label_w = std::max(max_label_w,
+			                       lfm.horizontalAdvance(m_line_curves[(size_t)c].name));
+		const QString rep_label = QStringLiteral("y_rep");
+		if (show_legend_bg)
+			max_label_w = std::max(max_label_w, lfm.horizontalAdvance(rep_label));
 
 		int legend_w = padding + line_w + spacing + max_label_w + padding;
-		int legend_h = padding + ncurves * line_h + padding;
+		int legend_h = padding + legend_entries * line_h + padding;
 
 		int lx = left + pw - legend_w - 8;
 		int ly = top + 8;
@@ -1917,22 +1999,278 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 		p.setBrush(bg);
 		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
 
-		for (int c = 0; c < ncurves; c++)
+		int row = 0;
+		for (size_t hi = 0; hi < hl_idx.size(); hi++)
 		{
-			QColor color = GROUP_PALETTE[c % NUM_PALETTE_COLORS];
-			int ey = ly + padding + c * line_h;
+			QColor color = bg_idx.empty()
+			             ? GROUP_PALETTE[(int)hi % NUM_PALETTE_COLORS]
+			             : QColor(20, 50, 110);
+			int ey = ly + padding + row * line_h;
 			int cy = ey + line_h / 2;
 
-			// Colored line sample.
 			p.setPen(QPen(color, 2.0));
 			p.drawLine(lx + padding, cy, lx + padding + line_w, cy);
-
-			// Label.
 			p.setPen(AXIS_COLOR);
 			p.drawText(lx + padding + line_w + spacing,
 			           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
-			           m_line_curves[c].name);
+			           m_line_curves[(size_t)hl_idx[hi]].name);
+			row++;
 		}
+		if (show_legend_bg)
+		{
+			QColor bg_color = GROUP_PALETTE[0];
+			bg_color.setAlpha(120);
+			int ey = ly + padding + row * line_h;
+			int cy = ey + line_h / 2;
+			p.setPen(QPen(bg_color, 2.0));
+			p.drawLine(lx + padding, cy, lx + padding + line_w, cy);
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + line_w + spacing,
+			           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
+			           rep_label);
+		}
+	}
+}
+
+
+// ── Posterior-predictive discrete plot ───────────────────────────────
+//
+// Bars at (x, obs) plus an interval marker at (x, exp_mean) with vertical
+// I-bars from exp_lo to exp_hi.  Used for binomial bar plots (two bars at
+// {0, 1}) and for Poisson / negative-binomial rootograms (bars at integer
+// counts on the √ scale).  When `m_ppc_integer_ticks` is true, x-axis ticks
+// are placed at every integer in the data range; otherwise ticks are placed
+// only at the supplied x positions.
+
+void PlotWidget::renderPpcDiscrete(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_ppc_points.empty()) return;
+
+	int bottom = top + ph;
+	int right  = left + pw;
+	int npts = (int)m_ppc_points.size();
+
+	// X range: a half-bar margin on either side of the supplied x positions.
+	double xlo = m_ppc_points.front().x - 0.5;
+	double xhi = m_ppc_points.back().x  + 0.5;
+	for (auto &pt : m_ppc_points) {
+		xlo = std::min(xlo, pt.x - 0.5);
+		xhi = std::max(xhi, pt.x + 0.5);
+	}
+
+	// Y range: 0 to max(obs, exp_hi) with 8% headroom.
+	double yhi = 0;
+	for (auto &pt : m_ppc_points) {
+		yhi = std::max(yhi, pt.obs);
+		yhi = std::max(yhi, pt.exp_hi);
+	}
+	if (yhi <= 0) yhi = 1.0;
+	yhi *= 1.08;
+	double ylo = 0;
+
+	double xrange = xhi - xlo;
+	double yrange = yhi - ylo;
+	if (xrange <= 0) xrange = 1;
+	if (yrange <= 0) yrange = 1;
+
+	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
+	auto dataToY = [&](double v) -> double { return bottom - ((v - ylo) / yrange) * ph; };
+
+	// Frame
+	p.setPen(QPen(AXIS_COLOR, 1));
+	p.drawRect(left, top, pw, ph);
+
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	// X ticks: integer ticks for rootograms, supplied positions for bars.
+	p.setPen(QPen(AXIS_COLOR, 1));
+	if (m_ppc_integer_ticks)
+	{
+		// Sparse tick spacing for crowded rootograms (every k-th integer).
+		int support = (int)std::lround(m_ppc_points.back().x - m_ppc_points.front().x) + 1;
+		int step = 1;
+		if (support > 25) step = 5;
+		else if (support > 12) step = 2;
+
+		int kmin = (int)std::lround(m_ppc_points.front().x);
+		int kmax = (int)std::lround(m_ppc_points.back().x);
+		for (int k = kmin; k <= kmax; k++) {
+			if ((k - kmin) % step != 0) continue;
+			double x = dataToX((double)k);
+			if (x < left - 2 || x > right + 2) continue;
+			p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+			QString label = QString::number(k);
+			int lw = fm.horizontalAdvance(label);
+			p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, label);
+		}
+	}
+	else
+	{
+		for (auto &pt : m_ppc_points) {
+			double x = dataToX(pt.x);
+			if (x < left - 2 || x > right + 2) continue;
+			p.drawLine(QPointF(x, bottom), QPointF(x, bottom + 4));
+			QString label = QString::number((int)std::lround(pt.x));
+			int lw = fm.horizontalAdvance(label);
+			p.drawText(int(x) - lw / 2, bottom + 4 + fm.ascent() + 2, label);
+		}
+	}
+	{ int tw = fm.horizontalAdvance(m_x_label); p.drawText(left + (pw - tw) / 2, bottom + MARGIN_BOTTOM - 4, m_x_label); }
+
+	// Y grid + ticks
+	double ytick = nice_tick(yrange);
+	double y0 = std::ceil(ylo / ytick) * ytick;
+
+	p.setPen(QPen(GRID_COLOR, 1, Qt::DotLine));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y > top + 1 && y < bottom - 1)
+			p.drawLine(QPointF(left, y), QPointF(right, y));
+	}
+
+	p.setPen(QPen(AXIS_COLOR, 1));
+	for (double v = y0; v <= yhi; v += ytick) {
+		double y = dataToY(v);
+		if (y < top - 2 || y > bottom + 2) continue;
+		p.drawLine(QPointF(left - 4, y), QPointF(left, y));
+		QString label = QString::number(v, 'g', 4);
+		int lw = fm.horizontalAdvance(label);
+		p.drawText(left - 6 - lw, int(y) + fm.ascent() / 2 - 1, label);
+	}
+	{ p.save(); p.translate(14, top + ph / 2); p.rotate(-90);
+	  int tw = fm.horizontalAdvance(m_y_label); p.drawText(-tw / 2, 0, m_y_label); p.restore(); }
+
+	// Title
+	renderTitle(p, left, pw, top);
+
+	// ── Draw observed bars ──────────────────────────────────────────
+	p.setClipRect(left, top, pw, ph);
+
+	// Bar half-width: for rootograms with many bins, slim bars; for
+	// binomial (2 bars), wider bars.
+	double bar_half_w_data = (npts <= 4) ? 0.32 : 0.42;
+	double y_zero = dataToY(0);
+
+	for (auto &pt : m_ppc_points)
+	{
+		if (pt.obs <= 0) continue;
+		double cx = dataToX(pt.x);
+		double bw_left  = dataToX(pt.x - bar_half_w_data);
+		double bw_right = dataToX(pt.x + bar_half_w_data);
+		double y_top = dataToY(pt.obs);
+		QRectF bar_rect(bw_left, y_top, bw_right - bw_left, y_zero - y_top);
+
+		p.setPen(QPen(BAR_BORDER, 1));
+		p.setBrush(BAR_FILL);
+		p.drawRect(bar_rect);
+		(void)cx; // kept for symmetry with marker pass below
+	}
+
+	// ── Draw posterior-predictive intervals ─────────────────────────
+	// I-bar at each x: vertical line from exp_lo to exp_hi with short
+	// horizontal caps, plus a filled circle marker at exp_mean.
+	QColor exp_color(180, 50, 70);          // darker red, distinct from BAR_BORDER
+	QColor exp_marker = exp_color;
+	double cap_half_w_px = 4.0;
+	double marker_radius = 3.0;
+
+	// Connecting line through expected medians (rootogram style); for binomial
+	// (only 2 points) the line still draws and reads as a slope cue.
+	if (npts >= 2)
+	{
+		QPen line_pen(exp_color, 1.0, Qt::DashLine);
+		p.setPen(line_pen);
+		p.setBrush(Qt::NoBrush);
+		for (int i = 1; i < npts; i++)
+		{
+			QPointF a(dataToX(m_ppc_points[(size_t)i-1].x),
+			          dataToY(m_ppc_points[(size_t)i-1].exp_mean));
+			QPointF b(dataToX(m_ppc_points[(size_t)i].x),
+			          dataToY(m_ppc_points[(size_t)i].exp_mean));
+			p.drawLine(a, b);
+		}
+	}
+
+	for (auto &pt : m_ppc_points)
+	{
+		double x = dataToX(pt.x);
+		double y_lo = dataToY(pt.exp_lo);
+		double y_hi = dataToY(pt.exp_hi);
+		double y_md = dataToY(pt.exp_mean);
+
+		// Vertical interval line
+		p.setPen(QPen(exp_color, 1.5));
+		p.setBrush(Qt::NoBrush);
+		p.drawLine(QPointF(x, y_lo), QPointF(x, y_hi));
+		// Caps
+		p.drawLine(QPointF(x - cap_half_w_px, y_lo), QPointF(x + cap_half_w_px, y_lo));
+		p.drawLine(QPointF(x - cap_half_w_px, y_hi), QPointF(x + cap_half_w_px, y_hi));
+
+		// Median marker
+		p.setPen(QPen(exp_color, 1.0));
+		p.setBrush(exp_marker);
+		p.drawEllipse(QPointF(x, y_md), marker_radius, marker_radius);
+	}
+
+	p.setClipping(false);
+
+	// ── Legend (top-right) ──────────────────────────────────────────
+	{
+		font.setPixelSize(10);
+		p.setFont(font);
+		QFontMetrics lfm(font);
+
+		const QString obs_label = QStringLiteral("y (observed)");
+		const QString rep_label = QStringLiteral("y_rep (5\u201395%)");
+
+		int line_w = 18;
+		int spacing = 4;
+		int padding = 6;
+		int line_h = std::max(lfm.height(), 4) + 2;
+		int max_label_w = std::max(lfm.horizontalAdvance(obs_label),
+		                            lfm.horizontalAdvance(rep_label));
+		int legend_w = padding + line_w + spacing + max_label_w + padding;
+		int legend_h = padding + 2 * line_h + padding;
+
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+
+		QColor bg(255, 255, 255, 210);
+		p.setPen(QPen(GRID_COLOR, 1));
+		p.setBrush(bg);
+		p.drawRoundedRect(lx, ly, legend_w, legend_h, 3, 3);
+
+		// Bar swatch row
+		int ey = ly + padding;
+		QRectF swatch(lx + padding, ey + line_h / 2 - 4, line_w, 8);
+		p.setPen(QPen(BAR_BORDER, 1));
+		p.setBrush(BAR_FILL);
+		p.drawRect(swatch);
+		p.setPen(AXIS_COLOR);
+		p.drawText(lx + padding + line_w + spacing,
+		           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
+		           obs_label);
+
+		// Interval row (I-bar + marker)
+		ey += line_h;
+		int cy = ey + line_h / 2;
+		p.setPen(QPen(exp_color, 1.5));
+		int x0 = lx + padding;
+		int x1 = lx + padding + line_w;
+		int xm = (x0 + x1) / 2;
+		p.drawLine(QPointF(xm, cy - 5), QPointF(xm, cy + 5));
+		p.drawLine(QPointF(xm - 3, cy - 5), QPointF(xm + 3, cy - 5));
+		p.drawLine(QPointF(xm - 3, cy + 5), QPointF(xm + 3, cy + 5));
+		p.setPen(QPen(exp_color, 1.0));
+		p.setBrush(exp_marker);
+		p.drawEllipse(QPointF(xm, cy), 3.0, 3.0);
+		p.setPen(AXIS_COLOR);
+		p.drawText(lx + padding + line_w + spacing,
+		           ey + (line_h + lfm.ascent() - lfm.descent()) / 2,
+		           rep_label);
 	}
 }
 

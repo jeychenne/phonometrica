@@ -50,6 +50,7 @@
 #include <phon/application/analysis.hpp>
 #include <phon/analysis/formula.hpp>
 #include <phon/analysis/scaled_residuals.hpp>
+#include <phon/analysis/posterior_predictive.hpp>
 #include <phon/analysis/emmeans.hpp>
 
 namespace phonometrica {
@@ -159,7 +160,9 @@ private:
 	void plotScaledResidualsVsFitted(const stats::Model &m);
 	void plotScaledResidualQQ(const stats::Model &m);
 	void plotPosteriorDensities(const stats::Model &m);
+	void plotPosteriorPredictiveCheck(const stats::Model &m);
 	const stats::ScaledResidualResult *ensureScaledResiduals(const stats::Model &m);
+	const stats::PosteriorPredictiveResult *ensurePosteriorPredictive(const stats::Model &m);
 	void updateTestResults(const stats::ScaledResidualResult &sr);
 	void clearTestResults();
 	// Inline replacement for the old modal "could not compute residuals"
@@ -251,6 +254,14 @@ private:
 	// When residual computation fails, this carries the explanation that
 	// is shown inline in the scaled-residual plot views (no modal popup).
 	QString m_scaled_residuals_error;
+
+	// Posterior predictive cache (lazy, invalidated on model change).
+	// Lives next to the scaled-residual cache because both are derived
+	// quantities that the Diagnostics tab consumes — keeping them parallel
+	// makes invalidation easy: m_current_model changes → both reset.
+	int m_ppc_model = -1;
+	std::optional<stats::PosteriorPredictiveResult> m_ppc;
+	QString m_ppc_error;
 
 	// Top bar
 	QLineEdit *m_formula_edit = nullptr;

@@ -592,12 +592,17 @@ menu lets you choose between four plot types:
   should be uniformly distributed between 0 and 1 regardless of the model family.
 - **Scaled Residuals Q-Q**: a Q-Q plot of the scaled residuals against the uniform distribution.
 
-As in the EDA tab, the points in all four diagnostic plots are linked to the source dataset
-or concordance the model was fitted on. **Left-clicking** a residual or quantile point opens
-the source data table and selects the corresponding observation, which is useful for
-identifying which rows produce unusually large residuals or sit at the extremes of a Q-Q plot.
-Click-to-source is unavailable for analyses loaded from ``.phon-analysis`` files saved before
-this feature was introduced; in that case the cursor stays as a normal arrow.
+When a Bayesian model is selected, two additional plot types — *Posterior Predictive Check*
+and *Posterior Densities* — appear in the drop-down. Both are described in
+`Diagnostics tab (Bayesian mode)`_ below.
+
+As in the EDA tab, the points in the four residual / Q-Q plots are linked to the source
+dataset or concordance the model was fitted on. **Left-clicking** a residual or quantile
+point opens the source data table and selects the corresponding observation, which is
+useful for identifying which rows produce unusually large residuals or sit at the extremes
+of a Q-Q plot. Click-to-source is unavailable for analyses loaded from ``.phon-analysis``
+files saved before this feature was introduced; in that case the cursor stays as a normal
+arrow.
 
 
 Scaled residuals
@@ -1112,23 +1117,141 @@ pairwise contrasts using posterior-based inference:
 Diagnostics tab (Bayesian mode)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The diagnostic plots and residual tests work identically in Bayesian and frequentist
-modes. Both estimation methods use the same DHARMa-style simulation-based scaled
-residuals — for mixed-effects models, simulation is unconditional (random effects are
-re-drawn from their estimated covariance for each replicate) — and the same Kolmogorov–
-Smirnov, dispersion, and outlier tests are applied to those residuals. The reported
-*p*-values are frequentist p-values from the simulation reference distribution; their
-interpretation (and the threshold for concern) is the same regardless of how the model
-was fit.
+The four plot types described in the main `Diagnostics tab`_ section work the same
+way for Bayesian models — the simulation-based scaled residuals, KS test, dispersion
+test, and outlier test all use the same DHARMa-style procedure regardless of how the
+model was fit. The residual tests panel reports frequentist *p*-values from the
+simulation reference distribution; their interpretation is the same as in the
+frequentist case.
+
+For Bayesian models, two extra plot types appear in the drop-down:
+
+- **Posterior Predictive Check**: a visual check of whether the response family you
+  picked is appropriate for your data.
+- **Posterior Densities**: density curves for each fixed-effect coefficient, showing
+  the shape of the posterior distribution rather than just its mean and credible
+  interval.
 
 .. note::
 
-   Earlier versions of Phonometrica reported posterior predictive p-values for Bayesian
-   fits. That layer has been removed: the test statistic it used was based on
-   conditional PIT residuals against the posterior-mean BLUP, which carried a built-in
-   upward bias on the KS statistic (false-positive rate above nominal even when the
-   marginal residuals were clean). The current diagnostics avoid this asymmetry by
-   using the same unconditional reference distribution for both estimation methods.
+   Earlier versions of Phonometrica reported posterior predictive *p*-values for the
+   residual tests in Bayesian fits. That layer has been removed: the test statistic it
+   used was based on conditional PIT residuals against the posterior-mean BLUP, which
+   carried a built-in upward bias on the KS statistic (false-positive rate above
+   nominal even when the marginal residuals were clean). The current diagnostics avoid
+   this asymmetry by using the same unconditional reference distribution for both
+   estimation methods. The visual Posterior Predictive Check below replaces what those
+   *p*-values were trying to communicate.
+
+
+Posterior predictive check
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Where the scaled-residual plots ask "are the model's residuals well-behaved?",
+the posterior predictive check (PPC) asks the more direct question:
+
+   *If I draw new datasets from the fitted model, do they look like my data?*
+
+Whenever the answer is no, the response family or some other modelling choice is
+missing a feature of the data. PPC is particularly useful for choosing between
+likelihood families: it makes problems like heavy tails, an excess of zeros, or
+boundary effects immediately visible.
+
+The procedure is straightforward. Phonometrica draws 200 samples from the posterior
+of the model parameters and, for each sample, simulates a complete new response
+vector — a *replicate dataset* — from the model's likelihood. For mixed-effects
+models, fresh random effects are drawn for each replicate (unconditional simulation,
+exactly as for scaled residuals). The plot then compares the distribution of the
+observed response with the distribution of the replicates, using a presentation
+tailored to the response family.
+
+**Continuous outcomes (Gaussian, Student t, Beta) — density overlay**
+
+The dark curve shows the smoothed density of your observed *y*; the cloud of light
+curves shows densities for 30 of the 200 replicates. If the dark curve sits
+comfortably inside the cloud, the family captures the shape of your data well.
+
+What to look for when the dark curve does *not* match the cloud:
+
+- **Heavier tails** than the cloud — the dark curve has more mass in the extremes
+  than the replicates produce. Common with Gaussian models on data with outliers
+  or tracking errors. Try the **Continuous (robust)** outcome (Student *t*).
+- **Asymmetry / skew** that the cloud cannot reproduce. Common with strictly
+  positive measurements like duration or amplitude. Try a log-transform of the
+  response, or — for values bounded in (0, 1) — switch to the **Proportion**
+  outcome (Beta).
+- **Bimodality** in the dark curve that is absent from the replicates. This often
+  signals an unmodelled grouping factor (speaker, dialect, condition) — check
+  whether a missing fixed or random effect would split the data into the two modes.
+
+**Binary outcomes (Bernoulli binomial) — bar plot**
+
+Two bars show the observed proportions of 0 and 1 in your data; vertical intervals
+at each bar span the 5th to 95th percentile of those proportions across the
+replicates. The bars should fall comfortably inside the intervals. A bar outside
+its interval means the model is systematically over- or under-predicting the rate
+of that outcome, which usually indicates a missing predictor.
+
+**Counts (Poisson, negative binomial) — rootogram**
+
+For each integer count value (0, 1, 2, …), a bar shows the square root of how many
+observations took that value, and a marker with a 5–95% interval shows what the
+model expects under the same √-transform. Square roots are used so that small
+expected counts in the tails remain visible alongside large counts near the mode.
+
+A bar protruding well above its interval means the model under-predicts observations
+at that value; a bar falling well below the interval means the model over-predicts.
+Poisson models typically struggle when there are too many zeros (the bar at *y* = 0
+sticks far above its interval); switching to the **Overdispersed count** outcome
+(negative binomial) usually fixes this.
+
+The display caps the count axis at 50 to keep the plot readable; if your data has a
+much longer tail, the display still shows the bulk of the support.
+
+**Reading the check**
+
+PPC is purely visual: there is no formal *p*-value, and that is by design. Posterior
+predictive *p*-values are notoriously over-conservative — they concentrate around
+0.5 even when the model is wrong (Gelman, Meng & Stern, 1996) — so reading the
+overlay by eye is the practical approach. A model that produces replicate datasets
+that look like your observed data is usable; a model whose replicates miss obvious
+features of the data needs reconsideration.
+
+.. note::
+
+   **Cost.** Generating 200 replicate datasets and computing the family-appropriate
+   summary takes noticeably longer than the residual plots, particularly for large
+   datasets and mixed-effects models. The result is cached for the current model, so
+   switching between the diagnostic plots does not retrigger the simulation.
+   Refitting or selecting a different model invalidates the cache.
+
+.. note::
+
+   **What "200 draws" means here.** Posterior draws come from Phonometrica's grid
+   approximation (see `Bayesian estimation`_ above) rather than from exact
+   Hamiltonian Monte Carlo as in Stan or brms. For most models the visual overlay is
+   indistinguishable from what brms produces; for models with strongly non-Gaussian
+   posteriors or boundary effects, brms with HMC may show a slightly more
+   informative spread, but the qualitative reading rarely differs.
+
+
+Posterior densities
+^^^^^^^^^^^^^^^^^^^
+
+The **Posterior Densities** plot shows the marginal posterior distribution of each
+fixed-effect coefficient as a smooth density curve. Each curve summarises *all* the
+information about that coefficient that the data and prior together provide —
+including its mean, its credible interval, and any asymmetry — in a single picture.
+
+The **Predictors** check-list above the plot lets you toggle individual coefficients
+on and off. With several coefficients displayed, the relative widths of the curves
+show which estimates are most precise; the relative locations show the size of each
+effect; and any visible asymmetry warns that the credible interval reported in the
+summary table is not a symmetric interval around the mean.
+
+This view is most useful early in the model-checking workflow, where it complements
+the coefficient table by giving an immediate sense of whether the posterior of a
+key effect is concentrated away from zero or straddles it.
 
 
 Model comparison (Bayesian mode)
@@ -1180,6 +1303,9 @@ Tips
   additional terms improve the fit.
 - Check the **Diagnostics** tab after fitting. Poor residual patterns suggest the model
   may need a different outcome type, additional predictors, or data transformation.
+  For Bayesian fits, the **Posterior Predictive Check** plot is a quick eye-ball test
+  of whether the response family captures the shape of your data — useful before
+  trusting the coefficient table.
 - For vowel formant plots, use the **Formant chart** checkbox in the EDA tab to reverse
   both axes.
 - When fitting a GAM with speaker or item effects, use ``s(speaker, bs=re)`` rather than
@@ -1258,6 +1384,8 @@ References
   *Bayesian Analysis*, 1(3), 515–534.
 - Gelman, A., Hwang, J. & Vehtari, A. (2014). Understanding predictive information criteria
   for Bayesian models. *Statistics and Computing*, 24(6), 997–1016.
+- Gelman, A., Meng, X.-L. & Stern, H. (1996). Posterior predictive assessment of model
+  fitness via realized discrepancies. *Statistica Sinica*, 6(4), 733–760.
 - Hartig, F. (2020). DHARMa: Residual diagnostics for hierarchical (multi-level / mixed)
   regression models. R package. https://CRAN.R-project.org/package=DHARMa
 - Holm, S. (1979). A simple sequentially rejective multiple test procedure.

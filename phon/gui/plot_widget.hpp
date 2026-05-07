@@ -124,14 +124,41 @@ public:
 
 	/// Line plot: multiple named curves on the same axes.
 	/// Used for posterior density plots and other multi-curve displays.
+	///
+	/// When `highlight` is false the curve is drawn first as a thin, muted
+	/// background line shared across all background curves (useful for
+	/// posterior-predictive overlays where many replicate curves should sit
+	/// behind a single bold observed curve).  Highlight curves draw on top
+	/// at full weight in distinct palette colours and appear in the legend.
 	struct LineCurve {
 		QString name;
 		std::vector<double> x;
 		std::vector<double> y;
+		bool highlight = true;
 	};
 	void setLinePlotData(std::vector<LineCurve> curves,
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
+
+	/// Posterior-predictive bar / rootogram point.  Each entry contributes a
+	/// solid bar at (x, obs), a vertical I-bar from (x, exp_lo) to (x, exp_hi),
+	/// and a marker at (x, exp_mean).  Markers across consecutive points are
+	/// connected by a thin line for the rootogram variant.
+	struct PpcBarPoint {
+		double x = 0;
+		double obs = 0;
+		double exp_mean = 0;
+		double exp_lo = 0;
+		double exp_hi = 0;
+	};
+	/// Discrete posterior-predictive plot.  When `integer_x_ticks` is true,
+	/// x-axis ticks are placed at every integer in the data range (rootogram
+	/// style).  When false, ticks are placed only at the supplied x positions
+	/// (binomial bars over {0, 1}).
+	void setPpcDiscreteData(std::vector<PpcBarPoint> points,
+	                        const QString &x_label, const QString &y_label,
+	                        const QString &title,
+	                        bool integer_x_ticks);
 
 	/// Effects plot: one or more fitted curves (or sets of points), each with
 	/// its own confidence-interval ribbon (or vertical error bars). Used to
@@ -224,7 +251,7 @@ protected:
 
 private:
 
-	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot };
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot, PpcDiscrete };
 
 	struct BoxStats
 	{
@@ -285,6 +312,7 @@ private:
 	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
 	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
 	void renderLinePlot(QPainter &p, int left, int top, int pw, int ph);
+	void renderPpcDiscrete(QPainter &p, int left, int top, int pw, int ph);
 	void renderEffectsPlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderTitle(QPainter &p, int left, int pw, int top);
 	void renderLegend(QPainter &p, int left, int top, int pw, int ph);
@@ -357,6 +385,10 @@ private:
 
 	// Line plot data (multiple curves)
 	std::vector<LineCurve> m_line_curves;
+
+	// Posterior-predictive discrete plot data (bar + interval + marker series)
+	std::vector<PpcBarPoint> m_ppc_points;
+	bool m_ppc_integer_ticks = false;
 
 	// Effects plot data (one or more curves, each with its own x/fit/CI bounds)
 	std::vector<EffectsCurve> m_eff_curves;

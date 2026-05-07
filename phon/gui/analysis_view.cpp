@@ -712,9 +712,9 @@ void AnalysisView::setupUi()
 	m_plot_type_combo->addItem(tr("Normal Q-Q"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals vs Fitted"));
 	m_plot_type_combo->addItem(tr("Scaled Residuals Q-Q"));
-	// "Posterior Densities" is appended dynamically in updateDiagnosticPlot()
-	// when a Bayesian model is selected, so the option only appears when it
-	// can do something useful.
+	// "Posterior Predictive Check" and "Posterior Densities" are appended
+	// dynamically in updateDiagnosticPlot() when a Bayesian model is selected,
+	// so the entries only appear when they can do something useful.
 	diag_top->addWidget(m_plot_type_combo);
 
 	// Predictor selector for the posterior-densities plot. Hidden unless that
@@ -1472,6 +1472,8 @@ void AnalysisView::onRefitModel(int row)
 		if (m_current_model == row) {
 			m_scaled_residuals.reset();
 			m_scaled_residuals_model = -1;
+			m_ppc.reset();
+			m_ppc_model = -1;
 			displayModel(row);
 		}
 
@@ -1499,6 +1501,8 @@ void AnalysisView::onModelSelected(int row)
 		m_current_model = row;
 		m_scaled_residuals.reset();
 		m_scaled_residuals_model = -1;
+		m_ppc.reset();
+		m_ppc_model = -1;
 		displayModel(row);
 
 		// Update the formula bar to match the selected model.
@@ -1592,6 +1596,8 @@ void AnalysisView::onDeleteModel()
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
 	m_scaled_residuals.reset();
 	m_scaled_residuals_model = -1;
+	m_ppc.reset();
+	m_ppc_model = -1;
 
 	if (m_model_list->count() > 0) {
 		// Select the nearest remaining model.
@@ -2926,31 +2932,48 @@ void AnalysisView::updateDiagnosticPlot()
 
 	auto &m = m_analysis->model(m_current_model);
 
-	// Add or remove the "Posterior Densities" plot type based on whether the
-	// current model is Bayesian. The item is the last entry when present.
+	// Add or remove the Bayesian-only plot types based on the current model.
+	// The two entries are appended in fixed order ("Posterior Predictive
+	// Check" before "Posterior Densities") so the user sees the diagnostic
+	// (does the family fit?) before the inferential view (where are the
+	// coefficients?).  Removed cleanly when switching to a frequentist model.
 	{
 		QSignalBlocker blocker(m_plot_type_combo);
+		const QString ppc_label       = tr("Posterior Predictive Check");
 		const QString posterior_label = tr("Posterior Densities");
-		int posterior_index = m_plot_type_combo->findText(posterior_label);
+
+		auto remove_if_present = [&](const QString &label) {
+			int idx = m_plot_type_combo->findText(label);
+			if (idx >= 0) {
+				if (m_plot_type_combo->currentIndex() == idx)
+					m_plot_type_combo->setCurrentIndex(0);
+				m_plot_type_combo->removeItem(idx);
+			}
+		};
+
 		if (m.is_bayesian())
 		{
-			if (posterior_index < 0)
+			if (m_plot_type_combo->findText(ppc_label) < 0)
+				m_plot_type_combo->addItem(ppc_label);
+			if (m_plot_type_combo->findText(posterior_label) < 0)
 				m_plot_type_combo->addItem(posterior_label);
 		}
-		else if (posterior_index >= 0)
+		else
 		{
-			// If currently selected, fall back to the first plot type before removal.
-			if (m_plot_type_combo->currentIndex() == posterior_index)
-				m_plot_type_combo->setCurrentIndex(0);
-			m_plot_type_combo->removeItem(posterior_index);
+			remove_if_present(ppc_label);
+			remove_if_present(posterior_label);
 		}
 	}
 
-	int plot_type = m_plot_type_combo->currentIndex();
+	const QString plot_text = m_plot_type_combo->currentText();
+	const bool is_ppc       = (plot_text == tr("Posterior Predictive Check"));
+	const bool is_post_dens = (plot_text == tr("Posterior Densities"));
+	const bool is_scaled    = (plot_text == tr("Scaled Residuals vs Fitted"))
+	                       || (plot_text == tr("Scaled Residuals Q-Q"));
 
 	// The predictor selector is relevant only for the posterior-densities plot
 	// on a Bayesian model that actually carries posterior summaries.
-	bool show_predictor_combo = (plot_type == 4)
+	bool show_predictor_combo = is_post_dens
 	                         && m.is_bayesian()
 	                         && !m.posterior_mean.empty()
 	                         && !m.posterior_sd.empty()
@@ -2958,18 +2981,25 @@ void AnalysisView::updateDiagnosticPlot()
 	m_posterior_predictors_label->setVisible(show_predictor_combo);
 	m_posterior_predictors_combo->setVisible(show_predictor_combo);
 
-	switch (plot_type)
-	{
-	case 0:  plotResidualsVsFitted(m);       break;
-	case 1:  plotQQ(m);                      break;
-	case 2:  plotScaledResidualsVsFitted(m); break;
-	case 3:  plotScaledResidualQQ(m);        break;
-	case 4:  plotPosteriorDensities(m);      break;
-	default: m_plot->clear();                break;
-	}
+	if (plot_text == tr("Residuals vs Fitted"))
+		plotResidualsVsFitted(m);
+	else if (plot_text == tr("Normal Q-Q"))
+		plotQQ(m);
+	else if (plot_text == tr("Scaled Residuals vs Fitted"))
+		plotScaledResidualsVsFitted(m);
+	else if (plot_text == tr("Scaled Residuals Q-Q"))
+		plotScaledResidualQQ(m);
+	else if (is_ppc)
+		plotPosteriorPredictiveCheck(m);
+	else if (is_post_dens)
+		plotPosteriorDensities(m);
+	else
+		m_plot->clear();
 
-	// Show test results only for scaled residual plots.
-	if (plot_type < 2 || plot_type >= 4)
+	// Show the residual-test results panel only for scaled-residual plots.
+	// The PPC view writes its own short caption into the same panel, so we
+	// don't clear in that case.
+	if (!is_scaled && !is_ppc)
 		clearTestResults();
 
 	updateDetachActionsEnabled();
@@ -3343,6 +3373,158 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 	                         tr("Coefficient value"), tr("Density"),
 	                         tr("Posterior Densities"));
 	m_plot->clearFixedYTicks();
+}
+
+
+// =====================================================================
+// Posterior predictive check
+// =====================================================================
+//
+// Runs a Bayesian posterior-predictive simulation (200 draws) and
+// renders the result in a family-appropriate way:
+//   • Continuous (Gaussian / Student t / Beta): density overlay
+//   • Bernoulli binomial: bar plot with posterior-predictive intervals
+//   • Poisson / negative binomial: standing rootogram on the √-scale
+// Diagnostic-side caching mirrors the scaled-residuals path, so flipping
+// between the PPC view and the scaled-residual views does not retrigger
+// the (200-replicate) simulation.
+
+const stats::PosteriorPredictiveResult *
+AnalysisView::ensurePosteriorPredictive(const stats::Model &m)
+{
+	if (m_ppc_model == m_current_model)
+		return m_ppc ? &*m_ppc : nullptr;
+
+	if (!m.is_bayesian()) {
+		m_ppc.reset();
+		m_ppc_model = m_current_model;
+		m_ppc_error = tr("Posterior predictive checks are only available for Bayesian models.");
+		return nullptr;
+	}
+	if (m.nobs == 0 || m.y.empty()) {
+		m_ppc.reset();
+		m_ppc_model = m_current_model;
+		m_ppc_error = tr("Posterior predictive checks are not available: this model carries no fitted data.");
+		return nullptr;
+	}
+
+	try
+	{
+		m_ppc = stats::compute_posterior_predictive(m);
+		m_ppc_model = m_current_model;
+		m_ppc_error.clear();
+		return &*m_ppc;
+	}
+	catch (std::exception &e)
+	{
+		m_ppc.reset();
+		m_ppc_model = m_current_model;
+		m_ppc_error = QString::fromUtf8(e.what());
+		return nullptr;
+	}
+}
+
+
+void AnalysisView::plotPosteriorPredictiveCheck(const stats::Model &m)
+{
+	// Defensive guard: the combo entry is only added for Bayesian models.
+	if (!m.is_bayesian())
+	{
+		m_plot->clear();
+		clearTestResults();
+		return;
+	}
+
+	auto *ppc = ensurePosteriorPredictive(m);
+	if (!ppc)
+	{
+		m_plot->clear();
+		QString message = m_ppc_error.isEmpty()
+			? tr("Posterior predictive checks are not available for this model.")
+			: m_ppc_error;
+		m_test_results_text->setPlainText(message);
+		m_test_results_group->setTitle(tr("Posterior predictive checks"));
+		m_test_results_group->setVisible(true);
+		return;
+	}
+
+	const QString title = QString::fromUtf8(ppc->title.data(), (int)ppc->title.size());
+	const QString xlbl  = QString::fromUtf8(ppc->x_label.data(), (int)ppc->x_label.size());
+	const QString ylbl  = QString::fromUtf8(ppc->y_label.data(), (int)ppc->y_label.size());
+
+	switch (ppc->kind)
+	{
+	case stats::PpcKind::Density:
+	{
+		std::vector<PlotWidget::LineCurve> curves;
+		curves.reserve(ppc->rep_densities.size() + 1);
+
+		// Replicates first (background); they will be painted beneath the
+		// observed curve regardless of curve order — renderLinePlot
+		// partitions by `highlight` and draws backgrounds first.
+		for (auto &rd : ppc->rep_densities) {
+			PlotWidget::LineCurve c;
+			c.x = rd.x;
+			c.y = rd.y;
+			c.highlight = false;
+			curves.push_back(std::move(c));
+		}
+
+		// Observed (highlight).
+		PlotWidget::LineCurve obs;
+		obs.name = tr("y");
+		obs.x = ppc->obs_density.x;
+		obs.y = ppc->obs_density.y;
+		obs.highlight = true;
+		curves.push_back(std::move(obs));
+
+		m_plot->setLinePlotData(std::move(curves), xlbl, ylbl, title);
+		m_plot->clearFixedYTicks();
+		break;
+	}
+	case stats::PpcKind::BinomialBars:
+	case stats::PpcKind::Rootogram:
+	{
+		std::vector<PlotWidget::PpcBarPoint> points;
+		points.reserve(ppc->discrete.size());
+		for (auto &pt : ppc->discrete) {
+			PlotWidget::PpcBarPoint q;
+			q.x = pt.x;
+			q.obs = pt.obs;
+			q.exp_mean = pt.exp_mean;
+			q.exp_lo = pt.exp_lo;
+			q.exp_hi = pt.exp_hi;
+			points.push_back(q);
+		}
+		bool integer_ticks = (ppc->kind == stats::PpcKind::Rootogram);
+		m_plot->setPpcDiscreteData(std::move(points), xlbl, ylbl, title, integer_ticks);
+		m_plot->clearFixedYTicks();
+		break;
+	}
+	}
+
+	// Caption-style note in the test-results panel: brief and self-explanatory.
+	// The wording is family-specific because the density overlay has no
+	// explicit "band" (the spread of replicate curves is the band visually),
+	// whereas the discrete variants do show a 5-95% I-bar at each x.
+	QString caption;
+	if (ppc->kind == stats::PpcKind::Density)
+	{
+		caption = tr("%1 posterior draws, %2 replicate curves shown.  "
+		             "Dark curve: observed y.  Light curves: replicate densities "
+		             "drawn from the posterior.")
+			.arg(ppc->n_replicates)
+			.arg(ppc->n_overlay);
+	}
+	else
+	{
+		caption = tr("%1 posterior draws.  Bars: observed.  "
+		             "Intervals span the 5\u201395% posterior predictive range.")
+			.arg(ppc->n_replicates);
+	}
+	m_test_results_text->setPlainText(caption);
+	m_test_results_group->setTitle(tr("Posterior predictive checks"));
+	m_test_results_group->setVisible(true);
 }
 
 
