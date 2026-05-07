@@ -38,11 +38,14 @@ Available methods
 Lobanov (1971)
 ~~~~~~~~~~~~~~
 
-The Lobanov method applies a z-score transformation to each formant independently, within each speaker::
+The Lobanov method applies a z-score transformation to each formant independently, within each speaker:
 
-   Fn' = (Fn − μn) / σn
+.. math::
 
-where μn and σn are the mean and standard deviation of formant Fn for the speaker.
+   F_n' = \frac{F_n - \mu_n}{\sigma_n}
+
+where :math:`\mu_n` and :math:`\sigma_n` are the mean and standard deviation of formant :math:`F_n` for the
+speaker.
 
 This is the most commonly used vowel normalization method. It is vowel-extrinsic (it uses the distribution of
 all vowels for a given speaker) and speaker-intrinsic (each speaker is normalized independently). The output
@@ -53,11 +56,13 @@ Nearey 1 (1978) — per-formant
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Nearey's first method (also called *individual log-mean* or *per-formant extrinsic*) subtracts the speaker's
-mean log-formant from each log-transformed formant value, independently for each formant::
+mean log-formant from each log-transformed formant value, independently for each formant:
 
-   Fn' = ln(Fn) − mean(ln(Fn))
+.. math::
 
-where the mean is computed over all observations of formant Fn for the speaker.
+   F_n' = \ln(F_n) - \overline{\ln(F_n)}
+
+where the mean is computed over all observations of formant :math:`F_n` for the speaker.
 
 This method operates in the log-frequency domain, which is motivated by the observation that formant
 frequencies are approximately log-normally distributed. Like Lobanov, it is vowel-extrinsic and
@@ -68,11 +73,14 @@ Nearey 2 (1978) — uniform
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Nearey's second method (also called *uniform* or *grand log-mean*) subtracts a single grand mean of all
-log-formant values from each log-transformed value::
+log-formant values from each log-transformed value:
 
-   Fn' = ln(Fn) − grand_mean(ln(F))
+.. math::
 
-where grand_mean(ln(F)) is the grand mean of all log-formant values (across all formants) for the speaker.
+   F_n' = \ln(F_n) - \overline{\ln(F)}
+
+where :math:`\overline{\ln(F)}` is the grand mean of all log-formant values (across all formants) for the
+speaker.
 
 The key difference from Nearey 1 is that a single correction factor is applied uniformly across all formants
 for a given speaker, rather than a separate correction for each formant. This assumes that a single
@@ -83,16 +91,22 @@ Watt & Fabricius (2002)
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 The Watt & Fabricius method normalizes formant values relative to a speaker-specific centroid computed from
-the three point vowels /i/, /a/, and /u/::
+the three point vowels /i/, /a/, and /u/:
 
-   Fn' = (Fn − Sn) / Sn
+.. math::
 
-where Sn is the centroid coordinate for formant n, computed as the mean of the point vowel values::
+   F_n' = \frac{F_n - S_n}{S_n}
 
-   Sn = (Fn(i) + Fn(a) + Fn(u')) / 3
+where :math:`S_n` is the centroid coordinate for formant :math:`n`, computed as the mean of the point vowel
+values:
 
-Following Watt & Fabricius (2002), F1 of /u/ is not measured directly but is estimated as F1(u') = F1(i).
-This avoids problems caused by variation in the realization of /u/ across speakers and dialects.
+.. math::
+
+   S_n = \frac{F_n(i) + F_n(a) + F_n(u')}{3}
+
+Following Watt & Fabricius (2002), F1 of /u/ is not measured directly but is estimated as
+:math:`F_1(u') = F_1(i)`. This avoids problems caused by variation in the realization of /u/ across speakers
+and dialects.
 
 This method requires exactly two formant columns (F1 and F2) and a vowel column that identifies the phonemic
 category of each observation. It is vowel-intrinsic (normalization depends on specific vowel categories) and

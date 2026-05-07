@@ -16,7 +16,8 @@ and residual diagnostics, were developed with the assistance of Claude Opus 4.6 
 from established literature and reference implementations in R.
 
 While our internal benchmarking shows an excellent match across a diverse suite of datasets when compared to reference R packages 
-(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor
+(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity, and the Bayesian engine is 
+still considered experimental at this stage. Users may encounter minor 
 discrepancies due to differences in optimization algorithms, convergence criteria, or numerical stability in edge cases. We strongly 
 recommend cross-validating critical results in a secondary statistical environment for the time being. We welcome community feedback and detailed bug 
 reports.
@@ -166,9 +167,10 @@ You can also cross grouping factors::
 .. note::
 
    **Choosing** *k* **for spline smooths.** The default of *k* = 10 works well in most
-   situations. If you suspect the relationship is very wiggly, you may want to increase *k* to 15 or 20. In principle,
-   setting *k* too high is not harmful since the penalty will prevent overfitting, although in practice it may still overfit the data.
-   Setting *k* too low, on the other hand, can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
+   situations. If you suspect the relationship is very wiggly (e.g. a formant contour with
+   multiple turning points), increase *k* to 15 or 20. Setting *k* too high is not harmful —
+   the penalty will prevent overfitting — but it makes computation slower. Setting *k* too low
+   can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
    reported in the summary is close to *k* − 1, consider increasing *k*.
 
 Random effects
@@ -345,11 +347,16 @@ Mathematical background
 ~~~~~~~~~~~~~~~~~~~~~~~
 
 EMMs are computed following Searle, Speed & Milliken (1980), using the terminology
-of Lenth (2016). For a model with fixed-effects coefficient vector **β** and covariance
-matrix **V**, the EMM for each level is a linear function **Lβ** where **L** is a
-prediction matrix (the "reference grid"). Standard errors are obtained from
-SE = √diag(**L V L'**), and confidence intervals use the appropriate *t* or *z*
-quantiles.
+of Lenth (2016). For a model with fixed-effects coefficient vector :math:`\boldsymbol{\beta}`
+and covariance matrix :math:`\mathbf{V}`, the EMM for each level is a linear function
+:math:`\mathbf{L}\boldsymbol{\beta}` where :math:`\mathbf{L}` is a prediction matrix (the
+"reference grid"). Standard errors are obtained from
+
+.. math::
+
+   \mathrm{SE} = \sqrt{\mathrm{diag}(\mathbf{L}\,\mathbf{V}\,\mathbf{L}^{\top})},
+
+and confidence intervals use the appropriate :math:`t` or :math:`z` quantiles.
 
 For generalized linear models, response-scale standard errors are computed via the
 delta method, and confidence intervals use endpoint back-transformation through the
@@ -359,8 +366,9 @@ inverse link function.
 
    EMMs for mixed-effects models use the fixed-effects coefficients only. Random effects
    integrate out to zero at the population level and do not contribute to the EMMs.
-   The covariance matrix is the conditional variance Var(β̂ | θ̂) from the Henderson
-   system, which is the same quantity reported by lme4 and glmmTMB in R.
+   The covariance matrix is the conditional variance
+   :math:`\mathrm{Var}(\hat{\boldsymbol{\beta}} \mid \hat{\boldsymbol{\theta}})` from the
+   Henderson system, which is the same quantity reported by lme4 and glmmTMB in R.
 
 
 Model comparison
@@ -380,7 +388,7 @@ fit and parsimony. These criteria can be used for any pair of models, whether ne
 For every pair of models, a likelihood ratio test (LRT) is computed:
 
 - **Df**: difference in number of parameters between the two models.
-- **Chisq**: the chi-squared test statistic (−2 × (logLik\ :sub:`simple` − logLik\ :sub:`complex`)).
+- **Chisq**: the chi-squared test statistic, :math:`-2 \cdot (\log L_{\text{simple}} - \log L_{\text{complex}})`.
 - **Pr(>Chisq)**: the *p*-value from the chi-squared distribution.
 
 The LRT is only valid when the simpler model is **nested** within the more complex one
@@ -609,7 +617,8 @@ Phonometrica computes scaled residuals using a procedure inspired by the DHARMa 
 
 1. For each of 1000 replicates, a new response vector is simulated from the fitted model.
    For mixed-effects models, the simulation is *unconditional* (marginal): fresh random effects
-   are drawn from N(0, Σ̂) for each replicate, rather than conditioning on the estimated BLUPs.
+   are drawn from :math:`\mathcal{N}(\mathbf{0}, \hat{\boldsymbol{\Sigma}})` for each replicate,
+   rather than conditioning on the estimated BLUPs.
    This is important because BLUPs are functions of the observed data — they absorb part of the
    residual noise via shrinkage — so conditioning on them would produce a predictive distribution
    that is systematically too narrow, resulting in underdispersed PIT residuals and inflated
@@ -636,8 +645,8 @@ three formal tests:
   underdispersion.
 - **Outlier test**: counts how many residuals fall in the extreme tails (below 1/1001 or
   above 1000/1001 for 1000 simulations). Under a correct model, the expected number of outliers
-  is approximately *n* × 2/1001, where *n* is the number of observations. A significant
-  excess of outliers may indicate influential observations or model misfit.
+  is approximately :math:`n \cdot 2/1001`, where :math:`n` is the number of observations. A
+  significant excess of outliers may indicate influential observations or model misfit.
 
 .. note::
 
@@ -652,7 +661,8 @@ three formal tests:
 .. note::
 
    **Comparison with R.** Phonometrica's scaled residuals use unconditional (marginal) simulation
-   for mixed-effects models: random effects are re-drawn from N(0, Σ̂) for each replicate. In R,
+   for mixed-effects models: random effects are re-drawn from
+   :math:`\mathcal{N}(\mathbf{0}, \hat{\boldsymbol{\Sigma}})` for each replicate. In R,
    the DHARMa package computes scaled residuals via ``simulateResiduals()``, which calls the
    model's ``simulate()`` method. The default behaviour depends on the package used to fit the
    model:
@@ -761,13 +771,16 @@ Phonometrica's statistical engine supports the following model families:
   coefficients; higher φ indicates less variability around the mean proportion.
 - **Student t** (identity link): robust regression and robust mixed models for continuous
   outcomes with heavy-tailed residuals. Useful when more observations are in the tails than would be expected
-  under a Gaussian model. The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
-  parameter ν that controls the tail heaviness. Observations with large residuals receive lower
-  weight, so the fixed-effects estimates are robust to outliers. As ν → ∞ the model reduces to
-  Gaussian regression; in practice, ν < 10 indicates meaningful departure from normality.
-  The engine fits Student-t models from multiple starting values for ν (covering the heavy-tailed-to-near-Gaussian range)
-  and keeps the best converged fit, so users do not need to specify initial values for ν or σ. If a fit produces an unusually
-  large ν (≥ 199), Phonometrica issues a warning indicating that the data are essentially Gaussian and recommends switching to the Gaussian family.
+  under a Gaussian model. The model estimates two additional parameters: a scale parameter :math:`\sigma`
+  and a degrees-of-freedom parameter :math:`\nu` that controls the tail heaviness. Observations with large
+  residuals receive lower weight, so the fixed-effects estimates are robust to outliers. As
+  :math:`\nu \to \infty` the model reduces to Gaussian regression; in practice, :math:`\nu < 10` indicates
+  meaningful departure from normality.
+  The engine fits Student-t models from multiple starting values for :math:`\nu` (covering the
+  heavy-tailed-to-near-Gaussian range) and keeps the best converged fit, so users do not need to specify
+  initial values for :math:`\nu` or :math:`\sigma`. If a fit produces an unusually
+  large :math:`\nu` (:math:`\geq 199`), Phonometrica issues a warning indicating that the data are
+  essentially Gaussian and recommends switching to the Gaussian family.
   Select **Continuous (robust)** in the Outcome dropdown to use this family, or pass ``"student"`` to
   the ``fit()`` scripting function.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
@@ -841,14 +854,16 @@ Bayesian estimation requires prior distributions for the model parameters. Phono
 to the response variable so that they are genuinely weakly informative regardless of the
 measurement scale (Hz, bark, semitones, milliseconds, etc.):
 
-- **Fixed effects (slopes)**: Normal(0, *s*), where *s* = max(2.5, 2.5 × sd(*y*\ :sub:`link`)).
-- **Intercept**: Normal(mean(*y*\ :sub:`link`), *s*), centered on the response mean.
+- **Fixed effects (slopes)**: :math:`\mathcal{N}(0, s)`, where
+  :math:`s = \max\!\bigl(2.5,\; 2.5 \cdot \mathrm{sd}(y_{\text{link}})\bigr)`.
+- **Intercept**: :math:`\mathcal{N}(\overline{y}_{\text{link}}, s)`, centered on the response mean.
 - **Variance components** (random-effect SDs): Penalized complexity prior
-  PC(*s*, 0.05), meaning P(σ > *s*) = 0.05 (Simpson et al., 2017).
-- **Residual SD** (Gaussian family): PC(*s*, 0.05).
-- **Dispersion parameters**: Gamma(1, 0.01) for negative binomial θ and beta φ.
+  :math:`\mathrm{PC}(s, 0.05)`, meaning :math:`P(\sigma > s) = 0.05` (Simpson et al., 2017).
+- **Residual SD** (Gaussian family): :math:`\mathrm{PC}(s, 0.05)`.
+- **Dispersion parameters**: :math:`\mathrm{Gamma}(1, 0.01)` for negative binomial :math:`\theta`
+  and beta :math:`\varphi`.
 
-Here *y*\ :sub:`link` denotes the response on the link scale (identity for Gaussian/Student,
+Here :math:`y_{\text{link}}` denotes the response on the link scale (identity for Gaussian/Student,
 logit for binomial/beta, log for Poisson/NB). The priors are broad enough that they have
 minimal influence on the posterior when the data are informative, but they prevent the
 optimizer from wandering into implausible regions of the parameter space when the data are
@@ -881,18 +896,28 @@ median of each is σ = 1, making the differences in tail weight visible directly
    Half-Normal, Half-Cauchy and PC (exponential) priors on a standard deviation σ, each
    calibrated so that the median equals 1.
 
-**Half-Normal(*s*)** priors are truncated Gaussians, with density proportional to exp(−σ² /
-(2 *s*²)) for σ ≥ 0. The Gaussian tail decays very fast, so values much larger than *s* are
-effectively ruled out a priori. This makes the prior informative: a misspecified *s* can
-bias the posterior SD downward. Use Half-Normal when you have genuine prior information
-about a plausible upper bound on σ — for example, when σ is on a log-odds scale and values
-above 5 are implausible on substantive grounds. Chung et al. (2013) recommend Half-Normal
-specifically to avoid the degenerate σ = 0 estimates produced by penalized-likelihood fits
-when the number of random-effect groups is small.
+**Half-Normal(s)** priors are truncated Gaussians, with density
 
-**Half-Cauchy(γ)** priors are truncated Cauchy distributions, with density proportional to
-1 / (σ² + γ²). The Cauchy tail decays only polynomially, so even with a small scale γ the
-prior keeps non-trivial mass at large σ. This is the classical "weakly informative" default
+.. math::
+
+   p(\sigma) \propto \exp\!\left(-\frac{\sigma^{2}}{2 s^{2}}\right) \quad \text{for } \sigma \geq 0.
+
+The Gaussian tail decays very fast, so values much larger than :math:`s` are
+effectively ruled out a priori. This makes the prior informative: a misspecified :math:`s` can
+bias the posterior SD downward. Use Half-Normal when you have genuine prior information
+about a plausible upper bound on :math:`\sigma` — for example, when :math:`\sigma` is on a
+log-odds scale and values above 5 are implausible on substantive grounds. Chung et al. (2013)
+recommend Half-Normal specifically to avoid the degenerate :math:`\sigma = 0` estimates produced
+by penalized-likelihood fits when the number of random-effect groups is small.
+
+**Half-Cauchy(γ)** priors are truncated Cauchy distributions, with density
+
+.. math::
+
+   p(\sigma) \propto \frac{1}{\sigma^{2} + \gamma^{2}}.
+
+The Cauchy tail decays only polynomially, so even with a small scale :math:`\gamma` the
+prior keeps non-trivial mass at large :math:`\sigma`. This is the classical "weakly informative" default
 recommended by Gelman (2006) for variance components in hierarchical models, and for many
 years the default in tools such as Stan, rstanarm and brms. The Half-Cauchy is the most
 permissive of the three: the data can override the prior even when the true SD is large.
@@ -901,21 +926,32 @@ random-effect levels (say, 2–5 groups) the posterior can drift into implausibl
 variances and degrade the stability of the INLA grid integration. Use Half-Cauchy when you
 have many random-effect levels and genuinely want the data to speak for themselves.
 
-**PC(*U*, α)** priors (Simpson et al., 2017) reduce to an *exponential* distribution on the
-standard deviation, *p*\ (σ) = λ · exp(−λσ). The functional form is unsurprising; what makes
+**PC(U, α)** priors (Simpson et al., 2017) reduce to an *exponential* distribution on the
+standard deviation,
+
+.. math::
+
+   p(\sigma) = \lambda \, \exp(-\lambda \sigma).
+
+The functional form is unsurprising; what makes
 PC priors distinctive is their construction. They are derived from the Kullback–Leibler
-divergence between the richer model (random effect with SD = σ) and a simpler *base model*
-(σ = 0, i.e. no random effect at that level). Deviating from the base model is penalized
-linearly in its natural Riemannian distance, and this penalty translates into an exponential
-prior on the SD. The rate λ is set through the interpretable tail-probability statement
-P(σ > *U*) = α: you specify a plausible upper bound *U* and a small probability α of
-exceeding it, and the software solves λ = −ln(α) / *U*. PC priors combine the interpretability
-that Half-Normal lacks (you state a probability rather than an abstract scale parameter) with
-the robustness that Half-Cauchy can over-supply (exponential tails are lighter than Cauchy,
-so posterior mass cannot drift arbitrarily far from the null). By construction they shrink
-the model toward the simpler structure, which is the right behaviour when the random-effect
-structure is richer than the data can support. For these reasons, PC priors are the default
-in R-INLA and in Phonometrica.
+divergence between the richer model (random effect with SD = :math:`\sigma`) and a simpler
+*base model* (:math:`\sigma = 0`, i.e. no random effect at that level). Deviating from the base
+model is penalized linearly in its natural Riemannian distance, and this penalty translates into
+an exponential prior on the SD. The rate :math:`\lambda` is set through the interpretable
+tail-probability statement :math:`P(\sigma > U) = \alpha`: you specify a plausible upper bound
+:math:`U` and a small probability :math:`\alpha` of exceeding it, and the software solves
+
+.. math::
+
+   \lambda = -\frac{\ln(\alpha)}{U}.
+
+PC priors combine the interpretability that Half-Normal lacks (you state a probability rather
+than an abstract scale parameter) with the robustness that Half-Cauchy can over-supply
+(exponential tails are lighter than Cauchy, so posterior mass cannot drift arbitrarily far from
+the null). By construction they shrink the model toward the simpler structure, which is the
+right behaviour when the random-effect structure is richer than the data can support. For these
+reasons, PC priors are the default in R-INLA and in Phonometrica.
 
 For routine analyses, keep the PC default. Switch to Half-Cauchy when you have substantive
 reasons to expect large between-group variability and enough random-effect levels (roughly
@@ -944,7 +980,8 @@ highly accurate for GLMs with moderate to large samples.
 **Mixed-effects models and dispersion families** (NB, beta, Student *t*): the negative
 log-posterior (likelihood × prior) is optimized directly, with the prior entering the
 objective function. For mixed-effects models, a two-phase optimization finds the joint
-posterior mode over fixed effects β and variance parameters θ.
+posterior mode over fixed effects :math:`\boldsymbol{\beta}` and variance parameters
+:math:`\boldsymbol{\theta}`.
 
 .. note::
 
@@ -961,25 +998,26 @@ posterior mode over fixed effects β and variance parameters θ.
    effect partially aliased with the corresponding random intercept).
 
    Both optimizers minimize the same Laplace-approximated marginal negative
-   log-likelihood to the same tolerance (10⁻⁸ on the gradient norm), with a
+   log-likelihood to the same tolerance (:math:`10^{-8}` on the gradient norm), with a
    secondary function-value convergence criterion for L-BFGS. Log-likelihood
-   values agree across optimizers to within numerical noise (~10⁻¹⁰),
+   values agree across optimizers to within numerical noise (:math:`\sim 10^{-10}`),
    far below the threshold at which AIC differences or likelihood-ratio
    statistics are meaningful. The optimizer used for each fit is reported in
    the model summary (**Converged in N iterations (Newton)** or
    **(L-BFGS)**) and is accessible from scripts as ``model.optimizer``.
 
 For mixed-effects models, the posterior is then refined via **grid integration** over the
-hyperparameters θ (variance component SDs, dispersion parameters). This follows the INLA
-strategy:
+hyperparameters :math:`\boldsymbol{\theta}` (variance component SDs, dispersion parameters).
+This follows the INLA strategy:
 
 1. A Hessian at the posterior mode defines a Gaussian approximation to the hyperparameter
    posterior.
 2. A central composite design (CCD) grid of evaluation points is constructed in the
    standardized eigenspace of this Gaussian.
-3. At each grid point θ\ :sub:`k`, the conditional posterior of the fixed effects β given
-   θ\ :sub:`k` is computed, yielding a conditional mean β̂(θ\ :sub:`k`) and covariance
-   Σ(θ\ :sub:`k`).
+3. At each grid point :math:`\boldsymbol{\theta}_k`, the conditional posterior of the fixed
+   effects :math:`\boldsymbol{\beta}` given :math:`\boldsymbol{\theta}_k` is computed, yielding
+   a conditional mean :math:`\hat{\boldsymbol{\beta}}(\boldsymbol{\theta}_k)` and covariance
+   :math:`\boldsymbol{\Sigma}(\boldsymbol{\theta}_k)`.
 4. The results are combined into a mixture-of-Gaussians posterior, with weights proportional
    to the unnormalized posterior density at each grid point.
 
@@ -1003,11 +1041,13 @@ frequentist test statistics:
   the data and the priors, there is a 95% probability that the parameter lies in this range.
   For mixed-effects models, these are quantiles of the mixture posterior (accounting for
   hyperparameter uncertainty), not of a single Gaussian.
-- **pd**: the probability of direction, defined as max(P(β > 0), P(β < 0)). This is the
+- **pd**: the probability of direction, defined as
+  :math:`\max\!\bigl(P(\beta > 0),\, P(\beta < 0)\bigr)`. This is the
   Bayesian counterpart to the frequentist *p*-value. A pd of 0.975 means there is a 97.5%
   posterior probability that the effect has the same sign as the estimate. Significance codes
-  are based on pd thresholds: \*\*\* (pd ≥ 0.999), \*\* (pd ≥ 0.99), \* (pd ≥ 0.975),
-  . (pd ≥ 0.95).
+  are based on pd thresholds: \*\*\* (:math:`\mathrm{pd} \geq 0.999`),
+  \*\* (:math:`\mathrm{pd} \geq 0.99`), \* (:math:`\mathrm{pd} \geq 0.975`),
+  . (:math:`\mathrm{pd} \geq 0.95`).
 
 **Goodness of fit:**
 
@@ -1015,32 +1055,34 @@ frequentist test statistics:
   estimates the out-of-sample predictive accuracy of the model (Watanabe, 2010; Gelman,
   Hwang & Vehtari, 2014). Lower WAIC indicates better expected predictive performance.
   WAIC is reported with its standard error (SE) and the effective number of parameters
-  (*p*\ :sub:`WAIC`), which measures model complexity on the posterior-predictive scale.
+  (:math:`p_{\text{WAIC}}`), which measures model complexity on the posterior-predictive scale.
   WAIC is computed from 1000 posterior draws at fit time.
 - **LPPD** (log pointwise predictive density): the sum of the log-predictive densities
-  at each observation, averaged over the posterior. WAIC = −2 × LPPD + 2 × *p*\ :sub:`WAIC`.
+  at each observation, averaged over the posterior.
+  :math:`\mathrm{WAIC} = -2 \cdot \mathrm{LPPD} + 2 \cdot p_{\text{WAIC}}`.
 - **LOO-IC** (leave-one-out information criterion): an alternative to WAIC based on Pareto
   Smoothed Importance Sampling (PSIS-LOO; Vehtari, Gelman & Gabry, 2017). Like WAIC, lower
   LOO-IC indicates better predictive performance. LOO-IC is reported with its standard error
-  (SE) and the effective number of parameters (*p*\ :sub:`LOO`). LOO-IC is generally preferred
-  over WAIC because it provides per-observation Pareto *k* diagnostics (see below) that warn
-  when the approximation is unreliable. When all *k* values are below 0.7, the LOO-IC
-  estimate is considered reliable.
-- **Pareto k diagnostics**: for each observation, a Pareto *k* value measures the influence
-  of that observation on the posterior. Phonometrica reports a summary of the Pareto *k*
-  distribution. Values below 0.5 are good, values between 0.5 and 0.7 are acceptable, and
-  values above 0.7 indicate that the LOO-IC estimate for that observation is unreliable —
+  (SE) and the effective number of parameters (:math:`p_{\text{LOO}}`). LOO-IC is generally
+  preferred over WAIC because it provides per-observation Pareto :math:`k` diagnostics (see
+  below) that warn when the approximation is unreliable. When all :math:`k` values are below
+  0.7, the LOO-IC estimate is considered reliable.
+- **Pareto k diagnostics**: for each observation, a Pareto :math:`k` value measures the
+  influence of that observation on the posterior. Phonometrica reports a summary of the Pareto
+  :math:`k` distribution. Values below 0.5 are good, values between 0.5 and 0.7 are acceptable,
+  and values above 0.7 indicate that the LOO-IC estimate for that observation is unreliable —
   in that case, WAIC may be preferred, or the model should be refit (e.g. with a different
   family or additional predictors to account for the influential observations).
-- **Log-marginal likelihood**: the Laplace-approximated log p(*y* | *M*), which can be used
-  for Bayes factor computation between models.
+- **Log-marginal likelihood**: the Laplace-approximated :math:`\log p(y \mid M)`, which can
+  be used for Bayes factor computation between models.
 
 **Hyperparameter posteriors:**
 
 For mixed-effects models, the random-effects table reports posterior means and 95% credible
 intervals for each variance component SD (e.g. sd(Intercept|speaker), sd(residual)),
 obtained from the grid integration. For families with dispersion parameters, the table also
-includes the posterior of θ\ :sub:`NB`, φ\ :sub:`beta`, or σ and ν for Student *t*.
+includes the posterior of :math:`\theta_{\text{NB}}`, :math:`\varphi_{\text{beta}}`, or
+:math:`\sigma` and :math:`\nu` for Student *t*.
 
 .. note::
 
@@ -1059,8 +1101,9 @@ pairwise contrasts using posterior-based inference:
 
 - **CrI** (credible intervals) replace confidence intervals in the EMM table.
 - **pd** (probability of direction) replaces adjusted *p*-values in the contrast table.
-  For each pairwise contrast, pd = Φ(|δ̂/SE|), where δ̂ is the posterior mean of the contrast
-  and SE is its posterior standard deviation.
+  For each pairwise contrast,
+  :math:`\mathrm{pd} = \Phi\!\bigl(|\hat{\delta}/\mathrm{SE}|\bigr)`, where :math:`\hat{\delta}`
+  is the posterior mean of the contrast and SE is its posterior standard deviation.
 - **No multiplicity adjustment** is applied, because pd is not a *p*-value and the
   family-wise error rate framework does not apply in the Bayesian context. The Adjustment
   dropdown is grayed out.
@@ -1093,17 +1136,17 @@ Model comparison (Bayesian mode)
 
 When comparing Bayesian models, the **Compare** button produces:
 
-- **Information criteria table**: each model's WAIC, *p*\ :sub:`WAIC`, LPPD, and SE(WAIC),
-  sorted from best (lowest WAIC) to worst. If LOO-IC is available for all models, the table
-  also includes LOO-IC and *p*\ :sub:`LOO` columns.
+- **Information criteria table**: each model's WAIC, :math:`p_{\text{WAIC}}`, LPPD, and
+  SE(WAIC), sorted from best (lowest WAIC) to worst. If LOO-IC is available for all models,
+  the table also includes LOO-IC and :math:`p_{\text{LOO}}` columns.
 - **ΔWAIC** (and **ΔLOO-IC** when available): the difference in the information criterion
   between each model and the best model, with its standard error computed from the pointwise
   contributions. A model whose ΔIC is within approximately 2 SE of zero is not meaningfully
   worse than the best model.
 - **Pareto k summary**: when LOO-IC is available, the output includes a summary of the Pareto
-  *k* diagnostics across all models. If any observation has *k* > 0.7, a warning is printed
-  advising that the LOO-IC estimate may be unreliable for that model and that WAIC should be
-  preferred.
+  :math:`k` diagnostics across all models. If any observation has :math:`k > 0.7`, a warning
+  is printed advising that the LOO-IC estimate may be unreliable for that model and that WAIC
+  should be preferred.
 - **Log-marginal likelihood** and **Bayes factors**: for each pair of models, the log Bayes
   factor is computed as the difference of the log-marginal likelihoods. A log BF > 3
   (BF > 20) is conventionally considered strong evidence in favor of the better model.
