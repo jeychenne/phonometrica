@@ -562,7 +562,61 @@ void Compiler::visit_assignment(Assignment *node)
 		visiting_assigned_lhs = true;
 		node->lhs->visit(*this);
 		visiting_assigned_lhs = false;
-		node->rhs->visit(*this);
+
+		if (op == Lexeme::OpAssign)
+		{
+			node->rhs->visit(*this);
+		}
+		else
+		{
+			// Compound assignment on a field LHS, e.g. `m.n += 1`. Mirror
+			// the IndexedExpression branch above: the first visit pushed
+			// [receiver, field_name] on the stack (no GetField, because
+			// visiting_assigned_lhs was true). Now we re-visit the LHS in
+			// non-assigned mode — this time GetField IS emitted, leaving
+			// the current value on the stack — push the RHS, apply the op,
+			// and fall through to the SetField below. Without this branch,
+			// `m.n += rhs` was being compiled as `m.n = rhs`, which only
+			// "works" the first time the field happens to start at the
+			// right value (e.g. the first `m.n += 1` from a zero field
+			// looks correct because 0+1 == 1; subsequent calls keep
+			// overwriting with the constant rhs). The IndexedExpression
+			// branch handled this correctly all along; the dot branch
+			// just hadn't been wired up.
+			if (visiting_constructor()) {
+				THROW("[Syntax error] Invalid operator in field declaration");
+			}
+			node->lhs->visit(*this);
+			node->rhs->visit(*this);
+
+			switch (op)
+			{
+				case Lexeme::OpConcat:
+					EMIT(Opcode::Concat, 2);
+					break;
+				case Lexeme::OpPlus:
+					EMIT(Opcode::Add);
+					break;
+				case Lexeme::OpMinus:
+					EMIT(Opcode::Subtract);
+					break;
+				case Lexeme::OpStar:
+					EMIT(Opcode::Multiply);
+					break;
+				case Lexeme::OpSlash:
+					EMIT(Opcode::Divide);
+					break;
+				case Lexeme::OpPower:
+					EMIT(Opcode::Power);
+					break;
+				case Lexeme::OpMod:
+					EMIT(Opcode::Modulus);
+					break;
+				default:
+					THROW("[Internal error] Invalid operator in self assignment");
+			}
+		}
+
 		EMIT(Opcode::SetField);
 	}
 	else

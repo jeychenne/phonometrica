@@ -36,6 +36,18 @@ static Variant system_current_directory(Runtime &, std::span<Variant>)
 	return fs::current_directory();
 }
 
+// Returns the absolute path of the script file currently being
+// interpreted. When `import` enters another file, the runtime updates
+// its current_path to that file for the duration of the import; when
+// the import returns, current_path is restored. So the value reflects
+// the file in which the calling code physically lives. For chunks
+// executed via do_string (no enclosing file) the value is the empty
+// string.
+static Variant system_script_path(Runtime &rt, std::span<Variant>)
+{
+	return rt.script_path();
+}
+
 static Variant system_set_current_directory(Runtime &, std::span<Variant> args)
 {
 	auto &path = cast<String>(args[0]);

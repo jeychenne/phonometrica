@@ -303,6 +303,7 @@ void Runtime::set_global_namespace()
 	// System functions
 	add_global("get_user_directory", system_user_directory, {});
 	add_global("get_current_directory", system_current_directory, {});
+	add_global("get_script_path", system_script_path, {});
 	add_global("set_current_directory", system_set_current_directory, {CLS(String) });
 	add_global("get_temp_directory", system_temp_directory, {});
 	add_global("get_path_separator", system_separator, {});

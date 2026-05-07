@@ -15,7 +15,7 @@ static const char *autocompletion_list =
 	"get_full_path get_header get_input get_intensity get_layer_count get_layer_label "
 	"get_mean_intensity get_mean_pitch get_metadata_directory get_os_name "
 	"get_path_separator get_pitch get_plugin_directory get_plugin_resource "
-	"get_plugin_version get_property get_script_directory get_selected_annotations "
+	"get_plugin_version get_property get_script_directory get_script_path get_selected_annotations "
 	"get_selected_sounds get_selection_duration get_settings_directory get_sound "
 	"get_sounds get_spectral_moments get_spectrum get_start get_temp_directory "
 	"get_temp_name get_user_directory get_visible_channels get_window_duration "

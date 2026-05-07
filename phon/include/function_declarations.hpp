@@ -409,6 +409,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_current_directory",  {
 		"get_current_directory()\nReturns the current working directory."
 	}},
+	{ "get_script_path",  {
+		"get_script_path()\nReturns the absolute path of the script file currently being interpreted. Use `get_directory(get_script_path())` to obtain the directory containing the script, and `join_path(...)` to build sibling paths portably."
+	}},
 	{ "set_current_directory",  {
 		"set_current_directory(path as String)\nSets the current working directory to `path`."
 	}},

@@ -307,6 +307,14 @@ public:
 
 	String program_path() const { return prog_path; }
 
+	// Path of the script file currently being interpreted. Mirrors what
+	// do_file() sets internally when a file is loaded; for code chunks
+	// (do_string) the value is empty. Exposed to scripts via the
+	// `get_script_path()` builtin, which lets a script resolve sibling
+	// files using `get_directory(get_script_path())` + `join_path(...)`
+	// without hard-coding any absolute path.
+	String script_path() const { return current_path; }
+
 private:
 
 	static constexpr size_t MAX_CALL_FRAME = 256;
