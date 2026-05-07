@@ -60,6 +60,18 @@ public:
 	        const stats::PriorSpec *priors = nullptr,
 	        int max_iter = 200);
 
+	// Refit the model at `index` in place, overwriting it with a freshly-fit
+	// model rebuilt from the model's own stored specification (formula, family,
+	// estimation mode, and priors when Bayesian). max_iter is a fitter ceiling,
+	// not part of the model's identity, so it is passed in. The model's user
+	// label (set via Rename) is preserved across refits. Throws if `index` is
+	// out of range or if the source is unavailable. The original model is
+	// preserved on failure: m_models[index] is overwritten only after the new
+	// fit succeeds.
+	void refit(int index,
+	           stats::FittingCallback progress = nullptr,
+	           int max_iter = 200);
+
 	// Number of fitted models.
 	int model_count() const { return (int)m_models.size(); }
 

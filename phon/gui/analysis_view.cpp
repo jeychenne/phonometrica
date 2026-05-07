@@ -1415,6 +1415,79 @@ void AnalysisView::onFit()
 }
 
 
+void AnalysisView::onRefitModel(int row)
+{
+	// Triggered from the model list's right-click menu. The refit reproduces
+	// the model from its OWN stored spec (formula, family, estimation mode,
+	// priors when Bayesian) — the formula bar and the rest of the GUI are
+	// deliberately not consulted, so right-clicking model B while model A is
+	// displayed refits B unambiguously. The only GUI value used is max_iter,
+	// which is a global fitter ceiling rather than part of any model's
+	// identity.
+	if (row < 0 || row >= m_analysis->model_count())
+		return;
+
+	// ── Set up progress bar (mirrors onFit) ─────────────────────
+	auto *main_win = qobject_cast<QMainWindow *>(window());
+	QStatusBar *status = main_win ? main_win->statusBar() : nullptr;
+	QProgressBar *progress = main_win ? main_win->findChild<QProgressBar *>() : nullptr;
+
+	if (status) status->showMessage(tr("Refitting model..."));
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	QApplication::processEvents();
+
+	bool progress_shown = false;
+	stats::FittingCallback cb = [progress, status, &progress_shown](int current, int maximum) {
+		if (progress) {
+			if (!progress_shown) {
+				progress->setMaximum(maximum);
+				progress->setValue(0);
+				progress->setVisible(true);
+				progress_shown = true;
+			}
+			progress->setValue(current);
+		}
+		QApplication::processEvents();
+	};
+
+	try
+	{
+		int max_iter = m_max_iter_spin->value();
+		m_analysis->refit(row, cb, max_iter);
+
+		QApplication::restoreOverrideCursor();
+		if (progress) progress->setVisible(false);
+		if (status) status->showMessage(tr("Model refitted"), 2000);
+
+		// The list-item text encodes label + estimation mode + formula; in
+		// the typical case nothing changes, but rebuild it defensively in
+		// case Formula::to_string() canonicalised differently this time.
+		if (auto *item = m_model_list->item(row)) {
+			item->setText(modelListText(row));
+		}
+
+		// Refresh the displayed view only if the refit'd model is the one
+		// currently shown. Otherwise leave the GUI untouched — right-click
+		// is a contextual action and must not steal display state.
+		if (m_current_model == row) {
+			m_scaled_residuals.reset();
+			m_scaled_residuals_model = -1;
+			displayModel(row);
+		}
+
+		emit titleChanged(label());
+	}
+	catch (std::exception &e)
+	{
+		QApplication::restoreOverrideCursor();
+		if (progress) progress->setVisible(false);
+		if (status) status->clearMessage();
+
+		QMessageBox::critical(this, tr("Refit model"), QString::fromUtf8(e.what()));
+	}
+}
+
+
 // =====================================================================
 // Model selection
 // =====================================================================
@@ -7308,6 +7381,8 @@ void AnalysisView::onModelListContextMenu(const QPoint &pos)
 		m_model_list->setCurrentRow(row);
 
 	QMenu menu(this);
+	QAction *refit_act = menu.addAction(tr("Refit"));
+	menu.addSeparator();
 	QAction *rename_act = menu.addAction(tr("Rename…"));
 	QAction *add_act = menu.addAction(tr("Add to data…"));
 	add_act->setEnabled(m_add_to_data_button->isEnabled());
@@ -7315,7 +7390,10 @@ void AnalysisView::onModelListContextMenu(const QPoint &pos)
 	QAction *delete_act = menu.addAction(tr("Delete"));
 
 	QAction *chosen = menu.exec(m_model_list->viewport()->mapToGlobal(pos));
-	if (chosen == rename_act) {
+	if (chosen == refit_act) {
+		onRefitModel(row);
+	}
+	else if (chosen == rename_act) {
 		onRenameModel(item);
 	}
 	else if (chosen == add_act) {

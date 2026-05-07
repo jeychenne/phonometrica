@@ -93,6 +93,44 @@ void Analysis::remove_model(int index)
 	}
 }
 
+void Analysis::refit(int index, stats::FittingCallback progress, int max_iter)
+{
+	if (!m_source) {
+		throw error("Cannot refit model: source data is not available");
+	}
+	if (index < 0 || index >= (int)m_models.size()) {
+		throw error("Cannot refit model: invalid index");
+	}
+
+	// Reproduce the model from its own stored spec — formula, family, and
+	// (when Bayesian) priors all live on the existing Model. The GUI is
+	// not consulted, so refit is well-defined regardless of which model is
+	// currently displayed.
+	const stats::Model &existing = m_models[index];
+	auto formula = stats::Formula::parse(existing.formula);
+	String family = existing.family;
+	bool bayesian = existing.is_bayesian();
+
+	// Build the new model first; only commit to m_models[index] after a
+	// successful fit so the original is preserved on any thrown exception.
+	stats::Model model;
+	if (bayesian) {
+		model = stats::fit(*m_source, formula, family, existing.priors,
+		                    m_reference_levels, std::move(progress), max_iter);
+	} else {
+		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress), max_iter);
+	}
+	model.formula = formula.to_string();
+	model.compute_pseudo_r2();
+
+	// Carry over the user-defined display label so renames survive a refit.
+	model.label = std::move(m_models[index].label);
+
+	m_models[index] = std::move(model);
+	m_modified = true;
+	m_content_modified = true;
+}
+
 Array<String> Analysis::column_names() const
 {
 	if (!m_source) return {};

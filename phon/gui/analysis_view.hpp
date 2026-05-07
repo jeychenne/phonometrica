@@ -88,6 +88,7 @@ private slots:
 	void onFit();
 	void onModelSelected(int row);
 	void onDeleteModel();
+	void onRefitModel(int row);
 	void onRenameModel(QListWidgetItem *item);
 	void onCompareModels();
 	void onAddToData();
