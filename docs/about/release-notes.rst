@@ -137,11 +137,11 @@ This is a major release. Phonometrica has gained substantial new functionality f
 
 - Analysis view: visual workspace for fitting, comparing, and diagnosing statistical models.
 - Visual formula builder with right-click context menus on columns.
-- Fixed-effects GLMs: Gaussian, binomial, Poisson, and experimental support for negative binomial (NB2) regression.
+- Fixed-effects GLMs: Gaussian, binomial, Poisson, and negative binomial (NB2) regression.
 - Beta regression (logit link) for proportion response variables.
 - Student *t* regression (identity link) for robust estimation with heavy-tailed residuals; jointly estimates scale σ and degrees-of-freedom ν parameters.
-- Mixed-effects models (LMM/GLMM): experimental support for random intercepts and correlated random slopes; crossed random effects.
-- Generalized additive models (GAM): experimental support for penalized cubic regression splines, per-smooth GCV, by-variable smooths, EDF and F-statistics.
+- Mixed-effects models (LMM/GLMM): support for random intercepts and correlated random slopes; crossed random effects.
+- Generalized additive models (GAM): support for penalized cubic regression splines, per-smooth GCV, by-variable smooths, EDF and F-statistics.
 - Random intercepts and random slopes via ``s(group, bs=re)`` and ``s(group, by=x, bs=re)`` in GAMs.
 - Model comparison: AIC/BIC table, pairwise likelihood ratio tests with automatic nestedness checking.
 - Approximate Bayesian inference (INLA-style): data-dependent weakly informative priors, posterior summaries (mean, credible intervals, probability of direction), customizable priors.

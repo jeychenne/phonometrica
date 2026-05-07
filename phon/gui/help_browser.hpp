@@ -15,52 +15,45 @@
  *                                                                                                                     *
  * Created: 25/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: In-app help browser. Displays documentation pages embedded as Qt resources in a                            *
- *          QTextBrowser dialog. The Sphinx qthelp builder produces the HTML at build time;                             *
- *          CMake compiles it into the binary via rcc.                                                                  *
+ * Purpose: In-app help dispatcher. Resolves the location of the bundled Sphinx HTML                                   *
+ *          documentation at runtime and hands the URL off to the system's default                                     *
+ *          browser via QDesktopServices. The HTML is shipped on disk alongside the                                    *
+ *          executable (Windows / build dir), in Contents/Resources/docs (macOS .app                                   *
+ *          bundle) or in <prefix>/share/phonometrica/docs (Linux install).                                            *
  *                                                                                                                     *
- *          Public API: call HelpBrowser::showPage("sound") from anywhere. The dialog is                               *
- *          created once and reused across calls (non-modal, can stay open while working).                              *
+ *          Public API is unchanged from the previous QTextBrowser-based version:                                      *
+ *          call HelpBrowser::showPage("sound") from anywhere. Empty anchor opens                                      *
+ *          the index page.                                                                                            *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #ifndef PHONOMETRICA_HELP_BROWSER_HPP
 #define PHONOMETRICA_HELP_BROWSER_HPP
 
-#include <QDialog>
-#include <QPointer>
+#include <QString>
 
-class QTextBrowser;
-class QAction;
+class QWidget;
 
 namespace phonometrica {
 
-class HelpBrowser : public QDialog
+class HelpBrowser
 {
-	Q_OBJECT
-
 public:
 
-	// Show the help page identified by its anchor.
-	// The anchor is a Sphinx page name relative to the doc root, without extension.
+	// Open the help page identified by `anchor` in the user's default browser.
+	// `anchor` is a Sphinx page name relative to the doc root, without extension.
 	// Examples: "sound", "scripting/index", "intro/install".
-	// If the anchor is empty the top-level index page is opened.
+	// An empty anchor opens the top-level index page.
+	// `parent` is used only as the parent of the warning dialog shown when the
+	// documentation cannot be located on disk.
 	static void showPage(const QString &anchor = {}, QWidget *parent = nullptr);
 
 private:
 
-	explicit HelpBrowser(QWidget *parent);
-
-	void navigateTo(const QString &anchor);
-
-	void updateNavActions();
-
-	QTextBrowser *m_browser = nullptr;
-	QAction *m_back_action = nullptr;
-	QAction *m_forward_action = nullptr;
-
-	// Single instance, lazily created.
-	static QPointer<HelpBrowser> s_instance;
+	// Resolve the absolute path of the docs root directory by trying a small set
+	// of platform-specific candidates relative to applicationDirPath(). Returns
+	// an empty string if no candidate is a readable directory.
+	static QString resolveDocsRoot();
 };
 
 } // namespace phonometrica

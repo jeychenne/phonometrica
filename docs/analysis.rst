@@ -16,8 +16,7 @@ and residual diagnostics, were developed with the assistance of Claude Opus 4.6 
 from established literature and reference implementations in R.
 
 While our internal benchmarking shows an excellent match across a diverse suite of datasets when compared to reference R packages 
-(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity, and the Bayesian engine is 
-still considered experimental at this stage. Users may encounter minor 
+(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor
 discrepancies due to differences in optimization algorithms, convergence criteria, or numerical stability in edge cases. We strongly 
 recommend cross-validating critical results in a secondary statistical environment for the time being. We welcome community feedback and detailed bug 
 reports.
@@ -167,10 +166,9 @@ You can also cross grouping factors::
 .. note::
 
    **Choosing** *k* **for spline smooths.** The default of *k* = 10 works well in most
-   situations. If you suspect the relationship is very wiggly (e.g. a formant contour with
-   multiple turning points), increase *k* to 15 or 20. Setting *k* too high is not harmful —
-   the penalty will prevent overfitting — but it makes computation slower. Setting *k* too low
-   can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
+   situations. If you suspect the relationship is very wiggly, you may want to increase *k* to 15 or 20. In principle,
+   setting *k* too high is not harmful since the penalty will prevent overfitting, although in practice it may still overfit the data.
+   Setting *k* too low, on the other hand, can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
    reported in the summary is close to *k* − 1, consider increasing *k*.
 
 Random effects
@@ -763,7 +761,7 @@ Phonometrica's statistical engine supports the following model families:
   coefficients; higher φ indicates less variability around the mean proportion.
 - **Student t** (identity link): robust regression and robust mixed models for continuous
   outcomes with heavy-tailed residuals. Useful when more observations are in the tails than would be expected
-   under a Gaussian model. The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
+  under a Gaussian model. The model estimates two additional parameters: a scale parameter σ and a degrees-of-freedom
   parameter ν that controls the tail heaviness. Observations with large residuals receive lower
   weight, so the fixed-effects estimates are robust to outliers. As ν → ∞ the model reduces to
   Gaussian regression; in practice, ν < 10 indicates meaningful departure from normality.

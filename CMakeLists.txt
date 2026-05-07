@@ -455,23 +455,22 @@ if(WITH_GUI)
         std/transphon.phon
     )
 
-
     ###################################
-    ##  EMBEDDED DOCUMENTATION       ##
+    ##  BUNDLED DOCUMENTATION        ##
     ###################################
 
-    # If PHON_BUILD_DOCS is ON and sphinx-build is available, the Sphinx
-    # qthelp builder is run at build time.  Its output is packed into a Qt
-    # resource (.qrc) and compiled into the binary, so the help browser can
-    # load pages from qrc:/docs/ without any external files.
+    # If PHON_BUILD_DOCS is ON and sphinx-build is available, the Sphinx html
+    # builder is run at build time. The output is shipped on disk next to (or
+    # inside, on macOS) the executable and opened in the user's default browser
+    # by HelpBrowser::showPage(). No more rcc, no more QTextBrowser CSS-2.1
+    # ceiling — the user gets the full Sphinx theme with working search and
+    # sidebar navigation.
 
     if(PHON_BUILD_DOCS)
         find_program(SPHINX_BUILD sphinx-build)
         if(SPHINX_BUILD)
             set(DOC_HTML_DIR "${CMAKE_BINARY_DIR}/docs_html")
-            set(DOC_STAMP   "${DOC_HTML_DIR}/.stamp")
-            set(DOC_QRC     "${CMAKE_BINARY_DIR}/docs.qrc")
-            set(DOC_RCC_CPP "${CMAKE_BINARY_DIR}/qrc_docs.cpp")
+            set(DOC_STAMP    "${DOC_HTML_DIR}/.stamp")
 
             file(GLOB_RECURSE DOC_SOURCES
                 "${CMAKE_SOURCE_DIR}/docs/*.rst"
@@ -479,40 +478,50 @@ if(WITH_GUI)
                 "${CMAKE_SOURCE_DIR}/docs/phon_lexer/phon/lexer.py"
             )
 
-            # Step 1 — run Sphinx (qthelp builder produces simple HTML).
+            # Run Sphinx with the standard html builder so the default theme,
+            # JS search index and sidebar TOC all work in a real browser.
             add_custom_command(
                 OUTPUT  "${DOC_STAMP}"
-                COMMAND "${SPHINX_BUILD}" -q -b qthelp
+                COMMAND "${SPHINX_BUILD}" -q -b html
                         "${CMAKE_SOURCE_DIR}/docs" "${DOC_HTML_DIR}"
                 COMMAND ${CMAKE_COMMAND} -E touch "${DOC_STAMP}"
                 DEPENDS ${DOC_SOURCES}
                 COMMENT "Building documentation with Sphinx..."
             )
 
-            # Step 2 — generate a .qrc listing every HTML/CSS/image file.
-            add_custom_command(
-                OUTPUT  "${DOC_QRC}"
-                COMMAND ${CMAKE_COMMAND}
-                        "-DDOC_DIR=${DOC_HTML_DIR}"
-                        "-DQRC_FILE=${DOC_QRC}"
-                        -P "${CMAKE_SOURCE_DIR}/cmake/GenerateDocQrc.cmake"
-                DEPENDS "${DOC_STAMP}"
-                COMMENT "Generating documentation resource file..."
-            )
+            add_custom_target(phon-docs ALL DEPENDS "${DOC_STAMP}")
+            add_dependencies(${PROJECT_NAME} phon-docs)
 
-            # Step 3 — compile the .qrc into a C++ source with rcc.
-            add_custom_command(
-                OUTPUT  "${DOC_RCC_CPP}"
-                COMMAND Qt6::rcc --name docs
-                        --output "${DOC_RCC_CPP}" "${DOC_QRC}"
-                DEPENDS "${DOC_QRC}"
-                COMMENT "Compiling documentation resources..."
-            )
+            # Place the docs where HelpBrowser::resolveDocsRoot() will find
+            # them when run from the build tree, and where the Inno Setup
+            # deploy workflow / macOS bundle can pick them up.
+            if(APPLE)
+                # Inside the .app bundle: Contents/Resources/docs/
+                add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${DOC_HTML_DIR}"
+                        "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Resources/docs"
+                    COMMENT "Copying documentation into .app bundle...")
+            else()
+                # Linux build dir / Windows build dir: <binary>/docs/
+                add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${DOC_HTML_DIR}"
+                        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/docs"
+                    COMMENT "Copying documentation alongside the binary...")
+            endif()
 
-            target_sources(${PROJECT_NAME} PRIVATE "${DOC_RCC_CPP}")
-            target_compile_definitions(phon-gui PUBLIC PHON_EMBEDDED_DOCS=1)
+            # Linux install: ship docs to <prefix>/share/phonometrica/docs/
+            # so HelpBrowser finds them via ../share/phonometrica/docs.
+            if(UNIX AND NOT APPLE)
+                include(GNUInstallDirs)
+                install(DIRECTORY "${DOC_HTML_DIR}/"
+                        DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/phonometrica/docs"
+                        PATTERN ".stamp" EXCLUDE
+                        PATTERN ".buildinfo" EXCLUDE)
+            endif()
 
-            message(STATUS "Documentation will be built and embedded (sphinx-build found at ${SPHINX_BUILD})")
+            message(STATUS "Documentation will be built and bundled (sphinx-build found at ${SPHINX_BUILD})")
         else()
             message(STATUS "sphinx-build not found -- documentation will not be embedded. "
                            "Install Sphinx (pip install sphinx) or set PHON_BUILD_DOCS=OFF to silence this.")

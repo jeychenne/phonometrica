@@ -19,154 +19,112 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <QVBoxLayout>
-#include <QToolBar>
-#include <QTextBrowser>
+#include <QCoreApplication>
+#include <QDesktopServices>
+#include <QFileInfo>
 #include <QMessageBox>
-#include <QFile>
+#include <QObject>
+#include <QStringList>
+#include <QUrl>
 #include <phon/gui/help_browser.hpp>
 
 namespace phonometrica {
 
-// Minimal stylesheet for rendering Sphinx qthelp HTML in QTextBrowser.
-// QTextBrowser supports a subset of CSS 2.1 — keep it simple.
-static const char *defaultStyleSheet = R"(
-    body {
-        font-family: sans-serif;
-        font-size: 12pt;
-        margin: 8px;
-        color: #1a1a1a;
-    }
-    h1 { font-size: 18pt; margin-top: 12px; margin-bottom: 8px; }
-    h2 { font-size: 16pt; margin-top: 10px; margin-bottom: 6px; }
-    h3 { font-size: 14pt; margin-top: 8px;  margin-bottom: 4px; }
-    h4 { font-size: 12pt; margin-top: 6px;  margin-bottom: 4px; }
+QString HelpBrowser::resolveDocsRoot()
+{
+	const QString appDir = QCoreApplication::applicationDirPath();
+	QStringList candidates;
 
-    a { color: #0057ae; }
+#if defined(Q_OS_MAC)
+	// Inside the .app bundle, applicationDirPath() is Phonometrica.app/Contents/MacOS,
+	// and the Sphinx output is copied into Contents/Resources/docs at build time.
+	candidates << appDir + QStringLiteral("/../Resources/docs");
+#elif defined(Q_OS_WIN)
+	// Inno Setup ships the docs in a subdirectory next to phonometrica.exe.
+	candidates << appDir + QStringLiteral("/docs");
+#else
+	// Linux installed via the .deb (CMAKE_INSTALL_PREFIX=/usr/local):
+	//   /usr/local/bin/phonometrica           -> applicationDirPath()
+	//   /usr/local/share/phonometrica/docs/   -> docs root
+	candidates << appDir + QStringLiteral("/../share/phonometrica/docs");
+#endif
 
-    code, tt {
-        font-family: monospace;
-        background-color: #f0f0f0;
-        padding: 1px 3px;
-    }
-    pre {
-        font-family: monospace;
-        background-color: #f5f5f5;
-        border: 1px solid #ddd;
-        padding: 8px;
-        margin: 6px 0;
-    }
+	// Final fallback for running directly from the build directory on any
+	// platform: the POST_BUILD step copies the Sphinx output to <build>/docs.
+	candidates << appDir + QStringLiteral("/docs");
 
-    dt { font-weight: bold; margin-top: 6px; }
-    dd { margin-left: 20px; }
+	for (const QString &path : std::as_const(candidates))
+	{
+		QFileInfo fi(path);
+		if (fi.exists() && fi.isDir())
+		{
+			return fi.canonicalFilePath();
+		}
+	}
 
-    .admonition, .note, .warning, .tip {
-        border: 1px solid #ccc;
-        background-color: #fafafa;
-        padding: 6px;
-        margin: 8px 0;
-    }
-    .warning { border-color: #c9a227; background-color: #fff9e6; }
-
-    li { margin-bottom: 3px; }
-
-    .math { font-style: italic; }
-)";
-
-QPointer<HelpBrowser> HelpBrowser::s_instance;
+	return {};
+}
 
 
 void HelpBrowser::showPage(const QString &anchor, QWidget *parent)
 {
-#ifdef PHON_EMBEDDED_DOCS
-	if (!s_instance) {
-		s_instance = new HelpBrowser(parent);
+	const QString root = resolveDocsRoot();
+	if (root.isEmpty())
+	{
+		QMessageBox::information(parent, QObject::tr("Help"),
+			QObject::tr("The documentation could not be found on disk.\n\n"
+			            "If you are running Phonometrica from a build directory, "
+			            "make sure the project was configured with PHON_BUILD_DOCS=ON "
+			            "and that sphinx-build is installed (pip install sphinx).\n\n"
+			            "If you are running an installed copy, please report this as a "
+			            "packaging bug."));
+		return;
 	}
-	s_instance->navigateTo(anchor);
-	s_instance->show();
-	s_instance->raise();
-	s_instance->activateWindow();
-#else
-	Q_UNUSED(anchor);
-	QMessageBox::information(parent, QObject::tr("Help"),
-		QObject::tr("The documentation was not embedded in this build.\n\n"
-		            "Install Sphinx and rebuild:\n"
-		            "  pip install sphinx\n"
-		            "  cmake --build . --target phonometrica"));
-#endif
-}
 
-
-HelpBrowser::HelpBrowser(QWidget *parent)
-	: QDialog(parent, Qt::Window)      // Qt::Window gives it a proper title bar and taskbar entry
-{
-	setWindowTitle(tr("Phonometrica Help"));
-	resize(720, 560);
-	setAttribute(Qt::WA_DeleteOnClose, false); // keep alive for reuse
-
-	auto *layout = new QVBoxLayout(this);
-	layout->setContentsMargins(0, 0, 0, 0);
-
-	// ── Navigation toolbar ───────────────────────────
-	auto *toolbar = new QToolBar(this);
-	toolbar->setMovable(false);
-	toolbar->setIconSize(QSize(16, 16));
-
-	m_back_action = toolbar->addAction(QIcon(":/icons/arrow-left.svg"), tr("Back"));
-	m_back_action->setEnabled(false);
-
-	m_forward_action = toolbar->addAction(QIcon(":/icons/arrow-right.svg"), tr("Forward"));
-	m_forward_action->setEnabled(false);
-
-	toolbar->addSeparator();
-
-	auto *home_action = toolbar->addAction(QIcon(":/icons/book-marked.svg"), tr("Home"));
-
-	layout->addWidget(toolbar);
-
-	// ── Browser ──────────────────────────────────────
-	m_browser = new QTextBrowser(this);
-	m_browser->setOpenLinks(true);
-	m_browser->setOpenExternalLinks(true);
-	m_browser->document()->setDefaultStyleSheet(defaultStyleSheet);
-	layout->addWidget(m_browser);
-
-	// Connections
-	connect(m_back_action, &QAction::triggered, m_browser, &QTextBrowser::backward);
-	connect(m_forward_action, &QAction::triggered, m_browser, &QTextBrowser::forward);
-	connect(home_action, &QAction::triggered, this, [this]() { navigateTo({}); });
-
-	connect(m_browser, &QTextBrowser::backwardAvailable,
-		m_back_action, &QAction::setEnabled);
-	connect(m_browser, &QTextBrowser::forwardAvailable,
-		m_forward_action, &QAction::setEnabled);
-}
-
-
-void HelpBrowser::navigateTo(const QString &anchor)
-{
 	// Accept either "sound" or "sound.html" from callers — normalise so we never
-	// produce something like "sound.html.html". An empty anchor means the project
+	// produce something like "sound.html.html". An empty anchor means the index
 	// landing page.
 	QString page;
-	if (anchor.isEmpty()) {
+	if (anchor.isEmpty())
+	{
 		page = QStringLiteral("index.html");
 	}
-	else if (anchor.endsWith(QLatin1String(".html"), Qt::CaseInsensitive)) {
+	else if (anchor.endsWith(QLatin1String(".html"), Qt::CaseInsensitive))
+	{
 		page = anchor;
 	}
-	else {
+	else
+	{
 		page = anchor + QStringLiteral(".html");
 	}
 
-	m_browser->setSource(QUrl(QStringLiteral("qrc:/docs/") + page));
-}
+	QString fullPath = root + QLatin1Char('/') + page;
+	QFileInfo fi(fullPath);
 
+	// If the requested page cannot be found, fall back to the index rather than
+	// silently failing — a missing anchor is almost always a stale call site
+	// and showing the index is more useful than a broken file:// URL.
+	if (!fi.exists())
+	{
+		fullPath = root + QStringLiteral("/index.html");
+		fi.setFile(fullPath);
+		if (!fi.exists())
+		{
+			QMessageBox::information(parent, QObject::tr("Help"),
+				QObject::tr("The documentation directory was found, but the index "
+				            "page is missing. Please reinstall Phonometrica or "
+				            "rebuild the documentation."));
+			return;
+		}
+	}
 
-void HelpBrowser::updateNavActions()
-{
-	m_back_action->setEnabled(m_browser->isBackwardAvailable());
-	m_forward_action->setEnabled(m_browser->isForwardAvailable());
+	const QUrl url = QUrl::fromLocalFile(fi.canonicalFilePath());
+	if (!QDesktopServices::openUrl(url))
+	{
+		QMessageBox::warning(parent, QObject::tr("Help"),
+			QObject::tr("Could not launch the default web browser to display:\n%1")
+				.arg(url.toLocalFile()));
+	}
 }
 
 } // namespace phonometrica
