@@ -1,0 +1,116 @@
+{
+  "family": "negbin",
+  "dataset": "negbin_counts.csv",
+  "generated_at": "2026-05-07 18:50:40 UTC",
+  "R_version": "R version 4.3.3 (2024-02-29)",
+  "glmmTMB_version": "1.1.8",
+  "models": {
+    "M1": {
+      "formula": "count ~ condition * context",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "loglik": -14366.298361017596,
+        "aic": 28746.596722035192,
+        "bic": 28792.207267508697,
+        "theta": 1.318748569624
+      },
+      "fixef": {
+        "names": ["Intercept", "condition[primed]", "context[formal]", "context[narrative]", "condition[primed]:context[formal]", "condition[primed]:context[narrative]"],
+        "estimate": [1.788591590335, 0.6627459661046, -0.2229697620571, -0.4797132540051, -0.1863176557719, -0.3390467181695],
+        "se": [0.03313387170459, 0.04546860444455, 0.04710264842223, 0.04912187227117, 0.06524463509302, 0.06760319749182]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "count ~ condition + context + (1|subject)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "loglik": -14106.572108061053,
+        "aic": 28225.144216122106,
+        "bic": 28264.238969385111,
+        "theta": 1.660020726122
+      },
+      "fixef": {
+        "names": ["Intercept", "condition[primed]", "context[formal]", "context[narrative]"],
+        "estimate": [1.800693728711, 0.4712769659791, -0.3076834060597, -0.6330887816906],
+        "se": [0.03761940418286, 0.02604629511779, 0.03081966327861, 0.03216005669127]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)"],
+        "sd": [0.3878494181936]
+      }
+    },
+    "M3": {
+      "formula": "count ~ condition + context + (1+condition|subject)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "loglik": -14070.887928862545,
+        "aic": 28157.77585772509,
+        "bic": 28209.902195409093,
+        "theta": 1.769233064664
+      },
+      "fixef": {
+        "names": ["Intercept", "condition[primed]", "context[formal]", "context[narrative]"],
+        "estimate": [1.791654131894, 0.4609468299685, -0.3144574522278, -0.6322859343248],
+        "se": [0.03843588791322, 0.03709949529961, 0.03061548877179, 0.03198660972382]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(condition[primed]|subject)"],
+        "sd": [0.4071216950619, 0.3774588411073]
+      }
+    },
+    "M4": {
+      "formula": "count ~ condition + context + (1|subject) + (1|item)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "loglik": -13945.413537233217,
+        "aic": 27904.827074466433,
+        "bic": 27950.437619939938,
+        "theta": 1.885220347215
+      },
+      "fixef": {
+        "names": ["Intercept", "condition[primed]", "context[formal]", "context[narrative]"],
+        "estimate": [1.763592398136, 0.4657669937211, -0.2995894674523, -0.6249214021833],
+        "se": [0.05282759548044, 0.02506658284009, 0.02972360113093, 0.03107949454793]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(Intercept|item)"],
+        "sd": [0.3895570576441, 0.2660269514891]
+      }
+    },
+    "M5": {
+      "formula": "count ~ condition + context + (1+condition|subject) + (1|item)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "loglik": -13910.746873016302,
+        "aic": 27839.493746032604,
+        "bic": 27898.13587592711,
+        "theta": 2.016340230025
+      },
+      "fixef": {
+        "names": ["Intercept", "condition[primed]", "context[formal]", "context[narrative]"],
+        "estimate": [1.757374032658, 0.4559690727641, -0.3097049635647, -0.6272447192216],
+        "se": [0.05292499643914, 0.03564609410031, 0.02948820723072, 0.03086863229562]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(condition[primed]|subject)", "sd(Intercept|item)"],
+        "sd": [0.4036953510443, 0.361659990173, 0.2631348516368]
+      }
+    }
+  }
+}

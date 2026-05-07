@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<Phonometrica class="Project">
+	<Metadata>
+		<UUID>R1OSeCk10KIiLKCZbp_h</UUID>
+		<ProgramVersion major="0" minor="9" micro="3" />
+		<Changelog />
+	</Metadata>
+	<Corpus size="3">
+		<Directory label="data" />
+		<Directory label="engine" />
+		<Directory label="statistics">
+			<Directory label="bayesian" />
+			<Directory label="frequentist" />
+			<Directory label="lib" />
+		</Directory>
+	</Corpus>
+	<Queries />
+	<Scripts>
+		<Directory label="engine">
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/run_all.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_compound_assignment.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_scientific_notation.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_try_catch.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_try_catch_loops.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_upvalues.phon</Path>
+			</Document>
+		</Directory>
+		<Directory label="frequentist">
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/run_all.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_beta.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_binomial.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_gaussian.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_negbin.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_poisson.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_real_schwa.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_student.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/lib/assert.phon</Path>
+			</Document>
+		</Directory>
+	</Scripts>
+	<Data>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/binomial_schwa.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/gam_test.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/negbin_hesitation.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/poisson_disfluency.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/schwa_eychenne2019.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/student_f1_mild.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/student_f1_robust.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/weak_contrast_validation.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/beta_accuracy.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/owls.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/inst_eval.csv</Path>
+		</Document>
+	</Data>
+	<Analyses />
+	<Bookmarks />
+	<Notes />
+</Phonometrica>

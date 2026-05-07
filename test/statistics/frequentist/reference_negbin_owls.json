@@ -1,0 +1,116 @@
+{
+  "family": "negbin",
+  "dataset": "owls.csv",
+  "generated_at": "2026-05-07 18:19:30 UTC",
+  "R_version": "R version 4.3.3 (2024-02-29)",
+  "glmmTMB_version": "1.1.8",
+  "models": {
+    "M1": {
+      "formula": "calls ~ food * sex",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 599,
+        "loglik": -1757.470644653581,
+        "aic": 3524.941289307161,
+        "bic": 3546.917597297739,
+        "theta": 0.7315559120941
+      },
+      "fixef": {
+        "names": ["Intercept", "food[Satiated]", "sex[Male]", "food[Satiated]:sex[Male]"],
+        "estimate": [1.982401919392, -0.4233943900455, 0.1838927472735, -0.07411272348292],
+        "se": [0.1106039214836, 0.158624945733, 0.1405481867794, 0.2063724813302]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "calls ~ food + sex + (1|nest)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 599,
+        "loglik": -1744.064321654076,
+        "aic": 3498.128643308153,
+        "bic": 3520.10495129873,
+        "theta": 0.8447996815793
+      },
+      "fixef": {
+        "names": ["Intercept", "food[Satiated]", "sex[Male]"],
+        "estimate": [2.043314633243, -0.693687958933, 0.05270607059459],
+        "se": [0.1285593048188, 0.1100855256992, 0.1085328538757]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|nest)"],
+        "sd": [0.4286935390132]
+      }
+    },
+    "M3": {
+      "formula": "calls ~ food + sex + (1+food|nest)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 599,
+        "loglik": -1719.938651683343,
+        "aic": 3453.877303366686,
+        "bic": 3484.644134553494,
+        "theta": 0.9695101963954
+      },
+      "fixef": {
+        "names": ["Intercept", "food[Satiated]", "sex[Male]"],
+        "estimate": [2.018776633312, -1.062950515319, 0.1009045704828],
+        "se": [0.09316435505424, 0.238794439472, 0.1052779943945]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|nest)", "sd(food[Satiated]|nest)"],
+        "sd": [0.1562681568024, 1.059258101986]
+      }
+    },
+    "M4": {
+      "formula": "calls ~ food + sex + arrival + (1|nest)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 599,
+        "loglik": -1733.955605355532,
+        "aic": 3479.911210711064,
+        "bic": 3506.282780299757,
+        "theta": 0.8887328021215
+      },
+      "fixef": {
+        "names": ["Intercept", "food[Satiated]", "sex[Male]", "arrival"],
+        "estimate": [4.880306158728, -0.6858433479354, 0.07286681440354, -0.1160241377218],
+        "se": [0.6337249569255, 0.1073470117984, 0.1062225828029, 0.02523476346111]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|nest)"],
+        "sd": [0.4077057871197]
+      }
+    },
+    "M5": {
+      "formula": "calls ~ food + sex + arrival + (1+food|nest)",
+      "engine": "glmmTMB",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 599,
+        "loglik": -1708.33057474721,
+        "aic": 3432.661149494419,
+        "bic": 3467.823242279343,
+        "theta": 1.035507591624
+      },
+      "fixef": {
+        "names": ["Intercept", "food[Satiated]", "sex[Male]", "arrival"],
+        "estimate": [4.968923059167, -1.059889345032, 0.1172078177449, -0.1204686321648],
+        "se": [0.6086299281384, 0.2446761018097, 0.1031742131148, 0.02440312041512]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|nest)", "sd(food[Satiated]|nest)"],
+        "sd": [0.1323037516101, 1.098815831838]
+      }
+    }
+  }
+}

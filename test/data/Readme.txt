@@ -1,0 +1,4 @@
+- The InstEval dataset comes from the lme4 R package
+- schwa_eychenne2019.csv is the dataset from the following study: https://doi.org/10.1017/S0952675719000198
+- the Owls dataset comes from the glmmTMB R package
+- other datasets are synthetic are were created for testing purposes only

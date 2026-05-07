@@ -1,0 +1,111 @@
+{
+  "family": "binomial",
+  "dataset": "binomial_schwa.csv",
+  "generated_at": "2026-05-07 11:27:10 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "glmmTMB_version": "1.1.13",
+  "models": {
+    "M1": {
+      "formula": "realized ~ position * style",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "loglik": -3290.282082429103,
+        "aic": 6592.564164858206,
+        "bic": 6632.12909025352
+      },
+      "fixef": {
+        "names": ["(Intercept)", "positioninitial", "positionmedial", "styleformal", "positioninitial:styleformal", "positionmedial:styleformal"],
+        "estimate": [0.7537770909587, 0.6818499514029, 0.1147779891225, -0.5844965539539, 0.1210551803917, 0.276857580087],
+        "se": [0.07145781365323, 0.1107341282222, 0.1021905584115, 0.09789065295917, 0.1493933627699, 0.1404370450562]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "realized ~ position + style + (1|speaker)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "loglik": -3124.278103993608,
+        "aic": 6258.556207987216,
+        "bic": 6291.526979149978
+      },
+      "fixef": {
+        "names": ["(Intercept)", "positioninitial", "positionmedial", "styleformal"],
+        "estimate": [0.7498213013966, 0.8026126828581, 0.2836679571389, -0.4896102566418],
+        "se": [0.1548830914027, 0.07711533508355, 0.07296758962971, 0.06194554899047]
+      },
+      "ranef": {
+        "names": "sd((Intercept)|speaker)",
+        "sd": 0.6373638526383
+      }
+    },
+    "M3": {
+      "formula": "realized ~ position + style + (1+style|speaker)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "loglik": -3117.544701952957,
+        "aic": 6249.089403905913,
+        "bic": 6295.24848353378
+      },
+      "fixef": {
+        "names": ["(Intercept)", "positioninitial", "positionmedial", "styleformal"],
+        "estimate": [0.7543505618499, 0.8078297671961, 0.2854859714706, -0.4937504837394],
+        "se": [0.1595140415344, 0.07739294716849, 0.0732077792089, 0.1016958124421]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd(styleformal|speaker)"],
+        "sd": [0.6572067350254, 0.3512840979639]
+      }
+    },
+    "M4": {
+      "formula": "realized ~ position + style + (1|speaker) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "loglik": -3065.37819983184,
+        "aic": 6142.75639966368,
+        "bic": 6182.321325058994
+      },
+      "fixef": {
+        "names": ["(Intercept)", "positioninitial", "positionmedial", "styleformal"],
+        "estimate": [0.7756564641812, 0.8271552901394, 0.2928350616682, -0.504784320476],
+        "se": [0.1915051453343, 0.07836031950909, 0.07415118488535, 0.06293698202573]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd((Intercept)|word)"],
+        "sd": [0.6619577421634, 0.4053394372908]
+      }
+    },
+    "M5": {
+      "formula": "realized ~ position + style + (1+style|speaker) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "loglik": -3058.141779821775,
+        "aic": 6132.28355964355,
+        "bic": 6185.036793503969
+      },
+      "fixef": {
+        "names": ["(Intercept)", "positioninitial", "positionmedial", "styleformal"],
+        "estimate": [0.7803070937405, 0.8329583269711, 0.2948754787968, -0.508771282464],
+        "se": [0.1957082165367, 0.07866374504638, 0.07441279945468, 0.1046827337385]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd(styleformal|speaker)", "sd((Intercept)|word)"],
+        "sd": [0.681296593854, 0.3651388015518, 0.408268590084]
+      }
+    }
+  }
+}

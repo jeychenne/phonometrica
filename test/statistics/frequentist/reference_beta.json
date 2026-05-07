@@ -1,0 +1,116 @@
+{
+  "family": "beta",
+  "dataset": "beta_accuracy.csv",
+  "generated_at": "2026-05-07 18:19:25 UTC",
+  "R_version": "R version 4.3.3 (2024-02-29)",
+  "glmmTMB_version": "1.1.8",
+  "models": {
+    "M1": {
+      "formula": "accuracy ~ difficulty * domain",
+      "engine": "glmmTMB",
+      "family": "beta",
+      "converged": true,
+      "fit": {
+        "nobs": 4475,
+        "loglik": 1869.577110928199,
+        "aic": -3725.154221856397,
+        "bic": -3680.310390441435,
+        "phi": 7.905055750795
+      },
+      "fixef": {
+        "names": ["Intercept", "difficulty[hard]", "domain[verbal]", "domain[spatial]", "difficulty[hard]:domain[verbal]", "difficulty[hard]:domain[spatial]"],
+        "estimate": [0.4653028720916, -0.7638721009348, 0.2007590006964, -0.001290823400614, 0.2533974259089, -0.252619959124],
+        "se": [0.02472077287056, 0.03496284543692, 0.03508288520521, 0.03528422741611, 0.0495418719564, 0.049866228573]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "accuracy ~ difficulty + domain + (1|subject)",
+      "engine": "glmmTMB",
+      "family": "beta",
+      "converged": true,
+      "fit": {
+        "nobs": 4475,
+        "loglik": 3110.531177272762,
+        "aic": -6209.062354545524,
+        "bic": -6170.62478476127,
+        "phi": 15.549549281202
+      },
+      "fixef": {
+        "names": ["Intercept", "difficulty[hard]", "domain[verbal]", "domain[spatial]"],
+        "estimate": [0.4902749959227, -0.8095015220405, 0.368108124677, -0.1345243921938],
+        "se": [0.04501036226296, 0.01578886195206, 0.01922104943705, 0.01901242807465]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)"],
+        "sd": [0.5171494073962]
+      }
+    },
+    "M3": {
+      "formula": "accuracy ~ difficulty + domain + (1+difficulty|subject)",
+      "engine": "glmmTMB",
+      "family": "beta",
+      "converged": true,
+      "fit": {
+        "nobs": 4475,
+        "loglik": 3265.256453340285,
+        "aic": -6514.512906680569,
+        "bic": -6463.262813634898,
+        "phi": 17.647730210075
+      },
+      "fixef": {
+        "names": ["Intercept", "difficulty[hard]", "domain[verbal]", "domain[spatial]"],
+        "estimate": [0.4877195188582, -0.812933118402, 0.3765006429442, -0.1370808520578],
+        "se": [0.04581760987233, 0.03306704163428, 0.01843507487938, 0.01829280627263]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(difficulty[hard]|subject)"],
+        "sd": [0.5305146682207, 0.3606569478523]
+      }
+    },
+    "M4": {
+      "formula": "accuracy ~ difficulty + domain + (1|subject) + (1|item)",
+      "engine": "glmmTMB",
+      "family": "beta",
+      "converged": true,
+      "fit": {
+        "nobs": 4475,
+        "loglik": 3930.834562982014,
+        "aic": -7847.669125964028,
+        "bic": -7802.825294549066,
+        "phi": 23.632806055959
+      },
+      "fixef": {
+        "names": ["Intercept", "difficulty[hard]", "domain[verbal]", "domain[spatial]"],
+        "estimate": [0.5062292590824, -0.8308808877457, 0.3820745378146, -0.1501688171307],
+        "se": [0.06684834912156, 0.01318689771981, 0.01603110095968, 0.01585621181449]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(Intercept|item)"],
+        "sd": [0.5270034652087, 0.3129314656841]
+      }
+    },
+    "M5": {
+      "formula": "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)",
+      "engine": "glmmTMB",
+      "family": "beta",
+      "converged": true,
+      "fit": {
+        "nobs": 4475,
+        "loglik": 4179.427464092997,
+        "aic": -8340.854928185994,
+        "bic": -8283.198573509613,
+        "phi": 28.354469633574
+      },
+      "fixef": {
+        "names": ["Intercept", "difficulty[hard]", "domain[verbal]", "domain[spatial]"],
+        "estimate": [0.5033133203197, -0.8327912449943, 0.3898099652353, -0.1518178379881],
+        "se": [0.06701069284328, 0.03141161946084, 0.01496957944697, 0.01484480860394]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|subject)", "sd(difficulty[hard]|subject)", "sd(Intercept|item)"],
+        "sd": [0.5337252007824, 0.3543093612587, 0.3126830157693]
+      }
+    }
+  }
+}

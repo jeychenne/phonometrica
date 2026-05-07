@@ -1,0 +1,111 @@
+{
+  "family": "poisson",
+  "dataset": "poisson_disfluency.csv",
+  "generated_at": "2026-05-07 11:27:10 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "glmmTMB_version": "1.1.13",
+  "models": {
+    "M1": {
+      "formula": "count ~ task * age",
+      "engine": "glmmTMB",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 1800,
+        "loglik": -3832.236091546678,
+        "aic": 7672.472183093357,
+        "bic": 7694.454350868894
+      },
+      "fixef": {
+        "names": ["(Intercept)", "taskreading", "ageyoung", "taskreading:ageyoung"],
+        "estimate": [1.402368306911, -0.6764312471437, -0.5889716917947, -0.0698257271926],
+        "se": [0.02134433729508, 0.03676462814133, 0.04107441107992, 0.07197614660493]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "count ~ task + age + (1|speaker)",
+      "engine": "glmmTMB",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 1800,
+        "loglik": -3357.131958327866,
+        "aic": 6722.263916655733,
+        "bic": 6744.24608443127
+      },
+      "fixef": {
+        "names": ["(Intercept)", "taskreading", "ageyoung"],
+        "estimate": [1.269326307375, -0.6948113433346, -0.5638846199038],
+        "se": [0.1486121576937, 0.03160347976326, 0.2352369189243]
+      },
+      "ranef": {
+        "names": "sd((Intercept)|speaker)",
+        "sd": 0.5087886073904
+      }
+    },
+    "M3": {
+      "formula": "count ~ task + age + (1+task|speaker)",
+      "engine": "glmmTMB",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 1800,
+        "loglik": -3319.84222160859,
+        "aic": 6651.684443217179,
+        "bic": 6684.657694880485
+      },
+      "fixef": {
+        "names": ["(Intercept)", "taskreading", "ageyoung"],
+        "estimate": [1.27339251502, -0.7447852575798, -0.5625031588538],
+        "se": [0.1471193926407, 0.08313446205264, 0.2329984569828]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd(taskreading|speaker)"],
+        "sd": [0.503166270735, 0.3309387696847]
+      }
+    },
+    "M4": {
+      "formula": "count ~ task + age + (1|speaker) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 1800,
+        "loglik": -3117.2872063764,
+        "aic": 6244.5744127528,
+        "bic": 6272.052122472221
+      },
+      "fixef": {
+        "names": ["(Intercept)", "taskreading", "ageyoung"],
+        "estimate": [1.210667384621, -0.6948111836176, -0.5639062978874],
+        "se": [0.1750982472943, 0.03160347917022, 0.237499543756]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd((Intercept)|word)"],
+        "sd": [0.5138067087601, 0.3489621107726]
+      }
+    },
+    "M5": {
+      "formula": "count ~ task + age + (1+task|speaker) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 1800,
+        "loglik": -3080.00135733455,
+        "aic": 6174.0027146691,
+        "bic": 6212.47150827629
+      },
+      "fixef": {
+        "names": ["(Intercept)", "taskreading", "ageyoung"],
+        "estimate": [1.214718362494, -0.7446858142253, -0.5625604670381],
+        "se": [0.1738235056874, 0.08312925874653, 0.2352740835242]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|speaker)", "sd(taskreading|speaker)", "sd((Intercept)|word)"],
+        "sd": [0.5082250471231, 0.3309511860973, 0.3489218438855]
+      }
+    }
+  }
+}

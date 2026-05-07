@@ -1,0 +1,50 @@
+# =====================================================================
+# test_negbin.phon — validates Phonometrica's frequentist
+# negative-binomial regression engine against reference_negbin.json
+# (produced by gen_reference_negbin.R from glmmTMB::Owls).
+#
+# Owls (Roulin & Bersier 2007): 599 obs from 27 nests. SiblingNegotiation
+# (number of begging calls) is a natural overdispersed count, well
+# modelled by NB. FoodTreatment varies within all 27 nests, so the
+# random slope (1+food|nest) has real (large) non-zero variance —
+# slope SD ≈ 1.06, larger than the intercept SD.
+#
+# Single grouping factor (nest) — no crossed REs in this family.
+# Crossed-RE testing is covered in the Gaussian (InstEval) and
+# binomial (real_schwa) suites. The trade-off is acceptable because
+# Salamanders (the only crossed-RE candidate for negbin) hits
+# boundary fits on the slope — the same problem we're trying to
+# avoid by switching away from the prior synthetic data.
+#
+# Five models:
+#   M1 — calls ~ food * sex                              (interaction)
+#   M2 — calls ~ food + sex + (1|nest)
+#   M3 — calls ~ food + sex + (1+food|nest)
+#   M4 — calls ~ food + sex + arrival + (1|nest)
+#   M5 — calls ~ food + sex + arrival + (1+food|nest)
+#
+# Tolerances on AIC/BIC use a wider rtol_fit (0.02) to accommodate
+# the documented ~1.3-unit additive offset in Phonometrica's NB
+# log-likelihood vs glmmTMB's (project memory: NB GLMM logLik gap).
+# Both engines sit on the same surface; the offset is a constant
+# reporting difference that propagates into AIC/BIC.
+# =====================================================================
+
+let A = import("../lib/assert")
+
+let DATA = A.resolve_data_path("owls.csv")
+let REF  = A.resolve_sibling("reference_negbin.json")
+
+let refs_root = A.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+A.start_section("NEGATIVE BINOMIAL")
+
+A.fit_and_check("M1", "calls ~ food * sex", d, "negbin", refs["M1"], 0.02, 0.005, 0.05)
+A.fit_and_check("M2", "calls ~ food + sex + (1|nest)", d, "negbin", refs["M2"], 0.02, 0.01, 0.1)
+A.fit_and_check("M3", "calls ~ food + sex + (1+food|nest)", d, "negbin", refs["M3"], 0.02, 0.02, 0.15)
+A.fit_and_check("M4", "calls ~ food + sex + arrival + (1|nest)", d, "negbin", refs["M4"], 0.02, 0.01, 0.1)
+A.fit_and_check("M5", "calls ~ food + sex + arrival + (1+food|nest)", d, "negbin", refs["M5"], 0.02, 0.02, 0.15)
+
+A.end_section()

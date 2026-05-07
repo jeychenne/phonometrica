@@ -1,0 +1,111 @@
+{
+  "family": "binomial",
+  "dataset": "schwa_eychenne2019.csv",
+  "generated_at": "2026-05-07 11:27:33 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "glmmTMB_version": "1.1.13",
+  "models": {
+    "M1": {
+      "formula": "schwa01 ~ dialect * gender + task",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 7787,
+        "loglik": -3918.962230404738,
+        "aic": 7853.924460809476,
+        "bic": 7909.606148454091
+      },
+      "fixef": {
+        "names": ["(Intercept)", "dialectLanguedocian", "dialectProvençal", "gendermale", "taskinformal", "tasktext", "dialectLanguedocian:gendermale", "dialectProvençal:gendermale"],
+        "estimate": [-0.1728261466979, 2.154843003281, 0.1609843668279, -0.04443552877884, 0.09762051531365, 0.4209859214004, -0.01781482149556, 0.07357789604717],
+        "se": [0.07356999112118, 0.09434033645595, 0.09032015488653, 0.08980879878285, 0.07183627861462, 0.06491818760134, 0.1361694966441, 0.1329658949303]
+      },
+      "ranef": null
+    },
+    "M2": {
+      "formula": "schwa01 ~ dialect + gender + task + (1|subject)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 7787,
+        "loglik": -3559.597737089946,
+        "aic": 7133.195474179892,
+        "bic": 7181.916950868931
+      },
+      "fixef": {
+        "names": ["(Intercept)", "dialectLanguedocian", "dialectProvençal", "gendermale", "taskinformal", "tasktext"],
+        "estimate": [-0.2562220883125, 2.491167844329, 0.2525953553712, 0.2008899483462, 0.06716582263125, 0.4369692573292],
+        "se": [0.2828803733052, 0.3206772009458, 0.3789471834855, 0.2744238064836, 0.07778443445655, 0.06955210925153]
+      },
+      "ranef": {
+        "names": "sd((Intercept)|subject)",
+        "sd": 0.8685591636476
+      }
+    },
+    "M3": {
+      "formula": "schwa01 ~ dialect + gender + task + (1+task|subject)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 7787,
+        "loglik": -3543.692242981627,
+        "aic": 7111.384485963255,
+        "bic": 7194.907017430179
+      },
+      "fixef": {
+        "names": ["(Intercept)", "dialectLanguedocian", "dialectProvençal", "gendermale", "taskinformal", "tasktext"],
+        "estimate": [-0.2275675357834, 2.471892891451, 0.09424563062868, 0.2655277539513, 0.07315287639902, 0.4318559182422],
+        "se": [0.2910298838962, 0.3208538762762, 0.3856070370324, 0.2733858557031, 0.09282895415511, 0.1053731569417]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|subject)", "sd(taskinformal|subject)", "sd(tasktext|subject)"],
+        "sd": [0.9582564589891, 0.2335500202776, 0.4525682452969]
+      }
+    },
+    "M4": {
+      "formula": "schwa01 ~ dialect + gender + task + (1|subject) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 7787,
+        "loglik": -3077.912135468537,
+        "aic": 6171.824270937073,
+        "bic": 6227.505958581689
+      },
+      "fixef": {
+        "names": ["(Intercept)", "dialectLanguedocian", "dialectProvençal", "gendermale", "taskinformal", "tasktext"],
+        "estimate": [-0.04446514166957, 3.17532015485, 0.3158293013199, 0.2032804513161, 0.09796895203547, 0.146746522406],
+        "se": [0.3534648761982, 0.3966045345812, 0.4673503896723, 0.336673299057, 0.1005435122966, 0.1402171000626]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|subject)", "sd((Intercept)|word)"],
+        "sd": [1.071064401442, 1.283012097657]
+      }
+    },
+    "M5": {
+      "formula": "schwa01 ~ dialect + gender + task + (1+task|subject) + (1|word)",
+      "engine": "glmmTMB",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 7787,
+        "loglik": -3050.459250294816,
+        "aic": 6126.918500589632,
+        "bic": 6217.401243012132
+      },
+      "fixef": {
+        "names": ["(Intercept)", "dialectLanguedocian", "dialectProvençal", "gendermale", "taskinformal", "tasktext"],
+        "estimate": [0.008475886738715, 3.157759618366, 0.1345509389852, 0.2672537536588, 0.106642544911, 0.1484353929883],
+        "se": [0.3753079444728, 0.403879194542, 0.4884024857535, 0.3438887901672, 0.1100387104252, 0.1849587993205]
+      },
+      "ranef": {
+        "names": ["sd((Intercept)|subject)", "sd(taskinformal|subject)", "sd(tasktext|subject)", "sd((Intercept)|word)"],
+        "sd": [1.231586444738, 0.1619335277518, 0.7107027675352, 1.315683093714]
+      }
+    }
+  }
+}
