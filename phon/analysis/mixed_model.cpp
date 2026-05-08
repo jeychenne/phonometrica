@@ -2045,6 +2045,72 @@ struct PirlsObjective
 			nll -= variance_prior_log_density(D_cov, *priors, lay);
 		}
 
+		// ── Student-t: replace IRLS log_det_Huu with observed-Hessian ──
+		//
+		// solve_pirls computes res.laplace_nll using IRLS / Fisher-info
+		// weights for both the inner û solve AND the outer ½ log|H_uu|.
+		// For canonical-link exponential-family models (Gaussian,
+		// Poisson with log link, NB with log link, binomial with logit
+		// link), w_PIRLS coincides with the observed Hessian at the
+		// score-equation root, so the Laplace approximation is correct
+		// as computed.  For Student-t — which is not an exponential
+		// family — w_PIRLS differs from the observed Hessian at every
+		// observation, even at the mode, by the (νσ²−r²) factor in the
+		// numerator.  Without correction, the surface the outer L-BFGS
+		// minimises is biased (most strongly at small ν, where the
+		// outlier mass with |r| > σ√ν makes the two weight forms
+		// diverge most), so σ̂ is systematically inflated and ν̂
+		// systematically biased upward relative to glmmTMB / TMB.
+		//
+		// We therefore replace the IRLS Laplace term with the observed-
+		// Hessian (hybrid: exact where PD, Fisher-info fallback
+		// otherwise) form at the converged μ̂.  This makes the
+		// converged (β̂, θ̂, σ̂, ν̂) self-consistent with the reported
+		// logLik and matches glmmTMB.
+		//
+		// Coordination invariant. The same hybrid correction is applied
+		// at three sites; they must stay in sync:
+		//   (1) here                          (outer frequentist optimizer)
+		//   (2) LaplaceJointObjective::eval   (Phase 2 joint, line ~2207)
+		//   (3) eval_pirls_grid_point         (Bayesian CCD grid, line ~3287)
+		// The post-fit logLik block at line ~7831 also applies the same
+		// correction; because (1) is now the optimizer objective, that
+		// post-fit block collapses to a no-op at convergence and exists
+		// as a safety net + reporter of model.laplace_method.
+		// Removing this block here without removing the others would
+		// re-introduce the bias the post-fit correction is designed to
+		// catch, but the optimizer would converge on a different MLE
+		// than the reported logLik — silent disagreement.
+		//
+		// Cost: two extra log-det evaluations per outer eval. For
+		// typical phonetic data this is microseconds — invisible
+		// against the PIRLS solve itself.
+		//
+		// Stability: the hybrid helper falls back to the always-PD
+		// Fisher form when H_uu becomes non-PD, so the objective
+		// stays finite throughout the L-BFGS trajectory. The inner û
+		// iteration still uses IRLS weights — only the outer
+		// ½ log|H_uu| is corrected here.
+		if (fam.name == "student" && lay.J_total > 0)
+		{
+			double sigma_t = std::exp(theta[n_chol]);
+			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			double nu_sigma2 = nu_t * sigma_t * sigma_t;
+
+			Eigen::VectorXd w_irls(n);
+			for (intptr_t i = 0; i < n; i++) {
+				double r = ym[i] - res.mu[i];
+				w_irls[i] = (nu_t + 1.0) / (nu_sigma2 + r * r);
+			}
+			double log_det_irls = full_log_det_H(w_irls, D_inv, lay, n);
+
+			LaplaceMethod method;
+			double log_det_hybrid = student_full_log_det_H_hybrid(
+			    ym, res.mu, sigma_t, nu_t, D_inv, lay, n, method);
+
+			nll += 0.5 * (log_det_hybrid - log_det_irls);
+		}
+
 		last_u = std::move(res.u);
 		return nll;
 	}
@@ -2136,6 +2202,44 @@ struct LaplaceJointObjective
 				D_cov[g] = D_inv[g].inverse();
 
 			nll -= variance_prior_log_density(D_cov, *priors, lay);
+		}
+
+		// ── Student-t: observed-Hessian Laplace correction ────────────
+		//
+		// solve_u_given_beta returns laplace_nll using IRLS log_det_Huu;
+		// for Student-t this differs from the observed-Hessian form
+		// glmmTMB uses, by an amount that varies with ν and σ.  Phase 2
+		// is normally skipped for Student-t (see "Phase 2 is skipped"
+		// comment in mixed_model body, line ~7045), but the
+		// phase2_student diagnostic flag re-enables it specifically
+		// for glmmTMB comparison — so the joint objective must
+		// minimise the same hybrid-Laplace NLL that PirlsObjective::eval
+		// does, otherwise enabling phase2_student would give a
+		// different MLE than the default Phase-1-only fit.
+		//
+		// Coordination invariant: same hybrid correction at three
+		// sites, must stay in sync — see the invariant block in
+		// PirlsObjective::eval (line ~2048) for the full list.
+		if (fam.name == "student" && lay.J_total > 0)
+		{
+			double sigma_t = fam_used.sigma;
+			double nu_t    = fam_used.nu;
+			double nu_sigma2 = nu_t * sigma_t * sigma_t;
+
+			// res.mu was computed by solve_u_given_beta at the
+			// converged inner û; re-derive r from ym.
+			Eigen::VectorXd w_irls(n);
+			for (intptr_t i = 0; i < n; i++) {
+				double r = ym[i] - res.mu[i];
+				w_irls[i] = (nu_t + 1.0) / (nu_sigma2 + r * r);
+			}
+			double log_det_irls = full_log_det_H(w_irls, D_inv, lay, n);
+
+			LaplaceMethod method;
+			double log_det_hybrid = student_full_log_det_H_hybrid(
+			    ym, res.mu, sigma_t, nu_t, D_inv, lay, n, method);
+
+			nll += 0.5 * (log_det_hybrid - log_det_irls);
 		}
 
 		return nll;
@@ -3211,10 +3315,14 @@ static GridPointResult eval_pirls_grid_point(
 	//
 	// We therefore replace the IRLS Laplace term with the observed-Hessian
 	// (hybrid: observed where PD, Fisher fallback otherwise) form at every
-	// CCD grid point. This mirrors the post-fit correction at the bottom
-	// of mixed_model() that was previously applied only to model.loglik —
-	// extending it to the integrand makes the marginal posterior of θ
-	// internally consistent with the reported point estimate.
+	// CCD grid point. This is the same correction applied at the two other
+	// Student-t Laplace evaluation sites: PirlsObjective::eval (outer
+	// frequentist optimizer, line ~2048) and the post-fit logLik adjustment
+	// at the bottom of mixed_model() (line ~7831). All three sites use the
+	// same hybrid weight form at the same converged μ̂, so the marginal
+	// posterior of θ, the frequentist MLE, and the reported logLik are
+	// internally consistent. Modifying any one site without the others
+	// would re-introduce the bias.
 	//
 	// Cost: two extra log-det evaluations per grid point. For typical
 	// phonetic data (J ≲ 100, n_grid ≲ 100), this is microseconds.
@@ -6116,7 +6224,7 @@ static void no_re_bayesian_laplace(
 	for (intptr_t k = 0; k < n_disp; k++) phi_hat[p + k] = saved_theta[k];
 
 	// ── 2. Joint FD Hessian on the negative log-posterior ─────────
-	// Same h_scale (1e-3) used by the random-slopes block at line ~7019.
+	// Same h_scale (1e-3) used by the random-slopes block at line ~7122.
 	// last_u stays empty: solve_u_given_beta short-circuits when J == 0,
 	// so the eval cost is just the unweighted neg-log-likelihood.
 	LaplaceJointObjective joint_obj{fam, Xm, ym, lay, n, p,
@@ -6934,9 +7042,14 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// out ignoring ∂log|H|/∂β; Phase 2 re-optimizes (β, θ)
 		// jointly with u profiled out, matching lme4/glmmTMB.
 		//
-		// For Student t, Phase 2 is skipped: the σ–ν correlation
-		// makes the joint (β, σ, ν) Hessian ill-conditioned, and
-		// Phase 1 PIRLS profiling already gives accurate β̂.
+		// For Student t, Phase 2 is skipped by default: the σ–ν
+		// correlation makes the joint (β, σ, ν) Hessian ill-
+		// conditioned. Phase 1 (PirlsObjective::eval) now applies
+		// the same observed-Hessian Laplace correction Phase 2 and
+		// glmmTMB use, so Phase 1's β̂ already matches the joint-
+		// optimization MLE — Phase 2 has no fit-quality benefit
+		// to add, only conditioning risk. The phase2_student
+		// override flag re-enables it for direct comparison.
 		{
 			// Get Phase 1 β̂ via one PIRLS call at converged θ
 			std::vector<Eigen::MatrixXd> D_inv_p1(G);
@@ -6970,13 +7083,17 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			if (is_student)
 			{
-				// Phase 2 is normally skipped for Student-t: the σ-ν
-				// correlation can make the joint (β, σ, ν) Hessian
-				// ill-conditioned, and Phase 1 PIRLS profiling already
-				// gives accurate β̂. The override flag (set via
-				// FitOptions.phase2_student) re-enables Phase 2 for
-				// diagnostic comparison against engines like glmmTMB
-				// that always do joint optimization.
+				// Phase 2 is skipped for Student-t by default: the
+				// σ-ν correlation can make the joint (β, σ, ν)
+				// Hessian ill-conditioned. Since PirlsObjective::eval
+				// applies the same observed-Hessian Laplace correction
+				// that LaplaceJointObjective::eval does (see line
+				// ~2048 and ~2207), Phase 1's β̂ now matches what
+				// joint optimization would produce — there's no fit-
+				// quality reason to run Phase 2. The phase2_student
+				// override flag (FitOptions.phase2_student) re-enables
+				// it for direct comparison against engines like
+				// glmmTMB that always do joint optimization.
 				bool run_phase2 = (init_overrides
 				                    && init_overrides->phase2_student);
 
@@ -7714,16 +7831,39 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	// ── Student-t Laplace correction: hybrid exact / Fisher-info ──
 	//
 	// final_inner.laplace_nll was computed inside solve_u_given_beta /
-	// solve_pirls using IRLS / Fisher-information weights. For
-	// Student-t we now recompute ½ log|H_uu| with the hybrid helper:
-	// try the exact Hessian weights first, fall back to Fisher info if
-	// the resulting H_uu is non-PD. This typically gives a tighter
-	// loglik (matching glmmTMB / TMB) without sacrificing robustness.
+	// solve_pirls using IRLS / Fisher-information weights for the outer
+	// ½ log|H_uu| Laplace term. For Student-t we recompute that term
+	// with the hybrid helper (exact observed-Hessian weights where the
+	// resulting H_uu is PD, Fisher-info fallback otherwise). This
+	// matches glmmTMB / TMB.
 	//
-	// Per design (Q2 / 2a), this only affects the *reported* loglik —
-	// optimization itself continues to use IRLS for stability. The
-	// converged (β, θ, σ, ν) values are therefore unchanged; only the
-	// Laplace correction term is replaced.
+	// Coordination invariant. The same hybrid correction is applied at
+	// three sites:
+	//   (1) PirlsObjective::eval        (outer frequentist optimizer, ~2048)
+	//   (2) LaplaceJointObjective::eval (Phase 2 joint optimizer,    ~2207)
+	//   (3) eval_pirls_grid_point       (Bayesian CCD grid,          ~3287)
+	// Because the optimizer (1) already minimises the hybrid-Laplace
+	// surface, delta_nll computed here is ≈ 0 at convergence — this
+	// block is a no-op when the fit converged from PirlsObjective.
+	// It is retained for two reasons:
+	//
+	//   a. Safety net. Any code path that constructs final_inner
+	//      directly via solve_u_given_beta (i.e. without going through
+	//      PirlsObjective on the outer loop) gets the correction
+	//      applied here. Without this block, such a path would report
+	//      a logLik on the IRLS surface even though the optimizer
+	//      converged on the hybrid surface.
+	//
+	//   b. Reporting. We need to populate model.laplace_method with
+	//      which weight form was usable at the converged μ̂ (Exact vs
+	//      FisherInfo); the hybrid helper returns this via out_method.
+	//
+	// If any of the three sites above is modified, all three must be
+	// updated together — they must apply the same Laplace correction
+	// at the same converged μ̂, or the optimizer's MLE and the reported
+	// logLik will disagree (the bug fixed in [Student-t Laplace fix]).
+	// The inner û iteration is unchanged: it always uses IRLS weights
+	// for stability; only the outer ½ log|H_uu| was ever in question.
 	if (fam.name == "student" && lay.J_total > 0)
 	{
 		// Recompute the IRLS log_det at the converged μ, so we know

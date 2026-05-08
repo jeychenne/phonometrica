@@ -103,8 +103,15 @@
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/negbin_counts.csv</Path>
 		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/monophtongues.csv</Path>
+		</Document>
 	</Data>
-	<Analyses />
+	<Analyses>
+		<Document class="Analysis">
+			<Path>$HOME/Temp/Analysis — monophtongues.phon-analysis</Path>
+		</Document>
+	</Analyses>
 	<Bookmarks />
 	<Notes />
 </Phonometrica>
