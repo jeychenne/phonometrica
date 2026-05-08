@@ -64,6 +64,9 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/lib/assert.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_negbin_owls.phon</Path>
+			</Document>
 		</Directory>
 	</Scripts>
 	<Data>
@@ -72,9 +75,6 @@
 		</Document>
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/gam_test.csv</Path>
-		</Document>
-		<Document class="Dataset">
-			<Path>$PHON_PROJECT/test/data/negbin_hesitation.csv</Path>
 		</Document>
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/poisson_disfluency.csv</Path>
@@ -99,6 +99,9 @@
 		</Document>
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/inst_eval.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/negbin_counts.csv</Path>
 		</Document>
 	</Data>
 	<Analyses />
