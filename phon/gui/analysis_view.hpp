@@ -131,6 +131,13 @@ private:
 	QString formatSummary(const stats::Model &m) const;
 	QString formatLatex(const stats::Model &m) const;
 
+	// Tab title without the " *" modified marker. Used both by label() (for
+	// the tab header) and by save() (for the default filename suggestion in
+	// the Save-as dialog), so the two cannot drift apart. For an unsaved
+	// analysis with a source this is "Analysis — <source-label>"; once the
+	// analysis has a path on disk it is the file's base name.
+	QString baseLabel() const;
+
 	// Returns the user label if set, otherwise "Model N" (1-based).
 	QString modelDisplayLabel(int index) const;
 	// Returns the full text for a model list item: "label: formula" or "label (B): formula".

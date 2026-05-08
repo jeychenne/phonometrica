@@ -111,25 +111,25 @@ AnalysisView::AnalysisView(Handle<Analysis> analysis, QWidget *parent) :
 	updateFitEnabled();
 }
 
-QString AnalysisView::label() const
+QString AnalysisView::baseLabel() const
 {
-	QString base;
 	if (m_analysis->has_path())
 	{
-		base = tabLabel(QString::fromUtf8(m_analysis->label().data(),
+		return tabLabel(QString::fromUtf8(m_analysis->label().data(),
 		                                   (int)m_analysis->label().size()));
 	}
-	else if (m_analysis->has_source())
+	if (m_analysis->has_source())
 	{
 		auto src = QString::fromUtf8(m_analysis->data()->label().data(),
 		                              (int)m_analysis->data()->label().size());
-		base = QStringLiteral("Analysis — ") + tabLabel(src);
+		return QStringLiteral("Analysis — ") + tabLabel(src);
 	}
-	else
-	{
-		base = QStringLiteral("Analysis");
-	}
+	return QStringLiteral("Analysis");
+}
 
+QString AnalysisView::label() const
+{
+	QString base = baseLabel();
 	if (isModified()) {
 		base += QStringLiteral(" *");
 	}
@@ -158,9 +158,15 @@ bool AnalysisView::save()
 
 	if (firstSave)
 	{
+		// Use baseLabel() rather than m_analysis->label() so the suggested
+		// filename matches what the user sees in the tab header.
+		// m_analysis->label() falls through to Document::label(), which
+		// returns "Untitled" for any document without a path — that would
+		// produce "untitled.phon-analysis" instead of e.g.
+		// "Analysis — schwa coding.phon-analysis".
 		auto path = getSaveFileName(this, tr("Save analysis as..."),
 			tr("Phonometrica analysis (*.phon-analysis)"),
-			defaultSaveName(m_analysis->label(), QStringLiteral(".phon-analysis")));
+			baseLabel() + QStringLiteral(".phon-analysis"));
 
 		if (path.isEmpty())
 			return false;
