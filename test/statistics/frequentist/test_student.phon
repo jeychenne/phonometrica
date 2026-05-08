@@ -1,33 +1,49 @@
 # =====================================================================
-# test_student.phon — Student-t regression validation.
+# test_student.phon — validates Phonometrica's frequentist Student-t
+# regression engine against reference_student.json (produced by
+# gen_reference_student.R from a real corpus monophthong dataset).
 #
-# Status: DISABLED for the v1.0 frequentist suite. The reference
-# produced by gen_reference_student.R is not trustworthy for any
-# of the ten models (5 robust + 5 mild):
+# Why this dataset and not synthetic: prior synthetic data choked
+# glmmTMB's t_family() on every random-effects fit (banana-shaped
+# σ-ν likelihood, weak ν identification at small N). On the corpus
+# data the user verified glmmTMB converges cleanly on all five
+# models, putting Student-t on the same engine and tooling as the
+# other frequentist families.
 #
-#   * Robust block — every model has converged = false. M2's speaker
-#     SD is reported as ~574 (orders of magnitude wrong). M4's sigma
-#     collapses to 2e-9. M5's slope SDs are < 1e-5 (boundary).
-#   * Mild block — only M4 produces a finite logLik. M1 didn't
-#     converge. M2/M3/M5 converged numerically but glmmTMB declined
-#     to compute logLik.
+# Five models on monophtongues.csv:
+#   M1 — E1 ~ Voyelle * Condition + Sexe + Age                       (no RE)
+#   M2 — E1 ~ Voyelle * Condition + Sexe * Age + (1|Sujet) + (1|Mot)
+#   M3 — E1 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)
+#   M4 — E2 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)
+#   M5 — E2 ~ Voyelle * Condition + Sexe + Age + (1|Sujet)
 #
-# Comparing Phonometrica's Student-t engine against this reference
-# would tell us nothing: a passing test would mean we're matching a
-# broken fit, and a failing test would be ambiguous.
-#
-# The right way to validate Student-t (when we get to it) is against
-# brms HMC, where the May 2026 fixes brought Phonometrica to within
-# 0.17 brms-SD-units on every fit (project memory entry "Student-t
-# Bayesian, May 2026 fixes"). That belongs in the Bayesian suite.
-#
-# This file is intentionally a no-op so run_all.phon can list it
-# without producing failures or warnings. To re-enable when a clean
-# frequentist reference is available: delete the early `return` and
-# write per-block A.fit_and_check calls following the patterns in
-# the other test_<family>.phon files.
+# Tolerances. glmmTMB and Phonometrica target the same likelihood
+# (joint Laplace ML) but differ in optimiser path and Student-t
+# parameter handling — glmmTMB carries log(ν) as a dispformula
+# coefficient while Phonometrica uses joint (β, θ) Laplace-MAP
+# with exact Student-t Hessian weights and a multistart over ν.
+# Modest tolerances absorb the per-iterate drift.
 # =====================================================================
 
 let A = import("../lib/assert")
-A.record_note("test_student.phon: SKIPPED — Student-t reference not reliable; see banner comment")
-return null
+
+let DATA = A.resolve_data_path("monophtongues.csv")
+let REF  = A.resolve_sibling("reference_student.json")
+
+let refs_root = A.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+A.start_section("STUDENT-T")
+
+A.fit_and_check("M1", "E1 ~ Voyelle * Condition + Sexe + Age", d, "student", refs["M1"], 0.005, 0.005, 0.05)
+
+A.fit_and_check("M2", "E1 ~ Voyelle * Condition + Sexe * Age + (1|Sujet) + (1|Mot)", d, "student", refs["M2"], 0.01, 0.01, 0.05)
+
+A.fit_and_check("M3", "E1 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)", d, "student", refs["M3"], 0.01, 0.01, 0.10)
+
+A.fit_and_check("M4", "E2 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)", d, "student", refs["M4"], 0.01, 0.01, 0.10)
+
+A.fit_and_check("M5", "E2 ~ Voyelle * Condition + Sexe + Age + (1|Sujet)", d, "student", refs["M5"], 0.01, 0.005, 0.05)
+
+A.end_section()

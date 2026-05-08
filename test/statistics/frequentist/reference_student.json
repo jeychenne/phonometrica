@@ -1,231 +1,115 @@
 {
   "family": "student",
-  "datasets": {
-    "robust": "student_f1_robust.csv",
-    "mild": "student_f1_mild.csv"
-  },
-  "generated_at": "2026-05-07 11:27:31 EDT",
+  "dataset": "monophtongues.csv",
+  "generated_at": "2026-05-08 16:26:59 EDT",
   "R_version": "R version 4.5.0 (2025-04-11)",
   "glmmTMB_version": "1.1.13",
-  "robust": {
-    "models": {
-      "M1": {
-        "formula": "f1 ~ vowel * gender",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 600,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 113.740542043297
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM", "voweli:genderM", "vowelu:genderM"],
-          "estimate": [509.162893491465, 142.192103949188, 142.069072548995, 241.279339444459, 65.672467035459, 68.988047294265],
-          "se": [null, 10.048213227725, 9.713005731568, 10.963941242307, 19.541604469705, 19.51454712191]
-        },
-        "ranef": null
+  "models": {
+    "M1": {
+      "formula": "E1 ~ Voyelle * Condition + Sexe + Age",
+      "engine": "glmmTMB",
+      "family": "student",
+      "converged": true,
+      "fit": {
+        "nobs": 1468,
+        "loglik": -1923.297318970343,
+        "aic": 3862.594637940686,
+        "bic": 3904.927887614082,
+        "sigma": 0.8476684230206
       },
-      "M2": {
-        "formula": "f1 ~ vowel + gender + (1|speaker)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 600,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 55.638160663873
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [162.660429510728, -274.304309590717, -407.392010842563, 86.080635178751],
-          "se": [16.333360283959, 5.56812675706, 5.563976597143, 265.814806506859]
-        },
-        "ranef": {
-          "names": "sd((Intercept)|speaker)",
-          "sd": 574.59453682219
-        }
+      "fixef": {
+        "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]"],
+        "estimate": [14.021803740067, -0.604361817543, 0.1736926540398, -1.357572632877, -0.003515105202848, 0.2850499132572],
+        "se": [0.07159472316421, 0.06619812547911, 0.06211379554001, 0.0468940511084, 0.001190978434277, 0.09396343112114]
       },
-      "M3": {
-        "formula": "f1 ~ vowel + gender + (1+vowel|speaker)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 600,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 67.163697151631
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [-184.818489409212, -149.545077511654, -166.132990769368, -107.541210434062],
-          "se": [null, 113.000869177913, 86.709582668586, 102.246117534876]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd(voweli|speaker)", "sd(vowelu|speaker)"],
-          "sd": [821.898562525632, 182.529430795411, 213.22693655366]
-        }
+      "ranef": null
+    },
+    "M2": {
+      "formula": "E1 ~ Voyelle * Condition + Sexe * Age + (1|Sujet) + (1|Mot)",
+      "engine": "glmmTMB",
+      "family": "student",
+      "converged": true,
+      "fit": {
+        "nobs": 1468,
+        "loglik": -1583.520068200349,
+        "aic": 3189.040136400699,
+        "bic": 3247.248354701618,
+        "sigma": 0.5213640522634
       },
-      "M4": {
-        "formula": "f1 ~ vowel + gender + (1|speaker) + (1|word)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 600,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 2.130344948953e-09
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [152.419230991592, -818.627347988707, -1196.098386032333, 12.116629017491],
-          "se": [null, null, null, null]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd((Intercept)|word)"],
-          "sd": [129.071010532557, 6061776.6313978285]
-        }
+      "fixef": {
+        "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
+        "estimate": [14.101530670052, -0.5717344025888, 0.1437903362259, -1.710268971805, -0.005664931679711, 0.3285687409656, 0.007237079333931],
+        "se": [0.2180179674366, 0.2537588088133, 0.08245959978383, 0.1895190374138, 0.002813542948195, 0.06499007496103, 0.00394769035485]
       },
-      "M5": {
-        "formula": "f1 ~ vowel + gender + (1+vowel|speaker) + (1|word)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 600,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 48.654740750973
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [683.110846192575, -340.187074788349, -396.127736556683, -85.913865423969],
-          "se": [23.6814790023, 5.932271367531, 5.770559316816, 32.748955046683]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd(voweli|speaker)", "sd(vowelu|speaker)", "sd((Intercept)|word)"],
-          "sd": [72.704160309606, 1.709109872576e-05, 3.369123838135e-35, 2.545474469493]
-        }
+      "ranef": {
+        "names": ["sd(Intercept|Sujet)", "sd(Intercept|Mot)"],
+        "sd": [0.4672126501839, 0.4103860614322]
       }
-    }
-  },
-  "mild": {
-    "models": {
-      "M1": {
-        "formula": "f1 ~ vowel * gender",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": false,
-        "fit": {
-          "nobs": 450,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 64.0026203509
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM", "voweli:genderM", "vowelu:genderM"],
-          "estimate": [519.723166417744, 158.760232278779, 135.493868094409, 245.551504072492, 75.017186728566, 63.494161003901],
-          "se": [null, 6.93205554687, 6.846960445635, 6.988885124751, 12.770551030902, 12.776030439518]
-        },
-        "ranef": null
+    },
+    "M3": {
+      "formula": "E1 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)",
+      "engine": "glmmTMB",
+      "family": "student",
+      "converged": true,
+      "fit": {
+        "nobs": 1468,
+        "loglik": -1571.100049804249,
+        "aic": 3168.200099608499,
+        "bic": 3236.991630327767,
+        "sigma": 0.4926573459397
       },
-      "M2": {
-        "formula": "f1 ~ vowel + gender + (1|speaker)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": true,
-        "fit": {
-          "nobs": 450,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 62.003851568984
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [486.436496594854, -139.705684608242, -187.791025552205, -35.204431388893],
-          "se": [14.477822796922, 7.159637129014, 7.159636282344, 19.622464683167]
-        },
-        "ranef": {
-          "names": "sd((Intercept)|speaker)",
-          "sd": 51.298210634719
-        }
+      "fixef": {
+        "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
+        "estimate": [14.103430343556, -0.5813636343477, 0.1483628354246, -1.696547420513, -0.005891866698878, 0.3294282462648, 0.007395542599879],
+        "se": [0.215576482592, 0.2544789958965, 0.0797099416241, 0.1861434857008, 0.002772066947838, 0.080541027508, 0.003877802951519]
       },
-      "M3": {
-        "formula": "f1 ~ vowel + gender + (1+vowel|speaker)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": true,
-        "fit": {
-          "nobs": 450,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 56.453558271136
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [485.844597457633, -138.34175228573, -187.846985366895, -34.630418551411],
-          "se": [14.433505704424, 7.074904183121, 7.030870372252, 19.573970004997]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd(voweli|speaker)", "sd(vowelu|speaker)"],
-          "sd": [51.246476238005, 1.215452906504e-38, 7.699044808284e-39]
-        }
+      "ranef": {
+        "names": ["sd(Intercept|Sujet)", "sd(Voyelle[ɑ]|Sujet)", "sd(Intercept|Mot)"],
+        "sd": [0.4517483487975, 0.3333953390145, 0.4079276170943]
+      }
+    },
+    "M4": {
+      "formula": "E2 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)",
+      "engine": "glmmTMB",
+      "family": "student",
+      "converged": true,
+      "fit": {
+        "nobs": 1468,
+        "loglik": -1532.833596484495,
+        "aic": 3091.667192968989,
+        "bic": 3160.458723688257,
+        "sigma": 0.4828204849308
       },
-      "M4": {
-        "formula": "f1 ~ vowel + gender + (1|speaker) + (1|word)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": true,
-        "fit": {
-          "nobs": 450,
-          "loglik": -2529.897259185982,
-          "aic": 5075.794518371965,
-          "bic": 5108.66849903408,
-          "sigma": 56.453581120333
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [485.845127861677, -138.341733017204, -187.847040763924, -34.63104996385],
-          "se": [14.433606633516, 7.074903053576, 7.030869049954, 19.574120995245]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd((Intercept)|word)"],
-          "sd": [51.246904017336, 0.004977172897935]
-        }
+      "fixef": {
+        "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
+        "estimate": [20.024665430864, -1.368616421152, -0.1091376836985, -0.9114091412117, 0.0009260507836427, 0.1127148147099, -0.00785700579357],
+        "se": [0.2387148172737, 0.300598095279, 0.07988130548745, 0.1642123299975, 0.002704068166604, 0.08846826851025, 0.003429965083369]
       },
-      "M5": {
-        "formula": "f1 ~ vowel + gender + (1+vowel|speaker) + (1|word)",
-        "engine": "glmmTMB",
-        "family": "student",
-        "converged": true,
-        "fit": {
-          "nobs": 450,
-          "loglik": null,
-          "aic": null,
-          "bic": null,
-          "sigma": 55.31738245135
-        },
-        "fixef": {
-          "names": ["(Intercept)", "voweli", "vowelu", "genderM"],
-          "estimate": [486.721426056996, -138.41085064229, -187.480045822496, -36.38475303264],
-          "se": [13.98592860773, 6.955181176995, 8.20270983383, 19.178042711775]
-        },
-        "ranef": {
-          "names": ["sd((Intercept)|speaker)", "sd(voweli|speaker)", "sd(vowelu|speaker)", "sd((Intercept)|word)"],
-          "sd": [48.843929737692, 0.0005714286060231, 24.427461659166, 0.01486177346559]
-        }
+      "ranef": {
+        "names": ["sd(Intercept|Sujet)", "sd(Voyelle[ɑ]|Sujet)", "sd(Intercept|Mot)"],
+        "sd": [0.4564490480346, 0.4172094166286, 0.4841623135772]
+      }
+    },
+    "M5": {
+      "formula": "E2 ~ Voyelle * Condition + Sexe + Age + (1|Sujet)",
+      "engine": "glmmTMB",
+      "family": "student",
+      "converged": true,
+      "fit": {
+        "nobs": 1468,
+        "loglik": -1910.329028159284,
+        "aic": 3838.658056318568,
+        "bic": 3886.282962201138,
+        "sigma": 0.8375478271198
+      },
+      "fixef": {
+        "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]"],
+        "estimate": [20.051689431676, -1.362072733697, -0.1347619331337, -1.236525996799, -0.0009121787790762, 0.1605334510863],
+        "se": [0.1015590651444, 0.06324670921891, 0.08036398817682, 0.07075289757071, 0.001787191802786, 0.08964253691816]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|Sujet)"],
+        "sd": [0.3594306145572]
       }
     }
   }
