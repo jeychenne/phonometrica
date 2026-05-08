@@ -24,7 +24,7 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
    * **Speech processing**: detect silences to pre-segment recordings for manual annotation; automatic speech recognition via whisper.cpp (runs locally on CPU, requires a model file).
    * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract formant, pitch, intensity, and spectral moment measurements.
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; vowel normalization (Lobanov, Nearey, Watt & Fabricius); toggle between wide and long formats; perform set operations on concordances.
-   * **Statistical analysis (preview/beta)**: frequentist and Bayesian linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations.
+   * **Statistical analysis**: frequentist and Bayesian (preview) linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations.
    * **Scripting engine**: Phonometrica can be configured and extended with an easy-to-use scripting language, JSON-based plugins, and coding protocols.
    * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
