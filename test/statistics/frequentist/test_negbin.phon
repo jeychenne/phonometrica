@@ -4,15 +4,6 @@
 # (produced by gen_reference_negbin.R from a synthetic dataset with
 # crossed REs and moderate random-slope variance).
 #
-# Why synthetic and not glmmTMB::Owls (the canonical NB tutorial
-# example): Owls has a very strong food-treatment slope variance
-# (SD ≈ 1.06 vs intercept SD 0.16), which sits right in
-# Phonometrica's documented weak spot — the joint (β, θ) L-BFGS
-# optimiser lacks step-halving for cold-start û = 0 with strong RE
-# variance, and throws an L-BFGS non-finite-state on M3. That's a
-# tracked post-v1.0 hardening item, not a v1.0 acceptance failure.
-# Salamanders has the same problem (boundary on the cover slope).
-#
 # Synthetic data with moderate slope variance (recovered SD ≈ 0.29,
 # intercept SD ≈ 0.40, ratio ~0.7) keeps both engines on the same
 # interior optimum.
@@ -24,9 +15,7 @@
 #   M4 — count ~ condition + context + (1|subject) + (1|item)
 #   M5 — count ~ condition + context + (1+condition|subject) + (1|item)
 #
-# Tolerances: rtol_fit is wider for NB (0.02) to accommodate the
-# documented ~1.3-unit additive offset in Phonometrica's NB
-# log-likelihood vs glmmTMB's. rtol_coef stays around 0.02–0.05
+# Tolerances: rtol_coef stays around 0.02–0.05
 # because the joint-vs-profiled theta_NB difference between the two
 # engines causes small but non-zero coefficient shifts at the same
 # data — they sit on the same surface, just locate slightly
