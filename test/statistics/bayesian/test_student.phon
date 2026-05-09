@@ -1,0 +1,48 @@
+# =====================================================================
+# test_student.phon — Bayesian Student-t fit on the monophthong
+# corpus. Five models match frequentist/test_student.phon.
+#
+# Phonometrica reports the Student-t hyperparameters as
+# `sigma(student)` and `nu(student)` in hyper_names. The brms
+# reference uses uniform(2, 200) on ν matching Phonometrica's
+# effectively-flat ν prior within its [2, 200] clamp range.
+#
+# Hyperparameter tolerances are loosened: per the May 2026 Student-t
+# validation, residual ~0.1-unit ν undershoot and ~6-unit p_WAIC
+# undercount at high RE complexity are Laplace-vs-HMC fundamentals.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("monophtongues.csv")
+let REF  = B.resolve_sibling("reference_student.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN STUDENT-T")
+
+let tol_default = B.default_tolerance()
+# Student-t hyperparameter posteriors (ν especially) have wider
+# Laplace-vs-HMC gaps than other families; loosen accordingly.
+tol_default["hyper_mean_rel"] = 0.30
+tol_default["hyper_sd_rel"]   = 0.35
+tol_default["pwaic_abs"]      = 8.0    # known ~6-unit undercount
+
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.45
+tol_slope["hyper_ci_rel"]   = 0.55
+tol_slope["pwaic_abs"]      = 8.0
+
+B.bayes_fit_and_check("M1", "E1 ~ Voyelle * Condition + Sexe + Age", d, "student", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "E1 ~ Voyelle * Condition + Sexe * Age + (1|Sujet) + (1|Mot)", d, "student", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "E1 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)", d, "student", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "E2 ~ Voyelle * Condition + Sexe * Age + (1+Voyelle|Sujet) + (1|Mot)", d, "student", refs["M4"], tol_slope)
+B.bayes_fit_and_check("M5", "E2 ~ Voyelle * Condition + Sexe + Age + (1|Sujet)", d, "student", refs["M5"], tol_default)
+
+B.end_section()

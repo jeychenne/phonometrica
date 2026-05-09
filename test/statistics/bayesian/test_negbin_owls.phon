@@ -1,0 +1,34 @@
+# =====================================================================
+# test_negbin_owls.phon — Bayesian NB fit on the owls dataset
+# (Roulin & Bersier 2007 / Zuur et al. 2009). Five models match
+# frequentist/test_negbin_owls.phon. Single grouping factor (nest);
+# crossed-RE testing is covered in the Gaussian and other suites.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("owls.csv")
+let REF  = B.resolve_sibling("reference_negbin_owls.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN NEGBIN (owls)")
+
+let tol_default = B.default_tolerance()
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.40
+tol_slope["hyper_ci_rel"]   = 0.50
+
+B.bayes_fit_and_check("M1", "calls ~ food * sex", d, "negbin", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "calls ~ food + sex + (1|nest)", d, "negbin", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "calls ~ food + sex + (1+food|nest)", d, "negbin", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "calls ~ food + sex + arrival + (1|nest)", d, "negbin", refs["M4"], tol_default)
+B.bayes_fit_and_check("M5", "calls ~ food + sex + arrival + (1+food|nest)", d, "negbin", refs["M5"], tol_slope)
+
+B.end_section()

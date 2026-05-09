@@ -75,6 +75,24 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_binomial.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_beta.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_negbin_owls.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_negbin.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_poisson.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_real_schwa.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_student.phon</Path>
+			</Document>
 		</Directory>
 	</Scripts>
 	<Data>

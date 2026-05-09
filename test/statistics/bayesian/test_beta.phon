@@ -1,0 +1,35 @@
+# =====================================================================
+# test_beta.phon — Bayesian beta-regression fit on the synthetic
+# accuracy dataset. Five models match frequentist/test_beta.phon.
+#
+# Phonometrica reports the precision parameter as `phi(beta)` in
+# hyper_names.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("beta_accuracy.csv")
+let REF  = B.resolve_sibling("reference_beta.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN BETA")
+
+let tol_default = B.default_tolerance()
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.40
+tol_slope["hyper_ci_rel"]   = 0.50
+
+B.bayes_fit_and_check("M1", "accuracy ~ difficulty * domain", d, "beta", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "accuracy ~ difficulty + domain + (1|subject)", d, "beta", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "accuracy ~ difficulty + domain + (1+difficulty|subject)", d, "beta", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "accuracy ~ difficulty + domain + (1|subject) + (1|item)", d, "beta", refs["M4"], tol_default)
+B.bayes_fit_and_check("M5", "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)", d, "beta", refs["M5"], tol_slope)
+
+B.end_section()

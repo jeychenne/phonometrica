@@ -106,15 +106,34 @@ phon_default_priors <- function(y, family, has_random_effects = TRUE,
         pri <- c(pri, prior_string(sprintf("exponential(%.10g)", lambda),
                                     class = "sd"))
     }
-    if (family == "gaussian") {
+    # Identity-link residual SD: same exponential as variance components.
+    # Applies to both Gaussian residual and Student-t scale parameter.
+    if (family == "gaussian" || family == "student") {
         pri <- c(pri, prior_string(sprintf("exponential(%.10g)", lambda),
                                     class = "sigma"))
     }
+    # NB overdispersion (brms calls it `shape`; same role as glmmTMB θ in
+    # nbinom2 and as Phonometrica's `theta(NB)` hyper). Default in
+    # Phonometrica: Gamma(1, 0.01) — weakly informative for overdispersion.
+    if (family == "negbin") {
+        pri <- c(pri, prior_string("gamma(1, 0.01)", class = "shape"))
+    }
+    # Beta precision φ.
+    if (family == "beta") {
+        pri <- c(pri, prior_string("gamma(1, 0.01)", class = "phi"))
+    }
+    # Student-t degrees of freedom. Phonometrica uses an effectively flat
+    # prior on ν within its [2, 200] clamp range (multi-start at ν ∈
+    # {3, 5, 10, 30}). brms default is gamma(2, 0.1); we override with a
+    # uniform prior on the same support so the brms posterior reflects
+    # data alone, matching the May 2026 Student-t validation.
+    if (family == "student") {
+        pri <- c(pri, prior_string("uniform(2, 200)", class = "nu",
+                                    lb = 2, ub = 200))
+    }
     if (has_correlated_random) {
         # LKJ(1): uniform over correlation matrices. Equivalent to
-        # Phonometrica's eta=1.0 default. Set explicitly so the
-        # reference is reproducible across brms versions whose
-        # default may differ.
+        # Phonometrica's eta=1.0 default.
         pri <- c(pri, prior_string("lkj(1)", class = "cor"))
     }
     pri
@@ -168,7 +187,11 @@ fit_brms <- function(formula_str, data, family, file_id) {
 
     fam_obj <- switch(family,
         "gaussian" = gaussian(),
-        "binomial" = bernoulli(),       # 0/1 response → bernoulli
+        "binomial" = bernoulli(),
+        "poisson"  = poisson(),
+        "negbin"   = negbinomial(),
+        "beta"     = Beta(),
+        "student"  = student(),
         stop(sprintf("fit_brms: unsupported family '%s'", family))
     )
 
@@ -270,11 +293,41 @@ extract_fixef_brms <- function(fit) {
 
 extract_hyper_brms <- function(fit, family) {
     draws_df <- as_draws_df(fit)
+    cols <- colnames(draws_df)
 
-    sd_cols <- grep("^sd_", colnames(draws_df), value = TRUE)
-    has_sigma <- (family == "gaussian") && ("sigma" %in% colnames(draws_df))
+    sd_cols <- grep("^sd_", cols, value = TRUE)
 
-    if (length(sd_cols) == 0L && !has_sigma) {
+    # Family-specific dispersion parameters. Names match Phonometrica's
+    # hyper_names format (see write_lognormal_hyper calls in mixed_model.cpp):
+    #   gaussian → sd(residual)        ← brms `sigma`
+    #   student  → sigma(student) + nu(student)
+    #   negbin   → theta(NB)           ← brms `shape`
+    #   beta     → phi(beta)           ← brms `phi`
+    #   binomial / poisson : no dispersion parameter
+    extra_names <- character(0)
+    extra_cols  <- character(0)
+
+    if (family == "gaussian" && "sigma" %in% cols) {
+        extra_names <- c(extra_names, "sd(residual)")
+        extra_cols  <- c(extra_cols,  "sigma")
+    } else if (family == "student") {
+        if ("sigma" %in% cols) {
+            extra_names <- c(extra_names, "sigma(student)")
+            extra_cols  <- c(extra_cols,  "sigma")
+        }
+        if ("nu" %in% cols) {
+            extra_names <- c(extra_names, "nu(student)")
+            extra_cols  <- c(extra_cols,  "nu")
+        }
+    } else if (family == "negbin" && "shape" %in% cols) {
+        extra_names <- c(extra_names, "theta(NB)")
+        extra_cols  <- c(extra_cols,  "shape")
+    } else if (family == "beta" && "phi" %in% cols) {
+        extra_names <- c(extra_names, "phi(beta)")
+        extra_cols  <- c(extra_cols,  "phi")
+    }
+
+    if (length(sd_cols) == 0L && length(extra_cols) == 0L) {
         return(NULL)
     }
 
@@ -289,17 +342,14 @@ extract_hyper_brms <- function(fit, family) {
         if (length(spl) != 2L) next
         gname <- spl[1]
         tname <- spl[2]
-        # brms uses "Intercept" (no parens) for RE intercepts. Both
-        # formats round-trip through r_to_phon_ranef_name unchanged
-        # since "Intercept" is already in Phonometrica's format.
         names_out <- c(names_out, sprintf("sd(%s|%s)", tname, gname))
         cols_out  <- c(cols_out,  col)
     }
 
-    if (has_sigma) {
-        names_out <- c(names_out, "sd(residual)")
-        cols_out  <- c(cols_out,  "sigma")
-    }
+    # Append family-specific dispersion params at the end, in the order
+    # Phonometrica places them.
+    names_out <- c(names_out, extra_names)
+    cols_out  <- c(cols_out,  extra_cols)
 
     n <- length(cols_out)
     post_mean <- numeric(n)
@@ -375,9 +425,17 @@ build_model_entry_brms <- function(fit, formula_str, family) {
 }
 
 # --------------------------------------------------------------------
-# write_reference_brms — serialise to JSON. Self-describing header
-# captures the brms / rstan / R versions and the sampling settings,
-# so a re-run later can be compared apples-to-apples.
+# write_reference_brms — serialise to a single JSON file with all
+# models. Self-describing header captures the brms / rstan / R
+# versions and sampling settings, so a re-run later can be compared
+# apples-to-apples. Same shape as frequentist references — the
+# phon-side harness loads the index and indexes by model tag.
+#
+# Earlier iterations of this file split each model into its own
+# JSON to dodge the bytecode compiler's 256-entry constant pool.
+# That cap was raised by widening Instruction to uint16_t (May 2026),
+# so the consolidated layout is fine and matches the frequentist
+# suite's convention.
 # --------------------------------------------------------------------
 
 write_reference_brms <- function(family, models, dataset, path) {
@@ -400,12 +458,13 @@ write_reference_brms <- function(family, models, dataset, path) {
         prior_spec = list(
             note = paste(
                 "Auto-scaled defaults matching Phonometrica's",
-                "scale_default_priors():",
-                "intercept ~ N(mean(y_link), 2.5·sd(y_link));",
-                "slopes ~ N(0, 2.5·sd(y_link));",
-                "sd ~ PC(2.5·sd(y_link), 0.05) ≡ exponential(-log(0.05)/scale);",
-                "sigma ~ same exponential (Gaussian only);",
-                "cor ~ LKJ(1)."
+                "scale_default_priors(): intercept ~ N(mean(y_link),",
+                "2.5*sd(y_link)); slopes ~ N(0, 2.5*sd(y_link));",
+                "sd ~ PC(2.5*sd(y_link), 0.05) i.e.",
+                "exponential(-log(0.05)/scale); sigma ~ same",
+                "(Gaussian/Student); shape ~ Gamma(1, 0.01) (NB);",
+                "phi ~ Gamma(1, 0.01) (Beta); nu ~ Uniform(2, 200)",
+                "(Student); cor ~ LKJ(1)."
             )
         ),
         models = models
@@ -413,7 +472,7 @@ write_reference_brms <- function(family, models, dataset, path) {
     json <- toJSON(ref, auto_unbox = TRUE, null = "null", na = "null",
                    pretty = TRUE, digits = 12)
     writeLines(json, path)
-    cat(sprintf("Wrote %s (%d model(s))\n", path, length(models)))
+    cat(sprintf("Wrote %s (%d models)\n", path, length(models)))
 }
 
 # --------------------------------------------------------------------

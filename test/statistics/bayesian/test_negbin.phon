@@ -1,0 +1,37 @@
+# =====================================================================
+# test_negbin.phon — Bayesian negative binomial fit on the synthetic
+# counts dataset. Five models match frequentist/test_negbin.phon.
+#
+# Phonometrica reports the NB overdispersion as `theta(NB)` in
+# hyper_names. Tolerances are looser than Gaussian: the dispersion
+# parameter posterior has heavier tails and the Laplace-vs-HMC
+# approximation gap is larger for non-conjugate dispersions.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("negbin_counts.csv")
+let REF  = B.resolve_sibling("reference_negbin.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN NEGATIVE BINOMIAL")
+
+let tol_default = B.default_tolerance()
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.40
+tol_slope["hyper_ci_rel"]   = 0.50
+
+B.bayes_fit_and_check("M1", "count ~ condition * context", d, "negbin", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "count ~ condition + context + (1|subject)", d, "negbin", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "count ~ condition + context + (1+condition|subject)", d, "negbin", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "count ~ condition + context + (1|subject) + (1|item)", d, "negbin", refs["M4"], tol_default)
+B.bayes_fit_and_check("M5", "count ~ condition + context + (1+condition|subject) + (1|item)", d, "negbin", refs["M5"], tol_slope)
+
+B.end_section()

@@ -1,0 +1,33 @@
+# =====================================================================
+# test_poisson.phon — Bayesian Poisson fit on the synthetic
+# disfluency-counts dataset. Five models match
+# frequentist/test_poisson.phon.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("poisson_disfluency.csv")
+let REF  = B.resolve_sibling("reference_poisson.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN POISSON")
+
+let tol_default = B.default_tolerance()
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.40
+tol_slope["hyper_ci_rel"]   = 0.50
+
+B.bayes_fit_and_check("M1", "count ~ task * age", d, "poisson", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "count ~ task + age + (1|speaker)", d, "poisson", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "count ~ task + age + (1+task|speaker)", d, "poisson", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "count ~ task + age + (1|speaker) + (1|word)", d, "poisson", refs["M4"], tol_default)
+B.bayes_fit_and_check("M5", "count ~ task + age + (1+task|speaker) + (1|word)", d, "poisson", refs["M5"], tol_slope)
+
+B.end_section()
