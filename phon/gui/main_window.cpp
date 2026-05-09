@@ -70,6 +70,7 @@
 #include <phon/gui/conc/protocol_builder_dialog.hpp>
 #include <phon/gui/transcribe_dialog.hpp>
 #include <phon/gui/find_silences_dialog.hpp>
+#include <phon/gui/record_sound_dialog.hpp>
 #include <phon/gui/transcription_worker.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/project.hpp>
@@ -322,6 +323,10 @@ QMenu *MainWindow::createAnalysisMenu()
 QMenu *MainWindow::createSpeechMenu()
 {
 	auto *menu = new QMenu(tr("&Speech"), this);
+
+	menu->addAction(tr("Record sound..."), this, &MainWindow::onRecordSound);
+
+	menu->addSeparator();
 
 	menu->addAction(tr("Find silences..."), this, &MainWindow::onFindSilences);
 
@@ -1664,6 +1669,43 @@ void MainWindow::onMeasureSpectralMoments()
 			QMessageBox::information(this, tr("Search"), tr("No matches found."));
 		}
 	}
+}
+
+void MainWindow::onRecordSound()
+{
+	RecordSoundDialog dlg(this);
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	auto path = dlg.savedPath();
+	if (path.empty())
+		return;
+
+	// Update the last directory so the next dialog (whatever it is) starts
+	// from where the recording was just saved.
+	{
+		QFileInfo fi(QString::fromUtf8(path.data(), int(path.size())));
+		setLastDirectory(fi.absolutePath());
+	}
+
+	if (dlg.addToProject())
+	{
+		try
+		{
+			Project::get()->import_file(path);
+			m_file_manager->refresh();
+			updateWindowTitle();
+		}
+		catch (std::exception &e)
+		{
+			QMessageBox::warning(this, tr("Record sound"),
+				tr("Recording was saved, but could not be added to the project:\n%1").arg(e.what()));
+			return;
+		}
+	}
+
+	statusBar()->showMessage(
+		tr("Recording saved: %1").arg(QString::fromUtf8(path.data(), int(path.size()))), 5000);
 }
 
 void MainWindow::onFindSilences()

@@ -134,6 +134,7 @@ private slots:
 	void onEditLastQuery();
 
 	// Speech menu
+	void onRecordSound();
 	void onFindSilences();
 	void onTranscribe();
 

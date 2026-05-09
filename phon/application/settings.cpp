@@ -505,6 +505,10 @@ void Settings::post_initialize()
 		reset_whisper_log();
 	}
 
+	if (!settings.contains("recording")) {
+		reset_recording();
+	}
+
 	// concordance gained "default_context" in 0.9.
 	try {
 		Settings::get_string("concordance", "default_context");
@@ -534,6 +538,7 @@ void Settings::reset()
 	reset_display();
 	reset_statistics();
 	reset_whisper_log();
+	reset_recording();
 }
 
 void Settings::reset_waveform()
@@ -720,6 +725,25 @@ void Settings::reset_intensity()
 	map["time_step"] = 0.01;
 
 	Settings::set_value("intensity", std::move(table));
+}
+
+void Settings::reset_recording()
+{
+	// Tunables for the SoundRecorder. block_frames is the chunk size handed to
+	// libsndfile per write; 4096 frames at 44.1 kHz mono float = 16 KB, well
+	// matched to filesystem block sizes. pool_blocks * block_frames bounds the
+	// in-flight buffer between the audio thread and the writer thread; the
+	// default ~5 s of headroom at 48 kHz stereo absorbs typical disk stalls
+	// (filesystem journal flush, antivirus scan) without dropping frames.
+	auto table = make_handle<Table>(runtime);
+	auto &map = table->data();
+
+	map["block_frames"]        = intptr_t(4096);
+	map["pool_blocks"]         = intptr_t(64);
+	map["default_format"]      = String("WAV");
+	map["default_sample_rate"] = intptr_t(44100);
+
+	Settings::set_value("recording", std::move(table));
 }
 
 void Settings::reset_recent_projects()
