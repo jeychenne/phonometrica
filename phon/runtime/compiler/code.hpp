@@ -30,7 +30,7 @@
 
 namespace phonometrica {
 
-using Instruction = uint8_t;
+using Instruction = uint16_t;
 
 
 
@@ -178,19 +178,21 @@ public:
 
 private:
 
-	// Big endian serialization
-	static std::array<uint8_t, 2> serialize_short_int(int value)
+	// Single-cell serialization. Now that Instruction is uint16_t, a
+	// 16-bit value fits in one bytecode cell directly; the prior
+	// big-endian high/low split across two cells is gone.
+	//
+	// IntSize (= sizeof(uint16_t) / sizeof(Instruction)) reduces to 1
+	// automatically, and runtime callers using `1 + Code::IntSize` to
+	// step past a jump-target operand stay correct without changes.
+	static constexpr Instruction serialize_short_int(int value)
 	{
-		auto v = uint16_t(value);
-		return {
-				static_cast<uint8_t>((v >> 8) & 0xFF), // high byte
-				static_cast<uint8_t>(v & 0xFF)         // low byte
-		};
+		return static_cast<Instruction>(static_cast<uint16_t>(value));
 	}
 
-	static uint16_t deserialize_short_int(const std::array<uint8_t, 2> bytes) {
-		return (static_cast<uint16_t>(bytes[0]) << 8) |
-			   static_cast<uint16_t>(bytes[1]);
+	static constexpr uint16_t deserialize_short_int(Instruction cell)
+	{
+		return static_cast<uint16_t>(cell);
 	}
 
 

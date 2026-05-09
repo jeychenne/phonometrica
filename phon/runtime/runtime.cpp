@@ -1306,15 +1306,15 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 			case Opcode::PushSmallInt:
 			{
 				trace_op();
-				// Compiler emits small-int values in [0, 255] as a raw
-				// uint8_t (see Compiler::visit_integer and Instruction =
-				// uint8_t). A prior (int8_t) cast here sign-extended bytes
-				// with the high bit set: e.g. 200 (0xC8) was read as -56.
-				// The guard in the compiler doesn't use PushSmallInt for
-				// negative values — they go through the constant table
-				// via PushInteger — so the unsigned reading is correct
-				// and matches the disassembler's `(int16_t) routine.code[…]`.
-				push_int((uint8_t) *ip++);
+				// PushSmallInt carries an unsigned operand fitting in
+				// one Instruction cell. Compiler::visit_integer routes
+				// negative values through the constant table via
+				// PushInteger, so we can read the cell directly with
+				// no sign-extension hazards. (Instruction is uint16_t
+				// since the v1.0 constant-pool widening; previously
+				// uint8_t with a (uint8_t) cast guarding against the
+				// sign-extension bug that hit values 128-255.)
+				push_int(*ip++);
 				break;
 			}
 			case Opcode::PushString:
@@ -1932,7 +1932,7 @@ size_t Runtime::disassemble_instruction(const Routine &routine, size_t offset)
 		}
 		case Opcode::PushSmallInt:
 		{
-			int value = (int16_t) routine.code[offset + 1];
+			int value = (int) routine.code[offset + 1];
 			printf("PUSH_SMALL_INT %-5d\n", value);
 			return 2;
 		}

@@ -158,15 +158,12 @@ void Code::backpatch(int at, int value)
 	if (value > std::numeric_limits<uint16_t>::max()) [[unlikely]] {
 		throw error("[Compilation error] Jump offset too large");
 	}
-	auto offset = serialize_short_int(value);
-	code[at] = offset[0];
-	code[at + 1] = offset[1];
+	code[at] = serialize_short_int(value);
 }
 
 int Code::read_integer(const Instruction *&ip)
 {
-	std::array<Instruction,2> instr = { *ip++, *ip++ };
-	return deserialize_short_int(instr);
+	return deserialize_short_int(*ip++);
 }
 
 int Code::append_jump(intptr_t line_no, Opcode jmp)
@@ -181,11 +178,12 @@ void Code::backpatch_instruction(int at, Instruction value)
 
 int Code::append_jump(intptr_t line_no, Opcode jmp, int addr)
 {
+	if (addr > std::numeric_limits<uint16_t>::max()) [[unlikely]] {
+		throw error("[Compilation error] Jump offset too large");
+	}
 	append(line_no, jmp);
-	auto a = serialize_short_int(addr);
 	auto offset = get_current_offset();
-	append(line_no, a[0]);
-	append(line_no, a[1]);
+	append(line_no, serialize_short_int(addr));
 
 	return offset;
 }
