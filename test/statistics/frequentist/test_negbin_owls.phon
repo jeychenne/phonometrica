@@ -30,7 +30,7 @@
 # reporting difference that propagates into AIC/BIC.
 # =====================================================================
 
-let A = import("../lib/assert")
+let A = import("assert")
 
 let DATA = A.resolve_data_path("owls.csv")
 let REF  = A.resolve_sibling("reference_negbin_owls_lme4.json")

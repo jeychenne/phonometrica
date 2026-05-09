@@ -68,6 +68,14 @@
 				<Path>$PHON_PROJECT/test/statistics/frequentist/test_negbin_owls.phon</Path>
 			</Document>
 		</Directory>
+		<Directory label="bayesian">
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_gaussian.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_binomial.phon</Path>
+			</Document>
+		</Directory>
 	</Scripts>
 	<Data>
 		<Document class="Dataset">
