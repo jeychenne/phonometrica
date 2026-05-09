@@ -1,0 +1,288 @@
+# =====================================================================
+# statistics/lib/bayes_assert.phon
+# =====================================================================
+# Bayesian-side assertion helpers. Extends `assert.phon` for the
+# bayesian/ test suite. Imports assert.phon to reuse:
+#   * pass/fail counters and section reporting
+#   * R<->Phonometrica name translation (extract_var_names, r_to_phon_*)
+#   * lookup_or_fail, check, check_int, check_optional
+#   * path-resolution helpers
+#
+# Why a separate module instead of growing assert.phon:
+#   The frequentist harness compares (estimate, se, ranef.sd) per
+#   coefficient. The Bayesian harness compares (post_mean, post_sd,
+#   ci_lower, ci_upper, pd) on fixed effects PLUS a separate hyper
+#   block. Keeping the two harnesses cleanly separated reads better
+#   than adding twin code paths to one file.
+#
+# IMPORTANT: every function call and declaration in this file fits on
+# a single line. Phonometrica's parser uses newlines as statement
+# terminators -- splitting a call across lines is a syntax error.
+# Some lines are therefore long; that is intentional.
+# =====================================================================
+
+let A = import("../lib/assert")     # shared utilities
+let m = Module("bayes_assert")
+
+# Carry the section-reporting state through to the underlying module.
+m.start_section = A.start_section
+m.end_section   = A.end_section
+m.report        = A.report
+m.reset_counters = A.reset_counters
+
+m.script_dir         = A.script_dir
+m.resolve_sibling    = A.resolve_sibling
+m.resolve_data_path  = A.resolve_data_path
+m.load_reference     = A.load_reference
+
+# --------------------------------------------------------------------
+# Tolerance multipliers. Expressed as a multiple of brms' posterior
+# SD so the comparison adapts to each coefficient's natural scale.
+# --------------------------------------------------------------------
+
+m.default_tolerance = function ()
+    let t = {}
+    t["mean_rel"]  = 0.20
+    t["mean_abs"]  = 0.02
+    t["sd_rel"]    = 0.20
+    t["sd_abs"]    = 0.05
+    t["ci_rel"]    = 0.40
+    t["ci_abs"]    = 0.10
+    t["pd_abs"]    = 0.05
+    t["hyper_mean_rel"] = 0.25
+    t["hyper_mean_abs"] = 0.05
+    t["hyper_sd_rel"]   = 0.30
+    t["hyper_sd_abs"]   = 0.05
+    t["hyper_ci_rel"]   = 0.40
+    t["hyper_ci_abs"]   = 0.15
+    t["waic_abs"]   = 4.0
+    t["waic_se_mult"] = 1.5
+    t["loo_abs"]    = 4.0
+    t["loo_se_mult"] = 1.5
+    t["pwaic_abs"]  = 4.0
+    t["pwaic_rel"]  = 0.20
+    t["ploo_abs"]   = 4.0
+    t["ploo_rel"]   = 0.20
+    return t
+end
+
+# --------------------------------------------------------------------
+# scale_tolerance — convert (rel, abs) into a single absolute tol.
+# --------------------------------------------------------------------
+
+m.scale_tolerance = function (rel as Number, atol as Number, ref_scale as Number)
+    let s = abs(ref_scale)
+    if s < 1.0 then
+        s = 1.0
+    end
+    let t = rel * s
+    if t < atol then
+        return atol
+    end
+    return t
+end
+
+# --------------------------------------------------------------------
+# check_within — Bayesian-style numeric check with rel/abs tolerance
+# computed against an explicit ref_scale (typically brms' posterior SD).
+# --------------------------------------------------------------------
+
+m.check_within = function (label as String, actual as Number, expected as Number, ref_scale as Number, rel as Number, atol as Number)
+    let tol = m.scale_tolerance(rel, atol, ref_scale)
+    let diff = abs(actual - expected)
+    if diff <= tol then
+        A.n_passed += 1
+    else
+        A.n_failed += 1
+        print "    FAIL: ", label, ": got ", actual, ", expected ", expected, " (|d|=", diff, ", tol=", tol, ")"
+    end
+end
+
+# --------------------------------------------------------------------
+# bayes_check_fit — generic Bayesian fit comparison.
+# --------------------------------------------------------------------
+
+m.bayes_check_fit = function (tag as String, model as Object, reference as Object, tol as Object)
+    let fit_ref = reference["fit"]
+
+    if contains(reference, "converged") and reference["converged"] == false then
+        A.record_note(tag & ": brms reference flagged as non-converged — skipping")
+        return
+    end
+    if not model.converged then
+        A.record_fail(tag & " convergence: brms converged but Phonometrica did not")
+        return
+    end
+
+    A.check_int(tag & " nobs", model.nobs, fit_ref["nobs"])
+
+    # WAIC.
+    if contains(fit_ref, "waic") and fit_ref["waic"] != null then
+        let se_w = 0.0
+        if contains(fit_ref, "se_waic") and fit_ref["se_waic"] != null then
+            se_w = fit_ref["se_waic"]
+        end
+        let atol_w = tol["waic_abs"]
+        if tol["waic_se_mult"] * se_w > atol_w then
+            atol_w = tol["waic_se_mult"] * se_w
+        end
+        m.check_within(tag & " WAIC", model.waic, fit_ref["waic"], 1.0, 0.0, atol_w)
+    end
+
+    # LOO-IC.
+    if contains(fit_ref, "loo_ic") and fit_ref["loo_ic"] != null then
+        let se_l = 0.0
+        if contains(fit_ref, "se_loo") and fit_ref["se_loo"] != null then
+            se_l = fit_ref["se_loo"]
+        end
+        let atol_l = tol["loo_abs"]
+        if tol["loo_se_mult"] * se_l > atol_l then
+            atol_l = tol["loo_se_mult"] * se_l
+        end
+        m.check_within(tag & " LOO-IC", model.loo_ic, fit_ref["loo_ic"], 1.0, 0.0, atol_l)
+    end
+
+    if contains(fit_ref, "p_waic") and fit_ref["p_waic"] != null then
+        m.check_within(tag & " p_WAIC", model.p_waic, fit_ref["p_waic"], fit_ref["p_waic"], tol["pwaic_rel"], tol["pwaic_abs"])
+    end
+    if contains(fit_ref, "p_loo") and fit_ref["p_loo"] != null then
+        m.check_within(tag & " p_LOO", model.p_loo, fit_ref["p_loo"], fit_ref["p_loo"], tol["ploo_rel"], tol["ploo_abs"])
+    end
+
+    # Fixed-effect posterior summaries (matched by name).
+    let fxref = reference["fixef"]
+    let coef_names = model.coef_names
+    let post_mean  = model.posterior_mean
+    let post_sd    = model.posterior_sd
+    let ci_lo      = model.ci_lower
+    let ci_hi      = model.ci_upper
+    let pd_act     = model.pd
+
+    let fx_names = fxref["names"]
+    let fx_mean  = fxref["post_mean"]
+    let fx_sd    = fxref["post_sd"]
+    let fx_lo    = fxref["ci_lower"]
+    let fx_hi    = fxref["ci_upper"]
+    let fx_pd    = fxref["pd"]
+
+    let var_names = A.extract_var_names(coef_names)
+    let n_fx = len(fx_names)
+
+    for i = 1 to n_fx do
+        let r_name    = fx_names[i]
+        let phon_name = A.r_to_phon_name(r_name, var_names)
+        let m_exp = fx_mean[i]
+        let s_exp = fx_sd[i]
+        let lo_exp = fx_lo[i]
+        let hi_exp = fx_hi[i]
+        let pd_exp = fx_pd[i]
+
+        let m_act = A.lookup_or_fail(tag & " mean[" & r_name & "] lookup", coef_names, post_mean, phon_name)
+        if m_act != null then
+            let s_act = A.lookup_or_fail(tag & " sd[" & r_name & "] lookup", coef_names, post_sd, phon_name)
+            let lo_act = A.lookup_or_fail(tag & " lo[" & r_name & "] lookup", coef_names, ci_lo, phon_name)
+            let hi_act = A.lookup_or_fail(tag & " hi[" & r_name & "] lookup", coef_names, ci_hi, phon_name)
+            let pd_act_i = A.lookup_or_fail(tag & " pd[" & r_name & "] lookup", coef_names, pd_act, phon_name)
+
+            let scale_ref = s_exp
+
+            m.check_within(tag & " mean[" & r_name & "]", m_act, m_exp, scale_ref, tol["mean_rel"], tol["mean_abs"])
+            if s_act != null then
+                m.check_within(tag & " sd[" & r_name & "]", s_act, s_exp, scale_ref, tol["sd_rel"], tol["sd_abs"])
+            end
+            if lo_act != null then
+                m.check_within(tag & " ci_lo[" & r_name & "]", lo_act, lo_exp, scale_ref, tol["ci_rel"], tol["ci_abs"])
+            end
+            if hi_act != null then
+                m.check_within(tag & " ci_hi[" & r_name & "]", hi_act, hi_exp, scale_ref, tol["ci_rel"], tol["ci_abs"])
+            end
+            if pd_act_i != null then
+                m.check_within(tag & " pd[" & r_name & "]", pd_act_i, pd_exp, 1.0, 0.0, tol["pd_abs"])
+            end
+        end
+    end
+
+    # Hyperparameter posteriors (variance components incl. residual SD).
+    if contains(reference, "hyper") and reference["hyper"] != null then
+        let href = reference["hyper"]
+        let h_names_ref = href["names"]
+        let h_mean_ref  = href["post_mean"]
+        let h_sd_ref    = href["post_sd"]
+        let h_lo_ref    = href["ci_lower"]
+        let h_hi_ref    = href["ci_upper"]
+        let n_h = len(h_names_ref)
+
+        let h_names_act = model.hyper_names
+        let h_mean_act  = model.hyper_posterior_mean
+        let h_sd_act    = model.hyper_posterior_sd
+        let h_lo_act    = model.hyper_ci_lower
+        let h_hi_act    = model.hyper_ci_upper
+
+        for i = 1 to n_h do
+            let r_name = h_names_ref[i]
+            let phon_name = A.r_to_phon_ranef_name(r_name, var_names)
+            let m_exp = h_mean_ref[i]
+            let s_exp = h_sd_ref[i]
+            let lo_exp = h_lo_ref[i]
+            let hi_exp = h_hi_ref[i]
+
+            let m_act = A.lookup_or_fail(tag & " hyper.mean[" & r_name & "] lookup", h_names_act, h_mean_act, phon_name)
+            if m_act != null then
+                let s_act = A.lookup_or_fail(tag & " hyper.sd[" & r_name & "] lookup", h_names_act, h_sd_act, phon_name)
+                let lo_act = A.lookup_or_fail(tag & " hyper.lo[" & r_name & "] lookup", h_names_act, h_lo_act, phon_name)
+                let hi_act = A.lookup_or_fail(tag & " hyper.hi[" & r_name & "] lookup", h_names_act, h_hi_act, phon_name)
+
+                let scale_ref = s_exp
+                if scale_ref == null or scale_ref == 0 then
+                    scale_ref = m_exp
+                end
+
+                m.check_within(tag & " hyper.mean[" & r_name & "]", m_act, m_exp, scale_ref, tol["hyper_mean_rel"], tol["hyper_mean_abs"])
+                if s_act != null then
+                    m.check_within(tag & " hyper.sd[" & r_name & "]", s_act, s_exp, scale_ref, tol["hyper_sd_rel"], tol["hyper_sd_abs"])
+                end
+                if lo_act != null and lo_exp != null then
+                    m.check_within(tag & " hyper.lo[" & r_name & "]", lo_act, lo_exp, scale_ref, tol["hyper_ci_rel"], tol["hyper_ci_abs"])
+                end
+                if hi_act != null and hi_exp != null then
+                    m.check_within(tag & " hyper.hi[" & r_name & "]", hi_act, hi_exp, scale_ref, tol["hyper_ci_rel"], tol["hyper_ci_abs"])
+                end
+            end
+        end
+    end
+end
+
+# --------------------------------------------------------------------
+# bayes_fit_and_check — fit a Bayesian model in a try/catch wrapper,
+# then run bayes_check_fit. The prior is constructed inside this
+# helper to match Phonometrica's auto-scaled defaults: callers don't
+# pass a Prior -- the brms-side reference was generated against
+# default priors, so the phon-side fit must use defaults too.
+# --------------------------------------------------------------------
+
+m.bayes_fit_and_check = function (tag as String, formula as String, data as Object, family as String, reference as Object, tol as Object)
+    if reference == null then
+        A.record_note(tag & ": no reference entry — skipping")
+        return
+    end
+    if tol == null then
+        tol = m.default_tolerance()
+    end
+
+    let model = null
+    try
+        let prior = Prior()
+        if family == "gaussian" then
+            model = fit(formula, data, prior)
+        else
+            model = fit(formula, data, family, prior)
+        end
+    catch e
+        A.record_fail(tag & ": fit() threw exception: " & str(e))
+        return
+    end
+
+    m.bayes_check_fit(tag, model, reference, tol)
+end
+
+return m

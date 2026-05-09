@@ -1,0 +1,51 @@
+# =====================================================================
+# test_gaussian.phon — validates Phonometrica's Bayesian Gaussian
+# engine against reference_gaussian.json (produced by brms HMC in
+# gen_reference_gaussian.R from the InstEval 300-student subsample).
+#
+# Five models, mirroring the frequentist suite:
+#   M1 — y ~ studage * service                                (no RE)
+#   M2 — y ~ studage + lectage + service + (1|s)              (1 RE intercept)
+#   M3 — y ~ studage + lectage + service + (1+service|s)      (random slope)
+#   M4 — y ~ studage + lectage + service + (1|s) + (1|d)      (crossed REs)
+#   M5 — y ~ studage + lectage + service + (1+service|s) + (1|d)
+#
+# Tolerance philosophy:
+#   Comparisons are scaled by brms' posterior SD per coefficient.
+#   The 0.20 default rel-tol means "<= 0.2 SDs of posterior
+#   uncertainty disagreement", the inferential-equivalence bar.
+#   M3 and M5 (random-slope) loosen this band: small differences in
+#   how Laplace+CCD vs HMC handle the LKJ correlation can produce
+#   ~0.3-SD shifts in slope variance posteriors.
+# =====================================================================
+
+let B = import("../lib/bayes_assert")
+
+let DATA = B.resolve_data_path("inst_eval.csv")
+let REF  = B.resolve_sibling("reference_gaussian.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+B.start_section("BAYESIAN GAUSSIAN")
+
+# Default tolerances for M1, M2, M4
+let tol_default = B.default_tolerance()
+
+# Loosened tolerances for random-slope models (M3, M5)
+let tol_slope = B.default_tolerance()
+tol_slope["mean_rel"]       = 0.30
+tol_slope["sd_rel"]         = 0.30
+tol_slope["ci_rel"]         = 0.50
+tol_slope["hyper_mean_rel"] = 0.40
+tol_slope["hyper_sd_rel"]   = 0.40
+tol_slope["hyper_ci_rel"]   = 0.50
+
+B.bayes_fit_and_check("M1", "y ~ studage * service", d, "gaussian", refs["M1"], tol_default)
+B.bayes_fit_and_check("M2", "y ~ studage + lectage + service + (1|s)", d, "gaussian", refs["M2"], tol_default)
+B.bayes_fit_and_check("M3", "y ~ studage + lectage + service + (1+service|s)", d, "gaussian", refs["M3"], tol_slope)
+B.bayes_fit_and_check("M4", "y ~ studage + lectage + service + (1|s) + (1|d)", d, "gaussian", refs["M4"], tol_default)
+B.bayes_fit_and_check("M5", "y ~ studage + lectage + service + (1+service|s) + (1|d)", d, "gaussian", refs["M5"], tol_slope)
+
+B.end_section()

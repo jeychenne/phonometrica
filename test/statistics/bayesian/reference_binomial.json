@@ -1,0 +1,170 @@
+{
+  "family": "binomial",
+  "dataset": "binomial_schwa.csv",
+  "engine": "brms",
+  "generated_at": "2026-05-09 07:07:47 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "brms_version": "2.22.0",
+  "rstan_version": "2.32.7",
+  "sampling": {
+    "iter": 4000,
+    "warmup": 1000,
+    "chains": 4,
+    "seed": 42,
+    "adapt_delta": 0.95
+  },
+  "prior_spec": {
+    "note": "Auto-scaled defaults matching Phonometrica's scale_default_priors(): intercept ~ N(mean(y_link), 2.5·sd(y_link)); slopes ~ N(0, 2.5·sd(y_link)); sd ~ PC(2.5·sd(y_link), 0.05) ≡ exponential(-log(0.05)/scale); sigma ~ same exponential (Gaussian only); cor ~ LKJ(1)."
+  },
+  "models": {
+    "M1": {
+      "formula": "realized ~ position * style",
+      "engine": "brms",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "waic": 6592.479322156912,
+        "p_waic": 5.957491620033,
+        "se_waic": 56.848341020575,
+        "loo_ic": 6592.484133390813,
+        "p_loo": 5.959897237005,
+        "se_loo": 56.84839699966,
+        "max_pareto_k": 0.01497716199737
+      },
+      "fixef": {
+        "names": ["Intercept", "positioninitial", "positionmedial", "styleformal", "positioninitial:styleformal", "positionmedial:styleformal"],
+        "post_mean": [0.7549953387655, 0.6836084337147, 0.1149342139003, -0.5858101399744, 0.1202105157684, 0.2772243260526],
+        "post_sd": [0.06944193687211, 0.1107445081845, 0.1002610120334, 0.09691055790701, 0.1501452951299, 0.1386975676109],
+        "ci_lower": [0.6184285894433, 0.4661735205428, -0.08221875225672, -0.7749206668416, -0.1763572987443, 0.002726582207222],
+        "ci_upper": [0.8913626688798, 0.9007593263568, 0.3111379743947, -0.395246869354, 0.4137051971974, 0.5535974673224],
+        "pd": [1, 1, 0.8754166666667, 1, 0.7901666666667, 0.976]
+      },
+      "hyper": null
+    },
+    "M2": {
+      "formula": "realized ~ position + style + (1|speaker)",
+      "engine": "brms",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "waic": 6212.03658324008,
+        "p_waic": 22.116344760575,
+        "se_waic": 64.344257170805,
+        "loo_ic": 6212.056136627941,
+        "p_loo": 22.126121454517,
+        "se_loo": 64.344548193458,
+        "max_pareto_k": 0.1525529489044
+      },
+      "fixef": {
+        "names": ["Intercept", "positioninitial", "positionmedial", "styleformal"],
+        "post_mean": [0.7561166765724, 0.8049650729781, 0.2843569876628, -0.4900299546638],
+        "post_sd": [0.1682900637005, 0.07692905566653, 0.0722461727926, 0.06132853655016],
+        "ci_lower": [0.431502427278, 0.6558960748343, 0.145062636706, -0.610529384332],
+        "ci_upper": [1.08675343381, 0.9567154805896, 0.426617262621, -0.3704600208226],
+        "pd": [1, 1, 0.9999166666667, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|speaker)"],
+        "post_mean": [0.7009876645333],
+        "post_sd": [0.1286529599366],
+        "ci_lower": [0.5002992094601],
+        "ci_upper": [0.9969060192089]
+      }
+    },
+    "M3": {
+      "formula": "realized ~ position + style + (1+style|speaker)",
+      "engine": "brms",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "waic": 6192.865745505687,
+        "p_waic": 34.915769811406,
+        "se_waic": 64.865010005918,
+        "loo_ic": 6192.905684253408,
+        "p_loo": 34.935739185283,
+        "se_loo": 64.865748638749,
+        "max_pareto_k": 0.1414168160337
+      },
+      "fixef": {
+        "names": ["Intercept", "positioninitial", "positionmedial", "styleformal"],
+        "post_mean": [0.7555510168073, 0.8097615733995, 0.2855949443249, -0.4945790836649],
+        "post_sd": [0.1802847025634, 0.07816354076171, 0.07389260952739, 0.1125249249087],
+        "ci_lower": [0.4065225977432, 0.6584521682086, 0.1420578049363, -0.7225387962949],
+        "ci_upper": [1.115814355257, 0.9633968888168, 0.4313814117921, -0.2704230909347],
+        "pd": [1, 1, 0.9999166666667, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|speaker)", "sd(styleformal|speaker)"],
+        "post_mean": [0.7420336187333, 0.3973773815545],
+        "post_sd": [0.1466806612218, 0.1102383176686],
+        "ci_lower": [0.5090166833089, 0.2079938815985],
+        "ci_upper": [1.073293954567, 0.6357127619266]
+      }
+    },
+    "M4": {
+      "formula": "realized ~ position + style + (1|speaker) + (1|word)",
+      "engine": "brms",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "waic": 6071.712414567583,
+        "p_waic": 35.381991177746,
+        "se_waic": 66.901757288648,
+        "loo_ic": 6071.746853529044,
+        "p_loo": 35.399210658458,
+        "se_loo": 66.902259057796,
+        "max_pareto_k": 0.1851082488211
+      },
+      "fixef": {
+        "names": ["Intercept", "positioninitial", "positionmedial", "styleformal"],
+        "post_mean": [0.7717807511545, 0.8291054257416, 0.2941509832576, -0.5052673598107],
+        "post_sd": [0.2128287837281, 0.07878638682391, 0.07445679682443, 0.06397792645972],
+        "ci_lower": [0.3490086201753, 0.6745196916543, 0.1486379405524, -0.6304951399231],
+        "ci_upper": [1.190695002245, 0.9835899944654, 0.4388391200552, -0.3772430099748],
+        "pd": [0.9996666666667, 1, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|speaker)", "sd(Intercept|word)"],
+        "post_mean": [0.7283144728216, 0.4495591571753],
+        "post_sd": [0.1391627931097, 0.1025610146521],
+        "ci_lower": [0.5130195451411, 0.2933852294639],
+        "ci_upper": [1.050739349497, 0.6863389324063]
+      }
+    },
+    "M5": {
+      "formula": "realized ~ position + style + (1+style|speaker) + (1|word)",
+      "engine": "brms",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 5400,
+        "waic": 6051.12004963105,
+        "p_waic": 48.357459479514,
+        "se_waic": 67.468579019284,
+        "loo_ic": 6051.179110466274,
+        "p_loo": 48.386989897122,
+        "se_loo": 67.469558215905,
+        "max_pareto_k": 0.220096855715
+      },
+      "fixef": {
+        "names": ["Intercept", "positioninitial", "positionmedial", "styleformal"],
+        "post_mean": [0.7779608418225, 0.8341747566214, 0.2949718914006, -0.5083671312277],
+        "post_sd": [0.2157935149208, 0.07905843689455, 0.07495905234343, 0.1149952213833],
+        "ci_lower": [0.3480685878783, 0.6807538190533, 0.1452780291667, -0.7347206170119],
+        "ci_upper": [1.201745238174, 0.9869972387076, 0.4432926082564, -0.2807608158371],
+        "pd": [0.9998333333333, 1, 1, 0.9999166666667]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|speaker)", "sd(styleformal|speaker)", "sd(Intercept|word)"],
+        "post_mean": [0.7598546285061, 0.4093516510177, 0.4559075329587],
+        "post_sd": [0.1502650485282, 0.1092458998366, 0.1038137237041],
+        "ci_lower": [0.521103832768, 0.2195115599498, 0.2951398762383],
+        "ci_upper": [1.104766129426, 0.6544913923087, 0.6986633466807]
+      }
+    }
+  }
+}

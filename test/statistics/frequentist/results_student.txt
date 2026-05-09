@@ -1,0 +1,304 @@
+
+----------------------------------------------------------------------
+ STUDENT-T
+----------------------------------------------------------------------
+    FAIL: M2 sigma: got 0.5683984655, expected 0.5213640523 (rtol=0.01, atol=0.001)
+    FAIL: M3 sigma: got 0.5607932364, expected 0.4926573459 (rtol=0.01, atol=0.001)
+    FAIL: M4 sigma: got 0.5609417446, expected 0.4828204849 (rtol=0.01, atol=0.001)
+    FAIL: M4 β[Voyelle[ɑ]]: got -1.390615351, expected -1.3686164212 (rtol=0.01, atol=0.0001)
+    FAIL: M4 β[Voyelle[ɑ]:Condition[B]]: got 0.1266789743, expected 0.1127148147 (rtol=0.01, atol=0.0001)
+  [STUDENT-T] 5 failure(s)
+
+
+----------------------------------------------------------------------
+glmmtmb:
+ Family: t  ( identity )
+Formula:          E1 ~ Voyelle * Condition + Sexe + Age
+Data: dat
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   3862.6    3904.9   -1923.3    3846.6      1460 
+
+
+Dispersion estimate for t family (sigma^2): 0.719 
+
+Conditional model:
+                     Estimate Std. Error z value Pr(>|z|)    
+(Intercept)         14.021804   0.071595  195.85  < 2e-16 ***
+Voyelleɑ            -0.604362   0.066198   -9.13  < 2e-16 ***
+ConditionB           0.173693   0.062114    2.80  0.00517 ** 
+Sexehomme           -1.357573   0.046894  -28.95  < 2e-16 ***
+Age                 -0.003515   0.001191   -2.95  0.00316 ** 
+Voyelleɑ:ConditionB  0.285050   0.093963    3.03  0.00242 ** 
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+> summary(m2)
+ Family: t  ( identity )
+Formula:          E1 ~ Voyelle * Condition + Sexe * Age + (1 | Sujet) + (1 | Mot)
+Data: dat
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   3189.0    3247.2   -1583.5    3167.0      1457 
+
+Random effects:
+
+Conditional model:
+ Groups Name        Variance Std.Dev.
+ Sujet  (Intercept) 0.2183   0.4672  
+ Mot    (Intercept) 0.1684   0.4104  
+Number of obs: 1468, groups:  Sujet, 175; Mot, 11
+
+Dispersion estimate for t family (sigma^2): 0.272 
+
+Conditional model:
+                     Estimate Std. Error z value Pr(>|z|)    
+(Intercept)         14.101531   0.218018   64.68  < 2e-16 ***
+Voyelleɑ            -0.571734   0.253759   -2.25   0.0243 *  
+ConditionB           0.143790   0.082460    1.74   0.0812 .  
+Sexehomme           -1.710269   0.189519   -9.02  < 2e-16 ***
+Age                 -0.005665   0.002814   -2.01   0.0441 *  
+Voyelleɑ:ConditionB  0.328569   0.064990    5.06 4.29e-07 ***
+Sexehomme:Age        0.007237   0.003948    1.83   0.0668 .  
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+> summary(m3)
+ Family: t  ( identity )
+Formula:          E1 ~ Voyelle * Condition + Sexe * Age + (1 + Voyelle | Sujet) +      (1 | Mot)
+Data: dat
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   3168.2    3237.0   -1571.1    3142.2      1455 
+
+Random effects:
+
+Conditional model:
+ Groups Name        Variance Std.Dev. Corr  
+ Sujet  (Intercept) 0.2041   0.4517         
+        Voyelleɑ    0.1112   0.3334   -0.05 
+ Mot    (Intercept) 0.1664   0.4079         
+Number of obs: 1468, groups:  Sujet, 175; Mot, 11
+
+Dispersion estimate for t family (sigma^2): 0.243 
+
+Conditional model:
+                     Estimate Std. Error z value Pr(>|z|)    
+(Intercept)         14.103430   0.215576   65.42  < 2e-16 ***
+Voyelleɑ            -0.581364   0.254479   -2.28   0.0223 *  
+ConditionB           0.148363   0.079710    1.86   0.0627 .  
+Sexehomme           -1.696547   0.186143   -9.11  < 2e-16 ***
+Age                 -0.005892   0.002772   -2.13   0.0335 *  
+Voyelleɑ:ConditionB  0.329428   0.080541    4.09 4.31e-05 ***
+Sexehomme:Age        0.007396   0.003878    1.91   0.0565 .  
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+> summary(m4)
+ Family: t  ( identity )
+Formula:          E2 ~ Voyelle * Condition + Sexe * Age + (1 + Voyelle | Sujet) +      (1 | Mot)
+Data: dat
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   3091.7    3160.5   -1532.8    3065.7      1455 
+
+Random effects:
+
+Conditional model:
+ Groups Name        Variance Std.Dev. Corr  
+ Sujet  (Intercept) 0.2083   0.4564         
+        Voyelleɑ    0.1741   0.4172   -0.51 
+ Mot    (Intercept) 0.2344   0.4842         
+Number of obs: 1468, groups:  Sujet, 175; Mot, 11
+
+Dispersion estimate for t family (sigma^2): 0.233 
+
+Conditional model:
+                      Estimate Std. Error z value Pr(>|z|)    
+(Intercept)         20.0246654  0.2387148   83.89  < 2e-16 ***
+Voyelleɑ            -1.3686164  0.3005981   -4.55 5.29e-06 ***
+ConditionB          -0.1091377  0.0798813   -1.37    0.172    
+Sexehomme           -0.9114091  0.1642123   -5.55 2.85e-08 ***
+Age                  0.0009261  0.0027041    0.34    0.732    
+Voyelleɑ:ConditionB  0.1127148  0.0884683    1.27    0.203    
+Sexehomme:Age       -0.0078570  0.0034300   -2.29    0.022 *  
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+> summary(m5)
+ Family: t  ( identity )
+Formula:          E2 ~ Voyelle * Condition + Sexe + Age + (1 | Sujet)
+Data: dat
+
+      AIC       BIC    logLik -2*log(L)  df.resid 
+   3838.7    3886.3   -1910.3    3820.7      1459 
+
+Random effects:
+
+Conditional model:
+ Groups Name        Variance Std.Dev.
+ Sujet  (Intercept) 0.1292   0.3594  
+Number of obs: 1468, groups:  Sujet, 175
+
+Dispersion estimate for t family (sigma^2): 0.701 
+
+Conditional model:
+                      Estimate Std. Error z value Pr(>|z|)    
+(Intercept)         20.0516894  0.1015591  197.44   <2e-16 ***
+Voyelleɑ            -1.3620727  0.0632467  -21.54   <2e-16 ***
+ConditionB          -0.1347619  0.0803640   -1.68   0.0936 .  
+Sexehomme           -1.2365260  0.0707529  -17.48   <2e-16 ***
+Age                 -0.0009122  0.0017872   -0.51   0.6098    
+Voyelleɑ:ConditionB  0.1605335  0.0896425    1.79   0.0733 .  
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+----------------------------------------------------------------------
+phonometrica:
+
+Family: Student t (robust) (identity)
+Sigma (scale): 0.8477
+Nu (df): 17.9515
+Formula: E1 ~ Voyelle * Condition + Sexe + Age
+Estimation: Frequentist (maximum likelihood)
+Observations: 1468
+
+Fixed effects:
+                               Estimate    Std.Error      t value     Pr(>|t|)
+Intercept                       14.0218       0.0680      206.344      < 0.001 ***
+Voyelle[ɑ]                      -0.6044       0.0630       -9.597      < 0.001 ***
+Condition[B]                     0.1737       0.0588        2.954       0.0031 **
+Voyelle[ɑ]:Condition[B]          0.2851       0.0894        3.187       0.0014 **
+Sexe[homme]                     -1.3576       0.0446      -30.409      < 0.001 ***
+Age                             -0.0035       0.0011       -3.098       0.0020 **
+---
+Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+AIC: 3862.6  BIC: 3904.9  logLik: -1923.3
+Converged in 7 iterations (Newton)
+
+Family: Student t (robust) (identity)
+Sigma (scale): 0.5684
+Nu (df): 9.2735
+Laplace correction: exact
+Formula: E1 ~ Voyelle * Condition + Sexe * Age + (1 | Sujet) + (1 | Mot)
+Estimation: Frequentist (maximum likelihood)
+Observations: 1468
+
+Fixed effects:
+                               Estimate    Std.Error      t value     Pr(>|t|)
+Intercept                       14.0995       0.2154       65.465      < 0.001 ***
+Voyelle[ɑ]                      -0.5789       0.2539       -2.280       0.0226 *
+Condition[B]                     0.1482       0.0797        1.859       0.0630 .
+Voyelle[ɑ]:Condition[B]          0.3221       0.0606        5.316      < 0.001 ***
+Sexe[homme]                     -1.7161       0.1836       -9.345      < 0.001 ***
+Age                             -0.0058       0.0027       -2.141       0.0323 *
+Sexe[homme]:Age                  0.0074       0.0038        1.937       0.0527 .
+---
+Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Random effects:
+Group                    Variance     Std.Dev.   Levels
+Sujet                      0.2077       0.4558      175
+Mot                        0.1696       0.4119       11
+
+Pseudo R-squared (Nakagawa):
+  Marginal  (fixed effects):          0.4479
+  Conditional (fixed + random):       0.7453
+
+AIC: 3196.5  BIC: 3254.7  logLik: -1587.2
+Converged in 14 iterations (L-BFGS)
+
+Family: Student t (robust) (identity)
+Sigma (scale): 0.5608
+Nu (df): 10.8616
+Laplace correction: exact
+Formula: E1 ~ Voyelle * Condition + Sexe * Age + (1 + Voyelle | Sujet) + (1 | Mot)
+Estimation: Frequentist (maximum likelihood)
+Observations: 1468
+
+Fixed effects:
+                               Estimate    Std.Error      t value     Pr(>|t|)
+Intercept                       14.1006       0.2137       65.992      < 0.001 ***
+Voyelle[ɑ]                      -0.5852       0.2550       -2.295       0.0217 *
+Condition[B]                     0.1535       0.0768        1.999       0.0456 *
+Voyelle[ɑ]:Condition[B]          0.3229       0.0740        4.364      < 0.001 ***
+Sexe[homme]                     -1.7000       0.1814       -9.372      < 0.001 ***
+Age                             -0.0061       0.0027       -2.284       0.0224 *
+Sexe[homme]:Age                  0.0076       0.0038        2.010       0.0445 *
+---
+Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Random effects:
+Group                    Variance     Std.Dev.   Levels   Corr
+Sujet                      0.1887       0.4344      175
+  Voyelle[ɑ]               0.0817       0.2859          +0.0501
+Mot                        0.1686       0.4107       11
+
+Pseudo R-squared (Nakagawa):
+  Marginal  (fixed effects):          0.4379
+  Conditional (fixed + random):       0.7518
+
+AIC: 3182.6  BIC: 3251.4  logLik: -1578.3
+Converged in 29 iterations (L-BFGS)
+
+
+Family: Student t (robust) (identity)
+Sigma (scale): 0.5609
+Nu (df): 15.5241
+Laplace correction: exact
+Formula: E2 ~ Voyelle * Condition + Sexe * Age + (1 + Voyelle | Sujet) + (1 | Mot)
+Estimation: Frequentist (maximum likelihood)
+Observations: 1468
+
+Fixed effects:
+                               Estimate    Std.Error      t value     Pr(>|t|)
+Intercept                       20.0449       0.2329       86.065      < 0.001 ***
+Voyelle[ɑ]                      -1.3906       0.3025       -4.597      < 0.001 ***
+Condition[B]                    -0.1172       0.0789       -1.487       0.1371
+Voyelle[ɑ]:Condition[B]          0.1267       0.0844        1.501       0.1334
+Sexe[homme]                     -0.9155       0.1607       -5.698      < 0.001 ***
+Age                              0.0005       0.0024        0.209       0.8341
+Sexe[homme]:Age                 -0.0076       0.0033       -2.271       0.0232 *
+---
+Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Random effects:
+Group                    Variance     Std.Dev.   Levels   Corr
+Sujet                      0.2025       0.4500      175
+  Voyelle[ɑ]               0.1525       0.3906          -0.5233
+Mot                        0.2386       0.4885       11
+
+Pseudo R-squared (Nakagawa):
+  Marginal  (fixed effects):          0.5281
+  Conditional (fixed + random):       0.8000
+
+AIC: 3110.5  BIC: 3179.2  logLik: -1542.2
+Converged in 24 iterations (L-BFGS)
+
+
+Family: Student t (robust) (identity)
+Sigma (scale): 0.8377
+Nu (df): 200.0000
+Laplace correction: exact
+Formula: E2 ~ Voyelle * Condition + Sexe + Age + (1 | Sujet)
+Estimation: Frequentist (maximum likelihood)
+Observations: 1468
+
+Fixed effects:
+                               Estimate    Std.Error      t value     Pr(>|t|)
+Intercept                       20.0517       0.1012      198.163      < 0.001 ***
+Voyelle[ɑ]                      -1.3620       0.0627      -21.730      < 0.001 ***
+Condition[B]                    -0.1347       0.0799       -1.685       0.0920 .
+Voyelle[ɑ]:Condition[B]          0.1605       0.0891        1.801       0.0717 .
+Sexe[homme]                     -1.2365       0.0705      -17.539      < 0.001 ***
+Age                             -0.0009       0.0018       -0.512       0.6085
+---
+Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+Random effects:
+Group                    Variance     Std.Dev.   Levels
+Sujet                      0.1284       0.3584      175
+
+Pseudo R-squared (Nakagawa):
+  Marginal  (fixed effects):          0.4841
+  Conditional (fixed + random):       0.5639
+
+AIC: 3838.7  BIC: 3886.3  logLik: -1910.3
+Converged in 16 iterations (L-BFGS)
