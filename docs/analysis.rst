@@ -10,16 +10,29 @@ a **top bar** for entering formulas, a **left panel** with column and model list
 **right panel** with tabs for results, post-hoc tests, diagnostics, and exploratory plots.
 
 Support for statistical modeling was introduced in version 0.9. The core estimation
-engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented by the lead author within the Phonometrica codebase. 
+engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented manually by the lead author.
 More specialized modules, including Negative Binomial regression, Mixed-Effects models, and Bayesian inference, along with post-hoc tests 
 and residual diagnostics, were developed with the assistance of Claude Opus 4.6 (as of April 2026) using algorithmic guidance 
 from established literature and reference implementations in R.
 
 While our internal benchmarking shows an excellent match across a diverse suite of datasets when compared to reference R packages 
-(such as lme4 or glmmTMB), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor
+(such as lme4, glmmTMB and brms), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor
 discrepancies due to differences in optimization algorithms, convergence criteria, or numerical stability in edge cases. We welcome community feedback and detailed bug
 reports.
 
+.. note::
+   **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
+   terms — cubic regression splines and random-effect smooths — but this support is currently
+   experimental. Fits agree qualitatively with the ``mgcv`` R package (significance of
+   smooths, broad shape of fitted curves, EDF ordering across terms) but may
+   differ numerically. The ``log(λ)`` value reported by ``model.smooth_log_lambda``
+   is not directly comparable to ``log(m$sp)`` from ``mgcv``, and EDF/F
+   statistics may differ from ``mgcv`` at extreme penalty regimes (very
+   smooth or very wiggly fits). For applications where mgcv-equivalence is required, we recommend
+   exporting your data and running the model in R until this is resolved.
+   Smooths are otherwise fully integrated with the rest of the analysis
+   pipeline: posterior predictive checks, model comparison, plotting, and
+   prediction at new x-values all work as expected.
 
 
 Top bar
