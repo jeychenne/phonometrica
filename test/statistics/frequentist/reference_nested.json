@@ -1,0 +1,75 @@
+{
+  "family": "nested",
+  "dataset": "nested_synthetic.csv",
+  "generated_at": "2026-05-10 14:51:00 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "glmmTMB_version": "1.1.13",
+  "models": {
+    "M1": {
+      "formula": "y ~ program + (1|school)",
+      "engine": "glmmTMB",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 320,
+        "loglik": -500.758923350855,
+        "aic": 1009.517846701711,
+        "bic": 1024.591130684886,
+        "rse": 1.110925444681
+      },
+      "fixef": {
+        "names": ["Intercept", "programB"],
+        "estimate": [5.178414941326, 0.9701891155612],
+        "se": [0.3228636764588, 0.1242052406121]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|school)", "sd(residual)"],
+        "sd": [0.8787604118453, 1.110925444681]
+      }
+    },
+    "M2": {
+      "formula": "y ~ program + (1|school) + (1|school:classroom)",
+      "engine": "glmmTMB",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 320,
+        "loglik": -497.87086247686,
+        "aic": 1005.74172495372,
+        "bic": 1024.583329932688,
+        "rse": 1.073205352564
+      },
+      "fixef": {
+        "names": ["Intercept", "programB"],
+        "estimate": [5.178416800868, 0.9701886016655],
+        "se": [0.3224646024812, 0.1199880061075]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|school)", "sd(Intercept|school:classroom)", "sd(residual)"],
+        "sd": [0.8645829171736, 0.3272629017732, 1.073205352564]
+      }
+    },
+    "M3": {
+      "formula": "y ~ program + (1|school/classroom)",
+      "engine": "glmmTMB",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 320,
+        "loglik": -497.87086247686,
+        "aic": 1005.74172495372,
+        "bic": 1024.583329932688,
+        "rse": 1.073205352564
+      },
+      "fixef": {
+        "names": ["Intercept", "programB"],
+        "estimate": [5.178416800868, 0.9701886016655],
+        "se": [0.3224646024811, 0.1199880061075]
+      },
+      "ranef": {
+        "names": ["sd(Intercept|classroom:school)", "sd(Intercept|school)", "sd(residual)"],
+        "sd": [0.3272629017732, 0.8645829171736, 1.073205352564]
+      }
+    }
+  }
+}

@@ -16,6 +16,7 @@ scripts <- c(
     "gen_reference_negbin.R",
     "gen_reference_beta.R",
     "gen_reference_student.R",
+    "gen_reference_nested.R",
     "gen_reference_real_schwa.R"
 )
 

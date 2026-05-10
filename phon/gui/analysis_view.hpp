@@ -151,6 +151,7 @@ private:
 	void addPredictor(const QString &name);
 	void addSmoothTerm(const QString &name, int k = 10, const QString &by = QString());
 	void addRandomIntercept(const QString &name);
+	void addNestedGroupingFactor(const QString &inner, const QString &outer);
 	void addInteraction(const QString &name, const QString &other, bool withMainEffects);
 	void addRandomSlope(const QString &variable, const QString &group, bool correlated);
 	void removeFromFormula(const QString &name);

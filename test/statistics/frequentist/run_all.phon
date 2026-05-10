@@ -45,7 +45,7 @@ print "######################################################################"
 # the very first fit), wrap the import so the rest of the suite still
 # runs and the failure is logged rather than aborting the whole run.
 
-let test_files = ["test_gaussian", "test_poisson", "test_binomial", "test_negbin", "test_beta", "test_real_schwa", "test_gam"]
+let test_files = ["test_gaussian", "test_poisson", "test_binomial", "test_negbin", "test_beta", "test_real_schwa", "test_gam", "test_nested"]
 
 # Disabled: "test_student" — see test_student.phon banner. The
 # glmmTMB Student-t reference is not trustworthy enough to validate

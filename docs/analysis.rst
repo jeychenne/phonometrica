@@ -191,6 +191,31 @@ Random effects
 - ``y ~ a + (1 + a | speaker)``: random intercept and correlated random slope for *a*
 - ``y ~ a + (0 + a | speaker)``: random slope only (no random intercept)
 
+Nested random effects are also supported, in either of the two forms used by lme4:
+
+- ``y ~ a + (1 | school/classroom)``: slash sugar — expands at parse time to
+  ``(1 | school) + (1 | classroom:school)``. The chain follows the lme4 convention
+  with the inner factor on the left of the synthetic name. Multi-level chains
+  work the same way: ``(1 | g1/g2/g3)`` expands to ``(1 | g1) + (1 | g2:g1) + (1 | g3:g2:g1)``.
+- ``y ~ a + (1 | school) + (1 | school:classroom)``: explicit form. The bare-colon
+  ``(1 | g1:g2)`` term creates a synthetic grouping factor over the observed pairs
+  of values; the order of names is preserved as written.
+
+Either form fits the same model; they differ only in how the random-effect SD is
+labelled in the summary table — slash sugar produces ``sd(Intercept|classroom:school)``
+(matching ``glmmTMB``'s ``VarCorr()`` output), while the explicit form preserves whatever
+order you typed.
+
+.. note::
+
+   **Implicit nesting via unique labels.** If your inner factor is already
+   coded with globally unique levels (e.g. classroom IDs that are unique
+   across schools), then ``(1 | school) + (1 | classroom)`` is also a valid
+   nested specification — the synthetic group form is not needed. If the
+   inner labels collide across outer levels (e.g. *Class 1* exists in every
+   school), you must use the synthetic or slash form so that Phonometrica
+   knows to disambiguate the grouping by the outer factor.
+
 You can combine fixed effects with smooth terms, or fixed effects with random effects.
 To combine smooth terms with grouping structure, use ``s(group, bs=re)`` (see above).
 
@@ -211,6 +236,15 @@ The left panel lists all the columns available in the source data.
   - *Add as smooth*: (numeric columns only) add a smooth term ``s(x)`` with preset or custom *k*.
     A submenu offers *with by variable* to create ``s(x, by=factor)`` terms.
   - *Add as grouping factor*: add a random intercept ``(1 | group)`` for mixed-effects models.
+  - *Add as nested grouping factor in...*: (submenu) for an inner factor like ``classroom``,
+    nest it inside an existing grouping factor like ``school``. Appends a term
+    ``(1 | school:classroom)`` to the formula, leaving any existing ``(1 | school)`` term
+    in place. The combined model is equivalent to lme4's ``(1 | school/classroom)``.
+    The submenu lists existing top-level grouping factors; synthetic groups already
+    nested are not offered (edit the formula directly to extend such a chain).
+    If the outer term carries random slopes, e.g. ``(1 + time | school)``, the slopes
+    are *not* propagated onto the synthetic group — to do that, edit the formula by
+    hand to use the slash form.
   - *Add smooth for grouping*: (categorical columns only) add a penalized random intercept
     ``s(group, bs=re)`` for use in GAM models.
   - *Add smooth for random slope in...*: (categorical columns only) add a penalized random

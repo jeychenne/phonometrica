@@ -70,6 +70,9 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/frequentist/test_gam.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_nested.phon</Path>
+			</Document>
 		</Directory>
 		<Directory label="bayesian">
 			<Document class="Script">
@@ -134,6 +137,9 @@
 		</Document>
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/monophtongues.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/nested_synthetic.csv</Path>
 		</Document>
 	</Data>
 	<Analyses>

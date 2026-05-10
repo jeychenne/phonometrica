@@ -2251,6 +2251,39 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	// ── Random effects ───────────────────────────────────────────────
 	menu.addAction(tr("Add as grouping factor"));
 
+	// Nested grouping factor: lists existing (non-synthetic) groups in
+	// the formula as candidate outer factors. Clicking one appends
+	// (1 | outer:inner) — lme4-style nesting via the bare-colon
+	// synthetic group, equivalent to (1|outer/inner) after parsing.
+	auto *nested_menu = menu.addMenu(tr("Add as nested grouping factor in..."));
+	{
+		auto name_s = String(name.toUtf8().constData());
+		bool any_eligible = false;
+		if (parsed && !parsed->random.empty())
+		{
+			for (intptr_t i = 1; i <= parsed->random.size(); i++)
+			{
+				auto &rt = parsed->random[i];
+				// Skip synthetic groups (already nested) — extending the
+				// chain via the GUI is a corner case; users can edit
+				// the formula directly for that.
+				if (rt.is_synthetic_group) continue;
+				// Skip self-nesting (outer == inner is nonsense).
+				if (rt.group == name_s) continue;
+
+				auto group_q = QString::fromUtf8(rt.group.data(), (int) rt.group.size());
+				auto *action = nested_menu->addAction(group_q);
+				action->setData(group_q);
+				any_eligible = true;
+			}
+		}
+		if (!any_eligible)
+		{
+			auto *placeholder = nested_menu->addAction(tr("(no eligible grouping factors in formula)"));
+			placeholder->setEnabled(false);
+		}
+	}
+
 	// Penalized random intercept (GAM): available for categorical columns.
 	QAction *re_smooth_action = nullptr;
 	QMenu *re_slope_menu = nullptr;
@@ -2425,6 +2458,9 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	else if (action_text == tr("Add as grouping factor")) {
 		addRandomIntercept(name);
 	}
+	else if (chosen->parent() == nested_menu) {
+		addNestedGroupingFactor(name, chosen->data().toString());
+	}
 	else if (re_smooth_action && chosen == re_smooth_action) {
 		// Insert s(name, bs=re) — penalized random intercept for GAM.
 		QString quoted = quoteIfNeeded(name);
@@ -2597,6 +2633,52 @@ void AnalysisView::addRandomIntercept(const QString &name)
 	if (text.isEmpty() || !text.contains('~'))
 	{
 		// Not a valid formula yet — append the term and let the user fill in the rest.
+		if (text.isEmpty())
+			m_formula_edit->setText(QStringLiteral("~ ") + term);
+		else
+			m_formula_edit->setText(text + QStringLiteral(" ~ ") + term);
+	}
+	else
+	{
+		QString rhs = text.mid(text.indexOf('~') + 1).trimmed();
+		if (rhs.isEmpty() || rhs == QStringLiteral("1")) {
+			QString lhs = text.left(text.indexOf('~') + 1);
+			m_formula_edit->setText(lhs + QStringLiteral(" ") + term);
+		} else {
+			m_formula_edit->setText(text + QStringLiteral(" + ") + term);
+		}
+	}
+
+	m_formula_edit->setFocus();
+	m_formula_edit->setCursorPosition(m_formula_edit->text().length());
+}
+
+// Append a nested random-effects term: (1 | outer:inner). This is
+// the bare-colon synthetic-group form, semantically equivalent to
+// the lme4 slash-sugar (1|outer/inner). The existing (1|outer)
+// term (if any) is left untouched, so the resulting model is
+//   ... + (1|outer) + (1|outer:inner)
+// which is exactly how (1|outer/inner) desugars at parse time.
+//
+// If the outer term has random slopes — e.g. (1+time|outer) — the
+// slopes are NOT propagated onto the synthetic group. lme4-style
+// (1+time|outer/inner) would propagate, but slopes on a synthetic
+// group require multiple obs per (outer, inner) cell to estimate
+// and that's rarely what the user wants. If propagation is desired,
+// edit the formula directly to use the slash form.
+void AnalysisView::addNestedGroupingFactor(const QString &inner, const QString &outer)
+{
+	QString inner_q = quoteIfNeeded(inner);
+	QString outer_q = quoteIfNeeded(outer);
+	QString term = QStringLiteral("(1 | ") + outer_q + QStringLiteral(":") + inner_q + QStringLiteral(")");
+	QString text = m_formula_edit->text().trimmed();
+
+	if (text.isEmpty() || !text.contains('~'))
+	{
+		// The outer term was supposedly present in `parsed`, so the
+		// formula must already contain a '~'. This branch is defensive
+		// only — fall through to the same append behaviour as the
+		// random-intercept helper.
 		if (text.isEmpty())
 			m_formula_edit->setText(QStringLiteral("~ ") + term);
 		else

@@ -1,0 +1,92 @@
+# =====================================================================
+# test_nested.phon — validates the new (1|g1/g2) slash sugar and
+# (1|g1:g2) synthetic-group syntax against reference_nested.json
+# (produced by gen_reference_nested.R from a synthetic 8-school ×
+# 4-classroom × 10-student design, fully balanced).
+#
+# Three checks:
+#   M1 — y ~ program + (1|school)                          [non-nested baseline]
+#   M2 — y ~ program + (1|school) + (1|school:classroom)   [explicit synthetic]
+#   M3 — y ~ program + (1|school/classroom)                [slash sugar]
+#
+# M2 and M3 are mathematically the same model — slash sugar is exactly
+# the parse-time desugaring (1|g1/g2) → (1|g1) + (1|g1:g2). The R
+# generator asserts logLik(M2) == logLik(M3) to <1e-6 before writing
+# the reference, so both phon fits are checked against the same
+# numerical target.
+#
+# In addition, this test verifies parser round-trip: after fitting M3,
+# model.formula must contain the expanded form, not the slash form,
+# because Formula::to_string() emits the expanded representation.
+# =====================================================================
+
+let A = import("../lib/assert")
+
+let DATA = A.resolve_data_path("nested_synthetic.csv")
+let REF  = A.resolve_sibling("reference_nested.json")
+
+let refs_root = A.load_reference(REF)
+let refs = refs_root["models"]
+let d = load(DATA)
+
+A.start_section("NESTED")
+
+# M1 — non-nested baseline. Pure (1|school) random intercept;
+# no synthetic-group plumbing exercised. If this fails, the
+# regression isn't about nesting.
+A.fit_and_check("M1", "y ~ program + (1|school)", d, "gaussian", refs["M1"], 0.001, 0.001, 0.01)
+
+# M2 — explicit synthetic group via colon. Exercises the
+# is_synthetic_group=true path in build_grouping(): per-row keys
+# built from (school, classroom) cell pairs, levels sorted, indices
+# back into the level table. The R reference stores the group as
+# "school:classroom" (glmmTMB's name for nested groups), which is
+# exactly what Phonometrica emits.
+A.fit_and_check("M2", "y ~ program + (1|school) + (1|school:classroom)", d, "gaussian", refs["M2"], 0.001, 0.001, 0.01)
+
+# M3 — slash sugar. Parser desugars to (1|school) + (1|school:classroom).
+# The fitted model must agree with M2 to numerical noise — the R
+# generator asserts this on the reference side, so we just compare
+# against M3's reference entry (which is structurally identical to
+# M2's). Tolerances match M2.
+A.fit_and_check("M3", "y ~ program + (1|school/classroom)", d, "gaussian", refs["M3"], 0.001, 0.001, 0.01)
+
+# ── Parser round-trip check ───────────────────────────────────────
+# Fit M3 directly (outside fit_and_check) and inspect model.formula.
+# After parse-time desugaring, to_string() must emit the expanded
+# form. Slash sugar follows the lme4 convention (inner factor on
+# the left), so (1|school/classroom) expands to
+# (1|school) + (1|classroom:school) — note the order swap.
+let m = fit("y ~ program + (1|school/classroom)", d)
+let f = m.formula
+let want_outer    = contains(f, "(1 | school)")
+let want_synth    = contains(f, "(1 | classroom:school)")
+let no_slash      = not contains(f, "school/classroom")
+let no_quotes     = not contains(f, "'classroom:school'")
+let no_src_order  = not contains(f, "(1 | school:classroom)")  # source-order would mean lme4 swap was missed
+
+if want_outer and want_synth and no_slash and no_quotes and no_src_order then
+    A.record_pass()
+    print "    PASS: M3 parser round-trip: ", f
+else
+    A.record_fail("M3 parser round-trip: unexpected formula string: " & f)
+end
+
+# ── Parser-error checks ───────────────────────────────────────────
+# Mixing '/' and ':' in the same grouping spec must be rejected.
+# Without this, the desugaring rule "(slopes | g1/g2) → (slopes | g1)
+# + (slopes | g1:g2)" becomes ambiguous in the chained case.
+let mix_threw = false
+try
+    fit("y ~ program + (1|school/classroom:program)", d)
+catch e
+    mix_threw = true
+end
+if mix_threw then
+    A.record_pass()
+    print "    PASS: mixed '/' and ':' in grouping spec correctly rejected"
+else
+    A.record_fail("mixed '/' and ':' in grouping spec was accepted (should throw)")
+end
+
+A.end_section()

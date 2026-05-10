@@ -264,7 +264,31 @@ String RandomTerm::to_string() const
 	bool need_plus = true;
 	append_term_array(result, slopes, need_plus);
 	result.append(" | ");
-	result.append(quote_name(group));
+	if (is_synthetic_group)
+	{
+		// Split the colon-joined name and quote each component
+		// individually so the result reparses as a synthetic group
+		// rather than as a literal column name containing colons.
+		bool first = true;
+		intptr_t start = 0;
+		intptr_t n = group.size();
+		const char *data = group.data();
+		for (intptr_t i = 0; i <= n; i++)
+		{
+			if (i == n || data[i] == ':')
+			{
+				String component(data + start, i - start);
+				if (!first) result.append(":");
+				result.append(quote_name(component));
+				first = false;
+				start = i + 1;
+			}
+		}
+	}
+	else
+	{
+		result.append(quote_name(group));
+	}
 	result.append(")");
 	return result;
 }
@@ -368,7 +392,28 @@ Array<String> Formula::all_variables() const
 	for (intptr_t i = 1; i <= random.size(); i++)
 	{
 		auto &rt = random[i];
-		add_unique(rt.group);
+		if (rt.is_synthetic_group)
+		{
+			// Split the colon-joined name and add each component
+			// (each is a real column in the data).
+			intptr_t start = 0;
+			intptr_t n = rt.group.size();
+			const char *data = rt.group.data();
+			for (intptr_t j = 0; j <= n; j++)
+			{
+				if (j == n || data[j] == ':')
+				{
+					if (j > start) {
+						add_unique(String(data + start, j - start));
+					}
+					start = j + 1;
+				}
+			}
+		}
+		else
+		{
+			add_unique(rt.group);
+		}
 		for (intptr_t j = 1; j <= rt.slopes.size(); j++) {
 			auto &st = rt.slopes[j];
 			for (intptr_t v = 1; v <= st.variables.size(); v++) {
@@ -399,6 +444,7 @@ enum class TokenType
 	Plus,      // +
 	Minus,     // -
 	Star,      // *
+	Slash,     // /  (only valid inside a random-effects term, between grouping factors)
 	Colon,     // :
 	Pipe,      // |
 	LParen,    // (
@@ -448,6 +494,7 @@ public:
 			case '+': m_pos++; return { TokenType::Plus, "+", 0 };
 			case '-': m_pos++; return { TokenType::Minus, "-", 0 };
 			case '*': m_pos++; return { TokenType::Star, "*", 0 };
+			case '/': m_pos++; return { TokenType::Slash, "/", 0 };
 			case ':': m_pos++; return { TokenType::Colon, ":", 0 };
 			case '|': m_pos++; return { TokenType::Pipe, "|", 0 };
 			case '(': m_pos++; return { TokenType::LParen, "(", 0 };
@@ -901,14 +948,29 @@ private:
 		f.offset = std::move(col);
 	}
 
-	// random_term := '(' random_inner '|' name ')'
+	// random_term := '(' random_inner '|' group_spec ')'
 	// random_inner := elem ('+' elem)*
 	// elem := '0' | '1' | term_chain
 	// term_chain := name (('*' | ':') name)*
+	// group_spec := name (('/' | ':') name)*
 	//
-	// '*' expands at parse time exactly as on the fixed side, matching lme4
-	// semantics: (1 + a*b | g) → (1 + a + b + a:b | g).
+	// '*' on the slope side expands at parse time exactly as on the fixed
+	// side, matching lme4 semantics: (1 + a*b | g) → (1 + a + b + a:b | g).
 	// Duplicate slope terms are silently dropped: (1 + a + a | g) → (1 + a | g).
+	//
+	// On the grouping side:
+	//   '/' is slash sugar — (slopes | g1/g2) expands to two terms:
+	//       (slopes | g1) + (slopes | g2:g1). Chains follow the lme4
+	//       convention with the inner factor on the LEFT:
+	//           g1/g2/g3 → g1, g2:g1, g3:g2:g1
+	//       The same slope list (and intercept flag) is replicated
+	//       across all expanded terms.
+	//   ':' is a synthetic group — (slopes | g1:g2) is a single term whose
+	//       grouping factor is the observed (g1, g2) pairs. is_synthetic_group
+	//       is set to true on the resulting RandomTerm and `group` stores the
+	//       colon-joined name *in source order*. (Bare colon respects the
+	//       user's order; only slash sugar reverses to match lme4.)
+	// '/' and ':' may not be mixed in the same group_spec.
 	void parse_random_term(Formula &f)
 	{
 		expect(TokenType::LParen, "Expected '(' for random effects term");
@@ -965,16 +1027,88 @@ private:
 		expect(TokenType::Pipe, "Expected '|' in random effects term");
 		advance();
 
-		// Grouping factor
+		// Grouping factor — first name is required.
 		expect(TokenType::Name, "Expected grouping variable name after '|'");
-		rt.group = m_current.text;
+		std::vector<String> group_chain;
+		group_chain.push_back(m_current.text);
 		advance();
+
+		// Optional slash- or colon-separated continuation. The first separator
+		// fixes the mode for the rest of this group_spec; mixing is an error.
+		TokenType sep_mode = TokenType::End; // sentinel: not yet decided
+		while (m_current.type == TokenType::Slash || m_current.type == TokenType::Colon)
+		{
+			if (sep_mode == TokenType::End) {
+				sep_mode = m_current.type;
+			} else if (m_current.type != sep_mode) {
+				throw error("Cannot mix '/' and ':' in grouping factor specification — use one or the other");
+			}
+			advance();
+			if (m_current.type != TokenType::Name) {
+				throw error("Expected grouping variable name after '%' in random effects term",
+				            (sep_mode == TokenType::Slash) ? "/" : ":");
+			}
+			group_chain.push_back(m_current.text);
+			advance();
+		}
 
 		// Closing paren
 		expect(TokenType::RParen, "Expected ')' to close random effects term");
 		advance();
 
-		f.random.append(std::move(rt));
+		// Emit one or more RandomTerms.
+		auto join_with_colon = [](const std::vector<String> &parts, size_t up_to) -> String
+		{
+			String out = parts[0];
+			for (size_t i = 1; i < up_to; i++) {
+				out.append(":");
+				out.append(parts[i]);
+			}
+			return out;
+		};
+
+		if (sep_mode == TokenType::Slash)
+		{
+			// lme4/glmmTMB convention: (slopes | g1/g2/g3) →
+			//     (slopes | g1) + (slopes | g2:g1) + (slopes | g3:g2:g1)
+			// The new factor at depth k is *prepended* to the previously-
+			// accumulated synthetic name, not appended. Matching this
+			// convention is what makes Phonometrica's ranef-table names
+			// agree with glmmTMB's VarCorr() names verbatim — which the
+			// validation suite relies on for lookup-by-name.
+			for (size_t i = 0; i < group_chain.size(); i++)
+			{
+				RandomTerm copy;
+				copy.intercept = rt.intercept;
+				copy.slopes = rt.slopes;             // deep copy
+				if (i == 0)
+				{
+					copy.group = group_chain[0];
+					copy.is_synthetic_group = false;
+				}
+				else
+				{
+					// inner-most (group_chain[i]) goes on the left;
+					// walk back through the chain prepending each ancestor.
+					String joined = group_chain[i];
+					for (size_t j = i; j > 0; j--) {
+						joined.append(":");
+						joined.append(group_chain[j - 1]);
+					}
+					copy.group = joined;
+					copy.is_synthetic_group = true;
+				}
+				f.random.append(std::move(copy));
+			}
+		}
+		else
+		{
+			// Either a bare name (group_chain.size()==1) or a single
+			// colon-joined synthetic group (size() >= 2).
+			rt.group = join_with_colon(group_chain, group_chain.size());
+			rt.is_synthetic_group = (group_chain.size() > 1);
+			f.random.append(std::move(rt));
+		}
 	}
 
 	Tokenizer m_tokenizer;

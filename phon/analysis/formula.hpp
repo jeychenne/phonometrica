@@ -93,11 +93,28 @@ struct SmoothTerm
 // Slopes may be main effects (single variable) or interactions (multiple
 // variables, joined with ':'). The * operator expands at parse time exactly
 // as on the fixed side: (1 + a*b | g) → (1 + a + b + a:b | g).
+//
+// Nested grouping factors are expressed two ways:
+//   (slopes | g1:g2)   bare colon — single term, synthetic grouping over the
+//                      observed (g1, g2) pairs.  `group` stores the
+//                      colon-joined name "g1:g2" *in source order* and
+//                      is_synthetic_group=true.
+//   (slopes | g1/g2)   slash sugar — expanded at parse time to two terms:
+//                      (slopes | g1) + (slopes | g2:g1). Chains follow the
+//                      lme4 convention with the inner factor on the LEFT:
+//                          g1/g2/g3 → g1, g2:g1, g3:g2:g1
+//                      The second/third/... terms use the synthetic-group
+//                      representation above.
+//
+// is_synthetic_group disambiguates a true colon-joined synthetic group from
+// a literal column whose name happens to contain a colon (which the user
+// would write as ('a:b') in the formula source).
 struct RandomTerm
 {
 	String group;              // grouping factor, e.g. "speaker"
 	Array<FixedTerm> slopes;   // random slope terms (each may be main effect or interaction)
 	bool intercept = true;     // whether a random intercept is included
+	bool is_synthetic_group = false; // true if `group` is a colon-joined synthetic name (e.g. "school:classroom")
 
 	String to_string() const;
 };
@@ -131,6 +148,9 @@ struct Formula
 	//   (0 + slope | group)       random slope only (no intercept)
 	//   (1 + a:b | group)         random interaction slope
 	//   (1 + a*b | group)         expands to (1 + a + b + a:b | group)
+	//   (1 | g1:g2)               nested RE over observed (g1, g2) pairs
+	//   (1 | g1/g2)               sugar for (1 | g1) + (1 | g1:g2)
+	//   (1 | g1/g2/g3)            sugar for (1|g1) + (1|g1:g2) + (1|g1:g2:g3)
 	// Throws on parse error.
 	static Formula parse(const String &text);
 

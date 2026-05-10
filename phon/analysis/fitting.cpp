@@ -517,6 +517,12 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 // Build a GroupingInfo from a RandomTerm and the DataTable.
 // Expands slope variables into treatment-coded design columns (same logic as fixed effects).
 // The Z_design matrix is n_obs × nterms, row-major.
+//
+// For a synthetic group (rt.is_synthetic_group, e.g. rt.group == "school:classroom"),
+// the grouping factor is built from the cartesian-product key of the named
+// columns over the observed rows. The display name and level strings use
+// ':' as a join character; internally we use a NUL byte for keying so that
+// literal colons in cell values cannot collide with the separator.
 static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
                                     const std::vector<intptr_t> &rows,
                                     const std::map<String, String> &reference_levels)
@@ -525,32 +531,105 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 	// ── Grouping factor ──────────────────────────────────────────────
 
-	intptr_t gcol = find_column(data, rt.group);
-	if (gcol == 0) {
-		throw error("Grouping variable '%' not found in data", rt.group);
-	}
-
-	gi.name = data.get_header(gcol);
-	gi.levels = extract_levels(data, gcol, rows);
-	gi.nlevels = gi.levels.size();
-
-	if (gi.nlevels < 2) {
-		throw error("Grouping factor '%' must have at least 2 levels", gi.name);
-	}
-
-	// Build a fast lookup: level string → 0-based index.
-	std::map<std::string, intptr_t> level_map;
-	for (intptr_t k = 1; k <= gi.levels.size(); k++) {
-		std::string key(gi.levels[k].data(), gi.levels[k].size());
-		level_map[key] = k - 1; // 0-based
-	}
-
-	gi.indices.reserve(rows.size());
-	for (intptr_t row : rows)
+	if (rt.is_synthetic_group)
 	{
-		String cell = data.get_cell(row, gcol);
-		std::string key(cell.data(), cell.size());
-		gi.indices.push_back(level_map[key]);
+		// Split rt.group on ':' and resolve each component column.
+		std::vector<intptr_t> gcols;
+		std::vector<String> comp_names;
+		intptr_t start = 0;
+		intptr_t n = rt.group.size();
+		const char *gdata = rt.group.data();
+		for (intptr_t i = 0; i <= n; i++)
+		{
+			if (i == n || gdata[i] == ':')
+			{
+				String comp(gdata + start, i - start);
+				intptr_t c = find_column(data, comp);
+				if (c == 0) {
+					throw error("Grouping variable '%' not found in data", comp);
+				}
+				gcols.push_back(c);
+				comp_names.push_back(comp);
+				start = i + 1;
+			}
+		}
+
+		gi.name = rt.group;  // keep colon-joined display name
+
+		// Build per-row keys (NUL-separated) and collect uniques in sorted order.
+		std::vector<std::string> row_keys;
+		row_keys.reserve(rows.size());
+		std::map<std::string, bool> seen;
+		for (intptr_t row : rows)
+		{
+			std::string key;
+			for (size_t k = 0; k < gcols.size(); k++)
+			{
+				if (k > 0) key.push_back('\0');
+				String cell = data.get_cell(row, gcols[k]);
+				key.append(cell.data(), cell.size());
+			}
+			row_keys.push_back(key);
+			seen[key] = true;
+		}
+
+		// Levels: emit in sorted-key order, with display strings using ':' as join.
+		Array<String> levels;
+		std::map<std::string, intptr_t> level_map;
+		intptr_t idx = 0;
+		for (auto &kv : seen)
+		{
+			// Reconstruct display string from NUL-separated key.
+			std::string disp;
+			disp.reserve(kv.first.size());
+			for (size_t i = 0; i < kv.first.size(); i++) {
+				disp.push_back(kv.first[i] == '\0' ? ':' : kv.first[i]);
+			}
+			levels.append(String(disp));
+			level_map[kv.first] = idx++;
+		}
+		gi.levels = std::move(levels);
+		gi.nlevels = gi.levels.size();
+
+		if (gi.nlevels < 2) {
+			throw error("Synthetic grouping factor '%' must have at least 2 levels (got % unique combination%)",
+			            gi.name, (long) gi.nlevels, gi.nlevels == 1 ? "" : "s");
+		}
+
+		gi.indices.reserve(rows.size());
+		for (auto &k : row_keys) {
+			gi.indices.push_back(level_map[k]);
+		}
+	}
+	else
+	{
+		intptr_t gcol = find_column(data, rt.group);
+		if (gcol == 0) {
+			throw error("Grouping variable '%' not found in data", rt.group);
+		}
+
+		gi.name = data.get_header(gcol);
+		gi.levels = extract_levels(data, gcol, rows);
+		gi.nlevels = gi.levels.size();
+
+		if (gi.nlevels < 2) {
+			throw error("Grouping factor '%' must have at least 2 levels", gi.name);
+		}
+
+		// Build a fast lookup: level string → 0-based index.
+		std::map<std::string, intptr_t> level_map;
+		for (intptr_t k = 1; k <= gi.levels.size(); k++) {
+			std::string key(gi.levels[k].data(), gi.levels[k].size());
+			level_map[key] = k - 1; // 0-based
+		}
+
+		gi.indices.reserve(rows.size());
+		for (intptr_t row : rows)
+		{
+			String cell = data.get_cell(row, gcol);
+			std::string key(cell.data(), cell.size());
+			gi.indices.push_back(level_map[key]);
+		}
 	}
 
 	// ── Z design matrix ──────────────────────────────────────────────
@@ -738,17 +817,44 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	{
 		auto &rt = formula.random[i];
 
-		intptr_t gcol = find_column(data, rt.group);
-		if (gcol == 0) {
-			throw error("Grouping variable '%' not found in data", rt.group);
-		}
-		bool found = false;
-		for (intptr_t c : all_col_indices)
+		// Collect grouping-factor columns. For synthetic groups we add
+		// every component column; for plain groups, just the one.
+		std::vector<String> group_components;
+		if (rt.is_synthetic_group)
 		{
-			if (c == gcol) { found = true; break; }
+			intptr_t start = 0;
+			intptr_t n = rt.group.size();
+			const char *gdata = rt.group.data();
+			for (intptr_t k = 0; k <= n; k++)
+			{
+				if (k == n || gdata[k] == ':')
+				{
+					if (k > start) {
+						group_components.push_back(String(gdata + start, k - start));
+					}
+					start = k + 1;
+				}
+			}
 		}
-		if (!found) {
-			all_col_indices.push_back(gcol);
+		else
+		{
+			group_components.push_back(rt.group);
+		}
+
+		for (auto &gname : group_components)
+		{
+			intptr_t gcol = find_column(data, gname);
+			if (gcol == 0) {
+				throw error("Grouping variable '%' not found in data", gname);
+			}
+			bool found = false;
+			for (intptr_t c : all_col_indices)
+			{
+				if (c == gcol) { found = true; break; }
+			}
+			if (!found) {
+				all_col_indices.push_back(gcol);
+			}
 		}
 
 		for (intptr_t j = 1; j <= rt.slopes.size(); j++)
