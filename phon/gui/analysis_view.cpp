@@ -1026,7 +1026,9 @@ void AnalysisView::setupUi()
 	m_bins_spin->setToolTip(tr("Number of histogram bins (0 = automatic)"));
 	eda_options->addWidget(m_bins_spin);
 	m_eda_regline_check = new QCheckBox(tr("Regression line"));
-	m_eda_regline_check->setToolTip(tr("Overlay an OLS regression line on the scatter plot"));
+	m_eda_regline_check->setToolTip(tr("Overlay an OLS regression line on the scatter plot. "
+	                                    "With grouping, draws one line per group, clipped to "
+	                                    "each group's own x-range."));
 	m_eda_regline_check->setVisible(false);
 	eda_options->addWidget(m_eda_regline_check);
 	m_eda_density_check = new QCheckBox(tr("Density curve"));
@@ -4288,8 +4290,10 @@ void AnalysisView::updateEdaPlot()
 		m_eda_ellipse_check->setVisible(has_group);
 		m_eda_ellipse_spin->setVisible(has_group);
 
-		// Regression line is available only without grouping.
-		m_eda_regline_check->setVisible(!has_group);
+		// Regression line is available in both ungrouped and grouped modes:
+		// in ungrouped mode it's a single OLS line over all points;
+		// in grouped mode, one OLS line per group.
+		m_eda_regline_check->setVisible(true);
 		m_eda_density_check->setVisible(false);
 		m_eda_bw_label->setVisible(false);
 		m_eda_bw_slider->setVisible(false);
@@ -4455,6 +4459,7 @@ void AnalysisView::updateEdaPlot()
 
 			bool show_means = m_eda_mean_check->isChecked();
 			bool show_ellipses = m_eda_ellipse_check->isChecked();
+			bool show_regression_lines = m_eda_regline_check->isChecked();
 
 			// chi-squared quantile for 2 df: F(x) = 1 - exp(-x/2), so x = -2*ln(1-p).
 			double conf = m_eda_ellipse_spin->value() / 100.0;
@@ -4474,7 +4479,8 @@ void AnalysisView::updateEdaPlot()
 				std::move(gv), std::move(xv), std::move(yv),
 				x_name_q, y_name_q, title,
 				show_means, show_ellipses, chi2_scale, formant, formant,
-				std::move(lv), std::move(sv), std::move(rows));
+				std::move(lv), std::move(sv), std::move(rows),
+				show_regression_lines);
 		}
 		else
 		{

@@ -102,7 +102,8 @@ public:
 	                           bool reverse_x = false, bool reverse_y = false,
 	                           std::vector<QString> point_labels = {},
 	                           std::vector<QString> style_groups = {},
-	                           std::vector<intptr_t> source_rows = {});
+	                           std::vector<intptr_t> source_rows = {},
+	                           bool show_regression_lines = false);
 
 	/// Box plot: groups[i] is the group label for values[i].
 	/// source_rows, when non-empty, aligns 1:1 with values; only outliers
@@ -290,6 +291,16 @@ private:
 		double ellipse_b = 0;     // semi-axis along minor direction
 		bool ellipse_valid = false; // false when n < 3 or singular covariance
 
+		// Per-group OLS regression of y on x. Always computed by
+		// buildGroups when the group has ≥ 2 points and non-zero
+		// x-variance; the m_show_group_regression flag governs whether
+		// it gets drawn. reg_r2 is 0 when y is constant within the
+		// group (no linear relationship to explain).
+		bool   reg_valid = false;
+		double reg_slope = 0;
+		double reg_intercept = 0;
+		double reg_r2 = 0;
+
 		// Per-point source row, aligned 1:1 with x/y. Populated only when
 		// buildGroups was given source_rows (not for pooled aggregates);
 		// empty otherwise. INVALID_ROW for any index that runs past the
@@ -357,6 +368,7 @@ private:
 	std::vector<GroupData> m_group_data;
 	bool m_show_means = false;
 	bool m_show_ellipses = false;
+	bool m_show_group_regression = false; // per-group OLS lines
 	bool m_use_labels = false; // true when per-point text labels are active
 
 	// Two-factor legend labels.

@@ -202,13 +202,15 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
                                         bool reverse_x, bool reverse_y,
                                         std::vector<QString> point_labels,
                                         std::vector<QString> style_groups,
-                                        std::vector<intptr_t> source_rows)
+                                        std::vector<intptr_t> source_rows,
+                                        bool show_regression_lines)
 {
 	m_mode = Mode::GroupedScatter;
 	m_group_data = buildGroups(groups, x, y, chi2_scale, point_labels,
 	                           style_groups, source_rows);
 	m_show_means = show_means;
 	m_show_ellipses = show_ellipses;
+	m_show_group_regression = show_regression_lines;
 	m_use_labels = !point_labels.empty();
 	m_reverse_x = reverse_x;
 	m_reverse_y = reverse_y;
@@ -484,6 +486,7 @@ void PlotWidget::clear()
 	m_show_density = false;
 	m_show_means = false;
 	m_show_ellipses = false;
+	m_show_group_regression = false;
 	m_use_labels = false;
 	m_reverse_x = false;
 	m_reverse_y = false;
@@ -728,7 +731,7 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 		}
 	}
 
-	// Compute per-group statistics: mean and covariance → ellipse.
+	// Compute per-group statistics: mean, OLS regression, and (n≥3) covariance → ellipse.
 	for (auto &gd : groups)
 	{
 		size_t gn = gd.x.size();
@@ -740,23 +743,45 @@ std::vector<PlotWidget::GroupData> PlotWidget::buildGroups(
 		gd.mean_x = sx / gn;
 		gd.mean_y = sy / gn;
 
+		if (gn < 2) {
+			gd.ellipse_valid = false;
+			gd.reg_valid = false;
+			continue;
+		}
+
+		// Sums of squared deviations — used by both the ellipse (after
+		// dividing by n−1 to get the sample covariance) and the regression
+		// (slope = sxy/sxx; R² = sxy²/(sxx·syy)). Computed once, used twice.
+		double sxx = 0, syy = 0, sxy = 0;
+		for (size_t i = 0; i < gn; i++) {
+			double dx = gd.x[i] - gd.mean_x;
+			double dy = gd.y[i] - gd.mean_y;
+			sxx += dx * dx;
+			syy += dy * dy;
+			sxy += dx * dy;
+		}
+
+		// ── Regression. Valid whenever there is non-zero variation in x
+		// (otherwise the slope is undefined). When y is constant, R² is 0
+		// by convention rather than 0/0.
+		if (sxx > 1e-15) {
+			gd.reg_slope = sxy / sxx;
+			gd.reg_intercept = gd.mean_y - gd.reg_slope * gd.mean_x;
+			gd.reg_r2 = (syy > 1e-15) ? (sxy * sxy) / (sxx * syy) : 0.0;
+			gd.reg_valid = true;
+		} else {
+			gd.reg_valid = false;
+		}
+
+		// ── Ellipse. Needs at least 3 points and a non-degenerate covariance.
 		if (gn < 3) {
 			gd.ellipse_valid = false;
 			continue;
 		}
 
-		// 2×2 covariance matrix (sample covariance, dividing by n-1).
-		double cxx = 0, cyy = 0, cxy = 0;
-		for (size_t i = 0; i < gn; i++) {
-			double dx = gd.x[i] - gd.mean_x;
-			double dy = gd.y[i] - gd.mean_y;
-			cxx += dx * dx;
-			cyy += dy * dy;
-			cxy += dx * dy;
-		}
-		cxx /= (gn - 1);
-		cyy /= (gn - 1);
-		cxy /= (gn - 1);
+		double cxx = sxx / (gn - 1);
+		double cyy = syy / (gn - 1);
+		double cxy = sxy / (gn - 1);
 
 		// Eigenvalues of 2×2 symmetric matrix [[cxx, cxy], [cxy, cyy]].
 		double trace = cxx + cyy;
@@ -1252,6 +1277,38 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 					m_hit_targets.push_back(ht);
 				}
 			}
+		}
+	}
+
+	// Per-group OLS regression lines, drawn on top of points so the
+	// trend is clearly visible against the scatter, but under the mean
+	// markers (which always sit on top). Each line is clipped to its
+	// own group's [min(x), max(x)] in data coordinates so disjoint
+	// groups don't extrapolate across the whole panel — same convention
+	// as ggplot's geom_smooth(method="lm").
+	if (m_show_group_regression)
+	{
+		for (int g = 0; g < ngroups; g++)
+		{
+			auto &gd = m_group_data[g];
+			if (!gd.reg_valid || gd.x.empty()) continue;
+
+			double xmin = gd.x[0];
+			double xmax = gd.x[0];
+			for (size_t i = 1; i < gd.x.size(); i++) {
+				if (gd.x[i] < xmin) xmin = gd.x[i];
+				if (gd.x[i] > xmax) xmax = gd.x[i];
+			}
+			if (xmax <= xmin) continue; // pathological — all x identical
+
+			double y0 = gd.reg_intercept + gd.reg_slope * xmin;
+			double y1 = gd.reg_intercept + gd.reg_slope * xmax;
+
+			QColor lc = GROUP_PALETTE[gd.color_index % NUM_PALETTE_COLORS].darker(110);
+			Qt::PenStyle ps = styled ? STYLE_PENS[gd.style_index % NUM_STYLE_PENS] : Qt::SolidLine;
+			p.setPen(QPen(lc, 2.0, ps));
+			p.drawLine(QPointF(dataToX(xmin), dataToY(y0)),
+			           QPointF(dataToX(xmax), dataToY(y1)));
 		}
 	}
 
