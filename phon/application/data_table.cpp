@@ -369,6 +369,16 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	}
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
+	// Experimental notice: smooth terms are not yet at production parity.
+	// Printed once per summary so users inspecting GAM output are aware
+	// that EDF and effective penalty values may differ from mgcv.
+	if (m.smooth_terms.size() > 0) {
+		rt.printf("\nNote: GAM support (s() smooth terms) is experimental in this release.\n"
+		          "      Fitted curves and inference are qualitatively reliable, but smooth\n"
+		          "      EDF and lambda values may differ numerically from reference\n"
+		          "      implementations such as R's mgcv\n");
+	}
+
 	if (m.is_bayesian())
 	{
 		auto prior_str = stats::format_prior_summary(m.priors, m.family);
@@ -955,22 +965,28 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 
 void DataTable::initialize(Runtime &rt)
 {
-	auto fit2 = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto fit2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		data.open();
 		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian");
 		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
 		return make_handle<stats::Model>(std::move(model));
 	};
 
-	auto fit3 = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto fit3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		auto &family_str = cast<String>(args[2]);
 		data.open();
 		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str);
 		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
 		return make_handle<stats::Model>(std::move(model));
 	};
 
@@ -2401,7 +2417,7 @@ void DataTable::initialize(Runtime &rt)
 	};
 
 	// Bayesian fit: fit(formula, data, prior) — Gaussian
-	auto fit_bayes2 = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto fit_bayes2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		auto &priors = cast<stats::PriorSpec>(args[2]);
@@ -2430,11 +2446,14 @@ void DataTable::initialize(Runtime &rt)
 		data.open();
 		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", priors);
 		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
 		return make_handle<stats::Model>(std::move(model));
 	};
 
 	// Bayesian fit: fit(formula, data, family, prior)
-	auto fit_bayes3 = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto fit_bayes3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
 		auto &family_str = cast<String>(args[2]);
@@ -2442,6 +2461,9 @@ void DataTable::initialize(Runtime &rt)
 		data.open();
 		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str, priors);
 		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
 		return make_handle<stats::Model>(std::move(model));
 	};
 

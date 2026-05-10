@@ -6309,6 +6309,18 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 	text += QStringLiteral("Observations: %1\n").arg(m.nobs);
 
+	// Experimental notice for models containing smooth terms.  Mirrors
+	// the notice in print_model_summary (data_table.cpp) so users see
+	// the same caveat whether they inspect the model in the GUI or via
+	// summarize() in scripting.
+	if (m.smooth_terms.size() > 0) {
+		text += QStringLiteral(
+			"\nNote: GAM support (s() smooth terms) is experimental in this release.\n"
+			"      Fitted curves and inference are qualitatively reliable, but smooth\n"
+			"      EDF and lambda values may differ numerically from reference\n"
+			"      implementations such as R's mgcv\n");
+	}
+
 	if (m.is_bayesian())
 	{
 		auto prior_str = stats::format_prior_summary(m.priors, m.family);
