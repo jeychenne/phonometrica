@@ -3,6 +3,46 @@ Release notes
 
 
 
+0.9.3 (10/05/2026)
+~~~~~~~~~~~~~~~~~~
+
+**General**
+
+- All plots in analysis views are now detachable into their own window.
+- Save dialogs for analyses propose a default filename derived from the source data table.
+- The user manual now opens in the system web browser instead of the embedded Qt help viewer; equation rendering in the documentation has been improved.
+
+**Sound and annotation views**
+
+- New audio recording capability (WAV PCM_16, unbounded duration), accessible from the main window.
+
+**Statistical analysis**
+
+- **Nested random effects** are now supported, in either of two equivalent forms: lme4-style slash sugar ``(1 | school/classroom)``, which expands at parse time to ``(1 | school) + (1 | classroom:school)``; and explicit bare-colon synthetic groups ``(1 | g1:g2)``, which build a grouping factor over the observed pairs of values. Slash sugar follows the lme4 convention with the inner factor on the left of the synthetic name; the bare-colon form preserves the order written. The right-click menu in the analysis view now offers an *Add as nested grouping factor in...* submenu listing existing grouping factors in the formula.
+- **Predicted effects** for fixed-effects, mixed-effects, and Bayesian models. Mixed-effects predictions are available in both conditional and population-averaged forms.
+- **Posterior predictive checks** for Bayesian models, with a residual-diagnostics tab using frequentist DHARMa-style p-values for cross-family consistency.
+- **Refit model** action re-runs the fit with the current settings without reopening the analysis.
+- Improved accuracy of frequentist Student-t (robust) regression: multi-start optimisation, exact-Hessian Laplace correction with Fisher-information fallback when the Hessian is non-positive-definite.
+- Improved accuracy of Bayesian negative binomial models and of Bayesian robust regression in both fixed-only and mixed forms.
+- Improved GAM accuracy. GAMs are now explicitly marked as **experimental** in the documentation pending further validation.
+- Validation suites against ``glmmTMB`` (frequentist) and ``brms`` (Bayesian) reference fits for the negative binomial, Student-t, and Bayesian Gaussian families.
+- EDA scatter plots: the *Regression line* option now stays available when a grouping variable is selected. With grouping, one OLS line is drawn per group, in the group's colour and clipped to that group's own x-range; it can be combined freely with the existing means and confidence ellipses.
+- Clicking an observation in an EDA or residual-diagnostics plot opens the corresponding row in the source data table.
+
+**Scripting**
+
+- New ``get_script_path()`` builtin returning the absolute path of the currently-running script.
+- Numeric literals can now be written in scientific notation (e.g. ``1.5e-3``).
+- Syntactic sugar for named arguments: positional arguments are passed first, followed by ``key = value`` pairs that are collected into a single ``Table`` argument.
+- Fixed compound assignment on ``Module`` fields (e.g. ``module.x += 1``).
+- VM instruction format widened to 16-bit operands, raising the per-function limits on constants, locals, and arguments.
+
+**Internal**
+
+- Updated bundled r8brain resampler to the latest upstream version.
+
+
+
 0.9.2 (04/05/2026)
 ~~~~~~~~~~~~~~~~~~
 
