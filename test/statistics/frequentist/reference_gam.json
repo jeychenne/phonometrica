@@ -1,0 +1,114 @@
+{
+  "models": {
+    "M1": {
+      "formula": "y_gauss ~ s(duration, bs=cr, k=10)",
+      "fit": {
+        "nobs": 840,
+        "loglik": -4539.12,
+        "aic": 9085.1781,
+        "r2_adj": 0.0268,
+        "scale": 53.8524
+      },
+      "fixef": {
+        "names": ["(Intercept)"],
+        "estimate": [528.9412],
+        "se": [1.8581]
+      },
+      "smooths": {
+        "names": ["s(duration)"],
+        "edf": [1.469],
+        "F": [14.5205],
+        "p": [0]
+      }
+    },
+    "M2": {
+      "formula": "y_gauss ~ vowel + s(duration, bs=cr, k=10)",
+      "fit": {
+        "nobs": 840,
+        "loglik": -4310.1843,
+        "aic": 8632.8859,
+        "r2_adj": 0.4339,
+        "scale": 41.0739
+      },
+      "fixef": {
+        "names": ["(Intercept)", "voweli", "vowelu"],
+        "estimate": [574.2461, -52.2923, -84.1828],
+        "se": [2.4423, 3.4761, 3.4646]
+      },
+      "smooths": {
+        "names": ["s(duration)"],
+        "edf": [2.2587],
+        "F": [17.0483],
+        "p": [0]
+      }
+    },
+    "M3": {
+      "formula": "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)",
+      "fit": {
+        "nobs": 840,
+        "loglik": -4469.822,
+        "aic": 8955.94,
+        "r2_adj": 0.1702,
+        "scale": 49.7272
+      },
+      "fixef": {
+        "names": ["(Intercept)"],
+        "estimate": [528.9412],
+        "se": [1.7157]
+      },
+      "smooths": {
+        "names": ["s(duration)", "s(age)"],
+        "edf": [1.6769, 4.4711],
+        "F": [15.0782, 26.9252],
+        "p": [1e-06, 0]
+      }
+    },
+    "M4": {
+      "formula": "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)",
+      "fit": {
+        "nobs": 840,
+        "loglik": -4307.5459,
+        "aic": 8632.6097,
+        "r2_adj": 0.4357,
+        "scale": 41.0066
+      },
+      "fixef": {
+        "names": ["(Intercept)", "voweli", "vowelu"],
+        "estimate": [574.2996, -52.6976, -84.2971],
+        "se": [2.4397, 3.4715, 3.4615]
+      },
+      "smooths": {
+        "names": ["s(duration):vowela", "s(duration):voweli", "s(duration):vowelu"],
+        "edf": [2.2707, 1, 1.4883],
+        "F": [6.8948, 26.5826, 3.4453],
+        "p": [0.0002, 1e-06, 0.0723]
+      }
+    },
+    "M5": {
+      "formula": "y_count ~ s(duration, bs=cr, k=8)",
+      "fit": {
+        "nobs": 840,
+        "loglik": -3267.5924,
+        "aic": 6547.5426
+      },
+      "fixef": {
+        "names": ["(Intercept)"],
+        "estimate": [2.1697],
+        "se": [0.0117]
+      },
+      "smooths": {
+        "names": ["s(duration)"],
+        "edf": [5.1789],
+        "F": [67.2564],
+        "p": [0]
+      }
+    }
+  },
+  "meta": {
+    "engine": "mgcv",
+    "version": "1.9.3",
+    "R_version": "R version 4.5.0 (2025-04-11)",
+    "dataset": "gam_test.csv",
+    "generated": "2026-05-10 09:48:12 EDT"
+  }
+}

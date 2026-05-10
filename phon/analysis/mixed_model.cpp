@@ -1556,6 +1556,16 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 	if (priors && coef_names)
 		res.laplace_nll += fixed_prior_nll(res.beta, *priors, *coef_names, p);
 
+	// Guard: if the Laplace NLL is non-finite (e.g. because PIRLS converged
+	// to a state where log|H_uu| overflowed or the conditional NLL blew up),
+	// return a large finite sentinel.  This prevents NaN from propagating into
+	// the outer L-BFGS finite-difference gradient, which would corrupt θ and
+	// produce the "θ all-finite: no" optimizer failure seen in NB random-slope
+	// models.  The downstream grid-weight code treats any result with
+	// laplace_nll > 1e9 as a near-zero-weight grid point.
+	if (!std::isfinite(res.laplace_nll))
+		res.laplace_nll = 1e10;
+
 	return res;
 }
 

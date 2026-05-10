@@ -814,6 +814,22 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    where all models are fitted through the Template Model Builder regardless of whether
    random effects are present.
 
+   When fitting a Bayesian Student-t regression model, Phonometrica reports a posterior distribution
+   for the degrees-of-freedom parameter ν, which controls how heavy-tailed the residual distribution is.
+   This posterior is computed using a numerical approximation (INLA) rather than full Markov chain Monte Carlo sampling.
+   The approximation works well when the data are clearly non-Gaussian — for instance, when ν is estimated to be below 10,
+   indicating substantial heavy-tailed behaviour — but tends to produce credible intervals for ν that are too narrow
+   when the residuals are close to Gaussian (ν above roughly 30), in which case the data contain little information
+   about ν and the true posterior is wide and diffuse. Concretely, if a full MCMC sampler such as Stan reports a 95%
+   credible interval of [5, 195] for ν on a given dataset, Phonometrica may report something like [7, 55] for the same model.
+   This does not affect the estimates or credible intervals for the regression coefficients, the random-effect standard
+   deviations, or the model comparison scores (WAIC, LOO-IC), which remain reliable regardless of how well ν is identified.
+   Users who need accurate uncertainty quantification specifically for ν in near-Gaussian models are advised to verify
+   the result with an external MCMC tool. This is not a bug specific to Phonometrica: a validation experiment using
+   500 simulated Gaussian observations confirmed that R-INLA, the reference implementation of the same class of
+   approximation, produces an identical pattern (R-INLA mean = 20.1, 95% CI = [6.9, 55.5] where the correct posterior
+   spans nearly the full prior range).
+
 
 Bayesian estimation
 -------------------

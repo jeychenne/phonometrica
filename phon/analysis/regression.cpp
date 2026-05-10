@@ -36,8 +36,62 @@
 #include <phon/analysis/statistics.hpp>
 #include <phon/utils/matrix.hpp>
 #include <phon/third_party/LBFGSpp/LBFGS.h>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <string>
 
 namespace phonometrica::stats {
+
+// =====================================================================
+// Diagnostic env-var: PHON_DIAG_FIXED_LOG_LAMBDA
+// =====================================================================
+//
+// When set, this env-var overrides the GCV smoothing-parameter search in
+// penalized_lm and penalized_glm. Value is a comma-separated list of
+// log10(λ) values. penalized_lm expects exactly K values (one per
+// penalty block); penalized_glm uses only the first value (it carries a
+// single global λ). On parse failure or count mismatch, a warning is
+// printed to stderr and the override is ignored.
+//
+// Same gating discipline as PHON_DIAG_LAPLACE: read once at fitter entry,
+// no perf cost when unset.
+static std::optional<std::vector<double>> read_diag_fixed_log_lambda()
+{
+	const char *env = std::getenv("PHON_DIAG_FIXED_LOG_LAMBDA");
+	if (!env || !*env) return std::nullopt;
+	std::vector<double> out;
+	std::string s = env;
+	size_t pos = 0;
+	while (pos <= s.size())
+	{
+		size_t comma = s.find(',', pos);
+		size_t end = (comma == std::string::npos) ? s.size() : comma;
+		std::string tok = s.substr(pos, end - pos);
+		// trim whitespace
+		while (!tok.empty() && std::isspace(static_cast<unsigned char>(tok.front()))) tok.erase(tok.begin());
+		while (!tok.empty() && std::isspace(static_cast<unsigned char>(tok.back())))  tok.pop_back();
+		if (tok.empty())
+		{
+			std::fprintf(stderr,
+				"[PHON_DIAG_FIXED_LOG_LAMBDA] empty token in '%s'; ignoring override.\n", env);
+			return std::nullopt;
+		}
+		char *endp = nullptr;
+		double v = std::strtod(tok.c_str(), &endp);
+		if (endp == tok.c_str() || *endp != '\0')
+		{
+			std::fprintf(stderr,
+				"[PHON_DIAG_FIXED_LOG_LAMBDA] invalid value '%s'; ignoring override.\n", tok.c_str());
+			return std::nullopt;
+		}
+		out.push_back(v);
+		if (comma == std::string::npos) break;
+		pos = comma + 1;
+	}
+	return out;
+}
 
 // =====================================================================
 // Validation
@@ -948,8 +1002,27 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	// For K=1 or K=0 this reduces to the single-λ case.
 	// For K>1, we cycle: optimize λ_j holding others fixed, repeat.
 
-	std::vector<double> log_lambda(K, 0.0); // log10(λ_j), initialized to 1.0
+	std::vector<double> log_lambda(K, 0.0); // log10(λ_j), initialized to 0.0 (λ=1)
 
+	auto fixed_ll = read_diag_fixed_log_lambda();
+	bool gcv_overridden = false;
+	if (fixed_ll.has_value())
+	{
+		if ((intptr_t) fixed_ll->size() != K)
+		{
+			std::fprintf(stderr,
+				"[PHON_DIAG_FIXED_LOG_LAMBDA] expected %lld value(s) for this model, got %lld; ignoring override.\n",
+				(long long) K, (long long) fixed_ll->size());
+		}
+		else
+		{
+			log_lambda = std::move(*fixed_ll);
+			gcv_overridden = true;
+		}
+	}
+
+	if (!gcv_overridden)
+	{
 	// Step 1: Initialize with single-λ GCV.
 	if (K > 0)
 	{
@@ -1053,6 +1126,8 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	}
 
 	if (progress) progress(total_steps, total_steps);
+
+	} // end if (!gcv_overridden)
 
 	// ── Final fit at converged λ values ──────────────────────────
 
@@ -1162,6 +1237,14 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		model.smooth_terms.append(std::move(sm));
 	}
 
+	// Surface the GCV-selected log10(λ) per penalty block on the model so
+	// callers (and the diagnostic env-var override) can introspect what the
+	// inner loop converged to.
+	model.smooth_log_lambda = Array<double>((intptr_t) log_lambda.size(), 0.0);
+	for (intptr_t j = 0; j < (intptr_t) log_lambda.size(); j++) {
+		model.smooth_log_lambda[j + 1] = log_lambda[j];
+	}
+
 	// Fitted values and residuals
 	model.fitted = Array<double>(n, 0.0);
 	model.residuals = Array<double>(n, 0.0);
@@ -1226,14 +1309,82 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	bool has_off = !offset.empty();
 	Map<const VectorXd> off(has_off ? offset.data() : nullptr, has_off ? n : 0);
 
-	// Initialize beta from unpenalized GLM-style: eta = link(y)
+	// Initialize μ via family-specific mustart, mirroring mgcv's
+	// family$initialize.  This avoids degenerate eta (e.g. log(0) = −∞
+	// for Poisson when y has zeros, or logit(0/1) = ±∞ for binomial),
+	// which otherwise produce zero-weighted observations in the first
+	// PIRLS step and make convergence both slow and prone to landing
+	// on a sub-optimal stationary point of the (otherwise strictly
+	// convex) penalized objective.
 	VectorXd beta = VectorXd::Zero(p);
-	VectorXd eta = fam.link(ym);
-	VectorXd mu = fam.linkinv(eta);
+	VectorXd mu(n);
+	if (fam.name == "poisson")
+	{
+		// mgcv: mustart = y + 0.1
+		for (intptr_t i = 0; i < n; i++) mu[i] = ym[i] + 0.1;
+	}
+	else if (fam.name == "binomial")
+	{
+		// mgcv: mustart = (y + 0.5) / 2 (works for 0/1-coded y)
+		for (intptr_t i = 0; i < n; i++) mu[i] = (ym[i] + 0.5) / 2.0;
+	}
+	else if (fam.name == "negbin")
+	{
+		// Same shrink-from-zero trick as Poisson; identical link form.
+		for (intptr_t i = 0; i < n; i++) mu[i] = ym[i] + 0.1;
+	}
+	else if (fam.name == "beta")
+	{
+		// Beta is constrained to (0, 1); pull strictly inside.
+		for (intptr_t i = 0; i < n; i++) {
+			double v = ym[i];
+			if (v <= 0.0) v = 1e-3;
+			else if (v >= 1.0) v = 1.0 - 1e-3;
+			mu[i] = v;
+		}
+	}
+	else
+	{
+		// Gaussian, Student-t, etc.: mustart = y is fine (identity link).
+		mu = ym;
+	}
+	VectorXd eta = fam.link(mu);
+	if (has_off) eta -= off;   // subtract offset so eta represents Xβ alone
+	{
+		VectorXd eta_full = eta;
+		if (has_off) eta_full += off;
+		mu = fam.linkinv(eta_full);
+	}
 
 	double lambda = 1.0; // will be optimized
 	bool converged = false;
 	int iter = 0;
+	double dev_prev = std::numeric_limits<double>::infinity();
+
+	// Diagnostic override of GCV smoothing-parameter selection.
+	// penalized_glm uses a single global λ, so we take the first value
+	// from the env-var list (warning if more than one is given).
+	auto fixed_ll_glm = read_diag_fixed_log_lambda();
+	bool gcv_overridden = false;
+	if (fixed_ll_glm.has_value())
+	{
+		if (fixed_ll_glm->empty())
+		{
+			std::fprintf(stderr,
+				"[PHON_DIAG_FIXED_LOG_LAMBDA] empty list; ignoring override.\n");
+		}
+		else
+		{
+			if (fixed_ll_glm->size() > 1)
+			{
+				std::fprintf(stderr,
+					"[PHON_DIAG_FIXED_LOG_LAMBDA] penalized_glm uses a single global λ; using first value (%g).\n",
+					(*fixed_ll_glm)[0]);
+			}
+			lambda = std::pow(10.0, (*fixed_ll_glm)[0]);
+			gcv_overridden = true;
+		}
+	}
 
 	for (iter = 0; iter < max_iter; iter++)
 	{
@@ -1256,6 +1407,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
 		VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
 
+		if (!gcv_overridden)
+		{
 		// GCV for λ selection on this working model.
 		// GCV_w(λ) = Σ w_i (z_i - x_i'β)² / (n - edf)²
 		double best_gcv = std::numeric_limits<double>::max();
@@ -1284,20 +1437,28 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 			}
 		}
 		lambda = best_lam;
+		}
 
-		// Solve at optimal λ
+		// Solve at optimal (or fixed) λ
 		MatrixXd M = XtWX + lambda * Sm;
 		LDLT<MatrixXd> ldlt(M);
 		VectorXd beta_new = ldlt.solve(XtWz);
 
-		// Check convergence
-		double delta = (beta_new - beta).norm() / (beta.norm() + 1e-10);
+		// Update β, η, μ from the PWLS solve.
 		beta = beta_new;
 		eta = Xm * beta;
 		if (has_off) eta += off;
 		mu = fam.linkinv(eta);
 
-		if (delta < 1e-6)
+		// Convergence: relative change in deviance < 1e-7, matching
+		// mgcv's gam.fit3.  Deviance-based testing is more robust than
+		// β-relative-change in penalized fits where β can plateau in a
+		// flat region of the objective before reaching the true minimum.
+		double dev_new = -2.0 * fam.loglik(ym, mu);
+		double dev_change = std::abs(dev_new - dev_prev) / (0.1 + std::abs(dev_new));
+		dev_prev = dev_new;
+
+		if (iter > 0 && dev_change < 1e-7)
 		{
 			converged = true;
 			break;
@@ -1366,12 +1527,19 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 				if (evals[j] > tol) evals_inv[j] = 1.0 / evals[j];
 			}
 			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
-			sm.F_stat = quad / sm.ref_df;
 
-			double resid_df = std::max(1.0, (double)n - edf_total);
+			// For GLMs the dispersion parameter is fixed (1.0 for Poisson and
+			// binomial), so mgcv's smooth significance test reports the
+			// quadratic form Chi.sq = β'V⁻¹β directly and tests it against a
+			// χ²(ref_df) distribution.  This differs from the Gaussian path,
+			// where σ² is unknown and the test reports F = quad / ref_df
+			// against F(ref_df, n−edf).  We follow the same convention:
+			// the F_stat field carries Chi.sq for GLMs and F for Gaussians.
+			sm.F_stat = quad;
+
 			try {
-				boost::math::fisher_f fdist(sm.ref_df, resid_df);
-				sm.p_value = 1.0 - boost::math::cdf(fdist, sm.F_stat);
+				boost::math::chi_squared chisq(sm.ref_df);
+				sm.p_value = 1.0 - boost::math::cdf(chisq, sm.F_stat);
 			} catch (...) {
 				sm.p_value = 0;
 			}
@@ -1432,6 +1600,20 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	model.niter = iter;
 	model.converged = converged;
 	model.smooth_terms = std::move(smooth_results);
+
+	// Surface the chosen λ. penalized_glm uses a single global λ; for
+	// caller convenience we replicate it across the per-smooth array
+	// (one entry per penalty block) so the field has the same shape as
+	// in penalized_lm.  TODO: split penalized_glm into per-block λ to
+	// match mgcv, then this becomes a real per-block array.
+	{
+		intptr_t K_glm = (intptr_t) smooth_ranges.size();
+		model.smooth_log_lambda = Array<double>(K_glm, 0.0);
+		double log_lam = std::log10(std::max(lambda, 1e-300));
+		for (intptr_t j = 0; j < K_glm; j++) {
+			model.smooth_log_lambda[j + 1] = log_lam;
+		}
+	}
 
 	return model;
 }

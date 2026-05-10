@@ -1,0 +1,176 @@
+{
+  "family": "negbin",
+  "dataset": "negbin_counts.csv",
+  "engine": "brms",
+  "generated_at": "2026-05-09 09:54:09 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "brms_version": "2.22.0",
+  "rstan_version": "2.32.7",
+  "sampling": {
+    "iter": 4000,
+    "warmup": 1000,
+    "chains": 4,
+    "seed": 42,
+    "adapt_delta": 0.95
+  },
+  "prior_spec": {
+    "note": "Auto-scaled defaults matching Phonometrica's scale_default_priors(): intercept ~ N(mean(y_link), 2.5*sd(y_link)); slopes ~ N(0, 2.5*sd(y_link)); sd ~ PC(2.5*sd(y_link), 0.05) i.e. exponential(-log(0.05)/scale); sigma ~ same (Gaussian/Student); shape ~ Gamma(1, 0.01) (NB); phi ~ Gamma(1, 0.01) (Beta); nu ~ Uniform(2, 200) (Student); cor ~ LKJ(1)."
+  },
+  "models": {
+    "M1": {
+      "formula": "count ~ condition * context",
+      "engine": "brms",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "waic": 28748.318872371077,
+        "p_waic": 8.626812973175,
+        "se_waic": 154.761780352022,
+        "loo_ic": 28748.325953319229,
+        "p_loo": 8.630353447078,
+        "se_loo": 154.762290488597,
+        "max_pareto_k": 0.1338960939358
+      },
+      "fixef": {
+        "names": ["Intercept", "conditionprimed", "contextformal", "contextnarrative", "conditionprimed:contextformal", "conditionprimed:contextnarrative"],
+        "post_mean": [1.78859350409, 0.6633044114907, -0.2220820955516, -0.4797618475662, -0.1875878057603, -0.3392310204973],
+        "post_sd": [0.03342577926515, 0.04552981715295, 0.04695664229546, 0.0493905498688, 0.06458475514052, 0.06811451292614],
+        "ci_lower": [1.723728611096, 0.5733864825881, -0.3140028033445, -0.576991345511, -0.3131949701305, -0.4747102806653],
+        "ci_upper": [1.85405979259, 0.7525823766322, -0.1306510273478, -0.3832374998559, -0.06184889242715, -0.2052310027561],
+        "pd": [1, 1, 1, 1, 0.9984166666667, 1]
+      },
+      "hyper": {
+        "names": ["theta(NB)"],
+        "post_mean": [1.317430675793],
+        "post_sd": [0.03289210684584],
+        "ci_lower": [1.253194894771],
+        "ci_upper": [1.383238155256]
+      }
+    },
+    "M2": {
+      "formula": "count ~ condition + context + (1|subject)",
+      "engine": "brms",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "waic": 28049.582717777179,
+        "p_waic": 169.748002124229,
+        "se_waic": 142.128027204436,
+        "loo_ic": 28051.544823924472,
+        "p_loo": 170.729055197801,
+        "se_loo": 142.222954654985,
+        "max_pareto_k": 0.5309412526677
+      },
+      "fixef": {
+        "names": ["Intercept", "conditionprimed", "contextformal", "contextnarrative"],
+        "post_mean": [1.800812855123, 0.4712371877297, -0.3072905260901, -0.6324671381549],
+        "post_sd": [0.03795418999297, 0.0261176888594, 0.03096626972784, 0.03241658357829],
+        "ci_lower": [1.726396520449, 0.4206780056769, -0.3683402397998, -0.6955839172384],
+        "ci_upper": [1.874812464768, 0.5234403597213, -0.2470644197437, -0.5681760781229],
+        "pd": [1, 1, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|subject)", "theta(NB)"],
+        "post_mean": [0.3911637574783, 1.660173981432],
+        "post_sd": [0.02408231874443, 0.04458607354029],
+        "ci_lower": [0.3468490618201, 1.574236014967],
+        "ci_upper": [0.4399143053957, 1.749771774665]
+      }
+    },
+    "M3": {
+      "formula": "count ~ condition + context + (1+condition|subject)",
+      "engine": "brms",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "waic": 27932.123549014847,
+        "p_waic": 263.673984974872,
+        "se_waic": 140.752627476427,
+        "loo_ic": 27939.207670502004,
+        "p_loo": 267.216045718456,
+        "se_loo": 141.08488630813,
+        "max_pareto_k": 0.7160908531488
+      },
+      "fixef": {
+        "names": ["Intercept", "conditionprimed", "contextformal", "contextnarrative"],
+        "post_mean": [1.792071198202, 0.4605762984689, -0.3136084857139, -0.6323052859061],
+        "post_sd": [0.03909960511564, 0.03801693173553, 0.03129042253013, 0.03248608925207],
+        "ci_lower": [1.714223033007, 0.3855898853259, -0.3743625555282, -0.6962855005549],
+        "ci_upper": [1.86871940171, 0.5353666079507, -0.2519920040617, -0.5685896805242],
+        "pd": [1, 1, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|subject)", "sd(conditionprimed|subject)", "theta(NB)"],
+        "post_mean": [0.4099862989409, 0.3795209485069, 1.768685295549],
+        "post_sd": [0.02901500503028, 0.03644366487879, 0.05043624281653],
+        "ci_lower": [0.3556580060317, 0.3108522074576, 1.673181303151],
+        "ci_upper": [0.4685463931674, 0.4534122333957, 1.870169998877]
+      }
+    },
+    "M4": {
+      "formula": "count ~ condition + context + (1|subject) + (1|item)",
+      "engine": "brms",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "waic": 27638.164384896256,
+        "p_waic": 207.27507390875,
+        "se_waic": 139.406575007353,
+        "loo_ic": 27641.586385564151,
+        "p_loo": 208.986074242673,
+        "se_loo": 139.571469205334,
+        "max_pareto_k": 0.6439762580562
+      },
+      "fixef": {
+        "names": ["Intercept", "conditionprimed", "contextformal", "contextnarrative"],
+        "post_mean": [1.764140210354, 0.4658841068653, -0.2995059355506, -0.6248333207396],
+        "post_sd": [0.05367070393805, 0.02507189514736, 0.0298518651235, 0.0310064568231],
+        "ci_lower": [1.659169234576, 0.4170237997645, -0.3595472056328, -0.6869237441977],
+        "ci_upper": [1.870220184208, 0.5149935999838, -0.2406721359974, -0.5636364248782],
+        "pd": [1, 1, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|item)", "sd(Intercept|subject)", "theta(NB)"],
+        "post_mean": [0.2743748341615, 0.3927198033671, 1.885684655659],
+        "post_sd": [0.0313209820768, 0.02382353125303, 0.05327476632657],
+        "ci_lower": [0.2203513112523, 0.3475905123932, 1.783427841352],
+        "ci_upper": [0.3422602411721, 0.4415383367856, 1.99287718929]
+      }
+    },
+    "M5": {
+      "formula": "count ~ condition + context + (1+condition|subject) + (1|item)",
+      "engine": "brms",
+      "family": "negbin",
+      "converged": true,
+      "fit": {
+        "nobs": 4993,
+        "waic": 27517.831643066449,
+        "p_waic": 296.293986130447,
+        "se_waic": 138.069753786212,
+        "loo_ic": 27526.575074203418,
+        "p_loo": 300.665701698913,
+        "se_loo": 138.437187814973,
+        "max_pareto_k": 0.6238618461803
+      },
+      "fixef": {
+        "names": ["Intercept", "conditionprimed", "contextformal", "contextnarrative"],
+        "post_mean": [1.757413274386, 0.4563663880144, -0.3092028001824, -0.6269203437373],
+        "post_sd": [0.0547780009106, 0.03556522027758, 0.02919671128359, 0.03087500593909],
+        "ci_lower": [1.647853231592, 0.3866349799094, -0.3658217959543, -0.6872446016397],
+        "ci_upper": [1.863826609379, 0.5253886274903, -0.2522297215535, -0.5653588368937],
+        "pd": [1, 1, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|item)", "sd(Intercept|subject)", "sd(conditionprimed|subject)", "theta(NB)"],
+        "post_mean": [0.2721204599525, 0.4068911231819, 0.363978066298, 2.015441733307],
+        "post_sd": [0.03070617004228, 0.02827056720902, 0.03524892305488, 0.06001648481009],
+        "ci_lower": [0.2184272466818, 0.3540973893098, 0.2970426579415, 1.899154121366],
+        "ci_upper": [0.3389072509194, 0.4653859672045, 0.4349718642928, 2.135535921169]
+      }
+    }
+  }
+}

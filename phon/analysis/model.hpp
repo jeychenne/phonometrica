@@ -326,6 +326,14 @@ struct Model
 	};
 	Array<SmoothResult> smooth_terms;
 
+	// log10(λ) per penalty block, in the same order as the GCV inner loop
+	// (i.e. the order in which smooth_ranges were assembled — one entry per
+	// s() term, or one per by-level for by-factor smooths).  Empty for
+	// non-GAM models.  Populated by penalized_lm / penalized_glm at the end
+	// of the GCV search; preserved across save/load via the .phon-analysis
+	// serializer.
+	Array<double> smooth_log_lambda;
+
 	// ---- Design matrices (stored for predict/diagnostics) ----
 	// X: fixed-effects design matrix (nobs × nfixed), stored as 2D Array
 	Array<double> X;

@@ -528,6 +528,96 @@ m.resolve_data_path = function (rel as String)
 end
 
 # --------------------------------------------------------------------
+# check_gam — GAM-specific fit comparison.
+#
+# Reference shape (one GAM model entry):
+#
+#   "fit": { "nobs", "loglik", "aic", "r2_adj", "scale" }
+#   "fixef": { "names", "estimate", "se" }   (same shape as check_fit)
+#   "smooths": {                              (parallel arrays, one entry
+#     "names": ["s(duration)", ...],           per s() term in formula order)
+#     "edf":   [3.5, ...],
+#     "F":     [42.3, ...],                   (F for Gaussian; Chi.sq for GLM)
+#     "p":     [0.0001, ...]
+#   }
+
+m.check_gam = function (tag as String, model as Object, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_edf as Number)
+    let fit_ref = reference["fit"]
+
+    m.check_int(tag & " nobs", model.nobs, fit_ref["nobs"])
+    m.check_optional(tag & " loglik", model.loglik, fit_ref, "loglik", rtol_fit, 0.01)
+    m.check_optional(tag & " AIC",    model.aic,    fit_ref, "aic",    rtol_fit, 0.01)
+    m.check_optional(tag & " adj.R²", model.adj_r2, fit_ref, "r2_adj", rtol_fit, 0.001)
+    m.check_optional(tag & " scale",  model.rse,    fit_ref, "scale",  rtol_fit, 0.001)
+
+    # ── Fixed-effect estimates ──
+    if contains(reference, "fixef") and reference["fixef"] != null then
+        let fxref     = reference["fixef"]
+        let fx_names  = fxref["names"]
+        let fx_est    = fxref["estimate"]
+        let fx_se     = fxref["se"]
+        let coef_names = model.coef_names
+        let beta      = get_coef(model)
+        let se        = model.se
+        let var_names = m.extract_var_names(coef_names)
+        let n_fx = len(fx_names)
+        for i = 1 to n_fx do
+            let r_name    = fx_names[i]
+            let phon_name = m.r_to_phon_name(r_name, var_names)
+            let b_exp = fx_est[i]
+            let s_exp = fx_se[i]
+            let b_act = m.lookup_or_fail(tag & " β[" & r_name & "] lookup", coef_names, beta, phon_name)
+            let s_act = m.lookup_or_fail(tag & " SE[" & r_name & "] lookup", coef_names, se, phon_name)
+            if b_act != null and b_exp != null then
+                m.check(tag & " β[" & r_name & "]", b_act, b_exp, rtol_coef, 0.001)
+            end
+            if s_act != null and s_exp != null then
+                m.check(tag & " SE[" & r_name & "]", s_act, s_exp, rtol_coef, 0.001)
+            end
+        end
+    end
+
+    # ── Smooth terms: parallel arrays ──
+    if contains(reference, "smooths") and reference["smooths"] != null then
+        let sm_ref   = reference["smooths"]
+        let ref_names = sm_ref["names"]
+        let ref_edf   = sm_ref["edf"]
+        let ref_F     = sm_ref["F"]
+        let ref_p     = sm_ref["p"]
+        let n_ref = len(ref_names)
+
+        if model.n_smooth != n_ref then
+            m.record_fail(tag & " smooth count: got " & model.n_smooth & ", expected " & n_ref)
+        else
+            let act_edf = model.smooth_edf
+            let act_F   = model.smooth_F
+            let act_p   = model.smooth_p
+            for i = 1 to n_ref do
+                let sname = ref_names[i]
+                m.check(tag & " EDF[" & sname & "]", act_edf[i], ref_edf[i], rtol_edf, 0.2)
+                m.check(tag & " F[" & sname & "]",   act_F[i],   ref_F[i],   rtol_edf * 2, 1.0)
+            end
+        end
+    end
+end
+
+# fit_and_check_gam — fit a GAM in a try/catch wrapper, then run check_gam.
+m.fit_and_check_gam = function (tag as String, formula as String, data as Object, family as String, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_edf as Number)
+    let model = null
+    try
+        model = fit(formula, data, family)
+    catch err
+        m.record_fail(tag & ": fit() threw exception: " & err)
+        return
+    end
+    if model == null then
+        m.record_fail(tag & ": fit() returned null")
+        return
+    end
+    m.check_gam(tag, model, reference, rtol_fit, rtol_coef, rtol_edf)
+end
+
+# --------------------------------------------------------------------
 # load_reference — read a JSON reference file. Convenience wrapper
 # over read_file + load_json.
 # --------------------------------------------------------------------

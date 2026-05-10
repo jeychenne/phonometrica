@@ -1096,6 +1096,60 @@ void DataTable::initialize(Runtime &rt)
 				sds.append(model.rse);
 			return make_handle<Array<double>>(std::move(sds));
 		}
+
+		// ── Smooth terms (GAM only) ───────────────────────────────────────
+		// Parallel arrays, one entry per s() term in formula order.
+		// For by-factor smooths, entries appear in the same order as the
+		// by-levels (alphabetical, matching the model summary table).
+		if (key == "smooth_names")
+		{
+			Array<Variant> items;
+			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+			{
+				auto &sm = model.smooth_terms[i];
+				String label("s(");
+				label.append(sm.variable);
+				if (!sm.by.empty()) { label.append("):"); label.append(sm.by); }
+				else                  label.append(")");
+				items.append(std::move(label));
+			}
+			return make_handle<List>(&rt, std::move(items));
+		}
+		if (key == "smooth_edf")
+		{
+			Array<double> edfs;
+			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+				edfs.append(model.smooth_terms[i].edf);
+			return make_handle<Array<double>>(std::move(edfs));
+		}
+		if (key == "smooth_F")
+		{
+			Array<double> Fs;
+			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+				Fs.append(model.smooth_terms[i].F_stat);
+			return make_handle<Array<double>>(std::move(Fs));
+		}
+		if (key == "smooth_p")
+		{
+			Array<double> ps;
+			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+				ps.append(model.smooth_terms[i].p_value);
+			return make_handle<Array<double>>(std::move(ps));
+		}
+		if (key == "smooth_log_lambda")
+		{
+			// Return the per-penalty-block log10(λ) selected by the GCV
+			// inner loop (or supplied via PHON_DIAG_FIXED_LOG_LAMBDA).
+			// One entry per s() term, or one per by-level for by-factor
+			// smooths.  Empty for non-GAM models.
+			Array<double> lls;
+			for (intptr_t i = 1; i <= model.smooth_log_lambda.size(); i++)
+				lls.append(model.smooth_log_lambda[i]);
+			return make_handle<Array<double>>(std::move(lls));
+		}
+		if (key == "n_smooth")
+			return model.smooth_terms.size();
+
 		throw error("[Index error] Model type has no member named \"%\"", key);
 	};
 

@@ -67,6 +67,9 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/frequentist/test_negbin_owls.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_gam.phon</Path>
+			</Document>
 		</Directory>
 		<Directory label="bayesian">
 			<Document class="Script">
@@ -74,9 +77,6 @@
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_binomial.phon</Path>
-			</Document>
-			<Document class="Script">
-				<Path>$PHON_PROJECT/test/statistics/bayesian/test_beta.phon</Path>
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_negbin_owls.phon</Path>
@@ -89,6 +89,9 @@
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_real_schwa.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/test_beta.phon</Path>
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_student.phon</Path>

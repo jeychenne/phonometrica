@@ -1,0 +1,62 @@
+# =====================================================================
+# test_gam.phon — validates Phonometrica's GAM engine against
+# reference_gam.json (produced by gen_reference_gam.R using mgcv).
+# Dataset: test/data/gam_test.csv (already in the repo)
+#
+# Run from test/statistics/frequentist/  e.g.:
+#   cd test/statistics/frequentist
+#   phonometrica -r test_gam.phon
+# =====================================================================
+
+let A = import("../lib/assert")
+
+# Literal relative paths — avoid get_script_path, which isn't present
+# in older release binaries.  These work when the script is run from
+# test/statistics/frequentist/.
+
+let DATA = ""
+let REF  = ""
+try
+    DATA = A.resolve_data_path("gam_test.csv")
+    REF  = A.resolve_sibling("reference_gam.json")
+catch err
+    DATA = "../../data/gam_test.csv"
+    REF  = "reference_gam.json"
+end
+
+
+let refs_root = A.load_reference(REF)
+let refs      = refs_root["models"]
+let d         = load(DATA)
+
+
+let m5 = fit("y_count ~ s(duration, bs=cr, k=8)", d, "poisson")
+print "M5 niter:    " & m5.niter
+print "M5 converged:" & m5.converged
+print "M5 loglik:   " & m5.loglik
+print "M5 nobs:     " & m5.nobs
+print "M5 intercept:" & get_coef(m5)[1]
+print "M5 β count:  " & len(get_coef(m5))
+print "β: " & get_coef(m5)
+
+
+# A.start_section("GAM")
+# 
+# A.fit_and_check_gam("M1", "y_gauss ~ s(duration, bs=cr, k=10)", d, "gaussian", refs["M1"], 0.01, 0.02, 0.15)
+# 
+# A.fit_and_check_gam("M2", "y_gauss ~ vowel + s(duration, bs=cr, k=10)", d, "gaussian", refs["M2"], 0.01, 0.02, 0.15)
+# 
+# A.fit_and_check_gam("M3", "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "gaussian", refs["M3"], 0.01, 0.02, 0.15)
+# 
+# A.fit_and_check_gam("M4", "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)", d, "gaussian", refs["M4"], 0.01, 0.02, 0.20)
+# 
+# A.fit_and_check_gam("M5", "y_count ~ s(duration, bs=cr, k=8)", d, "poisson", refs["M5"], 0.02, 0.02, 0.15)
+# 
+# 
+# let m5 = fit("y_count ~ s(duration, bs=cr, k=8)", d, "poisson")
+# print "M5 Phonometrica log10(λ): " & m5.smooth_log_lambda
+# print "M5 EDF: " & m5.smooth_edf
+# print "M5 F (Chi.sq): " & m5.smooth_F
+# 
+# 
+# A.end_section()

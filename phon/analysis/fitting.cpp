@@ -1015,6 +1015,54 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 			}
 		}
 
+		// ── scale.penalty (mgcv default scale.penalty=TRUE) ──────────
+		//
+		// Rescale each slice's S so mean(|diag(S)|) ≈ mean(|diag(B'B)|),
+		// where B is the slice-specific (possibly zero-masked) basis.
+		// This makes log10(λ) values directly comparable to mgcv's
+		// m$sp and brings the natural-scale optimum inside the GCV
+		// grid range [−5, +5] used in regression.cpp.
+		//
+		// Per-slice (not per-formula-term) is essential: by-factor
+		// smooths share one underlying basis but each level's B is
+		// zero-masked, so the appropriate scale is set by that level's
+		// non-zero rows alone — matching mgcv's per-penalty-block
+		// scaling. Random-effect smooths (bs="re") skip rescaling, also
+		// matching mgcv (no.rescale=TRUE).
+		for (auto &sl : smooth_slices)
+		{
+			auto &sb = sl.basis;
+			if (sb.type == "re") continue;
+			intptr_t nr = sb.B.nrow();
+			intptr_t nc = sb.B.ncol();
+			if (nr == 0 || nc == 0) continue;
+			double mean_BtB = 0.0;
+			for (intptr_t j = 1; j <= nc; j++) {
+				double col_sq = 0.0;
+				for (intptr_t i = 1; i <= nr; i++) {
+					double v = sb.B(i, j);
+					col_sq += v * v;
+				}
+				mean_BtB += col_sq;
+			}
+			mean_BtB /= (double) nc;
+			double mean_S = 0.0;
+			intptr_t Sn = sb.S.nrow();
+			for (intptr_t j = 1; j <= Sn; j++) {
+				mean_S += std::abs(sb.S(j, j));
+			}
+			if (Sn > 0) mean_S /= (double) Sn;
+			if (mean_BtB > 0.0 && mean_S > 0.0)
+			{
+				double scale = mean_BtB / mean_S;
+				for (intptr_t i = 1; i <= Sn; i++) {
+					for (intptr_t j = 1; j <= Sn; j++) {
+						sb.S(i, j) *= scale;
+					}
+				}
+			}
+		}
+
 		// Total augmented dimension.
 		intptr_t p_total = n_parametric;
 		for (auto &sl : smooth_slices) {

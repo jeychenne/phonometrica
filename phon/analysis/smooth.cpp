@@ -343,6 +343,11 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k)
 
 	auto absorbed = absorb_constraint(B_raw, cm.S);
 
+	// Note: scale.penalty (mgcv's default) is applied per-slice in
+	// fitting.cpp, not here.  For by-factor smooths each slice has a
+	// zero-masked B with effective row count = n_level, so the scale
+	// must be computed against THAT B and not the full-data B.
+
 	// ── Pack into SmoothBasis ────────────────────────────────────────
 
 	SmoothBasis sb;

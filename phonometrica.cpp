@@ -80,6 +80,26 @@ static bool argv_is_script_invocation(int argc, char **argv)
 }
 #endif
 
+// register_script_api — subset of initialize() that is safe to call
+// without QApplication. Registers the scripting type system and global
+// functions (load, fit, compare, ...) so script-interpreter mode can
+// run scripts that use the full data/stats API. Does NOT touch:
+//   - Settings I/O (no config file read/write)
+//   - Audio device probing (no RtAudio sound-format setup)
+//   - Bundled .phon initialization scripts (signal, speech_analysis, ...)
+// All Qt resource access through QResource works without QApplication
+// because compiled-in resources are registered automatically at static
+// init time.
+static void register_script_api(Runtime &rt)
+{
+#ifdef PHON_GUI
+	rt["phon"] = make_handle<Module>(&rt, "phon");
+	Project::preinitialize(rt);
+	Project::create(rt);
+	Project::initialize(rt);
+#endif
+}
+
 static void initialize(Runtime &rt)
 {
 #ifdef PHON_GUI
@@ -95,13 +115,9 @@ static void initialize(Runtime &rt)
         return {bytes.constData(), bytes.size()};
     };
 
-	rt["phon"] = make_handle<Module>(&rt, "phon");
+	register_script_api(rt);
 	Settings::initialize(&rt);
 	Settings::read();
-
-	Project::preinitialize(rt);
-	Project::create(rt);
-	Project::initialize(rt);
 
 	Sound::set_sound_formats();
 
@@ -133,6 +149,13 @@ int main(int argc, char **argv)
 	{
 		Runtime runtime(argv[0]);
 		runtime.set_text_mode(true);
+
+		// Register the scripting API (data/stats/document) so scripts run
+		// from the command line have access to load(), fit(), compare(),
+		// and the full type system. This is a subset of the full GUI
+		// initialize() that omits settings I/O, audio device probing, and
+		// bundled .phon scripts (none of which a script-runner needs).
+		register_script_api(runtime);
 
 		int error_code = 0;
 
