@@ -8,8 +8,9 @@
  *
  * This file includes low-pass FIR filter generator and filter cache.
  *
- * r8brain-free-src Copyright (c) 2013-2019 Aleksey Vaneev
- * See the "License.txt" file for license.
+ * r8brain-free-src Copyright (c) 2013-2025 Aleksey Vaneev
+ *
+ * See the "LICENSE" file for license.
  */
 
 #ifndef R8B_CDSPFIRFILTER_INCLUDED
@@ -21,28 +22,28 @@
 namespace r8b {
 
 /**
- * Enumeration of filter's phase responses.
+ * @brief Enumeration of filter's phase responses.
  */
 
 enum EDSPFilterPhaseResponse
 {
-	fprLinearPhase = 0, ///< Linear-phase response. Features a linear-phase
-		///< high-latency response, with the latency expressed as integer
+	fprLinearPhase = 0, ///< Linear-phase response. Features a linear-phase,
+		///< high-latency response, with the latency expressed as an integer
 		///< value.
-		///<
-	fprMinPhase ///< Minimum-phase response. Features a minimal latency
+	fprMinPhase ///< Minimum-phase response. Features a minimal-latency
 		///< response, but the response's phase is non-linear. The latency is
-		///< usually expressed as non-integer value, and usually is small, but
-		///< is never equal to zero. The minimum-phase filter is transformed
-		///< from the linear-phase filter. The transformation has precision
-		///< limits which may skew both the -3 dB point and attenuation of the
-		///< filter being transformed: as it was measured, the skew happens
-		///< purely at random, and in most cases it is within tolerable range.
-		///< In a small (1%) random subset of cases the skew is bigger and
-		///< cannot be predicted. Minimum-phase transform requires 64-bit
-		///< floating point FFT precision, results with 32-bit float FFT are
-		///< far from optimal.
-		///<
+		///< usually expressed as a non-integer value, and is usually small,
+		///< but is never equal to zero. The minimum-phase filter is obtained
+		///< from a linear-phase filter. Note that since in the context of
+		///< r8brain-free-src other filters (interpolation, half-band) remain
+		///< linear-phase, the resulting phase will be "intermediate". The
+		///< minimum-phase transformation has precision limits: this may skew
+		///< both the -3 dB point and attenuation of the filter being
+		///< transformed: as it was measured, the skew happens purely at
+		///< random, and in most cases is within tolerable range. In a small
+		///< (1%) random subset of cases the skew is bigger and cannot be
+		///< predicted. Minimum-phase transform requires 64-bit floating-point
+		///< FFT; results with 32-bit float FFT are far from optimal.
 };
 
 /**
@@ -56,7 +57,7 @@ enum EDSPFilterPhaseResponse
 
 class CDSPFIRFilter : public R8B_BASECLASS
 {
-	R8BNOCTOR( CDSPFIRFilter );
+	R8BNOCTOR( CDSPFIRFilter )
 
 	friend class CDSPFIRFilterCache;
 
@@ -69,8 +70,8 @@ public:
 	}
 
 	/**
-	 * @return The minimal allowed low-pass filter's transition band, in
-	 * percent.
+	 * @brief Returns the minimal allowed low-pass filter's transition band,
+	 * in percent.
 	 */
 
 	static double getLPMinTransBand()
@@ -79,8 +80,8 @@ public:
 	}
 
 	/**
-	 * @return The maximal allowed low-pass filter's transition band, in
-	 * percent.
+	 * @brief Returns the maximal allowed low-pass filter's transition band,
+	 * in percent.
 	 */
 
 	static double getLPMaxTransBand()
@@ -89,8 +90,8 @@ public:
 	}
 
 	/**
-	 * @return The minimal allowed low-pass filter's stop-band attenuation, in
-	 * decibel.
+	 * @brief Returns the minimal allowed low-pass filter's stop-band
+	 * attenuation, in decibel.
 	 */
 
 	static double getLPMinAtten()
@@ -99,8 +100,8 @@ public:
 	}
 
 	/**
-	 * @return The maximal allowed low-pass filter's stop-band attenuation, in
-	 * decibel.
+	 * @brief Returns the maximal allowed low-pass filter's stop-band
+	 * attenuation, in decibel.
 	 */
 
 	static double getLPMaxAtten()
@@ -109,7 +110,8 @@ public:
 	}
 
 	/**
-	 * @return "True" if kernel block of *this filter has zero-phase response.
+	 * @brief Returns `true` if kernel block of *this* filter has zero-phase
+	 * response.
 	 */
 
 	bool isZeroPhase() const
@@ -118,7 +120,7 @@ public:
 	}
 
 	/**
-	 * @return Filter's latency, in samples (integer part).
+	 * @brief Returns filter's latency, in samples (integer part).
 	 */
 
 	int getLatency() const
@@ -127,8 +129,8 @@ public:
 	}
 
 	/**
-	 * @return Filter's latency, in samples (fractional part). Always zero for
-	 * linear-phase filters.
+	 * @brief Returns filter's latency, in samples (fractional part). Always
+	 * zero for linear-phase filters.
 	 */
 
 	double getLatencyFrac() const
@@ -137,8 +139,8 @@ public:
 	}
 
 	/**
-	 * @return Filter kernel length, in samples. Not to be confused with the
-	 * block length.
+	 * @brief Returns filter kernel length, in samples. Not to be confused
+	 * with the block length.
 	 */
 
 	int getKernelLen() const
@@ -147,8 +149,8 @@ public:
 	}
 
 	/**
-	 * @return Filter's block length, espressed as Nth power of 2. The actual
-	 * length is twice as large due to zero-padding.
+	 * @brief Returns filter's block length, expressed as Nth power of 2.
+	 * The actual length is twice as large due to zero-padding.
 	 */
 
 	int getBlockLenBits() const
@@ -157,11 +159,13 @@ public:
 	}
 
 	/**
-	 * @return Filter's kernel block, in complex-numbered form obtained via
-	 * the CDSPRealFFT::forward() function call, zero-padded, gain-adjusted
-	 * with the CDSPRealFFT::getInvMulConst() * ReqGain constant, immediately
-	 * suitable for convolution. Kernel block may have "zero-phase" response,
-	 * depending on the isZeroPhase() function's result.
+	 * @brief Returns pointer to filter's kernel block, in complex-numbered
+	 * form obtained via the CDSPRealFFT::forward() function call.
+	 *
+	 * Zero-padded, gain-adjusted with the CDSPRealFFT::getInvMulConst()
+	 * multiplied by `ReqGain` constant, immediately suitable for convolution.
+	 * Kernel block may have "zero-phase" response, depending on the
+	 * isZeroPhase() function's result.
 	 */
 
 	const double* getKernelBlock() const
@@ -170,47 +174,36 @@ public:
 	}
 
 	/**
-	 * This function should be called when the filter obtained via the
-	 * filter cache is no longer needed.
+	 * @brief Reduces reference count to *this* object.
+	 *
+	 * This function should be called when the filter obtained via the filter
+	 * cache is no longer needed.
 	 */
 
 	void unref();
 
 private:
 	double ReqNormFreq; ///< Required normalized frequency, 0 to 1 inclusive.
-		///<
 	double ReqTransBand; ///< Required transition band in percent, as passed
 		///< by the user.
-		///<
 	double ReqAtten; ///< Required stop-band attenuation in decibel, as passed
 		///< by the user (positive value).
-		///<
 	EDSPFilterPhaseResponse ReqPhase; ///< Required filter's phase response.
-		///<
 	double ReqGain; ///< Required overall filter's gain.
-		///<
 	CDSPFIRFilter* Next; ///< Next FIR filter in cache's list.
-		///<
-	int RefCount; ///< The number of references made to *this FIR filter.
-		///<
-	bool IsZeroPhase; ///< "True" if kernel block of *this filter has
+	int RefCount; ///< The number of references made to *this* FIR filter.
+	bool IsZeroPhase; ///< `true` if kernel block of *this* filter has
 		///< zero-phase response.
-		///<
 	int Latency; ///< Filter's latency in samples (integer part).
-		///<
 	double LatencyFrac; ///< Filter's latency in samples (fractional part).
-		///<
 	int KernelLen; ///< Filter kernel length, in samples.
-		///<
-	int BlockLenBits; ///< Block length used to store *this FIR filter,
+	int BlockLenBits; ///< Block length used to store *this* FIR filter,
 		///< expressed as Nth power of 2. This value is used directly by the
 		///< convolver.
-		///<
 	CFixedBuffer< double > KernelBlock; ///< FIR filter buffer, capacity
-		///< equals to 1 << ( BlockLenBits + 1 ). Second part of the buffer
+		///< equals to `1 << ( BlockLenBits + 1 )`. Second half of the buffer
 		///< contains zero-padding to allow alias-free convolution.
-		///< Memory-aligned.
-		///<
+		///< Address-aligned.
 
 	CDSPFIRFilter()
 		: RefCount( 1 )
@@ -218,7 +211,7 @@ private:
 	}
 
 	/**
-	 * Function builds filter kernel based on the "Req" parameters.
+	 * @brief Builds filter kernel based on the "Req" parameters.
 	 *
 	 * @param ExtAttenCorrs External attentuation correction table, for
 	 * internal use.
@@ -290,7 +283,7 @@ private:
 
 		AttenCorr = min( AttenCorrCount, max( 0, AttenCorr ));
 
-		if( ExtAttenCorrs != NULL )
+		if( ExtAttenCorrs != R8B_NULL )
 		{
 			atten -= ExtAttenCorrs[ AttenCorr ];
 		}
@@ -461,7 +454,7 @@ private:
 		CDSPSincFilterGen sinc;
 		sinc.Len2 = 0.25 * hl / ReqNormFreq;
 		sinc.Freq1 = 0.0;
-		sinc.Freq2 = M_PI * ( 1.0 - fo1 ) * ReqNormFreq;
+		sinc.Freq2 = R8B_PI * ( 1.0 - fo1 ) * ReqNormFreq;
 		sinc.initBand( CDSPSincFilterGen :: wftKaiser, WinParams, true );
 
 		KernelLen = sinc.KernelLen;
@@ -520,7 +513,11 @@ private:
 			}
 
 			memset( &KernelBlock[ sinc.fl2 + 1 ], 0,
-				( BlockLen * 2 - KernelLen ) * sizeof( double ));
+				(size_t) ( BlockLen * 2 - KernelLen ) *
+				sizeof( KernelBlock[ 0 ]));
+
+			ffto -> forward( KernelBlock );
+			ffto -> convertToZP( KernelBlock );
 		}
 		else
 		{
@@ -528,14 +525,10 @@ private:
 				ffto -> getInvMulConst() * ReqGain );
 
 			memset( &KernelBlock[ KernelLen ], 0,
-				( BlockLen * 2 - KernelLen ) * sizeof( double ));
-		}
+				(size_t) ( BlockLen * 2 - KernelLen ) *
+				sizeof( KernelBlock[ 0 ]));
 
-		ffto -> forward( KernelBlock );
-
-		if( IsZeroPhase )
-		{
-			ffto -> convertToZ( KernelBlock );
+			ffto -> forward( KernelBlock );
 		}
 
 		R8BCONSOLE( "CDSPFIRFilter: flt_len=%i latency=%i nfreq=%.4f "
@@ -553,36 +546,38 @@ private:
 
 class CDSPFIRFilterCache : public R8B_BASECLASS
 {
-	R8BNOCTOR( CDSPFIRFilterCache );
+	R8BNOCTOR( CDSPFIRFilterCache )
 
 	friend class CDSPFIRFilter;
 
 public:
 	/**
-	 * @return The number of filters present in the cache now. This value can
-	 * be monitored for debugging "forgotten" filters.
+	 * @brief Returns the number of filters present in the cache now. This
+	 * value can be monitored for debugging "forgotten" filters.
 	 */
 
 	static int getObjCount()
 	{
-		R8BSYNC( StateSync );
+		R8BSYNC( getStateSync() );
 
-		return( ObjCount );
+		return( getObjCountStatic() );
 	}
 
 	/**
-	 * Function calculates or returns reference to a previously calculated
-	 * (cached) low-pass FIR filter. Note that the real transition band and
-	 * attenuation achieved by the filter varies with the magnitude of the
-	 * required attenuation, and are never 100% exact.
+	 * @brief Calculates or returns reference to a previously calculated
+	 * (cached) low-pass FIR filter.
+	 *
+	 * Note that the real transition band and attenuation achieved by the
+	 * filter varies with the magnitude of the required attenuation, and are
+	 * never 100% exact.
 	 *
 	 * @param ReqNormFreq Required normalized frequency, in the range 0 to 1,
 	 * inclusive. This is the point after which the stop-band spans.
 	 * @param ReqTransBand Required transition band, in percent of the
-	 * 0 to ReqNormFreq spectral bandwidth, in the range
+	 * 0 to `ReqNormFreq` spectral bandwidth, in the range
 	 * CDSPFIRFilter::getLPMinTransBand() to
 	 * CDSPFIRFilter::getLPMaxTransBand(), inclusive. The transition band
-	 * specifies the part of the spectrum between the -3 dB and ReqNormFreq
+	 * specifies the part of the spectrum between the -3 dB and `ReqNormFreq`
 	 * points. The real resulting -3 dB point varies in the range from -3.00
 	 * to -3.05 dB, but is generally very close to -3 dB.
 	 * @param ReqAtten Required stop-band attenuation in decibel, in the range
@@ -593,6 +588,7 @@ public:
 	 * @param ReqGain Required overall filter's gain (1.0 for unity gain).
 	 * @param AttenCorrs Attentuation correction table, to pass to the filter
 	 * generation function. For internal use.
+	 * @see EDSPFilterPhaseResponse
 	 * @return A reference to a new or a previously calculated low-pass FIR
 	 * filter object with the required characteristics. A reference count is
 	 * incremented in the returned filter object which should be released
@@ -602,7 +598,7 @@ public:
 	static CDSPFIRFilter& getLPFilter( const double ReqNormFreq,
 		const double ReqTransBand, const double ReqAtten,
 		const EDSPFilterPhaseResponse ReqPhase, const double ReqGain,
-		const double* const AttenCorrs = NULL )
+		const double* const AttenCorrs = R8B_NULL )
 	{
 		R8BASSERT( ReqNormFreq > 0.0 && ReqNormFreq <= 1.0 );
 		R8BASSERT( ReqTransBand >= CDSPFIRFilter :: getLPMinTransBand() );
@@ -611,29 +607,34 @@ public:
 		R8BASSERT( ReqAtten <= CDSPFIRFilter :: getLPMaxAtten() );
 		R8BASSERT( ReqGain > 0.0 );
 
-		R8BSYNC( StateSync );
+		R8B_EXITDTOR static CPtrKeeper< CDSPFIRFilter > Objects; // The chain
+			// of cached objects.
 
-		CDSPFIRFilter* PrevObj = NULL;
+		R8BSYNC( getStateSync() );
+
+		int& ObjCount = getObjCountStatic();
+		CDSPFIRFilter* PrevObj = R8B_NULL;
 		CDSPFIRFilter* CurObj = Objects;
 
-		while( CurObj != NULL )
+		while( CurObj != R8B_NULL )
 		{
 			if( CurObj -> ReqNormFreq == ReqNormFreq &&
 				CurObj -> ReqTransBand == ReqTransBand &&
+				CurObj -> ReqGain == ReqGain &&
 				CurObj -> ReqAtten == ReqAtten &&
-				CurObj -> ReqPhase == ReqPhase &&
-				CurObj -> ReqGain == ReqGain )
+				CurObj -> ReqPhase == ReqPhase )
 			{
 				break;
 			}
 
-			if( CurObj -> Next == NULL && ObjCount >= R8B_FILTER_CACHE_MAX )
+			if( CurObj -> Next == R8B_NULL &&
+				ObjCount >= R8B_FILTER_CACHE_MAX )
 			{
 				if( CurObj -> RefCount == 0 )
 				{
 					// Delete the last filter which is not used.
 
-					PrevObj -> Next = NULL;
+					PrevObj -> Next = R8B_NULL;
 					delete CurObj;
 					ObjCount--;
 				}
@@ -642,12 +643,12 @@ public:
 					// Move the last filter to the top of the list since it
 					// seems to be in use for a long time.
 
-					PrevObj -> Next = NULL;
+					PrevObj -> Next = R8B_NULL;
 					CurObj -> Next = Objects.unkeep();
 					Objects = CurObj;
 				}
 
-				CurObj = NULL;
+				CurObj = R8B_NULL;
 				break;
 			}
 
@@ -655,11 +656,11 @@ public:
 			CurObj = CurObj -> Next;
 		}
 
-		if( CurObj != NULL )
+		if( CurObj != R8B_NULL )
 		{
 			CurObj -> RefCount++;
 
-			if( PrevObj == NULL )
+			if( PrevObj == R8B_NULL )
 			{
 				return( *CurObj );
 			}
@@ -692,15 +693,29 @@ public:
 		return( *CurObj );
 	}
 
-private:
-	static CSyncObject StateSync; ///< Cache state synchronizer.
-		///<
-	static CPtrKeeper< CDSPFIRFilter* > Objects; ///< The chain of cached
-		///< objects.
-		///<
-	static int ObjCount; ///< The number of objects currently preset in the
-		///< cache.
-		///<
+protected:
+	/**
+	 * @brief Returns reference to filter cache sync object.
+	 */
+
+	static CSyncObject& getStateSync()
+	{
+		R8B_EXITDTOR static CSyncObject StateSync;
+
+		return( StateSync );
+	}
+
+	/**
+	 * @brief Returns reference to variable containing cache object count.
+	 */
+
+	static int& getObjCountStatic()
+	{
+		R8B_EXITDTOR static int ObjCount = 0; // The number of objects
+			// currently preset in the cache.
+
+		return( ObjCount );
+	}
 };
 
 // ---------------------------------------------------------------------------
@@ -709,7 +724,7 @@ private:
 
 inline void CDSPFIRFilter :: unref()
 {
-	R8BSYNC( CDSPFIRFilterCache :: StateSync );
+	R8BSYNC( CDSPFIRFilterCache :: getStateSync() );
 
 	RefCount--;
 }

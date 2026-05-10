@@ -38,7 +38,7 @@ set(PHON_VERSION_DEVEL 0)
 
 set(PHON_RELEASE_DATE_YEAR  2026)
 set(PHON_RELEASE_DATE_MONTH 5)
-set(PHON_RELEASE_DATE_DAY   7)
+set(PHON_RELEASE_DATE_DAY   10)
 
 add_definitions(
     -DPHON_VERSION_MAJOR=${PHON_VERSION_MAJOR}
@@ -221,7 +221,6 @@ if(WITH_APPLICATION)
         phon/third_party/pugixml/pugixml.cpp
         phon/third_party/rtaudio/RtAudio.cpp
         phon/third_party/sqlite/sqlite3.c
-        phon/third_party/r8brain/*.cpp
         phon/third_party/sptk4/*.cc
         phon/third_party/REAPER/core/*.cc
         phon/third_party/REAPER/epoch_tracker/*.cc

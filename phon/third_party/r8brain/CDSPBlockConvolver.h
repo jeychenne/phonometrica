@@ -8,8 +8,9 @@
  *
  * This file includes single-block overlap-save convolution processor class.
  *
- * r8brain-free-src Copyright (c) 2013-2019 Aleksey Vaneev
- * See the "License.txt" file for license.
+ * r8brain-free-src Copyright (c) 2013-2025 Aleksey Vaneev
+ *
+ * See the "LICENSE" file for license.
  */
 
 #ifndef R8B_CDSPBLOCKCONVOLVER_INCLUDED
@@ -39,22 +40,21 @@ class CDSPBlockConvolver : public CDSPProcessor
 {
 public:
 	/**
-	 * Constructor initializes internal variables and constants of *this
-	 * object.
+	 * @brief Initializes internal variables and constants of *this* object.
 	 *
 	 * @param aFilter Pre-calculated filter data. Reference to this object is
-	 * inhertied by *this object, and the object will be released when *this
+	 * inhertied by *this* object, and the object will be released when *this*
 	 * object is destroyed. If upsampling is used, filter's gain should be
 	 * equal to the upsampling factor.
-	 * @param aUpFactor The upsampling factor, positive value. E.g. value of 2
-	 * means 2x upsampling should be performed over the input data.
-	 * @param aDownFactor The downsampling factor, positive value. E.g. value
+	 * @param aUpFactor The upsampling factor, positive value. E.g., value of
+	 * 2 means 2x upsampling should be performed over the input data.
+	 * @param aDownFactor The downsampling factor, positive value. E.g., value
 	 * of 2 means 2x downsampling should be performed over the output data.
-	 * @param PrevLatency Latency, in samples (any value >=0), which was left
-	 * in the output signal by a previous process. This value is usually
-	 * non-zero if the minimum-phase filters are in use. This value is always
-	 * zero if the linear-phase filters are in use.
-	 * @param aDoConsumeLatency "True" if the output latency should be
+	 * @param PrevLatency Latency, in samples (any value greater or equal to
+	 * 0), which was left in the output signal by a previous process. This
+	 * value is usually non-zero if the minimum-phase filters are in use. This
+	 * value is always zero if the linear-phase filters are in use.
+	 * @param aDoConsumeLatency `true` if the output latency should be
 	 * consumed. Does not apply to the fractional part of the latency (if such
 	 * part is available).
 	 */
@@ -65,8 +65,8 @@ public:
 		: Filter( &aFilter )
 		, UpFactor( aUpFactor )
 		, DownFactor( aDownFactor )
-		, DoConsumeLatency( aDoConsumeLatency )
 		, BlockLen2( 2 << Filter -> getBlockLenBits() )
+		, DoConsumeLatency( aDoConsumeLatency )
 	{
 		R8BASSERT( UpFactor > 0 );
 		R8BASSERT( DownFactor > 0 );
@@ -102,7 +102,6 @@ public:
 
 		int fftoutBits;
 		InputDelay = 0;
-		UpSkipInit = 0;
 		DownSkipInit = 0;
 		DownShift = getBitOccupancy( DownFactor ) - 1;
 
@@ -157,6 +156,8 @@ public:
 			}
 		}
 
+		R8BASSERT( Latency >= 0 );
+
 		fftin = new CDSPRealFFTKeeper( fftinBits );
 
 		if( fftoutBits == fftinBits )
@@ -172,7 +173,7 @@ public:
 		WorkBlocks.alloc( BlockLen2 * 2 + PrevInputLen );
 		CurInput = &WorkBlocks[ 0 ];
 		CurOutput = &WorkBlocks[ BlockLen2 ]; // CurInput and
-			// CurOutput are memory-aligned.
+			// CurOutput are address-aligned.
 		PrevInput = &WorkBlocks[ BlockLen2 * 2 ];
 
 		clear();
@@ -186,6 +187,12 @@ public:
 	virtual ~CDSPBlockConvolver()
 	{
 		Filter -> unref();
+	}
+
+	virtual int getInLenBeforeOutPos( const int ReqOutPos ) const
+	{
+		return( (int) (( Latency + (double) ReqOutPos * DownFactor ) /
+			UpFactor + LatencyFrac * DownFactor / UpFactor ));
 	}
 
 	virtual int getLatency() const
@@ -207,7 +214,8 @@ public:
 
 	virtual void clear()
 	{
-		memset( &PrevInput[ 0 ], 0, PrevInputLen * sizeof( double ));
+		memset( &PrevInput[ 0 ], 0,
+			(size_t) PrevInputLen * sizeof( PrevInput[ 0 ]));
 
 		if( DoConsumeLatency )
 		{
@@ -219,23 +227,25 @@ public:
 
 			if( DownShift > 0 )
 			{
-				memset( &CurOutput[ 0 ], 0, ( BlockLen2 >> DownShift ) *
-					sizeof( double ));
+				memset( &CurOutput[ 0 ], 0,
+					(size_t) ( BlockLen2 >> DownShift ) *
+					sizeof( CurOutput[ 0 ]));
 			}
 			else
 			{
-				memset( &CurOutput[ BlockLen2 - OutOffset ], 0, OutOffset *
-					sizeof( double ));
+				memset( &CurOutput[ BlockLen2 - OutOffset ], 0,
+					(size_t) OutOffset * sizeof( CurOutput[ 0 ]));
 
-				memset( &CurOutput[ 0 ], 0, ( InputLen - OutOffset ) *
-					sizeof( double ));
+				memset( &CurOutput[ 0 ], 0,
+					(size_t) ( InputLen - OutOffset ) *
+					sizeof( CurOutput[ 0 ]));
 			}
 		}
 
-		memset( CurInput, 0, InputDelay * sizeof( double ));
+		memset( CurInput, 0, (size_t) InputDelay * sizeof( CurInput[ 0 ]));
 
 		InDataLeft = InputLen - InputDelay;
-		UpSkip = UpSkipInit;
+		UpSkip = 0;
 		DownSkip = DownSkipInit;
 	}
 
@@ -259,7 +269,7 @@ public:
 				if( UpShift >= 0 )
 				{
 					memcpy( &CurInput[ Offs >> UpShift ], ip,
-						( l >> UpShift ) * sizeof( double ));
+						(size_t) ( l >> UpShift ) * sizeof( CurInput[ 0 ]));
 				}
 				else
 				{
@@ -279,7 +289,7 @@ public:
 			{
 				const int bu = b >> UpShift;
 				memcpy( &CurInput[ Offs >> UpShift ], ip,
-					bu * sizeof( double ));
+					(size_t) bu * sizeof( CurInput[ 0 ]));
 
 				ip += bu;
 				ilu = InputLen >> UpShift;
@@ -290,7 +300,7 @@ public:
 				ilu = InputLen;
 			}
 
-			const int pil = (int) ( PrevInputLen * sizeof( double ));
+			const size_t pil = (size_t) PrevInputLen * sizeof( CurInput[ 0 ]);
 			memcpy( &CurInput[ ilu ], PrevInput, pil );
 			memcpy( PrevInput, &CurInput[ ilu - PrevInputLen ], pil );
 
@@ -307,7 +317,7 @@ public:
 
 			if( Filter -> isZeroPhase() )
 			{
-				(*fftout) -> multiplyBlocksZ( Filter -> getKernelBlock(),
+				(*fftout) -> multiplyBlocksZP( Filter -> getKernelBlock(),
 					CurInput );
 			}
 			else
@@ -345,78 +355,53 @@ public:
 
 private:
 	CDSPFIRFilter* Filter; ///< Filter in use.
-		///<
-	CPtrKeeper< CDSPRealFFTKeeper* > fftin; ///< FFT object 1, used to produce
+	CPtrKeeper< CDSPRealFFTKeeper > fftin; ///< FFT object 1, used to produce
 		///< the input spectrum (can embed the "power of 2" upsampling).
-		///<
-	CPtrKeeper< CDSPRealFFTKeeper* > ffto2; ///< FFT object 2 (can be NULL).
-		///<
+	CPtrKeeper< CDSPRealFFTKeeper > ffto2; ///< FFT object 2 (can be
+		///< `nullptr`).
 	CDSPRealFFTKeeper* fftout; ///< FFT object used to produce the output
 		///< signal (can embed the "power of 2" downsampling), may point to
-		///< either "fftin" or "ffto2".
-		///<
+		///< either `fftin` or `ffto2`.
 	int UpFactor; ///< Upsampling factor.
-		///<
 	int DownFactor; ///< Downsampling factor.
-		///<
-	bool DoConsumeLatency; ///< "True" if the output latency should be
-		///< consumed. Does not apply to the fractional part of the latency
-		///< (if such part is available).
-		///<
-	int BlockLen2; ///< Equals block length * 2.
-		///<
+	int BlockLen2; ///< Equals `block length * 2`.
 	int OutOffset; ///< Output offset, depends on filter's introduced latency.
-		///<
 	int PrevInputLen; ///< The length of previous input data saved, used for
 		///< overlap.
-		///<
 	int InputLen; ///< The number of input samples that should be accumulated
 		///< before the input block is processed.
-		///<
-	int Latency; ///< Processing latency, in samples.
-		///<
 	double LatencyFrac; ///< Fractional latency, in samples, that is left in
 		///< the output signal.
-		///<
-	int UpShift; ///< "Power of 2" upsampling shift. Equals -1 if UpFactor is
-		///< not a "power of 2" value. Equals 0 if UpFactor equals 1.
-		///<
+	int Latency; ///< Processing latency, in samples.
+	int UpShift; ///< "Power of 2" upsampling shift. Equals -1 if `UpFactor`
+		///< is not a "power of 2" value. Equals 0 if `UpFactor` equals 1.
 	int DownShift; ///< "Power of 2" downsampling shift. Equals -1 if
-		///< DownFactor is not a "power of 2". Equals 0 if DownFactor equals
-		///< 1.
-		///<
+		///< `DownFactor` is not a "power of 2". Equals 0 if `DownFactor`
+		///< equals 1.
 	int InputDelay; ///< Additional input delay, in samples. Used to make the
-		///< output delay divisible by DownShift. Used only if UpShift <= 0
-		///< and DownShift > 0.
-		///<
-	CFixedBuffer< double > WorkBlocks; ///< Previous input data, input and
-		///< output data blocks, overall capacity = BlockLen2 * 2 +
-		///< PrevInputLen. Used in the flip-flop manner.
-		///<
-	double* PrevInput; ///< Previous input data buffer, capacity = BlockLen.
-		///<
-	double* CurInput; ///< Input data buffer, capacity = BlockLen2.
-		///<
-	double* CurOutput; ///< Output data buffer, capacity = BlockLen2.
-		///<
+		///< output delay divisible by `DownShift`. Used only if `UpShift` is
+		///< non-positive and `DownShift` is greater than 0.
+	double* PrevInput; ///< Previous input data buffer, capacity = `BlockLen`.
+	double* CurInput; ///< Input data buffer, capacity = `BlockLen2`.
+	double* CurOutput; ///< Output data buffer, capacity = `BlockLen2`.
 	int InDataLeft; ///< Samples left before processing input and output FFT
-		///< blocks. Initialized to InputLen on clear.
-		///<
+		///< blocks. Initialized to `InputLen` on clear.
 	int LatencyLeft; ///< Latency in samples left to skip.
-		///<
 	int UpSkip; ///< The current upsampling sample skip (value in the range
-		///< 0 to UpFactor - 1).
-		///<
-	int UpSkipInit; ///< The initial UpSkip value after clear().
-		///<
+		///< 0 to `UpFactor - 1`).
 	int DownSkip; ///< The current downsampling sample skip (value in the
-		///< range 0 to DownFactor - 1). Not used if DownShift > 0.
-		///<
-	int DownSkipInit; ///< The initial DownSkip value after clear().
-		///<
+		///< range 0 to `DownFactor - 1`). Not used if `DownShift` is
+		///< positive.
+	int DownSkipInit; ///< The initial `DownSkip` value after clear().
+	CFixedBuffer< double > WorkBlocks; ///< Previous input data, input and
+		///< output data blocks, overall capacity = `BlockLen2 * 2 +
+		///< PrevInputLen`. Used in the flip-flop manner.
+	bool DoConsumeLatency; ///< `true` if the output latency should be
+		///< consumed. Does not apply to the fractional part of the latency
+		///< (if such part is available).
 
 	/**
-	 * Function copies samples from the input buffer to the output buffer
+	 * @brief Copies samples from the input buffer to the output buffer
 	 * while inserting zeros inbetween them to perform the whole-numbered
 	 * upsampling.
 	 *
@@ -430,30 +415,29 @@ private:
 	{
 		int b = min( UpSkip, l0 );
 
-		if( b > 0 )
+		if( b != 0 )
 		{
-			l0 -= b;
 			UpSkip -= b;
+			l0 -= b;
+
 			*op = 0.0;
 			op++;
-			b--;
 
-			while( b > 0 )
+			while( --b != 0 )
 			{
 				*op = 0.0;
 				op++;
-				b--;
 			}
 		}
 
 		double* ip = ip0;
-		int l = l0 / UpFactor;
-		int lz = l0 - l * UpFactor;
 		const int upf = UpFactor;
+		int l = l0 / upf;
+		int lz = l0 - l * upf;
 
 		if( upf == 3 )
 		{
-			while( l > 0 )
+			while( l != 0 )
 			{
 				op[ 0 ] = *ip;
 				op[ 1 ] = 0.0;
@@ -466,7 +450,7 @@ private:
 		else
 		if( upf == 5 )
 		{
-			while( l > 0 )
+			while( l != 0 )
 			{
 				op[ 0 ] = *ip;
 				op[ 1 ] = 0.0;
@@ -480,34 +464,31 @@ private:
 		}
 		else
 		{
-			while( l > 0 )
+			const size_t zc = (size_t) ( upf - 1 ) * sizeof( op[ 0 ]);
+
+			while( l != 0 )
 			{
-				op[ 0 ] = *ip;
-				int j;
-
-				for( j = 1; j < upf; j++ )
-				{
-					op[ j ] = 0.0;
-				}
-
+				*op = *ip;
 				ip++;
+
+				memset( op + 1, 0, zc );
 				op += upf;
 				l--;
 			}
 		}
 
-		if( lz > 0 )
+		if( lz != 0 )
 		{
 			*op = *ip;
-			op++;
 			ip++;
-			UpSkip = UpFactor - lz;
+			op++;
 
-			while( lz > 1 )
+			UpSkip = upf - lz;
+
+			while( --lz != 0 )
 			{
 				*op = 0.0;
 				op++;
-				lz--;
 			}
 		}
 
@@ -515,9 +496,11 @@ private:
 	}
 
 	/**
-	 * Function copies sample data from the CurOutput buffer to the specified
-	 * output buffer and advances its position. If necessary, this function
-	 * "consumes" latency and performs downsampling.
+	 * @brief Copies sample data from the CurOutput buffer to the specified
+	 * output buffer and advances its position.
+	 *
+	 * If necessary, this function "consumes" latency and performs
+	 * downsampling.
 	 *
 	 * @param Offs CurOutput buffer offset, can be negative.
 	 * @param[out] op0 Output buffer pointer, will be advanced.
@@ -542,7 +525,7 @@ private:
 			}
 		}
 
-		if( LatencyLeft > 0 )
+		if( LatencyLeft != 0 )
 		{
 			if( LatencyLeft >= b )
 			{
@@ -572,7 +555,7 @@ private:
 			{
 				b = ( b + df - 1 ) >> DownShift;
 				memcpy( op0, &CurOutput[ Offs >> DownShift ],
-					b * sizeof( double ));
+					(size_t) b * sizeof( op0[ 0 ]));
 
 				op0 += b;
 				l0 += b;
@@ -593,14 +576,16 @@ private:
 				while( l > 0 )
 				{
 					*op = *ip;
-					op++;
 					ip += df;
+					op++;
 					l--;
 				}
 			}
 			else
 			{
-				memcpy( op0, &CurOutput[ Offs ], b * sizeof( double ));
+				memcpy( op0, &CurOutput[ Offs ],
+					(size_t) b * sizeof( op0[ 0 ]));
+
 				op0 += b;
 				l0 += b;
 			}
@@ -608,14 +593,17 @@ private:
 	}
 
 	/**
-	 * Function performs input spectrum mirroring which is used to perform a
-	 * fast "power of 2" upsampling. Such mirroring is equivalent to insertion
-	 * of zeros into the input signal.
+	 * @brief Performs input spectrum mirroring which is used to perform a
+	 * fast "power of 2" upsampling.
+	 *
+	 * Such mirroring is equivalent to insertion of zeros into the input
+	 * signal.
 	 *
 	 * @param p Spectrum data block to mirror.
+	 * @tparam T Buffer's element type.
 	 */
 
-	template< class T >
+	template< typename T >
 	void mirrorInputSpectrum( T* const p )
 	{
 		const int bl1 = BlockLen2 >> UpShift;
@@ -629,14 +617,14 @@ private:
 		}
 
 		p[ bl1 ] = p[ 1 ];
-		p[ bl1 + 1 ] = 0.0;
+		p[ bl1 + 1 ] = (T) 0;
 		p[ 1 ] = p[ 0 ];
 
 		for( i = 1; i < UpShift; i++ )
 		{
 			const int z = bl1 << i;
-			memcpy( &p[ z ], p, z * sizeof( T ));
-			p[ z + 1 ] = 0.0;
+			memcpy( &p[ z ], p, (size_t) z * sizeof( p[ 0 ]));
+			p[ z + 1 ] = (T) 0;
 		}
 	}
 };

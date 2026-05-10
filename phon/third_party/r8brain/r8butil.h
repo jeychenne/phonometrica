@@ -9,8 +9,9 @@
  * This file includes several utility functions used by various utility
  * programs like "calcErrorTable.cpp".
  *
- * r8brain-free-src Copyright (c) 2013-2014 Aleksey Vaneev
- * See the "License.txt" file for license.
+ * r8brain-free-src Copyright (c) 2013-2025 Aleksey Vaneev
+ *
+ * See the "LICENSE" file for license.
  */
 
 #ifndef R8BUTIL_INCLUDED
@@ -21,6 +22,8 @@
 namespace r8b {
 
 /**
+ * @brief Converts complex response into magnitude in log scale.
+ *
  * @param re Real part of the frequency response.
  * @param im Imaginary part of the frequency response.
  * @return A magnitude response value converted from the linear scale to the
@@ -33,8 +36,8 @@ inline double convertResponseToLog( const double re, const double im )
 }
 
 /**
- * An utility function that performs frequency response scanning step update
- * based on the current magnitude response's slope.
+ * @brief An utility function that performs frequency response scanning step
+ * update based on the current magnitude response's slope.
  *
  * @param[in,out] step The current scanning step. Will be updated on
  * function's return. Must be a positive value.
@@ -64,9 +67,11 @@ inline void updateScanStep( double& step, const double curg,
 }
 
 /**
- * Function locates normalized frequency at which the minimum filter gain
- * is reached. The scanning is performed from lower (left) to higher
- * (right) frequencies, the whole range is scanned.
+ * @brief Locates normalized frequency at which the minimum filter gain is
+ * reached.
+ *
+ * The scanning is performed from lower (left) to higher (right) frequencies,
+ * the whole range is scanned.
  *
  * Function expects that the magnitude response is always reducing from lower
  * to high frequencies, starting at "minth".
@@ -88,7 +93,7 @@ inline void findFIRFilterResponseMinLtoR( const double* const flt,
 	double curth = minth;
 	double re;
 	double im;
-	calcFIRFilterResponse( flt, fltlen, M_PI * curth, re, im );
+	calcFIRFilterResponse( flt, fltlen, R8B_PI * curth, re, im );
 	double prevg_log = convertResponseToLog( re, im );
 	double step = 1e-11;
 
@@ -101,7 +106,7 @@ inline void findFIRFilterResponseMinLtoR( const double* const flt,
 			break;
 		}
 
-		calcFIRFilterResponse( flt, fltlen, M_PI * curth, re, im );
+		calcFIRFilterResponse( flt, fltlen, R8B_PI * curth, re, im );
 		const double curg = re * re + im * im;
 
 		if( curg > ming )
@@ -119,9 +124,11 @@ inline void findFIRFilterResponseMinLtoR( const double* const flt,
 }
 
 /**
- * Function locates normalized frequency at which the maximal filter gain
- * is reached. The scanning is performed from lower (left) to higher
- * (right) frequencies, the whole range is scanned.
+ * @brief Locates normalized frequency at which the maximal filter gain is
+ * reached.
+ *
+ * The scanning is performed from lower (left) to higher (right) frequencies,
+ * the whole range is scanned.
  *
  * Note: this function may "stall" in very rare cases if the magnitude
  * response happens to be "saw-tooth" like, requiring a very small stepping to
@@ -151,7 +158,7 @@ inline void findFIRFilterResponseMaxLtoR( const double* const flt,
 	double curth = maxth;
 	double re;
 	double im;
-	calcFIRFilterResponse( flt, fltlen, M_PI * curth, re, im );
+	calcFIRFilterResponse( flt, fltlen, R8B_PI * curth, re, im );
 	double prevg_log = convertResponseToLog( re, im );
 	double step = 1e-11;
 
@@ -167,7 +174,7 @@ inline void findFIRFilterResponseMaxLtoR( const double* const flt,
 			break;
 		}
 
-		calcFIRFilterResponse( flt, fltlen, M_PI * curth, re, im );
+		calcFIRFilterResponse( flt, fltlen, R8B_PI * curth, re, im );
 		const double curg = re * re + im * im;
 
 		if( curg > maxg )
@@ -204,7 +211,7 @@ inline void findFIRFilterResponseMaxLtoR( const double* const flt,
 					while( true )
 					{
 						const double c = ( l + r ) * 0.5;
-						calcFIRFilterResponse( flt, fltlen, M_PI * c,
+						calcFIRFilterResponse( flt, fltlen, R8B_PI * c,
 							re, im );
 
 						const double curg = re * re + im * im;
@@ -252,12 +259,14 @@ inline void findFIRFilterResponseMaxLtoR( const double* const flt,
 }
 
 /**
- * Function locates normalized frequency at which the specified maximum
- * filter gain is reached. The scanning is performed from higher (right)
- * to lower (left) frequencies, scanning stops when the required gain
- * value was crossed. Function uses an extremely efficient binary search and
- * thus expects that the magnitude response has the "main lobe" form produced
- * by windowing, with a minimal pass-band ripple.
+ * @brief Locates normalized frequency at which the specified maximum filter
+ * gain is reached.
+ *
+ * The scanning is performed from higher (right) to lower (left) frequencies,
+ * scanning stops when the required gain value was crossed. Function uses an
+ * extremely efficient binary search and thus expects that the magnitude
+ * response has the "main lobe" form produced by windowing, with a minimal
+ * pass-band ripple.
  *
  * @param flt Filter response.
  * @param fltlen Filter response's length in samples (taps).
@@ -287,7 +296,7 @@ inline void findFIRFilterResponseLevelRtoL( const double* const flt,
 
 		double re;
 		double im;
-		calcFIRFilterResponse( flt, fltlen, M_PI * c, re, im );
+		calcFIRFilterResponse( flt, fltlen, R8B_PI * c, re, im );
 		const double curg = re * re + im * im;
 
 		if( curg > maxg )

@@ -44,7 +44,12 @@
    CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
    SOFTWARE.
 */
-   
+/*
+   NOTE: This file is adapted from Julien Pommier's original PFFFT,
+   which works on 32 bit floating point precision using SSE instructions,
+   to work with 64 bit floating point precision using AVX instructions.
+   Author: Dario Mambro @ https://github.com/unevens/pffft
+*/
 /*
    PFFFT : a Pretty Fast FFT.
 
@@ -57,15 +62,15 @@
 
    Restrictions: 
 
-   - 1D transforms only, with 32-bit single precision.
+   - 1D transforms only, with 64-bit double precision.
 
    - supports only transforms for inputs of length N of the form
    N=(2^a)*(3^b)*(5^c), a >= 5, b >=0, c >= 0 (32, 48, 64, 96, 128,
    144, 160, etc are all acceptable lengths). Performance is best for
    128<=N<=8192.
 
-   - all (float*) pointers in the functions below are expected to
-   have an "simd-compatible" alignment, that is 16 bytes on x86 and
+   - all (double*) pointers in the functions below are expected to
+   have an "simd-compatible" alignment, that is 32 bytes on x86 and
    powerpc CPUs.
   
    You can allocate such buffers with the functions
@@ -74,11 +79,10 @@
 
 */
 
-#ifndef PFFFT_H
-#define PFFFT_H
+#ifndef PFFFT_DOUBLE_H
+#define PFFFT_DOUBLE_H
 
-#include <stddef.h> // for size_t
-#include <stdint.h> // Addition by AV.
+#include <stddef.h> /* for size_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -88,7 +92,10 @@ extern "C" {
      this struct can be shared by many threads as it contains only
      read-only data.  
   */
-  typedef struct PFFFT_Setup PFFFT_Setup;
+  typedef struct PFFFTD_Setup PFFFTD_Setup;
+
+#ifndef PFFFT_COMMON_ENUMS
+#define PFFFT_COMMON_ENUMS
 
   /* direction of the transform */
   typedef enum { PFFFT_FORWARD, PFFFT_BACKWARD } pffft_direction_t;
@@ -96,13 +103,15 @@ extern "C" {
   /* type of transform */
   typedef enum { PFFFT_REAL, PFFFT_COMPLEX } pffft_transform_t;
 
+#endif
+
   /*
     prepare for performing transforms of size N -- the returned
-    PFFFT_Setup structure is read-only so it can safely be shared by
+    PFFFTD_Setup structure is read-only so it can safely be shared by
     multiple concurrent threads. 
   */
-  PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform);
-  void pffft_destroy_setup(PFFFT_Setup *);
+  PFFFTD_Setup *pffftd_new_setup(int N, pffft_transform_t transform);
+  void pffftd_destroy_setup(PFFFTD_Setup *);
   /* 
      Perform a Fourier transform , The z-domain data is stored in the
      most efficient order for transforming it back, or using it for
@@ -115,13 +124,15 @@ extern "C" {
      Typically you will want to scale the backward transform by 1/N.
      
      The 'work' pointer should point to an area of N (2*N for complex
-     fft) floats, properly aligned. If 'work' is NULL, then stack will
+     fft) doubles, properly aligned. If 'work' is NULL, then stack will
      be used instead (this is probably the best strategy for small
-     FFTs, say for N < 16384).
+     FFTs, say for N < 16384). Threads usually have a small stack, that
+     there's no sufficient amount of memory, usually leading to a crash!
+     Use the heap with pffft_aligned_malloc() in this case.
 
      input and output may alias.
   */
-  void pffft_transform(PFFFT_Setup *setup, const float *input, float *output, float *work, pffft_direction_t direction);
+  void pffftd_transform(PFFFTD_Setup *setup, const double *input, double *output, double *work, pffft_direction_t direction);
 
   /* 
      Similar to pffft_transform, but makes sure that the output is
@@ -130,7 +141,7 @@ extern "C" {
      
      input and output may alias.
   */
-  void pffft_transform_ordered(PFFFT_Setup *setup, const float *input, float *output, float *work, pffft_direction_t direction);
+  void pffftd_transform_ordered(PFFFTD_Setup *setup, const double *input, double *output, double *work, pffft_direction_t direction);
 
   /* 
      call pffft_zreorder(.., PFFFT_FORWARD) after pffft_transform(...,
@@ -144,7 +155,7 @@ extern "C" {
      
      input and output should not alias.
   */
-  void pffft_zreorder(PFFFT_Setup *setup, const float *input, float *output, pffft_direction_t direction);
+  void pffftd_zreorder(PFFFTD_Setup *setup, const double *input, double *output, pffft_direction_t direction);
 
   /* 
      Perform a multiplication of the frequency components of dft_a and
@@ -158,21 +169,68 @@ extern "C" {
      
      The dft_a, dft_b and dft_ab pointers may alias.
   */
-  void pffft_zconvolve_accumulate(PFFFT_Setup *setup, const float *dft_a, const float *dft_b, float *dft_ab, float scaling);
+  void pffftd_zconvolve_accumulate(PFFFTD_Setup *setup, const double *dft_a, const double *dft_b, double *dft_ab, double scaling);
+
+  /* 
+     Perform a multiplication of the frequency components of dft_a and
+     dft_b and put result in dft_ab. The arrays should have
+     been obtained with pffft_transform(.., PFFFT_FORWARD) and should
+     *not* have been reordered with pffft_zreorder (otherwise just
+     perform the operation yourself as the dft coefs are stored as
+     interleaved complex numbers).
+
+     the operation performed is: dft_ab = (dft_a * fdt_b)*scaling
+
+     The dft_a, dft_b and dft_ab pointers may alias.
+  */
+  void pffftd_zconvolve_no_accu(PFFFTD_Setup *setup, const double *dft_a, const double *dft_b, double*dft_ab, double scaling);
+
+  /* return 4 or 1 wether support AVX instructions was enabled when building pffft-double.c */
+  int pffftd_simd_size();
+
+  /* return string identifier of used architecture (AVX/..) */
+  const char * pffftd_simd_arch();
+
+  /* simple helper to get minimum possible fft size */
+  int pffftd_min_fft_size(pffft_transform_t transform);
+
+  /* simple helper to determine size N is valid
+     - factorizable to pffft_min_fft_size() with factors 2, 3, 5
+  */
+  int pffftd_is_valid_size(int N, pffft_transform_t cplx);
+
+  /* determine nearest valid transform size  (by brute-force testing)
+     - factorizable to pffft_min_fft_size() with factors 2, 3, 5.
+     higher: bool-flag to find nearest higher value; else lower.
+  */
+  int pffftd_nearest_transform_size(int N, pffft_transform_t cplx, int higher);
+
+
+  /* following functions are identical to the pffft_ functions - both declared */
+
+  /* simple helper to determine next power of 2
+     - without inexact/rounding floating point operations
+  */
+  int pffftd_next_power_of_two(int N);
+  int pffft_next_power_of_two(int N);
+
+  /* simple helper to determine if power of 2 - returns bool */
+  int pffftd_is_power_of_two(int N);
+  int pffft_is_power_of_two(int N);
 
   /*
-    the float buffers must have the correct alignment (16-byte boundary
+    the double buffers must have the correct alignment (32-byte boundary
     on intel and powerpc). This function may be used to obtain such
     correctly aligned buffers.  
   */
+  void *pffftd_aligned_malloc(size_t nb_bytes);
   void *pffft_aligned_malloc(size_t nb_bytes);
+  void pffftd_aligned_free(void *);
   void pffft_aligned_free(void *);
-
-  /* return 4 or 1 wether support SSE/Altivec instructions was enable when building pffft.c */
-  int pffft_simd_size();
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif // PFFFT_H
+#endif /* PFFFT_DOUBLE_H */
+
