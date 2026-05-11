@@ -101,6 +101,8 @@ private slots:
 	void onSaveSummaryText();
 	void onSaveSummaryLatex();
 	void onEdaChanged();
+	void onEdaPlotTypeChanged();
+	void onCustomizeEda();
 	void onExportEdaPNG();
 	void onExportEdaPDF();
 	void onExportEdaSVG();
@@ -344,8 +346,72 @@ private:
 	QLabel *m_effects_message = nullptr;
 
 	// EDA tab
+	//
+	// Chart-first dispatch: the user picks a plot type up front; "Auto" preserves
+	// the original data-driven inference behavior bit-for-bit. Explicit choices
+	// constrain which variable slots are required (validation at render time,
+	// not at column-population time — see updateEdaPlot). Each new plot type
+	// adds one enum entry plus its own row in updateEdaPlot's dispatch.
+	enum class EdaPlotType
+	{
+		Auto = 0,
+		Histogram,
+		BarChart,
+		BoxPlot,
+		Scatter,
+		FormantChart
+	};
+	QLabel *m_eda_plot_type_label = nullptr;
+	QComboBox *m_eda_plot_type_combo = nullptr;
+	EdaPlotType m_last_eda_plot_type = EdaPlotType::Auto;
+	void applyEdaPlotTypeDefaults(EdaPlotType type);
+	// Validation hint shown under the plot when the user picks an explicit
+	// plot type and the selected variables don't fit. Cleared on successful
+	// render.
+	void setEdaHint(const QString &msg);
+
+	// Per-plot customization captured from the toolbar's Customize dialog.
+	// Empty strings / unset optionals / 0 mean "use computed defaults"; any
+	// non-default value overrides the auto-built title, axis labels, axis
+	// range, or facet panel-per-row count. The struct is reset whenever the
+	// plot type changes (variable changes leave it alone — labels you wrote
+	// for the data you're looking at usually still apply after, say, picking
+	// a different Group column).
+	struct EdaCustomization
+	{
+		QString title;
+		QString x_label;
+		QString y_label;
+		std::optional<double> x_min;
+		std::optional<double> x_max;
+		std::optional<double> y_min;
+		std::optional<double> y_max;
+		int facet_ncols = 0;        // 0 = auto (default cap of 4)
+
+		bool isEmpty() const
+		{
+			return title.isEmpty() && x_label.isEmpty() && y_label.isEmpty()
+			    && !x_min.has_value() && !x_max.has_value()
+			    && !y_min.has_value() && !y_max.has_value()
+			    && facet_ncols == 0;
+		}
+		void clear()
+		{
+			title.clear(); x_label.clear(); y_label.clear();
+			x_min.reset(); x_max.reset();
+			y_min.reset(); y_max.reset();
+			facet_ncols = 0;
+		}
+	};
+	EdaCustomization m_eda_customization;
+
 	QComboBox *m_eda_y_combo = nullptr;
 	QComboBox *m_eda_x_combo = nullptr;
+	// Slot labels stored as members so applyEdaPlotTypeDefaults can rename
+	// them to "F2:" / "F1:" for Formant chart and back to "X:" / "Y:" for
+	// every other type.
+	QLabel *m_eda_x_slot_label = nullptr;
+	QLabel *m_eda_y_slot_label = nullptr;
 	QLabel *m_bins_label = nullptr;
 	QSpinBox *m_bins_spin = nullptr;
 	QCheckBox *m_eda_regline_check = nullptr;
@@ -368,6 +434,7 @@ private:
 	QSpinBox *m_eda_ellipse_spin = nullptr;
 	QCheckBox *m_eda_formant_check = nullptr;
 	PlotWidget *m_eda_plot = nullptr;
+	QLabel *m_eda_hint_label = nullptr;   // empty-state hint shown under the plot
 	QTableWidget *m_eda_summary = nullptr;
 
 	// Detach state for each plot panel. The DetachablePlot struct

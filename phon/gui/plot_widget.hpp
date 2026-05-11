@@ -239,12 +239,56 @@ public:
 	/// curve_x/curve_y define the polyline in data coordinates;
 	/// the Y values are pre-scaled to the histogram count axis.
 	void setDensityCurve(std::vector<double> curve_x, std::vector<double> curve_y);
+
+	/// A KDE curve to overlay on a histogram. y values are pre-scaled to the
+	/// histogram's count axis (so the curve visually matches the bars). When
+	/// multiple curves are drawn (one per group in a grouped overlay), each
+	/// uses GROUP_PALETTE[color_index]; color_index == -1 means the default
+	/// "single-series" density color matched to the standard bar fill.
+	struct DensityCurve
+	{
+		std::vector<double> x;
+		std::vector<double> y;
+		int color_index = -1;
+	};
+	/// Set multiple density curves (one per group for grouped histograms).
+	/// Each curve has its own color_index into GROUP_PALETTE. The existing
+	/// setDensityCurve overload is preserved and now stores a single curve
+	/// internally with color_index == -1 (default density color).
+	void setDensityCurves(std::vector<DensityCurve> curves);
 	void clearDensityCurve();
 
 	/// Set fixed Y-axis tick positions (overrides auto-computed ticks).
 	/// Used for scaled residual plots where ticks should be at 0, 0.25, 0.50, 0.75, 1.
 	void setFixedYTicks(std::vector<double> ticks);
 	void clearFixedYTicks();
+
+	/// User-controlled X/Y range overrides. When set, the corresponding
+	/// renderer uses these bounds instead of computing them from data.
+	/// Apply to scatter, grouped scatter, boxplot, and histogram (Y for
+	/// histograms is governed by max counts; we override the X axis only
+	/// in that path). For faceted plots the override is propagated as the
+	/// shared range across all panels (set before calling setFacetedData).
+	/// Calling clear*Range removes the override, restoring auto-fit.
+	void setForcedXRange(double lo, double hi);
+	void setForcedYRange(double lo, double hi);
+	void clearForcedXRange();
+	void clearForcedYRange();
+
+	/// User override for the facet-grid layout: number of panels per row.
+	/// 0 (the default) means auto: near-square with a built-in cap of 4
+	/// columns so panels stay readable. Any positive value is used as-is
+	/// (the user can request a single column or wider grids than the cap).
+	void setFacetNColsOverride(int ncols);
+
+	/// Cosmetic overrides used by the EDA Customize dialog: set the plot's
+	/// title or axis labels directly, bypassing whatever setData/setHistogram
+	/// Data/etc. set internally. Call AFTER the data setter so the values
+	/// stick. Passing an empty string is a no-op (the default label from the
+	/// data call remains).
+	void setTitle(const QString &title);
+	void setXLabel(const QString &label);
+	void setYLabel(const QString &label);
 
 	/// Box-plot summary statistics for one cluster (or one (cluster, secondary)
 	/// pair in the dodged case). Populated by computeBoxStats.
@@ -340,6 +384,10 @@ public:
 		// Histogram (single-series or grouped overlay; group_counts populated
 		// only when the overall grid has m_facet_hist_group_labels set).
 		std::vector<HistBin> bins;
+		// Optional density-curve overlay(s) for histogram cells. One curve
+		// per group when histogram is grouped; one curve total (with
+		// color_index == -1) for ungrouped histograms. Empty = no density.
+		std::vector<DensityCurve> density_curves;
 
 		// BoxPlot (with optional dodged secondary grouping baked into
 		// BoxStats.secondary_index / .secondary_label; the legend uses
@@ -534,10 +582,14 @@ private:
 	// translucent fills with distinct stroke colors.
 	std::vector<QString> m_hist_group_labels;
 
-	// Density curve overlay (histogram only)
+	// Density curve overlay(s) for histograms. Empty means no overlay.
+	// Single-series histograms get a single curve (color_index == -1 →
+	// default fill); grouped histograms get one curve per group, each
+	// using GROUP_PALETTE[color_index] matching the matching bin fill.
+	// m_show_density is kept as a quick "render anything?" flag, equal to
+	// !m_density_curves.empty().
 	bool m_show_density = false;
-	std::vector<double> m_density_x;
-	std::vector<double> m_density_y;
+	std::vector<DensityCurve> m_density_curves;
 
 	// Fixed Y-axis ticks (empty = auto-compute via nice_tick)
 	std::vector<double> m_fixed_y_ticks;
@@ -610,6 +662,20 @@ private:
 	// count and are governed by m_facet_shared_y_count instead).
 	std::optional<std::pair<double, double>> m_forced_xrange;
 	std::optional<std::pair<double, double>> m_forced_yrange;
+
+	// Persistent user-supplied range overrides (set via setForcedXRange /
+	// setForcedYRange). Separate from m_forced_xrange/yrange because those
+	// are scratch state that renderFacetGrid mutates on each draw; the user
+	// overrides need to survive the inner-pass restore. updateEdaPlot reads
+	// these in the non-facet path and forwards them as the shared range to
+	// setFacetedData in the faceted path.
+	std::optional<std::pair<double, double>> m_user_xrange;
+	std::optional<std::pair<double, double>> m_user_yrange;
+
+	// User override for the panel-per-row count in faceted layouts. 0 means
+	// auto (the default cap of 4 applies). Used by renderFacetGrid via the
+	// facet_layout helper.
+	int m_facet_ncols_override = 0;
 
 	// Shared
 	QString m_x_label;

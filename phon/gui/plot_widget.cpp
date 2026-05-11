@@ -232,8 +232,7 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 	m_bar_group_labels.clear();
 	m_show_regression = false;
 	m_show_density = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 
 	// Build legend label lists.
 	m_color_labels.clear();
@@ -323,8 +322,7 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_style_labels.clear();
 	m_hist_group_labels.clear();
 	m_show_density = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -390,8 +388,7 @@ void PlotWidget::setHistogramData(std::vector<double> values, std::vector<QStrin
 	m_color_labels.clear();
 	m_style_labels.clear();
 	m_show_density = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -542,9 +539,24 @@ void PlotWidget::clearRegressionLine()
 
 void PlotWidget::setDensityCurve(std::vector<double> curve_x, std::vector<double> curve_y)
 {
+	// Backward-compat single-curve overload: wrap into a 1-element vector
+	// with color_index == -1 (renderer treats this as the default density
+	// color).
+	DensityCurve c;
+	c.x = std::move(curve_x);
+	c.y = std::move(curve_y);
+	c.color_index = -1;
+	m_density_curves.clear();
+	m_density_curves.push_back(std::move(c));
 	m_show_density = true;
-	m_density_x = std::move(curve_x);
-	m_density_y = std::move(curve_y);
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setDensityCurves(std::vector<DensityCurve> curves)
+{
+	m_density_curves = std::move(curves);
+	m_show_density = !m_density_curves.empty();
 	m_cache_valid = false;
 	update();
 }
@@ -552,8 +564,7 @@ void PlotWidget::setDensityCurve(std::vector<double> curve_x, std::vector<double
 void PlotWidget::clearDensityCurve()
 {
 	m_show_density = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -568,6 +579,87 @@ void PlotWidget::setFixedYTicks(std::vector<double> ticks)
 void PlotWidget::clearFixedYTicks()
 {
 	m_fixed_y_ticks.clear();
+	m_cache_valid = false;
+	update();
+}
+
+// ── User-controlled overrides ───────────────────────────────────────
+//
+// These setters configure persistent user preferences (custom axis
+// ranges, custom facet layout). They live alongside the auto-fit logic;
+// renderers consult them, but only after the user has explicitly set
+// values. The customization dialog in analysis_view wires these to its
+// form fields. setData / setHistogramData / etc. callers in non-facet
+// paths invoke setForcedXRange / setForcedYRange immediately after
+// loading data so the next paint honors the override.
+
+void PlotWidget::setForcedXRange(double lo, double hi)
+{
+	if (!std::isfinite(lo) || !std::isfinite(hi) || hi <= lo) {
+		clearForcedXRange();
+		return;
+	}
+	m_user_xrange = std::make_pair(lo, hi);
+	m_forced_xrange = m_user_xrange;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setForcedYRange(double lo, double hi)
+{
+	if (!std::isfinite(lo) || !std::isfinite(hi) || hi <= lo) {
+		clearForcedYRange();
+		return;
+	}
+	m_user_yrange = std::make_pair(lo, hi);
+	m_forced_yrange = m_user_yrange;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::clearForcedXRange()
+{
+	m_user_xrange.reset();
+	m_forced_xrange.reset();
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::clearForcedYRange()
+{
+	m_user_yrange.reset();
+	m_forced_yrange.reset();
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setFacetNColsOverride(int ncols)
+{
+	m_facet_ncols_override = (ncols > 0) ? ncols : 0;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setTitle(const QString &title)
+{
+	if (title.isEmpty()) return;
+	m_title = title;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setXLabel(const QString &label)
+{
+	if (label.isEmpty()) return;
+	m_x_label = label;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setYLabel(const QString &label)
+{
+	if (label.isEmpty()) return;
+	m_y_label = label;
 	m_cache_valid = false;
 	update();
 }
@@ -675,8 +767,7 @@ void PlotWidget::setFacetedData(std::vector<FacetCell> cells,
 	m_ppc_points.clear();
 	m_show_regression = false;
 	m_show_density = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 	m_cache_valid = false;
 	update();
 }
@@ -709,8 +800,7 @@ void PlotWidget::clear()
 	m_use_labels = false;
 	m_reverse_x = false;
 	m_reverse_y = false;
-	m_density_x.clear();
-	m_density_y.clear();
+	m_density_curves.clear();
 	m_line_curves.clear();
 	m_eff_curves.clear();
 	m_eff_level_labels.clear();
@@ -2098,10 +2188,12 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 
 	double ymax = (double)max_count;
 
-	// If a density curve is present, ensure the Y range covers its peak.
+	// If density curves are present, ensure the Y range covers each curve's
+	// peak — every curve shares the same Y axis with the histogram bars.
 	if (m_show_density) {
-		for (double v : m_density_y)
-			ymax = std::max(ymax, v);
+		for (const auto &c : m_density_curves) {
+			for (double v : c.y) ymax = std::max(ymax, v);
+		}
 	}
 
 	double yhi = ymax * 1.08;
@@ -2221,21 +2313,32 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 		}
 	}
 
-	// Density curve overlay
-	if (m_show_density && m_density_x.size() >= 2)
+	// Density curve overlay(s). One curve for single-series histograms;
+	// one per group when the histogram is a grouped overlay. Per-group
+	// curves use GROUP_PALETTE[color_index] to match the matching bar fill
+	// (slight darkening keeps the line readable against the translucent
+	// bar fill).
+	if (m_show_density)
 	{
-		QPainterPath path;
-		bool started = false;
-		for (size_t i = 0; i < m_density_x.size(); i++)
+		for (const auto &c : m_density_curves)
 		{
-			double px = dataToX(m_density_x[i]);
-			double py = dataToY(m_density_y[i]);
-			if (!started) { path.moveTo(px, py); started = true; }
-			else          { path.lineTo(px, py); }
+			if (c.x.size() < 2) continue;
+			QPainterPath path;
+			bool started = false;
+			for (size_t i = 0; i < c.x.size(); i++)
+			{
+				double px = dataToX(c.x[i]);
+				double py = dataToY(c.y[i]);
+				if (!started) { path.moveTo(px, py); started = true; }
+				else          { path.lineTo(px, py); }
+			}
+			QColor pen_color = (c.color_index >= 0)
+				? GROUP_PALETTE[c.color_index % NUM_PALETTE_COLORS].darker(115)
+				: DENSITY_COLOR;
+			p.setPen(QPen(pen_color, 2.0));
+			p.setBrush(Qt::NoBrush);
+			p.drawPath(path);
 		}
-		p.setPen(QPen(DENSITY_COLOR, 2.0));
-		p.setBrush(Qt::NoBrush);
-		p.drawPath(path);
 	}
 
 	p.setClipping(false);
@@ -3294,12 +3397,24 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 
 namespace {
 
-// Choose a near-square grid layout for n panels. Prefer more columns than
-// rows when n isn't a perfect square (matches ggplot's facet_wrap default).
-inline void facet_layout(int n, int &ncols, int &nrows)
+// Choose a grid layout for n panels.
+// - Default (override_ncols == 0): near-square, capped at 4 columns so
+//   panels stay readable. A 9-panel grid becomes 3x3; a 16-panel grid
+//   becomes 4x4; a 20-panel grid becomes 4 cols × 5 rows (without the
+//   cap it would be ceil(sqrt(20))=5 cols, narrower panels).
+// - Explicit override (override_ncols > 0): used as-is, clamped to n.
+//   The user can request 1 column for tall stacks or wider grids than
+//   the default cap if their plot area is wide enough.
+inline void facet_layout(int n, int &ncols, int &nrows, int override_ncols)
 {
 	if (n <= 0) { ncols = 1; nrows = 1; return; }
-	ncols = (int)std::ceil(std::sqrt((double)n));
+	if (override_ncols > 0) {
+		ncols = std::min(override_ncols, n);
+	} else {
+		ncols = (int)std::ceil(std::sqrt((double)n));
+		if (ncols > 4) ncols = 4;
+	}
+	if (ncols < 1) ncols = 1;
 	nrows = (int)std::ceil((double)n / ncols);
 }
 
@@ -3311,7 +3426,7 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 
 	int n = (int)m_facet_cells.size();
 	int ncols = 1, nrows = 1;
-	facet_layout(n, ncols, nrows);
+	facet_layout(n, ncols, nrows, m_facet_ncols_override);
 
 	// Reserve space for the outer title (top), shared X label (bottom), and
 	// shared rotated Y label (left). Panels share these so they aren't drawn
@@ -3504,7 +3619,16 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 			std::swap(m_bins, cell.bins);
 			std::swap(m_hist_group_labels,
 			          /* per-grid labels populated by caller */ m_facet_hist_group_labels);
+			// Per-cell density overlay(s) — built by the caller in
+			// analysis_view's facet path, one curve per group (or one
+			// total for ungrouped histograms). Swapping preserves the
+			// curves between cells.
+			std::swap(m_density_curves, cell.density_curves);
+			bool saved_show_density = m_show_density;
+			m_show_density = !m_density_curves.empty();
 			renderHistogram(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			m_show_density = saved_show_density;
+			std::swap(m_density_curves, cell.density_curves);
 			std::swap(m_hist_group_labels, m_facet_hist_group_labels);
 			std::swap(m_bins, cell.bins);
 			break;
@@ -3569,11 +3693,13 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 		}
 	}
 
-	// Restore state.
+	// Restore state. m_forced_xrange / m_forced_yrange go back to the
+	// user's persistent override (if any), not nullopt — otherwise a
+	// subsequent non-facet draw would lose the user's setting.
 	m_facet_render_active = false;
 	m_facet_panel_title.clear();
-	m_forced_xrange.reset();
-	m_forced_yrange.reset();
+	m_forced_xrange = m_user_xrange;
+	m_forced_yrange = m_user_yrange;
 	m_x_label = saved_x_label;
 	m_y_label = saved_y_label;
 	m_title = saved_title;

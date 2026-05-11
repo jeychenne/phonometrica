@@ -46,6 +46,9 @@
 #include <QToolButton>
 #include <QWidgetAction>
 #include <QFormLayout>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QDoubleValidator>
 #include <QHeaderView>
 #include <QEvent>
 #include <QSet>
@@ -950,6 +953,18 @@ void AnalysisView::setupUi()
 		btn->setPopupMode(QToolButton::InstantPopup);
 
 	//eda_toolbar->addSeparator();
+
+	// Customize action: opens a dialog where the user can override title,
+	// axis labels, axis ranges, and facet panel-per-row count. The state
+	// lives in m_eda_customization and is consulted by updateEdaPlot when
+	// finalizing each render. Reset whenever the plot type changes.
+	auto *eda_customize_action = new QAction(QIcon(":/icons/settings.svg"),
+	                                          tr("Customize plot..."), this);
+	eda_customize_action->setToolTip(tr("Override title, axis labels, axis ranges, "
+	                                     "and facet layout for the current plot"));
+	eda_toolbar->addAction(eda_customize_action);
+	connect(eda_customize_action, &QAction::triggered, this, &AnalysisView::onCustomizeEda);
+
 	QWidget* spacer = new QWidget();
 	spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 	eda_toolbar->addWidget(spacer);
@@ -967,6 +982,23 @@ void AnalysisView::setupUi()
 	// Row 1: variable selectors
 	auto *eda_vars = new QHBoxLayout;
 	eda_vars->setSpacing(6);
+	// Plot type combo — first element. "Auto" preserves the original
+	// data-driven inference behavior; the other entries constrain the plot
+	// to a specific kind, allowing plots that pure inference can't reach
+	// (Formant chart, plus future Violin / Density / Ridgeline / etc.).
+	m_eda_plot_type_label = new QLabel(tr("Plot type:"));
+	eda_vars->addWidget(m_eda_plot_type_label);
+	m_eda_plot_type_combo = new QComboBox;
+	m_eda_plot_type_combo->addItem(tr("Auto"),          (int)EdaPlotType::Auto);
+	m_eda_plot_type_combo->addItem(tr("Histogram"),     (int)EdaPlotType::Histogram);
+	m_eda_plot_type_combo->addItem(tr("Bar chart"),     (int)EdaPlotType::BarChart);
+	m_eda_plot_type_combo->addItem(tr("Boxplot"),       (int)EdaPlotType::BoxPlot);
+	m_eda_plot_type_combo->addItem(tr("Scatter"),       (int)EdaPlotType::Scatter);
+	m_eda_plot_type_combo->addItem(tr("Formant chart"), (int)EdaPlotType::FormantChart);
+	m_eda_plot_type_combo->setToolTip(tr("Choose a plot type. \"Auto\" picks one "
+	                                      "based on the variables you select."));
+	eda_vars->addWidget(m_eda_plot_type_combo);
+
 	eda_vars->addWidget(new QLabel(tr("X:")));
 	m_eda_x_combo = new QComboBox;
 	m_eda_x_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -1108,6 +1140,16 @@ void AnalysisView::setupUi()
 	eda_top_layout->setContentsMargins(0, 0, 0, 0);
 	eda_top_layout->setSpacing(4);
 	eda_top_layout->addWidget(m_eda_plot, 1);
+
+	// Empty-state hint shown just below the plot when the current variable
+	// selection doesn't fit the requested plot type. Italic gray so it reads
+	// as advisory text rather than chrome; hidden when validation passes.
+	m_eda_hint_label = new QLabel;
+	m_eda_hint_label->setStyleSheet("color: #888; font-style: italic; padding: 2px 8px;");
+	m_eda_hint_label->setVisible(false);
+	m_eda_hint_label->setWordWrap(true);
+	eda_top_layout->addWidget(m_eda_hint_label);
+
 	eda_top_layout->addWidget(eda_controls_widget);
 
 	// Wire the EDA DetachablePlot. The plot lives at index 0 of
@@ -1202,6 +1244,10 @@ void AnalysisView::setupUi()
 	connect(m_eda_style_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_label_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_facet_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	// Plot type uses its own slot so we can apply per-type defaults (Mean /
+	// Ellipse / Density / Regline) once at the moment of change, before
+	// triggering the redraw. onEdaChanged is invoked at the end of that slot.
+	connect(m_eda_plot_type_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaPlotTypeChanged);
 	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
@@ -3692,11 +3738,258 @@ void AnalysisView::showResidualUnavailable()
 // EDA
 // =====================================================================
 
+void AnalysisView::onEdaPlotTypeChanged()
+{
+	// Read the new selection from the combo's userData (set via addItem with
+	// (int)EdaPlotType::*). Falling back to Auto on any unexpected value
+	// keeps the function robust to combo reorderings.
+	auto data = m_eda_plot_type_combo->currentData();
+	auto new_type = data.isValid() ? static_cast<EdaPlotType>(data.toInt())
+	                                : EdaPlotType::Auto;
+
+	// Apply defaults only when the type genuinely changes — otherwise every
+	// updateEdaPlot would clobber per-session user toggles.
+	if (new_type != m_last_eda_plot_type)
+	{
+		// Reset every variable slot to (None) so the user starts fresh.
+		// Without this, switching from a grouped Scatter to a Histogram
+		// silently inherits the prior Group selection, producing an
+		// unexpected overlay; the user's complaint was exactly this.
+		// blockSignals prevents an avalanche of onEdaChanged from each
+		// individual combo reset — updateEdaPlot will fire once at the end
+		// via onEdaChanged.
+		auto reset = [](QComboBox *c) {
+			if (!c) return;
+			c->blockSignals(true);
+			c->setCurrentIndex(0);
+			c->blockSignals(false);
+		};
+		reset(m_eda_x_combo);
+		reset(m_eda_y_combo);
+		reset(m_eda_group_combo);
+		reset(m_eda_pool_combo);
+		reset(m_eda_style_combo);
+		reset(m_eda_label_combo);
+		reset(m_eda_facet_combo);
+
+		// Drop any user customizations — the title/labels/ranges were tied
+		// to the previous plot and no longer fit. The user can re-open the
+		// dialog after picking new variables.
+		m_eda_customization.clear();
+		setEdaHint(QString());
+
+		applyEdaPlotTypeDefaults(new_type);
+		m_last_eda_plot_type = new_type;
+	}
+	onEdaChanged();
+}
+
+void AnalysisView::applyEdaPlotTypeDefaults(EdaPlotType type)
+{
+	// Block signals on the checkboxes we're touching so the cascade of
+	// `toggled` signals doesn't trigger updateEdaPlot mid-update — we want
+	// onEdaChanged to fire once at the end (in onEdaPlotTypeChanged).
+	auto guard = [](QCheckBox *c, bool checked) {
+		c->blockSignals(true);
+		c->setChecked(checked);
+		c->blockSignals(false);
+	};
+
+	// Slot labels reflect the chart's variable conventions. Formant chart
+	// renames "X:" / "Y:" to "F2:" / "F1:" to match phonetic practice; every
+	// other type uses the neutral labels. Always reset back to X/Y when
+	// leaving Formant chart so the labels don't get stuck.
+	if (m_eda_x_slot_label) {
+		m_eda_x_slot_label->setText(type == EdaPlotType::FormantChart
+		                            ? tr("F2:") : tr("X:"));
+	}
+	if (m_eda_y_slot_label) {
+		m_eda_y_slot_label->setText(type == EdaPlotType::FormantChart
+		                            ? tr("F1:") : tr("Y:"));
+	}
+
+	switch (type)
+	{
+	case EdaPlotType::FormantChart:
+		// FormantChart's identity is reversed axes (handled inside
+		// updateEdaPlot via is_formant_chart), not extra overlays.
+		// Raw formant clouds are useful too — leave Mean and Ellipse OFF
+		// by default so the user opts in. Same for the other overlays.
+		guard(m_eda_mean_check, false);
+		guard(m_eda_ellipse_check, false);
+		guard(m_eda_formant_check, false);
+		guard(m_eda_regline_check, false);
+		guard(m_eda_density_check, false);
+		if (m_eda_ellipse_spin) m_eda_ellipse_spin->setValue(95);
+		break;
+	case EdaPlotType::Scatter:
+		// Fresh scatter: all overlays off so the user opts in.
+		guard(m_eda_mean_check, false);
+		guard(m_eda_ellipse_check, false);
+		guard(m_eda_formant_check, false);
+		guard(m_eda_regline_check, false);
+		guard(m_eda_density_check, false);
+		break;
+	case EdaPlotType::Histogram:
+	case EdaPlotType::BarChart:
+	case EdaPlotType::BoxPlot:
+		guard(m_eda_density_check, false);
+		guard(m_eda_regline_check, false);
+		break;
+	case EdaPlotType::Auto:
+		// Auto preserves whatever state the user had: the existing
+		// inference takes over and we don't second-guess their toggles.
+		break;
+	}
+}
+
 void AnalysisView::onEdaChanged()
 {
 	updateEdaPlot();
 	updateEdaSummary();
 	updateDetachActionsEnabled();
+}
+
+void AnalysisView::setEdaHint(const QString &msg)
+{
+	// The hint label lives between the plot widget and the controls strip
+	// (see setupUi). Hidden when empty so the layout doesn't reserve dead
+	// vertical space when nothing's wrong.
+	if (!m_eda_hint_label) return;
+	if (msg.isEmpty()) {
+		m_eda_hint_label->clear();
+		m_eda_hint_label->setVisible(false);
+	} else {
+		m_eda_hint_label->setText(msg);
+		m_eda_hint_label->setVisible(true);
+	}
+}
+
+void AnalysisView::onCustomizeEda()
+{
+	// Opens a modal dialog with seven form fields. Pre-fills from the
+	// current m_eda_customization so the user sees their last settings.
+	// On Accept, copy field values back into m_eda_customization and
+	// trigger a re-render. On Reset, clear customization in-place.
+	// Cancel discards the form edits.
+
+	QDialog dlg(this);
+	dlg.setWindowTitle(tr("Customize plot"));
+	dlg.setMinimumWidth(360);
+
+	auto *form = new QFormLayout;
+	form->setLabelAlignment(Qt::AlignRight);
+
+	auto *title_edit = new QLineEdit(m_eda_customization.title);
+	title_edit->setPlaceholderText(tr("(use auto-generated title)"));
+	form->addRow(tr("Title:"), title_edit);
+
+	auto *xlabel_edit = new QLineEdit(m_eda_customization.x_label);
+	xlabel_edit->setPlaceholderText(tr("(use variable name)"));
+	form->addRow(tr("X label:"), xlabel_edit);
+
+	auto *ylabel_edit = new QLineEdit(m_eda_customization.y_label);
+	ylabel_edit->setPlaceholderText(tr("(use variable name)"));
+	form->addRow(tr("Y label:"), ylabel_edit);
+
+	// Axis range fields. Empty = auto-fit. A locale-tolerant validator
+	// accepts dot/comma decimal separators without locking the user out
+	// while they're still typing (Intermediate is treated as acceptable).
+	auto make_range_field = [](const std::optional<double> &v) {
+		auto *e = new QLineEdit;
+		e->setPlaceholderText(QObject::tr("auto"));
+		auto *val = new QDoubleValidator(e);
+		val->setNotation(QDoubleValidator::StandardNotation);
+		e->setValidator(val);
+		if (v.has_value()) e->setText(QString::number(*v));
+		return e;
+	};
+	auto *xmin_edit = make_range_field(m_eda_customization.x_min);
+	auto *xmax_edit = make_range_field(m_eda_customization.x_max);
+	auto *ymin_edit = make_range_field(m_eda_customization.y_min);
+	auto *ymax_edit = make_range_field(m_eda_customization.y_max);
+
+	// X/Y range live on one row each as min/max pairs so the dialog stays
+	// compact. Layout: [min] – [max].
+	auto make_range_row = [](QLineEdit *lo, QLineEdit *hi) {
+		auto *w = new QWidget;
+		auto *l = new QHBoxLayout(w);
+		l->setContentsMargins(0, 0, 0, 0);
+		l->addWidget(lo);
+		l->addWidget(new QLabel(QStringLiteral(" \u2013 ")));
+		l->addWidget(hi);
+		return w;
+	};
+	form->addRow(tr("X range:"), make_range_row(xmin_edit, xmax_edit));
+	form->addRow(tr("Y range:"), make_range_row(ymin_edit, ymax_edit));
+
+	// Facet columns spinbox. 0 means auto.
+	auto *facet_ncols_spin = new QSpinBox;
+	facet_ncols_spin->setRange(0, 8);
+	facet_ncols_spin->setSpecialValueText(tr("auto"));
+	facet_ncols_spin->setValue(m_eda_customization.facet_ncols);
+	facet_ncols_spin->setToolTip(tr("Columns per row in faceted layouts. "
+	                                 "0 = auto (capped at 4 for readability)."));
+	form->addRow(tr("Facet columns:"), facet_ncols_spin);
+
+	// Buttons: Reset, then standard Cancel/OK.
+	auto *bbox = new QDialogButtonBox(
+	    QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Reset);
+	connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	connect(bbox->button(QDialogButtonBox::Reset), &QPushButton::clicked,
+	        &dlg, [&]() {
+		// Reset clears the form fields and (on Accept) the customization.
+		title_edit->clear();
+		xlabel_edit->clear();
+		ylabel_edit->clear();
+		xmin_edit->clear();
+		xmax_edit->clear();
+		ymin_edit->clear();
+		ymax_edit->clear();
+		facet_ncols_spin->setValue(0);
+	});
+
+	auto *dlg_layout = new QVBoxLayout(&dlg);
+	dlg_layout->addLayout(form);
+	dlg_layout->addWidget(bbox);
+
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	// Parse field values into the customization struct. A blank field is
+	// "use auto"; a value that fails to parse is treated as blank rather
+	// than producing a user-hostile error.
+	auto parse_opt = [](QLineEdit *e) -> std::optional<double> {
+		QString s = e->text().trimmed();
+		if (s.isEmpty()) return std::nullopt;
+		// Tolerate comma decimals from FR locales.
+		s.replace(',', '.');
+		bool ok = false;
+		double d = s.toDouble(&ok);
+		if (!ok || !std::isfinite(d)) return std::nullopt;
+		return d;
+	};
+
+	m_eda_customization.title    = title_edit->text().trimmed();
+	m_eda_customization.x_label  = xlabel_edit->text().trimmed();
+	m_eda_customization.y_label  = ylabel_edit->text().trimmed();
+	m_eda_customization.x_min    = parse_opt(xmin_edit);
+	m_eda_customization.x_max    = parse_opt(xmax_edit);
+	m_eda_customization.y_min    = parse_opt(ymin_edit);
+	m_eda_customization.y_max    = parse_opt(ymax_edit);
+	m_eda_customization.facet_ncols = facet_ncols_spin->value();
+
+	// If the user inverted min/max (e.g. typed 200 in min, 100 in max),
+	// silently swap so the renderer doesn't get a degenerate range.
+	auto fix = [](std::optional<double> &lo, std::optional<double> &hi) {
+		if (lo.has_value() && hi.has_value() && *lo > *hi)
+			std::swap(lo, hi);
+	};
+	fix(m_eda_customization.x_min, m_eda_customization.x_max);
+	fix(m_eda_customization.y_min, m_eda_customization.y_max);
+
+	// Re-render with new customization applied.
+	updateEdaPlot();
 }
 
 void AnalysisView::onExportEdaPNG()
@@ -4072,6 +4365,11 @@ void AnalysisView::updateEdaPlot()
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
 		m_eda_formant_check->setVisible(false);
+		// Plot-type combo stays visible — user can keep picking. The hint
+		// label is cleared here because we have no useful diagnostic to
+		// show when X itself isn't selected.
+		m_eda_hint_label->clear();
+		m_eda_hint_label->setVisible(false);
 	};
 
 	// Early-out: no source, or X = (None).
@@ -4131,15 +4429,90 @@ void AnalysisView::updateEdaPlot()
 		                 : (y_col >= 1 ? dt->get_cell(r, y_col) : String());
 	};
 
-	// ── Plot-kind dispatch ──────────────────────────────────────────
+	// ── Plot-type + Kind dispatch ───────────────────────────────────
+	// `ptype` is the user's intent. "Auto" preserves the original
+	// data-driven inference bit-for-bit. Each explicit type maps to a
+	// Kind and runs validation against the selected variable types; if
+	// validation fails, we set `hint` so the user sees a one-line
+	// diagnostic under the plot instead of silently getting an empty
+	// canvas. Variable combos stay populated so they can fix it without
+	// losing context.
+	auto ptype_data = m_eda_plot_type_combo->currentData();
+	EdaPlotType ptype = ptype_data.isValid()
+		? static_cast<EdaPlotType>(ptype_data.toInt())
+		: EdaPlotType::Auto;
+
 	bool x_numeric = isColumnNumeric(x_name);
 	bool y_numeric = has_y && isColumnNumeric(y_name);
 	enum Kind { KHistogram, KBarChart, KScatter, KBoxPlot, KUnsupported };
 	Kind kind = KUnsupported;
-	if (!has_y) kind = x_numeric ? KHistogram : KBarChart;
-	else if (x_numeric && y_numeric) kind = KScatter;
-	else if (!x_numeric && y_numeric) kind = KBoxPlot;
+	QString hint;
 
+	auto type_label = [&]() -> QString {
+		switch (ptype) {
+		case EdaPlotType::Histogram:    return tr("Histogram");
+		case EdaPlotType::BarChart:     return tr("Bar chart");
+		case EdaPlotType::BoxPlot:      return tr("Boxplot");
+		case EdaPlotType::Scatter:      return tr("Scatter");
+		case EdaPlotType::FormantChart: return tr("Formant chart");
+		case EdaPlotType::Auto:         return tr("Auto");
+		}
+		return QString();
+	}();
+
+	if (ptype == EdaPlotType::Auto)
+	{
+		// Original data-driven inference, unchanged.
+		if (!has_y) kind = x_numeric ? KHistogram : KBarChart;
+		else if (x_numeric && y_numeric) kind = KScatter;
+		else if (!x_numeric && y_numeric) kind = KBoxPlot;
+	}
+	else
+	{
+		switch (ptype)
+		{
+		case EdaPlotType::Histogram:
+			kind = KHistogram;
+			if (has_y) hint = tr("%1 is univariate — clear Y to plot.").arg(type_label);
+			else if (!x_numeric) hint = tr("%1 needs a numeric X.").arg(type_label);
+			break;
+		case EdaPlotType::BarChart:
+			kind = KBarChart;
+			if (has_y) hint = tr("%1 is univariate — clear Y to plot.").arg(type_label);
+			else if (x_numeric) hint = tr("%1 needs a categorical X.").arg(type_label);
+			break;
+		case EdaPlotType::BoxPlot:
+			kind = KBoxPlot;
+			if (!has_y) hint = tr("%1 needs both X (categorical) and Y (numeric).").arg(type_label);
+			else if (x_numeric) hint = tr("%1 needs a categorical X.").arg(type_label);
+			else if (!y_numeric) hint = tr("%1 needs a numeric Y.").arg(type_label);
+			break;
+		case EdaPlotType::Scatter:
+		case EdaPlotType::FormantChart:
+			kind = KScatter;
+			if (!has_y) hint = tr("%1 needs both X and Y.").arg(type_label);
+			else if (!x_numeric) hint = tr("%1 needs a numeric X.").arg(type_label);
+			else if (!y_numeric) hint = tr("%1 needs a numeric Y.").arg(type_label);
+			break;
+		case EdaPlotType::Auto:
+			break;
+		}
+	}
+
+	bool is_formant_chart = (ptype == EdaPlotType::FormantChart);
+
+	// Surface or clear the hint label. Visible only on validation failure.
+	if (!hint.isEmpty()) {
+		m_eda_hint_label->setText(hint);
+		m_eda_hint_label->setVisible(true);
+	} else {
+		m_eda_hint_label->clear();
+		m_eda_hint_label->setVisible(false);
+	}
+
+	// Auto-mode KUnsupported (e.g., numeric X with categorical Y) is treated
+	// like before — hide controls, bail. For explicit types, kind is always
+	// set; we keep controls visible so the user can fix any validation issue.
 	if (kind == KUnsupported) {
 		m_eda_plot->clear();
 		hideAllControls();
@@ -4161,14 +4534,14 @@ void AnalysisView::updateEdaPlot()
 	QString group_name_q = (g_col > 0) ? m_eda_group_combo->currentText() : QString();
 	QString facet_name_q = (f_col > 0) ? m_eda_facet_combo->currentText() : QString();
 
-	// ── Visibility (uniform across all 4 supported modes) ──────────
+	// ── Visibility (uniform across all supported modes) ─────────────
 	m_eda_group_label->setVisible(true);
 	m_eda_group_combo->setVisible(true);
 	m_eda_facet_label->setVisible(true);
 	m_eda_facet_combo->setVisible(true);
 	m_bins_label->setVisible(kind == KHistogram);
 	m_bins_spin->setVisible(kind == KHistogram);
-	bool density_eligible = (kind == KHistogram) && (g_col == 0) && (f_col == 0);
+	bool density_eligible = (kind == KHistogram);
 	m_eda_density_check->setVisible(density_eligible);
 	{
 		bool density_on = density_eligible && m_eda_density_check->isChecked();
@@ -4176,24 +4549,52 @@ void AnalysisView::updateEdaPlot()
 		m_eda_bw_slider->setVisible(density_on);
 		m_eda_bw_spin->setVisible(density_on);
 	}
-	m_eda_regline_check->setVisible(kind == KScatter);
+	m_eda_regline_check->setVisible(kind == KScatter && !is_formant_chart);
 	m_eda_pool_label->setVisible(kind == KScatter && g_col > 0);
 	m_eda_pool_combo->setVisible(kind == KScatter && g_col > 0);
 	m_eda_style_label->setVisible(kind == KScatter && g_col > 0);
 	m_eda_style_combo->setVisible(kind == KScatter && g_col > 0);
 	m_eda_label_label->setVisible(kind == KScatter);
 	m_eda_label_combo->setVisible(kind == KScatter);
-	m_eda_mean_check->setVisible(kind == KScatter && g_col > 0);
-	m_eda_ellipse_check->setVisible(kind == KScatter && g_col > 0);
-	m_eda_ellipse_spin->setVisible(kind == KScatter && g_col > 0);
-	m_eda_formant_check->setVisible(kind == KScatter);
+	// For FormantChart we want Mean and Ellipse exposed even with no Group
+	// — a global formant centroid + CI is meaningful, and applyEdaPlotType
+	// Defaults turned them on so the user must be able to see/toggle them.
+	m_eda_mean_check->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
+	m_eda_ellipse_check->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
+	m_eda_ellipse_spin->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
+	// Formant checkbox is hidden when the plot type is explicitly
+	// FormantChart — the formant flag is implied by that selection,
+	// so a redundant checkbox would just confuse users.
+	m_eda_formant_check->setVisible(kind == KScatter && !is_formant_chart);
 
-	bool formant = m_eda_formant_check->isChecked();
+	// Effective formant flag: implicit for FormantChart, explicit for Scatter.
+	bool formant = is_formant_chart
+		|| (kind == KScatter && m_eda_formant_check->isChecked());
 	int nbins = m_bins_spin->value();
 
-	// ── Helper: KDE attached to a single-series histogram ──────────
-	auto attachDensityCurve = [&](std::vector<double> vals_copy, int nbins_) {
+	// On validation failure, keep the visibility set above so the user can
+	// fix the variable selection without losing form state — but don't
+	// render anything.
+	if (!hint.isEmpty()) {
+		m_eda_plot->clear();
+		return;
+	}
+
+	// ── Helper: build one KDE curve from a sample ──
+	// Pure curve-builder. The optional bin_lo/bin_hi clip the kernel
+	// support to the histogram's shared bin edges (used in the faceted
+	// path where panels share X); when not supplied, the curve runs from
+	// data_min-3h to data_max+3h. The optional ref_n is the count used to
+	// scale density → counts; defaults to the actual sample size. For
+	// grouped overlays each group passes its own count so its curve
+	// matches its bar heights.
+	auto buildDensityCurve = [&](std::vector<double> vals_copy, int nbins_,
+	                              double clip_lo, double clip_hi,
+	                              int ref_n, int color_index) -> PlotWidget::DensityCurve {
+		PlotWidget::DensityCurve out;
+		out.color_index = color_index;
 		size_t n = vals_copy.size();
+		if (n < 2) return out;
 		double sum = 0, sum2 = 0;
 		for (double v : vals_copy) { sum += v; sum2 += v * v; }
 		double mean = sum / n;
@@ -4211,6 +4612,12 @@ void AnalysisView::updateEdaPlot()
 		h *= adjust;
 		double xlo = vals_copy.front() - 3.0 * h;
 		double xhi = vals_copy.back() + 3.0 * h;
+		// Clip the support to the shared histogram x-range when one is
+		// supplied; without this, two curves in a faceted layout might
+		// span different x-ranges and look misaligned.
+		if (std::isfinite(clip_lo)) xlo = std::max(xlo, clip_lo);
+		if (std::isfinite(clip_hi)) xhi = std::min(xhi, clip_hi);
+		if (xhi <= xlo) return out;
 		constexpr int NPTS = 200;
 		double dx = (xhi - xlo) / (NPTS - 1);
 		double data_lo = vals_copy.front();
@@ -4221,10 +4628,15 @@ void AnalysisView::updateEdaPlot()
 		if (actual_nbins <= 0)
 			actual_nbins = std::max(5, (int)std::ceil(std::log2((double)n) + 1));
 		double bin_width = data_range / actual_nbins;
-		double scale = (double)n * bin_width;
+		// Scale to counts: density × N × binwidth, where N is the count
+		// the curve should match (group's own count for grouped overlays,
+		// total sample for single-series). ref_n <= 0 means "use n".
+		double scale_n = (ref_n > 0) ? (double)ref_n : (double)n;
+		double scale = scale_n * bin_width;
 		double inv_h = 1.0 / h;
 		double norm = 1.0 / (std::sqrt(2.0 * M_PI) * h * (double)n);
-		std::vector<double> cx(NPTS), cy(NPTS);
+		out.x.resize(NPTS);
+		out.y.resize(NPTS);
 		for (int i = 0; i < NPTS; i++) {
 			double x = xlo + i * dx;
 			double f = 0;
@@ -4232,10 +4644,20 @@ void AnalysisView::updateEdaPlot()
 				double u = (x - vals_copy[j]) * inv_h;
 				f += std::exp(-0.5 * u * u);
 			}
-			cx[i] = x;
-			cy[i] = f * norm * scale;
+			out.x[i] = x;
+			out.y[i] = f * norm * scale;
 		}
-		m_eda_plot->setDensityCurve(std::move(cx), std::move(cy));
+		return out;
+	};
+	auto attachDensityCurve = [&](std::vector<double> vals_copy, int nbins_) {
+		// Single-curve convenience wrapper for the ungrouped non-facet
+		// path. color_index == -1 → default density color.
+		auto curve = buildDensityCurve(std::move(vals_copy), nbins_,
+		                                std::nan(""), std::nan(""),
+		                                0, -1);
+		std::vector<PlotWidget::DensityCurve> v;
+		v.push_back(std::move(curve));
+		m_eda_plot->setDensityCurves(std::move(v));
 	};
 
 	// ── Helper: partition row indices by facet level ───────────────
@@ -4328,6 +4750,8 @@ void AnalysisView::updateEdaPlot()
 				g_idx[hist_group_labels[i]] = i;
 			int ng = (int)hist_group_labels.size();
 
+			bool want_density = m_eda_density_check->isChecked();
+
 			for (auto &fp : facets) {
 				PlotWidget::FacetCell cell;
 				cell.label = fp.first;
@@ -4338,6 +4762,17 @@ void AnalysisView::updateEdaPlot()
 					cell.bins[i].count = 0;
 					if (g_col > 0) cell.bins[i].group_counts.assign(ng, 0);
 				}
+				// Density inputs: when density is requested, collect raw
+				// values (ungrouped) or per-group raw values (grouped) in
+				// the same row pass so we don't iterate the cell's rows
+				// twice. Empty when density is off.
+				std::vector<double> dens_vals;
+				std::vector<std::vector<double>> dens_vals_by_group;
+				if (want_density) {
+					if (g_col == 0) dens_vals.reserve(fp.second.size());
+					else dens_vals_by_group.assign(ng, std::vector<double>{});
+				}
+
 				for (intptr_t r : fp.second) {
 					auto v = xc(r);
 					if (v.empty()) continue;
@@ -4348,11 +4783,44 @@ void AnalysisView::updateEdaPlot()
 					if (bi < 0) bi = 0;
 					if (bi >= rnb) bi = rnb - 1;
 					cell.bins[bi].count++;
+					int g_for_density = -1;
 					if (g_col > 0) {
 						auto vg = dt->get_cell(r, g_col);
 						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
 						auto it = g_idx.find(qg);
-						if (it != g_idx.end()) cell.bins[bi].group_counts[it->second]++;
+						if (it != g_idx.end()) {
+							cell.bins[bi].group_counts[it->second]++;
+							g_for_density = it->second;
+						}
+					}
+					if (want_density) {
+						if (g_col == 0) dens_vals.push_back(d);
+						else if (g_for_density >= 0)
+							dens_vals_by_group[g_for_density].push_back(d);
+					}
+				}
+
+				// Build density curve(s) for this cell. Each curve is
+				// scaled to the local count so the curve heights match
+				// the bars in the SAME cell — densities don't get
+				// renormalized across panels.
+				if (want_density) {
+					if (g_col == 0) {
+						if (dens_vals.size() >= 2) {
+							int local_n = (int)dens_vals.size();
+							auto c = buildDensityCurve(std::move(dens_vals), nbins,
+							                            rlo, rhi, local_n, -1);
+							if (!c.x.empty()) cell.density_curves.push_back(std::move(c));
+						}
+					} else {
+						for (int gi = 0; gi < ng; gi++) {
+							auto &gv = dens_vals_by_group[gi];
+							if (gv.size() < 2) continue;
+							int gn = (int)gv.size();
+							auto c = buildDensityCurve(std::move(gv), nbins,
+							                            rlo, rhi, gn, gi);
+							if (!c.x.empty()) cell.density_curves.push_back(std::move(c));
+						}
 					}
 				}
 				cells.push_back(std::move(cell));
@@ -4590,6 +5058,25 @@ void AnalysisView::updateEdaPlot()
 		                            formant, formant,
 		                            show_means, show_ellipses,
 		                            m_eda_regline_check->isChecked());
+
+		// Apply user customization for the faceted path. Mirrors the
+		// same block at the end of updateEdaPlot — the facet branch
+		// returns early so we need to apply twice.
+		if (!m_eda_customization.title.isEmpty())
+			m_eda_plot->setTitle(m_eda_customization.title);
+		if (!m_eda_customization.x_label.isEmpty())
+			m_eda_plot->setXLabel(m_eda_customization.x_label);
+		if (!m_eda_customization.y_label.isEmpty())
+			m_eda_plot->setYLabel(m_eda_customization.y_label);
+		if (m_eda_customization.x_min.has_value() && m_eda_customization.x_max.has_value())
+			m_eda_plot->setForcedXRange(*m_eda_customization.x_min, *m_eda_customization.x_max);
+		else
+			m_eda_plot->clearForcedXRange();
+		if (m_eda_customization.y_min.has_value() && m_eda_customization.y_max.has_value())
+			m_eda_plot->setForcedYRange(*m_eda_customization.y_min, *m_eda_customization.y_max);
+		else
+			m_eda_plot->clearForcedYRange();
+		m_eda_plot->setFacetNColsOverride(m_eda_customization.facet_ncols);
 		return;
 	}
 
@@ -4621,9 +5108,41 @@ void AnalysisView::updateEdaPlot()
 		if (g_col > 0) title += QStringLiteral(" by ") + group_name_q;
 
 		if (g_col > 0) {
+			bool want_density = m_eda_density_check->isChecked();
+			// Build per-group density curves before moving vals/groups
+			// into the plot — each curve uses its group's count for
+			// scaling so the curve heights match the (overlaid) bars.
+			std::vector<PlotWidget::DensityCurve> curves;
+			if (want_density) {
+				// Discover groups in first-seen order, matching how
+				// computeGroupedBins assigns palette slots.
+				std::vector<QString> g_order;
+				std::map<QString, int> g_idx;
+				for (size_t i = 0; i < groups.size(); i++) {
+					if (g_idx.find(groups[i]) == g_idx.end()) {
+						g_idx[groups[i]] = (int)g_order.size();
+						g_order.push_back(groups[i]);
+					}
+				}
+				// Pool the X support so every group's curve spans the
+				// same range — keeps visual comparison meaningful.
+				double pool_lo = *std::min_element(vals.begin(), vals.end());
+				double pool_hi = *std::max_element(vals.begin(), vals.end());
+				for (int gi = 0; gi < (int)g_order.size(); gi++) {
+					std::vector<double> gv;
+					for (size_t i = 0; i < vals.size(); i++)
+						if (groups[i] == g_order[gi]) gv.push_back(vals[i]);
+					if (gv.size() < 2) continue;
+					int gn = (int)gv.size();
+					auto c = buildDensityCurve(std::move(gv), nbins,
+					                            pool_lo, pool_hi, gn, gi);
+					if (!c.x.empty()) curves.push_back(std::move(c));
+				}
+			}
 			m_eda_plot->setHistogramData(std::move(vals), std::move(groups),
 			                              x_name_q, tr("Count"), title, nbins);
-			m_eda_plot->clearDensityCurve();
+			if (!curves.empty()) m_eda_plot->setDensityCurves(std::move(curves));
+			else m_eda_plot->clearDensityCurve();
 		} else {
 			std::vector<double> vals_copy;
 			bool want_density = m_eda_density_check->isChecked() && vals.size() >= 2;
@@ -4968,6 +5487,31 @@ void AnalysisView::updateEdaPlot()
 				m_eda_plot->clearRegressionLine();
 		}
 	}
+
+	// ── Apply user customization (overrides auto title/labels/range) ────
+	// Done at the very end so it overrides whatever the dispatch above
+	// just set. Empty strings and unset optionals are no-ops; the facet
+	// branch also calls this before its early-return so the two paths
+	// produce identical results from the user's perspective.
+	if (!m_eda_customization.title.isEmpty())
+		m_eda_plot->setTitle(m_eda_customization.title);
+	if (!m_eda_customization.x_label.isEmpty())
+		m_eda_plot->setXLabel(m_eda_customization.x_label);
+	if (!m_eda_customization.y_label.isEmpty())
+		m_eda_plot->setYLabel(m_eda_customization.y_label);
+	// Ranges: override only when BOTH min and max are set. A partial range
+	// (just min, no max) would need a new "leave the other bound to auto-
+	// fit" API on PlotWidget; for now the user gets either full override
+	// or full auto. The dialog Reset clears both.
+	if (m_eda_customization.x_min.has_value() && m_eda_customization.x_max.has_value())
+		m_eda_plot->setForcedXRange(*m_eda_customization.x_min, *m_eda_customization.x_max);
+	else
+		m_eda_plot->clearForcedXRange();
+	if (m_eda_customization.y_min.has_value() && m_eda_customization.y_max.has_value())
+		m_eda_plot->setForcedYRange(*m_eda_customization.y_min, *m_eda_customization.y_max);
+	else
+		m_eda_plot->clearForcedYRange();
+	m_eda_plot->setFacetNColsOverride(m_eda_customization.facet_ncols);
 }
 
 
