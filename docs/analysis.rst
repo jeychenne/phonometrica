@@ -735,42 +735,107 @@ The **Export** button saves the current diagnostic plot to a file (PNG, PDF, or 
 EDA tab
 -------
 
-The Exploratory Data Analysis tab lets you visualize your data before fitting a model.
+The Exploratory Data Analysis tab lets you visualize your data before fitting a model. It is
+organized around four roles you can fill: a **plot type**, the **variables** that map to it,
+the **overlay options** that customize what's drawn, and a **Customize dialog** for cosmetic
+adjustments.
 
-Plot types
-~~~~~~~~~~
-
-The plot type is determined automatically by the types of the selected variables:
-
-- **Numeric × Numeric**: scatter plot (or grouped scatter when a Group variable is set),
-  with optional regression line, mean markers, and confidence ellipses.
-- **Numeric × (none)**: histogram with adjustable bin count and optional kernel density curve.
-- **Categorical × Numeric**: box plot (median, quartiles, whiskers, and outlier dots) for each
-  level of the categorical variable.
-- **Categorical × (none)**: bar chart of category counts.
-
-Scatter plot options
+Choosing a plot type
 ~~~~~~~~~~~~~~~~~~~~
 
-- **X** and **Y**: select the variables for each axis.
-- **Group**: color points by a categorical variable.
-- **Pool by**: average X and Y values within each (group, pool) cell before plotting
-  (e.g. pool by speaker to get one point per speaker per vowel).
-- **Label**: render the value of a variable as text at each data point.
-- **Regression line**: overlay an OLS regression line.
+The **Plot type** combo at the top of the EDA controls selects what kind of chart to build:
+
+- **Auto** (default) infers the chart from the variables you select. The original inference
+  rules apply: Numeric × Numeric → scatter, Numeric × (none) → histogram, Categorical × Numeric
+  → boxplot, Categorical × (none) → bar chart.
+- **Histogram**, **Bar chart**, **Boxplot**, **Scatter** force a specific chart. If the
+  selected variables don't fit (e.g. Histogram with a categorical X), a short hint appears
+  below the plot — for instance, *"Histogram needs a numeric X; "survey" is categorical."* —
+  and the variable combos stay populated so you can fix the selection without losing context.
+- **Formant chart** is a Scatter with axes reversed by convention (high values at the
+  bottom-left, as in F1 × F2 plots). The X and Y slot labels rename to **F2:** and **F1:**
+  as a reminder, and the redundant Formant checkbox is hidden.
+
+Switching the plot type clears every variable slot (X, Y, Group, Facet, Pool, Style, Label)
+so prior selections from a different chart don't carry over and produce surprising results.
+Any customization you set via the Customize dialog (see below) is also reset on type change.
+
+Variables
+~~~~~~~~~
+
+Variable slots adapt to the active plot type:
+
+- **X** and **Y**: the primary axes. Required by all plot types except those that take
+  only X (Histogram, Bar chart).
+- **Group**: split the data within each panel into colored subseries. Works for every
+  plot type:
+
+  - In **Histogram**, groups appear as overlaid translucent fills with their own legend.
+  - In **Bar chart**, groups appear as side-by-side (dodged) sub-bars.
+  - In **Boxplot**, groups appear as side-by-side boxes clustered by primary X level.
+  - In **Scatter** / **Formant chart**, groups encode color (and, with Style, marker shape).
+
+- **Facet**: split the plot into one panel per level of a categorical variable (small
+  multiples). All four chart types support it. Group and Facet combine: facet by speaker,
+  group by condition → overlaid histograms per speaker. By default panels are laid out
+  near-square with a cap of four columns per row so each panel stays readable; you can
+  override the column count via Customize.
+- **Pool by** *(Scatter / Formant chart with Group set)*: average X and Y values within
+  each (group, pool) cell before plotting — e.g. pool by speaker to get one point per
+  speaker per vowel.
+- **Style** *(Scatter / Formant chart with Group set)*: differentiate marker shape (and
+  ellipse line style) by a second categorical variable. Color continues to encode Group.
+- **Label** *(Scatter)*: render the value of a variable as text at each data point.
+
+Overlay options
+~~~~~~~~~~~~~~~
+
+Which overlays are visible depends on the active plot type and the variable selection.
+
+Histogram:
+
+- **Bins**: histogram bin count (0 = automatic, using Sturges' rule).
+- **Density curve**: overlay a kernel density estimate. When Group is set, one curve is
+  drawn per group, colored to match its bars and scaled to that group's count so curve
+  heights match the matching group's bars. When Facet is set, each panel gets its own
+  curve(s).
+- **Smoothing**: bandwidth adjustment factor for the density curve (1.00 = Silverman's
+  rule of thumb).
+
+Scatter and Formant chart:
+
+- **Regression line** *(Scatter)*: overlay an OLS regression line. Hidden for Formant
+  charts where a global regression isn't meaningful.
 - **Means**: show the mean of each group as a marker.
-- **Ellipses**: draw confidence ellipses around each group, with an adjustable confidence
-  level (default: 68% ≈ 1σ).
-- **Formant chart**: reverse both axes so that high values appear at the bottom-left, as is
-  conventional for F1 × F2 vowel plots.
+- **Ellipses**: draw confidence ellipses around each group with an adjustable confidence
+  level (default 68% ≈ 1σ for plain Scatter; 95% for Formant chart).
+- **Formant** *(Scatter only)*: reverse both axes. Equivalent to choosing the Formant
+  chart plot type but lets you toggle the convention on top of a plain Scatter setup;
+  hidden when the type is already Formant chart.
 
-Histogram options
-~~~~~~~~~~~~~~~~~
+Raw formant charts (clouds with no overlay) are useful too — Mean and Ellipse default to
+OFF when you switch to the Formant chart type. Enable them after you see the cloud if the
+centroids and confidence ellipses would help.
 
-- **Bins**: number of histogram bins (0 = automatic, using Sturges' rule).
-- **Density curve**: overlay a kernel density estimate.
-- **Smoothing**: bandwidth adjustment factor for the density curve (1.00 = Silverman's rule
-  of thumb).
+Customize dialog
+~~~~~~~~~~~~~~~~
+
+The gear button in the EDA toolbar opens a Customize dialog that overrides cosmetic and
+layout aspects of the current plot:
+
+- **Title**: replace the auto-generated title (e.g. *"F2 by gender"*).
+- **X label**, **Y label**: replace the auto-generated axis labels (typically the variable
+  names).
+- **X range**, **Y range**: override the auto-fit range with explicit min/max. Both bounds
+  must be set for the override to take effect; leaving either blank falls back to auto-fit
+  on both axes. Inverted min/max are silently swapped. Comma decimal separators (e.g.
+  *"1,5"*) are accepted alongside dot separators.
+- **Facet columns**: number of panels per row in faceted layouts. 0 means auto (capped at
+  4 for readability); any positive value is used as-is.
+
+A **Reset** button clears all customizations. Customizations persist across variable
+changes — if you re-pick X or Group, your title and labels remain — but reset automatically
+on plot type change, since the auto-generated labels would no longer match the new chart.
 
 Summary table
 ~~~~~~~~~~~~~
@@ -794,7 +859,8 @@ observation whose context you want to verify before refining the analysis.
 
 Which points are clickable depends on the plot type:
 
-- **Scatter** and **grouped scatter**: every plotted point is clickable.
+- **Scatter** and **grouped scatter**: every plotted point is clickable. In a faceted
+  scatter, points remain clickable within each panel.
 - **Box plot**: only the outlier dots are clickable. The box body itself summarises many
   observations and has no single source row.
 - **Histogram** and **bar chart**: not clickable. Each bin or bar aggregates many rows.
@@ -1367,8 +1433,10 @@ Tips
   For Bayesian fits, the **Posterior Predictive Check** plot is a quick eye-ball test
   of whether the response family captures the shape of your data — useful before
   trusting the coefficient table.
-- For vowel formant plots, use the **Formant chart** checkbox in the EDA tab to reverse
-  both axes.
+- For vowel formant plots, set **Plot type = Formant chart** in the EDA tab. This reverses
+  both axes (F1 × F2 convention) and renames the X / Y slots to F2 / F1 as a reminder. The
+  legacy *Formant* checkbox is still available when the plot type is plain Scatter, for the
+  occasional case where you want a formant-style scatter with custom overlays.
 - When fitting a GAM with speaker or item effects, use ``s(speaker, bs=re)`` rather than
   a fixed effect for the grouping variable. This estimates the between-group variance and
   shrinks group estimates toward the population mean, reducing overfitting — especially

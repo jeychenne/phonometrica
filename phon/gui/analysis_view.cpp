@@ -3897,7 +3897,7 @@ void AnalysisView::onCustomizeEda()
 	// while they're still typing (Intermediate is treated as acceptable).
 	auto make_range_field = [](const std::optional<double> &v) {
 		auto *e = new QLineEdit;
-		e->setPlaceholderText(QObject::tr("auto"));
+		e->setPlaceholderText(QObject::tr("required"));
 		auto *val = new QDoubleValidator(e);
 		val->setNotation(QDoubleValidator::StandardNotation);
 		e->setValidator(val);
@@ -3920,8 +3920,43 @@ void AnalysisView::onCustomizeEda()
 		l->addWidget(hi);
 		return w;
 	};
-	form->addRow(tr("X range:"), make_range_row(xmin_edit, xmax_edit));
-	form->addRow(tr("Y range:"), make_range_row(ymin_edit, ymax_edit));
+
+	// "Custom X range" / "Custom Y range" checkboxes sit in the form's
+	// label slot and gate the min/max fields. Unchecked = auto-fit
+	// (fields disabled, greyed out). Checked = override (fields enabled
+	// and both required at Accept time, enforced below). Pre-check the
+	// box if the user already had a range saved from a previous open.
+	bool x_initial = m_eda_customization.x_min.has_value()
+	              && m_eda_customization.x_max.has_value();
+	bool y_initial = m_eda_customization.y_min.has_value()
+	              && m_eda_customization.y_max.has_value();
+
+	auto *xrange_check = new QCheckBox(tr("Custom X range:"));
+	xrange_check->setChecked(x_initial);
+	xmin_edit->setEnabled(x_initial);
+	xmax_edit->setEnabled(x_initial);
+	connect(xrange_check, &QCheckBox::toggled, &dlg,
+	        [xmin_edit, xmax_edit](bool on) {
+		xmin_edit->setEnabled(on);
+		xmax_edit->setEnabled(on);
+		if (on) xmin_edit->setFocus();
+	});
+
+	auto *yrange_check = new QCheckBox(tr("Custom Y range:"));
+	yrange_check->setChecked(y_initial);
+	ymin_edit->setEnabled(y_initial);
+	ymax_edit->setEnabled(y_initial);
+	connect(yrange_check, &QCheckBox::toggled, &dlg,
+	        [ymin_edit, ymax_edit](bool on) {
+		ymin_edit->setEnabled(on);
+		ymax_edit->setEnabled(on);
+		if (on) ymin_edit->setFocus();
+	});
+
+	// QFormLayout::addRow accepts a QWidget* as the left-hand cell, so
+	// the checkbox can replace the usual QLabel.
+	form->addRow(xrange_check, make_range_row(xmin_edit, xmax_edit));
+	form->addRow(yrange_check, make_range_row(ymin_edit, ymax_edit));
 
 	// Facet columns spinbox. 0 means auto.
 	auto *facet_ncols_spin = new QSpinBox;
@@ -3935,11 +3970,52 @@ void AnalysisView::onCustomizeEda()
 	// Buttons: Reset, then standard Cancel/OK.
 	auto *bbox = new QDialogButtonBox(
 	    QDialogButtonBox::Ok | QDialogButtonBox::Cancel | QDialogButtonBox::Reset);
-	connect(bbox, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+	// Validate ranges before accepting: when a "Custom range" box is
+	// checked, both min and max must parse to finite numbers. If not,
+	// warn and keep the dialog open so the user can fix the field. We
+	// route accepted -> our lambda (instead of QDialog::accept directly)
+	// so we control the gate.
+	auto parse_check = [](QLineEdit *e) -> std::optional<double> {
+		QString s = e->text().trimmed();
+		if (s.isEmpty()) return std::nullopt;
+		s.replace(',', '.');
+		bool ok = false;
+		double d = s.toDouble(&ok);
+		if (!ok || !std::isfinite(d)) return std::nullopt;
+		return d;
+	};
+	auto try_accept = [&]() {
+		if (xrange_check->isChecked()) {
+			auto lo = parse_check(xmin_edit);
+			auto hi = parse_check(xmax_edit);
+			if (!lo.has_value() || !hi.has_value()) {
+				QMessageBox::warning(&dlg, tr("Custom X range"),
+				    tr("Custom X range needs both min and max set to "
+				       "valid numbers. Uncheck \u201cCustom X range\u201d "
+				       "to use the auto range instead."));
+				return;
+			}
+		}
+		if (yrange_check->isChecked()) {
+			auto lo = parse_check(ymin_edit);
+			auto hi = parse_check(ymax_edit);
+			if (!lo.has_value() || !hi.has_value()) {
+				QMessageBox::warning(&dlg, tr("Custom Y range"),
+				    tr("Custom Y range needs both min and max set to "
+				       "valid numbers. Uncheck \u201cCustom Y range\u201d "
+				       "to use the auto range instead."));
+				return;
+			}
+		}
+		dlg.accept();
+	};
+	connect(bbox, &QDialogButtonBox::accepted, &dlg, try_accept);
 	connect(bbox, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
 	connect(bbox->button(QDialogButtonBox::Reset), &QPushButton::clicked,
 	        &dlg, [&]() {
 		// Reset clears the form fields and (on Accept) the customization.
+		// Unchecking the range boxes also disables the now-empty min/max
+		// fields, giving consistent visual state.
 		title_edit->clear();
 		xlabel_edit->clear();
 		ylabel_edit->clear();
@@ -3947,6 +4023,8 @@ void AnalysisView::onCustomizeEda()
 		xmax_edit->clear();
 		ymin_edit->clear();
 		ymax_edit->clear();
+		xrange_check->setChecked(false);
+		yrange_check->setChecked(false);
 		facet_ncols_spin->setValue(0);
 	});
 
@@ -3958,7 +4036,9 @@ void AnalysisView::onCustomizeEda()
 
 	// Parse field values into the customization struct. A blank field is
 	// "use auto"; a value that fails to parse is treated as blank rather
-	// than producing a user-hostile error.
+	// than producing a user-hostile error. Range fields are only consulted
+	// when the matching checkbox is on — try_accept already verified both
+	// fields parse when the checkbox is on, so the parses here can't fail.
 	auto parse_opt = [](QLineEdit *e) -> std::optional<double> {
 		QString s = e->text().trimmed();
 		if (s.isEmpty()) return std::nullopt;
@@ -3973,10 +4053,20 @@ void AnalysisView::onCustomizeEda()
 	m_eda_customization.title    = title_edit->text().trimmed();
 	m_eda_customization.x_label  = xlabel_edit->text().trimmed();
 	m_eda_customization.y_label  = ylabel_edit->text().trimmed();
-	m_eda_customization.x_min    = parse_opt(xmin_edit);
-	m_eda_customization.x_max    = parse_opt(xmax_edit);
-	m_eda_customization.y_min    = parse_opt(ymin_edit);
-	m_eda_customization.y_max    = parse_opt(ymax_edit);
+	if (xrange_check->isChecked()) {
+		m_eda_customization.x_min = parse_opt(xmin_edit);
+		m_eda_customization.x_max = parse_opt(xmax_edit);
+	} else {
+		m_eda_customization.x_min.reset();
+		m_eda_customization.x_max.reset();
+	}
+	if (yrange_check->isChecked()) {
+		m_eda_customization.y_min = parse_opt(ymin_edit);
+		m_eda_customization.y_max = parse_opt(ymax_edit);
+	} else {
+		m_eda_customization.y_min.reset();
+		m_eda_customization.y_max.reset();
+	}
 	m_eda_customization.facet_ncols = facet_ncols_spin->value();
 
 	// If the user inverted min/max (e.g. typed 200 in min, 100 in max),
@@ -5046,6 +5136,26 @@ void AnalysisView::updateEdaPlot()
 		if (g_col > 0) global_title += QStringLiteral(" by ") + group_name_q;
 		global_title += QStringLiteral(" | facet: ") + facet_name_q;
 
+		// Fold user customization range into the facet shared range before
+		// shipping to setFacetedData. Without this, renderFacetGrid would
+		// use the auto-computed range during the inner pass and the user's
+		// override would be invisible in faceted layouts. The dialog only
+		// allows setting both bounds at once (gated by a "Custom range"
+		// checkbox), so checking either is_value() is sufficient — if one
+		// is set, both are.
+		bool x_user_set = m_eda_customization.x_min.has_value()
+		               && m_eda_customization.x_max.has_value();
+		bool y_user_set = m_eda_customization.y_min.has_value()
+		               && m_eda_customization.y_max.has_value();
+		if (x_user_set) {
+			x_range.first  = *m_eda_customization.x_min;
+			x_range.second = *m_eda_customization.x_max;
+		}
+		if (y_user_set) {
+			y_range.first  = *m_eda_customization.y_min;
+			y_range.second = *m_eda_customization.y_max;
+		}
+
 		m_eda_plot->setFacetedData(std::move(cells), inner_mode,
 		                            axis_x_label, axis_y_label,
 		                            global_title, facet_name_q,
@@ -5059,20 +5169,22 @@ void AnalysisView::updateEdaPlot()
 		                            show_means, show_ellipses,
 		                            m_eda_regline_check->isChecked());
 
-		// Apply user customization for the faceted path. Mirrors the
-		// same block at the end of updateEdaPlot — the facet branch
-		// returns early so we need to apply twice.
+		// Apply remaining user customization for the faceted path. Mirrors
+		// the same block at the end of updateEdaPlot — the facet branch
+		// returns early so we need to apply twice. Title/labels are direct
+		// overrides; ranges also go through setForcedX/YRange so that
+		// renderFacetGrid's end-of-pass restore puts back the user values.
 		if (!m_eda_customization.title.isEmpty())
 			m_eda_plot->setTitle(m_eda_customization.title);
 		if (!m_eda_customization.x_label.isEmpty())
 			m_eda_plot->setXLabel(m_eda_customization.x_label);
 		if (!m_eda_customization.y_label.isEmpty())
 			m_eda_plot->setYLabel(m_eda_customization.y_label);
-		if (m_eda_customization.x_min.has_value() && m_eda_customization.x_max.has_value())
+		if (x_user_set)
 			m_eda_plot->setForcedXRange(*m_eda_customization.x_min, *m_eda_customization.x_max);
 		else
 			m_eda_plot->clearForcedXRange();
-		if (m_eda_customization.y_min.has_value() && m_eda_customization.y_max.has_value())
+		if (y_user_set)
 			m_eda_plot->setForcedYRange(*m_eda_customization.y_min, *m_eda_customization.y_max);
 		else
 			m_eda_plot->clearForcedYRange();
@@ -5499,10 +5611,10 @@ void AnalysisView::updateEdaPlot()
 		m_eda_plot->setXLabel(m_eda_customization.x_label);
 	if (!m_eda_customization.y_label.isEmpty())
 		m_eda_plot->setYLabel(m_eda_customization.y_label);
-	// Ranges: override only when BOTH min and max are set. A partial range
-	// (just min, no max) would need a new "leave the other bound to auto-
-	// fit" API on PlotWidget; for now the user gets either full override
-	// or full auto. The dialog Reset clears both.
+	// Ranges: the dialog gates these on a "Custom X/Y range" checkbox and
+	// requires both bounds when the checkbox is checked, so x_min and
+	// x_max are either both set or both unset (same for y). Either-or-
+	// nothing means a single has_value() check suffices.
 	if (m_eda_customization.x_min.has_value() && m_eda_customization.x_max.has_value())
 		m_eda_plot->setForcedXRange(*m_eda_customization.x_min, *m_eda_customization.x_max);
 	else
