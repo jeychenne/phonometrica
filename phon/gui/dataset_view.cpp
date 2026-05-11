@@ -99,11 +99,6 @@ void DatasetView::setupUi()
 
 	m_toolbar->addSeparator();
 
-	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
-	analyze_action->setToolTip(tr("Open analysis view for this dataset"));
-
-	m_toolbar->addSeparator();
-
 	// -- Set operations --
 	auto *union_action = m_toolbar->addAction(QIcon(":/icons/set-union.svg"), tr("Union"));
 	union_action->setToolTip(tr("Unite with another dataset (A \u222a B)"));
@@ -116,6 +111,11 @@ void DatasetView::setupUi()
 
 	auto *merge_action = m_toolbar->addAction(QIcon(":/icons/layers.svg"), tr("Merge"));
 	merge_action->setToolTip(tr("Horizontal merge: add columns from another table"));
+
+	m_toolbar->addSeparator();
+
+	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
+	analyze_action->setToolTip(tr("Open analysis view for this dataset"));
 
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);

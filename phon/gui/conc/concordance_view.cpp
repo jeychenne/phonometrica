@@ -211,11 +211,6 @@ void ConcordanceView::setupUi()
 
 	m_toolbar->addSeparator();
 
-	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
-	analyze_action->setToolTip(tr("Open analysis view for this concordance"));
-
-	m_toolbar->addSeparator();
-
 	// -- Filter / Subset --
 	m_filter_action = m_toolbar->addAction(QIcon(":/icons/filter.svg"), tr("Filter"));
 	m_filter_action->setToolTip(tr("Show/hide the filter bar"));
@@ -389,6 +384,11 @@ void ConcordanceView::setupUi()
 		if (auto *sb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(scales_action)))
 			sb->setPopupMode(QToolButton::InstantPopup);
 	}
+
+	m_toolbar->addSeparator();
+
+	auto *analyze_action = m_toolbar->addAction(QIcon(":/icons/statistics.svg"), tr("Analyze"));
+	analyze_action->setToolTip(tr("Open analysis view for this concordance"));
 
 	// ── Right-aligned help button ─────────────────────
 	auto *spacer = new QWidget(this);

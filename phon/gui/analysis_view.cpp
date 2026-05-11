@@ -1022,8 +1022,10 @@ void AnalysisView::setupUi()
 	eda_vars->addWidget(m_eda_pool_label);
 	m_eda_pool_combo = new QComboBox;
 	m_eda_pool_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-	m_eda_pool_combo->setToolTip(tr("Average X and Y values within each (group, pool) cell before plotting "
-	                                "(e.g. pool by speaker to get one point per speaker per vowel)"));
+	m_eda_pool_combo->setToolTip(tr("Average X and Y values within each pool cell before plotting. "
+	                                "Without Group: one point per pool level (e.g. one point per "
+	                                "speaker). With Group: one point per (group, pool) cell (e.g. "
+	                                "one point per speaker per vowel)."));
 	m_eda_pool_combo->setVisible(false);
 	eda_vars->addWidget(m_eda_pool_combo);
 	m_eda_style_label = new QLabel(tr("Style:"));
@@ -4640,8 +4642,8 @@ void AnalysisView::updateEdaPlot()
 		m_eda_bw_spin->setVisible(density_on);
 	}
 	m_eda_regline_check->setVisible(kind == KScatter && !is_formant_chart);
-	m_eda_pool_label->setVisible(kind == KScatter && g_col > 0);
-	m_eda_pool_combo->setVisible(kind == KScatter && g_col > 0);
+	m_eda_pool_label->setVisible(kind == KScatter);
+	m_eda_pool_combo->setVisible(kind == KScatter);
 	m_eda_style_label->setVisible(kind == KScatter && g_col > 0);
 	m_eda_style_combo->setVisible(kind == KScatter && g_col > 0);
 	m_eda_label_label->setVisible(kind == KScatter);
@@ -5522,12 +5524,20 @@ void AnalysisView::updateEdaPlot()
 		}
 		else
 		{
-			// ── Plain scatter ──
+			// ── Plain scatter (no Group) ──
 			intptr_t l_col = 0;
 			if (has_label) {
 				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
 				for (intptr_t j = 1; j <= nc; j++) {
 					if (dt->get_header(j) == label_name) { l_col = j; break; }
+				}
+			}
+
+			intptr_t p_col = 0;
+			if (has_pool) {
+				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == pool_name) { p_col = j; break; }
 				}
 			}
 
@@ -5544,6 +5554,7 @@ void AnalysisView::updateEdaPlot()
 				auto vy = yc(r);
 				if (vx.empty() || vy.empty()) continue;
 				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+				if (p_col > 0 && dt->get_cell(r, p_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
@@ -5558,6 +5569,68 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
+
+			// ── Pooling ──
+			// When a pool variable is set without Group, each plotted point is
+			// the (x, y) mean across all rows sharing the same pool level —
+			// e.g. one point per speaker. Mirrors the grouped pool path at the
+			// top of this branch, minus the Group/Style keying. Source rows
+			// are left empty for pooled points: each one represents N rows,
+			// so click-through to a single source row isn't meaningful.
+			if (p_col > 0)
+			{
+				struct PoolCell {
+					double sx = 0, sy = 0;
+					int n = 0;
+					std::map<QString, int> label_freq;
+				};
+				std::map<QString, PoolCell> cells_pool;
+				std::vector<QString> cell_order;
+
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = xc(r);
+					auto vy = yc(r);
+					auto vp = dt->get_cell(r, p_col);
+					if (vx.empty() || vy.empty() || vp.empty()) continue;
+					if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+
+					QString pool_str = QString::fromUtf8(vp.data(), (int)vp.size());
+					if (cells_pool.find(pool_str) == cells_pool.end()) cell_order.push_back(pool_str);
+					auto &c = cells_pool[pool_str];
+					c.sx += dx;
+					c.sy += dy;
+					c.n++;
+					if (l_col > 0) {
+						auto vl = dt->get_cell(r, l_col);
+						c.label_freq[QString::fromUtf8(vl.data(), (int)vl.size())]++;
+					}
+				}
+
+				xv.clear(); yv.clear(); lv.clear();
+				rows.clear();
+				for (auto &key : cell_order) {
+					auto &c = cells_pool[key];
+					if (c.n == 0) continue;
+					xv.push_back(c.sx / c.n);
+					yv.push_back(c.sy / c.n);
+					if (l_col > 0) {
+						// Use the most frequent label among the rows in
+						// this pool cell. Ties broken by first-seen.
+						QString best;
+						int best_n = 0;
+						for (auto &kv : c.label_freq) {
+							if (kv.second > best_n) { best = kv.first; best_n = kv.second; }
+						}
+						lv.push_back(best);
+					}
+				}
+				if (xv.empty()) { m_eda_plot->clear(); return; }
+			}
 
 			double reg_intercept = 0, reg_slope = 0, reg_r2 = 0;
 			bool reg_valid = false;
@@ -5588,6 +5661,9 @@ void AnalysisView::updateEdaPlot()
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
 			if (has_label && l_col > 0)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
+			if (p_col > 0)
+				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText()
+				       + QStringLiteral("]");
 
 			m_eda_plot->setData(std::move(xv), std::move(yv), x_name_q, y_name_q,
 			                     title, PlotWidget::RefLine::None, formant, formant,
@@ -5960,21 +6036,67 @@ void AnalysisView::updateEdaSummary()
 		else
 		{
 			// ── Ungrouped scatter (both continuous): N, r, means, SDs ──
+			// When a pool variable is set, the stats are computed over pool
+			// cell means rather than raw observations — so the user sees
+			// grand means, in keeping with the plot itself (one point per
+			// pool level). N then reports the number of pool cells; the
+			// Missing column still reports raw rows that couldn't make any
+			// cell because of an NA in X, Y, or the pool column.
+
+			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
+			intptr_t p_col = 0;
+			if (has_pool) {
+				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == pool_name) { p_col = j; break; }
+				}
+			}
 
 			std::vector<double> xv, yv;
 			xv.reserve(nr);
 			yv.reserve(nr);
 			intptr_t missing = 0;
-			for (intptr_t r = 1; r <= nr; r++)
+
+			if (p_col > 0)
 			{
-				auto vx = xc(r);
-				auto vy = yc(r);
-				if (vx.empty() || vy.empty()) { missing++; continue; }
-				bool okx, oky;
-				double dx = vx.to_float(&okx);
-				double dy = vy.to_float(&oky);
-				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) { xv.push_back(dx); yv.push_back(dy); }
-				else missing++;
+				struct PoolCell { double sx = 0, sy = 0; int n = 0; };
+				std::map<QString, PoolCell> cells;
+				std::vector<QString> cell_order;
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = xc(r);
+					auto vy = yc(r);
+					auto vp = dt->get_cell(r, p_col);
+					if (vx.empty() || vy.empty() || vp.empty()) { missing++; continue; }
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) { missing++; continue; }
+					QString key = QString::fromUtf8(vp.data(), (int)vp.size());
+					if (cells.find(key) == cells.end()) cell_order.push_back(key);
+					auto &c = cells[key];
+					c.sx += dx; c.sy += dy; c.n++;
+				}
+				for (auto &key : cell_order) {
+					auto &c = cells[key];
+					if (c.n == 0) continue;
+					xv.push_back(c.sx / c.n);
+					yv.push_back(c.sy / c.n);
+				}
+			}
+			else
+			{
+				for (intptr_t r = 1; r <= nr; r++)
+				{
+					auto vx = xc(r);
+					auto vy = yc(r);
+					if (vx.empty() || vy.empty()) { missing++; continue; }
+					bool okx, oky;
+					double dx = vx.to_float(&okx);
+					double dy = vy.to_float(&oky);
+					if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) { xv.push_back(dx); yv.push_back(dy); }
+					else missing++;
+				}
 			}
 			if (xv.empty()) return;
 
