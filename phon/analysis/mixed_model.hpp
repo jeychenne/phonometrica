@@ -20,7 +20,8 @@
  * This is a unified engine: the same code path handles Gaussian, binomial, Poisson, and negative binomial families    *
  * with one or more random-effects terms (intercepts and/or slopes, crossed or nested). The only family-dependent      *
  * piece is the conditional log-likelihood and its derivatives, supplied by the Family struct.                         *
- * Estimation is by maximum likelihood (not REML).                                                                     *
+ * Estimation is by maximum likelihood (ML). REML is supported as an opt-in for Gaussian LMMs via      *
+ * FitOptions.method; see prior.hpp for the Method enum.                                                              *
  *                                                                                                                     *
  * Algorithm references (all published mathematical specifications, no GPL code):                                      *
  *   - Breslow & Clayton (1993). Approximate inference in generalized linear mixed models. JASA 88(421).               *
@@ -121,6 +122,11 @@ struct FitOptions
 	// can make the joint Hessian ill-conditioned, but on some
 	// datasets it converges and gives a tighter fit.
 	bool phase2_student = false;
+
+	// Frequentist estimation method. Only meaningful for Gaussian LMMs;
+	// for all other paths, REML is silently coerced to ML with a
+	// fit_warning. Default is ML.
+	Method method = Method::ML;
 };
 
 // Internal helper: per-start initialization overrides supplied by the
@@ -168,7 +174,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const Array<String> *coef_names = nullptr,
                   int max_iter = 200,
                   const Array<double> &offset = Array<double>(),
-                  const InitOverrides *init_overrides = nullptr);
+                  const InitOverrides *init_overrides = nullptr,
+                  Method method = Method::ML);
 
 
 // Multi-start orchestration entry point. For n_starts ≤ 1 (or for

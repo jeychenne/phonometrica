@@ -656,6 +656,8 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "fit",  {
 		"fit(formula as String, data as DataTable)\nFits a frequentist statistical model (Gaussian family) to the data.\002",
 		"fit(formula as String, data as DataTable, family as String)\nFits a frequentist model with the specified family (\"gaussian\", \"binomial\", \"poisson\", \"negbin\").\002",
+		"fit(formula as String, data as DataTable, options as Table)\nFits a frequentist Gaussian model with options.\nSupported options: fit_method=\"ML\" (default) or fit_method=\"REML\".\nREML applies only to mixed models with at least one random effect;\nit is silently coerced to ML otherwise.\002",
+		"fit(formula as String, data as DataTable, family as String, options as Table)\nFits a frequentist model with the specified family and options.\nSupported options: fit_method=\"ML\" (default) or fit_method=\"REML\".\002",
 		"fit(formula as String, data as DataTable, priors as Prior)\nFits a Bayesian model (Gaussian family) using INLA-style approximate inference.\002",
 		"fit(formula as String, data as DataTable, family as String, priors as Prior)\nFits a Bayesian model with the specified family using INLA-style approximate inference.\001"
 	}},

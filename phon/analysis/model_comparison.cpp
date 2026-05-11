@@ -156,6 +156,48 @@ AnovaResult anova_compare(const std::vector<const Model *> &models,
 			            "Use bayesian_compare() for Bayesian models");
 	}
 
+	// REML guards: ML and REML log-likelihoods are not on the same scale,
+	// and REML log-likelihoods between models with different fixed-effects
+	// designs are not comparable either (the "restriction" depends on X,
+	// so each model's REML log-likelihood is the density of a different
+	// transformed dataset). We enforce both with hard errors — issuing a
+	// warning is too easy to overlook, and the corrective action is a
+	// simple refit with method="ML".
+	{
+		int n_ml = 0, n_reml = 0;
+		for (size_t i = 0; i < models.size(); i++) {
+			if (models[i]->method == Method::REML) n_reml++;
+			else n_ml++;
+		}
+		if (n_ml > 0 && n_reml > 0) {
+			throw error("Cannot compare models fitted with different methods (ML and REML). "
+			            "ML and REML log-likelihoods are not on the same scale. "
+			            "Refit all models with the same method (typically ML for fixed-effects comparison).");
+		}
+		if (n_reml > 0)
+		{
+			// All-REML set: ensure fixed effects are identical across models.
+			// We compare every model to the first; if any fixed-effects design
+			// differs, REML LRT/AIC/BIC are not valid.
+			auto first_formula = Formula::parse(models[0]->formula);
+			for (size_t i = 1; i < models.size(); i++) {
+				auto fi = Formula::parse(models[i]->formula);
+				bool same_fixed = (first_formula.intercept == fi.intercept)
+				                  && (first_formula.fixed.size() == fi.fixed.size())
+				                  && fixed_terms_subset(first_formula.fixed, fi.fixed)
+				                  && fixed_terms_subset(fi.fixed, first_formula.fixed);
+				if (!same_fixed) {
+					throw error("Cannot compare REML-fitted models with different fixed-effects designs. "
+					            "REML log-likelihoods depend on the fixed-effects design and are not "
+					            "comparable across models that differ in their fixed effects. "
+					            "Refit all models with method=\"ML\" to compare fixed effects, or restrict "
+					            "the comparison to models with identical fixed effects (differing only in "
+					            "random-effects structure).");
+				}
+			}
+		}
+	}
+
 	// Build 1-based display labels for each model.
 	std::vector<int> lbl(models.size());
 	if (labels.size() == models.size())

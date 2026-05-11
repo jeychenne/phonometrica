@@ -61,7 +61,7 @@ Analysis::Analysis(Directory *parent, const String &path) :
 // Fitting
 // =====================================================================
 
-int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, const stats::PriorSpec *priors, int max_iter)
+int Analysis::fit(const String &formula_str, const String &family, stats::FittingCallback progress, const stats::PriorSpec *priors, int max_iter, const stats::FitOptions *opts)
 {
 	if (!m_source) {
 		throw error("Cannot fit model: source data is not available");
@@ -71,6 +71,9 @@ int Analysis::fit(const String &formula_str, const String &family, stats::Fittin
 	stats::Model model;
 	if (priors) {
 		model = stats::fit(*m_source, formula, family, *priors,
+		                    m_reference_levels, std::move(progress), max_iter);
+	} else if (opts) {
+		model = stats::fit(*m_source, formula, family, *opts,
 		                    m_reference_levels, std::move(progress), max_iter);
 	} else {
 		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress), max_iter);
@@ -105,7 +108,8 @@ void Analysis::refit(int index, stats::FittingCallback progress, int max_iter)
 	// Reproduce the model from its own stored spec — formula, family, and
 	// (when Bayesian) priors all live on the existing Model. The GUI is
 	// not consulted, so refit is well-defined regardless of which model is
-	// currently displayed.
+	// currently displayed. The estimation method (ML/REML) also round-trips
+	// via Model::method.
 	const stats::Model &existing = m_models[index];
 	auto formula = stats::Formula::parse(existing.formula);
 	String family = existing.family;
@@ -116,6 +120,11 @@ void Analysis::refit(int index, stats::FittingCallback progress, int max_iter)
 	stats::Model model;
 	if (bayesian) {
 		model = stats::fit(*m_source, formula, family, existing.priors,
+		                    m_reference_levels, std::move(progress), max_iter);
+	} else if (existing.method == stats::Method::REML) {
+		stats::FitOptions opts;
+		opts.method = stats::Method::REML;
+		model = stats::fit(*m_source, formula, family, opts,
 		                    m_reference_levels, std::move(progress), max_iter);
 	} else {
 		model = stats::fit(*m_source, formula, family, m_reference_levels, std::move(progress), max_iter);

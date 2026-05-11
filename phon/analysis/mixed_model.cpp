@@ -1091,7 +1091,8 @@ static ProfiledResult solve_gaussian_henderson(
 	intptr_t n, intptr_t p,
 	const PriorSpec *priors = nullptr,
 	const Array<String> *coef_names = nullptr,
-	const Eigen::VectorXd *off_ptr = nullptr)
+	const Eigen::VectorXd *off_ptr = nullptr,
+	bool use_reml = false)
 {
 	ProfiledResult res;
 	intptr_t G = lay.G;
@@ -1213,6 +1214,19 @@ static ProfiledResult solve_gaussian_henderson(
 	res.beta = sol.head(p);
 	res.u = sol.tail(J);
 
+	// Compute log|H| from the LDLT for potential REML correction.
+	// LDLT factorization: H = P'LDL'P where P is a permutation; log|H| = sum log(D_i).
+	// We need this BEFORE the log_det_Huu computation below (same Henderson block
+	// of D⁻¹ but without the σ² scaling — see derivation in the REML adjustment).
+	double log_det_H_full = 0;
+	if (use_reml) {
+		Eigen::VectorXd diagD = ldlt.vectorD();
+		for (intptr_t k = 0; k < diagD.size(); k++) {
+			// LDLT always produces a real D for PD H; clamp tiny positives for safety.
+			log_det_H_full += std::log(std::max(diagD[k], 1e-300));
+		}
+	}
+
 	// Final η = Xβ + Zu + offset
 	Eigen::VectorXd eta = Xm * res.beta;
 	add_offset(eta, off_ptr);
@@ -1258,6 +1272,25 @@ static ProfiledResult solve_gaussian_henderson(
 	res.laplace_nll = cond_nll + prior_nll + 0.5 * log_det_Huu
 	                  - 0.5 * J * std::log(2.0 * M_PI);
 
+	// REML correction: add ½ log|XᵀV⁻¹X| to the ML profiled NLL.
+	//
+	// Derivation. The Schwarz / Schur identity on the Henderson matrix
+	//    H = (1/σ²)·[[X'X, X'Z], [Z'X, Z'Z]] + diag(0, D⁻¹)
+	// gives  log|H| = log|H_uu| + log|H_ββ − H_βu H_uu⁻¹ H_uβ|
+	// where the Schur complement S = H_ββ − H_βu H_uu⁻¹ H_uβ
+	// equals (1/σ²)·XᵀV⁻¹X (V = ZDZ' + σ²I) — standard LMM result.
+	// Hence  log|XᵀV⁻¹X| = log|H| − log|H_uu| + p·log(σ²).
+	//
+	// Conventional REML form (matches lme4): also subtract the constant
+	// ½·p·log(2π) so that ℓ_R is a proper log-density on the (n−p)-dim
+	// residual space.
+	if (use_reml) {
+		double log_det_XtVinvX = log_det_H_full - log_det_Huu
+		                          + static_cast<double>(p) * std::log(sigma2);
+		res.laplace_nll += 0.5 * log_det_XtVinvX
+		                   - 0.5 * static_cast<double>(p) * std::log(2.0 * M_PI);
+	}
+
 	// Add -log p(β̂) for Bayesian posterior mode.
 	if (priors && coef_names)
 		res.laplace_nll += fixed_prior_nll(res.beta, *priors, *coef_names, p);
@@ -1283,6 +1316,7 @@ struct GaussianCholObjective
 	const PriorSpec *priors;
 	const Array<String> *coef_names;
 	const Eigen::VectorXd *off_ptr = nullptr;
+	bool use_reml = false;
 
 	double eval(const Eigen::VectorXd &theta) const
 	{
@@ -1301,9 +1335,11 @@ struct GaussianCholObjective
 		double sigma2 = std::exp(2.0 * theta[n_chol]);
 
 		// Henderson includes the fixed-effect prior (shifts β̂ to MAP).
+		// REML correction (when use_reml) is applied inside solve_gaussian_henderson.
 		double nll = solve_gaussian_henderson(D_inv, log_det_Dg, sigma2,
 		                                       Xm, ym, lay, n, p,
-		                                       priors, coef_names, off_ptr).laplace_nll;
+		                                       priors, coef_names, off_ptr,
+		                                       use_reml).laplace_nll;
 
 		// Variance-component and residual priors.
 		if (priors)
@@ -6439,7 +6475,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
                   const Array<String> *coef_names,
                   int max_iter,
                   const Array<double> &offset,
-                  const InitOverrides *init_overrides)
+                  const InitOverrides *init_overrides,
+                  Method method)
 {
 
 	if (y.ndim() != 1) {
@@ -6454,6 +6491,19 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	intptr_t n = y.size();
 	intptr_t p = X.ncol();
 	bool is_gaussian = (fam.name == "gaussian");
+
+	// REML is only meaningful for Gaussian linear mixed models.
+	// For all other paths (GLMMs, fixed-effects-only GLMs, etc.), coerce
+	// to ML — a fit_warning is attached at the end of fitting so the user
+	// knows their request was not honoured.
+	bool reml_requested = (method == Method::REML);
+	bool reml_active = reml_requested && is_gaussian && (!groups.empty()) && (priors == nullptr);
+	if (reml_requested && !reml_active) {
+		// Caller asked for REML but the path doesn't support it. We'll
+		// proceed with ML and surface a warning at the end (set below
+		// after model is built so it doesn't get overwritten).
+		method = Method::ML;
+	}
 
 	// Map offset vector (nullable pointer for internal use).
 	std::unique_ptr<Eigen::VectorXd> off_storage;
@@ -6630,7 +6680,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		intptr_t n_chol = total_chol_params(lay);
 		intptr_t outer_dim_gauss = n_chol + 1; // Cholesky params + log σ
 
-		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr};
+		GaussianCholObjective gauss_obj{Xm, ym, lay, n, p, n_chol, priors, coef_names, off_ptr, reml_active};
 
 		// ── Initialize (τ, ω) parameters from ANOVA variance estimates ──
 		// New layout per group: [τ_0, ..., τ_{q-1}, ω_0, ..., ω_{q(q-1)/2-1}].
@@ -6843,7 +6893,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 		auto final_gauss = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
 		                                             Xm, ym, lay, n, p,
-		                                             priors, coef_names, off_ptr);
+		                                             priors, coef_names, off_ptr,
+		                                             reml_active);
 		beta_hat = final_gauss.beta;
 
 		// Save for INLA grid integration (after Model is built).
@@ -7301,7 +7352,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	{
 		auto gauss_final = solve_gaussian_henderson(D_inv_final, log_det_Dg_final, sigma2,
 		                                            Xm, ym, lay, n, p,
-		                                            priors, coef_names, off_ptr);
+		                                            priors, coef_names, off_ptr,
+		                                            reml_active);
 		final_inner.u = std::move(gauss_final.u);
 		final_inner.mu = std::move(gauss_final.mu);
 		final_inner.laplace_nll = gauss_final.laplace_nll;
@@ -7908,6 +7960,35 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.well_identified = well_identified_flag;
 	model.fit_warning = identifiability_msg;
 
+	// Record the actual estimation method used (after any REML→ML coercion).
+	model.method = reml_active ? Method::REML : Method::ML;
+
+	// Surface a warning if REML was requested but not used. The warning is
+	// prepended so it appears even when an identifiability warning is also
+	// present.
+	if (reml_requested && !reml_active)
+	{
+		String reason;
+		if (priors != nullptr)
+			reason = "Bayesian estimation uses ML internally";
+		else if (!is_gaussian)
+			reason = "REML applies to Gaussian models only";
+		else if (groups.empty())
+			reason = "REML applies to mixed-effects models only (no random effects in formula)";
+		else
+			reason = "REML is not applicable in this configuration";
+
+		String warn = String::format(
+			"REML requested but fit used ML: %s.", reason.data());
+		if (!model.fit_warning.empty()) {
+			warn.append(String("\n"));
+			warn.append(model.fit_warning);
+			model.fit_warning = std::move(warn);
+		} else {
+			model.fit_warning = std::move(warn);
+		}
+	}
+
 	// ── Bayesian posterior ──────────────────────────────────────────
 	//
 	// When priors are supplied, run INLA grid integration over the
@@ -8030,7 +8111,8 @@ Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
 	// Fast path: no multi-start. Exact pre-existing behavior.
 	if (n_starts == 1) {
 		return mixed_model(y, X, groups, fam, progress,
-		                    priors, coef_names, max_iter, offset, nullptr);
+		                    priors, coef_names, max_iter, offset, nullptr,
+		                    opts.method);
 	}
 
 	// ── Perturbation table for Student-t ─────────────────────────────
@@ -8073,7 +8155,8 @@ Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
 			Model m = mixed_model(y, X, groups, fam,
 			                       (k == 0) ? progress : nullptr,
 			                       priors, coef_names, max_iter, offset,
-			                       k == 0 ? nullptr : &ov);
+			                       k == 0 ? nullptr : &ov,
+			                       opts.method);
 			if (m.converged && std::isfinite(m.loglik)) {
 				results[k].model = std::move(m);
 				results[k].loglik = results[k].model.loglik;

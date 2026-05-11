@@ -2,7 +2,7 @@
 <Phonometrica class="Project">
 	<Metadata>
 		<UUID>R1OSeCk10KIiLKCZbp_h</UUID>
-		<ProgramVersion major="0" minor="9" micro="3" />
+		<ProgramVersion major="0" minor="9" micro="4" />
 		<Changelog />
 	</Metadata>
 	<Corpus size="3">
@@ -73,6 +73,9 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/frequentist/test_nested.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/frequentist/test_reml_gaussian.phon</Path>
+			</Document>
 		</Directory>
 		<Directory label="bayesian">
 			<Document class="Script">
@@ -98,6 +101,12 @@
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/statistics/bayesian/test_student.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/inla/test_blr.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/statistics/bayesian/inla/test_glm.phon</Path>
 			</Document>
 		</Directory>
 	</Scripts>
@@ -140,6 +149,21 @@
 		</Document>
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/data/nested_synthetic.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/usair_brinla.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/painrelief_brinla.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>test/data/gaussian_f1.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/data/gaussian_f1.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>test/data/sleepstudy.tsv</Path>
 		</Document>
 	</Data>
 	<Analyses>

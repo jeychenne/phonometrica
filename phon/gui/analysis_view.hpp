@@ -217,6 +217,7 @@ private:
 	void updatePriorDefaultsLabel();
 	void updatePriorResidualVisibility();
 	void updatePriorPcAlphaVisibility();
+	void updateMethodVisibility();   // show ML/REML row only when family is Gaussian and formula has (|)
 
 	// ── Detachable-plot helper ───────────────────────────────────────
 	//
@@ -283,6 +284,8 @@ private:
 	// Fitting options popup
 	QSpinBox *m_max_iter_spin = nullptr;
 	QComboBox *m_default_est_combo = nullptr;
+	QComboBox *m_method_combo = nullptr;          // ML / REML (Gaussian LMMs only)
+	QLabel *m_method_label = nullptr;             // its form-row label, hidden when N/A
 
 	// Prior customization panel (visible only when Bayesian is selected)
 	QToolButton *m_prior_toggle = nullptr;

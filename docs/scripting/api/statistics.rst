@@ -91,6 +91,52 @@ Example::
 
 ------------
 
+.. function:: fit(formula, data [, family], options)
+
+Fits a frequentist model with additional fitting options supplied as a ``Table`` argument.
+This overload is the way to opt into **REML** (restricted maximum likelihood) for Gaussian
+linear mixed models, and the API entry point for any future fit-time option.
+
+``options`` is a ``Table`` of key/value pairs. The Table can either be written as a literal
+(``{ "fit_method": "REML" }``) or built up with the named-argument syntax
+(``fit_method = "REML"`` as the final positional argument, which the parser packs into a
+Table with the same shape). Both forms are accepted and equivalent.
+
+Currently supported options:
+
+* ``fit_method`` (string): ``"ML"`` (the default) or ``"REML"``. REML applies only to
+  Gaussian models with at least one random-effects term; for all other configurations
+  it is silently coerced to ML and the model carries a note explaining why. The key is
+  named ``fit_method`` rather than the more natural ``method`` because the latter is a
+  reserved keyword in the scripting engine.
+
+Validation is strict: any unknown key, or any unrecognized value, raises an error rather
+than being silently ignored (a typo like ``"RELM"`` should not silently demote a fit to ML).
+
+When ML and REML are both meaningful for your modelling goals, the typical workflow is to
+fit candidate models with ML to compare their fixed-effects structures (via AIC/BIC or
+likelihood-ratio tests), then refit the final model with REML for the variance-component
+estimates and the fixed-effects standard errors you report. See the *Analysis* user
+documentation for the rationale.
+
+Example::
+
+   let ds = load("my_data.csv")
+
+   // Same model fitted with both methods
+   let m_ml   = fit("f1 ~ gender + (1|speaker)", ds)
+   let m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
+
+   // Equivalent named-argument form
+   let m_reml2 = fit("f1 ~ gender + (1|speaker)", ds, fit_method = "REML")
+
+   // With an explicit family
+   let m_reml3 = fit("y ~ x + (1|g)", ds, "gaussian", { "fit_method": "REML" })
+
+   summarize(m_reml)   // shows a "Method: REML" line in the header
+
+------------
+
 .. function:: fit(formula, data, prior[, prior])
 
 Fits a **Bayesian** model using approximate Bayesian inference (INLA-style). The ``prior``
@@ -167,11 +213,26 @@ The models should be nested (one should be a special case of the other).
 standard errors), Pareto *k* diagnostic summaries, and log Bayes factors. Cannot be mixed
 with frequentist models.
 
+**REML restrictions**: two hard rules apply when REML-fitted models are involved.
+Comparing an ML-fitted model to a REML-fitted model raises an error — their
+log-likelihoods are not on the same scale. Comparing two REML-fitted models with
+different fixed-effects designs also raises an error: REML log-likelihoods depend on the
+fixed-effects design, so they are not comparable across models that differ in their fixed
+effects. Comparing REML-fitted models that share the same fixed-effects design but differ
+in their random-effects structure is allowed and is the canonical use case for REML
+likelihood-ratio tests. The error messages name the corrective action (typically: refit
+all candidate models with ML).
+
 Example::
 
    let m1 = fit("f1 ~ vowel + (1|speaker)", ds)
    let m2 = fit("f1 ~ vowel + gender + (1|speaker)", ds)
    compare(m1, m2)
+
+   // REML comparison restricted to same fixed effects:
+   let m3 = fit("f1 ~ vowel + (1|speaker)", ds, { "fit_method": "REML" })
+   let m4 = fit("f1 ~ vowel + (1|speaker) + (1|word)", ds, { "fit_method": "REML" })
+   compare(m3, m4)   // OK: same fixed effects, different RE structure
 
 ------------
 
@@ -504,6 +565,14 @@ Array of response residuals (observed − fitted) from the model.
 
 A string indicating the estimation method: ``"Frequentist"`` or ``"Bayesian"``.
 Available on all models.
+
+.. attribute:: fit_method
+
+A string indicating which frequentist method was used: ``"ML"`` (the default) or
+``"REML"``. REML applies only to Gaussian linear mixed models; for all other fits this
+is ``"ML"``. For Bayesian fits, this returns ``"ML"`` (the engine uses ML internally to
+locate the posterior mode), so use ``estimation`` to distinguish Bayesian from
+frequentist fits.
 
 .. attribute:: waic
 

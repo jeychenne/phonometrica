@@ -100,6 +100,7 @@ struct Model
 	intptr_t nfixed = 0; // number of fixed-effects parameters (including intercept)
 	Array<String> response_levels; // for binary text response: [reference(0), success(1)] (empty if numeric)
 	Estimation estimation = Estimation::Frequentist;
+	Method method = Method::ML;   // frequentist estimation method (ML default; REML for Gaussian LMM only)
 	PriorSpec priors;   // prior specification (only meaningful when estimation == Bayesian)
 
 	// ---- Fixed effects ----
@@ -406,9 +407,16 @@ struct Model
 
 	// Number of estimated parameters (for AIC/BIC).
 	// Fixed-effects parameters + dispersion (if Gaussian, NB, or Beta) + variance components.
+	//
+	// Under REML, the fixed-effects parameters are "integrated out" of the restricted
+	// likelihood, so they should not be counted. lme4 follows this convention: AIC/BIC
+	// from a REML fit count only the variance components and the residual scale. We do
+	// the same. (REML AIC/BIC are still inappropriate for comparing models with
+	// different fixed-effects designs — see anova_compare for the enforcement.)
 	intptr_t nparams() const
 	{
-		intptr_t k = nfixed;
+		intptr_t k = 0;
+		if (method == Method::ML) k += nfixed;  // fixed effects only counted under ML
 		if (is_gaussian()) k += 1; // residual variance
 		if (is_negbin()) k += 1;   // overdispersion θ
 		if (is_beta()) k += 1;     // precision φ

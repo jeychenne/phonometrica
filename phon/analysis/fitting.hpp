@@ -51,6 +51,18 @@ Model fit(const DataTable &data, const Formula &formula, const String &family = 
           FittingCallback progress = nullptr,
           int max_iter = 200);
 
+//! Fit a model to data using a formula (frequentist), with options.
+//!
+//! Options currently exposed: `method` (Method::ML default, Method::REML
+//! opt-in for Gaussian LMMs). See FitOptions in mixed_model.hpp.
+//!
+//! \param progress  optional callback for reporting fitting progress
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const FitOptions &opts,
+          const std::map<String, String> &reference_levels = {},
+          FittingCallback progress = nullptr,
+          int max_iter = 200);
+
 //! Fit a model to data using a formula (Bayesian).
 //! When a PriorSpec is provided, the model is fitted using INLA-style
 //! approximate Bayesian inference. A default-constructed PriorSpec gives

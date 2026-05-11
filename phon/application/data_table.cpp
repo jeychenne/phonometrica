@@ -366,6 +366,8 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	rt.printf("Formula: %s\n", m.formula.data());
 	if (m.is_bayesian()) {
 		rt.printf("Estimation: Bayesian (Gaussian approximation)\n");
+	} else if (m.method == stats::Method::REML) {
+		rt.printf("Method: REML\n");
 	}
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
@@ -990,6 +992,80 @@ void DataTable::initialize(Runtime &rt)
 		return make_handle<stats::Model>(std::move(model));
 	};
 
+	// ── Helper: parse the options Table into a FitOptions struct. ──
+	//
+	// The Table comes either from an explicit literal { "fit_method": "REML" }
+	// or from the named-argument syntax (fit_method = "REML"), which the parser
+	// packs into a Table with the same shape. Validation is strict: any
+	// unknown key, or any unrecognized value, is a hard error — silently
+	// ignoring typos like "RELM" would silently demote the fit to ML
+	// without the user noticing. Inapplicable but well-formed requests
+	// (e.g., fit_method="REML" on a non-Gaussian fit) are handled deeper in
+	// the engine, which emits a fit_warning and proceeds with ML.
+	//
+	// Note on naming: the option key is "fit_method" rather than the more
+	// natural "method" because "method" is a reserved keyword in the
+	// scripting engine. Using it as a named argument would conflict with
+	// the parser. "fit_method" is also unambiguous against any future
+	// estimation-related option (e.g. "tolerance", "max_iter").
+	auto parse_fit_options = [](const Table &tab) -> stats::FitOptions {
+		stats::FitOptions opts;
+		for (auto &pair : tab.data())
+		{
+			if (!pair.first.is_string()) {
+				throw error("[Type error] fit() options table: keys must be strings");
+			}
+			const String &key = cast<String>(pair.first);
+			if (key == "fit_method") {
+				const String &val = cast<String>(pair.second);
+				// Case-insensitive match on common spellings.
+				String upper = val.to_upper();
+				if (upper == "ML") {
+					opts.method = stats::Method::ML;
+				} else if (upper == "REML") {
+					opts.method = stats::Method::REML;
+				} else {
+					throw error("[Value error] fit() options: \"fit_method\" must be \"ML\" or \"REML\" (got \"%\")", val);
+				}
+			} else {
+				throw error("[Value error] fit() options: unknown key \"%\". "
+				            "Supported keys: \"fit_method\".", key);
+			}
+		}
+		return opts;
+	};
+
+	// fit(formula, data, options) — Gaussian + options
+	auto fit_opts2 = [parse_fit_options](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &formula_str = cast<String>(args[0]);
+		auto &data = cast<DataTable>(args[1]);
+		auto &options = cast<Table>(args[2]);
+		data.open();
+		auto opts = parse_fit_options(options);
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", opts);
+		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
+		return make_handle<stats::Model>(std::move(model));
+	};
+
+	// fit(formula, data, family, options)
+	auto fit_opts3 = [parse_fit_options](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &formula_str = cast<String>(args[0]);
+		auto &data = cast<DataTable>(args[1]);
+		auto &family_str = cast<String>(args[2]);
+		auto &options = cast<Table>(args[3]);
+		data.open();
+		auto opts = parse_fit_options(options);
+		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str, opts);
+		model.compute_pseudo_r2();
+		if (model.smooth_terms.size() > 0) {
+			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		}
+		return make_handle<stats::Model>(std::move(model));
+	};
+
 	auto summarize_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		print_model_summary(rt, cast<stats::Model>(args[0]));
 		return Variant();
@@ -1029,6 +1105,12 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
 		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
+		if (key == "fit_method") {
+			// Surface the ML/REML choice for frequentist Gaussian LMMs. For Bayesian
+			// fits this returns "ML" (the engine uses ML internally), and the user
+			// should rely on `estimation` to distinguish Bayesian from frequentist.
+			return String(model.method == stats::Method::REML ? "REML" : "ML");
+		}
 		if (key == "log_marginal") return model.log_marginal;
 		if (key == "waic") return model.waic;
 		if (key == "p_waic") return model.p_waic;
@@ -2471,6 +2553,8 @@ void DataTable::initialize(Runtime &rt)
 #define REF(bits) ParamBitset(bits)
 	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
 	rt.add_global("fit", fit3, { CLS(String), CLS(DataTable), CLS(String) });
+	rt.add_global("fit", fit_opts2, { CLS(String), CLS(DataTable), CLS(Table) });
+	rt.add_global("fit", fit_opts3, { CLS(String), CLS(DataTable), CLS(String), CLS(Table) });
 	rt.add_global("fit", fit_bayes2, { CLS(String), CLS(DataTable), CLS(stats::PriorSpec) });
 	rt.add_global("fit", fit_bayes3, { CLS(String), CLS(DataTable), CLS(String), CLS(stats::PriorSpec) });
 	rt.add_global("filter", filter2, { CLS(DataTable), CLS(String) });

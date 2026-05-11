@@ -57,6 +57,24 @@ enum class Estimation { Frequentist, Bayesian };
 
 
 // =====================================================================
+// Frequentist estimation method (Gaussian LMM only)
+// =====================================================================
+//
+// ML is the default and applies to all model types. REML is an opt-in
+// alternative for Gaussian linear mixed models only — it modifies the
+// profiled Laplace objective by an additional + ½ log|XᵀV⁻¹X| term,
+// giving unbiased variance-component estimates and matching lme4's
+// default. For all non-Gaussian families and for fixed-effects-only
+// models, REML is silently coerced to ML (with a fit_warning).
+//
+// REML log-likelihoods are NOT comparable across models with different
+// fixed-effects designs — the comparison machinery enforces this with
+// a hard error rather than a warning.
+
+enum class Method { ML, REML };
+
+
+// =====================================================================
 // Individual prior distributions
 // =====================================================================
 

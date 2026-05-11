@@ -754,7 +754,8 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
                        const std::map<String, String> &reference_levels,
                        FittingCallback progress,
                        const PriorSpec *priors,
-                       int max_iter)
+                       int max_iter,
+                       const FitOptions *opts = nullptr)
 {
 	if (formula.response.empty()) {
 		throw error("Formula has no response variable");
@@ -1240,6 +1241,13 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 	Model model;
 
+	// Track whether the chosen fitting path went through mixed_model_multistart.
+	// mixed_model() handles the REML→ML coercion warning itself for paths it
+	// owns; the fallback warning block after the if-chain covers only the
+	// remaining engines (lm, glm, penalized_*) which have no FitOptions
+	// awareness.
+	bool went_through_mixed_model = false;
+
 	if (formula.has_smooth_terms() && formula.has_random_effects())
 	{
 		throw error("Models with both smooth terms and (1|group) random effects are not yet supported. "
@@ -1343,8 +1351,11 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		// Multi-start activates by default for Student-t (n_starts = 4);
 		// other families fall through to a single fit. See the wrapper
 		// in mixed_model.cpp for the perturbation strategy.
+		FitOptions effective_opts = opts ? *opts : FitOptions{};
 		model = mixed_model_multistart(dm.y, dm.X, groups, fam, progress,
-		                                priors, &dm.coef_names, max_iter, off);
+		                                priors, &dm.coef_names, max_iter, off,
+		                                effective_opts);
+		went_through_mixed_model = true;
 	}
 	else if (family == "gaussian")
 	{
@@ -1356,13 +1367,48 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		// optimization, ensuring comparable log-likelihoods with mixed models.
 		std::vector<GroupingInfo> groups;
 		auto fam = Family::from_name(family);
+		FitOptions effective_opts = opts ? *opts : FitOptions{};
 		model = mixed_model_multistart(dm.y, dm.X, groups, fam, progress,
-		                                priors, &dm.coef_names, max_iter, off);
+		                                priors, &dm.coef_names, max_iter, off,
+		                                effective_opts);
+		went_through_mixed_model = true;
 	}
 	else
 	{
 		auto fam = Family::from_name(family);
 		model = glm(dm.y, dm.X, fam, false, max_iter, off);
+	}
+
+	// ── REML-coercion warning for non-LMM paths that bypass mixed_model() ──
+	//
+	// mixed_model() already records this warning when REML is requested
+	// for a non-Gaussian or no-RE Laplace path. But fit_impl branches to
+	// lm()/glm()/penalized_*() for paths that never enter mixed_model(),
+	// and those engines have no awareness of FitOptions. We surface the
+	// warning here so users get consistent feedback regardless of which
+	// underlying engine handles their fit. The went_through_mixed_model
+	// guard prevents a double-warning on the (negbin|beta|student)+no-RE
+	// path, which routes through mixed_model_multistart() with empty
+	// groups and is handled by mixed_model()'s own coercion logic.
+	if (opts && opts->method == Method::REML && !went_through_mixed_model)
+	{
+		String reason;
+		if (model.family != "gaussian")
+			reason = "REML applies to Gaussian models only";
+		else if (!model.smooth_terms.empty())
+			reason = "REML on GAMs is not supported in this release";
+		else
+			reason = "REML applies to mixed-effects models only (no random effects in formula)";
+
+		String warn = String::format(
+			"REML requested but fit used ML: %s.", reason.data());
+		if (!model.fit_warning.empty()) {
+			warn.append(String("\n"));
+			warn.append(model.fit_warning);
+			model.fit_warning = std::move(warn);
+		} else {
+			model.fit_warning = std::move(warn);
+		}
 	}
 
 	// ── Attach metadata ──────────────────────────────────────────────
@@ -1519,6 +1565,16 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
           int max_iter)
 {
 	return fit_impl(data, formula, family, reference_levels, progress, nullptr, max_iter);
+}
+
+
+Model fit(const DataTable &data, const Formula &formula, const String &family,
+          const FitOptions &opts,
+          const std::map<String, String> &reference_levels,
+          FittingCallback progress,
+          int max_iter)
+{
+	return fit_impl(data, formula, family, reference_levels, progress, nullptr, max_iter, &opts);
 }
 
 

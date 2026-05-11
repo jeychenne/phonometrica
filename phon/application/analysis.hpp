@@ -54,11 +54,13 @@ public:
 	// Fit a model using the given formula and family. Adds it to the model list.
 	// Returns the index (0-based) of the newly fitted model.
 	// If priors is non-null, Bayesian estimation is used; null means frequentist.
+	// If opts is non-null and priors is null, opts.method (ML vs REML) is honoured.
 	// Throws if source is unavailable.
 	int fit(const String &formula_str, const String &family = "gaussian",
 	        stats::FittingCallback progress = nullptr,
 	        const stats::PriorSpec *priors = nullptr,
-	        int max_iter = 200);
+	        int max_iter = 200,
+	        const stats::FitOptions *opts = nullptr);
 
 	// Refit the model at `index` in place, overwriting it with a freshly-fit
 	// model rebuilt from the model's own stored specification (formula, family,

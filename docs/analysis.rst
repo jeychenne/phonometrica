@@ -55,6 +55,10 @@ The top bar contains the following elements:
   the default) and **Bayesian** (approximate Bayesian inference with weakly informative priors,
   reporting posterior means, credible intervals, and probability of direction). See
   `Bayesian estimation`_ below.
+- **Fitting options** (|settings|): a gear-icon popup with additional controls — default
+  estimation type, maximum number of optimizer iterations, and (for Gaussian linear mixed
+  models) the choice between **ML** and **REML**. See `Frequentist estimation method (ML/REML)`_
+  below.
 - **Help** (|help|): opens this documentation page.
 
 
@@ -449,6 +453,24 @@ computed (Df = 0). The table shows ``--`` for these pairs.
    The nestedness check is heuristic — it compares formulas at the symbolic level. In rare
    edge cases (e.g. aliased interactions, different contrast coding), it may produce false
    warnings. If you know your models are nested, you can safely ignore the warning.
+
+.. note::
+
+   **REML restrictions.** Comparing models with **Compare** enforces two hard rules when
+   REML fits are involved:
+
+   - Models fitted with different methods (one ML, one REML) cannot be compared at all —
+     their log-likelihoods are not on the same scale. Refit with a consistent method.
+   - REML-fitted models can only be compared to each other when they share the same
+     **fixed-effects** design. Different fixed-effects designs would mean the two REML
+     log-likelihoods are densities of different transformed datasets, which makes the
+     comparison meaningless. To compare fixed-effects structures, refit all candidate
+     models with ML.
+
+   Both restrictions produce a clear error message with the recommended corrective action
+   rather than silently ignoring the issue. Comparing REML models that differ *only* in
+   their random-effects structure (same fixed effects) is allowed and is in fact the
+   canonical use case for REML LRTs.
 
 
 Effects plots
@@ -942,6 +964,68 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    500 simulated Gaussian observations confirmed that R-INLA, the reference implementation of the same class of
    approximation, produces an identical pattern (R-INLA mean = 20.1, 95% CI = [6.9, 55.5] where the correct posterior
    spans nearly the full prior range).
+
+
+Frequentist estimation method (ML/REML)
+---------------------------------------
+
+For frequentist Gaussian linear mixed models, Phonometrica offers a choice between
+**maximum likelihood (ML)** and **restricted maximum likelihood (REML)**. ML is the default
+and applies to all model types. REML is an opt-in alternative for Gaussian models with at
+least one random-effects term — for all other configurations (non-Gaussian families,
+fixed-effects-only Gaussian, GAMs, Bayesian fits), REML is silently coerced to ML and a
+note is attached to the model.
+
+To switch a fit to REML, open the **Fitting options** popup (|settings|) next to the
+**Fit** button and select **REML** in the **Method** dropdown. The dropdown is enabled only
+when the current family is Gaussian and the formula contains a random-effects term; in any
+other configuration it is greyed out with a tooltip explaining why.
+
+When to use REML
+~~~~~~~~~~~~~~~~
+
+The two methods differ in how the variance components are estimated. ML treats the
+fixed-effects parameters as known when estimating the variance components, which biases
+the variance estimates downward in small samples. REML estimates the variance components
+from a likelihood that has the fixed effects projected out, removing this bias. The
+practical implications:
+
+- **Fixed-effects estimates** :math:`\hat{\beta}` are *identical* under ML and REML. The
+  difference lives entirely in the variance components and, through them, the standard
+  errors of the fixed effects.
+- **Standard errors and confidence intervals for fixed effects** are typically slightly
+  larger under REML, reflecting the corrected variance estimates. This matters most when
+  the number of random-effects groups (e.g. speakers) is small.
+- REML is the **default in lme4** and `glmmTMB <https://CRAN.R-project.org/package=glmmTMB>`_;
+  choosing REML in Phonometrica gives results that match these R packages numerically (to
+  several decimal places on typical datasets).
+- ML is the right choice when **comparing models with different fixed effects** via likelihood
+  ratio tests, AIC, or BIC. REML log-likelihoods from models with different fixed-effects
+  designs are not on the same scale and cannot be compared — Phonometrica enforces this
+  with an error if you try (see `Model comparison`_ below).
+
+A practical workflow: fit candidate models with ML to compare fixed-effects structures
+(via AIC/BIC or LRT), then refit the final model with REML for the variance-component
+estimates and the fixed-effects standard errors you report.
+
+Output and reproducibility
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+REML fits are tagged with a ``Method: REML`` line in the model summary, and the choice is
+saved with the model. The **Refit** button on the model panel preserves the original
+method, so a REML model stays REML after a refit.
+
+In scripting, the method is selected via the ``fit_method`` option in the third argument
+of ``fit()``:
+
+.. code-block::
+
+   let m_ml   = fit("f1 ~ gender + (1|speaker)", ds)
+   let m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
+
+The option key is ``fit_method`` rather than the more natural ``method`` because the
+latter is a reserved keyword in the scripting engine. See the scripting API documentation
+for full details.
 
 
 Bayesian estimation
@@ -1549,5 +1633,9 @@ References
 
 
 .. |help| image:: ../icons/circle-help.svg
+    :height: 16px
+    :width: 16px
+
+.. |settings| image:: ../icons/settings.svg
     :height: 16px
     :width: 16px

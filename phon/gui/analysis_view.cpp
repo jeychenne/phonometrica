@@ -307,6 +307,38 @@ void AnalysisView::setupUi()
 	                                "(GLMs, mixed models, GAMs). Has no effect on OLS."));
 	options_form->addRow(tr("Max iterations:"), m_max_iter_spin);
 
+	// ── Method (ML / REML) for Gaussian LMMs ────────────────────
+	//
+	// REML is an opt-in alternative to ML for Gaussian linear mixed
+	// models. It applies only when the family is Gaussian AND the
+	// formula contains at least one random-effects term. The row is
+	// kept in the layout at all times but hidden when N/A, so the
+	// dialog doesn't jitter as the user changes family/formula.
+	m_method_combo = new QComboBox;
+	m_method_combo->addItem(tr("ML (default)"), QStringLiteral("ML"));
+	m_method_combo->addItem(tr("REML"), QStringLiteral("REML"));
+	m_method_combo->setItemData(0, tr("Maximum likelihood estimation."), Qt::ToolTipRole);
+	m_method_combo->setItemData(1, tr("Restricted maximum likelihood: gives unbiased\n"
+	                                   "variance-component estimates and matches lme4's\n"
+	                                   "default. Cannot be used to compare models with\n"
+	                                   "different fixed effects (refit with ML for that)."),
+	                            Qt::ToolTipRole);
+	{
+		int idx = 0;
+		try {
+			auto s = Settings::get_string("statistics", "method");
+			if (s == "REML") idx = 1;
+		} catch (...) {}
+		m_method_combo->setCurrentIndex(idx);
+	}
+	m_method_label = new QLabel(tr("Method:"));
+	options_form->addRow(m_method_label, m_method_combo);
+
+	connect(m_method_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
+		String val = (idx == 1) ? "REML" : "ML";
+		Settings::set_value("statistics", "method", std::move(val));
+	});
+
 	options_action->setDefaultWidget(options_widget);
 	options_menu->addAction(options_action);
 	m_options_button->setMenu(options_menu);
@@ -518,6 +550,7 @@ void AnalysisView::setupUi()
 	connect(m_family_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
 		updatePriorResidualVisibility();
 		updatePriorDefaultsLabel();
+		updateMethodVisibility();
 	});
 	connect(m_prior_reset_button, &QPushButton::clicked, this, &AnalysisView::resetPriorPanel);
 
@@ -548,6 +581,7 @@ void AnalysisView::setupUi()
 	updatePriorResidualVisibility();
 	updatePriorPcAlphaVisibility();
 	updatePriorDefaultsLabel();
+	updateMethodVisibility();
 
 	// ── Main content ────────────────────────────────────────────────
 
@@ -1280,6 +1314,9 @@ void AnalysisView::setupUi()
 	connect(diag_detach_action, &QAction::triggered, this, &AnalysisView::onDetachDiagPlot);
 	connect(effects_detach_action, &QAction::triggered, this, &AnalysisView::onDetachEffectsPlot);
 	connect(m_formula_edit, &QLineEdit::textChanged, this, &AnalysisView::updateColumnMarkers);
+	connect(m_formula_edit, &QLineEdit::textChanged, this, [this](const QString &) {
+		updateMethodVisibility();
+	});
 	connect(m_posthoc_factor_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_by_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
 	connect(m_posthoc_trend_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onPostHocChanged);
@@ -1455,7 +1492,25 @@ void AnalysisView::onFit()
 		}
 
 		int max_iter = m_max_iter_spin->value();
-		int index = m_analysis->fit(formula, family, cb, priors_ptr, max_iter);
+
+		// Build FitOptions from the GUI. Currently only `method` (ML/REML)
+		// is exposed in the UI. The struct is passed only when the user
+		// has selected REML AND the Method row is enabled (i.e. the choice
+		// is applicable — Gaussian LMM). Otherwise pass nullptr so
+		// Analysis::fit() falls through to the legacy path. If REML is
+		// selected but inapplicable, we still pass it through — the engine
+		// records a fit_warning so the user knows REML was requested but
+		// not honoured.
+		stats::FitOptions fit_opts;
+		const stats::FitOptions *opts_ptr = nullptr;
+		if (m_method_combo && m_method_combo->isEnabled()
+		    && m_method_combo->currentData().toString() == QStringLiteral("REML"))
+		{
+			fit_opts.method = stats::Method::REML;
+			opts_ptr = &fit_opts;
+		}
+
+		int index = m_analysis->fit(formula, family, cb, priors_ptr, max_iter, opts_ptr);
 		auto &m = m_analysis->model(index);
 
 		QApplication::restoreOverrideCursor();
@@ -8618,6 +8673,40 @@ void AnalysisView::updatePriorResidualVisibility()
 	bool is_gaussian = (family_data == QStringLiteral("gaussian") || family_data == QStringLiteral("student"));
 	for (auto *w : m_prior_residual_widgets)
 		w->setVisible(is_gaussian);
+}
+
+// Enable the ML/REML row only when the model is a Gaussian linear mixed
+// model: family == "gaussian" AND the formula contains a random-effects
+// term. For all other cases REML doesn't apply and the engine would
+// coerce to ML anyway. The row is always *visible* so the user can see
+// the option exists; it's *disabled* when not applicable, with a tooltip
+// explaining why, so the absence isn't mistaken for "feature not
+// implemented".
+//
+// The detection of "(|)" is heuristic — a substring search for the "(|"
+// pattern won't catch malformed formulas, but Formula::parse would catch
+// those at fit time. The intent here is just to grey out the option in
+// configurations where it can't possibly be honoured.
+void AnalysisView::updateMethodVisibility()
+{
+	if (!m_method_combo || !m_method_label) return;
+	QString family_data = m_family_combo->currentData().toString();
+	bool is_gaussian = (family_data == QStringLiteral("gaussian"));
+	bool has_re = m_formula_edit->text().contains(QStringLiteral("(")) &&
+	              m_formula_edit->text().contains(QStringLiteral("|"));
+	bool applicable = is_gaussian && has_re;
+	m_method_combo->setEnabled(applicable);
+	m_method_label->setEnabled(applicable);
+	if (applicable) {
+		m_method_combo->setToolTip(QString());
+		m_method_label->setToolTip(QString());
+	} else {
+		QString reason = !is_gaussian
+			? tr("REML applies to Gaussian (continuous) outcomes only.")
+			: tr("REML applies to mixed-effects models — add a random-effects term, e.g. (1 | speaker), to enable.");
+		m_method_combo->setToolTip(reason);
+		m_method_label->setToolTip(reason);
+	}
 }
 
 // Show the α spinbox (and its label) only when the prior type is "PC".
