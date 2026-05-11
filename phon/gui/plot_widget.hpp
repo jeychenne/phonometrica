@@ -24,6 +24,8 @@
 #define PHONOMETRICA_PLOT_WIDGET_HPP
 
 #include <cstdint>
+#include <optional>
+#include <utility>
 #include <vector>
 #include <QWidget>
 #include <QPixmap>
@@ -108,18 +110,44 @@ public:
 	/// Box plot: groups[i] is the group label for values[i].
 	/// source_rows, when non-empty, aligns 1:1 with values; only outliers
 	/// become click targets (the box body is not a single observation).
+	///
+	/// style_groups, when non-empty, introduces a secondary categorical
+	/// grouping: each X-axis cluster (groups[i]) holds one side-by-side
+	/// dodged box per unique value of style_groups[i], colored by the
+	/// secondary level. Used by EDA when both an X categorical and a
+	/// within-X group factor are selected (e.g. F1 ~ task | gender).
 	void setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
 	                    const QString &x_label, const QString &y_label,
 	                    const QString &title,
-	                    std::vector<intptr_t> source_rows = {});
+	                    std::vector<intptr_t> source_rows = {},
+	                    std::vector<QString> style_groups = {});
 
 	/// Histogram: a single array of numeric values. nbins=0 means auto (Sturges' rule).
 	void setHistogramData(std::vector<double> values,
 	                      const QString &x_label, const QString &y_label,
 	                      const QString &title, int nbins = 0);
 
+	/// Grouped (overlaid) histogram. groups[i] is the group label for values[i].
+	/// Bin edges are computed from the pooled value range so the overlaid
+	/// histograms are directly comparable. nbins=0 means auto (Sturges' rule
+	/// on the pooled sample size). Each group renders as a translucent fill
+	/// with a distinct outline color.
+	void setHistogramData(std::vector<double> values, std::vector<QString> groups,
+	                      const QString &x_label, const QString &y_label,
+	                      const QString &title, int nbins = 0);
+
 	/// Bar chart: category labels and their counts.
 	void setBarChartData(std::vector<QString> labels, std::vector<int> counts,
+	                     const QString &x_label, const QString &y_label,
+	                     const QString &title);
+
+	/// Grouped (dodged) bar chart. counts_by_group[g][c] is the count for the
+	/// g-th group in the c-th category. group_labels[g] is the legend label
+	/// for the g-th group; group_labels.size() == counts_by_group.size().
+	/// Within each category, one side-by-side sub-bar is drawn per group.
+	void setBarChartData(std::vector<QString> labels,
+	                     std::vector<QString> group_labels,
+	                     std::vector<std::vector<int>> counts_by_group,
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
 
@@ -218,45 +246,21 @@ public:
 	void setFixedYTicks(std::vector<double> ticks);
 	void clearFixedYTicks();
 
-	void clear();
-	bool hasData() const;
-
-	void savePNG(const QString &path);
-	void savePDF(const QString &path);
-	void saveSVG(const QString &path);
-
-	QSize sizeHint() const override { return {500, 400}; }
-
-Q_SIGNALS:
-
-	/// Emitted when the user left-clicks within HIT_TOLERANCE_PX of a plotted
-	/// point that has a known source-table row (i.e. caller passed source_rows
-	/// to the matching set*Data). source_row is 0-based. Never emitted for
-	/// histogram bins, bar-chart bars, box bodies, density curves, regression
-	/// lines, or pooled grouped-scatter cells.
-	void pointClicked(intptr_t source_row);
-
-protected:
-
-	void paintEvent(QPaintEvent *event) override;
-	void resizeEvent(QResizeEvent *event) override;
-
-	// Click-to-source hit testing. mousePressEvent picks the nearest hit
-	// target inside HIT_TOLERANCE_PX and emits pointClicked. mouseMoveEvent
-	// changes the cursor to PointingHandCursor when over a target so the
-	// affordance is discoverable. leaveEvent restores the default cursor when
-	// the pointer exits the widget.
-	void mousePressEvent(QMouseEvent *event) override;
-	void mouseMoveEvent(QMouseEvent *event) override;
-	void leaveEvent(QEvent *event) override;
-
-private:
-
-	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot, PpcDiscrete };
-
+	/// Box-plot summary statistics for one cluster (or one (cluster, secondary)
+	/// pair in the dodged case). Populated by computeBoxStats.
 	struct BoxStats
 	{
 		QString label;
+		// Primary X-axis cluster label (e.g. "male"). Equals `label` when no
+		// secondary grouping is active.
+		QString primary_label;
+		// Secondary within-cluster level (e.g. "formal"). Empty when no
+		// secondary grouping is active.
+		QString secondary_label;
+		// Color index into GROUP_PALETTE for the secondary level. -1 when no
+		// secondary grouping is active (box uses default BOX_FILL).
+		int secondary_index = -1;
+
 		double median = 0;
 		double q1 = 0;
 		double q3 = 0;
@@ -268,14 +272,20 @@ private:
 		std::vector<intptr_t> outlier_rows;
 	};
 
+	/// Histogram bin descriptor. Populated by computeBins.
 	struct HistBin
 	{
 		double lo = 0;
 		double hi = 0;
 		int count = 0;
+		// Per-group counts when grouped histograms are active. group_counts[g]
+		// is the count for the g-th group level (indexing into m_hist_group_labels).
+		// Empty when the histogram is single-series; in that case `count` is the
+		// total. Always equals the sum of group_counts when both are populated.
+		std::vector<int> group_counts;
 	};
 
-	/// Per-group data for grouped scatter plot.
+	/// Per-group data for grouped scatter plot. Populated by buildGroups.
 	struct GroupData
 	{
 		QString label;
@@ -315,6 +325,119 @@ private:
 		int style_index = 0;
 	};
 
+	/// Inner plot type within a faceted grid. One of these is set by the
+	/// caller via setFacetedData() and applied uniformly to every facet panel.
+	enum class FacetInnerMode { Histogram, BoxPlot, Scatter, GroupedScatter, BarChart };
+
+	/// Per-panel data for a faceted layout. Only the fields relevant to the
+	/// grid's inner mode are populated by the caller; the rest stay empty.
+	/// The renderer iterates m_facet_cells, lays out a grid of sub-rectangles,
+	/// and runs the matching inner renderer on each cell with the shared
+	/// X/Y range so panels are visually comparable.
+	struct FacetCell {
+		QString label;  // e.g. "speaker_03" — shown as panel sub-title
+
+		// Histogram (single-series or grouped overlay; group_counts populated
+		// only when the overall grid has m_facet_hist_group_labels set).
+		std::vector<HistBin> bins;
+
+		// BoxPlot (with optional dodged secondary grouping baked into
+		// BoxStats.secondary_index / .secondary_label; the legend uses
+		// m_facet_box_secondary_labels at the grid level).
+		std::vector<BoxStats> boxes;
+
+		// Scatter / GroupedScatter. For Scatter, x/y/point_labels/source_rows
+		// are populated. For GroupedScatter, group_data + color/style_labels
+		// at the grid level. show_regression and reg_* apply per-cell.
+		std::vector<double> x;
+		std::vector<double> y;
+		std::vector<QString> point_labels;
+		std::vector<intptr_t> source_rows;
+		std::vector<GroupData> group_data;
+		bool show_regression = false;
+		double reg_intercept = 0;
+		double reg_slope = 0;
+		double reg_r2 = 0;
+
+		// BarChart (single-series or grouped). For grouped, bar_grouped_counts
+		// is populated; the legend labels live at the grid level
+		// (m_facet_bar_group_labels).
+		std::vector<QString> bar_labels;
+		std::vector<int> bar_counts;
+		std::vector<std::vector<int>> bar_grouped_counts;
+	};
+
+	/// Faceted layout. cells[i] holds the data for the i-th sub-panel; layout
+	/// is auto-computed as a near-square grid (ncols = ceil(sqrt(n))).
+	///
+	/// x_range and y_range are the shared axis bounds across all panels —
+	/// computed once by the caller from the pooled data — so that the small
+	/// multiples are visually comparable. Pass {NaN, NaN} for an axis where
+	/// the inner renderer should compute its own range (typically y_range
+	/// for histograms whose y-axis is per-panel count). For consistency the
+	/// renderer applies x_range globally to all numeric x scales.
+	///
+	/// shared_y_count is honoured by faceted histograms / bar charts: when
+	/// true, every panel uses the global max count so counts are visually
+	/// comparable; when false, each panel scales to its own max.
+	///
+	/// hist_group_labels (non-empty only when the inner mode is Histogram and
+	/// each cell's bins have group_counts populated) drives the per-grid
+	/// legend.  box_secondary_labels / bar_group_labels / color_labels /
+	/// style_labels play the analogous role for the other inner modes.
+	void setFacetedData(std::vector<FacetCell> cells,
+	                    FacetInnerMode inner_mode,
+	                    const QString &x_label, const QString &y_label,
+	                    const QString &title,
+	                    const QString &facet_var_name,
+	                    std::pair<double, double> x_range,
+	                    std::pair<double, double> y_range,
+	                    bool shared_y_count = true,
+	                    std::vector<QString> hist_group_labels = {},
+	                    std::vector<QString> box_secondary_labels = {},
+	                    std::vector<QString> bar_group_labels = {},
+	                    std::vector<QString> color_labels = {},
+	                    std::vector<QString> style_labels = {},
+	                    bool reverse_x = false, bool reverse_y = false,
+	                    bool show_means = false, bool show_ellipses = false,
+	                    bool show_group_regression = false);
+
+	void clear();
+	bool hasData() const;
+
+	void savePNG(const QString &path);
+	void savePDF(const QString &path);
+	void saveSVG(const QString &path);
+
+	QSize sizeHint() const override { return {500, 400}; }
+
+Q_SIGNALS:
+
+	/// Emitted when the user left-clicks within HIT_TOLERANCE_PX of a plotted
+	/// point that has a known source-table row (i.e. caller passed source_rows
+	/// to the matching set*Data). source_row is 0-based. Never emitted for
+	/// histogram bins, bar-chart bars, box bodies, density curves, regression
+	/// lines, or pooled grouped-scatter cells.
+	void pointClicked(intptr_t source_row);
+
+protected:
+
+	void paintEvent(QPaintEvent *event) override;
+	void resizeEvent(QResizeEvent *event) override;
+
+	// Click-to-source hit testing. mousePressEvent picks the nearest hit
+	// target inside HIT_TOLERANCE_PX and emits pointClicked. mouseMoveEvent
+	// changes the cursor to PointingHandCursor when over a target so the
+	// affordance is discoverable. leaveEvent restores the default cursor when
+	// the pointer exits the widget.
+	void mousePressEvent(QMouseEvent *event) override;
+	void mouseMoveEvent(QMouseEvent *event) override;
+	void leaveEvent(QEvent *event) override;
+
+private:
+
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot, PpcDiscrete, Facet };
+
 	void renderPlot(QPainter &p, int w, int h);
 	void renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	                    double xlo, double xhi, double ylo, double yhi);
@@ -325,14 +448,31 @@ private:
 	void renderLinePlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderPpcDiscrete(QPainter &p, int left, int top, int pw, int ph);
 	void renderEffectsPlot(QPainter &p, int left, int top, int pw, int ph);
+	void renderFacetGrid(QPainter &p, int left, int top, int pw, int ph);
 	void renderTitle(QPainter &p, int left, int pw, int top);
 	void renderLegend(QPainter &p, int left, int top, int pw, int ph);
 	void rebuildCache();
 
+public:
+
+	// ── Static helpers ─────────────────────────────────────────────────
+	// Public so callers building FacetCell instances can pre-compute the
+	// bins / boxes / group_data they need to populate each panel.
+
 	static std::vector<BoxStats> computeBoxStats(const std::vector<QString> &groups,
 	                                              const std::vector<double> &values,
-	                                              const std::vector<intptr_t> &source_rows = {});
+	                                              const std::vector<intptr_t> &source_rows = {},
+	                                              const std::vector<QString> &style_groups = {});
 	static std::vector<HistBin> computeBins(const std::vector<double> &values, int nbins = 0);
+	/// Compute shared bin edges from pooled values then partition by group,
+	/// returning bins whose HistBin::group_counts is populated for the grouped
+	/// overlay path. group_labels_out is filled with the unique group labels
+	/// in first-seen order — pass it to FacetCell::bins users via the
+	/// hist_group_labels argument of setFacetedData.
+	static std::vector<HistBin> computeGroupedBins(const std::vector<double> &values,
+	                                                const std::vector<QString> &groups,
+	                                                std::vector<QString> &group_labels_out,
+	                                                int nbins = 0);
 	static double quantile_sorted(const std::vector<double> &sorted, double p);
 	static std::vector<GroupData> buildGroups(const std::vector<QString> &labels,
 	                                          const std::vector<double> &x,
@@ -345,6 +485,8 @@ private:
 	/// Draw a marker shape at (px, py) based on style_index.
 	/// 0 = circle, 1 = triangle-up, 2 = diamond, 3 = square.
 	static void drawMarker(QPainter &p, double px, double py, double r, int style_index);
+
+private:
 
 	Mode m_mode = Mode::Empty;
 
@@ -379,9 +521,18 @@ private:
 
 	// Box plot data
 	std::vector<BoxStats> m_boxes;
+	// Dodged-boxplot secondary group labels, indexed by secondary_index.
+	// Empty when the boxplot has only the primary X-axis grouping.
+	// When non-empty, the legend shows one entry per secondary level.
+	std::vector<QString> m_box_secondary_labels;
 
 	// Histogram data
 	std::vector<HistBin> m_bins;
+	// Grouped-histogram group labels, indexed by HistBin::group_counts position.
+	// Empty when the histogram is single-series. When non-empty, the legend
+	// shows one entry per group level and bins are rendered as overlaid
+	// translucent fills with distinct stroke colors.
+	std::vector<QString> m_hist_group_labels;
 
 	// Density curve overlay (histogram only)
 	bool m_show_density = false;
@@ -394,6 +545,11 @@ private:
 	// Bar chart data
 	std::vector<QString> m_bar_labels;
 	std::vector<int> m_bar_counts;
+	// Grouped (dodged) bar chart. m_bar_grouped_counts[g][c] is the count for
+	// the g-th group in the c-th category; m_bar_group_labels[g] is the legend
+	// label for the g-th group. Both empty when the bar chart is single-series.
+	std::vector<std::vector<int>> m_bar_grouped_counts;
+	std::vector<QString> m_bar_group_labels;
 
 	// Line plot data (multiple curves)
 	std::vector<LineCurve> m_line_curves;
@@ -408,6 +564,52 @@ private:
 	QString m_eff_caption;
 	bool m_eff_show_ci = true;   // when false, ribbons / error bars are suppressed
 	bool m_eff_show_legend = true; // suppressed automatically when many curves
+
+	// ── Faceted plot state ──
+	//
+	// Active when m_mode == Mode::Facet. m_facet_cells holds the per-panel
+	// data; m_facet_inner_mode dispatches to the right renderer for each
+	// panel. m_facet_x_range / m_facet_y_range are the shared axis bounds
+	// computed once at setFacetedData time so panels are visually comparable;
+	// a NaN bound means "fall back to per-panel auto range" for that axis.
+	//
+	// While renderFacetGrid iterates cells, it swaps each cell's data into
+	// the matching member fields (m_bins / m_boxes / m_x / m_y / m_group_data
+	// / m_bar_*) so the existing renderHistogram / renderBoxPlot / etc. can
+	// be reused. m_facet_render_active flags this inner pass so the inner
+	// renderers suppress per-panel title (we use m_facet_panel_title instead)
+	// and skip the per-panel legend (one grid-level legend is drawn last).
+	// m_forced_xrange / m_forced_yrange are read by the inner renderers in
+	// lieu of computing ranges from data — same idea as m_fixed_y_ticks.
+	std::vector<FacetCell> m_facet_cells;
+	FacetInnerMode m_facet_inner_mode = FacetInnerMode::Histogram;
+	QString m_facet_var_name;
+	bool m_facet_shared_y_count = true;
+	std::pair<double, double> m_facet_x_range{0, 0};
+	std::pair<double, double> m_facet_y_range{0, 0};
+
+	// Grid-level legend labels: only the matching one is populated based on
+	// the inner mode. Empty otherwise.
+	std::vector<QString> m_facet_hist_group_labels;
+	std::vector<QString> m_facet_box_secondary_labels;
+	std::vector<QString> m_facet_bar_group_labels;
+	std::vector<QString> m_facet_color_labels;
+	std::vector<QString> m_facet_style_labels;
+
+	// Inner-pass state set by renderFacetGrid before swapping data into
+	// member fields and calling an inner renderer.
+	bool m_facet_render_active = false;
+	QString m_facet_panel_title;
+
+	// Forced X/Y range escape hatches honored by the inner renderers in
+	// faceted mode (and any future caller that needs comparable axes across
+	// independent draws). When set, the renderer uses these instead of
+	// computing the range from data. Reset to nullopt outside of facet
+	// rendering. Apply to histograms / scatter / grouped scatter for X;
+	// scatter / grouped scatter / boxplot for Y (histograms compute Y from
+	// count and are governed by m_facet_shared_y_count instead).
+	std::optional<std::pair<double, double>> m_forced_xrange;
+	std::optional<std::pair<double, double>> m_forced_yrange;
 
 	// Shared
 	QString m_x_label;

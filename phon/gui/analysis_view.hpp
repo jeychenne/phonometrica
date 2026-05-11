@@ -361,6 +361,8 @@ private:
 	QComboBox *m_eda_style_combo = nullptr;
 	QLabel *m_eda_label_label = nullptr;
 	QComboBox *m_eda_label_combo = nullptr;
+	QLabel *m_eda_facet_label = nullptr;
+	QComboBox *m_eda_facet_combo = nullptr;
 	QCheckBox *m_eda_mean_check = nullptr;
 	QCheckBox *m_eda_ellipse_check = nullptr;
 	QSpinBox *m_eda_ellipse_spin = nullptr;

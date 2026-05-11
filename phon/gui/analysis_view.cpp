@@ -1011,6 +1011,16 @@ void AnalysisView::setupUi()
 	m_eda_label_combo->setToolTip(tr("Render the value of a variable as text at each data point"));
 	m_eda_label_combo->setVisible(false);
 	eda_vars->addWidget(m_eda_label_combo);
+	m_eda_facet_label = new QLabel(tr("Facet:"));
+	m_eda_facet_label->setVisible(false);
+	eda_vars->addWidget(m_eda_facet_label);
+	m_eda_facet_combo = new QComboBox;
+	m_eda_facet_combo->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	m_eda_facet_combo->setToolTip(tr("Split the plot into one panel per level of a categorical variable "
+	                                  "(small multiples). Combines with Group: facet by speaker, group by "
+	                                  "condition → overlaid histograms per speaker."));
+	m_eda_facet_combo->setVisible(false);
+	eda_vars->addWidget(m_eda_facet_combo);
 	eda_vars->addStretch();
 
 	// Row 2: secondary options (bins, checkboxes, smoothing)
@@ -1191,6 +1201,7 @@ void AnalysisView::setupUi()
 	connect(m_eda_pool_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_style_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_label_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
+	connect(m_eda_facet_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &AnalysisView::onEdaChanged);
 	connect(m_eda_mean_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_check, &QCheckBox::toggled, this, &AnalysisView::onEdaChanged);
 	connect(m_eda_ellipse_spin, QOverload<int>::of(&QSpinBox::valueChanged), this, &AnalysisView::onEdaChanged);
@@ -1268,12 +1279,14 @@ void AnalysisView::populateColumns()
 	m_eda_pool_combo->clear();
 	m_eda_style_combo->clear();
 	m_eda_label_combo->clear();
+	m_eda_facet_combo->clear();
 	m_eda_x_combo->addItem(tr("(None)"));
 	m_eda_y_combo->addItem(tr("(None)"));
 	m_eda_group_combo->addItem(tr("(None)"));
 	m_eda_pool_combo->addItem(tr("(None)"));
 	m_eda_style_combo->addItem(tr("(None)"));
 	m_eda_label_combo->addItem(tr("(None)"));
+	m_eda_facet_combo->addItem(tr("(None)"));
 
 	if (!m_analysis->has_source()) return;
 
@@ -1287,6 +1300,7 @@ void AnalysisView::populateColumns()
 		m_eda_pool_combo->addItem(qname);
 		m_eda_style_combo->addItem(qname);
 		m_eda_label_combo->addItem(qname);
+		m_eda_facet_combo->addItem(qname);
 	}
 
 	updateColumnMarkers();
@@ -4036,10 +4050,7 @@ void AnalysisView::refreshEdaVirtualColumns()
 
 void AnalysisView::updateEdaPlot()
 {
-	// X is the primary variable; Y is the optional secondary variable.
-	// When X = "(None)": nothing to show.
-	if (!m_analysis->has_source() || m_eda_x_combo->currentIndex() <= 0) {
-		m_eda_plot->clear();
+	auto hideAllControls = [&]() {
 		m_bins_label->setVisible(false);
 		m_bins_spin->setVisible(false);
 		m_eda_regline_check->setVisible(false);
@@ -4055,263 +4066,669 @@ void AnalysisView::updateEdaPlot()
 		m_eda_style_combo->setVisible(false);
 		m_eda_label_label->setVisible(false);
 		m_eda_label_combo->setVisible(false);
+		m_eda_facet_label->setVisible(false);
+		m_eda_facet_combo->setVisible(false);
 		m_eda_mean_check->setVisible(false);
 		m_eda_ellipse_check->setVisible(false);
 		m_eda_ellipse_spin->setVisible(false);
 		m_eda_formant_check->setVisible(false);
+	};
+
+	// Early-out: no source, or X = (None).
+	if (!m_analysis->has_source() || m_eda_x_combo->currentIndex() <= 0) {
+		m_eda_plot->clear();
+		hideAllControls();
 		return;
 	}
 
 	auto *dt = m_analysis->data();
+	intptr_t nc = dt->column_count();
+	intptr_t nr = dt->row_count();
+
+	// ── Resolve X column ───────────────────────────────────────────
 	auto x_name_q = m_eda_x_combo->currentText();
 	auto x_name = String(x_name_q.toUtf8().constData());
-
-	// Resolve X column: either a real column (x_col >= 1) or a virtual model
-	// column (x_col == 0, x_virtual_cells populated). xc(r) dispatches.
-	intptr_t nc = dt->column_count();
 	intptr_t x_col = 0;
 	for (intptr_t j = 1; j <= nc; j++) {
 		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
 	Array<String> x_virtual_cells;
 	bool x_virtual = false;
-	if (x_col < 1)
-	{
-		if (isVirtualEdaColumn(x_name_q))
-		{
+	if (x_col < 1) {
+		if (isVirtualEdaColumn(x_name_q)) {
 			x_virtual_cells = buildVirtualEdaCells(x_name_q);
 			x_virtual = !x_virtual_cells.empty();
 		}
-		if (!x_virtual) { m_eda_plot->clear(); return; }
+		if (!x_virtual) { m_eda_plot->clear(); hideAllControls(); return; }
 	}
 	auto xc = [&](intptr_t r) -> String {
 		return x_virtual ? x_virtual_cells[r] : dt->get_cell(r, x_col);
 	};
 
-	intptr_t nr = dt->row_count();
-
-	// Check if Y is selected (index 0 is "(None)").
+	// ── Resolve Y column (optional) ─────────────────────────────────
 	bool has_y = (m_eda_y_combo->currentIndex() > 0);
+	QString y_name_q;
+	String y_name;
+	intptr_t y_col = 0;
+	Array<String> y_virtual_cells;
+	bool y_virtual = false;
+	if (has_y) {
+		y_name_q = m_eda_y_combo->currentText();
+		y_name = String(y_name_q.toUtf8().constData());
+		for (intptr_t j = 1; j <= nc; j++) {
+			if (dt->get_header(j) == y_name) { y_col = j; break; }
+		}
+		if (y_col < 1) {
+			if (isVirtualEdaColumn(y_name_q)) {
+				y_virtual_cells = buildVirtualEdaCells(y_name_q);
+				y_virtual = !y_virtual_cells.empty();
+			}
+			if (!y_virtual) { m_eda_plot->clear(); hideAllControls(); return; }
+		}
+	}
+	auto yc = [&](intptr_t r) -> String {
+		return y_virtual ? y_virtual_cells[r]
+		                 : (y_col >= 1 ? dt->get_cell(r, y_col) : String());
+	};
 
-	// Show bins control only for numeric histograms (univariate numeric).
+	// ── Plot-kind dispatch ──────────────────────────────────────────
 	bool x_numeric = isColumnNumeric(x_name);
-	bool is_histogram = !has_y && x_numeric;
-	m_bins_label->setVisible(is_histogram);
-	m_bins_spin->setVisible(is_histogram);
+	bool y_numeric = has_y && isColumnNumeric(y_name);
+	enum Kind { KHistogram, KBarChart, KScatter, KBoxPlot, KUnsupported };
+	Kind kind = KUnsupported;
+	if (!has_y) kind = x_numeric ? KHistogram : KBarChart;
+	else if (x_numeric && y_numeric) kind = KScatter;
+	else if (!x_numeric && y_numeric) kind = KBoxPlot;
 
-	if (!has_y)
-	{
-		// ── Univariate: plot X alone ──
-		m_eda_regline_check->setVisible(false);
-		m_eda_group_label->setVisible(false);
-		m_eda_group_combo->setVisible(false);
-		m_eda_pool_label->setVisible(false);
-		m_eda_pool_combo->setVisible(false);
-		m_eda_style_label->setVisible(false);
-		m_eda_style_combo->setVisible(false);
-		m_eda_label_label->setVisible(false);
-		m_eda_label_combo->setVisible(false);
-		m_eda_mean_check->setVisible(false);
-		m_eda_ellipse_check->setVisible(false);
-		m_eda_ellipse_spin->setVisible(false);
-		m_eda_formant_check->setVisible(false);
-
-		if (x_numeric)
-		{
-			// Histogram of numeric X values
-			std::vector<double> vals;
-			vals.reserve(nr);
-			for (intptr_t r = 1; r <= nr; r++)
-			{
-				auto v = xc(r);
-				if (v.empty()) continue;
-				bool ok;
-				double d = v.to_float(&ok);
-				if (ok && std::isfinite(d)) vals.push_back(d);
-			}
-			if (vals.empty()) { m_eda_plot->clear(); return; }
-
-			// Keep a copy for KDE before moving vals into the histogram.
-			std::vector<double> vals_copy;
-			int nbins = m_bins_spin->value();
-			bool want_density = m_eda_density_check->isChecked() && vals.size() >= 2;
-			if (want_density) vals_copy = vals;
-
-			m_eda_plot->setHistogramData(std::move(vals), x_name_q, tr("Count"),
-			                              x_name_q, nbins);
-
-			m_eda_density_check->setVisible(true);
-			{
-				bool density_on = m_eda_density_check->isChecked();
-				m_eda_bw_label->setVisible(density_on);
-				m_eda_bw_slider->setVisible(density_on);
-				m_eda_bw_spin->setVisible(density_on);
-			}
-
-			if (want_density)
-			{
-				size_t n = vals_copy.size();
-
-				// Silverman's rule of thumb for bandwidth.
-				double sum = 0, sum2 = 0;
-				for (double v : vals_copy) { sum += v; sum2 += v * v; }
-				double mean = sum / n;
-				double var  = sum2 / n - mean * mean;
-				double sd   = std::sqrt(std::max(var, 0.0));
-
-				// Also compute IQR for robustness.
-				std::sort(vals_copy.begin(), vals_copy.end());
-				double q1 = vals_copy[n / 4];
-				double q3 = vals_copy[3 * n / 4];
-				double iqr = q3 - q1;
-				double s = std::min(sd, iqr / 1.34);
-				if (s < 1e-15) s = sd;
-				if (s < 1e-15) s = 1.0;
-				double h = 0.9 * s * std::pow((double)n, -0.2);
-
-				// Apply the user-adjustable bandwidth multiplier (R's adjust parameter).
-				double adjust = m_eda_bw_spin->value();
-				h *= adjust;
-
-				double xlo = vals_copy.front() - 3.0 * h;
-				double xhi = vals_copy.back()  + 3.0 * h;
-				constexpr int NPTS = 200;
-				double dx = (xhi - xlo) / (NPTS - 1);
-
-				double data_lo = vals_copy.front();
-				double data_hi = vals_copy.back();
-				double data_range = data_hi - data_lo;
-				if (data_range < 1e-10) data_range = 1.0;
-				int actual_nbins = nbins;
-				if (actual_nbins <= 0)
-					actual_nbins = std::max(5, (int)std::ceil(std::log2((double)n) + 1));
-				double bin_width = data_range / actual_nbins;
-
-				double scale = (double)n * bin_width;
-				double inv_h = 1.0 / h;
-				double norm = 1.0 / (std::sqrt(2.0 * M_PI) * h * (double)n);
-
-				std::vector<double> cx(NPTS), cy(NPTS);
-				for (int i = 0; i < NPTS; i++)
-				{
-					double x = xlo + i * dx;
-					double f = 0;
-					for (size_t j = 0; j < n; j++)
-					{
-						double u = (x - vals_copy[j]) * inv_h;
-						f += std::exp(-0.5 * u * u);
-					}
-					cx[i] = x;
-					cy[i] = f * norm * scale;
-				}
-
-				m_eda_plot->setDensityCurve(std::move(cx), std::move(cy));
-			}
-			else
-			{
-				m_eda_plot->clearDensityCurve();
-			}
-		}
-		else
-		{
-			m_eda_density_check->setVisible(false);
-			m_eda_bw_label->setVisible(false);
-			m_eda_bw_slider->setVisible(false);
-			m_eda_bw_spin->setVisible(false);
-			// Bar chart of categorical X counts
-			std::map<QString, int> counts;
-			std::vector<QString> order;
-			for (intptr_t r = 1; r <= nr; r++)
-			{
-				auto v = xc(r);
-				if (v.empty()) continue;
-				auto qs = QString::fromUtf8(v.data(), (int)v.size());
-				if (counts.find(qs) == counts.end()) order.push_back(qs);
-				counts[qs]++;
-			}
-			if (order.empty()) { m_eda_plot->clear(); return; }
-			std::vector<int> vals;
-			for (auto &lbl : order) vals.push_back(counts[lbl]);
-			m_eda_plot->setBarChartData(std::move(order), std::move(vals),
-			                             x_name_q, tr("Count"), x_name_q);
-		}
+	if (kind == KUnsupported) {
+		m_eda_plot->clear();
+		hideAllControls();
 		return;
 	}
 
-	// ── Bivariate: both X and Y selected ──
-
-	auto y_name_q = m_eda_y_combo->currentText();
-	auto y_name = String(y_name_q.toUtf8().constData());
-
-	intptr_t y_col = 0;
-	for (intptr_t j = 1; j <= nc; j++) {
-		if (dt->get_header(j) == y_name) { y_col = j; break; }
-	}
-	Array<String> y_virtual_cells;
-	bool y_virtual = false;
-	if (y_col < 1)
-	{
-		if (isVirtualEdaColumn(y_name_q))
-		{
-			y_virtual_cells = buildVirtualEdaCells(y_name_q);
-			y_virtual = !y_virtual_cells.empty();
+	// ── Resolve Group / Facet ───────────────────────────────────────
+	auto resolveCombo = [&](QComboBox *combo) -> intptr_t {
+		if (combo->currentIndex() <= 0) return 0;
+		auto qname = combo->currentText();
+		String name(qname.toUtf8().constData());
+		for (intptr_t j = 1; j <= nc; j++) {
+			if (dt->get_header(j) == name) return j;
 		}
-		if (!y_virtual) { m_eda_plot->clear(); return; }
+		return 0;
+	};
+	intptr_t g_col = resolveCombo(m_eda_group_combo);
+	intptr_t f_col = resolveCombo(m_eda_facet_combo);
+	QString group_name_q = (g_col > 0) ? m_eda_group_combo->currentText() : QString();
+	QString facet_name_q = (f_col > 0) ? m_eda_facet_combo->currentText() : QString();
+
+	// ── Visibility (uniform across all 4 supported modes) ──────────
+	m_eda_group_label->setVisible(true);
+	m_eda_group_combo->setVisible(true);
+	m_eda_facet_label->setVisible(true);
+	m_eda_facet_combo->setVisible(true);
+	m_bins_label->setVisible(kind == KHistogram);
+	m_bins_spin->setVisible(kind == KHistogram);
+	bool density_eligible = (kind == KHistogram) && (g_col == 0) && (f_col == 0);
+	m_eda_density_check->setVisible(density_eligible);
+	{
+		bool density_on = density_eligible && m_eda_density_check->isChecked();
+		m_eda_bw_label->setVisible(density_on);
+		m_eda_bw_slider->setVisible(density_on);
+		m_eda_bw_spin->setVisible(density_on);
 	}
-	auto yc = [&](intptr_t r) -> String {
-		return y_virtual ? y_virtual_cells[r] : dt->get_cell(r, y_col);
+	m_eda_regline_check->setVisible(kind == KScatter);
+	m_eda_pool_label->setVisible(kind == KScatter && g_col > 0);
+	m_eda_pool_combo->setVisible(kind == KScatter && g_col > 0);
+	m_eda_style_label->setVisible(kind == KScatter && g_col > 0);
+	m_eda_style_combo->setVisible(kind == KScatter && g_col > 0);
+	m_eda_label_label->setVisible(kind == KScatter);
+	m_eda_label_combo->setVisible(kind == KScatter);
+	m_eda_mean_check->setVisible(kind == KScatter && g_col > 0);
+	m_eda_ellipse_check->setVisible(kind == KScatter && g_col > 0);
+	m_eda_ellipse_spin->setVisible(kind == KScatter && g_col > 0);
+	m_eda_formant_check->setVisible(kind == KScatter);
+
+	bool formant = m_eda_formant_check->isChecked();
+	int nbins = m_bins_spin->value();
+
+	// ── Helper: KDE attached to a single-series histogram ──────────
+	auto attachDensityCurve = [&](std::vector<double> vals_copy, int nbins_) {
+		size_t n = vals_copy.size();
+		double sum = 0, sum2 = 0;
+		for (double v : vals_copy) { sum += v; sum2 += v * v; }
+		double mean = sum / n;
+		double var = sum2 / n - mean * mean;
+		double sd = std::sqrt(std::max(var, 0.0));
+		std::sort(vals_copy.begin(), vals_copy.end());
+		double q1 = vals_copy[n / 4];
+		double q3 = vals_copy[3 * n / 4];
+		double iqr = q3 - q1;
+		double s = std::min(sd, iqr / 1.34);
+		if (s < 1e-15) s = sd;
+		if (s < 1e-15) s = 1.0;
+		double h = 0.9 * s * std::pow((double)n, -0.2);
+		double adjust = m_eda_bw_spin->value();
+		h *= adjust;
+		double xlo = vals_copy.front() - 3.0 * h;
+		double xhi = vals_copy.back() + 3.0 * h;
+		constexpr int NPTS = 200;
+		double dx = (xhi - xlo) / (NPTS - 1);
+		double data_lo = vals_copy.front();
+		double data_hi = vals_copy.back();
+		double data_range = data_hi - data_lo;
+		if (data_range < 1e-10) data_range = 1.0;
+		int actual_nbins = nbins_;
+		if (actual_nbins <= 0)
+			actual_nbins = std::max(5, (int)std::ceil(std::log2((double)n) + 1));
+		double bin_width = data_range / actual_nbins;
+		double scale = (double)n * bin_width;
+		double inv_h = 1.0 / h;
+		double norm = 1.0 / (std::sqrt(2.0 * M_PI) * h * (double)n);
+		std::vector<double> cx(NPTS), cy(NPTS);
+		for (int i = 0; i < NPTS; i++) {
+			double x = xlo + i * dx;
+			double f = 0;
+			for (size_t j = 0; j < n; j++) {
+				double u = (x - vals_copy[j]) * inv_h;
+				f += std::exp(-0.5 * u * u);
+			}
+			cx[i] = x;
+			cy[i] = f * norm * scale;
+		}
+		m_eda_plot->setDensityCurve(std::move(cx), std::move(cy));
 	};
 
-	bool y_numeric = isColumnNumeric(y_name);
+	// ── Helper: partition row indices by facet level ───────────────
+	auto partitionByFacet = [&]() -> std::vector<std::pair<QString, std::vector<intptr_t>>> {
+		std::vector<std::pair<QString, std::vector<intptr_t>>> facets;
+		std::map<QString, size_t> idx;
+		for (intptr_t r = 1; r <= nr; r++) {
+			auto vf = dt->get_cell(r, f_col);
+			if (vf.empty()) continue;
+			auto qf = QString::fromUtf8(vf.data(), (int)vf.size());
+			auto it = idx.find(qf);
+			if (it == idx.end()) {
+				idx[qf] = facets.size();
+				facets.push_back({qf, {}});
+			}
+			facets[idx[qf]].second.push_back(r);
+		}
+		return facets;
+	};
 
-	if (x_numeric && y_numeric)
+	// ====================================================================
+	// Faceted dispatch — when Facet is active, partition rows by facet
+	// level, build a per-cell data structure, then ship the whole thing
+	// to PlotWidget::setFacetedData() which lays them out as small
+	// multiples with shared axes. Group remains live inside each panel
+	// (overlaid histograms / dodged bars / dodged boxes / grouped scatter).
+	// ====================================================================
+	if (f_col > 0) {
+		auto facets = partitionByFacet();
+		if (facets.empty()) { m_eda_plot->clear(); return; }
+
+		std::vector<PlotWidget::FacetCell> cells;
+		cells.reserve(facets.size());
+		PlotWidget::FacetInnerMode inner_mode = PlotWidget::FacetInnerMode::Histogram;
+		double nan_d = std::nan("");
+		std::pair<double, double> x_range{nan_d, nan_d};
+		std::pair<double, double> y_range{nan_d, nan_d};
+		std::vector<QString> hist_group_labels;
+		std::vector<QString> box_secondary_labels;
+		std::vector<QString> bar_group_labels;
+		std::vector<QString> color_labels;
+		std::vector<QString> style_labels;
+		bool show_means = m_eda_mean_check->isChecked();
+		bool show_ellipses = m_eda_ellipse_check->isChecked();
+		double conf = m_eda_ellipse_spin->value() / 100.0;
+		double chi2_scale = -2.0 * std::log(1.0 - conf);
+
+		if (kind == KHistogram)
+		{
+			inner_mode = PlotWidget::FacetInnerMode::Histogram;
+
+			// Pooled values & groups → shared bin edges, stable group order.
+			std::vector<double> all_vals;
+			std::vector<QString> all_groups;
+			for (auto &fp : facets) {
+				for (intptr_t r : fp.second) {
+					auto v = xc(r);
+					if (v.empty()) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					bool ok; double d = v.to_float(&ok);
+					if (!ok || !std::isfinite(d)) continue;
+					all_vals.push_back(d);
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						all_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+					}
+				}
+			}
+			if (all_vals.empty()) { m_eda_plot->clear(); return; }
+
+			std::vector<PlotWidget::HistBin> ref_bins;
+			if (g_col > 0) {
+				ref_bins = PlotWidget::computeGroupedBins(all_vals, all_groups,
+				                                          hist_group_labels, nbins);
+			} else {
+				ref_bins = PlotWidget::computeBins(all_vals, nbins);
+			}
+			if (ref_bins.empty()) { m_eda_plot->clear(); return; }
+			double rlo = ref_bins.front().lo;
+			double rhi = ref_bins.back().hi;
+			int rnb = (int)ref_bins.size();
+			double rbw = (rhi - rlo) / rnb;
+			x_range = {rlo, rhi};
+
+			// Per-cell binning against the shared edges. Walk row indices
+			// directly rather than calling computeBins (which would recompute
+			// edges from per-cell mins/maxes — defeats the purpose).
+			std::map<QString, int> g_idx;
+			for (int i = 0; i < (int)hist_group_labels.size(); i++)
+				g_idx[hist_group_labels[i]] = i;
+			int ng = (int)hist_group_labels.size();
+
+			for (auto &fp : facets) {
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				cell.bins.resize(rnb);
+				for (int i = 0; i < rnb; i++) {
+					cell.bins[i].lo = rlo + i * rbw;
+					cell.bins[i].hi = rlo + (i + 1) * rbw;
+					cell.bins[i].count = 0;
+					if (g_col > 0) cell.bins[i].group_counts.assign(ng, 0);
+				}
+				for (intptr_t r : fp.second) {
+					auto v = xc(r);
+					if (v.empty()) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					bool ok; double d = v.to_float(&ok);
+					if (!ok || !std::isfinite(d)) continue;
+					int bi = (int)((d - rlo) / rbw);
+					if (bi < 0) bi = 0;
+					if (bi >= rnb) bi = rnb - 1;
+					cell.bins[bi].count++;
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+						auto it = g_idx.find(qg);
+						if (it != g_idx.end()) cell.bins[bi].group_counts[it->second]++;
+					}
+				}
+				cells.push_back(std::move(cell));
+			}
+		}
+		else if (kind == KBarChart)
+		{
+			inner_mode = PlotWidget::FacetInnerMode::BarChart;
+
+			// Discover X categories and (optional) group categories across
+			// pooled data so every panel has the same bar layout.
+			std::vector<QString> cats_order;
+			std::map<QString, int> cats_idx;
+			std::vector<QString> groups_order;
+			std::map<QString, int> groups_idx;
+			for (auto &fp : facets) {
+				for (intptr_t r : fp.second) {
+					auto v = xc(r);
+					if (v.empty()) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					auto qs = QString::fromUtf8(v.data(), (int)v.size());
+					if (cats_idx.find(qs) == cats_idx.end()) {
+						cats_idx[qs] = (int)cats_order.size();
+						cats_order.push_back(qs);
+					}
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+						if (groups_idx.find(qg) == groups_idx.end()) {
+							groups_idx[qg] = (int)groups_order.size();
+							groups_order.push_back(qg);
+						}
+					}
+				}
+			}
+			if (cats_order.empty()) { m_eda_plot->clear(); return; }
+			if (g_col > 0) bar_group_labels = groups_order;
+
+			int nc_ = (int)cats_order.size();
+			int ng = std::max(1, (int)groups_order.size());
+			for (auto &fp : facets) {
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				cell.bar_labels = cats_order;
+				if (g_col == 0) {
+					cell.bar_counts.assign(nc_, 0);
+					for (intptr_t r : fp.second) {
+						auto v = xc(r);
+						if (v.empty()) continue;
+						auto qs = QString::fromUtf8(v.data(), (int)v.size());
+						cell.bar_counts[cats_idx[qs]]++;
+					}
+				} else {
+					cell.bar_grouped_counts.assign(ng, std::vector<int>(nc_, 0));
+					for (intptr_t r : fp.second) {
+						auto v = xc(r);
+						auto vg = dt->get_cell(r, g_col);
+						if (v.empty() || vg.empty()) continue;
+						auto qs = QString::fromUtf8(v.data(), (int)v.size());
+						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+						cell.bar_grouped_counts[groups_idx[qg]][cats_idx[qs]]++;
+					}
+				}
+				cells.push_back(std::move(cell));
+			}
+		}
+		else if (kind == KBoxPlot)
+		{
+			inner_mode = PlotWidget::FacetInnerMode::BoxPlot;
+
+			double ylo_pool = std::numeric_limits<double>::infinity();
+			double yhi_pool = -std::numeric_limits<double>::infinity();
+			for (auto &fp : facets) {
+				std::vector<QString> groups, style_groups;
+				std::vector<double> vals;
+				std::vector<intptr_t> rows;
+				for (intptr_t r : fp.second) {
+					auto vx = xc(r);
+					auto vy = yc(r);
+					if (vx.empty() || vy.empty()) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					bool ok; double dy = vy.to_float(&ok);
+					if (!ok || !std::isfinite(dy)) continue;
+					groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
+					vals.push_back(dy);
+					rows.push_back((intptr_t)(r - 1));
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						style_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+					}
+					ylo_pool = std::min(ylo_pool, dy);
+					yhi_pool = std::max(yhi_pool, dy);
+				}
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				cell.boxes = PlotWidget::computeBoxStats(groups, vals, rows, style_groups);
+				cells.push_back(std::move(cell));
+			}
+			if (std::isfinite(ylo_pool) && std::isfinite(yhi_pool) && yhi_pool > ylo_pool) {
+				double pad = (yhi_pool - ylo_pool) * 0.06;
+				y_range = {ylo_pool - pad, yhi_pool + pad};
+			}
+			if (g_col > 0) {
+				std::map<QString, int> seen;
+				for (auto &cell : cells) {
+					for (auto &b : cell.boxes) {
+						if (!b.secondary_label.isEmpty()
+						    && seen.find(b.secondary_label) == seen.end()) {
+							seen[b.secondary_label] = (int)box_secondary_labels.size();
+							box_secondary_labels.push_back(b.secondary_label);
+						}
+					}
+				}
+			}
+		}
+		else if (kind == KScatter)
+		{
+			inner_mode = g_col > 0 ? PlotWidget::FacetInnerMode::GroupedScatter
+			                       : PlotWidget::FacetInnerMode::Scatter;
+
+			intptr_t l_col = 0;
+			if (m_eda_label_combo->currentIndex() > 0) {
+				String label_name(m_eda_label_combo->currentText().toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == label_name) { l_col = j; break; }
+				}
+			}
+
+			// Discover pooled color labels first so colors stay consistent
+			// across facets (same group always gets the same palette slot).
+			if (g_col > 0) {
+				std::map<QString, int> seen;
+				for (auto &fp : facets) {
+					for (intptr_t r : fp.second) {
+						auto vg = dt->get_cell(r, g_col);
+						if (vg.empty()) continue;
+						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+						if (seen.find(qg) == seen.end()) {
+							seen[qg] = (int)color_labels.size();
+							color_labels.push_back(qg);
+						}
+					}
+				}
+			}
+
+			double xlo_pool = std::numeric_limits<double>::infinity();
+			double xhi_pool = -std::numeric_limits<double>::infinity();
+			double ylo_pool = std::numeric_limits<double>::infinity();
+			double yhi_pool = -std::numeric_limits<double>::infinity();
+
+			for (auto &fp : facets) {
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				if (g_col == 0) {
+					for (intptr_t r : fp.second) {
+						auto vx = xc(r);
+						auto vy = yc(r);
+						if (vx.empty() || vy.empty()) continue;
+						if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+						bool okx, oky;
+						double dx = vx.to_float(&okx);
+						double dy = vy.to_float(&oky);
+						if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+						cell.x.push_back(dx);
+						cell.y.push_back(dy);
+						cell.source_rows.push_back((intptr_t)(r - 1));
+						if (l_col > 0) {
+							auto vl = dt->get_cell(r, l_col);
+							cell.point_labels.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
+						}
+						xlo_pool = std::min(xlo_pool, dx); xhi_pool = std::max(xhi_pool, dx);
+						ylo_pool = std::min(ylo_pool, dy); yhi_pool = std::max(yhi_pool, dy);
+					}
+				} else {
+					std::vector<double> xv, yv;
+					std::vector<QString> gv, lv;
+					std::vector<intptr_t> rows;
+					for (intptr_t r : fp.second) {
+						auto vx = xc(r);
+						auto vy = yc(r);
+						auto vg = dt->get_cell(r, g_col);
+						if (vx.empty() || vy.empty() || vg.empty()) continue;
+						if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+						bool okx, oky;
+						double dx = vx.to_float(&okx);
+						double dy = vy.to_float(&oky);
+						if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
+						xv.push_back(dx);
+						yv.push_back(dy);
+						gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+						rows.push_back((intptr_t)(r - 1));
+						if (l_col > 0) {
+							auto vl = dt->get_cell(r, l_col);
+							lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
+						}
+						xlo_pool = std::min(xlo_pool, dx); xhi_pool = std::max(xhi_pool, dx);
+						ylo_pool = std::min(ylo_pool, dy); yhi_pool = std::max(yhi_pool, dy);
+					}
+					cell.group_data = PlotWidget::buildGroups(gv, xv, yv, chi2_scale, lv, {}, rows);
+				}
+				cells.push_back(std::move(cell));
+			}
+
+			if (std::isfinite(xlo_pool) && std::isfinite(xhi_pool) && xhi_pool > xlo_pool) {
+				double pad = (xhi_pool - xlo_pool) * 0.06;
+				x_range = {xlo_pool - pad, xhi_pool + pad};
+			}
+			if (std::isfinite(ylo_pool) && std::isfinite(yhi_pool) && yhi_pool > ylo_pool) {
+				double pad = (yhi_pool - ylo_pool) * 0.06;
+				y_range = {ylo_pool - pad, yhi_pool + pad};
+			}
+		}
+
+		// Build axis labels and title.
+		QString axis_x_label = x_name_q;
+		QString axis_y_label = (kind == KBoxPlot || kind == KScatter)
+			? y_name_q : tr("Count");
+		QString global_title;
+		if (kind == KScatter || kind == KBoxPlot)
+			global_title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
+		else
+			global_title = x_name_q;
+		if (g_col > 0) global_title += QStringLiteral(" by ") + group_name_q;
+		global_title += QStringLiteral(" | facet: ") + facet_name_q;
+
+		m_eda_plot->setFacetedData(std::move(cells), inner_mode,
+		                            axis_x_label, axis_y_label,
+		                            global_title, facet_name_q,
+		                            x_range, y_range, true,
+		                            std::move(hist_group_labels),
+		                            std::move(box_secondary_labels),
+		                            std::move(bar_group_labels),
+		                            std::move(color_labels),
+		                            std::move(style_labels),
+		                            formant, formant,
+		                            show_means, show_ellipses,
+		                            m_eda_regline_check->isChecked());
+		return;
+	}
+
+	// ====================================================================
+	// Non-faceted dispatch — single-panel plot with optional Group.
+	// ====================================================================
+
+	if (kind == KHistogram)
 	{
-		// ── Scatter or grouped scatter: X continuous, Y continuous ──
+		std::vector<double> vals;
+		std::vector<QString> groups;
+		vals.reserve(nr);
+		if (g_col > 0) groups.reserve(nr);
+		for (intptr_t r = 1; r <= nr; r++) {
+			auto v = xc(r);
+			if (v.empty()) continue;
+			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			bool ok; double d = v.to_float(&ok);
+			if (!ok || !std::isfinite(d)) continue;
+			vals.push_back(d);
+			if (g_col > 0) {
+				auto vg = dt->get_cell(r, g_col);
+				groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+			}
+		}
+		if (vals.empty()) { m_eda_plot->clear(); return; }
 
-		bool formant = m_eda_formant_check->isChecked();
-		bool has_group = (m_eda_group_combo->currentIndex() > 0);
+		QString title = x_name_q;
+		if (g_col > 0) title += QStringLiteral(" by ") + group_name_q;
+
+		if (g_col > 0) {
+			m_eda_plot->setHistogramData(std::move(vals), std::move(groups),
+			                              x_name_q, tr("Count"), title, nbins);
+			m_eda_plot->clearDensityCurve();
+		} else {
+			std::vector<double> vals_copy;
+			bool want_density = m_eda_density_check->isChecked() && vals.size() >= 2;
+			if (want_density) vals_copy = vals;
+			m_eda_plot->setHistogramData(std::move(vals), x_name_q, tr("Count"),
+			                              title, nbins);
+			if (want_density) attachDensityCurve(std::move(vals_copy), nbins);
+			else m_eda_plot->clearDensityCurve();
+		}
+	}
+	else if (kind == KBarChart)
+	{
+		std::vector<QString> cats_order;
+		std::map<QString, int> cats_idx;
+		if (g_col == 0) {
+			std::vector<int> counts;
+			for (intptr_t r = 1; r <= nr; r++) {
+				auto v = xc(r);
+				if (v.empty()) continue;
+				auto qs = QString::fromUtf8(v.data(), (int)v.size());
+				auto it = cats_idx.find(qs);
+				if (it == cats_idx.end()) {
+					cats_idx[qs] = (int)cats_order.size();
+					cats_order.push_back(qs);
+					counts.push_back(0);
+				}
+				counts[cats_idx[qs]]++;
+			}
+			if (cats_order.empty()) { m_eda_plot->clear(); return; }
+			m_eda_plot->setBarChartData(std::move(cats_order), std::move(counts),
+			                             x_name_q, tr("Count"), x_name_q);
+		} else {
+			std::vector<QString> groups_order;
+			std::map<QString, int> groups_idx;
+			std::vector<std::pair<int, int>> rows;
+			for (intptr_t r = 1; r <= nr; r++) {
+				auto v = xc(r);
+				auto vg = dt->get_cell(r, g_col);
+				if (v.empty() || vg.empty()) continue;
+				auto qs = QString::fromUtf8(v.data(), (int)v.size());
+				auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+				if (cats_idx.find(qs) == cats_idx.end()) {
+					cats_idx[qs] = (int)cats_order.size();
+					cats_order.push_back(qs);
+				}
+				if (groups_idx.find(qg) == groups_idx.end()) {
+					groups_idx[qg] = (int)groups_order.size();
+					groups_order.push_back(qg);
+				}
+				rows.push_back({cats_idx[qs], groups_idx[qg]});
+			}
+			if (cats_order.empty()) { m_eda_plot->clear(); return; }
+			int nc_ = (int)cats_order.size();
+			int ng = (int)groups_order.size();
+			std::vector<std::vector<int>> counts(ng, std::vector<int>(nc_, 0));
+			for (auto &p : rows) counts[p.second][p.first]++;
+			QString title = x_name_q + QStringLiteral(" by ") + group_name_q;
+			m_eda_plot->setBarChartData(std::move(cats_order),
+			                             std::move(groups_order),
+			                             std::move(counts),
+			                             x_name_q, tr("Count"), title);
+		}
+	}
+	else if (kind == KBoxPlot)
+	{
+		std::vector<QString> groups, style_groups;
+		std::vector<double> vals;
+		std::vector<intptr_t> rows;
+		groups.reserve(nr);
+		vals.reserve(nr);
+		rows.reserve(nr);
+		if (g_col > 0) style_groups.reserve(nr);
+		for (intptr_t r = 1; r <= nr; r++) {
+			auto vx = xc(r);
+			auto vy = yc(r);
+			if (vx.empty() || vy.empty()) continue;
+			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			bool ok; double dy = vy.to_float(&ok);
+			if (!ok || !std::isfinite(dy)) continue;
+			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
+			vals.push_back(dy);
+			rows.push_back((intptr_t)(r - 1));
+			if (g_col > 0) {
+				auto vg = dt->get_cell(r, g_col);
+				style_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
+			}
+		}
+		if (vals.empty()) { m_eda_plot->clear(); return; }
+		QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
+		if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
+		                            x_name_q, y_name_q, title,
+		                            std::move(rows), std::move(style_groups));
+	}
+	else if (kind == KScatter)
+	{
+		// Adapt the original scatter logic with the same Group/Pool/Style/
+		// Label/Mean/Ellipse/Formant semantics as before.
 		bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
 		bool has_label = (m_eda_label_combo->currentIndex() > 0);
 		bool has_style = (m_eda_style_combo->currentIndex() > 0);
 
-		// Show the group / pool / label / formant controls.
-		m_eda_group_label->setVisible(true);
-		m_eda_group_combo->setVisible(true);
-		m_eda_pool_label->setVisible(has_group);
-		m_eda_pool_combo->setVisible(has_group);
-		m_eda_style_label->setVisible(has_group);
-		m_eda_style_combo->setVisible(has_group);
-		m_eda_label_label->setVisible(true);
-		m_eda_label_combo->setVisible(true);
-		m_eda_formant_check->setVisible(true);
-
-		// Mean/Ellipse visible only when a group is selected.
-		m_eda_mean_check->setVisible(has_group);
-		m_eda_ellipse_check->setVisible(has_group);
-		m_eda_ellipse_spin->setVisible(has_group);
-
-		// Regression line is available in both ungrouped and grouped modes:
-		// in ungrouped mode it's a single OLS line over all points;
-		// in grouped mode, one OLS line per group.
-		m_eda_regline_check->setVisible(true);
-		m_eda_density_check->setVisible(false);
-		m_eda_bw_label->setVisible(false);
-		m_eda_bw_slider->setVisible(false);
-		m_eda_bw_spin->setVisible(false);
-
-		if (has_group)
+		if (g_col > 0)
 		{
-			// ── Grouped scatter ──
-			auto group_name_q = m_eda_group_combo->currentText();
-			auto group_name = String(group_name_q.toUtf8().constData());
-
-			intptr_t g_col = 0;
-			for (intptr_t j = 1; j <= nc; j++) {
-				if (dt->get_header(j) == group_name) { g_col = j; break; }
-			}
-			if (g_col < 1) { m_eda_plot->clear(); return; }
-
-			// Resolve label column (may be the same as group column).
+			// ── Grouped scatter (original code) ──
 			intptr_t l_col = 0;
 			if (has_label) {
 				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
@@ -4320,7 +4737,6 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 
-			// Resolve pool column.
 			intptr_t p_col = 0;
 			if (has_pool) {
 				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
@@ -4329,7 +4745,6 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 
-			// Resolve style column.
 			intptr_t s_col = 0;
 			if (has_style) {
 				auto style_name = String(m_eda_style_combo->currentText().toUtf8().constData());
@@ -4378,11 +4793,9 @@ void AnalysisView::updateEdaPlot()
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
 
-			// ── Pooling: collapse to one point per (pool, group[, style]) cell ──
+			// ── Pooling ──
 			if (p_col > 0)
 			{
-				// Re-read raw data including pool column to build the cell map.
-				// The cell key is (pool, group, style) — style is empty when s_col == 0.
 				struct PoolCell {
 					double sx = 0, sy = 0;
 					int n = 0;
@@ -4391,7 +4804,7 @@ void AnalysisView::updateEdaPlot()
 					std::map<QString, int> label_freq;
 				};
 				using CellKey = std::tuple<QString, QString, QString>;
-				std::map<CellKey, PoolCell> cells;
+				std::map<CellKey, PoolCell> cells_pool;
 				std::vector<CellKey> cell_order;
 
 				for (intptr_t r = 1; r <= nr; r++)
@@ -4417,8 +4830,8 @@ void AnalysisView::updateEdaPlot()
 					}
 
 					auto key = std::make_tuple(pool_str, group_str, style_str);
-					if (cells.find(key) == cells.end()) cell_order.push_back(key);
-					auto &c = cells[key];
+					if (cells_pool.find(key) == cells_pool.end()) cell_order.push_back(key);
+					auto &c = cells_pool[key];
 					c.sx += dx;
 					c.sy += dy;
 					c.n++;
@@ -4430,14 +4843,10 @@ void AnalysisView::updateEdaPlot()
 					}
 				}
 
-				// Replace the raw vectors with one averaged point per cell.
-				// Pooled aggregates have no single source row — leave `rows`
-				// empty so click-to-source is disabled in this branch (per
-				// design: pooled cells are means of N source rows).
 				xv.clear(); yv.clear(); gv.clear(); lv.clear(); sv.clear();
 				rows.clear();
 				for (auto &key : cell_order) {
-					auto &c = cells[key];
+					auto &c = cells_pool[key];
 					if (c.n == 0) continue;
 					xv.push_back(c.sx / c.n);
 					yv.push_back(c.sy / c.n);
@@ -4445,7 +4854,6 @@ void AnalysisView::updateEdaPlot()
 					if (s_col > 0)
 						sv.push_back(c.style);
 					if (l_col > 0) {
-						// Most frequent label within the cell.
 						QString best;
 						int best_n = 0;
 						for (auto &kv : c.label_freq) {
@@ -4457,15 +4865,12 @@ void AnalysisView::updateEdaPlot()
 				if (xv.empty()) { m_eda_plot->clear(); return; }
 			}
 
-			bool show_means = m_eda_mean_check->isChecked();
-			bool show_ellipses = m_eda_ellipse_check->isChecked();
+			bool show_means_local = m_eda_mean_check->isChecked();
+			bool show_ellipses_local = m_eda_ellipse_check->isChecked();
 			bool show_regression_lines = m_eda_regline_check->isChecked();
+			double conf_local = m_eda_ellipse_spin->value() / 100.0;
+			double chi2_scale_local = -2.0 * std::log(1.0 - conf_local);
 
-			// chi-squared quantile for 2 df: F(x) = 1 - exp(-x/2), so x = -2*ln(1-p).
-			double conf = m_eda_ellipse_spin->value() / 100.0;
-			double chi2_scale = -2.0 * std::log(1.0 - conf);
-
-			// Build title: Y ~ X | Group [× Style] [/ Label] [pooled by Pool].
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
 				+ QStringLiteral(" | ") + group_name_q;
 			if (has_style && s_col > 0)
@@ -4473,20 +4878,20 @@ void AnalysisView::updateEdaPlot()
 			if (has_label && l_col != g_col)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
 			if (p_col > 0)
-				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText() + QStringLiteral("]");
+				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText()
+				       + QStringLiteral("]");
 
 			m_eda_plot->setGroupedScatterData(
 				std::move(gv), std::move(xv), std::move(yv),
 				x_name_q, y_name_q, title,
-				show_means, show_ellipses, chi2_scale, formant, formant,
+				show_means_local, show_ellipses_local, chi2_scale_local,
+				formant, formant,
 				std::move(lv), std::move(sv), std::move(rows),
 				show_regression_lines);
 		}
 		else
 		{
 			// ── Plain scatter ──
-
-			// Resolve label column if selected.
 			intptr_t l_col = 0;
 			if (has_label) {
 				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
@@ -4523,18 +4928,17 @@ void AnalysisView::updateEdaPlot()
 			}
 			if (xv.empty()) { m_eda_plot->clear(); return; }
 
-			// Compute OLS regression before moving the vectors.
 			double reg_intercept = 0, reg_slope = 0, reg_r2 = 0;
 			bool reg_valid = false;
 			if (m_eda_regline_check->isChecked() && xv.size() >= 2)
 			{
-				size_t n = xv.size();
+				size_t n_ = xv.size();
 				double sx = 0, sy = 0;
-				for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
-				double mx = sx / n, my = sy / n;
+				for (size_t i = 0; i < n_; i++) { sx += xv[i]; sy += yv[i]; }
+				double mx = sx / n_, my = sy / n_;
 
 				double sxy = 0, sxx = 0, syy = 0;
-				for (size_t i = 0; i < n; i++) {
+				for (size_t i = 0; i < n_; i++) {
 					double dx = xv[i] - mx;
 					double dy = yv[i] - my;
 					sxy += dx * dy;
@@ -4563,73 +4967,6 @@ void AnalysisView::updateEdaPlot()
 			else
 				m_eda_plot->clearRegressionLine();
 		}
-	}
-	else if (!x_numeric && y_numeric)
-	{
-		// Box plot: X categorical, Y continuous
-		m_eda_regline_check->setVisible(false);
-		m_eda_density_check->setVisible(false);
-		m_eda_bw_label->setVisible(false);
-		m_eda_bw_slider->setVisible(false);
-		m_eda_bw_spin->setVisible(false);
-		m_eda_group_label->setVisible(false);
-		m_eda_group_combo->setVisible(false);
-		m_eda_pool_label->setVisible(false);
-		m_eda_pool_combo->setVisible(false);
-		m_eda_style_label->setVisible(false);
-		m_eda_style_combo->setVisible(false);
-		m_eda_label_label->setVisible(false);
-		m_eda_label_combo->setVisible(false);
-		m_eda_mean_check->setVisible(false);
-		m_eda_ellipse_check->setVisible(false);
-		m_eda_ellipse_spin->setVisible(false);
-		m_eda_formant_check->setVisible(false);
-
-		std::vector<QString> groups;
-		std::vector<double> vals;
-		std::vector<intptr_t> rows;
-		groups.reserve(nr);
-		vals.reserve(nr);
-		rows.reserve(nr);
-		for (intptr_t r = 1; r <= nr; r++)
-		{
-			auto vx = xc(r);
-			auto vy = yc(r);
-			if (vx.empty() || vy.empty()) continue;
-			bool ok;
-			double dy = vy.to_float(&ok);
-			if (!ok || !std::isfinite(dy)) continue;
-			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
-			vals.push_back(dy);
-			rows.push_back((intptr_t)(r - 1));
-		}
-		if (vals.empty()) { m_eda_plot->clear(); return; }
-		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
-		                            x_name_q, y_name_q,
-		                            y_name_q + QStringLiteral(" ~ ") + x_name_q,
-		                            std::move(rows));
-	}
-	else
-	{
-		// Unsupported combination (e.g. both categorical) — clear.
-		m_eda_regline_check->setVisible(false);
-		m_eda_density_check->setVisible(false);
-		m_eda_bw_label->setVisible(false);
-		m_eda_bw_slider->setVisible(false);
-		m_eda_bw_spin->setVisible(false);
-		m_eda_group_label->setVisible(false);
-		m_eda_group_combo->setVisible(false);
-		m_eda_pool_label->setVisible(false);
-		m_eda_pool_combo->setVisible(false);
-		m_eda_style_label->setVisible(false);
-		m_eda_style_combo->setVisible(false);
-		m_eda_label_label->setVisible(false);
-		m_eda_label_combo->setVisible(false);
-		m_eda_mean_check->setVisible(false);
-		m_eda_ellipse_check->setVisible(false);
-		m_eda_ellipse_spin->setVisible(false);
-		m_eda_formant_check->setVisible(false);
-		m_eda_plot->clear();
 	}
 }
 

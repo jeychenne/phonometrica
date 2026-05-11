@@ -184,6 +184,7 @@ void PlotWidget::setData(std::vector<double> x, std::vector<double> y,
 	m_reverse_x = reverse_x;
 	m_reverse_y = reverse_y;
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
@@ -222,9 +223,13 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 	m_point_labels.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_show_regression = false;
 	m_show_density = false;
 	m_density_x.clear();
@@ -262,16 +267,35 @@ void PlotWidget::setGroupedScatterData(std::vector<QString> groups,
 void PlotWidget::setBoxPlotData(std::vector<QString> groups, std::vector<double> values,
                                  const QString &x_label, const QString &y_label,
                                  const QString &title,
-                                 std::vector<intptr_t> source_rows)
+                                 std::vector<intptr_t> source_rows,
+                                 std::vector<QString> style_groups)
 {
 	m_mode = Mode::BoxPlot;
-	m_boxes = computeBoxStats(groups, values, source_rows);
+	m_boxes = computeBoxStats(groups, values, source_rows, style_groups);
+
+	// Discover unique secondary levels in first-seen order — this drives the
+	// legend and the color palette indices. Empty when no style_groups were
+	// supplied (the renderer falls back to the single-color BOX_FILL path).
+	m_box_secondary_labels.clear();
+	if (!style_groups.empty())
+	{
+		std::map<QString, int> idx;
+		size_t n = std::min(groups.size(), std::min(values.size(), style_groups.size()));
+		for (size_t i = 0; i < n; i++) {
+			if (idx.find(style_groups[i]) == idx.end()) {
+				idx[style_groups[i]] = (int)m_box_secondary_labels.size();
+				m_box_secondary_labels.push_back(style_groups[i]);
+			}
+		}
+	}
+
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
 	m_x.clear();
 	m_y.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_source_rows.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
@@ -293,6 +317,75 @@ void PlotWidget::setHistogramData(std::vector<double> values,
 	m_y.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_hist_group_labels.clear();
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setHistogramData(std::vector<double> values, std::vector<QString> groups,
+                                   const QString &x_label, const QString &y_label,
+                                   const QString &title, int nbins)
+{
+	m_mode = Mode::Histogram;
+
+	// Build shared bin edges from the pooled value range; Sturges' rule on
+	// pooled n. This is what makes the overlaid histograms directly
+	// comparable across groups.
+	m_bins = computeBins(values, nbins);
+
+	// Discover unique groups in first-seen order.
+	m_hist_group_labels.clear();
+	std::map<QString, int> idx;
+	size_t n = std::min(values.size(), groups.size());
+	for (size_t i = 0; i < n; i++) {
+		if (idx.find(groups[i]) == idx.end()) {
+			idx[groups[i]] = (int)m_hist_group_labels.size();
+			m_hist_group_labels.push_back(groups[i]);
+		}
+	}
+	int ng = (int)m_hist_group_labels.size();
+
+	// Allocate per-group counters on every bin.
+	for (auto &b : m_bins) {
+		b.group_counts.assign(ng, 0);
+	}
+
+	// Tally per-group counts against the shared bin grid. Mirrors the
+	// classification logic in computeBins (clamped to [0, nbins-1]).
+	if (!m_bins.empty()) {
+		double lo = m_bins.front().lo;
+		double hi = m_bins.back().hi;
+		int nb = (int)m_bins.size();
+		double bin_width = (hi - lo) / nb;
+		if (bin_width > 0)
+		{
+			for (size_t i = 0; i < n; i++) {
+				auto it = idx.find(groups[i]);
+				if (it == idx.end()) continue;
+				int g = it->second;
+				int bi = (int)((values[i] - lo) / bin_width);
+				if (bi < 0) bi = 0;
+				if (bi >= nb) bi = nb - 1;
+				m_bins[bi].group_counts[g]++;
+			}
+		}
+	}
+
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+	m_x.clear();
+	m_y.clear();
+	m_source_rows.clear();
+	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -310,6 +403,8 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_mode = Mode::BarChart;
 	m_bar_labels = std::move(labels);
 	m_bar_counts = std::move(counts);
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_x_label = x_label;
 	m_y_label = y_label;
 	m_title = title;
@@ -317,7 +412,49 @@ void PlotWidget::setBarChartData(std::vector<QString> labels, std::vector<int> c
 	m_y.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_show_regression = false;
+	m_cache_valid = false;
+	update();
+}
+
+void PlotWidget::setBarChartData(std::vector<QString> labels,
+                                  std::vector<QString> group_labels,
+                                  std::vector<std::vector<int>> counts_by_group,
+                                  const QString &x_label, const QString &y_label,
+                                  const QString &title)
+{
+	m_mode = Mode::BarChart;
+	m_bar_labels = std::move(labels);
+	m_bar_group_labels = std::move(group_labels);
+	m_bar_grouped_counts = std::move(counts_by_group);
+
+	// Build a fallback m_bar_counts (sum across groups) so any code path
+	// that reads from m_bar_counts (e.g. legacy y-range computation when
+	// m_bar_grouped_counts is empty by mistake) still has something sensible.
+	// renderBarChart prefers m_bar_grouped_counts when non-empty.
+	m_bar_counts.assign(m_bar_labels.size(), 0);
+	for (size_t g = 0; g < m_bar_grouped_counts.size(); g++) {
+		for (size_t c = 0; c < m_bar_grouped_counts[g].size() && c < m_bar_counts.size(); c++) {
+			m_bar_counts[c] += m_bar_grouped_counts[g][c];
+		}
+	}
+
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+	m_x.clear();
+	m_y.clear();
+	m_source_rows.clear();
+	m_boxes.clear();
+	m_box_secondary_labels.clear();
+	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -339,9 +476,13 @@ void PlotWidget::setLinePlotData(std::vector<LineCurve> curves,
 	m_y.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -366,9 +507,13 @@ void PlotWidget::setPpcDiscreteData(std::vector<PpcBarPoint> points,
 	m_y.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -453,9 +598,13 @@ void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
 	m_point_labels.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -467,6 +616,72 @@ void PlotWidget::setEffectsPlotData(std::vector<EffectsCurve> curves,
 	update();
 }
 
+void PlotWidget::setFacetedData(std::vector<FacetCell> cells,
+                                 FacetInnerMode inner_mode,
+                                 const QString &x_label, const QString &y_label,
+                                 const QString &title,
+                                 const QString &facet_var_name,
+                                 std::pair<double, double> x_range,
+                                 std::pair<double, double> y_range,
+                                 bool shared_y_count,
+                                 std::vector<QString> hist_group_labels,
+                                 std::vector<QString> box_secondary_labels,
+                                 std::vector<QString> bar_group_labels,
+                                 std::vector<QString> color_labels,
+                                 std::vector<QString> style_labels,
+                                 bool reverse_x, bool reverse_y,
+                                 bool show_means, bool show_ellipses,
+                                 bool show_group_regression)
+{
+	m_mode = Mode::Facet;
+	m_facet_cells = std::move(cells);
+	m_facet_inner_mode = inner_mode;
+	m_facet_var_name = facet_var_name;
+	m_facet_x_range = x_range;
+	m_facet_y_range = y_range;
+	m_facet_shared_y_count = shared_y_count;
+	m_facet_hist_group_labels = std::move(hist_group_labels);
+	m_facet_box_secondary_labels = std::move(box_secondary_labels);
+	m_facet_bar_group_labels = std::move(bar_group_labels);
+	m_facet_color_labels = std::move(color_labels);
+	m_facet_style_labels = std::move(style_labels);
+	m_reverse_x = reverse_x;
+	m_reverse_y = reverse_y;
+	m_show_means = show_means;
+	m_show_ellipses = show_ellipses;
+	m_show_group_regression = show_group_regression;
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+
+	// Wipe per-type buffers; renderFacetGrid will swap cell data into them
+	// during the inner pass.
+	m_x.clear();
+	m_y.clear();
+	m_point_labels.clear();
+	m_source_rows.clear();
+	m_boxes.clear();
+	m_box_secondary_labels.clear();
+	m_bins.clear();
+	m_hist_group_labels.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_line_curves.clear();
+	m_ppc_points.clear();
+	m_show_regression = false;
+	m_show_density = false;
+	m_density_x.clear();
+	m_density_y.clear();
+	m_cache_valid = false;
+	update();
+}
+
+
 void PlotWidget::clear()
 {
 	m_mode = Mode::Empty;
@@ -475,9 +690,13 @@ void PlotWidget::clear()
 	m_point_labels.clear();
 	m_source_rows.clear();
 	m_boxes.clear();
+	m_box_secondary_labels.clear();
 	m_bins.clear();
+	m_hist_group_labels.clear();
 	m_bar_labels.clear();
 	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -499,6 +718,17 @@ void PlotWidget::clear()
 	m_ppc_points.clear();
 	m_ppc_integer_ticks = false;
 	m_fixed_y_ticks.clear();
+	m_facet_cells.clear();
+	m_facet_hist_group_labels.clear();
+	m_facet_box_secondary_labels.clear();
+	m_facet_bar_group_labels.clear();
+	m_facet_color_labels.clear();
+	m_facet_style_labels.clear();
+	m_facet_var_name.clear();
+	m_facet_render_active = false;
+	m_facet_panel_title.clear();
+	m_forced_xrange.reset();
+	m_forced_yrange.reset();
 	m_cache_valid = false;
 	m_hit_targets.clear();
 	update();
@@ -525,9 +755,11 @@ double PlotWidget::quantile_sorted(const std::vector<double> &sorted, double p)
 
 std::vector<PlotWidget::BoxStats> PlotWidget::computeBoxStats(
 	const std::vector<QString> &groups, const std::vector<double> &values,
-	const std::vector<intptr_t> &source_rows)
+	const std::vector<intptr_t> &source_rows,
+	const std::vector<QString> &style_groups)
 {
 	bool has_rows = !source_rows.empty();
+	bool has_secondary = !style_groups.empty();
 
 	// (value, source_row) pairs let us keep the row association across the
 	// per-group sort that whisker/outlier extraction needs. INVALID_ROW is
@@ -535,25 +767,52 @@ std::vector<PlotWidget::BoxStats> PlotWidget::computeBoxStats(
 	// point's index runs past source_rows.size().
 	using Pair = std::pair<double, intptr_t>;
 
-	// Collect values per group, preserving first-seen order.
-	std::vector<QString> order;
+	// Composite key when secondary grouping is active: "primary\x1Fsecondary"
+	// (0x1F is the ASCII unit separator — same trick as the grouped-scatter
+	// composite key in buildGroups). Order is preserved as first-seen.
+	struct CellKey {
+		QString primary;
+		QString secondary;
+		QString composite;  // for map lookup; primary alone when no secondary
+		bool operator<(const CellKey &o) const { return composite < o.composite; }
+	};
+
+	std::vector<CellKey> order;
 	std::map<QString, std::vector<Pair>> grouped;
 
+	// Track secondary-level → palette index in first-seen order. The same
+	// secondary level always gets the same color across all primaries.
+	std::map<QString, int> secondary_idx;
+
 	size_t n = std::min(groups.size(), values.size());
+	if (has_secondary) n = std::min(n, style_groups.size());
+
 	for (size_t i = 0; i < n; i++)
 	{
-		auto &g = groups[i];
-		if (grouped.find(g) == grouped.end()) {
-			order.push_back(g);
+		QString primary = groups[i];
+		QString secondary = has_secondary ? style_groups[i] : QString();
+		QString composite = has_secondary
+			? (primary + QChar(0x1F) + secondary)
+			: primary;
+
+		if (grouped.find(composite) == grouped.end()) {
+			CellKey ck;
+			ck.primary = primary;
+			ck.secondary = secondary;
+			ck.composite = composite;
+			order.push_back(ck);
+		}
+		if (has_secondary && secondary_idx.find(secondary) == secondary_idx.end()) {
+			secondary_idx[secondary] = (int)secondary_idx.size();
 		}
 		intptr_t row = (has_rows && i < source_rows.size()) ? source_rows[i] : INVALID_ROW;
-		grouped[g].push_back({values[i], row});
+		grouped[composite].push_back({values[i], row});
 	}
 
 	std::vector<BoxStats> result;
-	for (auto &label : order)
+	for (auto &ck : order)
 	{
-		auto &pairs = grouped[label];
+		auto &pairs = grouped[ck.composite];
 		if (pairs.empty()) continue;
 
 		std::sort(pairs.begin(), pairs.end(),
@@ -565,7 +824,11 @@ std::vector<PlotWidget::BoxStats> PlotWidget::computeBoxStats(
 		for (auto &p : pairs) vals.push_back(p.first);
 
 		BoxStats bs;
-		bs.label = label;
+		bs.label = ck.composite;          // display fallback; renderer uses
+		                                  // primary_label for cluster axis ticks
+		bs.primary_label = ck.primary;
+		bs.secondary_label = ck.secondary;
+		bs.secondary_index = has_secondary ? secondary_idx[ck.secondary] : -1;
 		bs.median = quantile_sorted(vals, 0.5);
 		bs.q1 = quantile_sorted(vals, 0.25);
 		bs.q3 = quantile_sorted(vals, 0.75);
@@ -639,6 +902,58 @@ std::vector<PlotWidget::HistBin> PlotWidget::computeBins(const std::vector<doubl
 		if (idx < 0) idx = 0;
 		if (idx >= nbins) idx = nbins - 1;
 		bins[idx].count++;
+	}
+
+	return bins;
+}
+
+std::vector<PlotWidget::HistBin> PlotWidget::computeGroupedBins(
+	const std::vector<double> &values,
+	const std::vector<QString> &groups,
+	std::vector<QString> &group_labels_out,
+	int nbins)
+{
+	// Same bin edges as the ungrouped case: based on the pooled value range.
+	// This is what makes the overlay panels directly comparable.
+	auto bins = computeBins(values, nbins);
+	if (bins.empty()) {
+		group_labels_out.clear();
+		return bins;
+	}
+
+	// Discover unique groups in first-seen order, and assign each value its
+	// group index. We DO NOT zero `count`: callers may consume either the
+	// total or the per-group breakdown.
+	group_labels_out.clear();
+	std::map<QString, int> idx_map;
+	size_t n = std::min(values.size(), groups.size());
+
+	for (size_t i = 0; i < n; i++) {
+		if (idx_map.find(groups[i]) == idx_map.end()) {
+			idx_map[groups[i]] = (int)group_labels_out.size();
+			group_labels_out.push_back(groups[i]);
+		}
+	}
+	int ng = (int)group_labels_out.size();
+
+	for (auto &b : bins) {
+		b.group_counts.assign(ng, 0);
+	}
+
+	double lo = bins.front().lo;
+	double hi = bins.back().hi;
+	int nb = (int)bins.size();
+	double bin_width = (hi - lo) / nb;
+	if (bin_width <= 0) return bins;
+
+	for (size_t i = 0; i < n; i++) {
+		auto it = idx_map.find(groups[i]);
+		if (it == idx_map.end()) continue;
+		int g = it->second;
+		int bi = (int)((values[i] - lo) / bin_width);
+		if (bi < 0) bi = 0;
+		if (bi >= nb) bi = nb - 1;
+		bins[bi].group_counts[g]++;
 	}
 
 	return bins;
@@ -842,6 +1157,7 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 	case Mode::LinePlot:       renderLinePlot(p, left, top, pw, ph); break;
 	case Mode::PpcDiscrete:    renderPpcDiscrete(p, left, top, pw, ph); break;
 	case Mode::EffectsPlot:    renderEffectsPlot(p, left, top, pw, ph); break;
+	case Mode::Facet:          renderFacetGrid(p, left, top, pw, ph); break;
 	default: break;
 	}
 }
@@ -855,6 +1171,15 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 	double xlo, xhi, ylo, yhi;
 	axis_range(m_x, xlo, xhi);
 	axis_range(m_y, ylo, yhi);
+
+	if (m_forced_xrange.has_value()) {
+		xlo = m_forced_xrange->first;
+		xhi = m_forced_xrange->second;
+	}
+	if (m_forced_yrange.has_value()) {
+		ylo = m_forced_yrange->first;
+		yhi = m_forced_yrange->second;
+	}
 
 	if (m_ref_line == RefLine::Diagonal)
 	{
@@ -883,6 +1208,7 @@ void PlotWidget::renderScatter(QPainter &p, int left, int top, int pw, int ph,
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	// Axes
@@ -1091,6 +1417,14 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 	double ypad = yrange * 0.06;
 	xlo -= xpad; xhi += xpad;
 	ylo -= ypad; yhi += ypad;
+	if (m_forced_xrange.has_value()) {
+		xlo = m_forced_xrange->first;
+		xhi = m_forced_xrange->second;
+	}
+	if (m_forced_yrange.has_value()) {
+		ylo = m_forced_yrange->first;
+		yhi = m_forced_yrange->second;
+	}
 	xrange = xhi - xlo;
 	yrange = yhi - ylo;
 
@@ -1107,6 +1441,7 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	// Axes
@@ -1378,7 +1713,8 @@ void PlotWidget::renderGroupedScatter(QPainter &p, int left, int top, int pw, in
 	p.setClipping(false);
 
 	// Legend
-	renderLegend(p, left, top, pw, ph);
+	if (!m_facet_render_active)
+		renderLegend(p, left, top, pw, ph);
 }
 
 
@@ -1520,7 +1856,22 @@ void PlotWidget::renderBoxPlot(QPainter &p, int left, int top, int pw, int ph)
 	if (m_boxes.empty()) return;
 
 	int bottom = top + ph;
-	int ngroups = (int)m_boxes.size();
+	bool has_secondary = !m_box_secondary_labels.empty();
+
+	// Cluster boxes by primary_label, preserving first-seen order. In the
+	// non-dodged path each primary has exactly one box; in the dodged path
+	// each primary holds N boxes, one per secondary level present.
+	std::vector<QString> cluster_order;
+	std::map<QString, std::vector<int>> cluster_members;  // primary → indices into m_boxes
+	for (int i = 0; i < (int)m_boxes.size(); i++)
+	{
+		auto &pk = m_boxes[i].primary_label.isEmpty() ? m_boxes[i].label : m_boxes[i].primary_label;
+		if (cluster_members.find(pk) == cluster_members.end())
+			cluster_order.push_back(pk);
+		cluster_members[pk].push_back(i);
+	}
+	int nclusters = (int)cluster_order.size();
+	if (nclusters == 0) return;
 
 	// Y range: union of all whiskers and outliers.
 	double ylo = 1e30, yhi = -1e30;
@@ -1538,12 +1889,17 @@ void PlotWidget::renderBoxPlot(QPainter &p, int left, int top, int pw, int ph)
 	double pad = range * 0.06;
 	ylo -= pad;
 	yhi += pad;
+	if (m_forced_yrange.has_value()) {
+		ylo = m_forced_yrange->first;
+		yhi = m_forced_yrange->second;
+	}
 	double yrange = yhi - ylo;
 
 	auto dataToY = [&](double v) -> double { return bottom - ((v - ylo) / yrange) * ph; };
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	QFont font;
@@ -1580,65 +1936,129 @@ void PlotWidget::renderBoxPlot(QPainter &p, int left, int top, int pw, int ph)
 	// Title
 	renderTitle(p, left, pw, top);
 
-	// Draw boxes
+	// Draw boxes — geometry split by cluster width and per-cluster member
+	// count for dodged layout.
 	p.setClipRect(left, top, pw, ph);
 
-	double group_width = (double)pw / ngroups;
-	double box_width = group_width * 0.55;
+	double cluster_width = (double)pw / nclusters;
 
-	for (int g = 0; g < ngroups; g++)
+	for (int c = 0; c < nclusters; c++)
 	{
-		auto &b = m_boxes[g];
-		double cx = left + group_width * (g + 0.5);
+		auto &members = cluster_members[cluster_order[c]];
+		int nmembers = (int)members.size();
+		// Within a cluster, reserve 70% of the cluster width for the sub-boxes
+		// (15% padding on each side). Sub-boxes are evenly spaced.
+		double inner_w = cluster_width * 0.70;
+		double inner_left = left + cluster_width * c + (cluster_width - inner_w) * 0.5;
+		// Each sub-slot is inner_w / nmembers wide; the actual box occupies
+		// 75% of the slot. For nmembers==1 (ungrouped path) the box width
+		// reduces to ~52% of cluster_width, matching the previous look.
+		double slot_w = inner_w / nmembers;
+		double box_width = slot_w * 0.75;
 
-		double ymed = dataToY(b.median);
-		double yq1  = dataToY(b.q1);
-		double yq3  = dataToY(b.q3);
-		double ywlo = dataToY(b.whisker_lo);
-		double ywhi = dataToY(b.whisker_hi);
+		for (int k = 0; k < nmembers; k++)
+		{
+			auto &b = m_boxes[members[k]];
+			double cx = inner_left + slot_w * (k + 0.5);
 
-		// Box (Q1 to Q3)
-		p.setPen(QPen(BOX_BORDER, 1.5));
-		p.setBrush(BOX_FILL);
-		p.drawRect(QRectF(cx - box_width / 2, yq3, box_width, yq1 - yq3));
+			double ymed = dataToY(b.median);
+			double yq1  = dataToY(b.q1);
+			double yq3  = dataToY(b.q3);
+			double ywlo = dataToY(b.whisker_lo);
+			double ywhi = dataToY(b.whisker_hi);
 
-		// Median
-		p.setPen(QPen(BOX_BORDER, 2));
-		p.drawLine(QPointF(cx - box_width / 2, ymed), QPointF(cx + box_width / 2, ymed));
+			// Pick colors: single-color path uses BOX_FILL/BOX_BORDER; dodged
+			// path uses the secondary-index palette slot with a translucent fill.
+			QColor fill = BOX_FILL;
+			QColor border = BOX_BORDER;
+			if (has_secondary && b.secondary_index >= 0)
+			{
+				QColor c0 = GROUP_PALETTE[b.secondary_index % NUM_PALETTE_COLORS];
+				fill = c0;
+				fill.setAlpha(110);
+				border = c0;
+			}
 
-		// Whiskers
-		p.setPen(QPen(AXIS_COLOR, 1));
-		p.drawLine(QPointF(cx, yq3), QPointF(cx, ywhi));    // top whisker
-		p.drawLine(QPointF(cx, yq1), QPointF(cx, ywlo));    // bottom whisker
-		double cap = box_width * 0.3;
-		p.drawLine(QPointF(cx - cap, ywhi), QPointF(cx + cap, ywhi));
-		p.drawLine(QPointF(cx - cap, ywlo), QPointF(cx + cap, ywlo));
+			// Box (Q1 to Q3)
+			p.setPen(QPen(border, 1.5));
+			p.setBrush(fill);
+			p.drawRect(QRectF(cx - box_width / 2, yq3, box_width, yq1 - yq3));
 
-		// Outliers
-		p.setPen(Qt::NoPen);
-		p.setBrush(POINT_COLOR);
-		bool track_hits = m_collect_hits && !b.outlier_rows.empty();
-		for (size_t k = 0; k < b.outliers.size(); k++) {
-			double oy = dataToY(b.outliers[k]);
-			p.drawEllipse(QPointF(cx, oy), POINT_RADIUS, POINT_RADIUS);
-			if (track_hits && k < b.outlier_rows.size()
-			    && b.outlier_rows[k] != INVALID_ROW) {
-				HitTarget ht;
-				ht.pos = QPointF(cx, oy);
-				ht.source_row = b.outlier_rows[k];
-				m_hit_targets.push_back(ht);
+			// Median
+			p.setPen(QPen(border, 2));
+			p.drawLine(QPointF(cx - box_width / 2, ymed), QPointF(cx + box_width / 2, ymed));
+
+			// Whiskers
+			p.setPen(QPen(AXIS_COLOR, 1));
+			p.drawLine(QPointF(cx, yq3), QPointF(cx, ywhi));    // top whisker
+			p.drawLine(QPointF(cx, yq1), QPointF(cx, ywlo));    // bottom whisker
+			double cap = box_width * 0.3;
+			p.drawLine(QPointF(cx - cap, ywhi), QPointF(cx + cap, ywhi));
+			p.drawLine(QPointF(cx - cap, ywlo), QPointF(cx + cap, ywlo));
+
+			// Outliers (use secondary color when present, POINT_COLOR otherwise)
+			QColor outlier_color = (has_secondary && b.secondary_index >= 0) ? border : POINT_COLOR;
+			p.setPen(Qt::NoPen);
+			p.setBrush(outlier_color);
+			bool track_hits = m_collect_hits && !b.outlier_rows.empty();
+			for (size_t kk = 0; kk < b.outliers.size(); kk++) {
+				double oy = dataToY(b.outliers[kk]);
+				p.drawEllipse(QPointF(cx, oy), POINT_RADIUS, POINT_RADIUS);
+				if (track_hits && kk < b.outlier_rows.size()
+				    && b.outlier_rows[kk] != INVALID_ROW) {
+					HitTarget ht;
+					ht.pos = QPointF(cx, oy);
+					ht.source_row = b.outlier_rows[kk];
+					m_hit_targets.push_back(ht);
+				}
 			}
 		}
 
-		// Group label (below x-axis)
+		// Cluster label (below x-axis) — one label per primary, centered on
+		// the cluster.
 		p.setClipping(false);
 		p.setPen(QPen(AXIS_COLOR, 1));
-		int lw = fm.horizontalAdvance(b.label);
-		p.drawText(int(cx) - lw / 2, bottom + 4 + fm.ascent() + 2, b.label);
+		double cx_cluster = left + cluster_width * (c + 0.5);
+		const QString &cluster_lbl = cluster_order[c];
+		int lw = fm.horizontalAdvance(cluster_lbl);
+		p.drawText(int(cx_cluster) - lw / 2, bottom + 4 + fm.ascent() + 2, cluster_lbl);
 		p.setClipRect(left, top, pw, ph);
 	}
 
 	p.setClipping(false);
+
+	// Legend for the secondary grouping (when active).
+	if (has_secondary && !m_facet_render_active)
+	{
+		int swatch = 10;
+		int spacing = 4;
+		int line_h = std::max(fm.height(), swatch) + 2;
+		int padding = 6;
+		int nlevels = (int)m_box_secondary_labels.size();
+
+		int max_lbl = 0;
+		for (auto &lbl : m_box_secondary_labels)
+			max_lbl = std::max(max_lbl, fm.horizontalAdvance(lbl));
+
+		int legend_w = padding + swatch + spacing + max_lbl + padding;
+		int legend_h = padding + nlevels * line_h + padding;
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+		(void)legend_h;
+
+		for (int i = 0; i < nlevels; i++)
+		{
+			QColor c0 = GROUP_PALETTE[i % NUM_PALETTE_COLORS];
+			int ey = ly + padding + i * line_h;
+			p.setPen(Qt::NoPen);
+			p.setBrush(c0);
+			p.drawRect(QRectF(lx + padding, ey + (line_h - swatch) / 2.0, swatch, swatch));
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_box_secondary_labels[i]);
+		}
+	}
 }
 
 
@@ -1648,17 +2068,33 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 
 	int bottom = top + ph;
 	int nbins = (int)m_bins.size();
+	bool grouped = !m_hist_group_labels.empty();
+	int ng = (int)m_hist_group_labels.size();
 
-	// X range from bins
+	// X range from bins, unless an outer caller (faceting) forced a shared
+	// range so all panels are visually comparable.
 	double xlo = m_bins.front().lo;
 	double xhi = m_bins.back().hi;
+	if (m_forced_xrange.has_value()) {
+		xlo = m_forced_xrange->first;
+		xhi = m_forced_xrange->second;
+	}
 	double xrange = xhi - xlo;
 	if (xrange <= 0) xrange = 1;
 
-	// Y range: 0 to max count
+	// Y range: 0 to max count. In the grouped case, the per-bin maximum is
+	// the largest single-group count in any bin (overlay layout, not stacked).
 	int max_count = 0;
-	for (auto &b : m_bins)
-		max_count = std::max(max_count, b.count);
+	if (grouped)
+	{
+		for (auto &b : m_bins) {
+			for (int c : b.group_counts) max_count = std::max(max_count, c);
+		}
+	}
+	else
+	{
+		for (auto &b : m_bins) max_count = std::max(max_count, b.count);
+	}
 
 	double ymax = (double)max_count;
 
@@ -1670,12 +2106,20 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 
 	double yhi = ymax * 1.08;
 	if (yhi < 1) yhi = 1;
+	// Faceted shared-y: outer caller has already computed the global max and
+	// supplied it via m_forced_yrange (upper bound only; the lower bound
+	// stays at 0 for count histograms).
+	if (m_forced_yrange.has_value()) {
+		yhi = m_forced_yrange->second;
+		if (yhi <= 0) yhi = 1;
+	}
 
 	auto dataToX = [&](double v) -> double { return left + ((v - xlo) / xrange) * pw; };
 	auto dataToY = [&](double v) -> double { return bottom - (v / yhi) * ph; };
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	QFont font;
@@ -1731,16 +2175,50 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 
 	// Draw bars
 	p.setClipRect(left, top, pw, ph);
-	for (int i = 0; i < nbins; i++)
-	{
-		double x1 = dataToX(m_bins[i].lo);
-		double x2 = dataToX(m_bins[i].hi);
-		double y1 = dataToY(m_bins[i].count);
-		double y2 = dataToY(0);
 
-		p.setPen(QPen(BAR_BORDER, 1));
-		p.setBrush(BAR_FILL);
-		p.drawRect(QRectF(x1, y1, x2 - x1, y2 - y1));
+	if (!grouped)
+	{
+		// Single-series histogram (original behavior).
+		for (int i = 0; i < nbins; i++)
+		{
+			double x1 = dataToX(m_bins[i].lo);
+			double x2 = dataToX(m_bins[i].hi);
+			double y1 = dataToY(m_bins[i].count);
+			double y2 = dataToY(0);
+
+			p.setPen(QPen(BAR_BORDER, 1));
+			p.setBrush(BAR_FILL);
+			p.drawRect(QRectF(x1, y1, x2 - x1, y2 - y1));
+		}
+	}
+	else
+	{
+		// Grouped (overlaid) histogram: each bin draws ng translucent
+		// rectangles, one per group. Bins share the same x edges; per-group
+		// counts come from HistBin::group_counts. The fill is translucent so
+		// overlapping bars remain legible; outline keeps each level
+		// individually traceable.
+		for (int i = 0; i < nbins; i++)
+		{
+			double x1 = dataToX(m_bins[i].lo);
+			double x2 = dataToX(m_bins[i].hi);
+			double y0 = dataToY(0);
+
+			// Draw groups in reverse so the first group ends up on top
+			// (matches first-seen palette ordering in the legend).
+			for (int g = ng - 1; g >= 0; g--)
+			{
+				int cnt = (g < (int)m_bins[i].group_counts.size())
+					? m_bins[i].group_counts[g] : 0;
+				if (cnt <= 0) continue;
+				double y1 = dataToY(cnt);
+				QColor c0 = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+				QColor fill = c0; fill.setAlpha(100);
+				p.setPen(QPen(c0, 1));
+				p.setBrush(fill);
+				p.drawRect(QRectF(x1, y1, x2 - x1, y0 - y1));
+			}
+		}
 	}
 
 	// Density curve overlay
@@ -1761,6 +2239,40 @@ void PlotWidget::renderHistogram(QPainter &p, int left, int top, int pw, int ph)
 	}
 
 	p.setClipping(false);
+
+	// Legend for the grouped overlay.
+	if (grouped && !m_facet_render_active)
+	{
+		int swatch = 10;
+		int spacing = 4;
+		int line_h = std::max(fm.height(), swatch) + 2;
+		int padding = 6;
+		int nlevels = ng;
+
+		int max_lbl = 0;
+		for (auto &lbl : m_hist_group_labels)
+			max_lbl = std::max(max_lbl, fm.horizontalAdvance(lbl));
+
+		int legend_w = padding + swatch + spacing + max_lbl + padding;
+		int legend_h = padding + nlevels * line_h + padding;
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+		(void)legend_h;
+
+		for (int i = 0; i < nlevels; i++)
+		{
+			QColor c0 = GROUP_PALETTE[i % NUM_PALETTE_COLORS];
+			QColor fill = c0; fill.setAlpha(100);
+			int ey = ly + padding + i * line_h;
+			p.setPen(QPen(c0, 1));
+			p.setBrush(fill);
+			p.drawRect(QRectF(lx + padding, ey + (line_h - swatch) / 2.0, swatch, swatch));
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_hist_group_labels[i]);
+		}
+	}
 }
 
 
@@ -1770,11 +2282,21 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 
 	int bottom = top + ph;
 	int nbars = (int)m_bar_labels.size();
+	bool grouped = !m_bar_group_labels.empty() && !m_bar_grouped_counts.empty();
+	int ng = grouped ? (int)m_bar_group_labels.size() : 1;
 
-	// Y range: 0 to max count
+	// Y range: max bar height. In the grouped path the max is over per-cell
+	// counts (dodged, not stacked).
 	int max_count = 0;
-	for (int c : m_bar_counts)
-		max_count = std::max(max_count, c);
+	if (grouped)
+	{
+		for (auto &gc : m_bar_grouped_counts)
+			for (int c : gc) max_count = std::max(max_count, c);
+	}
+	else
+	{
+		for (int c : m_bar_counts) max_count = std::max(max_count, c);
+	}
 
 	double yhi = max_count * 1.08;
 	if (yhi < 1) yhi = 1;
@@ -1783,6 +2305,7 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	QFont font;
@@ -1822,18 +2345,50 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 	p.setClipRect(left, top, pw, ph);
 
 	double bar_area = (double)pw / nbars;
-	double bar_width = bar_area * 0.7;
-	double gap = bar_area * 0.15;
 
-	for (int i = 0; i < nbars; i++)
+	if (!grouped)
 	{
-		double x = left + bar_area * i + gap;
-		double y1 = dataToY(m_bar_counts[i]);
-		double y2 = dataToY(0);
+		double bar_width = bar_area * 0.7;
+		double gap = bar_area * 0.15;
 
-		p.setPen(QPen(BAR_BORDER, 1));
-		p.setBrush(BAR_FILL);
-		p.drawRect(QRectF(x, y1, bar_width, y2 - y1));
+		for (int i = 0; i < nbars; i++)
+		{
+			double x = left + bar_area * i + gap;
+			double y1 = dataToY(m_bar_counts[i]);
+			double y2 = dataToY(0);
+
+			p.setPen(QPen(BAR_BORDER, 1));
+			p.setBrush(BAR_FILL);
+			p.drawRect(QRectF(x, y1, bar_width, y2 - y1));
+		}
+	}
+	else
+	{
+		// Dodged: each category gets ng sub-bars side by side. The inner
+		// region uses 70% of the category width with 15% padding on each side;
+		// each sub-bar takes 80% of its slot.
+		double inner_w = bar_area * 0.70;
+		double slot_w = inner_w / ng;
+		double sub_bar_w = slot_w * 0.80;
+
+		for (int i = 0; i < nbars; i++)
+		{
+			double inner_left = left + bar_area * i + (bar_area - inner_w) * 0.5;
+			for (int g = 0; g < ng; g++)
+			{
+				int cnt = (g < (int)m_bar_grouped_counts.size()
+				           && i < (int)m_bar_grouped_counts[g].size())
+					? m_bar_grouped_counts[g][i] : 0;
+				if (cnt <= 0) continue;
+				double x = inner_left + slot_w * g + (slot_w - sub_bar_w) * 0.5;
+				double y1 = dataToY(cnt);
+				double y2 = dataToY(0);
+				QColor c0 = GROUP_PALETTE[g % NUM_PALETTE_COLORS];
+				p.setPen(QPen(c0.darker(120), 1));
+				p.setBrush(c0);
+				p.drawRect(QRectF(x, y1, sub_bar_w, y2 - y1));
+			}
+		}
 	}
 	p.setClipping(false);
 
@@ -1844,6 +2399,38 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 		double cx = left + bar_area * (i + 0.5);
 		int lw = fm.horizontalAdvance(m_bar_labels[i]);
 		p.drawText(int(cx) - lw / 2, bottom + 4 + fm.ascent() + 2, m_bar_labels[i]);
+	}
+
+	// Legend for the grouped layout.
+	if (grouped && !m_facet_render_active)
+	{
+		int swatch = 10;
+		int spacing = 4;
+		int line_h = std::max(fm.height(), swatch) + 2;
+		int padding = 6;
+
+		int max_lbl = 0;
+		for (auto &lbl : m_bar_group_labels)
+			max_lbl = std::max(max_lbl, fm.horizontalAdvance(lbl));
+
+		int legend_w = padding + swatch + spacing + max_lbl + padding;
+		int legend_h = padding + ng * line_h + padding;
+		int lx = left + pw - legend_w - 8;
+		int ly = top + 8;
+		(void)legend_w; (void)legend_h;
+
+		for (int i = 0; i < ng; i++)
+		{
+			QColor c0 = GROUP_PALETTE[i % NUM_PALETTE_COLORS];
+			int ey = ly + padding + i * line_h;
+			p.setPen(QPen(c0.darker(120), 1));
+			p.setBrush(c0);
+			p.drawRect(QRectF(lx + padding, ey + (line_h - swatch) / 2.0, swatch, swatch));
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           m_bar_group_labels[i]);
+		}
 	}
 }
 
@@ -1886,6 +2473,7 @@ void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	// Axes
@@ -2135,6 +2723,7 @@ void PlotWidget::renderPpcDiscrete(QPainter &p, int left, int top, int pw, int p
 
 	// Frame
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	QFont font;
@@ -2405,6 +2994,7 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 
 	// ── Frame ───────────────────────────────────────────────────────
 	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
 	p.drawRect(left, top, pw, ph);
 
 	QFont font;
@@ -2690,18 +3280,379 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 }
 
 
+// ── Faceted plot grid ────────────────────────────────────────────────
+//
+// renderFacetGrid lays out a near-square grid of sub-panels, each driven
+// by one of the existing inner renderers (Histogram / BoxPlot / Scatter /
+// GroupedScatter / BarChart). The approach is swap-and-restore: for each
+// cell we move its data into the matching member fields, set
+// m_facet_render_active = true (so renderTitle uses the panel label,
+// per-panel legends are suppressed) and m_forced_xrange / m_forced_yrange
+// (so axes are shared across panels), invoke the inner renderer with the
+// sub-rectangle, then move the data back. The grid-level title, the shared
+// X/Y axis labels, and the legend are drawn once around the cell loop.
+
+namespace {
+
+// Choose a near-square grid layout for n panels. Prefer more columns than
+// rows when n isn't a perfect square (matches ggplot's facet_wrap default).
+inline void facet_layout(int n, int &ncols, int &nrows)
+{
+	if (n <= 0) { ncols = 1; nrows = 1; return; }
+	ncols = (int)std::ceil(std::sqrt((double)n));
+	nrows = (int)std::ceil((double)n / ncols);
+}
+
+} // anonymous namespace
+
+void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
+{
+	if (m_facet_cells.empty()) return;
+
+	int n = (int)m_facet_cells.size();
+	int ncols = 1, nrows = 1;
+	facet_layout(n, ncols, nrows);
+
+	// Reserve space for the outer title (top), shared X label (bottom), and
+	// shared rotated Y label (left). Panels share these so they aren't drawn
+	// per-cell. The legend (if any) lives in the top-right corner of the
+	// grid area and is drawn last.
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	const int OUTER_TITLE_H   = 22;  // global title strip
+	const int X_LABEL_H       = 18;  // shared X-axis label strip
+	const int Y_LABEL_W       = 18;  // shared Y-axis label strip
+	const int FACET_PANEL_GAP = 22;  // vertical gap between facet rows
+
+	// Compute the legend strip width upfront so the panel grid can be shrunk
+	// to make room — otherwise the legend overlaps the rightmost panels.
+	// The legend is right-anchored in its own column with a small gap.
+	auto legend_label_list = [&]() -> const std::vector<QString>* {
+		switch (m_facet_inner_mode) {
+		case FacetInnerMode::Histogram:      return &m_facet_hist_group_labels;
+		case FacetInnerMode::BoxPlot:        return &m_facet_box_secondary_labels;
+		case FacetInnerMode::BarChart:       return &m_facet_bar_group_labels;
+		case FacetInnerMode::GroupedScatter: return &m_facet_color_labels;
+		case FacetInnerMode::Scatter:        return (const std::vector<QString>*)nullptr;
+		}
+		return nullptr;
+	}();
+	bool has_legend = legend_label_list && !legend_label_list->empty();
+	int LEGEND_STRIP_W = 0;
+	int legend_swatch = 10;
+	int legend_spacing = 4;
+	int legend_padding = 6;
+	int legend_outer_margin = 8;  // gap between panels and legend strip
+	if (has_legend) {
+		int max_lbl = 0;
+		for (auto &lbl : *legend_label_list)
+			max_lbl = std::max(max_lbl, fm.horizontalAdvance(lbl));
+		LEGEND_STRIP_W = legend_outer_margin + legend_padding + legend_swatch
+		               + legend_spacing + max_lbl + legend_padding;
+	}
+
+	// Outer title.
+	if (!m_title.isEmpty())
+	{
+		QFont tf; tf.setPixelSize(13); tf.setBold(true);
+		p.setFont(tf);
+		p.setPen(QPen(AXIS_COLOR, 1));
+		QFontMetrics tfm(tf);
+		int tw = tfm.horizontalAdvance(m_title);
+		// Center over the panel grid (which excludes the legend strip), not
+		// over the full widget — keeps the title visually attached to its data.
+		int title_box_w = pw - LEGEND_STRIP_W;
+		p.drawText(left + (title_box_w - tw) / 2, top + tfm.ascent(), m_title);
+		p.setFont(font);
+	}
+
+	// Shared X-axis label, drawn at the bottom of the grid area.
+	p.setPen(QPen(AXIS_COLOR, 1));
+	if (!m_x_label.isEmpty())
+	{
+		int tw = fm.horizontalAdvance(m_x_label);
+		int label_box_w = pw - LEGEND_STRIP_W;
+		p.drawText(left + (label_box_w - tw) / 2, top + ph - 4, m_x_label);
+	}
+	if (!m_y_label.isEmpty())
+	{
+		p.save();
+		p.translate(left + 4, top + (ph) / 2);
+		p.rotate(-90);
+		int tw = fm.horizontalAdvance(m_y_label);
+		p.drawText(-tw / 2, fm.ascent(), m_y_label);
+		p.restore();
+	}
+
+	// Grid area (inside the reserved strips). The right edge is pulled
+	// inward by LEGEND_STRIP_W so the legend lives in its own column.
+	int grid_left = left + Y_LABEL_W;
+	int grid_top  = top + OUTER_TITLE_H;
+	int grid_w    = pw - Y_LABEL_W - LEGEND_STRIP_W;
+	int grid_h    = ph - OUTER_TITLE_H - X_LABEL_H;
+	if (grid_w <= 0 || grid_h <= 0) return;
+
+	// Panel dimensions. Panels are evenly spaced with a small gap between
+	// rows; columns share their left/right edges.
+	double cell_w = (double)grid_w / ncols;
+	double cell_h = (double)(grid_h - (nrows - 1) * (FACET_PANEL_GAP - 6))
+	                / nrows;
+	if (cell_h < 60) cell_h = 60;
+
+	// Save state we'll mutate during the inner pass.
+	QString saved_x_label = m_x_label;
+	QString saved_y_label = m_y_label;
+	QString saved_title = m_title;
+	bool saved_reverse_x = m_reverse_x;
+	bool saved_reverse_y = m_reverse_y;
+
+	// In the inner pass, the global X/Y labels and title are suppressed
+	// because we already drew them above; the renderer's per-panel title is
+	// the facet level.
+	m_x_label.clear();
+	m_y_label.clear();
+	m_title.clear();
+
+	// Range honored by every inner renderer that supports m_forced_*.
+	// Histograms use the X range for shared bin edges (set in caller) and
+	// the Y range upper bound when m_facet_shared_y_count is true; boxplots
+	// use Y range; scatter uses both. NaN bounds are skipped.
+	auto is_finite_pair = [](const std::pair<double, double> &r) {
+		return std::isfinite(r.first) && std::isfinite(r.second) && r.first < r.second;
+	};
+
+	if (is_finite_pair(m_facet_x_range))
+		m_forced_xrange = m_facet_x_range;
+	else
+		m_forced_xrange.reset();
+
+	// For histograms we compute the shared Y upper bound from the pooled
+	// max-per-bin-per-group max across all cells, then expose it via
+	// m_forced_yrange (lower bound 0).
+	if (m_facet_inner_mode == FacetInnerMode::Histogram && m_facet_shared_y_count)
+	{
+		int gmax = 0;
+		for (auto &cell : m_facet_cells)
+		{
+			for (auto &b : cell.bins)
+			{
+				if (b.group_counts.empty()) {
+					gmax = std::max(gmax, b.count);
+				} else {
+					for (int c : b.group_counts) gmax = std::max(gmax, c);
+				}
+			}
+		}
+		if (gmax < 1) gmax = 1;
+		m_forced_yrange = std::make_pair(0.0, gmax * 1.08);
+	}
+	else if (m_facet_inner_mode == FacetInnerMode::BarChart && m_facet_shared_y_count)
+	{
+		int gmax = 0;
+		for (auto &cell : m_facet_cells)
+		{
+			if (cell.bar_grouped_counts.empty()) {
+				for (int c : cell.bar_counts) gmax = std::max(gmax, c);
+			} else {
+				for (auto &gc : cell.bar_grouped_counts)
+					for (int c : gc) gmax = std::max(gmax, c);
+			}
+		}
+		if (gmax < 1) gmax = 1;
+		m_forced_yrange = std::make_pair(0.0, gmax * 1.08);
+	}
+	else if (is_finite_pair(m_facet_y_range))
+	{
+		m_forced_yrange = m_facet_y_range;
+	}
+	else
+	{
+		m_forced_yrange.reset();
+	}
+
+	m_facet_render_active = true;
+
+	// Inner-pass: for each cell, move data into the matching member fields,
+	// call the right inner renderer, then move it back. std::swap is move-
+	// only on vectors so this is allocation-free.
+	for (int i = 0; i < n; i++)
+	{
+		FacetCell &cell = m_facet_cells[i];
+		int row = i / ncols;
+		int col = i % ncols;
+
+		int cell_left = grid_left + (int)std::round(col * cell_w);
+		int cell_top  = grid_top  + (int)std::round(row * (cell_h + (FACET_PANEL_GAP - 6)));
+		int cell_pw   = (int)std::round(cell_w);
+		int cell_ph   = (int)std::round(cell_h);
+		// Reserve a little margin inside each cell for the panel header
+		// (the facet level text drawn by renderTitle).
+		const int PANEL_HEADER_H = 18;
+		int inner_top = cell_top + PANEL_HEADER_H;
+		int inner_ph  = cell_ph - PANEL_HEADER_H;
+		if (inner_ph < 40) inner_ph = 40;
+
+		m_facet_panel_title = cell.label;
+
+		switch (m_facet_inner_mode)
+		{
+		case FacetInnerMode::Histogram:
+		{
+			std::swap(m_bins, cell.bins);
+			std::swap(m_hist_group_labels,
+			          /* per-grid labels populated by caller */ m_facet_hist_group_labels);
+			renderHistogram(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			std::swap(m_hist_group_labels, m_facet_hist_group_labels);
+			std::swap(m_bins, cell.bins);
+			break;
+		}
+		case FacetInnerMode::BoxPlot:
+		{
+			std::swap(m_boxes, cell.boxes);
+			std::swap(m_box_secondary_labels, m_facet_box_secondary_labels);
+			renderBoxPlot(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			std::swap(m_box_secondary_labels, m_facet_box_secondary_labels);
+			std::swap(m_boxes, cell.boxes);
+			break;
+		}
+		case FacetInnerMode::Scatter:
+		{
+			std::swap(m_x, cell.x);
+			std::swap(m_y, cell.y);
+			std::swap(m_point_labels, cell.point_labels);
+			std::swap(m_source_rows, cell.source_rows);
+			m_reverse_x = saved_reverse_x;
+			m_reverse_y = saved_reverse_y;
+			m_show_regression = cell.show_regression;
+			m_reg_intercept = cell.reg_intercept;
+			m_reg_slope = cell.reg_slope;
+			m_reg_r2 = cell.reg_r2;
+			m_use_labels = !m_point_labels.empty();
+			renderScatter(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph, 0, 0, 0, 0);
+			std::swap(m_source_rows, cell.source_rows);
+			std::swap(m_point_labels, cell.point_labels);
+			std::swap(m_y, cell.y);
+			std::swap(m_x, cell.x);
+			m_show_regression = false;
+			m_use_labels = false;
+			break;
+		}
+		case FacetInnerMode::GroupedScatter:
+		{
+			std::swap(m_group_data, cell.group_data);
+			std::swap(m_color_labels, m_facet_color_labels);
+			std::swap(m_style_labels, m_facet_style_labels);
+			m_reverse_x = saved_reverse_x;
+			m_reverse_y = saved_reverse_y;
+			renderGroupedScatter(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			std::swap(m_style_labels, m_facet_style_labels);
+			std::swap(m_color_labels, m_facet_color_labels);
+			std::swap(m_group_data, cell.group_data);
+			break;
+		}
+		case FacetInnerMode::BarChart:
+		{
+			std::swap(m_bar_labels, cell.bar_labels);
+			std::swap(m_bar_counts, cell.bar_counts);
+			std::swap(m_bar_grouped_counts, cell.bar_grouped_counts);
+			std::swap(m_bar_group_labels, m_facet_bar_group_labels);
+			renderBarChart(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			std::swap(m_bar_group_labels, m_facet_bar_group_labels);
+			std::swap(m_bar_grouped_counts, cell.bar_grouped_counts);
+			std::swap(m_bar_counts, cell.bar_counts);
+			std::swap(m_bar_labels, cell.bar_labels);
+			break;
+		}
+		}
+	}
+
+	// Restore state.
+	m_facet_render_active = false;
+	m_facet_panel_title.clear();
+	m_forced_xrange.reset();
+	m_forced_yrange.reset();
+	m_x_label = saved_x_label;
+	m_y_label = saved_y_label;
+	m_title = saved_title;
+	m_reverse_x = saved_reverse_x;
+	m_reverse_y = saved_reverse_y;
+
+	// Grid-level legend (drawn once after all panels). Picks the legend
+	// labels matching the inner mode; pure single-series modes have no
+	// legend.
+	auto draw_legend = [&](const std::vector<QString> &labels, bool filled_rect) {
+		if (labels.empty()) return;
+		int swatch = legend_swatch;
+		int spacing = legend_spacing;
+		int line_h = std::max(fm.height(), swatch) + 4;
+		int padding = legend_padding;
+		int nlevels = (int)labels.size();
+
+		// Anchor the legend in the reserved right strip. Top edge aligns
+		// with the title strip; vertically centered would also work but
+		// top-aligned matches ggplot's default and stays predictable when
+		// there are many levels.
+		int lx = left + pw - LEGEND_STRIP_W + legend_outer_margin;
+		int ly = top + OUTER_TITLE_H + 4;
+
+		for (int i = 0; i < nlevels; i++)
+		{
+			QColor c0 = GROUP_PALETTE[i % NUM_PALETTE_COLORS];
+			int ey = ly + padding + i * line_h;
+			if (filled_rect) {
+				QColor fill = c0; fill.setAlpha(110);
+				p.setPen(QPen(c0, 1));
+				p.setBrush(fill);
+			} else {
+				p.setPen(Qt::NoPen);
+				p.setBrush(c0);
+			}
+			p.drawRect(QRectF(lx + padding, ey + (line_h - swatch) / 2.0, swatch, swatch));
+			p.setPen(AXIS_COLOR);
+			p.drawText(lx + padding + swatch + spacing,
+			           ey + (line_h + fm.ascent() - fm.descent()) / 2,
+			           labels[i]);
+		}
+	};
+
+	switch (m_facet_inner_mode)
+	{
+	case FacetInnerMode::Histogram:
+		draw_legend(m_facet_hist_group_labels, true);
+		break;
+	case FacetInnerMode::BoxPlot:
+		draw_legend(m_facet_box_secondary_labels, false);
+		break;
+	case FacetInnerMode::BarChart:
+		draw_legend(m_facet_bar_group_labels, false);
+		break;
+	case FacetInnerMode::GroupedScatter:
+		draw_legend(m_facet_color_labels, false);
+		break;
+	case FacetInnerMode::Scatter:
+		break;  // no legend for ungrouped scatter
+	}
+}
+
+
 void PlotWidget::renderTitle(QPainter &p, int left, int pw, int top)
 {
-	if (m_title.isEmpty()) return;
+	// In faceted mode the per-panel title replaces the global title; the
+	// outer grid driver draws the global title once above the grid.
+	const QString &title = m_facet_render_active ? m_facet_panel_title : m_title;
+	if (title.isEmpty()) return;
 
 	QFont titleFont;
-	titleFont.setPixelSize(13);
+	titleFont.setPixelSize(m_facet_render_active ? 11 : 13);
 	titleFont.setBold(true);
 	p.setFont(titleFont);
 	p.setPen(QPen(AXIS_COLOR, 1));
 	QFontMetrics tfm(titleFont);
-	int tw = tfm.horizontalAdvance(m_title);
-	p.drawText(left + (pw - tw) / 2, top - 8, m_title);
+	int tw = tfm.horizontalAdvance(title);
+	p.drawText(left + (pw - tw) / 2, top - 4, title);
 
 	// Restore base font
 	QFont font;
