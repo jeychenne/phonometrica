@@ -526,6 +526,94 @@ static double fixed_prior_nll(const Eigen::VectorXd &beta,
 	return nll;
 }
 
+// =====================================================================
+// Penalized deviance for PIRLS step-halving
+// =====================================================================
+//
+// Evaluates the joint negative log-posterior of (β, u | y, θ) up to
+// terms constant in (β, u). Used by solve_pirls's line search to
+// decide whether a proposed Newton step (β + α·d_β, u + α·d_u) should
+// be accepted, halved, or rejected.
+//
+// Components:
+//   −loglik(y, μ(β, u))                                 [data term]
+//   + ½ Σ_g Σ_j u_gj' D_g⁻¹ u_gj                        [u-prior quadratic]
+//   + fixed_prior_nll(β)              [Bayesian only]   [β-prior, if any]
+//
+// Returned value sufficient for the acceptance criterion
+//   (dev_try − dev_curr) / max(1, |dev_curr|) < 1e-9
+// (the standard Armijo no-search relaxation): tighter would fail near
+// flat optima from FP rounding noise.
+//
+// Constants in θ (log|D_g|, q_g/2·log 2π normalization of the u prior)
+// are intentionally omitted: they cancel in line-search comparisons
+// within a single solve_pirls call where θ is fixed. fixed_prior_nll's
+// own log 2π / log σ terms also cancel but are kept for code reuse.
+//
+// On any non-finite intermediate (e.g. β·X overflows the link inverse
+// → μ saturates → log 0 in loglik), returns +∞ so the step-halver
+// treats it identically to a rejected step.
+static double penalized_deviance_for_ls(
+    const Eigen::VectorXd &beta,
+    const Eigen::VectorXd &u,
+    const std::vector<Eigen::MatrixXd> &D_inv,
+    const Family &fam,
+    const Eigen::Map<Matrix<double>> &Xm,
+    const Eigen::Map<Vector<double>> &ym,
+    const GroupLayout &lay,
+    intptr_t n, intptr_t p,
+    const Eigen::VectorXd *off_ptr,
+    const PriorSpec *priors,
+    const Array<String> *coef_names)
+{
+	intptr_t G = lay.G;
+
+	// η = Xβ + Zu (+offset)
+	Eigen::VectorXd eta = Xm * beta;
+	for (intptr_t g = 0; g < G; g++)
+	{
+		auto &idx = *lay.group_indices[g];
+		intptr_t qg = lay.q[g];
+		for (intptr_t i = 0; i < n; i++)
+		{
+			intptr_t base = lay.offset[g] + idx[i] * qg;
+			for (intptr_t t = 0; t < qg; t++) {
+				eta[i] += lay.Z(g, i, t) * u[base + t];
+			}
+		}
+	}
+	add_offset(eta, off_ptr);
+
+	Eigen::VectorXd mu = fam.linkinv(eta);
+	double dev = -fam.loglik(ym, mu);
+	if (!std::isfinite(dev))
+		return std::numeric_limits<double>::infinity();
+
+	// u-prior quadratic: 0.5 Σ_g Σ_j u_gj' D_g⁻¹ u_gj
+	for (intptr_t g = 0; g < G; g++)
+	{
+		intptr_t qg = lay.q[g];
+		for (intptr_t j = 0; j < lay.J[g]; j++)
+		{
+			intptr_t base = lay.offset[g] + j * qg;
+			double quad = 0;
+			for (intptr_t t1 = 0; t1 < qg; t1++) {
+				for (intptr_t t2 = 0; t2 < qg; t2++) {
+					quad += u[base + t1] * D_inv[g](t1, t2) * u[base + t2];
+				}
+			}
+			dev += 0.5 * quad;
+		}
+	}
+
+	if (priors && coef_names)
+		dev += fixed_prior_nll(beta, *priors, *coef_names, p);
+
+	if (!std::isfinite(dev))
+		return std::numeric_limits<double>::infinity();
+	return dev;
+}
+
 // Compute the variance-component prior contribution (log-density + Jacobian).
 // Returns a value to be SUBTRACTED from the negative log-posterior.
 // D_cov[g] is the q_g × q_g covariance matrix for group g.
@@ -1394,6 +1482,22 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 	res.beta = beta_init;
 	res.u = (u_init.size() == J) ? u_init : Eigen::VectorXd::Zero(J);
 
+	// ── Step-halving line-search state ──────────────────────────────
+	// dev_curr holds the penalized deviance at the *currently
+	// accepted* (β, u). Initialised at (beta_init, u_init), then
+	// refreshed each iteration to the accepted point's deviance.
+	// line_search_exhausted propagates to the post-loop branch,
+	// which short-circuits the Laplace correction and returns the
+	// 1e10 "bad point" sentinel that all outer optimizers expect.
+	static const bool diag_pirls_on = []() {
+		const char *e = std::getenv("PHON_DIAG_PIRLS");
+		return e && e[0] && e[0] != '0';
+	}();
+	double dev_curr = penalized_deviance_for_ls(
+	    res.beta, res.u, D_inv, fam, Xm, ym, lay, n, p,
+	    off_ptr, priors, coef_names);
+	bool line_search_exhausted = false;
+
 	// Symbolic factorization of the sparse Henderson matrix is reused
 	// across all PIRLS iterations within this call: the sparsity pattern
 	// of (Z'WZ + D⁻¹) and the X' blocks depends only on the design (X,Z)
@@ -1512,19 +1616,108 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 			sol = Eigen::LDLT<Eigen::MatrixXd>(Hd).solve(rhs);
 		}
 
-		Eigen::VectorXd beta_new = sol.head(p);
-		Eigen::VectorXd u_new = sol.tail(J);
+		Eigen::VectorXd beta_proposed = sol.head(p);
+		Eigen::VectorXd u_proposed = (J > 0) ? Eigen::VectorXd(sol.tail(J))
+		                                     : Eigen::VectorXd();
 
-		// ── Convergence ─────────────────────────────────────────
-		double max_change = (beta_new - res.beta).cwiseAbs().maxCoeff();
+		// ── Step-halving line search ────────────────────────────
+		// Henderson gives a proposed full Newton step (β_proposed,
+		// u_proposed). Pure-Newton acceptance can overshoot into a
+		// region where μ saturates the link (binomial μ → 0/1,
+		// Poisson/NB μ → ∞) and the next IRLS iteration's weights
+		// collapse, producing NaN. We wrap the assignment with a
+		// line search: try α=1.0 first, halve on non-finite or
+		// non-decreasing penalized deviance up to MAX_HALVINGS times.
+		// α applies jointly to (β, u) since Newton's direction is
+		// jointly optimal.  On well-conditioned fits α=1.0 always
+		// succeeds on the first try — behaviour matches the pre-
+		// step-halving code modulo one extra deviance evaluation
+		// per iteration.
+		constexpr int MAX_HALVINGS = 10;
+		Eigen::VectorXd d_beta = beta_proposed - res.beta;
+		Eigen::VectorXd d_u = (J > 0) ? Eigen::VectorXd(u_proposed - res.u)
+		                              : Eigen::VectorXd();
+		double max_change_full = d_beta.cwiseAbs().maxCoeff();
 		if (J > 0) {
-			max_change = std::max(max_change, (u_new - res.u).cwiseAbs().maxCoeff());
+			max_change_full = std::max(max_change_full,
+			                            d_u.cwiseAbs().maxCoeff());
 		}
 
-		res.beta = beta_new;
-		res.u = u_new;
+		double alpha = 1.0;
+		int halvings = 0;
+		bool accepted = false;
+		double dev_try = 0;
+		Eigen::VectorXd beta_try, u_try;
+		for (; halvings <= MAX_HALVINGS; halvings++)
+		{
+			beta_try = res.beta + alpha * d_beta;
+			u_try = (J > 0) ? Eigen::VectorXd(res.u + alpha * d_u)
+			                : res.u;
+			dev_try = penalized_deviance_for_ls(
+			    beta_try, u_try, D_inv, fam, Xm, ym, lay, n, p,
+			    off_ptr, priors, coef_names);
+			// Acceptance: finite AND not catastrophically worse than
+			// the current iterate.
+			//
+			//   slack = max(1e-3, 1e-6 · |dev_curr|)
+			//
+			// On well-conditioned fits this absorbs two sources of
+			// "Newton step slightly increased dev" noise that exist
+			// independently of any overshoot:
+			//   - FP rounding (~n · ε_mach · |dev|; ≈ 1e-9 · |dev|
+			//     for schwa-scale n ≈ 5000)
+			//   - Quadratic-approximation oscillation near the
+			//     optimum, where Newton's local model is locally
+			//     inexact and may give a tiny uphill step before
+			//     the next iteration corrects it.
+			// Without enough slack the line search would
+			// occasionally reject α=1 on a converging step and
+			// shift PIRLS to a different MAP. Catastrophic
+			// overshoot (μ saturating the link → loglik = ±Inf,
+			// which is what the line search exists to defend
+			// against) is still caught by std::isfinite regardless
+			// of slack.
+			constexpr double LS_TOL_ABS = 1e-3;
+			constexpr double LS_TOL_REL = 1e-6;
+			double ls_slack = std::max(LS_TOL_ABS,
+			                            LS_TOL_REL * std::abs(dev_curr));
+			if (std::isfinite(dev_try) && (dev_try - dev_curr) < ls_slack)
+			{
+				accepted = true;
+				break;
+			}
+			alpha *= 0.5;
+		}
 
-		if (max_change < 1e-8) break;
+		if (diag_pirls_on) {
+			std::fprintf(stderr,
+			    "[pirls_diag] iter=%d alpha=%.6g halvings=%d "
+			    "dev_curr=%.6f dev_try=%.6f max_change=%.6g accepted=%d\n",
+			    pirls_iter, alpha, halvings,
+			    dev_curr, dev_try, max_change_full, (int)accepted);
+		}
+
+		if (!accepted) {
+			// 10 halvings exhausted — solver stuck. res.beta / res.u
+			// remain at the last accepted iterate; the post-loop
+			// branch short-circuits the Laplace correction below
+			// and returns the 1e10 sentinel.
+			line_search_exhausted = true;
+			break;
+		}
+
+		res.beta = beta_try;
+		res.u = u_try;
+		dev_curr = dev_try;
+
+		// Convergence: small full proposed Newton direction.
+		// With the generous acceptance slack above, α<1 only
+		// triggers on genuine overshoot — where d itself is
+		// non-small, so this test won't fire anyway. Requiring
+		// α=1 here as well would block convergence in the edge
+		// case of a single late halving event whose accepted
+		// (β, u) IS at the MAP but whose α happens to be 0.5.
+		if (max_change_full < 1e-8) break;
 		if (pirls_iter == 99) break;
 	}
 
@@ -1544,6 +1737,20 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 		}
 	}
 	res.mu = fam.linkinv(eta);
+
+	// On step-halving exhaustion the last accepted (β, u) may be far
+	// from the joint MAP and the Henderson weight matrix poorly
+	// conditioned. Computing log|H_uu| here would be wasted work at
+	// best and produce a misleading "finite but wrong" Laplace NLL
+	// at worst. Short-circuit with the 1e10 bad-point sentinel —
+	// every outer optimizer already treats this as a near-zero-weight
+	// grid point. res.beta / res.u / res.mu remain set to the last
+	// accepted iterate so downstream consumers that read μ still get
+	// something well-defined.
+	if (line_search_exhausted) {
+		res.laplace_nll = 1e10;
+		return res;
+	}
 
 	// ── Laplace nll ─────────────────────────────────────────────────
 	double cond_nll = -fam.loglik(ym, res.mu);
