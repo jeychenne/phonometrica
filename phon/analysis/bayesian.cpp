@@ -29,10 +29,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <random>
+#include <string>
 #include <boost/math/distributions/normal.hpp>
 #include <Eigen/Dense>
 #include <phon/analysis/bayesian.hpp>
+#include <phon/analysis/family.hpp>
 #include <phon/analysis/waic.hpp>
 #include <phon/analysis/psis.hpp>
 
@@ -125,6 +129,106 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	}
 	Eigen::VectorXd beta_post = post_ldlt.solve(info_weighted);
 
+	// ── 2b. Simplified Laplace correction (Tierney-Kadane skewness) ──
+	//
+	// The closed-form update above gives the (penalized) MAP β̂.  For
+	// non-Gaussian likelihoods this is also the *mode* of the Gaussian
+	// approximation to the posterior, but the true posterior is skewed
+	// — its mean differs from its mode along the third-derivative
+	// direction.  The leading correction is
+	//
+	//   δ_j  =  ½ Σ_i ℓ'''(η̂_i) · (Σ_post x_i)_j · (x_i' Σ_post x_i)
+	//
+	// derived by expanding the log-posterior to third order around β̂
+	// and integrating against the Gaussian envelope via Wick's theorem.
+	// For Gaussian likelihoods ℓ'''(η) ≡ 0 ⇒ δ ≡ 0, so the Gaussian
+	// path is bit-identical to the pre-SLA behaviour.
+	//
+	// β̂_MAP (saved here) is what the log-marginal Laplace term and the
+	// `posterior_mode` summary report below need; β̂_post + δ becomes
+	// the reported `posterior_mean`.
+	//
+	// Reference: Rue, Martino & Chopin (2009), §3.2.2; Tierney & Kadane
+	// (1986), JASA 81(393).  Cost: one n×p² mat-mul.  Skipped silently
+	// when the design matrix is unavailable (model loaded from a saved
+	// analysis without X/y) or the family lacks `loglik_d3` plumbing.
+	Eigen::VectorXd beta_map = beta_post;
+	{
+		static const bool diag_sla_on = []() {
+			const char *e = std::getenv("PHON_DIAG_SLA");
+			return e && e[0] && e[0] != '0';
+		}();
+
+		intptr_t n = model.nobs;
+		bool have_design = !model.X.empty() && model.X.ndim() == 2
+		                && model.X.nrow() == n && model.X.ncol() >= p
+		                && !model.y.empty() && model.y.size() == n;
+
+		if (have_design)
+		{
+			// Build the family with its dispersion parameters, mirroring
+			// the pattern in emmeans.cpp / mixed_model.cpp.
+			Family fam = Family::from_name(model.family);
+			if (model.is_negbin())  fam = Family::negbin(model.theta);
+			if (model.is_beta())    fam = Family::beta(model.phi);
+			if (model.is_student()) fam = Family::student(model.sigma, model.nu);
+
+			if (fam.loglik_d3 && fam.linkinv)
+			{
+				Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
+				Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+
+				// η̂ at the MAP, with offset if present.
+				Eigen::VectorXd eta_hat = Xm * beta_map;
+				if (!model.offset.empty()) {
+					Eigen::Map<const Eigen::VectorXd> off(model.offset.data(), n);
+					eta_hat += off;
+				}
+				Eigen::VectorXd mu_hat = fam.linkinv(eta_hat);
+				Eigen::VectorXd ell3   = fam.loglik_d3(ym, mu_hat, eta_hat);
+
+				// A = X Σ_post   (n × p).  Row i of A is (Σ_post x_i)^T.
+				Eigen::MatrixXd A = Xm * Sigma_post;
+
+				// σ²_{η,i} = x_i' Σ_post x_i = X_{i:} · A_{i:}.
+				Eigen::VectorXd var_eta(n);
+				for (intptr_t i = 0; i < n; i++)
+					var_eta[i] = Xm.row(i).dot(A.row(i));
+
+				// s_i = ½ ℓ'''(η̂_i) σ²_{η,i};  δ = A' s.
+				Eigen::VectorXd s = 0.5 * ell3.cwiseProduct(var_eta);
+				Eigen::VectorXd delta = A.transpose() * s;
+
+				if (diag_sla_on)
+				{
+					std::string fam_buf(model.family.data(), model.family.size());
+					std::fprintf(stderr,
+						"\n=== PHON_DIAG_SLA: bayesian_adjust ===\n");
+					std::fprintf(stderr,
+						"family=%s  n=%lld  p=%lld\n",
+						fam_buf.c_str(), (long long) n, (long long) p);
+					std::fprintf(stderr,
+						"%-28s %14s %14s %14s\n",
+						"coef", "MAP", "delta", "SLA_mean");
+					for (intptr_t j = 0; j < p; j++)
+					{
+						std::string cname_buf("(?)");
+						if (j + 1 <= model.coef_names.size()) {
+							cname_buf = std::string(model.coef_names[j + 1].data(),
+							                        model.coef_names[j + 1].size());
+						}
+						std::fprintf(stderr,
+							"%-28s %14.6f %14.6f %14.6f\n",
+							cname_buf.c_str(), beta_map[j], delta[j], beta_map[j] + delta[j]);
+					}
+					std::fprintf(stderr, "=== end PHON_DIAG_SLA ===\n\n");
+				}
+
+				beta_post = beta_map + delta;
+			}
+		}
+	}
+
 	// ── 3. Extract posterior summaries ───────────────────────────────
 
 	boost::math::normal_distribution<double> normal;
@@ -145,8 +249,8 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
 		model.posterior_mean[j + 1] = mean;
-		model.posterior_mode[j + 1] = mean;    // Gaussian: mode = mean
-		model.posterior_median[j + 1] = mean;  // Gaussian: median = mean
+		model.posterior_mode[j + 1] = beta_map[j];   // β̂_MAP (pre-SLA)
+		model.posterior_median[j + 1] = mean;  // Gaussian: median = mean (kept; skew-normal median deferred)
 		model.posterior_sd[j + 1] = sd;
 		model.ci_lower[j + 1] = mean - z_975 * sd;
 		model.ci_upper[j + 1] = mean + z_975 * sd;
@@ -253,14 +357,16 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 
 	// ── 6. Laplace log marginal likelihood ───────────────────────────
 	//
-	// log p(y) ≈ log f(β̂_post) + (p/2) log(2π) - 0.5 log det(H_post)
+	// log p(y) ≈ log f(β̂_MAP) + (p/2) log(2π) - 0.5 log det(H_post)
 	//
-	// where f(β̂_post) = p(y|β̂_post) × π(β̂_post).
+	// where f(β̂_MAP) = p(y|β̂_MAP) × π(β̂_MAP).  Evaluated at the *mode*
+	// β̂_MAP (= `beta_map`), NOT at the SLA-corrected mean — the
+	// Laplace approximation is a Gaussian envelope around the mode.
 	{
 		static const double log_2pi = std::log(2.0 * M_PI);
 
 		// Log-likelihood at the posterior mode (quadratic approx from MLE).
-		Eigen::VectorXd shift = beta_post - beta_mle;
+		Eigen::VectorXd shift = beta_map - beta_mle;
 		double loglik_post = model.loglik - 0.5 * shift.dot(H_lik * shift);
 
 		// Log-prior at the posterior mode.
@@ -271,7 +377,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		{
 			if (is_smooth_col[j]) continue;
 			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
-			double z = (beta_post[j] - pr.mean) / pr.sd;
+			double z = (beta_map[j] - pr.mean) / pr.sd;
 			log_prior += -0.5 * log_2pi - std::log(pr.sd) - 0.5 * z * z;
 		}
 
