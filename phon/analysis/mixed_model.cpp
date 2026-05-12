@@ -56,6 +56,7 @@
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/waic.hpp>
 #include <phon/analysis/psis.hpp>
+#include <phon/analysis/student_bounds.hpp>
 #include <phon/utils/matrix.hpp>
 #include <phon/third_party/Eigen/SparseCore>
 #include <phon/third_party/Eigen/SparseCholesky>
@@ -765,15 +766,28 @@ static double residual_prior_log_density(double sigma, const PriorSpec &priors)
 // disagreement will be silent rather than crash.
 //
 // Clamping convention. All three sites pass ν through std::clamp(...,
-// 2.0, 200.0) before calling student_nu_prior_log_density, matching
-// the existing family-evaluation clamp pattern. Without this clamp,
-// the L-BFGS central-difference gradient stencils straddle the U(2,200)
-// support boundary and produce -1e30-vs-finite differences that abort
-// multi-start. With clamping, the prior contribution saturates at
-// log(200) outside support — no cliff — and the optimizer converges
-// cleanly to the boundary if the data want ν > 200. σ has no analogous
-// upper bound; it can grow unboundedly under any of the residual-prior
-// types (PC / HalfCauchy / HalfNormal), so no clamp is needed there.
+// NU_MIN, NU_MAX) before calling student_nu_prior_log_density, matching
+// the existing family-evaluation clamp pattern. Two reasons:
+//
+//   (1) The Student-t family itself is only well-posed for ν ≥ 2 (finite
+//       second moment, well-defined IRLS weights). NU_MIN enforces that.
+//
+//   (2) When the user picks UniformPrior{NU_MIN, NU_MAX} for student_nu,
+//       the prior returns a -1e30 hard barrier outside support. Without
+//       clamping, L-BFGS central-difference gradient stencils straddle
+//       the boundary and produce -1e30-vs-finite differences that abort
+//       multi-start. The clamp saturates the prior contribution at the
+//       boundary so the optimizer sees a flat region instead of a cliff.
+//
+// With the default GammaPrior the prior is continuous and bounded
+// everywhere on (0, ∞), so (2) doesn't bite, but the clamp is still
+// applied uniformly for (1) and for consistency across prior types.
+// NU_MIN / NU_MAX live in phon/analysis/student_bounds.hpp; see that
+// header for the rationale on the specific values.
+//
+// σ has no analogous upper bound; it can grow unboundedly under any of
+// the residual-prior types (PC / HalfCauchy / HalfNormal), so no clamp
+// is needed there.
 static double student_sigma_prior_log_density(double sigma, const PriorSpec &priors)
 {
 	return priors.residual.log_density(sigma) + std::log(sigma);
@@ -781,7 +795,7 @@ static double student_sigma_prior_log_density(double sigma, const PriorSpec &pri
 
 static double student_nu_prior_log_density(double nu, const PriorSpec &priors)
 {
-	return priors.student_nu.log_density(nu) + std::log(nu);
+	return log_density(priors.student_nu, nu) + std::log(nu);
 }
 
 
@@ -2337,7 +2351,7 @@ struct PirlsObjective
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 			auto fam_t = Family::student(sigma_t, nu_t);
 			res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p, beta_init, last_u, priors, coef_names, off_ptr);
 		}
@@ -2359,7 +2373,9 @@ struct PirlsObjective
 
 			// Student-t dispersion priors (Site 1 of 3 — see invariant block
 			// at student_nu_prior_log_density). σ uses priors.residual; ν
-			// uses priors.student_nu (default U(2, 200)). Each carries its
+			// uses priors.student_nu (default Gamma(2.0, 0.1); see
+			// prior.hpp for the choice between Uniform and Gamma).
+			// Each carries its
 			// log-Jacobian for the log-space parameterisation.
 			//
 			// This is the UPSTREAM site: it is what makes the optimizer
@@ -2378,7 +2394,7 @@ struct PirlsObjective
 			if (fam.name == "student")
 			{
 				double sigma_t = std::exp(theta[n_chol]);
-				double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+				double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 				nll -= student_sigma_prior_log_density(sigma_t, *priors);
 				nll -= student_nu_prior_log_density(nu_t, *priors);
 			}
@@ -2433,7 +2449,7 @@ struct PirlsObjective
 		if (fam.name == "student" && lay.J_total > 0)
 		{
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 			double nu_sigma2 = nu_t * sigma_t * sigma_t;
 
 			Eigen::VectorXd w_irls(n);
@@ -2513,7 +2529,7 @@ struct LaplaceJointObjective
 		else if (fam.name == "student")
 		{
 			double sigma_t = std::exp(phi[p + n_chol]);
-			double nu_t = std::clamp(std::exp(phi[p + n_chol + 1]), 2.0, 200.0);
+			double nu_t = std::clamp(std::exp(phi[p + n_chol + 1]), NU_MIN, NU_MAX);
 			fam_used = Family::student(sigma_t, nu_t);
 		}
 
@@ -2561,7 +2577,7 @@ struct LaplaceJointObjective
 			if (fam.name == "student")
 			{
 				double sigma_t = std::exp(phi[p + n_chol]);
-				double nu_t    = std::clamp(std::exp(phi[p + n_chol + 1]), 2.0, 200.0);
+				double nu_t    = std::clamp(std::exp(phi[p + n_chol + 1]), NU_MIN, NU_MAX);
 				nll -= student_sigma_prior_log_density(sigma_t, *priors);
 				nll -= student_nu_prior_log_density(nu_t, *priors);
 			}
@@ -3674,7 +3690,7 @@ static GridPointResult eval_pirls_grid_point(
 	else if (fam.name == "student")
 	{
 		double sigma_t = std::exp(theta[n_chol]);
-		double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+		double nu_t = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 		auto fam_t = Family::student(sigma_t, nu_t);
 		res = solve_pirls(D_inv, log_det_Dg, fam_t, Xm, ym, lay, n, p,
 		                   beta_init, u_init, priors, coef_names, off_ptr);
@@ -3715,7 +3731,7 @@ static GridPointResult eval_pirls_grid_point(
 		if (fam.name == "student")
 		{
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 			nll -= student_sigma_prior_log_density(sigma_t, *priors);
 			nll -= student_nu_prior_log_density(nu_t, *priors);
 		}
@@ -3766,7 +3782,7 @@ static GridPointResult eval_pirls_grid_point(
 	if (fam.name == "student" && lay.J_total > 0)
 	{
 		double sigma_t = std::exp(theta[n_chol]);
-		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 		double nu_sigma2 = nu_t * sigma_t * sigma_t;
 
 		// Recompute IRLS log_det at the converged μ — this is what's
@@ -3798,7 +3814,7 @@ static GridPointResult eval_pirls_grid_point(
 		fam_gp = Family::beta(std::exp(theta[n_chol]));
 	else if (fam.name == "student")
 		fam_gp = Family::student(std::exp(theta[n_chol]),
-		                          std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0));
+		                          std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX));
 
 	if (fam.name == "beta")
 	{
@@ -4051,7 +4067,7 @@ static GridPointResult eval_pirls_grid_point(
 	if (fam.name == "student")
 	{
 		double sigma_t = std::exp(theta[n_chol]);
-		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+		double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 		double nu_sigma2 = nu_t * sigma_t * sigma_t;
 
 		// Defensive epsilon to prevent exact division by zero in the
@@ -6233,7 +6249,7 @@ static void inla_grid_integrate_pirls(
 			for (intptr_t j = 0; j < n_disp; j++) {
 				double dv = std::exp(theta_k[n_chol + j]);
 				if (fam.name == "student" && j == 1)
-					dv = std::clamp(dv, 2.0, 200.0);
+					dv = std::clamp(dv, NU_MIN, NU_MAX);
 				std::fprintf(stderr, " %-9.3f", dv);
 			}
 
@@ -6610,8 +6626,8 @@ static void inla_grid_integrate_pirls(
 			// clamp(exp(θ), 2, 200) before accumulation. The helper then
 			// clamps the back-transformed mean/CI to the same support.
 			{
-				static const double log_lo = std::log(2.0);
-				static const double log_hi = std::log(200.0);
+				static const double log_lo = LOG_NU_MIN;
+				static const double log_hi = LOG_NU_MAX;
 				double mean_log_v = 0, mean_log_v2 = 0;
 				for (intptr_t k = 0; k < n_grid; k++)
 				{
@@ -6625,7 +6641,7 @@ static void inla_grid_integrate_pirls(
 				double log_sd_v  = (var_log_v > 0) ? std::sqrt(var_log_v) : 0.0;
 
 				write_lognormal_hyper(model, idx, String("nu(student)"),
-				                       mean_log_v, log_sd_v, z_975, 2.0, 200.0);
+				                       mean_log_v, log_sd_v, z_975, NU_MIN, NU_MAX);
 			}
 		}
 	}
@@ -6672,7 +6688,7 @@ static void inla_grid_integrate_pirls(
 	} else if (model.family == "student") {
 		disp_fn = [n_chol](const Eigen::VectorXd &theta, double *disp) {
 			disp[0] = std::exp(theta[n_chol]);                             // σ
-			disp[1] = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0); // ν
+			disp[1] = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX); // ν
 		};
 	} else {
 		// Binomial, Poisson: no dispersion parameter
@@ -6880,7 +6896,7 @@ static void no_re_bayesian_laplace(
 			double log_nu = saved_theta[1];
 			double log_sd = std::sqrt(std::max(Sigma(p + 1, p + 1), 0.0));
 			write_lognormal_hyper(model, 2, String("nu(student)"),
-			                       log_nu, log_sd, z_975, 2.0, 200.0);
+			                       log_nu, log_sd, z_975, NU_MIN, NU_MAX);
 		}
 	}
 
@@ -6939,7 +6955,7 @@ static void no_re_bayesian_laplace(
 		else if (fam.name == "student")
 		{
 			disp[0] = std::max(std::exp(phi_s[p]),     1e-10);             // σ
-			disp[1] = std::clamp(std::exp(phi_s[p + 1]), 2.0, 200.0);      // ν
+			disp[1] = std::clamp(std::exp(phi_s[p + 1]), NU_MIN, NU_MAX);      // ν
 		}
 
 		Eigen::VectorXd eta = Xm * beta_s;
@@ -7629,7 +7645,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			else if (is_beta)
 				fam_p1 = Family::beta(std::exp(theta[n_chol]));
 			else if (is_student)
-				fam_p1 = Family::student(std::exp(theta[n_chol]), std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0));
+				fam_p1 = Family::student(std::exp(theta[n_chol]), std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX));
 
 			auto p1_pirls = solve_pirls(D_inv_p1, log_det_p1, fam_p1,
 			                             Xm, ym, lay, n, p, beta_init,
@@ -7822,7 +7838,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// For Student t, update the Family with the converged σ and ν
 		else if (is_student) {
 			double sigma_t = std::exp(theta[n_chol]);
-			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			double nu_t = std::clamp(std::exp(theta[n_chol + 1]), NU_MIN, NU_MAX);
 			fam_used = Family::student(sigma_t, nu_t);
 		}
 

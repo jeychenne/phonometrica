@@ -45,7 +45,10 @@
 #include <cstdio>
 #include <map>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <phon/string.hpp>
+#include <phon/analysis/student_bounds.hpp>
 
 namespace phonometrica::stats {
 
@@ -179,15 +182,15 @@ struct GammaPrior
 };
 
 
-// Uniform prior for a bounded parameter (e.g. Student-t ν ∈ [2, 200]).
+// Uniform prior for a bounded parameter (e.g. Student-t ν ∈ [NU_MIN, NU_MAX]).
 // Density is constant inside [lower, upper], zero outside.
 //
-// Currently used only by PriorSpec::student_nu, consumed by the
-// Bayesian Student-t optimization path (PirlsObjective::eval and the
-// two coordinated sites — see the coordination invariant in
-// mixed_model.cpp). That path operates on plain double, so the branch
-// on x is safe. If used in an AD-traced path later, replace the if
-// with CppAD::CondExp.
+// One of two alternatives for PriorSpec::student_nu (the other is
+// GammaPrior). Consumed by the Bayesian Student-t optimization path
+// (PirlsObjective::eval and the two coordinated sites — see the
+// coordination invariant in mixed_model.cpp). That path operates on
+// plain double, so the branch on x is safe. If used in an AD-traced
+// path later, replace the if with CppAD::CondExp.
 struct UniformPrior
 {
 	double lower = 0.0;
@@ -206,6 +209,56 @@ struct UniformPrior
 		return T(-log_width);
 	}
 };
+
+
+// =====================================================================
+// Student-t ν prior: choice between Uniform and Gamma
+// =====================================================================
+//
+// Two reasonable shapes exist in the literature for the degrees-of-freedom
+// parameter of a Student-t likelihood:
+//
+//   UniformPrior{NU_MIN, NU_MAX}
+//     Weakly-informative: any ν in support is equally plausible.  Useful
+//     when prior beliefs are genuinely flat.  Drawback on log-scale
+//     optimization: combined with the dν/dlog ν = ν Jacobian, the
+//     log-space prior gradient is identically +1 throughout support, i.e.
+//     monotonically increases in log ν.  On ν-insensitive (near-Gaussian)
+//     data, the posterior pegs at NU_MAX with no resistance — there is no
+//     asymptotic shape from the prior to pull it back.
+//
+//   GammaPrior{2.0, 0.1}
+//     Mode at (a-1)/b = 10, mean at a/b = 20, with a finite tail that
+//     decays at large ν.  Pulls the log-space posterior back from large
+//     ν, producing finite posterior moments even on ν-insensitive data.
+//     This is brms's default, and the reference values in Phon's
+//     Bayesian Student-t test suite are generated against this prior.
+//
+// Phon defaults to GammaPrior{2.0, 0.1} for parity with brms.  Users who
+// genuinely want flat-on-ν can assign a UniformPrior to the same field.
+//
+// The variant dispatch is via std::visit; both members provide a
+// template log_density that works for plain double and CppAD::AD<double>.
+using StudentNuPrior = std::variant<UniformPrior, GammaPrior>;
+
+// Visitor-dispatched log-density for StudentNuPrior.  Provides a uniform
+// interface so call sites do not need to switch on the variant alternative.
+template <typename T>
+T log_density(const StudentNuPrior &prior, T x)
+{
+	return std::visit([&](const auto &p) -> T { return p.log_density(x); }, prior);
+}
+
+// True when the variant holds the default Gamma(2.0, 0.1) — used by
+// PriorSpec::is_default() and any diagnostic that needs to suppress
+// summary lines for an unchanged default.  Returns false for any
+// UniformPrior or any Gamma with non-default parameters.
+inline bool is_default_student_nu_prior(const StudentNuPrior &prior)
+{
+	if (!std::holds_alternative<GammaPrior>(prior)) return false;
+	const auto &g = std::get<GammaPrior>(prior);
+	return g.shape == 2.0 && g.rate == 0.1;
+}
 
 
 // =====================================================================
@@ -299,16 +352,22 @@ struct PriorSpec
 	// Beta φ (precision): Gamma prior.
 	GammaPrior beta_phi;
 
-	// Student-t ν (degrees of freedom): Uniform prior on a bounded support.
-	// Default: U(2, 200) — matches the brms reference default for the
-	// Student-t validation suite and aligns with the [2, 200] fitting clamp
-	// in solve_pirls / LaplaceJointObjective.
+	// Student-t ν (degrees of freedom): variant prior over Uniform | Gamma.
+	// Default: Gamma(2.0, 0.1) — matches brms's default and the reference
+	// values in the Bayesian Student-t validation suite.  Mode at 10, mean
+	// at 20, with a finite tail; on ν-insensitive (near-Gaussian) data this
+	// produces a finite posterior rather than pegging at the NU_MAX clamp
+	// boundary the way the older UniformPrior default did.
+	//
+	// To use a flat prior instead, assign `UniformPrior{NU_MIN, NU_MAX}`
+	// (or any other bounded window) to this field after constructing the
+	// PriorSpec.
 	//
 	// Student-t σ uses the existing `residual` field — σ plays the residual-
 	// scale role for Student-t the same way σ_residual does for Gaussian,
 	// and the auto-scaling at fitting.cpp:1549 already produces the right
 	// data-scaled PC prior. No separate field is needed.
-	UniformPrior student_nu = {2.0, 200.0};
+	StudentNuPrior student_nu = GammaPrior{2.0, 0.1};
 
 	// ---- Auto-scaling flags ----
 	// When true, the corresponding prior is replaced at fit time by a
@@ -341,7 +400,7 @@ struct PriorSpec
 		    && residual.param1 == 1.0 && residual.param2 == 0.05
 		    && negbin_theta.shape == 1.0 && negbin_theta.rate == 0.01
 		    && beta_phi.shape == 1.0 && beta_phi.rate == 0.01
-		    && student_nu.lower == 2.0 && student_nu.upper == 200.0
+		    && is_default_student_nu_prior(student_nu)
 		    && lkj_eta == 1.0;
 	}
 
@@ -492,8 +551,18 @@ inline std::string format_prior_summary(const PriorSpec &p, const String &family
 	if (family == "student")
 	{
 		char buf[80];
-		snprintf(buf, sizeof(buf), "  Student nu:     U(%.4g, %.4g)\n",
-		         p.student_nu.lower, p.student_nu.upper);
+		if (std::holds_alternative<GammaPrior>(p.student_nu))
+		{
+			const auto &g = std::get<GammaPrior>(p.student_nu);
+			snprintf(buf, sizeof(buf), "  Student nu:     Gamma(%.4g, %.4g)\n",
+			         g.shape, g.rate);
+		}
+		else
+		{
+			const auto &u = std::get<UniformPrior>(p.student_nu);
+			snprintf(buf, sizeof(buf), "  Student nu:     U(%.4g, %.4g)\n",
+			         u.lower, u.upper);
+		}
 		s += buf;
 	}
 

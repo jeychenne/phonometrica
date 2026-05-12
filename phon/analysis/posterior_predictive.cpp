@@ -33,6 +33,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Cholesky>
 #include <phon/analysis/posterior_predictive.hpp>
+#include <phon/analysis/student_bounds.hpp>
 
 namespace phonometrica::stats {
 namespace {
@@ -74,7 +75,7 @@ static void disp_from_theta(const String &family, const double *theta_k,
 
 	if (family == "student") {
 		disp[0] = std::exp(theta_k[n_chol]);
-		disp[1] = std::clamp(std::exp(theta_k[n_chol + 1]), 2.0, 200.0);
+		disp[1] = std::clamp(std::exp(theta_k[n_chol + 1]), NU_MIN, NU_MAX);
 	} else {
 		// gaussian, negbin, beta
 		disp[0] = std::exp(theta_k[n_chol]);

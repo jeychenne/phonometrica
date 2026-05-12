@@ -37,6 +37,7 @@
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/string.hpp>
 #include <phon/utils/matrix.hpp>
+#include <phon/analysis/student_bounds.hpp>
 
 namespace phonometrica::stats {
 
