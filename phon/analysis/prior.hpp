@@ -179,6 +179,35 @@ struct GammaPrior
 };
 
 
+// Uniform prior for a bounded parameter (e.g. Student-t ν ∈ [2, 200]).
+// Density is constant inside [lower, upper], zero outside.
+//
+// Currently used only by PriorSpec::student_nu, consumed by the
+// Bayesian Student-t optimization path (PirlsObjective::eval and the
+// two coordinated sites — see the coordination invariant in
+// mixed_model.cpp). That path operates on plain double, so the branch
+// on x is safe. If used in an AD-traced path later, replace the if
+// with CppAD::CondExp.
+struct UniformPrior
+{
+	double lower = 0.0;
+	double upper = 1.0;
+
+	// log p(x) = -log(upper - lower) inside [lower, upper], else hard barrier.
+	// Returns a large finite negative outside support rather than -∞ so the
+	// L-BFGS gradient finite-differences stay well-defined (a true -∞ would
+	// give NaN-via-cancellation in the central-difference stencil).
+	template <typename T>
+	T log_density(T x) const
+	{
+		double log_width = std::log(upper - lower);
+		if (x < T(lower) || x > T(upper))
+			return T(-1e30);
+		return T(-log_width);
+	}
+};
+
+
 // =====================================================================
 // Variance prior: a tagged choice among PC / HalfCauchy / HalfNormal
 // =====================================================================
@@ -270,6 +299,17 @@ struct PriorSpec
 	// Beta φ (precision): Gamma prior.
 	GammaPrior beta_phi;
 
+	// Student-t ν (degrees of freedom): Uniform prior on a bounded support.
+	// Default: U(2, 200) — matches the brms reference default for the
+	// Student-t validation suite and aligns with the [2, 200] fitting clamp
+	// in solve_pirls / LaplaceJointObjective.
+	//
+	// Student-t σ uses the existing `residual` field — σ plays the residual-
+	// scale role for Student-t the same way σ_residual does for Gaussian,
+	// and the auto-scaling at fitting.cpp:1549 already produces the right
+	// data-scaled PC prior. No separate field is needed.
+	UniformPrior student_nu = {2.0, 200.0};
+
 	// ---- Auto-scaling flags ----
 	// When true, the corresponding prior is replaced at fit time by a
 	// data-scaled weakly informative default (à la brms). User calls to
@@ -301,6 +341,7 @@ struct PriorSpec
 		    && residual.param1 == 1.0 && residual.param2 == 0.05
 		    && negbin_theta.shape == 1.0 && negbin_theta.rate == 0.01
 		    && beta_phi.shape == 1.0 && beta_phi.rate == 0.01
+		    && student_nu.lower == 2.0 && student_nu.upper == 200.0
 		    && lkj_eta == 1.0;
 	}
 
@@ -446,6 +487,13 @@ inline std::string format_prior_summary(const PriorSpec &p, const String &family
 		char buf[80];
 		snprintf(buf, sizeof(buf), "  Beta phi:       Gamma(%.4g, %.4g)\n",
 		         p.beta_phi.shape, p.beta_phi.rate);
+		s += buf;
+	}
+	if (family == "student")
+	{
+		char buf[80];
+		snprintf(buf, sizeof(buf), "  Student nu:     U(%.4g, %.4g)\n",
+		         p.student_nu.lower, p.student_nu.upper);
 		s += buf;
 	}
 

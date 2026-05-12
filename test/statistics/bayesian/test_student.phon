@@ -31,8 +31,8 @@ tol_default["hyper_sd_rel"]   = 0.35
 tol_default["pwaic_abs"]      = 8.0    # known ~6-unit undercount
 
 let tol_slope = B.default_tolerance()
-tol_slope["mean_rel"]       = 0.30
-tol_slope["sd_rel"]         = 0.30
+#tol_slope["mean_rel"]       = 0.30
+#tol_slope["sd_rel"]         = 0.30
 tol_slope["ci_rel"]         = 0.50
 tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.45

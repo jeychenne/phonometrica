@@ -726,6 +726,66 @@ static double residual_prior_log_density(double sigma, const PriorSpec &priors)
 
 
 // =====================================================================
+// Student-t dispersion priors (σ and ν), with log-space Jacobians
+// =====================================================================
+//
+// Phon's Bayesian Student-t fits parameterise σ and ν on the log scale
+// (optimization over [log σ, log ν] for numerical stability). To make the
+// priors specified on the original (σ, ν) scale produce the correct MAP
+// when minimising the negative log posterior over (log σ, log ν), each
+// contribution carries its log-Jacobian:
+//
+//   p(log σ) = p(σ) · σ       ⇒  log p(log σ) = log p(σ) + log σ
+//   p(log ν) = p(ν) · ν       ⇒  log p(log ν) = log p(ν) + log ν
+//
+// Without the Jacobian, a "missing" prior is not flat-on-σ — it is
+// flat-on-log-σ, which on the original scale means p(σ) ∝ 1/σ (Jeffreys-
+// like). This silently biases the posterior on weakly-identifying data;
+// see the architecture comment block in no_re_bayesian_laplace for the
+// historical context.
+//
+// Both helpers return log p(x) + log x, to be SUBTRACTED from the NLL.
+//
+// Student-t σ reuses priors.residual (the residual-scale prior already
+// auto-scaled to data via residual_auto). This is intentional: σ plays
+// the residual-scale role identically in Gaussian and Student-t, and
+// reusing the field keeps auto-scaling, user customisation, and
+// reporting consistent across the two families.
+//
+// Coordination invariant. These helpers are called at three sites that
+// must stay in sync — see the invariant block near solve_pirls (line
+// ~2326) for the analogous hybrid-log-det invariant. The three Student-t
+// dispersion-prior sites are:
+//   (1) PirlsObjective::eval        (Phase 1 outer optimizer)
+//   (2) LaplaceJointObjective::eval (Phase 2 / no-RE FD Hessian)
+//   (3) eval_pirls_grid_point       (Bayesian CCD reweighting)
+// If you add a prior contribution at one site without the other two,
+// the optimizer's MAP, the Hessian, and the grid integration will
+// disagree on which posterior they are approximating — and the
+// disagreement will be silent rather than crash.
+//
+// Clamping convention. All three sites pass ν through std::clamp(...,
+// 2.0, 200.0) before calling student_nu_prior_log_density, matching
+// the existing family-evaluation clamp pattern. Without this clamp,
+// the L-BFGS central-difference gradient stencils straddle the U(2,200)
+// support boundary and produce -1e30-vs-finite differences that abort
+// multi-start. With clamping, the prior contribution saturates at
+// log(200) outside support — no cliff — and the optimizer converges
+// cleanly to the boundary if the data want ν > 200. σ has no analogous
+// upper bound; it can grow unboundedly under any of the residual-prior
+// types (PC / HalfCauchy / HalfNormal), so no clamp is needed there.
+static double student_sigma_prior_log_density(double sigma, const PriorSpec &priors)
+{
+	return priors.residual.log_density(sigma) + std::log(sigma);
+}
+
+static double student_nu_prior_log_density(double nu, const PriorSpec &priors)
+{
+	return priors.student_nu.log_density(nu) + std::log(nu);
+}
+
+
+// =====================================================================
 // Full log-determinant of the random-effects Hessian
 // =====================================================================
 //
@@ -2296,6 +2356,32 @@ struct PirlsObjective
 				D_cov[g] = D_inv[g].inverse();
 
 			nll -= variance_prior_log_density(D_cov, *priors, lay);
+
+			// Student-t dispersion priors (Site 1 of 3 — see invariant block
+			// at student_nu_prior_log_density). σ uses priors.residual; ν
+			// uses priors.student_nu (default U(2, 200)). Each carries its
+			// log-Jacobian for the log-space parameterisation.
+			//
+			// This is the UPSTREAM site: it is what makes the optimizer
+			// converge to the with-prior MAP rather than the no-prior MAP.
+			// Sites (2) and (3) are required to keep the Hessian and the
+			// CCD reweighting consistent with this MAP.
+			//
+			// ν is clamped to [2, 200] before the prior call to match the
+			// existing family-evaluation clamp pattern. Without this clamp,
+			// L-BFGS central-difference gradients straddle the prior
+			// support boundary and produce -1e30-vs-finite stencils that
+			// abort multi-start. With clamping, the prior contribution
+			// saturates at log(200) outside support — no cliff — and the
+			// optimizer converges cleanly to the boundary when the data
+			// want ν > 200.
+			if (fam.name == "student")
+			{
+				double sigma_t = std::exp(theta[n_chol]);
+				double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+				nll -= student_sigma_prior_log_density(sigma_t, *priors);
+				nll -= student_nu_prior_log_density(nu_t, *priors);
+			}
 		}
 
 		// ── Student-t: replace IRLS log_det_Huu with observed-Hessian ──
@@ -2455,6 +2541,30 @@ struct LaplaceJointObjective
 				D_cov[g] = D_inv[g].inverse();
 
 			nll -= variance_prior_log_density(D_cov, *priors, lay);
+
+			// Student-t dispersion priors (Site 2 of 3 — see invariant
+			// block at student_nu_prior_log_density). Must match what
+			// PirlsObjective::eval (Site 1) applies, or the Hessian
+			// computed here disagrees with the MAP found upstream.
+			//
+			// Particularly important for the no-RE Bayesian path
+			// (no_re_bayesian_laplace) which builds an FD Hessian using
+			// this objective at a saved_theta produced by Site 1: if
+			// Site 1 finds the with-prior MAP, the FD Hessian here must
+			// be computed under the same objective.
+			//
+			// ν is clamped to [2, 200] for the same reason as Site 1 —
+			// see the comment there. The clamp also keeps the FD
+			// Hessian well-defined when saved_theta lands at or near
+			// the boundary (the post-fit no-RE path computes H via
+			// central differences with h=1e-3).
+			if (fam.name == "student")
+			{
+				double sigma_t = std::exp(phi[p + n_chol]);
+				double nu_t    = std::clamp(std::exp(phi[p + n_chol + 1]), 2.0, 200.0);
+				nll -= student_sigma_prior_log_density(sigma_t, *priors);
+				nll -= student_nu_prior_log_density(nu_t, *priors);
+			}
 		}
 
 		// ── Student-t: observed-Hessian Laplace correction ────────────
@@ -3036,6 +3146,31 @@ struct GridPointResult
 	// numerically verified against the brute-force six-pattern tensor
 	// sum on synthetic GLMMs to machine precision.
 	Eigen::VectorXd sla_delta;
+
+	// Within-component third central moment of the marginal posterior of
+	// β_j at this grid point:
+	//
+	//   sla_S_j  =  Σ_i ℓ'''(η̂_i) · (Σ_γ W_i)_j³
+	//
+	// This is the cube of the same SW(i, j) = (Σ_γ W_i)_j used in sla_delta,
+	// weighted by ℓ''' and summed over observations.  Same derivation, one
+	// extra cube and dot.  Gives the standardized third cumulant κ_3_j =
+	// sla_S_j / σ_β,j³ (where σ_β,j² = vcov_beta(j, j)) of the within-
+	// component Edgeworth-expanded marginal posterior.
+	//
+	// Used by the mixture pd computation to add the per-component Edgeworth
+	// CDF correction:
+	//
+	//   F_k(0) ≈ Φ(-μ_k/σ_k) − (κ_3_k/6) · φ(μ_k/σ_k) · ((μ_k/σ_k)² − 1)
+	//
+	// Without this correction, mix_cdf treats each component as Gaussian,
+	// which combined with the SLA mean shift gives pd values inflated above
+	// brms's MCMC truth when the posterior is skewed (canonical case:
+	// binomial mixed-effects fits with random intercepts/slopes).
+	//
+	// Gaussian families: ℓ'''(η) ≡ 0 ⇒ sla_S = 0; populated as zeros for
+	// code symmetry, same as sla_delta.
+	Eigen::VectorXd sla_S;
 	// Populated only for non-Gaussian PIRLS grid points; empty otherwise.
 	// Used by compute_grid_waic to sample u from its Laplace-approximate
 	// conditional posterior u|β,θ,y, matching the Gaussian closed-form path.
@@ -3470,6 +3605,7 @@ static GridPointResult eval_gaussian_grid_point(
 
 	// Gaussian: ℓ'''(η) ≡ 0, so the SLA correction is identically zero.
 	gpr.sla_delta = Eigen::VectorXd::Zero(p);
+	gpr.sla_S     = Eigen::VectorXd::Zero(p);
 
 	return gpr;
 }
@@ -3562,6 +3698,27 @@ static GridPointResult eval_pirls_grid_point(
 		for (intptr_t g = 0; g < G; g++)
 			D_cov[g] = D_inv[g].inverse();
 		nll -= variance_prior_log_density(D_cov, *priors, lay);
+
+		// Student-t dispersion priors (Site 3 of 3 — see invariant block
+		// at student_nu_prior_log_density). Must match Site 1 and Site 2.
+		//
+		// This site evaluates the joint NLL at each CCD grid point;
+		// adding the prior here ensures the grid weights reflect the
+		// with-prior posterior, consistent with where the MAP (theta_star)
+		// was found upstream.
+		//
+		// ν is clamped to [2, 200] to match Sites 1/2 — the CCD grid
+		// can spread far from theta_star, so grid points outside the
+		// prior support are routine. Clamping makes the prior contribution
+		// saturate cleanly at the boundary so the per-grid-point NLL is
+		// well-defined throughout the integration domain.
+		if (fam.name == "student")
+		{
+			double sigma_t = std::exp(theta[n_chol]);
+			double nu_t    = std::clamp(std::exp(theta[n_chol + 1]), 2.0, 200.0);
+			nll -= student_sigma_prior_log_density(sigma_t, *priors);
+			nll -= student_nu_prior_log_density(nu_t, *priors);
+		}
 	}
 
 	// ── Student-t: replace IRLS log_det_Huu with observed-Hessian ──
@@ -3943,6 +4100,7 @@ static GridPointResult eval_pirls_grid_point(
 	// random slope, strong-RE limit, and q=0 (reduces to Phase 1's formula).
 
 	gpr.sla_delta = Eigen::VectorXd::Zero(p);
+	gpr.sla_S     = Eigen::VectorXd::Zero(p);
 	if (fam_gp.loglik_d3)
 	{
 		// η̂ on the full linear-predictor scale (offset folded in by link).
@@ -3976,6 +4134,28 @@ static GridPointResult eval_pirls_grid_point(
 		// δ_j = ½ Σ_i ℓ'''(η̂_i) · SW(i, j) · var_eta_i, for j in β-block.
 		Eigen::VectorXd s = 0.5 * ell3.cwiseProduct(var_eta);
 		gpr.sla_delta = SW.leftCols(p).transpose() * s;
+
+		// S_j = Σ_i ℓ'''(η̂_i) · SW(i, j)³, for j in β-block.
+		// This is the within-component marginal third moment of β_j at this
+		// grid point — same derivation as δ_j but with SW(i, j)³ instead of
+		// SW(i, j) · var_eta_i.  Used by the Edgeworth pd correction at the
+		// mixture combination step; without it, mix_cdf treats each
+		// component as Gaussian and pd is inflated when the within-
+		// component posterior is skewed.
+		//
+		// The existing SW computation already gives us (Σ_γ W_i)_j for j in
+		// the β-block — no extra solves needed.  Cost: a single length-n
+		// loop per coefficient (p · n cube-and-sum operations).
+		for (intptr_t j = 0; j < p; j++)
+		{
+			double acc = 0.0;
+			for (intptr_t i = 0; i < n; i++)
+			{
+				double a = SW(i, j);
+				acc += ell3[i] * a * a * a;
+			}
+			gpr.sla_S[j] = acc;
+		}
 	}
 
 	return gpr;
@@ -5563,9 +5743,46 @@ static void inla_grid_integrate_gaussian(
 		model.ci_upper[j + 1] = mix_quantile(j, 0.975);
 		model.posterior_median[j + 1] = mix_quantile(j, 0.5);
 
-		// pd from the mixture CDF: P(sign(β) = sign(E[β]))
+		// pd from the mixture CDF, with per-component Edgeworth correction
+		// for within-component posterior skewness (Tierney-Kadane).
+		//
+		// The plain Gaussian-mixture pd = 1 − mix_cdf(0.0) treats each
+		// grid-point component as Gaussian.  The actual within-component
+		// posterior is approximately Edgeworth-expanded with standardized
+		// third cumulant κ_3_k = sla_S_k[j] / σ_k_j³, so the per-component
+		// CDF carries a correction
+		//
+		//   F_k(0) ≈ Φ(−μ_k/σ_k) − (κ_3_k/6) · φ(μ_k/σ_k) · ((μ_k/σ_k)² − 1)
+		//
+		// Summing w_k F_k(0) gives the corrected P(β < 0); pd is then
+		//
+		//   pd = pd_Gauss + sign(mean) · correction
+		//
+		// where correction = Σ_k w_k · (S_k_j / (6 σ_k_j³)) · φ(μ_k/σ_k) ·
+		// ((μ_k/σ_k)² − 1).  For Gaussian families ℓ''' ≡ 0 ⇒ S_k_j = 0,
+		// so correction ≡ 0 and pd reduces to the Gaussian-mixture value
+		// bit-identically; we keep the code path here for symmetry with the
+		// PIRLS site, where the correction actually fires.
 		double p_positive = 1.0 - mix_cdf(j, 0.0);
-		model.pd[j + 1] = (mean >= 0) ? p_positive : (1.0 - p_positive);
+		double pd_gauss = (mean >= 0) ? p_positive : (1.0 - p_positive);
+
+		double pd_correction = 0.0;
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			if (results[k].sla_S.size() <= j) continue;
+			double S_kj = results[k].sla_S[j];
+			if (S_kj == 0.0) continue;
+			double var_k = results[k].vcov_beta(j, j);
+			if (var_k <= 0) continue;
+			double sd_k = std::sqrt(var_k);
+			double mu_k = sla_beta[k][j];
+			double z = mu_k / sd_k;
+			double phi_z = std::exp(-0.5 * z * z) / std::sqrt(2.0 * M_PI);
+			pd_correction += w[k] * (S_kj / (6.0 * sd_k * sd_k * sd_k))
+			               * phi_z * (z * z - 1.0);
+		}
+		double pd_signed = (mean >= 0) ? pd_correction : -pd_correction;
+		model.pd[j + 1] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
 	}
 
 	// Update beta/se/stat for compatibility with display code.
@@ -6169,8 +6386,31 @@ static void inla_grid_integrate_pirls(
 		model.ci_upper[j + 1] = mix_quantile(j, 0.975);
 		model.posterior_median[j + 1] = mix_quantile(j, 0.5);
 
+		// pd from the mixture CDF, with per-component Edgeworth correction
+		// for within-component posterior skewness (Tierney-Kadane).
+		// See the parallel site for the Gaussian path (~line 5746) for the
+		// derivation and an explanation of the correction's role.  Mirror
+		// implementation so the two paths stay symmetric.
 		double p_positive = 1.0 - mix_cdf(j, 0.0);
-		model.pd[j + 1] = (mean >= 0) ? p_positive : (1.0 - p_positive);
+		double pd_gauss = (mean >= 0) ? p_positive : (1.0 - p_positive);
+
+		double pd_correction = 0.0;
+		for (intptr_t k = 0; k < n_grid; k++)
+		{
+			if (results[k].sla_S.size() <= j) continue;
+			double S_kj = results[k].sla_S[j];
+			if (S_kj == 0.0) continue;
+			double var_k = results[k].vcov_beta(j, j);
+			if (var_k <= 0) continue;
+			double sd_k = std::sqrt(var_k);
+			double mu_k = sla_beta[k][j];
+			double z = mu_k / sd_k;
+			double phi_z = std::exp(-0.5 * z * z) / std::sqrt(2.0 * M_PI);
+			pd_correction += w[k] * (S_kj / (6.0 * sd_k * sd_k * sd_k))
+			               * phi_z * (z * z - 1.0);
+		}
+		double pd_signed = (mean >= 0) ? pd_correction : -pd_correction;
+		model.pd[j + 1] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
 	}
 
 	// Update beta/se/stat for compatibility with display code.
@@ -6488,16 +6728,21 @@ static void inla_grid_integrate_pirls(
 // `if (model.posterior_mean.empty()) bayesian_summaries(...)` skip the
 // buggy fallback. No change to fitting.cpp is needed.
 //
-// **Prior caveat.** LaplaceJointObjective applies the β prior and the
-// variance-component prior (the latter empty for G==0), but does NOT apply
-// the residual / dispersion prior on log σ, log ν, log θ_NB, log φ_β. The
-// optimizer converges to (β̂, log disp̂) under flat improper priors on the
-// log-dispersion parameters; this helper's Hessian is consistent with that
-// objective. The mixed-RE path (inla_grid_integrate_pirls) does the same
-// thing — it doesn't apply the dispersion prior in the optimization either,
-// only in CCD reweighting, so the no-RE behaviour is internally consistent
-// with how Phon currently treats dispersion priors throughout. Tightening
-// the dispersion-prior treatment is a separate concern.
+// **Prior treatment.** LaplaceJointObjective applies the β prior, the
+// variance-component prior (empty for G==0), and — for Student-t — the
+// σ and ν priors with their log-space Jacobians. The optimizer that
+// produced `saved_theta` (PirlsObjective::eval) applies the same
+// Student-t dispersion priors, so the with-prior MAP found upstream is
+// consistent with the objective used here for the FD Hessian. See the
+// coordination invariant at student_nu_prior_log_density for the three
+// sites that must stay in sync; this helper consumes Site 1's output
+// and uses Site 2's objective.
+//
+// For NB θ and Beta φ, the dispersion priors are still NOT applied in
+// the joint objective — those families converge to the no-prior MAP
+// for the dispersion parameter. Closing that gap is a follow-up that
+// mirrors the Student-t pattern (add the prior + Jacobian at all three
+// coordinated sites, gated on fam.name == "negbin" / "beta").
 static void no_re_bayesian_laplace(
     Model &model,
     const Family &fam,

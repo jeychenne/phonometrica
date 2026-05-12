@@ -183,6 +183,15 @@
 		<Document class="Dataset">
 			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/ohio_brinla.csv</Path>
 		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/lowbwt_brinla.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/aids_brinla.csv</Path>
+		</Document>
+		<Document class="Dataset">
+			<Path>$PHON_PROJECT/test/statistics/bayesian/inla/../../../data/crab_brinla.csv</Path>
+		</Document>
 	</Data>
 	<Analyses>
 		<Document class="Analysis">
