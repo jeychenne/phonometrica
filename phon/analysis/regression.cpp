@@ -35,7 +35,6 @@
 #include <phon/analysis/regression.hpp>
 #include <phon/analysis/statistics.hpp>
 #include <phon/utils/matrix.hpp>
-#include <phon/third_party/LBFGSpp/LBFGS.h>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
@@ -252,29 +251,6 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 
 // Compute cost (negative log-likelihood / n) and gradient for L-BFGS.
 // The gradient X'(μ-y)/n is exact for canonical links (identity, logit, log).
-static double glm_cost(const Array<double> &y, const Array<double> &X,
-                       const Family &fam, const Eigen::VectorXd &beta, Eigen::VectorXd &grad,
-                       const Array<double> &offset)
-{
-	intptr_t n = X.nrow();
-	intptr_t m = X.ncol();
-
-	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
-	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
-
-	Vector<double> eta = Xm * beta;
-	if (!offset.empty()) {
-		Eigen::Map<const Vector<double>> off(offset.data(), n);
-		eta += off;
-	}
-	Vector<double> mu = fam.linkinv(eta);
-
-	grad = (Xm.transpose() * (mu - ym)).array() / n;
-
-	return -fam.loglik(ym, mu) / n;
-}
-
-
 // Model-based covariance: (X'WX)^{-1}
 static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
                                       const Eigen::VectorXd &beta,
@@ -333,8 +309,6 @@ static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<
 Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, bool robust, int max_iter,
           const Array<double> &offset)
 {
-	using namespace LBFGSpp;
-
 	validate_inputs(y, X);
 
 	intptr_t m = X.ncol();
@@ -346,51 +320,236 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 	store_matrices(model, y, X);
 	if (!offset.empty()) model.offset = offset;
 
-	// L-BFGS optimization
-	Eigen::VectorXd weights = Eigen::VectorXd::Zero(m);
-	LBFGSParam<double> param;
-	param.epsilon = 1e-6;
-	param.max_iterations = max_iter;
-	LBFGSSolver<double> solver(param);
-
-	auto cost = [&](const Eigen::VectorXd &b, Eigen::VectorXd &grad)
-	{
-		return glm_cost(y, X, fam, b, grad, offset);
-	};
-
-	double fx;
-	int niter = solver.minimize(cost, weights, fx);
-	model.niter = niter;
-	model.converged = (niter < param.max_iterations);
-
-	// Copy coefficients
-	model.beta = Array<double>(m, 0.0);
-	std::copy(weights.data(), weights.data() + m, model.beta.data());
-
-	// Variance-covariance matrix
-	Matrix<double> cov;
-	if (robust) {
-		cov = glm_robust_covariance(y, X, fam, weights, offset);
-	} else {
-		cov = glm_covariance(X, fam, weights, offset);
+	// Eigen views over the input arrays
+	Eigen::Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, m);
+	Eigen::Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	const bool has_off = !offset.empty();
+	Eigen::VectorXd off_eig;
+	if (has_off) {
+		off_eig = Eigen::Map<const Vector<double>>(offset.data(), n);
 	}
 
-	// Store full variance-covariance matrix
+	// Diagnostic flag (PHON_DIAG_IRLS=1) — one-shot env-var read,
+	// matches the PHON_DIAG_LAPLACE / PHON_DIAG_PIRLS idiom in
+	// mixed_model.cpp. Zero cost when off.
+	static const bool diag_irls_on = []() {
+		const char *e = std::getenv("PHON_DIAG_IRLS");
+		return e && e[0] && e[0] != '0';
+	}();
+
+	// ── R-style data-informed initialization ────────────────────────
+	//
+	// The previous L-BFGS path cold-started at β=0, which combined
+	// with L-BFGS's quasi-Newton Hessian approximation makes the
+	// solver sensitive to predictor magnitude ratios (lowbwt with
+	// AGE≈25, LWT≈130 hits max_iterations without converging).
+	//
+	// IRLS itself is scale-invariant (the Hessian X'WX rescales
+	// with X), so the predictor-magnitude problem goes away. But
+	// we follow R's `mustart` idiom anyway: start from a data-
+	// informed μ, take its link-scale, then regress on X to get
+	// β₀. Reduces typical IRLS iteration count by 1–2 and matches
+	// what users debugging against stats::glm() expect.
+	//
+	//   Gaussian: μ_start = y                       (identity link)
+	//   Binomial: μ_start = (y + 0.5) / 2           (avoids 0/1 boundary)
+	//   Poisson:  μ_start = y + 0.1                 (avoids log(0))
+	//
+	// Falls back to β=0 if X'X is singular (perfectly collinear
+	// predictors); IRLS will then either converge from β=0 or fail
+	// the singular-X'WX check below.
+	//
+	// custom_weights families (Student-t) and dispersion-parameter
+	// families (NB, Beta) never reach glm() — they route through
+	// mixed_model_multistart in fit_impl (see fitting.cpp:1378
+	// "routes through mixed_model_multistart() with empty groups").
+	// So we only handle canonical-link families here.
+	Eigen::VectorXd mu_start(n);
+	if (fam.name == "binomial") {
+		for (intptr_t i = 0; i < n; i++) mu_start[i] = (ym[i] + 0.5) / 2.0;
+	}
+	else if (fam.name == "poisson") {
+		for (intptr_t i = 0; i < n; i++) mu_start[i] = ym[i] + 0.1;
+	}
+	else {
+		// gaussian and any other identity-link family routed here
+		mu_start = ym;
+	}
+	Eigen::VectorXd eta_start = fam.link(mu_start);
+	if (has_off) eta_start -= off_eig;
+
+	Eigen::VectorXd beta;
+	{
+		Eigen::MatrixXd XtX = Xm.transpose() * Xm;
+		Eigen::VectorXd XtEta = Xm.transpose() * eta_start;
+		Eigen::LDLT<Eigen::MatrixXd> ldlt(XtX);
+		if (ldlt.info() == Eigen::Success) {
+			beta = ldlt.solve(XtEta);
+		}
+		else {
+			beta = Eigen::VectorXd::Zero(m);
+		}
+	}
+
+	// ── Deviance at current iterate (for the line search) ──────────
+	// Frequentist GLM: just −loglik. No β prior, no random-effect
+	// prior. +∞ on any non-finite intermediate (e.g. μ saturating
+	// → log 0 in loglik) so the step-halver treats overflow
+	// identically to a rejected step.
+	auto deviance_at = [&](const Eigen::VectorXd &b) -> double {
+		Eigen::VectorXd eta = Xm * b;
+		if (has_off) eta += off_eig;
+		Eigen::VectorXd mu = fam.linkinv(eta);
+		double d = -fam.loglik(ym, mu);
+		return std::isfinite(d) ? d : std::numeric_limits<double>::infinity();
+	};
+	double dev_curr = deviance_at(beta);
+
+	// ── IRLS with step-halving ────────────────────────────────────
+	// One outer iteration:
+	//   * compute η = Xβ + offset, μ = linkinv(η)
+	//   * w_i  = (dμ/dη)² / V(μ)                  [IRLS weight]
+	//   * z_i  = (η − offset)_i + (y_i − μ_i) / (dμ/dη)_i   [working response, β-space]
+	//   * solve  (X'WX) β_proposed = X'Wz         [Newton step]
+	//   * line-search (β + α·(β_proposed − β)), α ∈ {1, 0.5, …, 2⁻¹⁰}
+	//   * accept on finite, non-catastrophic deviance change
+	//
+	// Step-halving uses the same acceptance machinery as solve_pirls
+	// (see mixed_model.cpp). Generous slack absorbs FP-noise + Newton
+	// quadratic-approximation oscillation near a flat optimum;
+	// catastrophic overshoot (μ saturating → loglik = ±Inf) is caught
+	// by the std::isfinite check in deviance_at and triggers halving.
+	constexpr int MAX_HALVINGS = 10;
+	int niter = 0;
+	bool converged = false;
+
+	for (int iter = 0; iter < max_iter; iter++)
+	{
+		niter = iter + 1;
+
+		Eigen::VectorXd eta = Xm * beta;
+		if (has_off) eta += off_eig;
+		Eigen::VectorXd mu = fam.linkinv(eta);
+		Eigen::VectorXd mu_eta_v = fam.mu_eta(mu);
+		Eigen::VectorXd V = fam.variance(mu);
+
+		Eigen::VectorXd w(n), z(n);
+		for (intptr_t i = 0; i < n; i++)
+		{
+			double me = mu_eta_v[i];
+			double v = V[i];
+			// μ_η and V both → 0 at the boundary of μ's support
+			// (binomial μ=0/1; Poisson μ=0). For canonical-link
+			// families the algebraic limit of w·z is finite, but
+			// the intermediate z would be ±∞ from y/0. We zero
+			// the contribution of degenerate observations and let
+			// step-halving / next iteration correct.
+			if (std::abs(me) < 1e-15 || v < 1e-30) {
+				w[i] = 0;
+				z[i] = eta[i] - (has_off ? off_eig[i] : 0.0);
+			}
+			else {
+				w[i] = (me * me) / v;
+				z[i] = eta[i] - (has_off ? off_eig[i] : 0.0)
+				     + (ym[i] - mu[i]) / me;
+			}
+		}
+
+		Eigen::MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
+		Eigen::VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
+
+		Eigen::LDLT<Eigen::MatrixXd> ldlt(XtWX);
+		if (ldlt.info() != Eigen::Success) {
+			// X'WX singular — perfect/quasi-separation or exact
+			// collinearity. R's glm() reports "did not converge"
+			// here; we do the same and return β at the last
+			// accepted iterate. The caller decides what to do
+			// (typically: report converged=false, refuse to use
+			// SEs, suggest dropping a predictor).
+			converged = false;
+			break;
+		}
+		Eigen::VectorXd beta_proposed = ldlt.solve(XtWz);
+
+		Eigen::VectorXd d_beta = beta_proposed - beta;
+		double max_change_full = d_beta.cwiseAbs().maxCoeff();
+
+		// ── Step-halving line search ────────────────────────────
+		double alpha = 1.0;
+		int halvings = 0;
+		bool accepted = false;
+		Eigen::VectorXd beta_try;
+		double dev_try = 0;
+		for (; halvings <= MAX_HALVINGS; halvings++)
+		{
+			beta_try = beta + alpha * d_beta;
+			dev_try = deviance_at(beta_try);
+			constexpr double LS_TOL_ABS = 1e-3;
+			constexpr double LS_TOL_REL = 1e-6;
+			double ls_slack = std::max(LS_TOL_ABS,
+			                            LS_TOL_REL * std::abs(dev_curr));
+			if (std::isfinite(dev_try) && (dev_try - dev_curr) < ls_slack)
+			{
+				accepted = true;
+				break;
+			}
+			alpha *= 0.5;
+		}
+
+		if (diag_irls_on) {
+			std::fprintf(stderr,
+			    "[irls_diag] iter=%d alpha=%.6g halvings=%d "
+			    "dev_curr=%.6f dev_try=%.6f max_change=%.6g accepted=%d\n",
+			    iter, alpha, halvings, dev_curr, dev_try,
+			    max_change_full, (int)accepted);
+		}
+
+		if (!accepted) {
+			// 10 halvings exhausted — solver stuck. β stays at
+			// the last accepted iterate. Same propagation as the
+			// singular-X'WX branch above.
+			converged = false;
+			break;
+		}
+
+		beta = beta_try;
+		dev_curr = dev_try;
+
+		if (max_change_full < 1e-8) {
+			converged = true;
+			break;
+		}
+	}
+
+	model.niter = niter;
+	model.converged = converged;
+
+	// ── Coefficients ──
+	model.beta = Array<double>(m, 0.0);
+	std::copy(beta.data(), beta.data() + m, model.beta.data());
+
+	// ── Variance-covariance matrix ──
+	Matrix<double> cov;
+	if (robust) {
+		cov = glm_robust_covariance(y, X, fam, beta, offset);
+	}
+	else {
+		cov = glm_covariance(X, fam, beta, offset);
+	}
+
 	store_vcov(model, cov);
 
-	// Standard errors
+	// ── Standard errors, Wald statistics, p-values ──
 	model.se = Array<double>(m, 0.0);
 	for (intptr_t i = 0; i < m; i++) {
 		model.se[i + 1] = sqrt(cov(i, i));
 	}
 
-	// z-values (Wald statistics)
 	model.stat = Array<double>(m, 0.0);
 	for (intptr_t i = 1; i <= m; i++) {
 		model.stat[i] = model.beta[i] / model.se[i];
 	}
 
-	// p-values (Wald chi-squared test)
 	boost::math::chi_squared dist(1);
 	model.p = Array<double>(m, 0.0);
 	for (intptr_t i = 1; i <= m; i++)
@@ -399,11 +558,8 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 		model.p[i] = 1 - boost::math::cdf(dist, wald);
 	}
 
-	// Fitted values and residuals
+	// ── Fitted values, log-likelihood, information criteria ──
 	model.compute_fitted(fam.linkinv);
-
-	// Log-likelihood at converged values
-	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
 	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
 	model.loglik = fam.loglik(ym, mu_eig);
 	model.compute_information_criteria();
