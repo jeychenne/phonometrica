@@ -307,37 +307,48 @@ void AnalysisView::setupUi()
 	                                "(GLMs, mixed models, GAMs). Has no effect on OLS."));
 	options_form->addRow(tr("Max iterations:"), m_max_iter_spin);
 
-	// ── Method (ML / REML) for Gaussian LMMs ────────────────────
+	// ── Estimation method (ML / REML) for Gaussian LMMs ─────────
 	//
 	// REML is an opt-in alternative to ML for Gaussian linear mixed
 	// models. It applies only when the family is Gaussian AND the
 	// formula contains at least one random-effects term. The row is
-	// kept in the layout at all times but hidden when N/A, so the
+	// kept in the layout at all times but disabled when N/A, so the
 	// dialog doesn't jitter as the user changes family/formula.
+	//
+	// Visible item labels are spelled out in full ("Maximum
+	// likelihood", "Restricted maximum likelihood") rather than using
+	// ML/REML abbreviations, which were judged cryptic for users
+	// unfamiliar with the literature.
+	//
+	// Default: ML is ALWAYS the initial selection. The choice is not
+	// persisted across sessions or even across fits within a single
+	// session — REML must be re-selected for each fit that wants it.
+	// This is intentional: REML is opt-in per-fit because it has
+	// narrow applicability (Gaussian LMMs only, fixed effects must
+	// match across compared models), and a persisted REML preference
+	// would silently apply to fresh LMM fits where ML is the safer
+	// default. Refits of existing models read the method from the
+	// model itself (Analysis::refit), not from this combo, so dropping
+	// persistence doesn't break the refit workflow.
 	m_method_combo = new QComboBox;
-	m_method_combo->addItem(tr("ML (default)"), QStringLiteral("ML"));
-	m_method_combo->addItem(tr("REML"), QStringLiteral("REML"));
-	m_method_combo->setItemData(0, tr("Maximum likelihood estimation."), Qt::ToolTipRole);
+	m_method_combo->addItem(tr("Maximum likelihood"), QStringLiteral("ML"));
+	m_method_combo->addItem(tr("Restricted maximum likelihood"), QStringLiteral("REML"));
+	m_method_combo->setItemData(0, tr("Maximum likelihood (default for Gaussian LMMs)."),
+	                            Qt::ToolTipRole);
 	m_method_combo->setItemData(1, tr("Restricted maximum likelihood: gives unbiased\n"
 	                                   "variance-component estimates and matches lme4's\n"
 	                                   "default. Cannot be used to compare models with\n"
-	                                   "different fixed effects (refit with ML for that)."),
+	                                   "different fixed effects (refit with maximum\n"
+	                                   "likelihood for that)."),
 	                            Qt::ToolTipRole);
-	{
-		int idx = 0;
-		try {
-			auto s = Settings::get_string("statistics", "method");
-			if (s == "REML") idx = 1;
-		} catch (...) {}
-		m_method_combo->setCurrentIndex(idx);
-	}
+	// Index 0 (ML) is implicitly current after the first addItem; no
+	// explicit setCurrentIndex needed, and no Settings load — see
+	// rationale above.
 	m_method_label = new QLabel(tr("Method:"));
 	options_form->addRow(m_method_label, m_method_combo);
 
-	connect(m_method_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int idx) {
-		String val = (idx == 1) ? "REML" : "ML";
-		Settings::set_value("statistics", "method", std::move(val));
-	});
+	// No currentIndexChanged connect: the choice is read directly from
+	// the combo at fit time (see onFit) and is not persisted.
 
 	options_action->setDefaultWidget(options_widget);
 	options_menu->addAction(options_action);
@@ -6329,7 +6340,19 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 	formula.replace('_', QStringLiteral("\\_"));
 	formula.replace('~', QStringLiteral("$\\sim$"));
 
-	tex += QStringLiteral("\\caption{%1}\n").arg(formula);
+	// Caption: formula followed by the estimation method, so that
+	// readers of the exported table can tell at a glance whether the
+	// fit was frequentist (ML or REML) or Bayesian. Mirrors the
+	// "Estimation:" line in the in-app and scripting summaries.
+	QString estimation_text;
+	if (m.is_bayesian()) {
+		estimation_text = QStringLiteral("Bayesian (Gaussian approximation)");
+	} else if (m.method == stats::Method::REML) {
+		estimation_text = QStringLiteral("Frequentist (restricted maximum likelihood)");
+	} else {
+		estimation_text = QStringLiteral("Frequentist (maximum likelihood)");
+	}
+	tex += QStringLiteral("\\caption{%1. Estimation: %2.}\n").arg(formula, estimation_text);
 
 	if (m.is_bayesian() && !m.posterior_mean.empty())
 	{
@@ -7561,7 +7584,9 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
 	if (m.is_bayesian()) {
-		text += QStringLiteral("Estimation: Bayesian (approximate posterior)\n");
+		text += QStringLiteral("Estimation: Bayesian (Gaussian approximation)\n");
+	} else if (m.method == stats::Method::REML) {
+		text += QStringLiteral("Estimation: Frequentist (restricted maximum likelihood)\n");
 	} else {
 		text += QStringLiteral("Estimation: Frequentist (maximum likelihood)\n");
 	}
@@ -8706,6 +8731,13 @@ void AnalysisView::updateMethodVisibility()
 			: tr("REML applies to mixed-effects models — add a random-effects term, e.g. (1 | speaker), to enable.");
 		m_method_combo->setToolTip(reason);
 		m_method_label->setToolTip(reason);
+		// Snap the disabled combo back to ML so the greyed-out row
+		// always reads "Maximum likelihood", consistent with what the
+		// engine actually uses for non-Gaussian families and for
+		// fixed-effects-only models. Leaving a previously-selected
+		// REML visible in a greyed-out row would falsely suggest the
+		// fit will use REML; in fact the engine would coerce to ML.
+		m_method_combo->setCurrentIndex(0);
 	}
 }
 

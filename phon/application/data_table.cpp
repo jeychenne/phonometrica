@@ -367,7 +367,9 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	if (m.is_bayesian()) {
 		rt.printf("Estimation: Bayesian (Gaussian approximation)\n");
 	} else if (m.method == stats::Method::REML) {
-		rt.printf("Method: REML\n");
+		rt.printf("Estimation: Frequentist (restricted maximum likelihood)\n");
+	} else {
+		rt.printf("Estimation: Frequentist (maximum likelihood)\n");
 	}
 	rt.printf("Observations: %ld\n", (long)m.nobs);
 
