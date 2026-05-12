@@ -1,0 +1,40 @@
+{
+  "chapter": "Ch9",
+  "dataset": "mgcv::gamSim(1, n=400, seed=2), brinla::kyphosis",
+  "engine": "inla",
+  "generated_at": "2026-05-12 08:14:51 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "INLA_version": "25.10.19",
+  "brinla_version": "0.1.0",
+  "prior_spec": {
+    "note": "Matched to Phonometrica's scale_default_priors(): intercept ~ N(mean(y_link), max(2.5, 2.5*sd(y_link))); slopes ~ N(0, max(2.5, 2.5*sd(y_link))); RE SD and gaussian/student residual SD ~ PC(scale, 0.05). Carve-out: INLA default priors on NB size, beta precision, and student dof. Tolerances on those specific posteriors are loosened — see test_*.phon."
+  },
+  "models": {
+    "M_A": {
+      "formula": "y ~ s(x0) + s(x1) + s(x2) + s(x3)",
+      "engine": "inla",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 400,
+        "waic": 1698.757429608523,
+        "p_waic": 19.391443165811
+      },
+      "fixef": {
+        "names": ["Intercept"],
+        "post_mean": [7.946127830282],
+        "post_sd": [0.1029407553093],
+        "ci_lower": [7.744139324407],
+        "ci_upper": [8.148044830388],
+        "pd": [0.9999998133785]
+      },
+      "hyper": {
+        "names": ["sd(residual)"],
+        "post_mean": [1.968982563399],
+        "post_sd": [0.07137080924227],
+        "ci_lower": [1.83297358072],
+        "ci_upper": [2.113249433037]
+      }
+    }
+  }
+}

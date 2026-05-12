@@ -1,0 +1,118 @@
+{
+  "chapter": "Ch5",
+  "dataset": "brinla::reeds, brinla::reading, boot::nitrofen, brinla::ohio",
+  "engine": "inla",
+  "generated_at": "2026-05-12 07:37:48 EDT",
+  "R_version": "R version 4.5.0 (2025-04-11)",
+  "INLA_version": "25.10.19",
+  "brinla_version": "0.1.0",
+  "prior_spec": {
+    "note": "Matched to Phonometrica's scale_default_priors(): intercept ~ N(mean(y_link), max(2.5, 2.5*sd(y_link))); slopes ~ N(0, max(2.5, 2.5*sd(y_link))); RE SD and gaussian/student residual SD ~ PC(scale, 0.05). Carve-out: INLA default priors on NB size, beta precision, and student dof. Tolerances on those specific posteriors are loosened — see test_*.phon."
+  },
+  "models": {
+    "R1": {
+      "formula": "nitrogen ~ 1 + (1|site)",
+      "engine": "inla",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 15,
+        "waic": 10.71846080105,
+        "p_waic": 3.027242945037
+      },
+      "fixef": {
+        "names": ["Intercept"],
+        "post_mean": [3.029333325619],
+        "post_sd": [0.3778749141451],
+        "ci_lower": [2.248262000438],
+        "ci_upper": [3.810404630774],
+        "pd": [0.9999973900832]
+      },
+      "hyper": {
+        "names": ["sd(residual)", "sd(Intercept|site)"],
+        "post_mean": [0.3164968296152, 0.6320833632684],
+        "post_sd": [0.06735498717101, 0.3920628579597],
+        "ci_lower": [0.2091937875173, 0.1935841559748],
+        "ci_upper": [0.4725119696404, 1.656894337974]
+      }
+    },
+    "R2": {
+      "formula": "piat ~ agegrp + (1|id)",
+      "engine": "inla",
+      "family": "gaussian",
+      "converged": true,
+      "fit": {
+        "nobs": 267,
+        "waic": 1840.360146597956,
+        "p_waic": 54.853579869442
+      },
+      "fixef": {
+        "names": ["Intercept", "agegrp"],
+        "post_mean": [-11.289218245673, 5.004527407043],
+        "post_sd": [2.258122801692, 0.2521119443474],
+        "ci_lower": [-15.717999281448, 4.50929068133],
+        "ci_upper": [-6.854662469683, 5.499025267965],
+        "pd": [1, 0.9999998164646]
+      },
+      "hyper": {
+        "names": ["sd(residual)", "sd(Intercept|id)"],
+        "post_mean": [6.723548740172, 5.486852420625],
+        "post_sd": [0.3545664993794, 0.6309280958685],
+        "ci_lower": [6.059425303712, 4.334166095334],
+        "ci_upper": [7.45161757532, 6.808949201566]
+      }
+    },
+    "R4": {
+      "formula": "live ~ conc_scaled * brood + (1|id)",
+      "engine": "inla",
+      "family": "poisson",
+      "converged": true,
+      "fit": {
+        "nobs": 150,
+        "waic": 794.997850462401,
+        "p_waic": 40.638017774175
+      },
+      "fixef": {
+        "names": ["Intercept", "conc_scaled", "broodb2", "broodb3", "conc_scaled:broodb2", "conc_scaled:broodb3"],
+        "post_mean": [1.645995774519, -0.06909122439313, 1.162404801742, 1.345586508851, -1.661831809009, -1.821059434794],
+        "post_sd": [0.1394884633656, 0.224016888979, 0.1367699583232, 0.1341370307566, 0.2473587013952, 0.2437527696174],
+        "ci_lower": [1.371608789989, -0.5124785171946, 0.8946063299805, 1.082982915147, -2.148237440193, -2.30050960021],
+        "ci_upper": [1.919628201444, 0.3676950199954, 1.430998754338, 1.609047999634, -1.178123791066, -1.3445471645],
+        "pd": [0.9999998176789, 0.620934326877, 0.9999998100568, 0.9999998099278, 1, 1]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|id)"],
+        "post_mean": [0.3221437026949],
+        "post_sd": [0.05920908176469],
+        "ci_lower": [0.2159013816214],
+        "ci_upper": [0.4489970666705]
+      }
+    },
+    "R5": {
+      "formula": "resp ~ age + smoke + (1|id)",
+      "engine": "inla",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 2148,
+        "waic": 1465.680100685975,
+        "p_waic": 190.737175236104
+      },
+      "fixef": {
+        "names": ["Intercept", "age", "smoke"],
+        "post_mean": [-2.975287841652, -0.1743969979275, 0.3887869519262],
+        "post_sd": [0.2033314071148, 0.06317877540161, 0.2427141854281],
+        "ci_lower": [-3.396101239629, -0.2986058753943, -0.08516074575583],
+        "ci_upper": [-2.598415487236, -0.05080560586174, 0.868247611777],
+        "pd": [1, 0.9972393544922, 0.9460505296437]
+      },
+      "hyper": {
+        "names": ["sd(Intercept|id)"],
+        "post_mean": [1.960848623102],
+        "post_sd": [0.1634053415325],
+        "ci_lower": [1.657155139714],
+        "ci_upper": [2.299047203149]
+      }
+    }
+  }
+}

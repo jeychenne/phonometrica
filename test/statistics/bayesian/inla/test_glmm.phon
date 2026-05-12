@@ -1,0 +1,82 @@
+# =====================================================================
+# test_glmm.phon
+# =====================================================================
+# Validates Phonometrica's Bayesian mixed-effects engine against
+# reference_glmm.json (produced by R-INLA in gen_reference_glmm.R from
+# Chapter 5 of "Bayesian Regression Modeling with INLA").
+#
+# Four models exercising both Bayesian solver paths:
+#   R1 — reeds:    nitrogen ~ 1 + (1|site)                    (gauss,  n=15,   3 sites)
+#   R2 — reading:  piat ~ agegrp + (1|id)                     (gauss,  n=233,  89 ids)
+#   R4 — nitrofen: live ~ conc_scaled * brood + (1|id)        (pois,   n=150,  50 ids)
+#   R5 — ohio:     resp ~ age + smoke + (1|id)                (binom,  n=2148, 537 ids)
+#
+# Solver paths exercised:
+#   R1, R2 → inla_grid_integrate_gaussian
+#   R4, R5 → inla_grid_integrate_pirls (validates PIRLS step-halving
+#                                       AND mixed-effects SLA correction)
+#
+# Deferred: R3 reading correlated slope+intercept — see
+# gen_reference_glmm.R header for the iid2d prior-parameterization
+# discussion.
+#
+# Tolerance philosophy:
+#   tol_inla — standard brinla bands for R2/R4/R5. RE SD posteriors
+#   are well-identified when there are dozens to hundreds of groups
+#   (89, 50, 537 respectively).
+#
+#   tol_r1 — reeds has only 3 sites. sd(Intercept|site) posterior is
+#   prior-dominated and grid-quadrature-sensitive; the engine-to-
+#   engine drift on this hyper is expected. β posteriors stay tight
+#   under matched priors so β tolerances are unchanged.
+# =====================================================================
+
+let B = import("../../lib/bayes_assert")
+
+let DATA_REEDS    = B.resolve_sibling("../../../data/reeds_brinla.csv")
+let DATA_READING  = B.resolve_sibling("../../../data/reading_brinla.csv")
+let DATA_NITROFEN = B.resolve_sibling("../../../data/nitrofen_brinla.csv")
+let DATA_OHIO     = B.resolve_sibling("../../../data/ohio_brinla.csv")
+let REF           = B.resolve_sibling("reference_glmm.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+
+B.start_section("BAYESIAN GLMM (Ch5 INLA-reference)")
+
+# ── Standard tolerance ─────────────────────────────────────────────
+let tol_inla = B.default_tolerance()
+tol_inla["mean_rel"]       = 0.10
+tol_inla["sd_rel"]         = 0.15
+tol_inla["ci_rel"]         = 0.20
+tol_inla["hyper_mean_rel"] = 0.25
+tol_inla["hyper_sd_rel"]   = 0.30
+tol_inla["hyper_ci_rel"]   = 0.65
+tol_inla["waic_abs"]       = 5.0
+
+# ── R1 carve-out: 3 sites, prior-dominated RE SD posterior ────────
+let tol_r1 = B.default_tolerance()
+tol_r1["mean_rel"]       = 0.10
+tol_r1["sd_rel"]         = 0.15
+tol_r1["ci_rel"]         = 0.20
+tol_r1["hyper_mean_rel"] = 0.40
+tol_r1["hyper_sd_rel"]   = 0.50
+tol_r1["hyper_ci_rel"]   = 0.80
+tol_r1["waic_abs"]       = 5.0
+
+# ── R1, R2 Gaussian + RE int ──────────────────────────────────────
+let d_reeds = load(DATA_REEDS)
+B.bayes_fit_and_check("R1", "nitrogen ~ 1 + (1|site)", d_reeds, "gaussian", refs["R1"], tol_r1)
+
+let d_reading = load(DATA_READING)
+B.bayes_fit_and_check("R2", "piat ~ agegrp + (1|id)", d_reading, "gaussian", refs["R2"], tol_inla)
+
+# ── R4 Poisson + RE int (interaction expansion exercised) ─────────
+let d_nitrofen = load(DATA_NITROFEN)
+B.bayes_fit_and_check("R4", "live ~ conc_scaled * brood + (1|id)", d_nitrofen, "poisson", refs["R4"], tol_inla)
+
+# ── R5 Binomial + RE int (large data, PIRLS heavy) ────────────────
+let d_ohio = load(DATA_OHIO)
+B.bayes_fit_and_check("R5", "resp ~ age + smoke + (1|id)", d_ohio, "binomial", refs["R5"], tol_inla)
+
+B.end_section()

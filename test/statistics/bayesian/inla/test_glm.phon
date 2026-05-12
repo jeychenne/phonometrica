@@ -1,0 +1,80 @@
+# =====================================================================
+# test_glm.phon
+# =====================================================================
+# Validates Phonometrica's Bayesian binomial, Poisson, and NB engines
+# against reference_glm.json (produced by R-INLA in
+# gen_reference_glm.R from Chapter 4 of "Bayesian Regression Modeling
+# with INLA").
+#
+# Six models:
+#   G1 — lowbwt full:    LOW ~ AGE + LWT + RACE + SMOKE + HT + UI + FTV  (binomial, n=189)
+#   G2 — lowbwt reduced: LOW ~ LWT + RACE + SMOKE + HT + UI               (binomial, n=189)
+#   G3 — AIDS linear:    DEATHS ~ TIME                                    (poisson,  n=14)
+#   G4 — AIDS log:       DEATHS ~ log_time   (log_time precomputed)       (poisson,  n=14)
+#   G5 — crab NB:        SATELLITES ~ COLOR + SPINE + WIDTH                (negbin,   n=173)
+#   G6 — crab Poisson:   SATELLITES ~ COLOR + SPINE + WIDTH                (poisson,  n=173)
+#
+# Tolerance philosophy:
+#   * Binomial/Poisson have no family-level hyperparameter — tol_inla
+#     covers β posteriors and WAIC only. Bands match the BLR slice;
+#     the Laplace-vs-Laplace numerical gap is expected to be similar.
+#   * NB (G5) carve-out: INLA's default loggamma prior on size differs
+#     from Phon's Gamma(1, 0.01) prior on theta(NB). tol_g5 widens
+#     hyper tolerance to absorb the resulting θ-posterior shift; β
+#     stays under matched priors so β tolerances are unchanged.
+# =====================================================================
+
+let B = import("../../lib/bayes_assert")
+
+let DATA_LOWBWT = B.resolve_sibling("../../../data/lowbwt_brinla.csv")
+let DATA_AIDS   = B.resolve_sibling("../../../data/aids_brinla.csv")
+let DATA_CRAB   = B.resolve_sibling("../../../data/crab_brinla.csv")
+let REF         = B.resolve_sibling("reference_glm.json")
+
+let refs_root = B.load_reference(REF)
+let refs = refs_root["models"]
+
+B.start_section("BAYESIAN GLM (Ch4 INLA-reference)")
+
+# ── INLA-matched tolerance (β posteriors + WAIC) ──────────────────
+# β tight under matched priors; hyper tolerances aren't exercised by
+# binomial / Poisson (no family-level dispersion). For G5 (NB) the
+# hyper tolerance is overridden in tol_g5 below.
+let tol_inla = B.default_tolerance()
+tol_inla["mean_rel"]       = 0.10
+tol_inla["sd_rel"]         = 0.15
+tol_inla["ci_rel"]         = 0.20
+tol_inla["hyper_mean_rel"] = 0.25
+tol_inla["hyper_sd_rel"]   = 0.30
+tol_inla["hyper_ci_rel"]   = 0.65
+tol_inla["waic_abs"]       = 5.0
+
+# ── NB carve-out tolerance ────────────────────────────────────────
+# theta(NB) under different priors (Phon Gamma(1, 0.01) vs INLA
+# default loggamma); posterior on θ can shift modestly. β posteriors
+# remain matched, so β tolerances are unchanged from tol_inla.
+let tol_g5 = B.default_tolerance()
+tol_g5["mean_rel"]       = 0.10
+tol_g5["sd_rel"]         = 0.15
+tol_g5["ci_rel"]         = 0.20
+tol_g5["hyper_mean_rel"] = 0.50
+tol_g5["hyper_sd_rel"]   = 0.50
+tol_g5["hyper_ci_rel"]   = 0.70
+tol_g5["waic_abs"]       = 5.0
+
+# ── G1, G2 lowbwt (binomial) ──────────────────────────────────────
+let d_lb = load(DATA_LOWBWT)
+B.bayes_fit_and_check("G1", "LOW ~ AGE + LWT + RACE + SMOKE + HT + UI + FTV", d_lb, "binomial", refs["G1"], tol_inla)
+B.bayes_fit_and_check("G2", "LOW ~ LWT + RACE + SMOKE + HT + UI",             d_lb, "binomial", refs["G2"], tol_inla)
+
+# ── G3, G4 AIDS (Poisson) ─────────────────────────────────────────
+let d_aids = load(DATA_AIDS)
+B.bayes_fit_and_check("G3", "DEATHS ~ TIME",     d_aids, "poisson", refs["G3"], tol_inla)
+B.bayes_fit_and_check("G4", "DEATHS ~ log_time", d_aids, "poisson", refs["G4"], tol_inla)
+
+# ── G5, G6 crab (NB + Poisson) ────────────────────────────────────
+let d_crab = load(DATA_CRAB)
+B.bayes_fit_and_check("G5", "SATELLITES ~ COLOR + SPINE + WIDTH", d_crab, "negbin",  refs["G5"], tol_g5)
+B.bayes_fit_and_check("G6", "SATELLITES ~ COLOR + SPINE + WIDTH", d_crab, "poisson", refs["G6"], tol_inla)
+
+B.end_section()
