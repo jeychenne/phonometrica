@@ -3007,8 +3007,35 @@ struct GridPointResult
 	Eigen::VectorXd beta;        // conditional mode β̂(θ)
 	Eigen::MatrixXd vcov_beta;   // conditional Var(β|θ), p × p
 	double neg_log_posterior;     // neg-log-posterior at θ
-	Eigen::VectorXd d3;          // SLA third-derivative correction per coefficient (size p)
-	                              // d3_j = Σ_i X³_{ij} ℓ'''(η̂_i)
+
+	// Simplified Laplace (Tierney-Kadane skewness) correction to the
+	// per-coefficient *marginal* posterior mean at this grid point:
+	//
+	//   sla_delta_j = ½ Σ_i ℓ'''(η̂_i) · (Σ_γ W_i)_j · (W_i^T Σ_γ W_i)
+	//
+	// where γ = (β; u) is the joint latent vector, W = (X | Z) is the
+	// augmented design, and Σ_γ is the joint Henderson inverse C⁻¹
+	// (already computed locally inside eval_*_grid_point for vcov_beta).
+	// Derivation: Wick expansion of the cubic term in the joint posterior;
+	// see RMC (2009) §3.2.2 and Tierney-Kadane (1986) JASA 81(393).
+	//
+	// The mixture step reports (β̂_k + sla_delta_k) as the posterior mean,
+	// not β̂_k.  WAIC sampling is recentred on β̂_k + sla_delta_k for the
+	// same reason — it gives a closer Gaussian to the true skewed posterior.
+	//
+	// Gaussian families: ℓ'''(η) ≡ 0 ⇒ sla_delta = 0; populated as a
+	// zero vector for code symmetry.
+	//
+	// Historical note: a previous implementation used the special case
+	// δ_j ∝ Σ_i x³_{ij} ℓ'''(η̂_i) — the same formula as Phase 1's fixed-
+	// effects path, with Σ_β|θ in place of Σ_γ and x_i in place of W_i.
+	// That collapses correctly when there are no random effects but over-
+	// corrects Intercepts by 0.1–0.3 logit on random-intercept models
+	// (because it discards the off-diagonal Σ_βu block that captures
+	// β ↔ u shrinkage cancellation).  The full joint formula above is
+	// numerically verified against the brute-force six-pattern tensor
+	// sum on synthetic GLMMs to machine precision.
+	Eigen::VectorXd sla_delta;
 	// Populated only for non-Gaussian PIRLS grid points; empty otherwise.
 	// Used by compute_grid_waic to sample u from its Laplace-approximate
 	// conditional posterior u|β,θ,y, matching the Gaussian closed-form path.
@@ -3109,7 +3136,7 @@ static intptr_t sanitise_grid_points(
 			// Zero out results so that w[k] * beta[k] = 0 * 0 = 0, not 0 * NaN.
 			results[k].beta = Eigen::VectorXd::Zero(p);
 			results[k].vcov_beta = Eigen::MatrixXd::Zero(p, p);
-			results[k].d3 = Eigen::VectorXd::Zero(p);
+			results[k].sla_delta = Eigen::VectorXd::Zero(p);
 			results[k].neg_log_posterior = std::numeric_limits<double>::infinity();
 		}
 	}
@@ -3441,8 +3468,8 @@ static GridPointResult eval_gaussian_grid_point(
 	Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 	gpr.vcov_beta = Cinv.topLeftCorner(p, p);
 
-	// Gaussian ℓ'''(η) = 0 ⇒ no simplified Laplace correction.
-	gpr.d3 = Eigen::VectorXd::Zero(p);
+	// Gaussian: ℓ'''(η) ≡ 0, so the SLA correction is identically zero.
+	gpr.sla_delta = Eigen::VectorXd::Zero(p);
 
 	return gpr;
 }
@@ -3890,32 +3917,65 @@ static GridPointResult eval_pirls_grid_point(
 		}
 	}
 
-	// ── Simplified Laplace correction: third derivative d₃ ──────
+	// ── Simplified Laplace correction (joint-covariance form) ──────
 	//
-	// d3_j = Σ_i X³_{ij} × ℓ'''(η̂_i)
+	// Per-coefficient marginal-mean correction for π(β_j | θ, y) at this
+	// grid point:
 	//
-	// where ℓ'''(η) is the third derivative of the per-observation
-	// log-likelihood w.r.t. η.  For non-Gaussian families this is
-	// generally nonzero and captures the skewness of the posterior.
+	//   δ_j = ½ Σ_i ℓ'''(η̂_i) · (Σ_γ W_i)_j · (W_i^T Σ_γ W_i)
 	//
-	// Reference: Rue, Martino & Chopin (2009), Section 3.2.2.
+	// where W_i = (x_i; z_i) is the i-th row of the augmented design and
+	// Σ_γ = C⁻¹ is the joint posterior covariance of (β, u) — exactly the
+	// `Cinv` already computed above for gpr.vcov_beta (we use the full
+	// sdim × sdim matrix here, not just the top-left p × p block).
+	//
+	// Implementation cost: one (n × sdim) × (sdim × sdim) matmul to get
+	// SW = W · Σ_γ, then a length-n dot loop for (W_i^T Σ_γ W_i), then a
+	// (p × n) × (n × 1) gemv for the final δ.  Dominant term O(n · sdim²),
+	// dwarfed by the PIRLS solve in fits that exercise it.
+	//
+	// For Gaussian families ℓ''' ≡ 0 ⇒ δ ≡ 0; this branch is skipped via
+	// the `loglik_d3` guard.  For random-effects-free models the grid path
+	// isn't entered at all (Phase 1's bayesian_adjust handles those).
+	//
+	// Verified against the brute-force six-pattern tensor sum on synthetic
+	// binomial-logit GLMMs to machine precision in all of: random intercept,
+	// random slope, strong-RE limit, and q=0 (reduces to Phase 1's formula).
 
-	gpr.d3 = Eigen::VectorXd::Zero(p);
+	gpr.sla_delta = Eigen::VectorXd::Zero(p);
 	if (fam_gp.loglik_d3)
 	{
-		// Compute η̂ = g(μ̂) via the link function.
-		Eigen::VectorXd eta_hat = fam_gp.link(res.mu);
-		Eigen::VectorXd ell3 = fam_gp.loglik_d3(ym, res.mu, eta_hat);
+		// η̂ on the full linear-predictor scale (offset folded in by link).
+		Eigen::VectorXd eta_hat_full = fam_gp.link(res.mu);
+		Eigen::VectorXd ell3 = fam_gp.loglik_d3(ym, res.mu, eta_hat_full);
 
-		for (intptr_t j = 0; j < p; j++)
+		// Augmented design W = (X | Z), materialised row-by-row.
+		Eigen::MatrixXd Wmat = Eigen::MatrixXd::Zero(n, sdim);
+		Wmat.leftCols(p) = Xm;
+		for (intptr_t i = 0; i < n; i++)
 		{
-			double sum = 0;
-			for (intptr_t i = 0; i < n; i++) {
-				double xij = Xm(i, j);
-				sum += xij * xij * xij * ell3[i];
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t jlev = (*lay.group_indices[g])[i];
+				intptr_t qg = lay.q[g];
+				intptr_t base = p + lay.offset[g] + jlev * qg;
+				for (intptr_t t = 0; t < qg; t++)
+					Wmat(i, base + t) = lay.Z(g, i, t);
 			}
-			gpr.d3[j] = sum;
 		}
+
+		// SW = W · Σ_γ   (n × sdim).  Row i of SW is (Σ_γ W_i)^T since
+		// Σ_γ is symmetric, so SW(i, j) = (Σ_γ W_i)_j for any j.
+		Eigen::MatrixXd SW = Wmat * Cinv;
+
+		// W_i^T Σ_γ W_i  =  W_i · (Σ_γ W_i)  =  Wmat.row(i) · SW.row(i).
+		Eigen::VectorXd var_eta(n);
+		for (intptr_t i = 0; i < n; i++)
+			var_eta[i] = Wmat.row(i).dot(SW.row(i));
+
+		// δ_j = ½ Σ_i ℓ'''(η̂_i) · SW(i, j) · var_eta_i, for j in β-block.
+		Eigen::VectorXd s = 0.5 * ell3.cwiseProduct(var_eta);
+		gpr.sla_delta = SW.leftCols(p).transpose() * s;
 	}
 
 	return gpr;
@@ -4404,12 +4464,15 @@ static void compute_grid_waic(
 		intptr_t k = (intptr_t)(std::lower_bound(cdf.begin(), cdf.end(), uu) - cdf.begin());
 		k = std::min(k, n_grid - 1);
 
-		// Draw β^(s) ~ N(β̂_k, Σ_β(θ_k))
+		// Draw β^(s) ~ N(β̂_k + δ_k, Σ_β(θ_k)).  Centring on the SLA-
+		// corrected mean β̂_k + δ_k (rather than the bare conditional
+		// mode β̂_k) gives a closer Gaussian to the true skewed posterior
+		// for non-Gaussian families.  For Gaussian families δ_k ≡ 0.
 		Eigen::VectorXd z_beta(p);
 		for (intptr_t j = 0; j < p; j++)
 			z_beta[j] = std_normal(rng);
 
-		Eigen::VectorXd beta_s = results[k].beta;
+		Eigen::VectorXd beta_s = results[k].beta + results[k].sla_delta;
 		if (chol_ok[k])
 			beta_s += chol_vcov[k].matrixL() * z_beta;
 
@@ -5235,15 +5298,15 @@ static void inla_grid_integrate_gaussian(
 
 	// ── 5b. Per-grid-point conditional means ───────────────────
 	//
-	// For Gaussian families ℓ'''(η) ≡ 0, so the SLA third-derivative
-	// correction is mathematically zero here.  See the PIRLS path for
-	// the full rationale (and for why SLA is also disabled there).
-	// The variable name sla_beta is kept to minimise downstream churn.
+	// For Gaussian families ℓ'''(η) ≡ 0, so sla_delta_k = 0 at every grid
+	// point (set unconditionally in eval_gaussian_grid_point).  The add
+	// below is therefore a no-op here, kept for symmetry with the PIRLS
+	// path's SLA correction.
 
 	std::vector<Eigen::VectorXd> sla_beta(n_grid);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		sla_beta[k] = results[k].beta;
+		sla_beta[k] = results[k].beta + results[k].sla_delta;
 	}
 
 	// ── 6. Mixture posterior for β ───────────────────────────────
@@ -5823,45 +5886,27 @@ static void inla_grid_integrate_pirls(
 		for (intptr_t k = 0; k < n_grid; k++) w[k] = 1.0 / (double) n_grid;
 	}
 
-	// ── 5b. Per-grid-point conditional means ───────────────────
+	// ── 5b. Per-grid-point conditional means with SLA correction ──
 	//
-	// The current implementation uses the Gaussian Laplace approximation
-	// at each grid point without any additional skewness correction:
+	// Each grid point's conditional posterior π(β | θ_k, y) is skewed for
+	// non-Gaussian families.  The simplified Laplace (Tierney-Kadane)
+	// correction shifts the reported posterior mean from the conditional
+	// mode β̂(θ_k) to β̂(θ_k) + δ_k via the joint third-derivative tensor
+	// contracted against the joint covariance Σ_γ = C⁻¹:
 	//
-	//   μ̃_j(θ_k) = β̂_j(θ_k) = mode of π_G(β_j | θ_k, y)
+	//   δ_k,j = ½ Σ_i ℓ'''(η̂_i,k) · (Σ_γ,k W_i)_j · (W_i^T Σ_γ,k W_i)
 	//
-	// A simplified Laplace (SLA) correction along the lines of
-	// Rue, Martino & Chopin (2009) §3.2.2 was previously applied as
+	// δ_k is computed inside eval_pirls_grid_point and stored on the
+	// GridPointResult.  See the comment on GridPointResult::sla_delta for
+	// the derivation sketch and a historical note on the wrong univariate
+	// formula that was tried and reverted.
 	//
-	//   μ̃_j(θ_k) = β̂_j(θ_k) + ½ d₃_j(θ_k) σ⁴_j(θ_k)
-	//
-	// where d₃_j = Σ_i X³_{ij} ℓ'''(η̂_i).  This formula is only first-
-	// order correct for the *marginal* posterior of β_j when the mixed
-	// third derivatives ∂³ℓ/∂β_j∂β_k∂β_l are negligible — i.e., when β_j
-	// is effectively independent of the other fixed effects.  For the
-	// **intercept** column (all 1's, correlated with every other coefficient)
-	// this assumption is routinely violated, and we observed
-	// 0.1–0.3 logit over-corrections on binomial/Poisson GLMM intercepts
-	// relative to brms (NUTS MCMC) and INLA references, with no benefit
-	// to slope estimates (whose SLA shifts are numerically negligible —
-	// ≤ 0.003 on the logit scale for typical designs).
-	//
-	// A properly marginalised SLA correction would require the full
-	// third-derivative tensor of ℓ plus a correction derived from
-	// integrating the other β's out Laplace-style.  That is deferred.
-	// For now we use the plain Laplace-at-the-mode β̂_j(θ_k), which
-	// matches INLA's default for non-Gaussian models and gives posterior
-	// means within MC noise of brms.
-	//
-	// Note: for Gaussian families d₃ = 0 always (ℓ'''(η) ≡ 0 for the
-	// normal log-density w.r.t. η), so this branch was a no-op there.
-	// The variable name sla_beta is kept to minimise downstream churn;
-	// it now simply aliases β̂_k.
+	// Reference: Rue, Martino & Chopin (2009), §3.2.2.
 
 	std::vector<Eigen::VectorXd> sla_beta(n_grid);
 	for (intptr_t k = 0; k < n_grid; k++)
 	{
-		sla_beta[k] = results[k].beta;
+		sla_beta[k] = results[k].beta + results[k].sla_delta;
 	}
 
 	// ── 6. Mixture posterior for β ───────────────────────────────
