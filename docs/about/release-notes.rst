@@ -3,6 +3,37 @@ Release notes
 
 
 
+0.9.4 (14/05/2026)
+~~~~~~~~~~~~~~~~~~
+
+**General**
+
+- New **Fitting options** popup (gear icon next to the **Fit** button in the analysis view) gathers settings that apply to the next fit: default estimation type (frequentist / Bayesian), maximum optimizer iterations, and — for Gaussian linear mixed models — the choice between **ML** and **REML**.
+
+**Statistical analysis**
+
+- **REML** is now available as an opt-in alternative to ML for Gaussian linear mixed models. The choice is per fit and is never persisted across sessions; ML remains the default. Numerical results match ``lme4`` and ``glmmTMB`` to several decimal places on typical datasets. **Model comparison** enforces two safeguards: ML-fitted and REML-fitted models cannot be compared to each other, and REML-fitted models can only be compared when they share the same **fixed-effects** design — comparing REML models that differ only in their random-effects structure is the canonical use case and is allowed. Both restrictions produce a clear error with a corrective suggestion rather than silently returning a meaningless result.
+- **Skew-Laplace approximation (SLA)** is now applied at all marginal-posterior summary sites in Bayesian regression — fixed-effects-only and mixed-effects, for all supported response families. The Tierney–Kadane third-derivative skewness correction improves the accuracy of posterior means, credible intervals, and probability of direction for skewed posteriors, particularly for variance-component hyperparameters and for coefficients in non-Gaussian models. An Edgeworth third-cumulant correction is additionally applied per-component to the probability of direction reported by mixture posteriors.
+- **Fixed-effects GLMs** (Gaussian, binomial, Poisson, negative binomial) now use an IRLS inner solver, improving accuracy and convergence on ill-conditioned or near-saturated designs.
+- **PIRLS step-halving** in mixed-effects GLMMs makes the inner Newton loop robust against overshoot in datasets with strong random-effects variance: the optimizer now backtracks when a proposed step would increase the joint negative log-likelihood.
+- **Bayesian robust (Student-t) regression**: refactored ν-prior infrastructure with a dedicated ``StudentNuPrior`` defaulting to Gamma(2, 0.1) over a bounded range. This is primarily a structural change; existing fits reload unchanged.
+- Fixed a bug whereby the ML/REML selection in the analysis view was not consistently applied when a model was refit or restored from a saved analysis.
+
+**Exploratory data analysis**
+
+- **Group** and **Facet** variables are now available across **all** EDA plot types (Histogram, Bar chart, Boxplot, Scatter, Formant chart). *Group* splits the data within each panel into colored subseries — overlaid translucent fills for histograms, dodged sub-bars for bar charts, side-by-side boxes for boxplots, and color (plus marker shape via *Style*) for scatter plots. *Facet* builds small multiples, one panel per level of a categorical variable; panels are laid out near-square with a four-column cap by default, overridable via the Customize dialog. Group and Facet combine freely.
+- **Pool by** *(scatter and formant chart, with Group set)*: average X and Y values within each (group, pool) cell before plotting — for example, pool by speaker to obtain one point per speaker per vowel. This restores the pre-grouping behaviour of formant charts as an explicit, named option.
+- **Style** *(scatter and formant chart, with Group set)*: encode a second categorical variable as marker shape (and confidence-ellipse line style), freeing colour to encode Group.
+- New **Customize…** dialog for EDA plots gives access to the plot title, X / Y / legend titles, X and Y range overrides (with comma- or dot-decimal separators), and the per-row facet column count. Customizations persist across variable changes but reset automatically on plot-type change. A **Reset** button clears all customizations at once.
+- The plot type can now be forced manually (Histogram / Bar chart / Boxplot / Scatter / Formant chart) instead of always being inferred from the selected variables, with an inline hint when the chosen variables don't fit the chosen plot type.
+
+**Internal**
+
+- New R-INLA-based validation suite (``test/statistics/bayesian/inla/``): four chapters of brinla reference fits (BLR / GLM / GLMM / GAM) with reference posteriors stored as JSON and matching ``.phon`` test scripts.
+- New REML validation suite against ``lme4`` / ``glmmTMB`` reference fits.
+
+
+
 0.9.3 (10/05/2026)
 ~~~~~~~~~~~~~~~~~~
 

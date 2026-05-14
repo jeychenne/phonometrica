@@ -1,3 +1,24 @@
+phonometrica (0.9.4) unstable; urgency=medium
+
+  * REML estimation option for Gaussian linear mixed models, with
+    model-comparison safeguards (ML/REML cross-comparison refused, REML
+    comparison restricted to matching fixed-effects designs)
+  * Group and Facet variables across all EDA plot types; new Pool-by and
+    Style variables for scatter and formant charts; new Customize dialog
+    for titles, axis labels, range overrides, and facet layout
+  * Skew-Laplace correction applied at all Bayesian marginal-posterior
+    summary sites (fixed and mixed effects, all families); Edgeworth
+    third-cumulant correction for probability of direction
+  * IRLS solver for fixed-effects GLMs; step-halving in the PIRLS inner
+    loop for mixed-effects GLMMs
+  * Refactored ν-prior infrastructure for Bayesian Student-t regression
+  * Bug fix: ML/REML selection in the analysis view is now consistently
+    applied across refits
+  * New validation suites against R-INLA (brinla reference fits) and
+    against lme4/glmmTMB for REML
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Thu, 14 May 2026 12:00:00 +0000
+
 phonometrica (0.9.3) unstable; urgency=medium
 
   * support for nested random effects in regression formulas
