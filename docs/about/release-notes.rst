@@ -12,12 +12,8 @@ Release notes
 
 **Statistical analysis**
 
-- **REML** is now available as an opt-in alternative to ML for Gaussian linear mixed models. The choice is per fit and is never persisted across sessions; ML remains the default. Numerical results match ``lme4`` and ``glmmTMB`` to several decimal places on typical datasets. **Model comparison** enforces two safeguards: ML-fitted and REML-fitted models cannot be compared to each other, and REML-fitted models can only be compared when they share the same **fixed-effects** design — comparing REML models that differ only in their random-effects structure is the canonical use case and is allowed. Both restrictions produce a clear error with a corrective suggestion rather than silently returning a meaningless result.
-- **Skew-Laplace approximation (SLA)** is now applied at all marginal-posterior summary sites in Bayesian regression — fixed-effects-only and mixed-effects, for all supported response families. The Tierney–Kadane third-derivative skewness correction improves the accuracy of posterior means, credible intervals, and probability of direction for skewed posteriors, particularly for variance-component hyperparameters and for coefficients in non-Gaussian models. An Edgeworth third-cumulant correction is additionally applied per-component to the probability of direction reported by mixture posteriors.
-- **Fixed-effects GLMs** (Gaussian, binomial, Poisson, negative binomial) now use an IRLS inner solver, improving accuracy and convergence on ill-conditioned or near-saturated designs.
-- **PIRLS step-halving** in mixed-effects GLMMs makes the inner Newton loop robust against overshoot in datasets with strong random-effects variance: the optimizer now backtracks when a proposed step would increase the joint negative log-likelihood.
-- **Bayesian robust (Student-t) regression**: refactored ν-prior infrastructure with a dedicated ``StudentNuPrior`` defaulting to Gamma(2, 0.1) over a bounded range. This is primarily a structural change; existing fits reload unchanged.
-- Fixed a bug whereby the ML/REML selection in the analysis view was not consistently applied when a model was refit or restored from a saved analysis.
+- **Restricted maximum likelihood** is now available as an opt-in alternative to maximum likelihood for Gaussian linear mixed models.
+- improvements to the statistical engine
 
 **Exploratory data analysis**
 
