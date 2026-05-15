@@ -48,6 +48,34 @@ Return the duration of the selection in the current annotation or sound view, or
 Return a list of the visible channel indices in the current annotation or sound view.
 
 
+Structural transformations
+--------------------------
+
+These functions produce a **new** sound file on disk and return a fresh ``Sound`` handle. They do
+not modify the source and do not add the result to the current project — call ``import_file(path)``
+if you want the new file in the project. The on-disk format of the result is inferred from the
+output path's extension (``.wav``, ``.aiff``, ``.flac``, or ``.ogg``). Data is streamed through
+libsndfile, so even multi-hour files are processed in constant memory.
+
+
+.. function:: extract_sound_slice(sound as Sound, t_start as Number, t_end as Number, path as String)
+
+Extracts the samples in ``[t_start, t_end]`` (in seconds) from ``sound`` into a new sound file at
+``path`` and returns the resulting ``Sound``. Times must satisfy ``0 <= t_start < t_end <=
+duration``. Sample rate and channel count are preserved.
+
+------------
+
+.. function:: concatenate_sounds(sources as List, path as String)
+
+Concatenates the sounds in ``sources`` end-to-end into a new sound file at ``path`` and returns
+it. All sources must share the same sample rate and channel count; any mismatch raises an error
+identifying the first offending file. The output keeps the common rate and channel count, with
+the format determined by ``path``'s extension.
+
+------------
+
+
 Acoustic measurement
 --------------------
 

@@ -150,6 +150,92 @@ and choose **Open in Praat**, or use the corresponding command in the toolbar. T
 to Praat so that you can view the annotation overlaid on the sound in Praat's editor.
 
 
+.. _annotation-file-operations:
+
+Annotation file operations
+--------------------------
+
+Phonometrica lets you transform annotations as files: making copies, pulling layers out, slicing
+to a sub-interval, merging compatible annotations, and concatenating them end-to-end. All these
+operations produce a **new** file on disk and add it to the current project. They are accessible
+from the context menu in the file manager when one or more annotations are selected. Each operation
+inherits the source's properties, description, and (where it still applies) sound binding; for
+multi-source operations, properties from later inputs override earlier ones on category collision.
+By default, the result keeps the source's format (native ``.phon-annot`` or Praat TextGrid); when the
+sources disagree, a format selector appears in the dialog.
+
+Duplicate
+~~~~~~~~~
+
+Right-click an annotation and choose **Duplicate**. A copy is created next to the source with the
+suffix ``_copy``, in the same format, with the same properties, description, and sound binding.
+This is the fastest way to fork an annotation before destructive edits.
+
+Extract layers
+~~~~~~~~~~~~~~
+
+When you want only a subset of an annotation's layers (for example, the phone and word layers
+from a richer annotation), right-click and choose **Extract layers...**. The dialog lists every
+layer with its label and kind (intervals vs. instants); check the ones you want. The selected
+layers are copied into a new annotation in display order. The sound binding is inherited because
+the duration is unchanged.
+
+Extract slice
+~~~~~~~~~~~~~
+
+To cut out a time region, right-click and choose **Extract slice...**. The dialog has plain text
+fields for the start and end times in seconds (so you can paste exact values from Praat or elsewhere)
+and a checkbox controlling boundary handling for partial events:
+
+- **Clip events that straddle the boundary** (default): events partially inside the slice are
+  kept but clipped to the slice boundaries.
+- **Off**: such events are dropped entirely.
+
+Instants are never partial: an instant at time *t* is kept iff *t* lies in [start, end] inclusive.
+Times in the resulting annotation are shifted so the slice starts at zero.
+
+When the source annotation is bound to a sound, the dialog also lets you choose what to extract:
+**Annotation only**, **Sound only**, or **Both**. In the **Both** mode, the matching portion of the
+bound sound is extracted to a new audio file and the new annotation is automatically bound to it.
+You can right-click a sound directly to extract a sound slice without involving an annotation.
+
+Merge annotations
+~~~~~~~~~~~~~~~~~
+
+When two or more annotations cover the same time range with different layers (for example, one
+annotation has phones and words, another adds POS tags), you can combine them into a single
+annotation. Multi-select the annotations in the file manager, right-click, and choose
+**Merge annotations...**. The dialog lets you pick one as the **base** (its sound binding and
+description are inherited); the layers of the others are appended after the base's. All sources
+must have the same effective duration within 1 ms — the bound sound's duration if available,
+otherwise the maximum event end time. Any annotation that doesn't match the base is listed in
+red and the operation is blocked until you cancel and resolve the mismatch.
+
+If two layers happen to have the same label, the duplicates are renamed ``label (2)``, ``label (3)``,
+and so on.
+
+Concatenate annotations
+~~~~~~~~~~~~~~~~~~~~~~~
+
+To glue annotations end-to-end (typically when you've split a long recording into chunks for
+annotation and now want a single file), multi-select them, right-click, and choose
+**Concatenate annotations...**. The dialog shows the sources in a list you can reorder by drag
+and drop; the first source provides the layer labels, format, properties, and description for the
+result. All sources must share the same number of layers and matching layer kinds (interval vs.
+instant) at each index; layer-count mismatches are reported at OK time by the underlying operation.
+
+For annotations bound to a sound, the source's duration is taken from the sound. For unbound
+sources, the dialog shows one duration spinner per unbound annotation under "Durations for unbound
+annotations" so you can give each one an explicit duration in seconds — inferring from the maximum
+event end is unreliable when an annotation has meaningful trailing silence. Events from source *i*
+are shifted by the cumulative duration offset; adjacent intervals at boundaries are kept distinct
+rather than merged, since their labels may differ.
+
+The result is not automatically bound to any sound. If you want a concatenated annotation that is
+bound, concatenate the matching sound files separately (see :ref:`sound-file-operations`) and bind
+the result manually.
+
+
 References
 ----------
 

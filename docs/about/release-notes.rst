@@ -2,6 +2,21 @@ Release notes
 -------------
 
 
+0.9.5 (00/00/2026)
+~~~~~~~~~~~~~~~~~~
+
+**Sound and annotation views**
+
+- **Annotation file operations** in the file manager context menu: *Duplicate*, *Extract layers...*, *Extract slice...*, *Merge annotations...*, and *Concatenate annotations...*. Each produces a new file on disk and adds it to the project, inheriting properties, description, and (where preserved) sound binding from the source(s). Merge requires matching durations within 1 ms; concatenate accepts per-source explicit durations for unbound inputs. The new annotation keeps the source's format by default (native ``.phon-annot`` or Praat TextGrid), with a selector when sources disagree.
+- **Sound file operations**: *Extract slice...* (single sound or as the sound side of an annotation slice) and *Concatenate sounds...*. Concatenation is strict-mode (matching sample rate and channel count); resample-on-concatenate is planned. Output format (WAV, AIFF, FLAC, OGG) is selectable.
+- *Extract slice...* on a bound annotation offers three modes — annotation only, sound only, or both; the *both* mode binds the new annotation to the new sound automatically.
+
+**Scripting**
+
+- New globals matching the GUI operations: ``duplicate_annotation``, ``extract_layers``, ``merge_annotations``, ``extract_annotation_slice`` (two overloads), ``concatenate_annotations`` (two overloads), ``extract_sound_slice``, ``concatenate_sounds``. All return a fresh handle to a file written on disk; the caller decides whether to import it into the project.
+
+
+
 
 0.9.4 (14/05/2026)
 ~~~~~~~~~~~~~~~~~~

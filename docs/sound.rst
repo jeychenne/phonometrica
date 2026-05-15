@@ -211,6 +211,41 @@ To extract spectral moments systematically from a corpus, use a spectral moments
 (see :ref:`acoustic-queries`).
 
 
+.. _sound-file-operations:
+
+Sound file operations
+---------------------
+
+Phonometrica lets you transform sound files as files: pulling out a time range, and concatenating
+several sounds end-to-end. Both operations produce a **new** sound file on disk and add it to the
+current project. They are accessible from the context menu in the file manager.
+
+Extract slice
+~~~~~~~~~~~~~
+
+Right-click a sound and choose **Extract slice...**. The dialog has plain text fields for the start
+and end times in seconds and a format selector (WAV, AIFF, FLAC, or OGG). Sample rate and channel
+count are preserved. Data is streamed through libsndfile, so extracting a 10-second slice from a
+multi-hour recording is fast and memory-light.
+
+This same dialog appears, with additional options, when you right-click an annotation that is
+bound to a sound — in that case you can extract the sound, the annotation, or both, and the "both"
+mode automatically binds the new annotation to the new sound (see :ref:`annotation-file-operations`).
+
+Concatenate sounds
+~~~~~~~~~~~~~~~~~~
+
+To glue sounds end-to-end, multi-select two or more sounds in the file manager, right-click, and
+choose **Concatenate sounds...**. The dialog shows the sources in a list you can reorder by drag
+and drop, plus an output path and format selector.
+
+All sources must share the same **sample rate** and **channel count**. Any mismatch is reported
+in red at the top of the dialog and the operation is blocked until you cancel — resampling the
+inputs to a common rate is a separate step you need to do beforehand (a future version may offer
+resample-on-concatenate). The output keeps the common rate and channel count, with the chosen
+container format. Data is streamed frame by frame so the cost is linear in the total duration.
+
+
 References
 ----------
 

@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <phon/application/annotation.hpp>
+#include <phon/application/annotation_ops.hpp>
 #include <phon/application/constants.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/object.hpp>
@@ -184,6 +185,15 @@ void Annotation::initialize(Runtime &rt)
 		auto snd = recast<Sound>(project->get(path));
 		if (snd) annot.set_sound(snd);
 		return Variant();
+	};
+
+	// Construct a fresh empty annotation (native format, no path, no layers).
+	// Layers and events are added via the normal `create_layer`/`add_interval`/
+	// `add_instant` API. Useful for synthetic data generation and for tests
+	// that need to round-trip through disk without setting up a fixture file
+	// up front.
+	auto new_annotation_fn = [](Runtime &, std::span<Variant>) -> Variant {
+		return make_handle<Annotation>();
 	};
 
 	auto get_event_count = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -442,6 +452,128 @@ void Annotation::initialize(Runtime &rt)
 		return Variant();
 	};
 
+	// ── Structural transformations (annotation_ops) ─────────────
+	//
+	// All of these accept an output path and return a freshly-allocated
+	// Annotation/Sound. They do NOT add the result to the project — the
+	// caller wanting project integration should do so explicitly (e.g. via
+	// Project::import_file or add_file).
+
+	auto duplicate_annot = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto &path = cast<String>(args[1]);
+		return duplicate_annotation(annot, path);
+	};
+
+	// extract_layers(annot, layer_indices_list, out_path)
+	auto extract_layers_fn = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto &items = cast<List>(args[1]).items();
+		auto &path  = cast<String>(args[2]);
+
+		std::vector<intptr_t> indices;
+		indices.reserve(items.size());
+		for (auto &it : items) {
+			indices.push_back(cast<intptr_t>(it));
+		}
+		return extract_layers(annot, std::span<const intptr_t>(indices.data(), indices.size()), path);
+	};
+
+	// merge_annotations(base, others_list, out_path)
+	auto merge_annots_fn = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &base = cast<Annotation>(args[0]);
+		auto &items = cast<List>(args[1]).items();
+		auto &path  = cast<String>(args[2]);
+
+		std::vector<Handle<Annotation>> others;
+		others.reserve(items.size());
+		for (auto &it : items) {
+			auto &a = cast<Annotation>(it);
+			others.emplace_back(&a);
+		}
+		return merge_annotations(base, std::span<const Handle<Annotation>>(others.data(), others.size()), path);
+	};
+
+	// extract_annotation_slice(annot, t1, t2, out_path)  — clip_partial defaults true
+	auto extract_annot_slice3 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto t1 = cast<double>(args[1]);
+		auto t2 = cast<double>(args[2]);
+		auto &path = cast<String>(args[3]);
+		return extract_annotation_slice(annot, t1, t2, /*clip_partial=*/true, path);
+	};
+
+	// extract_annotation_slice(annot, t1, t2, clip_partial, out_path)
+	auto extract_annot_slice4 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &annot = cast<Annotation>(args[0]);
+		auto t1 = cast<double>(args[1]);
+		auto t2 = cast<double>(args[2]);
+		auto clip = cast<bool>(args[3]);
+		auto &path = cast<String>(args[4]);
+		return extract_annotation_slice(annot, t1, t2, clip, path);
+	};
+
+	// concatenate_annotations(sources_list, out_path) — durations inferred from bound sounds
+	auto concat_annots_inferred = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &items = cast<List>(args[0]).items();
+		auto &path  = cast<String>(args[1]);
+
+		std::vector<Handle<Annotation>> srcs;
+		srcs.reserve(items.size());
+		for (auto &it : items) {
+			auto &a = cast<Annotation>(it);
+			srcs.emplace_back(&a);
+		}
+		return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
+		                               std::span<const double>(), path);
+	};
+
+	// concatenate_annotations(sources_list, durations_list, out_path)
+	auto concat_annots_explicit = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &src_items = cast<List>(args[0]).items();
+		auto &dur_items = cast<List>(args[1]).items();
+		auto &path      = cast<String>(args[2]);
+
+		std::vector<Handle<Annotation>> srcs;
+		srcs.reserve(src_items.size());
+		for (auto &it : src_items) {
+			auto &a = cast<Annotation>(it);
+			srcs.emplace_back(&a);
+		}
+		std::vector<double> durs;
+		durs.reserve(dur_items.size());
+		for (auto &it : dur_items) {
+			durs.push_back(cast<double>(it));
+		}
+		return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
+		                               std::span<const double>(durs.data(), durs.size()), path);
+	};
+
+	// extract_sound_slice(sound, t1, t2, out_path) — format inferred from extension
+	auto extract_sound_slice_fn = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &snd  = cast<Sound>(args[0]);
+		auto t1    = cast<double>(args[1]);
+		auto t2    = cast<double>(args[2]);
+		auto &path = cast<String>(args[3]);
+		auto fmt   = sound_format_from_path(path);
+		return extract_sound_slice(snd, t1, t2, path, fmt);
+	};
+
+	// concatenate_sounds(sources_list, out_path)
+	auto concat_sounds_fn = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &items = cast<List>(args[0]).items();
+		auto &path  = cast<String>(args[1]);
+
+		std::vector<Handle<Sound>> srcs;
+		srcs.reserve(items.size());
+		for (auto &it : items) {
+			auto &s = cast<Sound>(it);
+			srcs.emplace_back(&s);
+		}
+		auto fmt = sound_format_from_path(path);
+		return concatenate_sounds(std::span<const Handle<Sound>>(srcs.data(), srcs.size()), path, fmt);
+	};
+
 #define CLS(T) phonometrica::get_class<T>()
 	auto cls = CLS(Annotation);
 	cls->add_method(rt.get_field_string, annot_get_field, { CLS(Annotation), CLS(String) });
@@ -469,6 +601,29 @@ void Annotation::initialize(Runtime &rt)
 	rt.add_global("write_as_native", write_native2,  { CLS(Annotation), CLS(String) });
 	rt.add_global("write_as_textgrid", write_textgrid1,  { CLS(Annotation) });
 	rt.add_global("write_as_textgrid", write_textgrid2,  { CLS(Annotation), CLS(String) });
+
+	// Construction.
+	rt.add_global("new_annotation", new_annotation_fn, {});
+
+	// Structural transformations.
+	rt.add_global("duplicate_annotation", duplicate_annot,
+	              { CLS(Annotation), CLS(String) });
+	rt.add_global("extract_layers", extract_layers_fn,
+	              { CLS(Annotation), CLS(List), CLS(String) });
+	rt.add_global("merge_annotations", merge_annots_fn,
+	              { CLS(Annotation), CLS(List), CLS(String) });
+	rt.add_global("extract_annotation_slice", extract_annot_slice3,
+	              { CLS(Annotation), CLS(Number), CLS(Number), CLS(String) });
+	rt.add_global("extract_annotation_slice", extract_annot_slice4,
+	              { CLS(Annotation), CLS(Number), CLS(Number), CLS(bool), CLS(String) });
+	rt.add_global("concatenate_annotations", concat_annots_inferred,
+	              { CLS(List), CLS(String) });
+	rt.add_global("concatenate_annotations", concat_annots_explicit,
+	              { CLS(List), CLS(List), CLS(String) });
+	rt.add_global("extract_sound_slice", extract_sound_slice_fn,
+	              { CLS(Sound), CLS(Number), CLS(Number), CLS(String) });
+	rt.add_global("concatenate_sounds", concat_sounds_fn,
+	              { CLS(List), CLS(String) });
 #undef CLS
 }
 
@@ -720,6 +875,12 @@ void Annotation::duplicate_layer(intptr_t index, intptr_t new_index)
 	else {
 		m_layers.insert(new_index, std::move(copy));
 	}
+	m_modified = true;
+}
+
+void Annotation::append_layer(Layer layer)
+{
+	m_layers.append(std::move(layer));
 	m_modified = true;
 }
 

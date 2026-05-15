@@ -111,6 +111,11 @@ public:
 
 	void duplicate_layer(intptr_t index, intptr_t new_index);
 
+	// Append a fully-constructed layer to the end of the annotation. Used by
+	// annotation_ops when building a new annotation from layers copied or
+	// transformed from existing sources. Marks the annotation as modified.
+	void append_layer(Layer layer);
+
 	bool layer_has_instants(intptr_t index) const;
 
 	String get_layer_label(intptr_t index) const;

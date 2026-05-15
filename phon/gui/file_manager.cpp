@@ -29,16 +29,129 @@
 #include <QClipboard>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/project_model.hpp>
+#include <phon/gui/extract_layers_dialog.hpp>
+#include <phon/gui/extract_slice_dialog.hpp>
+#include <phon/gui/merge_annotations_dialog.hpp>
+#include <phon/gui/concatenate_annotations_dialog.hpp>
+#include <phon/gui/concatenate_sounds_dialog.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/bookmark.hpp>
 #include <phon/application/data_table.hpp>
 #include <phon/application/dataset.hpp>
 #include <phon/application/annotation.hpp>
+#include <phon/application/annotation_ops.hpp>
+#include <phon/application/constants.hpp>
 #include <phon/application/script.hpp>
 #include <phon/application/praat.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
+
+namespace {
+
+// ---------------------------------------------------------------------------
+//  Helpers for the annotation_ops context-menu actions.
+//
+//  The pattern is the same across every operation that produces a new file:
+//    1. Build the source data into a staged Handle<> via annotation_ops.
+//       The staged document is fully populated in memory (layers, properties,
+//       description, sound binding) and has been written to disk.
+//    2. Add the disk file to the project via Project::add_file. The project
+//       constructs its own Annotation/Sound, which for native annotations
+//       reads metadata from the file but for TextGrid annotations does not
+//       (TextGrid has no slot for metadata).
+//    3. Copy properties, description, and sound binding from the staged
+//       Handle<> to the project's document. This is idempotent for native
+//       (Document::add_property dedupes by category) and necessary for
+//       TextGrid.
+// ---------------------------------------------------------------------------
+
+// Look up the document the project just constructed for `disk_path`.
+Document *project_document_for(Project *proj, const String &disk_path)
+{
+	auto &files = proj->files();
+	auto it = files.find(disk_path);
+	if (it == files.end()) return nullptr;
+	return it->second.get();
+}
+
+// Copy properties/description/sound binding from `staged` onto the project's
+// in-memory document `target`. Safe to call regardless of underlying format.
+void copy_annotation_metadata(const Annotation &staged, Annotation &target)
+{
+	for (auto &p : staged.properties()) {
+		target.add_property(p, false);
+	}
+	if (!staged.description().empty()) {
+		target.set_description(staged.description(), false);
+	}
+	if (staged.has_sound()) {
+		target.set_sound(staged.sound(), false);
+	}
+}
+
+// Register the staged annotation under `parent` in the project and copy its
+// metadata to the resulting in-project document. Returns the in-project
+// pointer, or nullptr if registration failed.
+Annotation *register_staged_annotation(Project *proj,
+                                       const Handle<Annotation> &staged,
+                                       const Handle<Directory> &parent)
+{
+	String disk_path = staged->path();
+	proj->add_file(String(staged->path()), parent, FileType::CorpusFile, true);
+	auto *doc = project_document_for(proj, disk_path);
+	auto *new_annot = dynamic_cast<Annotation *>(doc);
+	if (new_annot) {
+		copy_annotation_metadata(*staged, *new_annot);
+	}
+	proj->modify();
+	return new_annot;
+}
+
+// Mirror of register_staged_annotation for sounds. Sounds carry no
+// per-document metadata (properties live on Document but are not
+// typically set on Sound; we still copy them through for parity).
+Sound *register_staged_sound(Project *proj,
+                             const Handle<Sound> &staged,
+                             const Handle<Directory> &parent)
+{
+	String disk_path = staged->path();
+	proj->add_file(String(staged->path()), parent, FileType::CorpusFile, true);
+	auto *doc = project_document_for(proj, disk_path);
+	auto *new_snd = dynamic_cast<Sound *>(doc);
+	if (new_snd) {
+		for (auto &p : staged->properties()) {
+			new_snd->add_property(p, false);
+		}
+		if (!staged->description().empty()) {
+			new_snd->set_description(staged->description(), false);
+		}
+	}
+	proj->modify();
+	return new_snd;
+}
+
+// Default extension to use when producing an annotation of the given type.
+String annotation_ext_for(Annotation::Type t)
+{
+	return (t == Annotation::Type::TextGrid) ? String(".TextGrid")
+	                                         : String(PHON_EXT_ANNOTATION);
+}
+
+// Build a sibling output path: `<source_dir>/<source_basename><suffix><ext>`,
+// then make it non-colliding via annotation_ops::unique_path.
+String sibling_output_path(const Document &source, const String &suffix, const String &ext)
+{
+	auto dir  = filesystem::directory_name(source.path());
+	auto base = filesystem::strip_ext(filesystem::base_name(source.path()));
+	String desired;
+	desired.append(base);
+	desired.append(suffix);
+	desired.append(ext);
+	return unique_path(filesystem::join(dir, desired));
+}
+
+} // anonymous namespace
 
 
 // =========================================================
@@ -477,6 +590,183 @@ void FileManager::onContextMenu(const QPoint &pos)
 			}
 		}
 
+		// ── Multi-selection: Merge annotations ──
+		// Show "Merge annotations..." when 2+ annotations (and nothing else)
+		// are selected. The dialog handles picking the base, the output path,
+		// and the format.
+		if (proxyIndexes.size() >= 2)
+		{
+			QList<Annotation *> selected_annots;
+			bool homogeneous = true;
+			for (auto &pi : proxyIndexes)
+			{
+				auto si = toSource(pi);
+				auto *e = m_model->elementFromIndex(si);
+				if (auto *a = dynamic_cast<Annotation *>(e)) {
+					selected_annots.append(a);
+				}
+				else {
+					homogeneous = false;
+					break;
+				}
+			}
+
+			if (homogeneous && selected_annots.size() >= 2)
+			{
+				menu.addSeparator();
+				menu.addAction(tr("Merge annotations..."), [this, selected_annots]() {
+					// Make sure all sources are loaded before showing the dialog
+					// (so the dialog can report their layer counts).
+					for (auto *a : selected_annots) {
+						try { a->open(); }
+						catch (std::exception &e) {
+							QMessageBox::warning(this, tr("Merge annotations"),
+								QString::fromUtf8(e.what()));
+							return;
+						}
+					}
+
+					MergeAnnotationsDialog dlg(this, selected_annots);
+					if (dlg.exec() != QDialog::Accepted)
+						return;
+
+					auto *base = dlg.baseAnnotation();
+					auto others_qlist = dlg.otherAnnotations();
+					auto out_path = dlg.outputPath();
+					auto out_format = dlg.outputFormat();
+					if (!base || others_qlist.isEmpty() || out_path.empty())
+						return;
+
+					// Wrap others in Handles for the span-of-Handle API.
+					std::vector<Handle<Annotation>> others;
+					others.reserve(others_qlist.size());
+					for (auto *a : others_qlist) others.emplace_back(a);
+
+					Handle<Annotation> staged;
+					try {
+						staged = merge_annotations(*base,
+							std::span<const Handle<Annotation>>(others.data(), others.size()),
+							out_path, out_format);
+					}
+					catch (std::exception &e) {
+						QMessageBox::warning(this, tr("Merge annotations"),
+							QString::fromUtf8(e.what()));
+						return;
+					}
+
+					auto *parent_dir = base->parent();
+					if (!parent_dir) parent_dir = m_project->corpus().get();
+					register_staged_annotation(m_project, staged, Handle<Directory>(parent_dir));
+					refresh();
+				});
+
+				menu.addAction(tr("Concatenate annotations..."), [this, selected_annots]() {
+					// Sources are already loaded (the Merge block did it before this
+					// menu was built — but we run open() defensively to handle the
+					// case where the user opens this action directly without Merge
+					// having been listed for whatever reason).
+					for (auto *a : selected_annots) {
+						try { a->open(); }
+						catch (std::exception &e) {
+							QMessageBox::warning(this, tr("Concatenate annotations"),
+								QString::fromUtf8(e.what()));
+							return;
+						}
+					}
+
+					ConcatenateAnnotationsDialog dlg(this, selected_annots);
+					if (dlg.exec() != QDialog::Accepted)
+						return;
+
+					auto order = dlg.orderedSources();
+					auto durations = dlg.orderedDurations();
+					auto out_path = dlg.outputPath();
+					auto out_format = dlg.outputFormat();
+					if (order.size() < 2 || out_path.empty())
+						return;
+
+					std::vector<Handle<Annotation>> srcs;
+					srcs.reserve(order.size());
+					for (auto *a : order) srcs.emplace_back(a);
+
+					Handle<Annotation> staged;
+					try {
+						staged = concatenate_annotations(
+							std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
+							std::span<const double>(durations.data(), durations.size()),
+							out_path, out_format);
+					}
+					catch (std::exception &e) {
+						QMessageBox::warning(this, tr("Concatenate annotations"),
+							QString::fromUtf8(e.what()));
+						return;
+					}
+
+					// Anchor the new file in the first source's directory.
+					auto *parent_dir = order.first()->parent();
+					if (!parent_dir) parent_dir = m_project->corpus().get();
+					register_staged_annotation(m_project, staged, Handle<Directory>(parent_dir));
+					refresh();
+				});
+			}
+		}
+
+		// ── Multi-selection: Concatenate sounds ──
+		if (proxyIndexes.size() >= 2)
+		{
+			QList<Sound *> selected_sounds;
+			bool homogeneous = true;
+			for (auto &pi : proxyIndexes)
+			{
+				auto si = toSource(pi);
+				auto *e = m_model->elementFromIndex(si);
+				if (auto *s = dynamic_cast<Sound *>(e)) {
+					selected_sounds.append(s);
+				}
+				else {
+					homogeneous = false;
+					break;
+				}
+			}
+
+			if (homogeneous && selected_sounds.size() >= 2)
+			{
+				menu.addSeparator();
+				menu.addAction(tr("Concatenate sounds..."), [this, selected_sounds]() {
+					ConcatenateSoundsDialog dlg(this, selected_sounds);
+					if (dlg.exec() != QDialog::Accepted)
+						return;
+
+					auto order = dlg.orderedSources();
+					auto out_path = dlg.outputPath();
+					auto fmt = dlg.outputFormat();
+					if (order.size() < 2 || out_path.empty())
+						return;
+
+					std::vector<Handle<Sound>> srcs;
+					srcs.reserve(order.size());
+					for (auto *s : order) srcs.emplace_back(s);
+
+					Handle<Sound> staged;
+					try {
+						staged = concatenate_sounds(
+							std::span<const Handle<Sound>>(srcs.data(), srcs.size()),
+							out_path, fmt);
+					}
+					catch (std::exception &e) {
+						QMessageBox::warning(this, tr("Concatenate sounds"),
+							QString::fromUtf8(e.what()));
+						return;
+					}
+
+					auto *parent_dir = order.first()->parent();
+					if (!parent_dir) parent_dir = m_project->corpus().get();
+					register_staged_sound(m_project, staged, Handle<Directory>(parent_dir));
+					refresh();
+				});
+			}
+		}
+
 		// ── Single selection: Create annotation from sound ──
 		if (proxyIndexes.size() == 1)
 		{
@@ -671,6 +961,7 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 			}
 		}
 	}
+	menu.addSeparator();
 
 	// ── Export native annotation to TextGrid ──────────────────────────────
 	if (auto *annot = dynamic_cast<Annotation *>(doc))
@@ -862,6 +1153,191 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 					act->setChecked(ds->separator() == opt.sep);
 				}
 			}
+		}
+	}
+
+	// ── Annotation transformations (annotation_ops) ───────────────────────
+	if (auto *annot = dynamic_cast<Annotation *>(doc))
+	{
+		if (annot->has_path())
+		{
+			// "Duplicate" — produces a sibling file with a "_copy" suffix and
+			// inherits format, properties, description and sound binding from
+			// the source.
+			menu.addAction(tr("Duplicate"), [this, annot]() {
+				auto ext = annotation_ext_for(annot->is_textgrid()
+				                              ? Annotation::Type::TextGrid
+				                              : Annotation::Type::Native);
+				String out_path = sibling_output_path(*annot, "_copy", ext);
+
+				Handle<Annotation> staged;
+				try {
+					staged = duplicate_annotation(*annot, out_path);
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Duplicate annotation"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				auto *parent_dir = annot->parent();
+				if (!parent_dir) parent_dir = m_project->corpus().get();
+				register_staged_annotation(m_project, staged, Handle<Directory>(parent_dir));
+				refresh();
+			});
+
+			// "Extract layers..." — opens a dialog to pick which layers to
+			// keep, the output path, and (if the user wants to convert
+			// formats) the on-disk format.
+			menu.addAction(tr("Extract layers..."), [this, annot]() {
+				try { annot->open(); }
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Extract layers"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				ExtractLayersDialog dlg(this, *annot);
+				if (dlg.exec() != QDialog::Accepted)
+					return;
+
+				auto indices = dlg.selectedLayers();
+				auto out_path = dlg.outputPath();
+				auto out_format = dlg.outputFormat();
+				if (indices.empty() || out_path.empty())
+					return;
+
+				Handle<Annotation> staged;
+				try {
+					staged = extract_layers(*annot,
+						std::span<const intptr_t>(indices.data(), indices.size()),
+						out_path, out_format);
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Extract layers"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				auto *parent_dir = annot->parent();
+				if (!parent_dir) parent_dir = m_project->corpus().get();
+				register_staged_annotation(m_project, staged, Handle<Directory>(parent_dir));
+				refresh();
+			});
+
+			// "Extract slice..." — opens a dialog to pick a time range and,
+			// when the annotation has a bound sound, whether to slice the
+			// annotation, the sound, or both. The "both" mode automatically
+			// binds the new annotation to the new sound.
+			menu.addAction(tr("Extract slice..."), [this, annot]() {
+				try { annot->open(); }
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Extract slice"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				ExtractSliceDialog dlg(this, annot, /*sound=*/nullptr);
+				if (dlg.exec() != QDialog::Accepted)
+					return;
+
+				auto *parent_dir = annot->parent();
+				if (!parent_dir) parent_dir = m_project->corpus().get();
+				auto parent_handle = Handle<Directory>(parent_dir);
+
+				double t1 = dlg.startTime();
+				double t2 = dlg.endTime();
+				auto mode = dlg.mode();
+
+				Sound *new_sound_in_project = nullptr;
+				Annotation *new_annot_in_project = nullptr;
+
+				// Sound side first so that a successful "Both" run binds the
+				// project-managed sound (not the staged Handle) to the
+				// project-managed annotation below.
+				if (mode != ExtractSliceDialog::Mode::AnnotationOnly)
+				{
+					Handle<Sound> staged_snd;
+					try {
+						staged_snd = extract_sound_slice(
+							*annot->sound(), t1, t2,
+							dlg.soundOutputPath(),
+							dlg.soundOutputFormat());
+					}
+					catch (std::exception &e) {
+						QMessageBox::warning(this, tr("Extract slice"),
+							QString::fromUtf8(e.what()));
+						return;
+					}
+					new_sound_in_project = register_staged_sound(
+						m_project, staged_snd, parent_handle);
+				}
+
+				if (mode != ExtractSliceDialog::Mode::SoundOnly)
+				{
+					Handle<Annotation> staged_annot;
+					try {
+						staged_annot = extract_annotation_slice(
+							*annot, t1, t2, dlg.clipPartial(),
+							dlg.annotationOutputPath(),
+							dlg.annotationOutputFormat());
+					}
+					catch (std::exception &e) {
+						QMessageBox::warning(this, tr("Extract slice"),
+							QString::fromUtf8(e.what()));
+						return;
+					}
+					new_annot_in_project = register_staged_annotation(
+						m_project, staged_annot, parent_handle);
+				}
+
+				// "Both" mode: bind the project's in-memory annotation to the
+				// project's in-memory sound. mutate=true so the binding is
+				// persisted when the project is next saved.
+				if (mode == ExtractSliceDialog::Mode::Both
+				    && new_annot_in_project && new_sound_in_project)
+				{
+					new_annot_in_project->set_sound(Handle<Sound>(new_sound_in_project));
+				}
+
+				refresh();
+			});
+			menu.addSeparator();
+		}
+	}
+
+	// ── Sound transformations (annotation_ops) ────────────────────────────
+	// Single-sound "Extract slice..." entry. The annotation-side counterpart
+	// above already covers annotations with bound sound; this entry handles
+	// a sound right-click independently.
+	if (auto *snd = dynamic_cast<Sound *>(doc))
+	{
+		if (snd->has_path())
+		{
+			menu.addSeparator();
+			menu.addAction(tr("Extract slice..."), [this, snd]() {
+				ExtractSliceDialog dlg(this, /*annot=*/nullptr, snd);
+				if (dlg.exec() != QDialog::Accepted)
+					return;
+
+				Handle<Sound> staged;
+				try {
+					staged = extract_sound_slice(
+						*snd, dlg.startTime(), dlg.endTime(),
+						dlg.soundOutputPath(),
+						dlg.soundOutputFormat());
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Extract slice"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				auto *parent_dir = snd->parent();
+				if (!parent_dir) parent_dir = m_project->corpus().get();
+				register_staged_sound(m_project, staged, Handle<Directory>(parent_dir));
+				refresh();
+			});
 		}
 	}
 
