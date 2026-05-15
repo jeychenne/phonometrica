@@ -986,6 +986,18 @@ void AnalysisView::setupUi()
 	eda_toolbar->setContentsMargins(2, 0, 2, 0);
 	eda_toolbar->setStyleSheet(QStringLiteral("QToolBar { spacing: 2px; }"));
 
+	// Refresh action: re-runs updateEdaPlot(), which re-reads cells from the
+	// underlying DataTable. Useful workflow: click an outlier point, jump to
+	// its row in the dataset view, edit the value, return here, hit refresh.
+	auto *eda_refresh_action = new QAction(QIcon(":/icons/refresh-cw.svg"),
+	                                        tr("Refresh plot"), this);
+	eda_refresh_action->setToolTip(tr("Re-read the current data from the table "
+	                                    "and redraw the plot. Use this after "
+	                                    "editing values in the source dataset."));
+	eda_refresh_action->setShortcut(QKeySequence::Refresh);
+	eda_toolbar->addAction(eda_refresh_action);
+	connect(eda_refresh_action, &QAction::triggered, this, &AnalysisView::onRefreshEdaPlot);
+
 	auto *eda_save_menu = new QMenu(this);
 	eda_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
 	eda_save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEdaPDF);
@@ -4147,6 +4159,15 @@ void AnalysisView::onCustomizeEda()
 	fix(m_eda_customization.y_min, m_eda_customization.y_max);
 
 	// Re-render with new customization applied.
+	updateEdaPlot();
+}
+
+void AnalysisView::onRefreshEdaPlot()
+{
+	// updateEdaPlot() reads cells fresh from m_analysis->data()->get_cell()
+	// on every call, so simply re-running it picks up any edits the user
+	// made to the source dataset since the last render. No invalidation
+	// needed: the DataTable is the single source of truth.
 	updateEdaPlot();
 }
 

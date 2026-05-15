@@ -103,6 +103,7 @@ private slots:
 	void onEdaChanged();
 	void onEdaPlotTypeChanged();
 	void onCustomizeEda();
+	void onRefreshEdaPlot();
 	void onExportEdaPNG();
 	void onExportEdaPDF();
 	void onExportEdaSVG();

@@ -443,6 +443,7 @@ if(WITH_GUI)
         icons/list.svg
         icons/vowel-space.svg
         icons/settings.svg
+        icons/refresh-cw.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
