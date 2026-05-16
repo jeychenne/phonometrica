@@ -34,6 +34,7 @@ import("test_upvalues")
 import("test_try_catch")
 import("test_try_catch_loops")
 import("test_nested_error_lines")
+import("test_error_trace")
 
 print ""
 print "######################################################################"

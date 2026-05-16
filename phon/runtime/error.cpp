@@ -51,7 +51,7 @@ ScriptException::ScriptException(const ScriptException &other) :
 }
 
 ScriptException::ScriptException(ScriptException &&other) noexcept :
-	RuntimeError(other),
+	RuntimeError(std::move(other)),
 	m_value(std::move(other.m_value))
 {
 

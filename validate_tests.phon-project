@@ -38,6 +38,12 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/engine/test_nested_error_lines.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_error_trace.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_gui_trace.phon</Path>
+			</Document>
 		</Directory>
 		<Directory label="frequentist">
 			<Document class="Script">

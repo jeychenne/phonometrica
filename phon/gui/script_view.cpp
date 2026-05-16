@@ -284,12 +284,47 @@ void ScriptView::execute()
 	}
 	catch (RuntimeError &e)
 	{
-		m_editor->showError(e.line_no());
+		// Pick the deepest frame whose file matches this editor's buffer for
+		// the in-editor highlight. Without this, e.line_no() (== innermost
+		// throw line) gets blindly applied here even when the throw actually
+		// happened in an imported module — highlighting a random line in the
+		// open file. Walking the trace innermost-out lets us land on the
+		// deepest line that's actually visible to the user; if no frame is
+		// in this buffer, we skip the highlight entirely.
+		//
+		// For an unsaved buffer (chunk_path empty) we match against entries
+		// whose file is also empty: do_string passes an empty path through,
+		// so trace entries for the top-level chunk come back with file == "".
+		const auto &trace = e.trace();
+		std::string this_file(chunk_path.data(), size_t(chunk_path.size()));
+		int highlight_line = 0;
+		for (const auto &entry : trace)
+		{
+			if (entry.file == this_file)
+			{
+				highlight_line = int(entry.line);
+				break;
+			}
+		}
+
+		if (highlight_line > 0) {
+			m_editor->showError(highlight_line);
+		}
+		else if (trace.empty()) {
+			// Pre-trace fallback: nothing better to go on than the recorded
+			// line. Will be wrong for cross-file throws but matches the
+			// historical behaviour.
+			m_editor->showError(int(e.line_no()));
+		}
+		// else: error is in some other file; the console trace below tells
+		// the user where to look — better silence than misleading highlight.
+
 		if (m_console)
 		{
 			m_console->appendNewLine();
 			m_console->showError(QString("Error at line %1").arg(e.line_no()));
 			m_console->showError(e.what());
+			m_console->showTrace(trace);
 			m_console->addPrompt();
 		}
 	}

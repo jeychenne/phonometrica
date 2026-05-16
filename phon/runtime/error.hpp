@@ -25,6 +25,9 @@
 #include <cstdint>
 #include <memory>
 #include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 #include <phon/utils/print.hpp>
 
 namespace phonometrica {
@@ -57,6 +60,34 @@ std::runtime_error error(const String &msg);
 
 //---------------------------------------------------------------------------------------------------------------------
 
+// One frame of the call-stack trace attached to a RuntimeError.
+//
+// The trace is accumulated by `Runtime::interpret()` at each catch handler
+// invocation as the exception propagates: the innermost frame (the throw
+// site) is appended first, then each enclosing frame in turn. Each entry
+// captures:
+//   - file:    the path of the script being interpreted when this frame
+//              caught (`Runtime::script_path()`); empty for in-memory
+//              chunks or unknown sources.
+//   - line:    1-based source line in that file. For the innermost frame
+//              this is the throw site; for enclosing frames it is the
+//              call-site line that led deeper.
+//   - routine: name of the routine running in that frame; "<chunk>" for
+//              top-level code with no enclosing function.
+//
+// std::string is used (rather than phonometrica::String) so this header
+// stays free of the heavy String / QString chain — error.hpp is included
+// from many TUs and we want to keep its dependencies minimal.
+struct TraceEntry
+{
+	std::string file;
+	intptr_t    line = 0;
+	std::string routine;
+};
+
+
+//---------------------------------------------------------------------------------------------------------------------
+
 // Error from the scripting engine
 class RuntimeError : public std::runtime_error
 {
@@ -85,9 +116,28 @@ public:
 
 	intptr_t line_no() const { return line; }
 
+	// Append a frame to the call-stack trace. `Runtime::interpret()` calls
+	// this from inside its catch handler at each level the exception passes
+	// through, so the resulting vector reads innermost-first: trace().front()
+	// is the throw site, trace().back() is the outermost frame the error
+	// reached (typically the call site in the catching frame, or the chunk
+	// frame for an uncaught error). See TraceEntry for the per-entry fields.
+	void push_trace(std::string file, intptr_t line_no, std::string routine)
+	{
+		trace_.push_back({ std::move(file), line_no, std::move(routine) });
+	}
+
+	// Frames the error passed through, innermost first. Empty for a freshly
+	// constructed RuntimeError that has not been propagated through any
+	// `interpret()` frame yet.
+	const std::vector<TraceEntry> &trace() const { return trace_; }
+
 private:
 
 	intptr_t line;
+
+	// Accumulated at unwind sites. See push_trace() above.
+	std::vector<TraceEntry> trace_;
 };
 
 

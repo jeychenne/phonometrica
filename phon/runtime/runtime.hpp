@@ -26,6 +26,7 @@
 #include <type_traits>
 #include <unordered_set>
 #include <phon/string.hpp>
+#include <phon/runtime/error.hpp>
 #include <phon/runtime/iterator.hpp>
 #include <phon/runtime/class.hpp>
 #include <phon/runtime/list.hpp>
@@ -333,6 +334,15 @@ public:
 	// call site that propagated it.
 	intptr_t error_line() const { return catch_line; }
 
+	// Call-stack trace of the currently-active caught error. Innermost frame
+	// first, outermost last; empty outside a catch body (or when a new
+	// Runtime hasn't yet seen any error). Built by `interpret()`'s catch
+	// handler accumulating one TraceEntry per frame as the exception
+	// propagates, then copied here at catch-dispatch time so the value
+	// outlives the exception object. Exposed to scripts via the
+	// `get_error_trace()` builtin.
+	const std::vector<TraceEntry> &error_trace() const { return catch_trace; }
+
 private:
 
 	static constexpr size_t MAX_CALL_FRAME = 256;
@@ -543,6 +553,12 @@ private:
 	// after a catch body exits, so the builtin is only meaningful inside
 	// the catch body that handled the error.
 	intptr_t catch_line = -1;
+
+	// Frames the most recently dispatched caught error passed through,
+	// innermost first. Snapshotted from the exception's own trace at
+	// catch-dispatch time so it remains readable after the exception
+	// object has been destroyed. Same staleness rules as `catch_line`.
+	std::vector<TraceEntry> catch_trace;
 
 	// If false, we're running from a GUI.
 	bool text_mode = true;

@@ -415,6 +415,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_error_line",  {
 		"get_error_line()\nInside a `catch` clause, returns the source line of the original throw — preserved across function-call and module-import boundaries. Returns -1 outside a catch body (or for an error with no recorded line). Useful for logging or reporting where an error originated, especially when the error was raised deep in a call chain."
 	}},
+	{ "get_error_trace",  {
+		"get_error_trace()\nInside a `catch` clause, returns the call-stack trace of the original throw as a List of Tables, ordered innermost-first. Each Table has three fields: `file` (String, source file path), `line` (Integer, 1-based source line — throw site for the innermost entry, call-site for outer entries), and `function` (String, routine name; \"<chunk>\" for top-level code). Returns an empty List outside a catch body. Useful for logging deep errors from helper functions or imported modules."
+	}},
 	{ "set_current_directory",  {
 		"set_current_directory(path as String)\nSets the current working directory to `path`."
 	}},

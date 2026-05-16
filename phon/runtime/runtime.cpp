@@ -1480,6 +1480,31 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 			needs_ref = false;
 			calling_method = false;
 
+			// Append this frame's entry to the exception's call-stack trace. The
+			// catch handler runs once per frame on the propagation path: deepest
+			// first (we are still in the throwing frame the first time around),
+			// then each enclosing frame after its `unwind_call_frame_for_throw()`
+			// restores `code`/`ip` to the call-site. So the resulting trace reads
+			// innermost-first and the line for each entry naturally resolves to
+			// the right source position (the throw site for the innermost frame,
+			// the call-site for each enclosing one — because the saved `ip` had
+			// already been advanced past the Call opcode and operands when the
+			// inner frame was entered).
+			//
+			// Only RuntimeError carries a trace; bare std::runtime_error gets a
+			// fresh trace seeded with this frame in the unwind branch below, on
+			// upgrade. (`current_routine` is always non-null inside the catch:
+			// `interpret()` sets it before entering the opcode loop.)
+			if (auto re = dynamic_cast<RuntimeError*>(&e))
+			{
+				auto rname = current_routine->name();
+				re->push_trace(
+					std::string(current_path.data(), size_t(current_path.size())),
+					get_current_line(),
+					rname.empty() ? std::string("<chunk>")
+					              : std::string(rname.data(), size_t(rname.size())));
+			}
+
 			int current_idx = int(current_frame - frames);
 			if (!handler_stack.empty() && handler_stack.back().frame_index == current_idx)
 			{
@@ -1493,20 +1518,33 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 					pop(int(cur - h.stack_size));
 				}
 
-				// Record the line of the originating throw so the catch body can
-				// query it via the `get_error_line()` builtin. RuntimeError (and
-				// its subclass ScriptException) carries an accurate line set at
-				// throw time and preserved across call-boundary unwinds by the
-				// pass-through arms of CATCH_ERROR / Runtime::call(). For a bare
-				// std::runtime_error coming from `throw error(...)` in native code
-				// (no embedded line — e.g. check_float_error, out-of-bounds in
-				// array.hpp), we are still in the throwing frame here, so
-				// `get_current_line()` is the right answer.
-				if (auto re = dynamic_cast<RuntimeError*>(&e)) {
+				// Snapshot the line and trace into the runtime so the catch body
+				// can query them via `get_error_line()` / `get_error_trace()`.
+				// RuntimeError (and its subclass ScriptException) carries an
+				// accurate line set at throw time and preserved across
+				// call-boundary unwinds by the pass-through arms of
+				// CATCH_ERROR / Runtime::call(). For a bare std::runtime_error
+				// caught in the *same* frame as the throw (`throw error(...)`
+				// in native code — check_float_error, the array/list
+				// out-of-bounds throws, etc.), we are still in the throwing
+				// frame, so `get_current_line()` is the right answer and the
+				// trace is a single synthetic entry for this frame.
+				if (auto re = dynamic_cast<RuntimeError*>(&e))
+				{
 					catch_line = re->line_no();
+					catch_trace = re->trace();
 				}
-				else {
+				else
+				{
 					catch_line = get_current_line();
+					catch_trace.clear();
+					auto rname = current_routine->name();
+					catch_trace.push_back({
+						std::string(current_path.data(), size_t(current_path.size())),
+						get_current_line(),
+						rname.empty() ? std::string("<chunk>")
+						              : std::string(rname.data(), size_t(rname.size()))
+					});
 				}
 
 				// Push the thrown value: the original Variant when the throw came from
@@ -1538,12 +1576,19 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 			// call-boundary CATCH_ERROR would stamp the caller's line — exactly the
 			// "reports stop at the outer call" bug for the non-RUNTIME_ERROR throw
 			// paths. RuntimeError (and ScriptException) already carry an accurate line
-			// and are rethrown verbatim.
+			// and trace and are rethrown verbatim.
 			if (dynamic_cast<RuntimeError*>(&e) == nullptr) {
 				auto inner_line = get_current_line();
+				auto rname = current_routine->name();
+				std::string file(current_path.data(), size_t(current_path.size()));
+				std::string routine_name = rname.empty()
+				    ? std::string("<chunk>")
+				    : std::string(rname.data(), size_t(rname.size()));
 				std::string msg = e.what();
 				unwind_call_frame_for_throw();
-				throw RuntimeError(inner_line, std::move(msg));
+				RuntimeError upgraded(inner_line, std::move(msg));
+				upgraded.push_trace(std::move(file), inner_line, std::move(routine_name));
+				throw std::move(upgraded);
 			}
 			unwind_call_frame_for_throw();
 			throw;

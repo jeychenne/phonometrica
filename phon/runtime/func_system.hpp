@@ -60,6 +60,38 @@ static Variant system_error_line(Runtime &rt, std::span<Variant>)
 	return rt.error_line();
 }
 
+// Returns the call-stack trace of the currently-active caught error as
+// a List of Tables. Each Table has three fields:
+//   - "file"     (String):  source file of the frame (empty for in-memory
+//                           chunks or unknown sources).
+//   - "line"     (Integer): 1-based line. For the innermost entry this is
+//                           the throw site; for outer entries it is the
+//                           call-site line that led deeper.
+//   - "function" (String):  routine name; "<chunk>" for top-level code.
+// Entries are ordered innermost-first (the throw site is the first entry,
+// the catching frame is the last). Returns an empty List outside a catch
+// body, or for a Runtime that has not yet seen any error.
+//
+// Intended for use inside a `catch` clause for logging or error reporting.
+// The trace is preserved across function-call and module-import boundaries
+// and accumulates one entry per call frame the error passed through.
+static Variant system_error_trace(Runtime &rt, std::span<Variant>)
+{
+	const auto &trace = rt.error_trace();
+	Array<Variant> items;
+
+	for (const auto &entry : trace)
+	{
+		Table::Storage tab;
+		tab.insert({ Variant(String("file")),     Variant(String(entry.file)) });
+		tab.insert({ Variant(String("line")),     Variant(intptr_t(entry.line)) });
+		tab.insert({ Variant(String("function")), Variant(String(entry.routine)) });
+		items.emplace_back(Variant(make_handle<Table>(&rt, std::move(tab))));
+	}
+
+	return make_handle<List>(&rt, std::move(items));
+}
+
 static Variant system_set_current_directory(Runtime &, std::span<Variant> args)
 {
 	auto &path = cast<String>(args[0]);

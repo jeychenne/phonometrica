@@ -24,7 +24,9 @@
 #define PHONOMETRICA_CONSOLE_HPP
 
 #include <deque>
+#include <vector>
 #include <QPlainTextEdit>
+#include <phon/runtime/error.hpp>
 
 namespace phonometrica {
 
@@ -40,6 +42,13 @@ public:
 
 	// Append an error message (displayed in red).
 	void showError(const QString &msg);
+
+	// Append a call-stack trace under an error message. Each entry is rendered
+	// on its own indented line in muted red as "  at <file>:<line> in <func>".
+	// Entries are displayed innermost-first (the throw site is the topmost
+	// line of the trace block); empty traces produce no output. Intended to be
+	// called between `showError(e.what())` and `addPrompt()`.
+	void showTrace(const std::vector<TraceEntry> &trace);
 
 	// Display a new prompt at the current position.
 	void addPrompt();

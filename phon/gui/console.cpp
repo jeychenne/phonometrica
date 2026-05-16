@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <QContextMenuEvent>
+#include <QFileInfo>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QTextBlock>
@@ -222,6 +223,14 @@ void Console::runCode(const QString &code)
 	catch (std::exception &e)
 	{
 		showError(e.what());
+		// If the exception carries a call-stack trace (RuntimeError and its
+		// subclass ScriptException do; bare std::exception does not), render it
+		// under the message. For console-typed code the trace is usually one
+		// entry deep (just `<chunk>`), but anything calling helpers or imports
+		// can produce a useful chain.
+		if (auto re = dynamic_cast<RuntimeError*>(&e)) {
+			showTrace(re->trace());
+		}
 	}
 
 	addPrompt();
@@ -269,6 +278,52 @@ void Console::showError(const QString &msg)
 		ancestor = ancestor->parentWidget();
 	}
 }
+
+void Console::showTrace(const std::vector<TraceEntry> &trace)
+{
+	if (trace.empty()) return;
+
+	auto cursor = textCursor();
+	cursor.movePosition(QTextCursor::End);
+
+	// Muted red so the trace reads as subordinate to the error message above
+	// without disappearing into the default text colour.
+	QTextCharFormat traceFmt;
+	traceFmt.setForeground(QColor(180, 100, 100));
+
+	for (const auto &entry : trace)
+	{
+		// Display the basename rather than the full path: traces shown inline
+		// in a fixed-width console get unreadable fast with absolute paths.
+		// "<inline>" is the marker for chunks evaluated via do_string with no
+		// associated file (typed in the console, or an unsaved editor buffer).
+		QString file = entry.file.empty()
+			? QStringLiteral("<inline>")
+			: QFileInfo(QString::fromStdString(entry.file)).fileName();
+
+		// `Routine::name()` returns "" for the top-level chunk; mirror what
+		// `Function::name()` does for user-facing display and surface it as
+		// "<chunk>". The runtime already substitutes this string when building
+		// the trace, so the empty-check here is defence in depth.
+		QString function = entry.routine.empty()
+			? QStringLiteral("<chunk>")
+			: QString::fromStdString(entry.routine);
+
+		QString row = QStringLiteral("  at %1:%2 in %3")
+		                  .arg(file)
+		                  .arg(qlonglong(entry.line))
+		                  .arg(function);
+
+		cursor.insertText(row, traceFmt);
+		// Newline in default format so a subsequent addPrompt() / appendOutput
+		// inherits a clean cursor state. Mirrors the pattern in showError().
+		cursor.insertText("\n", QTextCharFormat());
+	}
+
+	setTextCursor(cursor);
+	goToEnd();
+}
+
 
 void Console::addPrompt()
 {

@@ -26,6 +26,7 @@ phonometrica test_compound_assignment.phon
 | `test_try_catch.phon`             | `try`/`catch`, throw/rethrow, cross-frame, return/break inside try             |
 | `test_try_catch_loops.phon`       | Stress test: break/continue × try/catch handler-stack accounting               |
 | `test_nested_error_lines.phon`    | `get_error_line()` reports the inner throw site, not the outer call boundary  |
+| `test_error_trace.phon`           | `get_error_trace()` captures the full call stack of a caught error            |
 
 ## Adding a new test
 
