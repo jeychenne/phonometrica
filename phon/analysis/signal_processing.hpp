@@ -108,7 +108,12 @@ std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input
 // Praat-style raw autocorrelation pitch tracker.
 // If `use_gaussian` is false (default), a 3-period Hanning window is used, matching Praat's default `To Pitch...`
 // command. If true, a 6-period Gaussian window is used, matching Praat's "very accurate" mode.
-std::vector<double> get_pitch_praat(const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false);
+//
+// If `out_strengths` is non-null, it is populated with one entry per output frame: the normalised
+// autocorrelation peak (the "corrected r" of Boersma 1993) of the Viterbi-chosen candidate at that
+// frame, or 0.0 if the chosen candidate is the unvoiced one. This is the quantity that HNR is
+// derived from: HNR_dB = 10 * log10(r / (1 - r)). Used by the voice-quality kernel.
+std::vector<double> get_pitch_praat(const Array<double> &input, double sample_rate, double min_pitch, double max_pitch, double time_step, double voicing_threshold, double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01, bool use_gaussian = false, std::vector<double> *out_strengths = nullptr);
 
 // Apply pre-emphasis for formant analysis.
 void pre_emphasis(Array<double> &data, double Fs, double threshold);

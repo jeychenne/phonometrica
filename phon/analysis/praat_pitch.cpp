@@ -148,8 +148,10 @@ std::vector<double> get_pitch_praat(
         double min_pitch, double max_pitch, double time_step,
         double voicing_threshold, double octave_jump_cost,
         double voicing_cost, double silence_threshold, double octave_cost,
-        bool use_gaussian)
+        bool use_gaussian,
+        std::vector<double> *out_strengths)
 {
+    if (out_strengths) out_strengths->clear();
     if (idat.size() < 2 || sample_rate <= 0.0 || min_pitch <= 0.0 || max_pitch <= min_pitch)
         return {};
 
@@ -196,7 +198,10 @@ std::vector<double> get_pitch_praat(
     for (size_t s = 0; s + static_cast<size_t>(win_len) <= input.size(); s += static_cast<size_t>(step_samples))
         ++nframes_total;
     if (nframes_total == 0) return {};
-    if (global_peak == 0.0) return std::vector<double>(nframes_total, 0.0);
+    if (global_peak == 0.0) {
+        if (out_strengths) out_strengths->assign(nframes_total, 0.0);
+        return std::vector<double>(nframes_total, 0.0);
+    }
 
     // Build window and normalised window autocorrelation (windowR[0] = 1, windowR[i] = ac_w[i]/ac_w[0]).
     Eigen::VectorXd window = use_gaussian ? make_gaussian_window(win_len)
@@ -407,8 +412,10 @@ std::vector<double> get_pitch_praat(
 
     // Backtrack.
     std::vector<double> pitch_track(nframes);
+    if (out_strengths) out_strengths->assign(nframes, 0.0);
     for (int t = static_cast<int>(nframes) - 1; t >= 0; --t) {
         pitch_track[t] = frame_candidates[t][place].frequency;
+        if (out_strengths) (*out_strengths)[t] = frame_candidates[t][place].strength;
         if (t > 0) place = psi[t][place];
     }
 

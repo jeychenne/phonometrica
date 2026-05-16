@@ -29,6 +29,8 @@
 #include <phon/application/sound.hpp>
 #include <phon/gui/time_model.hpp>
 
+class QTimer;
+
 namespace phonometrica {
 
 // Waveform amplitude scaling mode.
@@ -57,6 +59,14 @@ public:
 
 	// When true, this widget draws the cursor time label.
 	void setTopPlot(bool top);
+
+	// Glottal-pulse overlay. Pulses are computed by the voice-quality kernel
+	// (REAPER EpochTracker) on this widget's channel and drawn as thin
+	// vertical marks over the cached waveform. Computation is lazy on the
+	// first paint after the toggle goes on; the result is cached for the
+	// lifetime of the widget unless parameters or visibility change.
+	void setShowGlottalPulses(bool show);
+	void setGlottalPulseParams(double f0_min, double f0_max, bool do_highpass);
 
 protected:
 
@@ -97,6 +107,10 @@ private:
 	double xToTime(double x) const;
 	void drawWaveformToPixmap();
 
+	// Glottal-pulse cache.
+	void computeGlottalPulses();
+	void drawGlottalPulses(class QPainter &p);
+
 	TimeModel *m_model;
 	Handle<Sound> m_sound;
 	int m_channel; // 0 = average, 1..N = specific channel
@@ -115,6 +129,19 @@ private:
 
 	bool m_mouse_tracking_enabled = false;
 	bool m_is_top = false;
+
+	// Glottal pulses (voice-quality overlay).
+	bool m_show_pulses = false;
+	bool m_pulses_valid = false;
+	std::vector<double> m_pulses;       // absolute times, seconds
+	double m_pulse_f0_min   = 75.0;
+	double m_pulse_f0_max   = 600.0;
+	bool   m_pulse_highpass = true;
+
+	// Debounce for viewport-driven recompute of pulses. Mirrors the
+	// pattern used by PitchWidget / IntensityWidget so rapid scroll or
+	// zoom does not block the UI on REAPER calls.
+	QTimer *m_pulse_debounce_timer = nullptr;
 };
 
 } // namespace phonometrica

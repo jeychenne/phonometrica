@@ -22,17 +22,20 @@ reports.
 
 .. note::
    **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
-   terms — cubic regression splines and random-effect smooths — but this support is currently
-   experimental. Fits agree qualitatively with the ``mgcv`` R package (significance of
-   smooths, broad shape of fitted curves, EDF ordering across terms) but may
-   differ numerically. The ``log(λ)`` value reported by ``model.smooth_log_lambda``
-   is not directly comparable to ``log(m$sp)`` from ``mgcv``, and EDF/F
-   statistics may differ from ``mgcv`` at extreme penalty regimes (very
-   smooth or very wiggly fits). For applications where mgcv-equivalence is required, we recommend
-   exporting your data and running the model in R until this is resolved.
-   Smooths are otherwise fully integrated with the rest of the analysis
-   pipeline: posterior predictive checks, model comparison, plotting, and
-   prediction at new x-values all work as expected.
+   terms — cubic regression splines and random-effect smooths. Currently, GAM support
+   is intended for exploratory analysis of nonlinear effects: identifying whether a smooth
+   captures meaningful structure, inspecting the shape of fitted curves, and comparing terms by EDF.
+   Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
+   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values all work normally.
+   Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
+   with s(age) alongside categorical predictors). For confirmatory analyses where exact agreement
+   with mgcv matters — basis-equivalent coefficients, F-tests for smooth terms, mgcv's REML/GCV
+   penalty selection — export to R and use mgcv directly. Phonometrica's cr basis is not the same
+   parameterization as mgcv's default and per-smooth coefficients, EDF magnitudes, and log(λ)
+   values are not directly comparable across the two tools.
+   Known limit: binomial GAMs may not converge on near-saturated data (small n with k × number of
+   smooths approaching n). If the intercept comes back at an extreme value with predicted
+   probabilities collapsed to 0 or 1, drop k or the number of smooth terms.
 
 
 Top bar

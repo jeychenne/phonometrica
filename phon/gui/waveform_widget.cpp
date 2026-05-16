@@ -23,9 +23,11 @@
 #include <QPainterPath>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QTimer>
 #include <cmath>
 #include <algorithm>
 #include <phon/gui/waveform_widget.hpp>
+#include <phon/analysis/voice_quality.hpp>
 
 namespace phonometrica {
 
@@ -35,6 +37,7 @@ static const QColor WAVEFORM_COLOR(0, 0, 0);              // black
 static const QColor SELECTION_COLOR(209, 116, 23, 50);    // semi-transparent orange
 static const QColor POINT_SEL_COLOR(199, 179, 0);         // gold cursor
 static const QColor PLAYBACK_COLOR(255, 0, 0);            // red tick
+static const QColor PULSE_COLOR(0, 0, 200, 140);          // semi-transparent blue, Praat-like
 
 WaveformWidget::WaveformWidget(TimeModel *model, const Handle<Sound> &sound, int channel, QWidget *parent) :
 	QWidget(parent), m_model(model), m_sound(sound), m_channel(channel)
@@ -52,6 +55,19 @@ WaveformWidget::WaveformWidget(TimeModel *model, const Handle<Sound> &sound, int
 	connect(m_model, &TimeModel::cursorCleared, this, &WaveformWidget::onCursorCleared);
 	connect(m_model, &TimeModel::playbackTimeChanged, this, &WaveformWidget::onPlaybackChanged);
 	connect(m_model, &TimeModel::playbackCleared, this, &WaveformWidget::onPlaybackCleared);
+
+	// Debounce for pulse recompute on viewport changes. 120 ms matches
+	// PitchWidget / IntensityWidget so the UX feels consistent across
+	// overlays. Pulses are recomputed leading-edge (on the first viewport
+	// change after stillness) and again trailing-edge (once changes stop).
+	m_pulse_debounce_timer = new QTimer(this);
+	m_pulse_debounce_timer->setSingleShot(true);
+	m_pulse_debounce_timer->setInterval(120);
+	connect(m_pulse_debounce_timer, &QTimer::timeout, this, [this]() {
+		if (!m_show_pulses) return;
+		m_pulses_valid = false;
+		update();
+	});
 }
 
 void WaveformWidget::setGlobalMagnitude(double value)
@@ -92,6 +108,32 @@ void WaveformWidget::setTopPlot(bool top)
 		m_is_top = top;
 		update();
 	}
+}
+
+void WaveformWidget::setShowGlottalPulses(bool show)
+{
+	if (m_show_pulses == show)
+		return;
+	m_show_pulses = show;
+	// Force a fresh compute when turning on, in case the cache is from
+	// a different viewport (or never computed). Turning off clears the
+	// flag; we don't bother invalidating the cache because it'll be
+	// invalidated next time the user toggles on or scrolls.
+	if (show)
+		m_pulses_valid = false;
+	update();
+}
+
+void WaveformWidget::setGlottalPulseParams(double f0_min, double f0_max, bool do_highpass)
+{
+	if (m_pulse_f0_min == f0_min && m_pulse_f0_max == f0_max && m_pulse_highpass == do_highpass)
+		return;
+	m_pulse_f0_min   = f0_min;
+	m_pulse_f0_max   = f0_max;
+	m_pulse_highpass = do_highpass;
+	m_pulses_valid = false;
+	if (m_show_pulses)
+		update();
 }
 
 
@@ -343,6 +385,106 @@ std::vector<double> WaveformWidget::computeWaveform()
 
 
 // ─────────────────────────────────────────────────
+//  Glottal-pulse overlay
+// ─────────────────────────────────────────────────
+
+// Above this viewport width, individual pulses blur into a solid stripe
+// at typical screen sizes (~150 pulses/sec of voicing → sub-pixel spacing).
+// Skipping computation entirely also avoids the multi-second REAPER latency
+// at very wide views. Tighten if pulses end up needed on longer spans.
+static constexpr double PULSE_MAX_WINDOW_S = 30.0;
+
+void WaveformWidget::computeGlottalPulses()
+{
+	m_pulses.clear();
+	m_pulses_valid = true; // mark valid even on bail-out so we don't retry per-paint
+
+	double t0 = m_model->windowStart();
+	double t1 = m_model->windowEnd();
+	double dur = t1 - t0;
+	if (dur <= 0.0 || dur > PULSE_MAX_WINDOW_S) return;
+
+	auto first_sample = m_sound->time_to_frame(t0);
+	auto last_sample  = m_sound->time_to_frame(t1);
+	if (last_sample - first_sample < 2) return;
+	int nchannel = m_sound->nchannel();
+	double sr = static_cast<double>(m_sound->sample_rate());
+	if (sr <= 0.0) return;
+
+	// Materialise window samples as doubles. REAPER's int16 conversion
+	// happens inside the kernel; we just need contiguous doubles.
+	intptr_t n = last_sample - first_sample;
+	std::vector<double> mono(static_cast<size_t>(n), 0.0);
+
+	if (m_channel == 0)
+	{
+		std::vector<std::span<const float>> channels;
+		channels.reserve(static_cast<size_t>(nchannel));
+		for (int c = 1; c <= nchannel; ++c)
+			channels.push_back(m_sound->channel_view(c, first_sample, last_sample));
+
+		const double inv_nc = (nchannel > 0) ? 1.0 / nchannel : 1.0;
+		for (intptr_t x = 0; x < n; ++x)
+		{
+			double s = 0.0;
+			for (int c = 0; c < nchannel; ++c)
+				s += channels[c][x];
+			mono[x] = s * inv_nc;
+		}
+	}
+	else
+	{
+		auto data = m_sound->channel_view(m_channel, first_sample, last_sample);
+		for (intptr_t x = 0; x < n; ++x)
+			mono[x] = data[x];
+	}
+
+	std::vector<double> local_pulses;
+	try {
+		local_pulses = speech::compute_glottal_pulses(
+		    std::span<const double>(mono.data(), mono.size()),
+		    sr, m_pulse_f0_min, m_pulse_f0_max, m_pulse_highpass);
+	}
+	catch (const std::exception &) {
+		// REAPER failed on this window (rare). Leave pulses empty.
+		return;
+	}
+
+	// REAPER returns pulse times relative to the start of its input. Shift
+	// to absolute file time so the draw routine can compare against the
+	// time model directly.
+	m_pulses.reserve(local_pulses.size());
+	for (double t : local_pulses)
+		m_pulses.push_back(t0 + t);
+}
+
+void WaveformWidget::drawGlottalPulses(QPainter &p)
+{
+	if (m_pulses.empty()) return;
+
+	double t0 = m_model->windowStart();
+	double t1 = m_model->windowEnd();
+	int h = height();
+	int w = width();
+
+	p.setPen(QPen(PULSE_COLOR, 1));
+	p.setRenderHint(QPainter::Antialiasing, false); // crisp 1-px verticals
+
+	// Pulses are sorted by construction (REAPER yields chronological times).
+	// The viewport check costs nothing relative to compute time and keeps
+	// the routine correct if a stale cache straddles a viewport edge.
+	for (double t : m_pulses)
+	{
+		if (t < t0) continue;
+		if (t > t1) break;
+		double x = timeToX(t);
+		if (x >= 0 && x <= w)
+			p.drawLine(QPointF(x, 0), QPointF(x, h));
+	}
+}
+
+
+// ─────────────────────────────────────────────────
 //  Painting
 // ─────────────────────────────────────────────────
 
@@ -355,6 +497,16 @@ void WaveformWidget::paintEvent(QPaintEvent *)
 
 	// Draw the cached waveform.
 	p.drawPixmap(0, 0, m_cache);
+
+	// Glottal-pulse overlay (between the wave and the cursor/selection overlays
+	// so pulses are visible but the selection / cursor / playback still draw
+	// on top of them).
+	if (m_show_pulses)
+	{
+		if (!m_pulses_valid)
+			computeGlottalPulses();
+		drawGlottalPulses(p);
+	}
 
 	int w = width();
 	int h = height();
@@ -531,6 +683,18 @@ void WaveformWidget::leaveEvent(QEvent *)
 void WaveformWidget::onViewportChanged(double, double)
 {
 	m_cache_valid = false;
+
+	// Pulse cache also follows the viewport. Use the same leading-edge
+	// throttle pattern as PitchWidget: invalidate immediately on the
+	// first change after stillness, coalesce rapid subsequent changes
+	// (scrolling, zooming), and recompute once more 120 ms after the
+	// last change so the final position is correct.
+	if (m_show_pulses)
+	{
+		if (!m_pulse_debounce_timer->isActive())
+			m_pulses_valid = false;
+		m_pulse_debounce_timer->start();
+	}
 	update();
 }
 

@@ -28,6 +28,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QDialogButtonBox>
+#include <QApplication>
 #include <phon/gui/sound_view.hpp>
 #include <phon/gui/spectrum_view.hpp>
 #include <phon/application/spectral_moments.hpp>
@@ -47,6 +48,7 @@
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/audio_player.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/analysis/voice_quality.hpp>
 
 static constexpr const char *PLAY_ICON = ":/icons/play.svg";
 static constexpr const char *PAUSE_ICON = ":/icons/pause.svg";
@@ -117,6 +119,12 @@ void SoundView::initialize()
 	catch (...) {
 		m_show_formants = false;
 	}
+	try {
+		m_show_glottal_pulses = Settings::get_boolean("sound_plots", "glottal_pulses");
+	}
+	catch (...) {
+		m_show_glottal_pulses = false;
+	}
 
 	// All channels visible by default, average hidden.
 	for (int i = 1; i <= m_sound->nchannel(); i++)
@@ -140,6 +148,8 @@ void SoundView::initialize()
 		m_show_pitch_action->setChecked(m_show_pitch);
 	if (m_show_formants_action)
 		m_show_formants_action->setChecked(m_show_formants);
+	if (m_show_glottal_pulses_action)
+		m_show_glottal_pulses_action->setChecked(m_show_glottal_pulses);
 
 	// Set initial viewport after all widgets are connected.
 	// Show the first 10 seconds (or the whole file if shorter).
@@ -500,6 +510,31 @@ void SoundView::createToolBar()
 	m_toolbar->addAction(intensity_action);
 	if (auto *ib = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(intensity_action)))
 		ib->setPopupMode(QToolButton::InstantPopup);
+
+
+	// ── Voice quality menu button ─────────────────────
+	// Houses the glottal-pulse overlay in v1.0; HNR track and full voice
+	// report (jitter/shimmer/HNR over selection) join in follow-up commits.
+	auto *voice_menu = new QMenu(this);
+
+	m_show_glottal_pulses_action = voice_menu->addAction(tr("Show glottal pulses"));
+	m_show_glottal_pulses_action->setCheckable(true);
+	m_show_glottal_pulses_action->setChecked(false);
+	connect(m_show_glottal_pulses_action, &QAction::toggled, this, &SoundView::onToggleGlottalPulses);
+
+	voice_menu->addSeparator();
+
+	auto *voice_report_action = voice_menu->addAction(tr("Get voice report"));
+	voice_report_action->setShortcut(QKeySequence(Qt::Key_F9));
+	voice_report_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(voice_report_action);
+	connect(voice_report_action, &QAction::triggered, this, &SoundView::onVoiceReport);
+
+	auto *voice_action = new QAction(QIcon(":/icons/voice.svg"), tr("Voice quality"), this);
+	voice_action->setMenu(voice_menu);
+	m_toolbar->addAction(voice_action);
+	if (auto *vb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(voice_action)))
+		vb->setPopupMode(QToolButton::InstantPopup);
 
 	m_toolbar->addSeparator();
 
@@ -1018,6 +1053,185 @@ void SoundView::onToggleFormants(bool checked)
 	Settings::set_value("sound_plots", "formants", checked);
 	for (auto *sg : m_spectrograms)
 		sg->setShowFormants(checked);
+}
+
+void SoundView::onToggleGlottalPulses(bool checked)
+{
+	m_show_glottal_pulses = checked;
+	Settings::set_value("sound_plots", "glottal_pulses", checked);
+	// Pulses are overlaid on each waveform widget, not on the average track.
+	// The average channel still receives the toggle so the user can opt in
+	// from the average view too (it computes on the per-frame mean).
+	for (auto *wf : m_waveforms)
+		wf->setShowGlottalPulses(checked);
+}
+
+// ─────────────────────────────────────────────────
+//  Voice quality report
+// ─────────────────────────────────────────────────
+
+namespace {
+
+// Format a relative jitter / shimmer measure as a percentage with three
+// fractional digits, or "(undefined)" if NaN.
+QString fmtPercent(double x)
+{
+	if (std::isnan(x)) return QObject::tr("(undefined)");
+	return QString::number(100.0 * x, 'f', 3) + QStringLiteral(" %");
+}
+
+QString fmtMicroseconds(double seconds)
+{
+	if (std::isnan(seconds)) return QObject::tr("(undefined)");
+	return QString::number(seconds * 1e6, 'f', 2) + QStringLiteral(" µs");
+}
+
+QString fmtDb(double db)
+{
+	if (std::isnan(db)) return QObject::tr("(undefined)");
+	return QString::number(db, 'f', 3) + QStringLiteral(" dB");
+}
+
+// Mean period from valid in-range periods, used for the pulse-summary
+// line ("Mean period: X ms / mean F0: Y Hz"). Excludes out-of-range
+// periods but does not apply the pair-ratio constraint (the report line
+// is informational, not a perturbation measure).
+double meanInRangePeriod(const std::vector<double> &pulses, const speech::PeriodFilter &pf)
+{
+	double sum = 0.0;
+	int n = 0;
+	for (size_t i = 0; i + 1 < pulses.size(); ++i)
+	{
+		double T = pulses[i + 1] - pulses[i];
+		if (T >= pf.period_floor && T <= pf.period_ceiling)
+		{
+			sum += T;
+			++n;
+		}
+	}
+	if (n == 0) return std::numeric_limits<double>::quiet_NaN();
+	return sum / n;
+}
+
+} // namespace
+
+void SoundView::onVoiceReport()
+{
+	if (!m_model->hasSpanSelection())
+	{
+		QMessageBox::warning(this, tr("Cannot compute voice report"),
+			tr("Please select a time interval first.\n\nA single-point selection is not enough — "
+			   "the voice report needs a span of voiced speech to estimate jitter, shimmer and HNR."));
+		return;
+	}
+
+	double t1 = m_model->selectionStart();
+	double t2 = m_model->selectionEnd();
+	double sr = static_cast<double>(m_sound->sample_rate());
+
+	auto first = m_sound->time_to_frame(t1);
+	auto last  = m_sound->time_to_frame(t2);
+	if (last - first < 2 || sr <= 0.0)
+	{
+		QMessageBox::warning(this, tr("Cannot compute voice report"),
+			tr("The selection is too short."));
+		return;
+	}
+
+	QString heading = tr("Voice report (%1 s – %2 s, duration %3 s)")
+		.arg(t1, 0, 'f', 4).arg(t2, 0, 'f', 4).arg(t2 - t1, 0, 'f', 4);
+
+	QString body;
+	QApplication::setOverrideCursor(Qt::WaitCursor);
+	try
+	{
+		const bool mono = m_sound->is_mono();
+		const QString ind = mono ? QString() : QStringLiteral("  ");
+
+		for (int ch : m_visible_channels)
+		{
+			// Materialise channel samples in the selection range as doubles
+			// for the kernel (which is double-precision throughout).
+			auto view = m_sound->channel_view(ch, first, last);
+			std::vector<double> samples(view.begin(), view.end());
+			std::span<const double> span(samples.data(), samples.size());
+
+			// 1. Glottal pulses (REAPER). On failure (rare), leave empty
+			// and let the downstream measures report "undefined".
+			std::vector<double> pulses;
+			try { pulses = speech::compute_glottal_pulses(span, sr); }
+			catch (...) { /* keep pulses empty */ }
+
+			speech::PeriodFilter    pf;
+			speech::AmplitudeFilter af;
+
+			double j_local   = speech::jitter_local    (pulses, pf);
+			double j_localA  = speech::jitter_local_abs(pulses, pf);
+			double j_rap     = speech::jitter_rap      (pulses, pf);
+			double j_ppq5    = speech::jitter_ppq5     (pulses, pf);
+			double j_ddp     = speech::jitter_ddp      (pulses, pf);
+
+			double s_local   = speech::shimmer_local   (pulses, span, sr, af);
+			double s_localDb = speech::shimmer_local_db(pulses, span, sr, af);
+			double s_apq3    = speech::shimmer_apq3    (pulses, span, sr, af);
+			double s_apq5    = speech::shimmer_apq5    (pulses, span, sr, af);
+			double s_apq11   = speech::shimmer_apq11   (pulses, span, sr, af);
+
+			double hnrDb     = speech::hnr_mean_db(span, sr);
+
+			double meanT     = meanInRangePeriod(pulses, pf);
+
+			if (!mono)
+				body += tr("Channel %1:\n").arg(ch);
+
+			body += ind + tr("Pulses\n");
+			body += ind + tr("  Number of pulses: %1\n").arg(pulses.size());
+			if (!std::isnan(meanT))
+			{
+				body += ind + tr("  Mean period: %1 ms  (mean F0: %2 Hz)\n")
+					.arg(meanT * 1000.0, 0, 'f', 3)
+					.arg(1.0 / meanT, 0, 'f', 1);
+			}
+			else
+			{
+				body += ind + tr("  Mean period: (undefined — too few in-range periods)\n");
+			}
+
+			body += ind + tr("Jitter\n");
+			body += ind + tr("  Local:                %1\n").arg(fmtPercent(j_local));
+			body += ind + tr("  Local, absolute:      %1\n").arg(fmtMicroseconds(j_localA));
+			body += ind + tr("  RAP:                  %1\n").arg(fmtPercent(j_rap));
+			body += ind + tr("  PPQ5:                 %1\n").arg(fmtPercent(j_ppq5));
+			body += ind + tr("  DDP:                  %1\n").arg(fmtPercent(j_ddp));
+
+			body += ind + tr("Shimmer\n");
+			body += ind + tr("  Local:                %1\n").arg(fmtPercent(s_local));
+			body += ind + tr("  Local, in dB:         %1\n").arg(fmtDb(s_localDb));
+			body += ind + tr("  APQ3:                 %1\n").arg(fmtPercent(s_apq3));
+			body += ind + tr("  APQ5:                 %1\n").arg(fmtPercent(s_apq5));
+			body += ind + tr("  APQ11:                %1\n").arg(fmtPercent(s_apq11));
+
+			body += ind + tr("Harmonics-to-noise ratio (mean over voiced frames):\n");
+			body += ind + tr("  HNR:                  %1\n").arg(fmtDb(hnrDb));
+			body += QStringLiteral("\n");
+		}
+
+		QApplication::restoreOverrideCursor();
+	}
+	catch (std::exception &e)
+	{
+		QApplication::restoreOverrideCursor();
+		QMessageBox::critical(this, tr("Measurement error"), QString::fromUtf8(e.what()));
+		return;
+	}
+
+	// Inlined writeToOutput: that helper is defined later in the file, so
+	// calling it from here would be a forward-reference error. The body
+	// is the same: trim trailing newlines and forward to the output panel.
+	while (body.endsWith('\n'))
+		body.chop(1);
+	if (auto *output = OutputPanel::instance())
+		output->appendResult(heading, body);
 }
 
 void SoundView::onFormantSettings()
@@ -1681,6 +1895,10 @@ void SoundView::updatePlotVisibility()
 	// Formants are overlaid on spectrograms, not separate widgets.
 	for (auto *sg : m_spectrograms)
 		sg->setShowFormants(m_show_formants);
+
+	// Glottal pulses are overlaid on waveforms, not separate widgets.
+	for (auto *wf : m_waveforms)
+		wf->setShowGlottalPulses(m_show_glottal_pulses);
 
 	m_y_axis->update();
 	updateTopPlot();

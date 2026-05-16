@@ -129,6 +129,8 @@ private slots:
 	void onFormantSettings();
 	void onTogglePitch(bool checked);
 	void onPitchSettings();
+	void onToggleGlottalPulses(bool checked);
+	void onVoiceReport();
 	void onSelectWindow();
 	void onGetFormants();
 	void onGetMeanFormants();
@@ -204,6 +206,7 @@ private:
 	bool m_show_pitch = false;
 	bool m_show_intensity = false;
 	bool m_show_formants = false;
+	bool m_show_glottal_pulses = false;
 
 	QAction *m_zoom_sel_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
@@ -223,6 +226,10 @@ private:
 
 	// Formant menu: show toggle.
 	QAction *m_show_formants_action = nullptr;
+
+	// Voice quality menu: show toggle for glottal pulses (HNR track and
+	// voice-report dialog land in follow-up commits).
+	QAction *m_show_glottal_pulses_action = nullptr;
 
 	// Audio playback
 	std::unique_ptr<AudioPlayer> m_player;
