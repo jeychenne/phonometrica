@@ -160,6 +160,57 @@ the maximum possible frequency of the last formant, the analysis window length a
 will be used instead.
 
 
+------------
+
+.. function:: get_voice_report(sound as Sound, channel as Integer, t1 as Number, t2 as Number [, f0_min as Number, f0_max as Number])
+
+Computes the full voice-quality battery (jitter, shimmer, harmonics-to-noise ratio, plus a pulse summary) over the half-open
+time interval ``[t1, t2)`` on the specified channel, and returns the result as a ``Table``. When ``channel`` is 0, the per-frame
+mean across channels is analysed (the "average" view). The optional ``f0_min`` and ``f0_max`` arguments bound REAPER's
+periodicity search and the period filter applied to the perturbation aggregates; if omitted, they default to 75 Hz and 600 Hz
+respectively, matching Praat's voice-report defaults.
+
+The returned table has 14 fields. ``num_pulses`` is the number of voiced glottal-closure instants detected by REAPER in the
+selection. All other fields are ``Number`` values, and equal ``undefined`` (NaN) when there are not enough valid pulses or
+voiced frames to compute the corresponding measure.
+
+============================  =====================================================================================
+Field                         Description
+============================  =====================================================================================
+``num_pulses``                Number of voiced pulses (integer).
+``mean_period``               Mean period over in-range pulses, in seconds.
+``mean_f0``                   ``1 / mean_period``, in hertz.
+``jitter_local``              Mean ``|T(i+1) − T(i)| / mean(T)``, dimensionless (multiply by 100 for "percent").
+``jitter_local_abs``          Mean ``|T(i+1) − T(i)|`` in seconds.
+``jitter_rap``                3-point relative average perturbation (dimensionless).
+``jitter_ppq5``               5-point period perturbation quotient (dimensionless).
+``jitter_ddp``                Difference of differences of periods, equal to ``3 × jitter_rap``.
+``shimmer_local``             Relative shimmer (dimensionless).
+``shimmer_local_db``          Mean ``|20 · log10(A(i+1)/A(i))|`` in decibels.
+``shimmer_apq3``              3-point amplitude perturbation quotient (dimensionless).
+``shimmer_apq5``              5-point amplitude perturbation quotient (dimensionless).
+``shimmer_apq11``             11-point amplitude perturbation quotient (dimensionless).
+``hnr``                       Harmonics-to-noise ratio, mean over voiced frames, in decibels.
+============================  =====================================================================================
+
+The pulse times come from REAPER [TAL2014]_, restricted to voiced regions; HNR is derived from the normalised autocorrelation
+strength of the Praat-style pitch tracker [BOE1993]_ along its chosen Viterbi path. Jitter and shimmer aggregates apply the
+same period (1.3) and amplitude (1.6) ratio filters as Praat's voice report. See :ref:`voice-report` in the sound view
+documentation for full definitions.
+
+Example::
+
+   let snd = get_sounds()[1]
+   let r = get_voice_report(snd, 1, 0.5, 1.2)
+   print "Pulses found: " & r.num_pulses
+   print "Local jitter: " & (100 * r.jitter_local) & " %"
+   print "HNR: " & r.hnr & " dB"
+
+When a measure is undefined (e.g. on an unvoiced selection), the corresponding field holds NaN and prints as ``nan`` (or
+``undefined`` when serialised through JSON). A NaN field can be tested with the standard ``x != x`` idiom, since NaN
+compares unequal to itself.
+
+
 Spectrum and spectral moments
 -----------------------------
 

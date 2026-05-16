@@ -28,6 +28,7 @@
 //#include <iostream>
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/object.hpp>
+#include <phon/runtime/table.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/resampler.hpp>
@@ -545,6 +546,35 @@ Array<double> Sound::get_intensity(int channel, double from, double to, double t
 	return speech::get_intensity(input, sample_rate(), window_size, time_step);
 }
 
+speech::VoiceReport Sound::compute_voice_report(int channel, double t1, double t2,
+                                                double f0_min, double f0_max)
+{
+	open();
+
+	if (t1 < 0.0 || t2 <= t1 || t2 > duration()) {
+		throw error("Sound::compute_voice_report: invalid time range [%, %] for sound of duration %",
+		            t1, t2, duration());
+	}
+	if (!(f0_min > 0.0) || !(f0_max > f0_min)) {
+		throw error("Sound::compute_voice_report: invalid F0 range [%, %] Hz", f0_min, f0_max);
+	}
+
+	auto first = time_to_frame(t1);
+	auto last  = time_to_frame(t2);
+	if (last - first < 2) {
+		throw error("Sound::compute_voice_report: selection too short (% s — % s)", t1, t2);
+	}
+
+	// Materialise the requested channel (or the mean across channels for
+	// channel == 0) as doubles. get_channel handles channel == 0 by
+	// delegating to average_channels.
+	auto chan = get_channel(channel, first, last);
+	std::span<const double> span(chan.data(), static_cast<size_t>(chan.size()));
+
+	return speech::compute_voice_report(span, static_cast<double>(sample_rate()),
+	                                    f0_min, f0_max);
+}
+
 void Sound::initialize(Runtime &rt)
 {
 	auto sound_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -586,6 +616,56 @@ void Sound::initialize(Runtime &rt)
 			throw error("File '%': invalid time %", sound.path(), time);
 		}
 		return sound.get_mean_intensity(channel, t1, t2);
+	};
+
+	// Pack a VoiceReport into a Table whose keys match the GUI report
+	// layout. Doubles that came back NaN are stored as NaN; scripting
+	// callers can detect them with the standard `x != x` idiom since
+	// NaN compares unequal to itself. num_pulses is an integer so it
+	// round-trips through arithmetic and comparisons without surprises.
+	auto pack_voice_report = [](Runtime &rt, const speech::VoiceReport &r) -> Variant {
+		auto table = make_handle<Table>(&rt);
+		auto &map  = table->data();
+
+		map["num_pulses"]       = r.num_pulses;
+		map["mean_period"]      = r.mean_period;
+		map["mean_f0"]          = r.mean_f0;
+
+		map["jitter_local"]     = r.jitter_local;
+		map["jitter_local_abs"] = r.jitter_local_abs;
+		map["jitter_rap"]       = r.jitter_rap;
+		map["jitter_ppq5"]      = r.jitter_ppq5;
+		map["jitter_ddp"]       = r.jitter_ddp;
+
+		map["shimmer_local"]    = r.shimmer_local;
+		map["shimmer_local_db"] = r.shimmer_local_db;
+		map["shimmer_apq3"]     = r.shimmer_apq3;
+		map["shimmer_apq5"]     = r.shimmer_apq5;
+		map["shimmer_apq11"]    = r.shimmer_apq11;
+
+		map["hnr"]              = r.hnr;
+
+		return Variant(std::move(table));
+	};
+
+	auto get_voice_report1 = [pack_voice_report](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &sound  = cast<Sound>(args[0]);
+		auto channel = (int) args[1].resolve().get_number();
+		auto t1      = args[2].resolve().get_number();
+		auto t2      = args[3].resolve().get_number();
+		auto r       = sound.compute_voice_report(channel, t1, t2);
+		return pack_voice_report(rt, r);
+	};
+
+	auto get_voice_report2 = [pack_voice_report](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &sound  = cast<Sound>(args[0]);
+		auto channel = (int) args[1].resolve().get_number();
+		auto t1      = args[2].resolve().get_number();
+		auto t2      = args[3].resolve().get_number();
+		auto f0_min  = args[4].resolve().get_number();
+		auto f0_max  = args[5].resolve().get_number();
+		auto r       = sound.compute_voice_report(channel, t1, t2, f0_min, f0_max);
+		return pack_voice_report(rt, r);
 	};
 
 	auto get_pitch1 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -807,6 +887,8 @@ void Sound::initialize(Runtime &rt)
 	rt.add_global("get_formants", get_formants2, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(intptr_t), CLS(Number), CLS(Number), CLS(intptr_t) });
 	rt.add_global("get_intensity", get_intensity, {CLS(Sound), CLS(intptr_t), CLS(Number) });
 	rt.add_global("get_mean_intensity", get_mean_intensity, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number)});
+	rt.add_global("get_voice_report", get_voice_report1, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number) });
+	rt.add_global("get_voice_report", get_voice_report2, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
 	rt.add_global("hertz_to_bark", hz2bark1, {CLS(Number) });
 	rt.add_global("hertz_to_bark", hz2bark2, {CLS(Array<double>) });
 	rt.add_global("bark_to_hertz", bark2hz1, {CLS(Number) });

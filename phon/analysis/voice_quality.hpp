@@ -31,6 +31,8 @@
 #define PHONOMETRICA_VOICE_QUALITY_HPP
 
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <span>
 #include <vector>
 
@@ -181,6 +183,61 @@ double hnr_mean_db(std::span<const double> samples, double sample_rate,
 // caller can treat frames as equispaced with step `opts.time_step`.
 std::vector<double> hnr_contour(std::span<const double> samples, double sample_rate,
                                 HnrOptions opts = {});
+
+
+// ── Aggregate voice report ────────────────────────────────────────────
+//
+// One-shot computation of the full voice-quality battery on a single
+// channel of speech. All measures share the same set of glottal pulses
+// (REAPER), which is the expensive step. Jitter and shimmer use the
+// default Praat filters; HNR uses the Praat-style pitch tracker with
+// the defaults declared in HnrOptions.
+//
+// All double fields are NaN when the underlying measure is undefined
+// (typically not enough valid pulses or no voiced frames). num_pulses
+// is always populated (it is the count of voiced GCIs returned by
+// REAPER); the GUI and scripting bindings rely on a zero count to
+// surface a single "no pulses found" message rather than ten NaNs.
+//
+// Field order is kept close to the layout of the GUI report so a
+// scripting-side dump matches what the user sees in the output panel.
+
+struct VoiceReport
+{
+	// Glottal pulses
+	intptr_t num_pulses     = 0;
+	double   mean_period    = std::numeric_limits<double>::quiet_NaN();  // seconds
+	double   mean_f0        = std::numeric_limits<double>::quiet_NaN();  // Hz, = 1 / mean_period
+
+	// Jitter family (all relative, except jitter_local_abs which is in seconds)
+	double   jitter_local     = std::numeric_limits<double>::quiet_NaN();
+	double   jitter_local_abs = std::numeric_limits<double>::quiet_NaN();
+	double   jitter_rap       = std::numeric_limits<double>::quiet_NaN();
+	double   jitter_ppq5      = std::numeric_limits<double>::quiet_NaN();
+	double   jitter_ddp       = std::numeric_limits<double>::quiet_NaN();
+
+	// Shimmer family (all relative, except shimmer_local_db which is in dB)
+	double   shimmer_local    = std::numeric_limits<double>::quiet_NaN();
+	double   shimmer_local_db = std::numeric_limits<double>::quiet_NaN();
+	double   shimmer_apq3     = std::numeric_limits<double>::quiet_NaN();
+	double   shimmer_apq5     = std::numeric_limits<double>::quiet_NaN();
+	double   shimmer_apq11    = std::numeric_limits<double>::quiet_NaN();
+
+	// Harmonics-to-noise ratio (mean over voiced frames, dB)
+	double   hnr              = std::numeric_limits<double>::quiet_NaN();
+};
+
+// Compute the full voice report on `samples` (one channel). REAPER
+// pulse detection is performed once and reused across jitter, shimmer
+// and the period summary. HNR uses its own pitch tracker on the same
+// samples. Pulse detection failures are caught internally so that the
+// HNR field can still be populated even when REAPER cannot lock onto
+// the signal; conversely, HNR failures do not affect the jitter and
+// shimmer fields.
+VoiceReport compute_voice_report(std::span<const double> samples,
+                                 double sample_rate,
+                                 double f0_min = 75.0,
+                                 double f0_max = 600.0);
 
 } // namespace phonometrica::speech
 

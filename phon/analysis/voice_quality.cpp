@@ -592,4 +592,95 @@ std::vector<double> hnr_contour(std::span<const double> samples, double sample_r
 	return out;
 }
 
+
+// ── Aggregate voice report ────────────────────────────────────────────
+
+namespace {
+
+// Mean period from valid in-range periods. Excludes out-of-range
+// periods but does not apply the pair-ratio constraint — this is the
+// informational summary line ("Mean period / mean F0"), not a
+// perturbation measure. Mirrors the helper previously inlined in the
+// sound view; centralising it here lets the GUI and scripting paths
+// share one definition.
+double mean_in_range_period(std::span<const double> pulses, const PeriodFilter &f)
+{
+	if (pulses.size() < 2) return NaN;
+	double sum = 0.0;
+	intptr_t n = 0;
+	for (size_t i = 0; i + 1 < pulses.size(); ++i)
+	{
+		double T = pulses[i + 1] - pulses[i];
+		if (T >= f.period_floor && T <= f.period_ceiling)
+		{
+			sum += T;
+			++n;
+		}
+	}
+	if (n == 0) return NaN;
+	return sum / static_cast<double>(n);
+}
+
+} // anonymous namespace
+
+
+VoiceReport compute_voice_report(std::span<const double> samples,
+                                 double sample_rate,
+                                 double f0_min,
+                                 double f0_max)
+{
+	VoiceReport r;
+
+	// REAPER pulse detection. Failures (rare: ComputeFeatures/TrackEpochs
+	// occasionally bail on extremely short or all-silent inputs) leave the
+	// pulse list empty so jitter/shimmer report NaN, but they do not
+	// short-circuit HNR — HNR has its own tracker and can still produce a
+	// useful value when REAPER cannot lock.
+	std::vector<double> pulses;
+	try
+	{
+		pulses = compute_glottal_pulses(samples, sample_rate, f0_min, f0_max);
+	}
+	catch (...)
+	{
+		// Keep pulses empty; downstream measures will return NaN naturally.
+	}
+
+	r.num_pulses = static_cast<intptr_t>(pulses.size());
+
+	// Period filter inherits f0_min/f0_max from the caller so the
+	// in-range definition is consistent with pulse detection.
+	PeriodFilter    pf;
+	pf.period_floor   = 1.0 / f0_max;
+	pf.period_ceiling = 1.0 / f0_min;
+	AmplitudeFilter af;
+	af.period = pf;
+
+	std::span<const double> pulses_span(pulses.data(), pulses.size());
+
+	r.mean_period = mean_in_range_period(pulses_span, pf);
+	r.mean_f0     = std::isnan(r.mean_period) || r.mean_period <= 0.0
+	                  ? NaN
+	                  : 1.0 / r.mean_period;
+
+	r.jitter_local     = jitter_local    (pulses_span, pf);
+	r.jitter_local_abs = jitter_local_abs(pulses_span, pf);
+	r.jitter_rap       = jitter_rap      (pulses_span, pf);
+	r.jitter_ppq5      = jitter_ppq5     (pulses_span, pf);
+	r.jitter_ddp       = jitter_ddp      (pulses_span, pf);
+
+	r.shimmer_local    = shimmer_local   (pulses_span, samples, sample_rate, af);
+	r.shimmer_local_db = shimmer_local_db(pulses_span, samples, sample_rate, af);
+	r.shimmer_apq3     = shimmer_apq3    (pulses_span, samples, sample_rate, af);
+	r.shimmer_apq5     = shimmer_apq5    (pulses_span, samples, sample_rate, af);
+	r.shimmer_apq11    = shimmer_apq11   (pulses_span, samples, sample_rate, af);
+
+	HnrOptions hopts;
+	hopts.f0_min = f0_min;
+	hopts.f0_max = f0_max;
+	r.hnr = hnr_mean_db(samples, sample_rate, hopts);
+
+	return r;
+}
+
 } // namespace phonometrica::speech

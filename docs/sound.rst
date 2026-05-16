@@ -116,6 +116,23 @@ The intensity track is a two-dimensional representation of the sound which shows
 You can show or hide the intensity track using the ``Show intensity`` command in the intensity menu.
 
 
+Voice quality
+~~~~~~~~~~~~~
+
+The voice quality menu |voice| in the toolbar gives access to perturbation measures of a voiced
+signal. Two commands are available:
+
+* ``Show glottal pulses`` overlays the glottal-closure instants (GCIs) detected by REAPER [TAL2014]_
+  on top of each waveform. Pulses inside voiced regions are drawn as short vertical ticks; pulses
+  REAPER would otherwise insert across unvoiced gaps are filtered out.
+* ``Get voice report`` (shortcut ``F9``) computes a full voice-quality report — jitter, shimmer and
+  harmonics-to-noise ratio — over the current selection. See :ref:`voice-report` below.
+
+All voice-quality measures use the pitch range from the pitch settings (``minimum pitch`` /
+``maximum pitch``) to bound REAPER's period search and to filter out-of-range periods from the
+perturbation aggregates.
+
+
 How to use sound views
 ----------------------
 
@@ -160,6 +177,7 @@ Once a persistent cursor is visible, you can perform acoustic measurements by us
 * The ``Get intensity`` command in the intensity menu |intensity| prints the intensity under the cursor.
 * The ``Get formants`` command in the formants menu |formants| prints the value of the visible formants, as well as their respective bandwidth, under the cursor.
 * The ``Get spectral moments`` command in the spectrogram menu |spectrogram| prints the centre of gravity, spread, skewness, and kurtosis at the cursor position (see :ref:`spectral-moments`).
+* The ``Get voice report`` command in the voice quality menu |voice| computes jitter, shimmer and HNR over a *time-span* selection (see :ref:`voice-report`). Unlike the other commands, it requires a span, not a cursor.
 
 Note that for these commands to work, the corresponding plot must be visible (e.g. the pitch plot must be visible if you want to measure pitch).
 
@@ -209,6 +227,56 @@ results are printed in the output panel:
 
 To extract spectral moments systematically from a corpus, use a spectral moments query
 (see :ref:`acoustic-queries`).
+
+
+.. _voice-report:
+
+Voice report
+~~~~~~~~~~~~
+
+The **voice report** is a one-shot summary of voice-quality measures over a selected time span.
+It mirrors Praat's "Voice report" so values can be cross-checked against Praat. To compute it,
+select a portion of the signal that contains continuous voiced speech (e.g. a single sustained
+vowel), then choose ``Get voice report`` from the voice quality menu |voice| in the toolbar, or
+press ``F9``. A single-point cursor is not enough — jitter, shimmer and HNR all require a span.
+
+The report contains four blocks per visible channel:
+
+- **Pulses**: the number of glottal-closure instants detected by REAPER [TAL2014]_ in voiced
+  regions of the selection, together with the mean period and the corresponding mean F0. The
+  mean is taken over periods inside the pitch range only.
+- **Jitter**: five period-perturbation measures.
+
+  - *Local*: mean absolute difference between consecutive periods, normalised by the mean
+    period (a relative measure, printed as a percentage).
+  - *Local, absolute*: mean absolute difference between consecutive periods, in microseconds.
+  - *RAP*: relative average perturbation over a 3-period window.
+  - *PPQ5*: period perturbation quotient over a 5-period window.
+  - *DDP*: difference of differences of periods (= 3 × RAP by construction).
+- **Shimmer**: five amplitude-perturbation measures, defined analogously to the jitter family
+  on peak amplitudes around each glottal pulse.
+
+  - *Local*: relative mean absolute amplitude difference (percentage).
+  - *Local, in dB*: mean absolute difference of consecutive amplitudes in decibels.
+  - *APQ3*, *APQ5*, *APQ11*: amplitude perturbation quotient over a 3-, 5- or 11-period window.
+- **HNR**: harmonics-to-noise ratio, in dB, averaged over voiced frames. Derived from the
+  normalised autocorrelation strength of the Praat-style pitch tracker [BOE1993]_:
+  :math:`\mathrm{HNR}_{\mathrm{dB}} = 10\,\log_{10} \frac{r}{1 - r}`, where :math:`r` is the
+  per-frame chosen-path strength.
+
+Each measure displays ``(undefined)`` when there are too few valid pulses or no voiced frames
+to compute it.
+
+Jitter and shimmer reject periods that fall outside the pitch range, pairs whose period ratio
+exceeds 1.3, and (for shimmer) pairs whose amplitude ratio exceeds 1.6. These filters match
+Praat's defaults; they are essential on real speech because a single misplaced pulse —
+typically at a voicing boundary — would otherwise dominate the aggregate. The same selection
+can therefore yield a meaningful report even when REAPER inserts a few spurious pulses near
+the edges of the voiced segment.
+
+The same computation is also available from the scripting engine through the
+:func:`get_voice_report` function, which returns a ``Table`` whose keys mirror the fields in
+the printed report; see the :ref:`Sound API <sound-type>` page.
 
 
 .. _sound-file-operations:
@@ -279,6 +347,10 @@ References
     :width: 16px
 
 .. |formants| image:: ../icons/waves.svg
+    :height: 16px
+    :width: 16px
+
+.. |voice| image:: ../icons/voice.svg
     :height: 16px
     :width: 16px
 

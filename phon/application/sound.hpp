@@ -36,6 +36,7 @@
 #include <phon/utils/slice.hpp>
 #include <phon/utils/signal.hpp>
 #include <phon/analysis/signal_processing.hpp>
+#include <phon/analysis/voice_quality.hpp>
 
 
 namespace phonometrica {
@@ -117,6 +118,14 @@ public:
 	Array<double> get_formants(int channel, double time, int nformant, double nyquist_frequency, double window_size, int lpc_order);
 
 	Array<double> get_formants(int channel, const Array<double> &times, int nformant, double nyquist_frequency, double window_size, int lpc_order);
+
+	// Compute the full voice-quality battery (jitter, shimmer, HNR, pulse
+	// summary) over the half-open time interval [t1, t2). When channel == 0,
+	// the per-frame mean across channels is analysed (the "average" view).
+	// f0_min and f0_max bound REAPER's periodicity search and the period
+	// filter; defaults match Praat's voice-report defaults.
+	speech::VoiceReport compute_voice_report(int channel, double t1, double t2,
+	                                         double f0_min = 75.0, double f0_max = 600.0);
 
 	static void initialize(Runtime &rt);
 
