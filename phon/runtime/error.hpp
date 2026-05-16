@@ -116,6 +116,22 @@ public:
 
 	intptr_t line_no() const { return line; }
 
+	// Byte column (0-based) where the error was detected on `line_no`. Defaults
+	// to -1 when no column information is available (e.g. for errors raised
+	// from inside the interpreter rather than from the parser/scanner). Live
+	// error highlighting in the script editor consults this value and only
+	// paints a narrow squiggle when it is non-negative.
+	intptr_t column_no() const { return column; }
+
+	// Byte length of the offending token at (line_no, column_no). 0 means "no
+	// width" — callers that paint a squiggle treat that as "use minimum width".
+	intptr_t error_length() const { return length; }
+
+	// Attach (column, length) to an already-constructed RuntimeError. Used by
+	// the scanner just before throwing so all existing RuntimeError
+	// constructors stay source-compatible.
+	void set_position(intptr_t col, intptr_t len) { column = col; length = len; }
+
 	// Append a frame to the call-stack trace. `Runtime::interpret()` calls
 	// this from inside its catch handler at each level the exception passes
 	// through, so the resulting vector reads innermost-first: trace().front()
@@ -135,6 +151,12 @@ public:
 private:
 
 	intptr_t line;
+
+	// (column, length) of the offending source range. -1 / 0 mean "unset"; the
+	// editor's live-error pipeline falls back to whole-line highlighting in
+	// that case.
+	intptr_t column = -1;
+	intptr_t length = 0;
 
 	// Accumulated at unwind sites. See push_trace() above.
 	std::vector<TraceEntry> trace_;

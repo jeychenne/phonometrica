@@ -98,6 +98,14 @@ void ScriptView::setupUi()
 	m_hint_action->setChecked(autohints);
 	connect(m_hint_action, &QAction::toggled, this, &ScriptView::onToggleHints);
 
+	m_error_action = m_toolbar->addAction(QIcon(":/icons/circle-x.svg"),
+		tr("Highlight syntax errors as you type"));
+	m_error_action->setCheckable(true);
+	bool error_checking = true;
+	try { error_checking = Settings::get_boolean("error_checking"); } catch (...) { }
+	m_error_action->setChecked(error_checking);
+	connect(m_error_action, &QAction::toggled, this, &ScriptView::onToggleErrorChecking);
+
 	auto *bytecode_action = m_toolbar->addAction(QIcon(":/icons/binary.svg"),
 		tr("View bytecode"));
 	connect(bytecode_action, &QAction::triggered, this, &ScriptView::onViewBytecode);
@@ -136,7 +144,9 @@ void ScriptView::setupUi()
 	// ── Editor ─────────────────────────────────────
 
 	m_editor = new ScriptEditor(this);
+	m_editor->setRuntime(&m_runtime);
 	m_editor->activateHints(autohints);
+	m_editor->activateErrorChecking(error_checking);
 	layout->addWidget(m_editor, 1);
 
 	// ── Search bar ─────────────────────────────────
@@ -413,6 +423,11 @@ void ScriptView::onUnindentSelection()
 void ScriptView::onToggleHints(bool checked)
 {
 	m_editor->activateHints(checked);
+}
+
+void ScriptView::onToggleErrorChecking(bool checked)
+{
+	m_editor->activateErrorChecking(checked);
 }
 
 void ScriptView::onViewBytecode()

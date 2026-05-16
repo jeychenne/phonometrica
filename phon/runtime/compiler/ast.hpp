@@ -24,6 +24,7 @@
 
 #include <memory>
 #include <phon/string.hpp>
+#include <phon/runtime/definitions.hpp>          // PHON_CTOR_STRING, PHON_INIT_STRING
 #include <phon/runtime/compiler/token.hpp>
 
 namespace phonometrica {
@@ -38,7 +39,7 @@ struct Ast
 {
 	using Lexeme = Token::Lexeme;
 
-	explicit Ast(int ln) : line_no(ln) { }
+	Ast(int ln, int col) : line_no(ln), column(col) { }
 
 	virtual ~Ast() = default;
 
@@ -51,8 +52,13 @@ struct Ast
 	template<class T>
 	bool is() const { return dynamic_cast<const T*>(this) != nullptr; }
 
-	// Line number, for error reporting.
+	// Line number (1-based) where the node's first token starts.
 	int line_no;
+
+	// Byte column (0-based) where the node's first token starts on `line_no`.
+	// Mirrors Token::column. Suitable for Scintilla-style editor underlines
+	// and click-on-symbol navigation.
+	int column;
 
 	// Whether the node is the left hand side of an assignment
 	bool is_assigned = false;
@@ -75,8 +81,7 @@ struct AstContext
 
 struct Assignment final : public Ast
 {
-	Assignment(int line, AutoAst lhs, AutoAst rhs, Lexeme op = Lexeme::OpAssign) :
-		Ast(line), lhs(std::move(lhs)), rhs(std::move(rhs)), op(op) { }
+	Assignment(int line, int col, AutoAst lhs, AutoAst rhs, Lexeme op = Lexeme::OpAssign) : Ast(line, col), lhs(std::move(lhs)), rhs(std::move(rhs)), op(op) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -88,7 +93,7 @@ struct Assignment final : public Ast
 
 struct Literal : public Ast
 {
-	explicit Literal(int line) : Ast(line) { }
+	Literal(int line, int col) : Ast(line, col) { }
 
 	bool is_literal() const override { return true; }
 };
@@ -96,7 +101,7 @@ struct Literal : public Ast
 // null, nan, true, false
 struct ConstantLiteral final : public Literal
 {
-	ConstantLiteral(int line, Lexeme lex) : Literal(line), lex(lex) { }
+	ConstantLiteral(int line, int col, Lexeme lex) : Literal(line, col), lex(lex) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -105,7 +110,7 @@ struct ConstantLiteral final : public Literal
 
 struct FloatLiteral final : public Literal
 {
-	FloatLiteral(int line, double value) : Literal(line), value(value) { }
+	FloatLiteral(int line, int col, double value) : Literal(line, col), value(value) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -114,7 +119,7 @@ struct FloatLiteral final : public Literal
 
 struct IntegerLiteral final : public Literal
 {
-	IntegerLiteral(int line, intptr_t value) : Literal(line), value(value) { }
+	IntegerLiteral(int line, int col, intptr_t value) : Literal(line, col), value(value) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -123,7 +128,7 @@ struct IntegerLiteral final : public Literal
 
 struct StringLiteral final : public Literal
 {
-	StringLiteral(int line, String value) : Literal(line), value(std::move(value)) { }
+	StringLiteral(int line, int col, String value) : Literal(line, col), value(std::move(value)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -132,7 +137,7 @@ struct StringLiteral final : public Literal
 
 struct ListLiteral final : public Literal
 {
-	ListLiteral(int line, AstList items) : Literal(line), items(std::move(items)){ }
+	ListLiteral(int line, int col, AstList items) : Literal(line, col), items(std::move(items)){ }
 
 	void visit(AstVisitor &v) override;
 
@@ -141,7 +146,7 @@ struct ListLiteral final : public Literal
 
 struct ArrayLiteral final : public Literal
 {
-	ArrayLiteral(int line, AstList items, intptr_t nrow, intptr_t ncol) : Literal(line),
+	ArrayLiteral(int line, int col, AstList items, intptr_t nrow, intptr_t ncol) : Literal(line, col),
 		items(std::move(items)), nrow(nrow), ncol(ncol) { }
 
 	void visit(AstVisitor &v) override;
@@ -153,7 +158,7 @@ struct ArrayLiteral final : public Literal
 // Table
 struct TableLiteral final : public Literal
 {
-	TableLiteral(int line, AstList keys, AstList values) : Literal(line), keys(std::move(keys)), values(std::move(values)) { }
+	TableLiteral(int line, int col, AstList keys, AstList values) : Literal(line, col), keys(std::move(keys)), values(std::move(values)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -162,7 +167,7 @@ struct TableLiteral final : public Literal
 
 struct SetLiteral final : public Literal
 {
-	SetLiteral(int line, AstList values) : Literal(line), values(std::move(values)) { }
+	SetLiteral(int line, int col, AstList values) : Literal(line, col), values(std::move(values)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -173,7 +178,7 @@ struct SetLiteral final : public Literal
 
 struct ReferenceExpression final : public Ast
 {
-	ReferenceExpression(int line, AutoAst e) : Ast(line), expr(std::move(e)) { }
+	ReferenceExpression(int line, int col, AutoAst e) : Ast(line, col), expr(std::move(e)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -182,7 +187,7 @@ struct ReferenceExpression final : public Ast
 
 struct UnaryExpression final : public Ast
 {
-	UnaryExpression(int line, Lexeme op, AutoAst expr) : Ast(line), op(op), expr(std::move(expr)) { }
+	UnaryExpression(int line, int col, Lexeme op, AutoAst expr) : Ast(line, col), op(op), expr(std::move(expr)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -192,7 +197,7 @@ struct UnaryExpression final : public Ast
 
 struct BinaryExpression final : public Ast
 {
-	BinaryExpression(int line, Lexeme op, AutoAst lhs, AutoAst rhs) : Ast(line), op(op), lhs(std::move(lhs)), rhs(std::move(rhs)) { }
+	BinaryExpression(int line, int col, Lexeme op, AutoAst lhs, AutoAst rhs) : Ast(line, col), op(op), lhs(std::move(lhs)), rhs(std::move(rhs)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -202,7 +207,7 @@ struct BinaryExpression final : public Ast
 
 struct ConcatExpression final : public Ast
 {
-	ConcatExpression(int line, AstList lst) : Ast(line), list(std::move(lst)) { }
+	ConcatExpression(int line, int col, AstList lst) : Ast(line, col), list(std::move(lst)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -211,7 +216,7 @@ struct ConcatExpression final : public Ast
 
 struct Variable final : public Ast
 {
-	Variable(int line, String name) : Ast(line), name(std::move(name)) { }
+	Variable(int line, int col, String name) : Ast(line, col), name(std::move(name)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -222,7 +227,7 @@ struct Variable final : public Ast
 
 struct StatementList final : public Ast
 {
-	StatementList(int line, AstList stmts, bool open_scope = false) : Ast(line), statements(std::move(stmts)), open_scope(open_scope) { }
+	StatementList(int line, int col, AstList stmts, bool open_scope = false) : Ast(line, col), statements(std::move(stmts)), open_scope(open_scope) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -232,7 +237,7 @@ struct StatementList final : public Ast
 
 struct Declaration final : public Ast
 {
-	Declaration(int line, AstList lhs, AstList rhs) : Ast(line), lhs(std::move(lhs)), rhs(std::move(rhs)) { }
+	Declaration(int line, int col, AstList lhs, AstList rhs) : Ast(line, col), lhs(std::move(lhs)), rhs(std::move(rhs)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -241,7 +246,7 @@ struct Declaration final : public Ast
 
 struct PrintStatement final : public Ast
 {
-	PrintStatement(int line, AstList lst, bool new_line) : Ast(line), list(std::move(lst)), new_line(new_line) { }
+	PrintStatement(int line, int col, AstList lst, bool new_line) : Ast(line, col), list(std::move(lst)), new_line(new_line) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -251,7 +256,7 @@ struct PrintStatement final : public Ast
 
 struct DebugStatement final : public Ast
 {
-	DebugStatement(int line, AutoAst block) : Ast(line), block(std::move(block)) { }
+	DebugStatement(int line, int col, AutoAst block) : Ast(line, col), block(std::move(block)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -260,7 +265,7 @@ struct DebugStatement final : public Ast
 
 struct ThrowStatement final : public Ast
 {
-	ThrowStatement(int line, AutoAst e) : Ast(line), expr(std::move(e)) { }
+	ThrowStatement(int line, int col, AutoAst e) : Ast(line, col), expr(std::move(e)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -269,8 +274,7 @@ struct ThrowStatement final : public Ast
 
 struct TryStatement final : public Ast
 {
-	TryStatement(int line, AutoAst body, String name, AutoAst catch_body) :
-		Ast(line), body(std::move(body)), name(std::move(name)), catch_body(std::move(catch_body)) { }
+	TryStatement(int line, int col, AutoAst body, String name, AutoAst catch_body) : Ast(line, col), body(std::move(body)), name(std::move(name)), catch_body(std::move(catch_body)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -290,7 +294,7 @@ struct TryStatement final : public Ast
 
 struct AssertStatement final : public Ast
 {
-	AssertStatement(int line, AutoAst e, AutoAst msg) : Ast(line), expr(std::move(e)), msg(std::move(msg)) { }
+	AssertStatement(int line, int col, AutoAst e, AutoAst msg) : Ast(line, col), expr(std::move(e)), msg(std::move(msg)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -299,7 +303,7 @@ struct AssertStatement final : public Ast
 
 struct IfCondition final : public Ast
 {
-	IfCondition(int line, AutoAst cond, AutoAst block) : Ast(line), cond(std::move(cond)), block(std::move(block)) { }
+	IfCondition(int line, int col, AutoAst cond, AutoAst block) : Ast(line, col), cond(std::move(cond)), block(std::move(block)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -310,7 +314,7 @@ struct IfCondition final : public Ast
 
 struct IfStatement final : public Ast
 {
-	IfStatement(int line, AstList ifs, AutoAst else_block) : Ast(line), if_conds(std::move(ifs)), else_block(std::move(else_block)) { }
+	IfStatement(int line, int col, AstList ifs, AutoAst else_block) : Ast(line, col), if_conds(std::move(ifs)), else_block(std::move(else_block)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -322,7 +326,7 @@ struct IfStatement final : public Ast
 
 struct WhileStatement final : public Ast
 {
-	WhileStatement(int line, AutoAst e, AutoAst block) : Ast(line), cond(std::move(e)), body(std::move(block)) { }
+	WhileStatement(int line, int col, AutoAst e, AutoAst block) : Ast(line, col), cond(std::move(e)), body(std::move(block)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -331,7 +335,7 @@ struct WhileStatement final : public Ast
 
 struct RepeatStatement final : public Ast
 {
-	RepeatStatement(int line, AutoAst e, AutoAst block) : Ast(line), cond(std::move(e)), body(std::move(block)) { }
+	RepeatStatement(int line, int col, AutoAst e, AutoAst block) : Ast(line, col), cond(std::move(e)), body(std::move(block)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -340,8 +344,7 @@ struct RepeatStatement final : public Ast
 
 struct ForStatement final : public Ast
 {
-	ForStatement(int line, AutoAst var, AutoAst e1, AutoAst e2, AutoAst e3, AutoAst block, bool down) :
-		Ast(line), var(std::move(var)), start(std::move(e1)), end(std::move(e2)), step(std::move(e3)), block(std::move(block)), down(down) { }
+	ForStatement(int line, int col, AutoAst var, AutoAst e1, AutoAst e2, AutoAst e3, AutoAst block, bool down) : Ast(line, col), var(std::move(var)), start(std::move(e1)), end(std::move(e2)), step(std::move(e3)), block(std::move(block)), down(down) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -351,7 +354,7 @@ struct ForStatement final : public Ast
 
 struct ForeachStatement final : public Ast
 {
-	ForeachStatement(int line, AutoAst k, AutoAst v, AutoAst coll, AutoAst block) : Ast(line),
+	ForeachStatement(int line, int col, AutoAst k, AutoAst v, AutoAst coll, AutoAst block) : Ast(line, col),
 		key(std::move(k)), value(std::move(v)), collection(std::move(coll)), block(std::move(block)) { }
 
 	void visit(AstVisitor &v) override;
@@ -361,7 +364,7 @@ struct ForeachStatement final : public Ast
 
 struct LoopExitStatement final : public Ast
 {
-	LoopExitStatement(int line, Lexeme lex) : Ast(line), lex(lex) { }
+	LoopExitStatement(int line, int col, Lexeme lex) : Ast(line, col), lex(lex) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -372,8 +375,7 @@ struct LoopExitStatement final : public Ast
 
 struct RoutineParameter final : public Ast
 {
-	RoutineParameter(int line, AutoAst var, AutoAst type, bool ref) :
-		Ast(line), variable(std::move(var)), type(std::move(type)), by_ref(ref) { }
+	RoutineParameter(int line, int col, AutoAst var, AutoAst type, bool ref) : Ast(line, col), variable(std::move(var)), type(std::move(type)), by_ref(ref) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -384,8 +386,7 @@ struct RoutineParameter final : public Ast
 
 struct RoutineDefinition final : public Ast
 {
-	RoutineDefinition(int line, AutoAst name, AstList params, AutoAst body, bool local, bool method) :
-		Ast(line), name(std::move(name)),  body(std::move(body)), params(std::move(params)), local(local), method(method)
+	RoutineDefinition(int line, int col, AutoAst name, AstList params, AutoAst body, bool local, bool method) : Ast(line, col), name(std::move(name)),  body(std::move(body)), params(std::move(params)), local(local), method(method)
 		{
 			auto var = dynamic_cast<Variable*>(this->name.get());
 			is_constructor = method && this->name && var->name == PHON_CTOR_STRING;
@@ -405,8 +406,7 @@ struct RoutineDefinition final : public Ast
 
 struct ClassDeclaration final : public Ast
 {
-	ClassDeclaration(int line, AutoAst name, AutoAst parent, AstList fields, AstList methods, bool local, bool is_ref) :
-		Ast(line), name(std::move(name)), parent(std::move(parent)), fields(std::move(fields)),
+	ClassDeclaration(int line, int col, AutoAst name, AutoAst parent, AstList fields, AstList methods, bool local, bool is_ref) : Ast(line, col), name(std::move(name)), parent(std::move(parent)), fields(std::move(fields)),
 		methods(std::move(methods)), local(local), is_ref(is_ref) { }
 
 	void visit(AstVisitor &v) override;
@@ -418,7 +418,7 @@ struct ClassDeclaration final : public Ast
 
 struct CallExpression final : public Ast
 {
-	CallExpression(int line, AutoAst e, AstList args) : Ast(line), expr(std::move(e)), args(std::move(args)) { }
+	CallExpression(int line, int col, AutoAst e, AstList args) : Ast(line, col), expr(std::move(e)), args(std::move(args)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -431,7 +431,7 @@ struct CallExpression final : public Ast
 
 struct IndexedExpression final : public Ast
 {
-	IndexedExpression(int line, AutoAst e, AstList i) : Ast(line), expr(std::move(e)), indexes(std::move(i)) { }
+	IndexedExpression(int line, int col, AutoAst e, AstList i) : Ast(line, col), expr(std::move(e)), indexes(std::move(i)) { }
 
 	void visit(AstVisitor &v) override;
 
@@ -443,7 +443,7 @@ struct IndexedExpression final : public Ast
 
 struct ReturnStatement final : public Ast
 {
-	ReturnStatement(int line, AutoAst e) : Ast(line), expr(std::move(e)) { }
+	ReturnStatement(int line, int col, AutoAst e) : Ast(line, col), expr(std::move(e)) { }
 
 	void visit(AstVisitor &v) override;
 

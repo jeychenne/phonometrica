@@ -30,6 +30,9 @@ Scanner::Scanner() :
     m_line_no = 0;
     m_pos = nullptr;
     m_char = 0;
+    m_char_byte = 0;
+    m_token_line = 0;
+    m_token_column = 0;
 }
 
 void Scanner::load_file(const String &path)
@@ -52,6 +55,9 @@ void Scanner::reset()
     m_line_no = 0;
     m_line.clear();
     m_char = 0;
+    m_char_byte = 0;
+    m_token_line = 0;
+    m_token_column = 0;
 }
 
 void Scanner::rewind()
@@ -86,6 +92,9 @@ void Scanner::read_char()
 
 void Scanner::get_char()
 {
+    // Capture byte offset of m_char *before* next_codepoint advances m_pos.
+    // m_pos points to the first byte of the code point about to be read.
+    m_char_byte = (m_pos != nullptr) ? intptr_t(m_pos - m_line.begin()) : 0;
     m_char = m_line.next_codepoint(m_pos);
 }
 
@@ -321,6 +330,13 @@ Token Scanner::read_token()
     m_spelling.clear();
     skip_white();
 
+    // Snapshot the position of the token we are about to scan. Every Token
+    // constructor below reads from these so the (line, column) pair on a Token
+    // always refers to its starting position, even when scanning crosses line
+    // boundaries (e.g. triple-quoted strings).
+    m_token_line = m_line_no;
+    m_token_column = m_char_byte;
+
     // An identifier must start with a Unicode "alphabetic character". This includes characters such as
     // Chinese '漢' or Korean '한'.
     if (String::is_letter(m_char))
@@ -343,7 +359,7 @@ Token Scanner::read_token()
             { accept(); }
         }
 
-        return Token(m_spelling, m_line_no, true);
+        return Token(m_spelling, m_token_line, m_token_column, true);
     }
 
     // Scan a number.
@@ -391,9 +407,9 @@ Token Scanner::read_token()
         }
 
         if (is_float)
-            return Token(Token::Lexeme::FloatLiteral, m_spelling, m_line_no);
+            return Token(Token::Lexeme::FloatLiteral, m_spelling, m_token_line, m_token_column);
 
-        return Token(Token::Lexeme::IntegerLiteral, m_spelling, m_line_no);
+        return Token(Token::Lexeme::IntegerLiteral, m_spelling, m_token_line, m_token_column);
     }
 
     switch (m_char)
@@ -405,81 +421,80 @@ Token Scanner::read_token()
         if (m_char == U'=')
         {
             accept();
-            return Token(m_spelling, m_line_no, false);
+            return Token(m_spelling, m_token_line, m_token_column, false);
         }
         else
         {
-            return Token(m_spelling, m_line_no, false);
+            return Token(m_spelling, m_token_line, m_token_column, false);
         }
     }
     case U'#':
     {
 	    do skip(); while (m_char != '\n' && m_char != Token::ETX);
 		if (m_char == Token::ETX) {
-			return Token(Token::Lexeme::Eot, "EOT", m_line_no);
+			return Token(Token::Lexeme::Eot, "EOT", m_token_line, m_token_column);
 		}
 		[[fallthrough]];
     }
     case U'\n':
 	{
-		intptr_t line_no = m_line_no;
 		accept();
-		return Token(Token::Lexeme::Eol, String(), line_no);
+		return Token(Token::Lexeme::Eol, String(), m_token_line, m_token_column);
 	}
     case U'"':
     {
         scan_string(U'"');
-        return Token(Token::Lexeme::StringLiteral, m_spelling, m_line_no);
+        return Token(Token::Lexeme::StringLiteral, m_spelling, m_token_line, m_token_column);
     }
     case U'\'':
 	{
 		scan_string(U'\'');
-		return Token(Token::Lexeme::StringLiteral, m_spelling, m_line_no);
+		return Token(Token::Lexeme::StringLiteral, m_spelling, m_token_line, m_token_column);
 	}
     case Token::ETX:
     {
         // Don't accept token since we reached the end.
-        return Token(Token::Lexeme::Eot, "EOT", m_line_no);
+        return Token(Token::Lexeme::Eot, "EOT", m_token_line, m_token_column);
     }
     case U'(':
     {
 	    accept();
-    	return Token(Token::Lexeme::LParen, "(", m_line_no);
+	    return Token(Token::Lexeme::LParen, "(", m_token_line, m_token_column);
     }
     case U')':
     {
 	    accept();
-	    return Token(Token::Lexeme::RParen, ")", m_line_no);
+	    return Token(Token::Lexeme::RParen, ")", m_token_line, m_token_column);
     }
     case U'{':
     {
 	    accept();
-	    return Token(Token::Lexeme::LCurl, "{", m_line_no);
+	    return Token(Token::Lexeme::LCurl, "{", m_token_line, m_token_column);
     }
     case U'}':
     {
 	    accept();
-	    return Token(Token::Lexeme::RCurl, "}", m_line_no);
+	    return Token(Token::Lexeme::RCurl, "}", m_token_line, m_token_column);
     }
     case U'[':
     {
 	    accept();
-	    return Token(Token::Lexeme::LSquare, "[", m_line_no);
+	    return Token(Token::Lexeme::LSquare, "[", m_token_line, m_token_column);
     }
     case U']':
     {
 	    accept();
-	    return Token(Token::Lexeme::RSquare, "]", m_line_no);
+	    return Token(Token::Lexeme::RSquare, "]", m_token_line, m_token_column);
     }
     case U'+':
     {
-    	accept();
-    	if (m_char == U'=')
-    	{
-    		accept();
-    		return Token(Token::Lexeme::OpAssignPlus, "+=", m_line_no);
-    	}
-    	return Token(Token::Lexeme::OpPlus, "+", m_line_no);
+	    accept();
+		if (m_char == U'=')
+		{
+			accept();
+			return Token(Token::Lexeme::OpAssignPlus, "+=", m_token_line, m_token_column);
+		}
+	    return Token(Token::Lexeme::OpPlus, "+", m_token_line, m_token_column);
     }
     case U'-':
     {
@@ -487,9 +502,9 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignMinus, "-=", m_line_no);
+			return Token(Token::Lexeme::OpAssignMinus, "-=", m_token_line, m_token_column);
 		}
-	    return Token(Token::Lexeme::OpMinus, "-", m_line_no);
+	    return Token(Token::Lexeme::OpMinus, "-", m_token_line, m_token_column);
     }
     case U'*':
     {
@@ -497,9 +512,9 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignStar, "*=", m_line_no);
+			return Token(Token::Lexeme::OpAssignStar, "*=", m_token_line, m_token_column);
 		}
-	    return Token(Token::Lexeme::OpStar, "*", m_line_no);
+	    return Token(Token::Lexeme::OpStar, "*", m_token_line, m_token_column);
     }
     case U'/':
     {
@@ -507,9 +522,9 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignSlash, "/=", m_line_no);
+			return Token(Token::Lexeme::OpAssignSlash, "/=", m_token_line, m_token_column);
 		}
-	    return Token(Token::Lexeme::OpSlash, "/", m_line_no);
+	    return Token(Token::Lexeme::OpSlash, "/", m_token_line, m_token_column);
     }
     case U'^':
 	{
@@ -517,9 +532,9 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignPower, "^=", m_line_no);
+			return Token(Token::Lexeme::OpAssignPower, "^=", m_token_line, m_token_column);
 		}
-		return Token(Token::Lexeme::OpPower, "^", m_line_no);
+		return Token(Token::Lexeme::OpPower, "^", m_token_line, m_token_column);
 	}
    	case U'%':
 	{
@@ -527,9 +542,9 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignMod, "%=", m_line_no);
+			return Token(Token::Lexeme::OpAssignMod, "%=", m_token_line, m_token_column);
 		}
-		return Token(Token::Lexeme::OpMod, "%", m_line_no);
+		return Token(Token::Lexeme::OpMod, "%", m_token_line, m_token_column);
 	}
     case U'&':
     {
@@ -537,39 +552,39 @@ Token Scanner::read_token()
 		if (m_char == U'=')
 		{
 			accept();
-			return Token(Token::Lexeme::OpAssignConcat, "&=", m_line_no);
+			return Token(Token::Lexeme::OpAssignConcat, "&=", m_token_line, m_token_column);
 		}
-	    return Token(Token::Lexeme::OpConcat, "&", m_line_no);
+	    return Token(Token::Lexeme::OpConcat, "&", m_token_line, m_token_column);
     }
     case U',':
     {
 	    accept();
-	    return Token(Token::Lexeme::Comma, ",", m_line_no);
+	    return Token(Token::Lexeme::Comma, ",", m_token_line, m_token_column);
     }
     case U';':
     {
 	    accept();
-	    return Token(Token::Lexeme::Semicolon, ";", m_line_no);
+	    return Token(Token::Lexeme::Semicolon, ";", m_token_line, m_token_column);
     }
     case U':':
     {
 	    accept();
-	    return Token(Token::Lexeme::Colon, ":", m_line_no);
+	    return Token(Token::Lexeme::Colon, ":", m_token_line, m_token_column);
     }
     case U'.':
     {
         accept();
-        return Token(Token::Lexeme::Dot, ".", m_line_no);
+        return Token(Token::Lexeme::Dot, ".", m_token_line, m_token_column);
     }
 	case U'|':
 	{
 		accept();
-		return Token(Token::Lexeme::Pipe, "|", m_line_no);
+		return Token(Token::Lexeme::Pipe, "|", m_token_line, m_token_column);
 	}
 	case U'~':
 	{
 		accept();
-		return Token(Token::Lexeme::Tilde, "~", m_line_no);
+		return Token(Token::Lexeme::Tilde, "~", m_token_line, m_token_column);
 	}
     case U'!':
     {
@@ -578,7 +593,7 @@ Token Scanner::read_token()
         if (m_char == U'=')
         {
             accept();
-            return Token(Token::Lexeme::OpNotEqual, m_spelling, m_line_no);
+            return Token(Token::Lexeme::OpNotEqual, m_spelling, m_token_line, m_token_column);
         }
 
         report_error("invalid token");
@@ -595,16 +610,16 @@ Token Scanner::read_token()
             if (m_char == U'>')
             {
                 accept();
-                return Token(Token::Lexeme::OpCompare, m_spelling, m_line_no);
+                return Token(Token::Lexeme::OpCompare, m_spelling, m_token_line, m_token_column);
             }
             else
             {
-                return Token(Token::Lexeme::OpLessEqual, m_spelling, m_line_no);
+                return Token(Token::Lexeme::OpLessEqual, m_spelling, m_token_line, m_token_column);
             }
         }
         else
         {
-            return Token(Token::Lexeme::OpLessThan, m_spelling, m_line_no);
+            return Token(Token::Lexeme::OpLessThan, m_spelling, m_token_line, m_token_column);
         }
     }
     case U'>':
@@ -614,17 +629,17 @@ Token Scanner::read_token()
         if (m_char == U'=')
         {
             accept();
-            return Token(Token::Lexeme::OpGreaterEqual, m_spelling, m_line_no);
+            return Token(Token::Lexeme::OpGreaterEqual, m_spelling, m_token_line, m_token_column);
         }
         else
         {
-            return Token(Token::Lexeme::OpGreaterThan, m_spelling, m_line_no);
+            return Token(Token::Lexeme::OpGreaterThan, m_spelling, m_token_line, m_token_column);
         }
     }
 	case U'@':
 	{
 		accept();
-		return Token(Token::Lexeme::OpAt, m_spelling, m_line_no);
+		return Token(Token::Lexeme::OpAt, m_spelling, m_token_line, m_token_column);
 	}
 
     default:
@@ -636,7 +651,8 @@ Token Scanner::read_token()
     return Token();
 }
 
-void Scanner::report_error(const std::string &hint, intptr_t offset, const char *error_type)
+void Scanner::report_error(const std::string &hint, intptr_t offset, const char *error_type,
+                           intptr_t err_column, intptr_t err_length)
 {
 	assert(m_line_no != 0);
 	String line = m_source->get_line(m_line_no);
@@ -666,7 +682,15 @@ void Scanner::report_error(const std::string &hint, intptr_t offset, const char 
 		message.append(hint);
 	}
 
-	throw RuntimeError(m_line_no, message);
+	// Caller-supplied (column, length) wins; otherwise fall back to the
+	// scanner's current position so even raw `report_error("invalid token")`
+	// calls carry a usable squiggle anchor.
+	intptr_t col = (err_column >= 0) ? err_column : m_char_byte;
+	intptr_t len = (err_length > 0) ? err_length : 1;
+
+	RuntimeError err(m_line_no, message);
+	err.set_position(col, len);
+	throw err;
 }
 
 bool Scanner::check_space(char32_t c)

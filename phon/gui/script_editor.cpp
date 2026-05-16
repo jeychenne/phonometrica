@@ -21,10 +21,18 @@
 
 #include <QKeyEvent>
 #include <QApplication>
+#include <QTimer>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QContextMenuEvent>
+#include <QToolTip>
+#include <QHelpEvent>
+#include <QCursor>
 #include <Qsci/qsciapis.h>
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/phon_lexer.hpp>
 #include <phon/gui/font_helpers.hpp>
+#include <phon/runtime/compiler/script_index.hpp>
 #include <phon/include/autocompletion_list.hpp>
 #include <phon/include/function_declarations.hpp>
 
@@ -36,11 +44,35 @@ ScriptEditor::ScriptEditor(QWidget *parent) :
 	setupEditor();
 	setupApis();
 
+	// Debounce timer driving the single background parse that feeds both
+	// user-symbol autocompletion and live syntax-error squiggles. Restarted
+	// on every text change, so the parse runs only once the typing settles.
+	m_parse_timer = new QTimer(this);
+	m_parse_timer->setSingleShot(true);
+	m_parse_timer->setInterval(PARSE_DEBOUNCE_MS);
+	connect(m_parse_timer, &QTimer::timeout, this, &ScriptEditor::runBackgroundParse);
+
 	// Notify the view on text changes.
 	connect(this, &QsciScintilla::textChanged, this, &ScriptEditor::contentModified);
 
 	// Clear error indicators whenever the text is modified (keyboard, paste, undo, etc.).
+	// The next debounced parse will repaint them if the error is still present.
 	connect(this, &QsciScintilla::textChanged, this, &ScriptEditor::clearErrors);
+
+	// Restart the debounce on every text change.
+	connect(this, &QsciScintilla::textChanged, this,
+	        [this]() { m_parse_timer->start(); });
+}
+
+void ScriptEditor::setRuntime(Runtime *rt)
+{
+	m_runtime = rt;
+	// Trigger one immediate parse so symbols declared in a freshly-loaded
+	// script are available without waiting for the first edit, and any
+	// pre-existing syntax error is surfaced right away.
+	if (m_runtime) {
+		runBackgroundParse();
+	}
 }
 
 
@@ -115,10 +147,11 @@ void ScriptEditor::setupEditor()
 	setBraceMatching(SloppyBraceMatch);
 }
 
-void ScriptEditor::setupApis()
+// Populate the QsciAPIs table with the built-in identifiers. Used both at
+// initial setup and on every debounced rebuild — m_apis is cleared first by
+// the caller in the rebuild path.
+static void populate_builtins(QsciAPIs *apis)
 {
-	auto *apis = new QsciAPIs(m_lexer);
-
 	// Add all autocompletion words.
 	QStringList words = QString(autocompletion_list).split(' ', Qt::SkipEmptyParts);
 	for (const auto &w : words)
@@ -145,8 +178,13 @@ void ScriptEditor::setupApis()
 				apis->add(clean);
 		}
 	}
+}
 
-	apis->prepare();
+void ScriptEditor::setupApis()
+{
+	m_apis = new QsciAPIs(m_lexer);
+	populate_builtins(m_apis);
+	m_apis->prepare();
 
 	// Autocompletion settings.
 	setAutoCompletionSource(AcsAPIs);
@@ -157,6 +195,53 @@ void ScriptEditor::setupApis()
 	// Call tips.
 	setCallTipsStyle(CallTipsNoContext);
 	setCallTipsVisible(0);                   // show all matching tips
+}
+
+void ScriptEditor::runBackgroundParse()
+{
+	// Cheap no-op when no runtime is available yet (the editor can be
+	// instantiated before ScriptView wires the runtime in).
+	if (!m_runtime || !m_apis) return;
+
+	auto utf8 = text().toUtf8();
+	String source(utf8.constData(), intptr_t(utf8.size()));
+	m_last_index = index_script(*m_runtime, source);
+
+	// (1) Rebuild the autocompletion table. On parse failure the symbol list
+	// is empty, so user-declared names temporarily disappear from the popup
+	// until the script parses again — preferable to showing stale names from
+	// a previous successful parse.
+	m_apis->clear();
+	populate_builtins(m_apis);
+	for (auto &name : m_last_index.distinct_names()) {
+		QString qname = QString::fromUtf8(name.data(), int(name.size()));
+		if (!qname.isEmpty())
+			m_apis->add(qname);
+	}
+	m_apis->prepare();
+
+	// (2) Paint or clear the live-error squiggle. The toggle gates only the
+	// painting; the parse runs either way (autocompletion needs it).
+	if (m_error_checking_active && m_last_index.has_error && m_last_index.error_line > 0) {
+		// Cache the error range and message so the hover tooltip in
+		// event(QHelpEvent::ToolTip) can recognise positions inside it
+		// without re-parsing.
+		m_error_line    = m_last_index.error_line;
+		m_error_column  = m_last_index.error_column;
+		m_error_length  = m_last_index.error_length;
+		m_error_message = QString::fromUtf8(m_last_index.error_message.data(),
+		                                    int(m_last_index.error_message.size()));
+
+		if (m_error_column >= 0 && m_error_length > 0) {
+			showError(m_error_line, m_error_column, m_error_length);
+		} else {
+			// Parse-time error with no precise column (defensive fallback):
+			// highlight the whole line.
+			showError(m_error_line);
+		}
+	} else {
+		clearErrors();
+	}
 }
 
 
@@ -176,7 +261,14 @@ void ScriptEditor::showError(int lineNumber)
 
 	if (len > 0)
 	{
+		// Wipe any previous indicator paint without touching the cached
+		// error state — that's runBackgroundParse's responsibility, and it
+		// has typically just populated it for us.
+		long total = SendScintilla(SCI_GETTEXTLENGTH);
 		SendScintilla(SCI_SETINDICATORCURRENT, (unsigned long)ERROR_INDICATOR);
+		if (total > 0) {
+			SendScintilla(SCI_INDICATORCLEARRANGE, (unsigned long)0, (unsigned long)total);
+		}
 		SendScintilla(SCI_INDICATORFILLRANGE, (unsigned long)start, (unsigned long)len);
 	}
 
@@ -185,8 +277,67 @@ void ScriptEditor::showError(int lineNumber)
 	ensureLineVisible(line);
 }
 
+void ScriptEditor::showError(int lineNumber, int column, int length)
+{
+	// (line, column) come from the parser: line is 1-based, column is a
+	// 0-based byte offset from the start of the line. Scintilla addresses
+	// positions in document bytes, which is what we have.
+	if (lineNumber <= 0 || column < 0 || length <= 0) {
+		// Defensive fallback — should not happen given the caller's checks.
+		showError(lineNumber);
+		return;
+	}
+	int line = lineNumber - 1;
+
+	long line_start = SendScintilla(SCI_POSITIONFROMLINE, (unsigned long)line);
+	long line_end = SendScintilla(SCI_GETLINEENDPOSITION, (unsigned long)line);
+	long start = line_start + column;
+	long end = start + length;
+	if (start > line_end) start = line_end;
+	if (end   > line_end) end   = line_end;
+	long len = end - start;
+
+	// Wipe any previous indicator paint without touching the cached error
+	// state — that's runBackgroundParse's responsibility.
+	long total = SendScintilla(SCI_GETTEXTLENGTH);
+	SendScintilla(SCI_SETINDICATORCURRENT, (unsigned long)ERROR_INDICATOR);
+	if (total > 0) {
+		SendScintilla(SCI_INDICATORCLEARRANGE, (unsigned long)0, (unsigned long)total);
+	}
+
+	// If the resulting range is empty (e.g. the error position is past the
+	// end of the line's actual content, or the line is blank), the narrow
+	// indicator wouldn't paint anything visible. Fall back to a whole-line
+	// indicator so the user still sees that *something* is wrong — better an
+	// imprecise underline than a silent failure.
+	if (len <= 0) {
+		long whole_len = line_end - line_start;
+		if (whole_len > 0) {
+			SendScintilla(SCI_INDICATORFILLRANGE, (unsigned long)line_start, (unsigned long)whole_len);
+		}
+		// Note: unlike the whole-line variant we still do NOT scroll the
+		// view here. See comment below.
+		return;
+	}
+
+	SendScintilla(SCI_INDICATORFILLRANGE, (unsigned long)start, (unsigned long)len);
+	// Note: unlike the whole-line variant we do NOT scroll the view here.
+	// This overload is called from the debounced background parse on every
+	// keystroke-after-pause; auto-scrolling would steal the caret from the
+	// user mid-edit. The whole-line variant is still called from execute()
+	// where scrolling-to-error is the desired behaviour.
+}
+
 void ScriptEditor::clearErrors()
 {
+	// Wipe the cached error state so the hover tooltip stops claiming the
+	// (now stale) error range. The next background parse will repopulate
+	// these if the error is still present after the user's edit.
+	m_error_line = 0;
+	m_error_column = -1;
+	m_error_length = 0;
+	m_error_message.clear();
+
 	long total = SendScintilla(SCI_GETTEXTLENGTH);
 	if (total > 0)
 	{
@@ -265,6 +416,24 @@ void ScriptEditor::activateHints(bool value)
 	}
 }
 
+void ScriptEditor::activateErrorChecking(bool value)
+{
+	m_error_checking_active = value;
+
+	if (!m_error_checking_active) {
+		// Wipe any squiggle currently on screen. The next background parse
+		// will keep refreshing the index but won't repaint the indicator
+		// until the user turns checking back on.
+		clearErrors();
+	}
+	else {
+		// Trigger an immediate parse so the squiggle reappears right away if
+		// the script is still broken — otherwise the user would wait for the
+		// next debounced timer fire after the next keystroke.
+		runBackgroundParse();
+	}
+}
+
 
 // ─────────────────────────────────────────────────
 //  Key handling & smart auto-indentation
@@ -285,7 +454,133 @@ bool ScriptEditor::event(QEvent *e)
 			return false;
 		}
 	}
+
+	// Hover tooltip for live-error squiggles: when the user lets the mouse
+	// rest over text, Qt fires a QHelpEvent::ToolTip and we get to decide
+	// whether (and what) to show. We show the cached parse-error message
+	// only when the mouse is inside the squiggle range — outside it we
+	// suppress the tooltip so QScintilla's defaults still apply.
+	if (e->type() == QEvent::ToolTip && m_error_line > 0 && !m_error_message.isEmpty())
+	{
+		auto *he = static_cast<QHelpEvent *>(e);
+		QPoint pt = he->pos();
+		long doc_pos = SendScintilla(SCI_POSITIONFROMPOINT,
+		                             (unsigned long)pt.x(),
+		                             (unsigned long)pt.y());
+		if (doc_pos >= 0)
+		{
+			long mouse_line = SendScintilla(SCI_LINEFROMPOSITION, (unsigned long)doc_pos);
+			int  err_line   = m_error_line - 1;  // -> 0-based
+
+			bool over_error = false;
+			if ((int)mouse_line == err_line)
+			{
+				long line_start = SendScintilla(SCI_POSITIONFROMLINE, (unsigned long)err_line);
+				long line_end   = SendScintilla(SCI_GETLINEENDPOSITION, (unsigned long)err_line);
+				long range_start, range_end;
+				if (m_error_column >= 0 && m_error_length > 0)
+				{
+					range_start = line_start + m_error_column;
+					range_end   = range_start + m_error_length;
+					if (range_end > line_end) range_end = line_end;
+				}
+				else
+				{
+					// Whole-line fallback: any hover on the line counts.
+					range_start = line_start;
+					range_end   = line_end;
+				}
+				over_error = (doc_pos >= range_start && doc_pos < range_end);
+			}
+
+			if (over_error)
+			{
+				QToolTip::showText(he->globalPos(), m_error_message, this);
+				return true;
+			}
+		}
+		QToolTip::hideText();
+		// Fall through to let QScintilla provide its own tooltips if any.
+	}
+
 	return QsciScintilla::event(e);
+}
+
+void ScriptEditor::mousePressEvent(QMouseEvent *e)
+{
+	// Ctrl+left-click on an identifier jumps to its definition. We
+	// intentionally do NOT also move the caret to the click position first:
+	// the act of Ctrl-clicking is unambiguously "I want to go there", and a
+	// brief caret stop at the click site would be jarring.
+	if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier))
+	{
+		QString word = wordAtPoint(e->pos());
+		if (!word.isEmpty())
+		{
+			goToDefinition(word);
+			e->accept();
+			return;
+		}
+	}
+	QsciScintilla::mousePressEvent(e);
+}
+
+void ScriptEditor::contextMenuEvent(QContextMenuEvent *e)
+{
+	// Build on top of QScintilla's standard context menu (Cut, Copy, Paste,
+	// Select All, etc.) rather than replacing it — users expect those to
+	// remain available.
+	QMenu *menu = createStandardContextMenu();
+	if (!menu) {
+		// Defensive: some QScintilla versions can return null in unusual
+		// states; fall back to the parent implementation.
+		QsciScintilla::contextMenuEvent(e);
+		return;
+	}
+
+	QString word = wordAtPoint(e->pos());
+
+	auto *goto_action = new QAction(tr("Go to Definition"), menu);
+	// Disable rather than hide when there's nothing to navigate to — keeps
+	// the feature discoverable.
+	goto_action->setEnabled(!word.isEmpty());
+	connect(goto_action, &QAction::triggered, this, [this, word]() {
+		goToDefinition(word);
+	});
+
+	// Insert at the top so it's the most-prominent action.
+	auto existing = menu->actions();
+	QAction *anchor = existing.isEmpty() ? nullptr : existing.first();
+	menu->insertAction(anchor, goto_action);
+	menu->insertSeparator(anchor);
+
+	menu->exec(e->globalPos());
+	delete menu;
+}
+
+void ScriptEditor::goToDefinition(const QString &word)
+{
+	if (word.isEmpty()) return;
+
+	QByteArray utf8 = word.toUtf8();
+	String name(utf8.constData(), intptr_t(utf8.size()));
+	const Symbol *sym = m_last_index.find(name);
+	if (!sym)
+	{
+		// Either the index is empty (no successful parse yet, or runtime
+		// not wired), or the word is a built-in / undeclared name. Make the
+		// failure visible rather than no-op silently.
+		QToolTip::showText(QCursor::pos(), tr("Definition not found"), this);
+		return;
+	}
+
+	int target_line = sym->line - 1;        // -> 0-based for Scintilla
+	long line_start = SendScintilla(SCI_POSITIONFROMLINE, (unsigned long)target_line);
+	long target_pos = line_start + sym->column;
+
+	SendScintilla(SCI_GOTOPOS, (unsigned long)target_pos);
+	ensureLineVisible(target_line);
+	setFocus();
 }
 
 void ScriptEditor::keyPressEvent(QKeyEvent *e)

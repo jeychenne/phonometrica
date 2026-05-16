@@ -44,9 +44,14 @@ public:
     Token read_token();
 
 
-    void report_error(const std::string &hint, intptr_t offset = 0, const char *error_type = "Syntax");
+    void report_error(const std::string &hint, intptr_t offset = 0, const char *error_type = "Syntax",
+                      intptr_t err_column = -1, intptr_t err_length = 0);
 
     intptr_t line_no() const { return m_line_no; }
+
+    // Byte offset of the current code point (m_char) from the start of its
+    // line. Updated by get_char() before m_pos advances past the code point.
+    intptr_t column() const { return m_char_byte; }
 
     bool has_content() const { return !m_source->empty(); }
 
@@ -71,6 +76,17 @@ private:
 
     // Current code point
     char32_t m_char;
+
+    // Byte offset of m_char in m_line. Captured in get_char() before m_pos
+    // advances. Used both for the caret in error messages and as the column
+    // recorded on each Token.
+    intptr_t m_char_byte = 0;
+
+    // Source position at the start of the token currently being scanned in
+    // read_token(). Captured once after skip_white() and reused by every
+    // Token(...) construction in that call.
+    intptr_t m_token_line = 0;
+    intptr_t m_token_column = 0;
 
     void reset();
 

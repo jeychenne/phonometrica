@@ -76,6 +76,7 @@ private slots:
 	void onUnindentSelection();
 	void onViewBytecode();
 	void onToggleHints(bool checked);
+	void onToggleErrorChecking(bool checked);
 	void onFind();
 	void onReplace();
 	void onReplaceAll();
@@ -94,6 +95,7 @@ private:
 
 	QAction *m_save_action = nullptr;
 	QAction *m_hint_action = nullptr;
+	QAction *m_error_action = nullptr;
 };
 
 } // namespace phonometrica

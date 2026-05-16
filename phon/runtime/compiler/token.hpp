@@ -132,9 +132,9 @@ struct Token final
 
 	Token(Token &&other) = default;
 
-	Token(const String &spelling, intptr_t line, bool ident);
+	Token(const String &spelling, intptr_t line, intptr_t column, bool ident);
 
-	Token(Lexeme type, const String &spelling, intptr_t line);
+	Token(Lexeme type, const String &spelling, intptr_t line, intptr_t column);
 
 	~Token() = default;
 
@@ -163,6 +163,12 @@ struct Token final
 	String spelling;
 
 	intptr_t line_no = 0;
+
+	// Byte offset of the token's first character from the start of its line
+	// (0-based). For multi-line tokens (e.g. triple-quoted strings) this refers
+	// to the opening line. Suitable as a column for editor underlines and
+	// click-on-symbol features that work on Scintilla byte positions.
+	intptr_t column = 0;
 
 	Lexeme id = Lexeme::Unknown;
 

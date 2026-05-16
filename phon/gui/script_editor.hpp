@@ -25,10 +25,17 @@
 #define PHONOMETRICA_SCRIPT_EDITOR_HPP
 
 #include <Qsci/qsciscintilla.h>
+#include <phon/runtime/compiler/script_index.hpp>
+
+class QTimer;
+class QsciAPIs;
+class QMouseEvent;
+class QContextMenuEvent;
 
 namespace phonometrica {
 
 class PhonLexer;
+class Runtime;
 
 class ScriptEditor : public QsciScintilla
 {
@@ -38,8 +45,18 @@ public:
 
 	explicit ScriptEditor(QWidget *parent = nullptr);
 
+	// Set the runtime used for background parses that feed the symbol index.
+	// Must be called once after construction; until it is, user-symbol
+	// autocompletion is disabled (the built-in completion list still works).
+	void setRuntime(Runtime *rt);
+
 	// Highlight a line that contains an error (1-based line number from the runtime).
 	void showError(int lineNumber);
+
+	// Paint a narrow squiggle indicator at (line, column) spanning `length`
+	// bytes. Used by the live-error pipeline so the user sees a precise
+	// underline on the offending token rather than the entire line.
+	void showError(int line, int column, int length);
 
 	// Clear all error highlights.
 	void clearErrors();
@@ -58,6 +75,20 @@ public:
 
 	bool hintsActive() const { return m_hints_active; }
 
+	// Enable or disable live syntax-error squiggles. Background parsing for
+	// autocompletion is unaffected by this toggle — only the painting of
+	// squiggles. Defaults to enabled; users who find live underlines
+	// distracting can switch them off from the toolbar.
+	void activateErrorChecking(bool value);
+
+	bool errorCheckingActive() const { return m_error_checking_active; }
+
+	// Jump the caret to the first declaration of `word` in the most recent
+	// script index. If `word` is empty or no declaration is recorded, shows
+	// a brief "Definition not found" tooltip near the cursor and does
+	// nothing. Used by the Ctrl+click handler and the context-menu action.
+	void goToDefinition(const QString &word);
+
 signals:
 
 	void contentModified();
@@ -66,6 +97,15 @@ protected:
 
 	bool event(QEvent *e) override;
 	void keyPressEvent(QKeyEvent *e) override;
+	void mousePressEvent(QMouseEvent *e) override;
+	void contextMenuEvent(QContextMenuEvent *e) override;
+
+private slots:
+
+	// Re-parse the current text and (a) rebuild autocompletion from the
+	// resulting user symbols, (b) paint or clear the live syntax-error
+	// squiggle. Single parse drives both. Triggered on a debounced timer.
+	void runBackgroundParse();
 
 private:
 
@@ -75,10 +115,38 @@ private:
 
 	PhonLexer *m_lexer = nullptr;
 
+	// QsciAPIs is owned by the lexer (parent pointer); we keep a non-owning
+	// handle so we can clear and repopulate it on each background parse.
+	QsciAPIs *m_apis = nullptr;
+
+	// Runtime used by the background indexer. Borrowed; never owned.
+	Runtime *m_runtime = nullptr;
+
+	// Debounce timer that drives runBackgroundParse. Single-shot, restarted
+	// on every textChanged signal.
+	QTimer *m_parse_timer = nullptr;
+
+	// The latest successfully-built symbol index. Used by goToDefinition for
+	// click-on-symbol navigation and by rebuildApis for completion. Kept as
+	// a member rather than a stack local so click handlers can query it
+	// without re-parsing.
+	ScriptIndex m_last_index;
+
+	// Last live-parse error state. Populated by runBackgroundParse when a
+	// parse fails; cleared by clearErrors. The hover tooltip consults these
+	// to decide whether (and what) to show when the mouse dwells inside the
+	// squiggle range.
+	int     m_error_line = 0;        // 1-based; 0 means "no error"
+	int     m_error_column = -1;     // 0-based byte column
+	int     m_error_length = 0;
+	QString m_error_message;
+
 	bool m_hints_active = false;
+	bool m_error_checking_active = true;
 
 	static constexpr int ERROR_INDICATOR = 8;
 	static constexpr int TAB_WIDTH = 4;
+	static constexpr int PARSE_DEBOUNCE_MS = 1000;
 };
 
 } // namespace phonometrica

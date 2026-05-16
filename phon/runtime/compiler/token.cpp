@@ -117,8 +117,8 @@ static Array<String> token_names = {
         "end of text"
 };
 
-Token::Token(const String &spelling, intptr_t line, bool ident) :
-        spelling(spelling), line_no(line)
+Token::Token(const String &spelling, intptr_t line, intptr_t column, bool ident) :
+        spelling(spelling), line_no(line), column(column)
 {
     auto it = token_codes.find(spelling);
 
@@ -133,8 +133,8 @@ Token::Token(const String &spelling, intptr_t line, bool ident) :
     }
 }
 
-Token::Token(Lexeme type, const String &spelling, intptr_t line) :
-        spelling(spelling), line_no(line), id(type)
+Token::Token(Lexeme type, const String &spelling, intptr_t line, intptr_t column) :
+        spelling(spelling), line_no(line), column(column), id(type)
 {
 
 }

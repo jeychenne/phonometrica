@@ -49,8 +49,29 @@ void Parser::accept()
 void Parser::report_error(const std::string &hint, const char *error_type)
 {
 	clear();
-	// Move error indicator to the beginning of the current token
-	scanner.report_error(hint, token.size(), error_type);
+	// Move error indicator to the beginning of the current token, and carry
+	// the token's exact (column, length) on the thrown RuntimeError so the
+	// editor's live-error pass can paint a narrow squiggle at the right spot.
+	auto col = (intptr_t) token.column;
+	auto len = (intptr_t) token.size();
+	if (len == 0) len = 1;            // Eot / Eol have no spelling
+	scanner.report_error(hint, token.size(), error_type, col, len);
+}
+
+void Parser::report_error_at(intptr_t line, intptr_t col, intptr_t len,
+                             const std::string &hint, const char *error_type)
+{
+	clear();
+	// Render a self-contained message: we deliberately do NOT call into
+	// scanner.report_error, because that builds its caret using the
+	// scanner's *current* (typically EOF) position, which is unrelated to
+	// where we want the user's attention. The squiggle position is carried
+	// on the RuntimeError independently.
+	auto msg = utils::format("[% error] At line %\nHint: %", error_type, line, hint);
+	RuntimeError err(line, msg);
+	if (len <= 0) len = 1;
+	err.set_position(col, len);
+	throw err;
 }
 
 void Parser::expect(Lexeme lex, const char *hint)
@@ -108,6 +129,11 @@ int Parser::get_line()
 	return (int) token.line_no;
 }
 
+int Parser::get_column()
+{
+	return (int) token.column;
+}
+
 void Parser::initialize()
 {
 
@@ -118,6 +144,7 @@ AutoAst Parser::parse()
 	initialize();
 	accept();
 	auto line = get_line();
+	auto col = get_column();
 	AstList block;
 	while (token.is_separator()) accept();
 
@@ -131,10 +158,14 @@ AutoAst Parser::parse()
 	while (!check(Lexeme::Eot))
 	{
 		block.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
 	expect(Lexeme::Eot, "at end of file");
-	return std::make_unique<StatementList>(line, std::move(block));
+	return std::make_unique<StatementList>(line, col, std::move(block));
 }
 
 AutoAst Parser::parse_statement()
@@ -250,16 +281,24 @@ AutoAst Parser::parse_statements(bool open_scope)
 	trace_ast();
 	AstList block;
 	auto line = get_line();
+	auto col = get_column();
 	while (token.is_separator()) { accept(); }
 
 	while (!check(Lexeme::End))
 	{
+		if (check(Lexeme::Eot)) {
+			report_error_at(line, col, 1, "Unclosed block: expected \"end\"");
+		}
 		block.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::End) && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
 	accept(Lexeme::End);
 
-	return std::make_unique<StatementList>(line, std::move(block), open_scope);
+	return std::make_unique<StatementList>(line, col, std::move(block), open_scope);
 }
 
 AutoAst Parser::parse_if_block()
@@ -267,16 +306,26 @@ AutoAst Parser::parse_if_block()
 	trace_ast();
 	AstList block;
 	auto line = get_line();
+	auto col = get_column();
 	while (token.is_separator()) { accept(); }
 
 	while (!check(Lexeme::End) && !check(Lexeme::Elsif) && !check(Lexeme::Else))
 	{
+		if (check(Lexeme::Eot)) {
+			report_error_at(line, col, 1, "Unclosed \"if\" block: expected \"end\", \"else\", or \"elsif\"");
+		}
 		block.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::End) && !check(Lexeme::Elsif)
+		    && !check(Lexeme::Else) && !check(Lexeme::Eot))
+		{
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
 	accept(Lexeme::End);
 
-	return std::make_unique<StatementList>(line, std::move(block), true);
+	return std::make_unique<StatementList>(line, col, std::move(block), true);
 }
 
 AutoAst Parser::parse_print_statement()
@@ -647,6 +696,7 @@ AstList Parser::parse_arguments()
 	AstList args;
 	AstList named_keys, named_values;
 	int named_line = 0;
+	int named_col = 0;
 
 	if (accept(Lexeme::RParen))
 	{
@@ -665,6 +715,7 @@ AstList Parser::parse_arguments()
 			}
 			String name = var->name;
 			int line = e->line_no;
+			int col = e->column;
 			// Reject duplicate keys at parse time so the user gets a clearer
 			// error than "second value silently wins" at runtime.
 			for (auto &k : named_keys)
@@ -676,10 +727,10 @@ AstList Parser::parse_arguments()
 					report_error(msg);
 				}
 			}
-			if (named_keys.empty()) named_line = line;
+			if (named_keys.empty()) { named_line = line; named_col = col; }
 			accept(); // consume '='
 			auto value = parse_expression();
-			named_keys.push_back(std::make_unique<StringLiteral>(line, std::move(name)));
+			named_keys.push_back(std::make_unique<StringLiteral>(line, col, std::move(name)));
 			named_values.push_back(std::move(value));
 		}
 		else
@@ -694,7 +745,7 @@ AstList Parser::parse_arguments()
 	expect(Lexeme::RParen, "in argument list");
 
 	if (!named_keys.empty()) {
-		args.push_back(std::make_unique<TableLiteral>(named_line,
+		args.push_back(std::make_unique<TableLiteral>(named_line, named_col,
 			std::move(named_keys), std::move(named_values)));
 	}
 
@@ -775,6 +826,7 @@ AutoAst Parser::parse_if_statement()
 	AstList ifs;
 	AutoAst else_block;
 	auto line = get_line();
+	auto col = get_column();
 	auto e = parse_expression();
 	expect(Lexeme::Then, "in \"if\" statement");
 	auto block = parse_if_block();
@@ -791,18 +843,19 @@ AutoAst Parser::parse_if_statement()
 		else_block = parse_if_block();
 	}
 
-	return std::make_unique<IfStatement>(line, std::move(ifs), std::move(else_block));
+	return std::make_unique<IfStatement>(line, col, std::move(ifs), std::move(else_block));
 }
 
 AutoAst Parser::parse_while_statement()
 {
 	trace_ast();
 	auto line = get_line();
+	auto col = get_column();
 	auto e = parse_expression();
 	expect(Lexeme::Do, "in while statement");
 	auto block = parse_statements(true);
 
-	return std::make_unique<WhileStatement>(line, std::move(e), std::move(block));
+	return std::make_unique<WhileStatement>(line, col, std::move(e), std::move(block));
 }
 
 
@@ -810,18 +863,26 @@ AutoAst Parser::parse_repeat_statement()
 {
 	trace_ast();
 	auto line = get_line();
+	auto col = get_column();
 	AstList block;
 	skip_empty_lines();
 	while (!accept(Lexeme::Until))
 	{
+		if (check(Lexeme::Eot)) {
+			report_error_at(line, col, 1, "Unclosed \"repeat\" block: expected \"until\"");
+		}
 		block.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::Until) && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
 	// The compiler we create the scope so that the until condition is in the same scope as the block.
-	auto body = std::make_unique<StatementList>(line, std::move(block), false);
+	auto body = std::make_unique<StatementList>(line, col, std::move(block), false);
 	auto cond = parse_expression();
 
-	return std::make_unique<RepeatStatement>(line, std::move(cond), std::move(body));
+	return std::make_unique<RepeatStatement>(line, col, std::move(cond), std::move(body));
 }
 
 AutoAst Parser::parse_for_statement()
@@ -829,6 +890,7 @@ AutoAst Parser::parse_for_statement()
 	trace_ast();
 	constexpr const char *hint = "in for loop";
 	auto line = get_line();
+	auto col = get_column();
 	AutoAst e1, e2, e3;
 	bool down = false;
 	auto var = parse_identifier(hint);
@@ -856,7 +918,7 @@ AutoAst Parser::parse_for_statement()
 	// Don't open a scope for the block: we will open it ourselves so that we can include the loop variable in it.
 	auto block = parse_statements(false);
 
-	return std::make_unique<ForStatement>(line, std::move(var), std::move(e1), std::move(e2), std::move(e3), std::move(block), down);
+	return std::make_unique<ForStatement>(line, col, std::move(var), std::move(e1), std::move(e2), std::move(e3), std::move(block), down);
 }
 
 AutoAst Parser::parse_foreach_statement()
@@ -864,6 +926,7 @@ AutoAst Parser::parse_foreach_statement()
 	trace_ast();
 	constexpr const char *hint = "in foreach loop";
 	auto line = get_line();
+	auto col = get_column();
 	AutoAst key;
 	if (accept(Lexeme::Ref)) {
 		key = make<ReferenceExpression>(parse_identifier(hint));
@@ -899,7 +962,7 @@ AutoAst Parser::parse_foreach_statement()
 	// Don't open a scope for the block: we will open it ourselves so that we can include the loop variable in it.
 	auto block = parse_statements(false);
 
-	return std::make_unique<ForeachStatement>(line, std::move(key), std::move(val), std::move(coll), std::move(block));
+	return std::make_unique<ForeachStatement>(line, col, std::move(key), std::move(val), std::move(coll), std::move(block));
 }
 
 AutoAst Parser:: parse_conditional_expression()
@@ -925,6 +988,7 @@ AutoAst Parser::parse_class_declaration(bool local)
 	AutoAst parent;
 	AstList fields, methods;
 	int line = get_line();
+	int col = get_column();
 	bool has_default_initializer = false;
 
 	if (parsing_class) {
@@ -941,7 +1005,7 @@ AutoAst Parser::parse_class_declaration(bool local)
 	{
 		AstList params;
 		auto ctor = make<Variable>(runtime->intern_string(PHON_CTOR_STRING));
-		methods.push_back(std::make_unique<RoutineDefinition>(line, std::move(ctor), std::move(params), nullptr, true, true));
+		methods.push_back(std::make_unique<RoutineDefinition>(line, col, std::move(ctor), std::move(params), nullptr, true, true));
 	}
 
 	if (accept(Lexeme::Inherits))
@@ -956,6 +1020,9 @@ AutoAst Parser::parse_class_declaration(bool local)
 
 	while (!check(Lexeme::End))
 	{
+		if (check(Lexeme::Eot)) {
+			report_error_at(line, col, 1, "Unclosed class declaration: expected \"end\"");
+		}
 		if (check(Lexeme::Identifier))
 		{
 			fields.push_back(parse_declaration());
@@ -973,7 +1040,11 @@ AutoAst Parser::parse_class_declaration(bool local)
 			report_error("Invalid statement in class declaration");
 		}
 
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::End) && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between class members");
+		}
 	}
 	accept(Lexeme::End);
 
@@ -983,12 +1054,12 @@ AutoAst Parser::parse_class_declaration(bool local)
 		auto ident = make<Variable>(runtime->intern_string(PHON_INIT_STRING));
 		AstList params;
 		params.push_back(make<RoutineParameter>(make<Variable>(this_keyword), nullptr, true));
-		methods.push_back(std::make_unique<RoutineDefinition>(line, std::move(ident), std::move(params), nullptr, true, true));
+		methods.push_back(std::make_unique<RoutineDefinition>(line, col, std::move(ident), std::move(params), nullptr, true, true));
 	}
 
 	parsing_class = false;
 
-	return std::make_unique<ClassDeclaration>(line, std::move(name), std::move(parent), std::move(fields), std::move(methods), local, is_ref);
+	return std::make_unique<ClassDeclaration>(line, col, std::move(name), std::move(parent), std::move(fields), std::move(methods), local, is_ref);
 }
 
 AutoAst Parser::parse_function_declaration(bool local, bool method)
@@ -997,6 +1068,7 @@ AutoAst Parser::parse_function_declaration(bool local, bool method)
 	static String init_string(PHON_INIT_STRING);
 	static Array<String> method_names = {init_string, PHON_TOSTR_STRING};
 	int line = get_line();
+	int col = get_column();
 
 	if (method && !method_names.contains(token.spelling)) {
 		report_error("[Syntax error] Invalid method name");
@@ -1015,20 +1087,21 @@ AutoAst Parser::parse_function_declaration(bool local, bool method)
 	auto body = parse_statements(false);
 	parsing_initializer.pop_back();
 
-	return std::make_unique<RoutineDefinition>(line, std::move(name), std::move(params), std::move(body), local, method);
+	return std::make_unique<RoutineDefinition>(line, col, std::move(name), std::move(params), std::move(body), local, method);
 }
 
 AutoAst Parser::parse_function_expression()
 {
 	trace_ast();
 	int line = get_line();
+	int col = get_column();
 	constexpr const char *hint = "in function expression";
 	expect(Lexeme::LParen, hint);
 	auto params = parse_parameters();
 	// Don't open a scope for the block: the function will do it so that we include the parameters in the scope.
 	auto body = parse_statements(false);
 
-	return std::make_unique<RoutineDefinition>(line, nullptr, std::move(params), std::move(body), true, false);
+	return std::make_unique<RoutineDefinition>(line, col, nullptr, std::move(params), std::move(body), true, false);
 }
 
 AutoAst Parser::parse_return_statement()
@@ -1070,6 +1143,7 @@ AutoAst Parser::parse_list_literal()
 {
 	trace_ast();
 	auto line = get_line();
+	auto col = get_column();
 	skip_empty_lines();
 	if (accept(Lexeme::RSquare)) {
 		return make<ListLiteral>(AstList());
@@ -1086,7 +1160,7 @@ AutoAst Parser::parse_list_literal()
 	skip_empty_lines();
 	expect(Lexeme::RSquare, "at the end of list or array literal");
 
-	return std::make_unique<ListLiteral>(line, std::move(items));
+	return std::make_unique<ListLiteral>(line, col, std::move(items));
 }
 
 AutoAst Parser::parse_array_literal()
@@ -1096,6 +1170,7 @@ AutoAst Parser::parse_array_literal()
 	intptr_t nrow = 1;
 
 	auto line = get_line();
+	auto col = get_column();
 	skip_empty_lines();
 	if (accept(Lexeme::RSquare)) {
 		return make<ArrayLiteral>(AstList(), 0, 0);
@@ -1127,7 +1202,7 @@ AutoAst Parser::parse_array_literal()
 	}
 	expect(Lexeme::RSquare, "in array literal");
 
-	return std::make_unique<ArrayLiteral>(line, std::move(items), nrow, ncol);
+	return std::make_unique<ArrayLiteral>(line, col, std::move(items), nrow, ncol);
 }
 
 AutoAst Parser::parse_table_literal()
@@ -1135,6 +1210,7 @@ AutoAst Parser::parse_table_literal()
 	trace_ast();
 	constexpr const char *hint = "in table literal";
 	auto line = get_line();
+	auto col = get_column();
 	skip_empty_lines();
 	if (accept(Lexeme::RCurl)) {
 		return make<TableLiteral>(AstList(), AstList());
@@ -1156,7 +1232,7 @@ AutoAst Parser::parse_table_literal()
 		skip_empty_lines();
 		expect(Lexeme::RCurl, hint);
 
-		return std::make_unique<TableLiteral>(line, std::move(keys), std::move(values));
+		return std::make_unique<TableLiteral>(line, col, std::move(keys), std::move(values));
 	}
 	else
 	{
@@ -1168,7 +1244,7 @@ AutoAst Parser::parse_table_literal()
 		skip_empty_lines();
 		expect(Lexeme::RCurl, "in set literal");
 
-		return std::make_unique<SetLiteral>(line, std::move(keys));
+		return std::make_unique<SetLiteral>(line, col, std::move(keys));
 	}
 }
 
@@ -1210,9 +1286,10 @@ AutoAst Parser::parse_debug_statement()
 {
 	trace_ast();
 	auto line = get_line();
+	auto col = get_column();
 	AutoAst body = accept(Lexeme::Eol) ? parse_statements(true) : parse_statement();
 
-	return std::make_unique<DebugStatement>(line, std::move(body));
+	return std::make_unique<DebugStatement>(line, col, std::move(body));
 }
 
 AutoAst Parser::parse_throw_statement()
@@ -1225,6 +1302,7 @@ AutoAst Parser::parse_try_statement()
 {
 	trace_ast();
 	auto line = get_line();
+	auto col = get_column();
 
 	// Try body: collect statements until we hit `catch`.
 	AstList body_stmts;
@@ -1232,12 +1310,16 @@ AutoAst Parser::parse_try_statement()
 	while (!check(Lexeme::Catch) && !check(Lexeme::Eot))
 	{
 		body_stmts.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::Catch) && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
 	if (!check(Lexeme::Catch)) {
-		report_error("Expected \"catch\" in \"try\" statement");
+		report_error_at(line, col, 1, "Unclosed \"try\" block: expected \"catch\"");
 	}
-	auto body = std::make_unique<StatementList>(line, std::move(body_stmts), true);
+	auto body = std::make_unique<StatementList>(line, col, std::move(body_stmts), true);
 
 	// Consume `catch`.
 	expect(Lexeme::Catch, "in \"try\" statement");
@@ -1256,15 +1338,23 @@ AutoAst Parser::parse_try_statement()
 	// pass open_scope=false here.
 	AstList catch_stmts;
 	auto catch_line = get_line();
+	auto catch_col = get_column();
 	while (!check(Lexeme::End) && !check(Lexeme::Eot))
 	{
 		catch_stmts.push_back(parse_statement());
+		bool had_separator = token.is_separator();
 		while (token.is_separator()) accept();
+		if (!had_separator && !check(Lexeme::End) && !check(Lexeme::Eot)) {
+			report_error("Expected a new line or semicolon between statements");
+		}
 	}
-	expect(Lexeme::End, "in \"try\" statement");
-	auto catch_body = std::make_unique<StatementList>(catch_line, std::move(catch_stmts), false);
+	if (!check(Lexeme::End)) {
+		report_error_at(catch_line, catch_col, 1, "Unclosed \"catch\" block: expected \"end\"");
+	}
+	accept(Lexeme::End);
+	auto catch_body = std::make_unique<StatementList>(catch_line, catch_col, std::move(catch_stmts), false);
 
-	return std::make_unique<TryStatement>(line, std::move(body), std::move(name), std::move(catch_body));
+	return std::make_unique<TryStatement>(line, col, std::move(body), std::move(name), std::move(catch_body));
 }
 
 void Parser::clear()

@@ -59,12 +59,14 @@ private:
 	template <class T, class... Args>
 	std::unique_ptr<T> make(Args &&... args)
 	{
-		return std::make_unique<T>(get_line(), std::forward<Args>(args)...);
+		return std::make_unique<T>(get_line(), get_column(), std::forward<Args>(args)...);
 	}
 
 	void clear();
 
 	int get_line();
+
+	int get_column();
 
 	void initialize();
 
@@ -84,6 +86,15 @@ private:
 	void expect_separator();
 
 	void report_error(const std::string &hint, const char *error_type = "Syntax");
+
+	// Throw a syntax error anchored to an explicit (line, column, length)
+	// rather than to the scanner's current position. Used when the offending
+	// construct is structurally far from where parsing actually failed —
+	// most obviously, unclosed blocks: by the time the parser notices a
+	// missing `end`, the scanner is at EOF (an unpaintable, blank-line
+	// position) but the user wants the squiggle inside the unclosed block.
+	void report_error_at(intptr_t line, intptr_t col, intptr_t len,
+	                     const std::string &hint, const char *error_type = "Syntax");
 
 	AutoAst parse();
 
