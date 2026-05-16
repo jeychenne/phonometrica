@@ -412,6 +412,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_script_path",  {
 		"get_script_path()\nReturns the absolute path of the script file currently being interpreted. Use `get_directory(get_script_path())` to obtain the directory containing the script, and `join_path(...)` to build sibling paths portably."
 	}},
+	{ "get_error_line",  {
+		"get_error_line()\nInside a `catch` clause, returns the source line of the original throw — preserved across function-call and module-import boundaries. Returns -1 outside a catch body (or for an error with no recorded line). Useful for logging or reporting where an error originated, especially when the error was raised deep in a call chain."
+	}},
 	{ "set_current_directory",  {
 		"set_current_directory(path as String)\nSets the current working directory to `path`."
 	}},

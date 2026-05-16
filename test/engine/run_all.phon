@@ -33,6 +33,7 @@ import("test_compound_assignment")
 import("test_upvalues")
 import("test_try_catch")
 import("test_try_catch_loops")
+import("test_nested_error_lines")
 
 print ""
 print "######################################################################"

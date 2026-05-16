@@ -10,7 +10,7 @@ static const char *autocompletion_list =
 	"Function function genericize get get_annotation get_annotations get_base_name "
 	"get_cell get_column get_concordance get_concordances get_config_path "
 	"get_current_annotation get_current_directory get_current_sound "
-	"get_dataset get_datasets get_directory get_end get_event_count get_event_end "
+	"get_dataset get_datasets get_directory get_end get_error_line get_event_count get_event_end "
 	"get_event_index get_event_start get_event_text get_extension get_formants "
 	"get_full_path get_header get_input get_intensity get_layer_count get_layer_label "
 	"get_mean_intensity get_mean_pitch get_metadata_directory get_os_name "

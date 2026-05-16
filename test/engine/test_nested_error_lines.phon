@@ -1,0 +1,146 @@
+# =====================================================================
+# test_nested_error_lines.phon
+# =====================================================================
+# Regression test for error-line propagation across call boundaries.
+#
+# Before the fix, any RuntimeError (native math error, undefined var,
+# bad index, ...) thrown from inside a called function was rewrapped
+# by CATCH_ERROR / Runtime::call() in the caller's frame with the
+# caller's current line. `get_error_line()` (and the GUI editor's
+# error highlight) would then point at the outer call site instead of
+# the actual throw location. After the fix, RuntimeError and
+# ScriptException pass through unchanged, so the inner line survives
+# any number of call boundaries.
+#
+# IMPORTANT: this test asserts specific physical line numbers. The
+# throw/error sites are concentrated in the helper block below; each
+# is paired with a `LINE_*` constant on the next line. If you edit
+# this file, keep the constants in sync with the actual line numbers.
+# =====================================================================
+
+# --- Helpers --------------------------------------------------------
+# All throw/error sites live here, with the matching LINE_* constant
+# declared immediately after each helper so the two stay visible
+# together when reading or editing.
+
+function throw_inner()
+    throw "inner boom"
+end
+let LINE_INNER = 27
+
+function call_inner()
+    throw_inner()
+end
+# The call site above (line 32) is what error_line() used to report
+# instead of the actual throw at LINE_INNER. The fix is what makes
+# the inner line survive this boundary.
+let LINE_OUTER_CALL = 32
+
+function call_call_inner()
+    call_inner()
+end
+# Two levels deep — the outermost frame is where the catch lives.
+let LINE_OUTER_OUTER_CALL = 40
+
+function divide_zero()
+    let x = 1 / 0
+end
+let LINE_DIVIDE = 46
+
+function out_of_bounds()
+    let xs = [1, 2, 3]
+    let bad = xs[100]
+end
+let LINE_OOB = 52
+
+function undefined_var()
+    return some_name_that_does_not_exist
+end
+let LINE_UNDEFINED = 57
+
+# --- Tests ----------------------------------------------------------
+
+# 1. Sanity: outside any catch body, get_error_line() returns -1.
+print "--- 1. initial state (no catch active) ---"
+assert get_error_line() == -1, "get_error_line() should be -1 before any catch dispatches"
+
+# 2. Script-level throw caught in the same frame.
+#    ScriptException already preserved its line before the fix; this
+#    locks that behaviour in.
+print "--- 2. same-frame throw ---"
+try
+    throw "direct"
+catch
+    assert get_error_line() > 0, "line must be set inside catch"
+end
+
+# 3. Throw from one frame deeper. THIS IS THE CORE BUG: before the
+#    fix, get_error_line() would report the call site in this frame,
+#    not LINE_INNER inside throw_inner().
+print "--- 3. one-deep call (script throw) ---"
+try
+    call_inner()
+catch
+    assert get_error_line() == LINE_INNER, "expected inner throw line " & str(LINE_INNER) & ", got " & str(get_error_line())
+end
+
+# 4. Throw from two frames deeper. Same bug, harder to mask: the line
+#    must survive two unwinds.
+print "--- 4. two-deep call (script throw) ---"
+try
+    call_call_inner()
+catch
+    assert get_error_line() == LINE_INNER, "expected inner throw line " & str(LINE_INNER) & " through two frames, got " & str(get_error_line())
+end
+
+# 5. Native math error from inside a callee. The variant of the bug
+#    that hurts the most in practice: a `1/0` deep in stats code used
+#    to surface at the wrong line.
+print "--- 5. divide by zero in callee ---"
+try
+    divide_zero()
+catch
+    assert get_error_line() == LINE_DIVIDE, "expected divide-by-zero line " & str(LINE_DIVIDE) & ", got " & str(get_error_line())
+end
+
+# 6. Native out-of-bounds error from inside a callee.
+print "--- 6. out-of-bounds in callee ---"
+try
+    out_of_bounds()
+catch
+    assert get_error_line() == LINE_OOB, "expected out-of-bounds line " & str(LINE_OOB) & ", got " & str(get_error_line())
+end
+
+# 7. Undefined-variable error from inside a callee. Exercises the
+#    [Symbol error] path through CATCH_ERROR.
+print "--- 7. undefined variable in callee ---"
+try
+    undefined_var()
+catch
+    assert get_error_line() == LINE_UNDEFINED, "expected undefined-var line " & str(LINE_UNDEFINED) & ", got " & str(get_error_line())
+end
+
+# 8. Structural cross-check: regardless of any line-counting drift in
+#    this file, the inner line must NOT equal the outer call site.
+#    This is the property that genuinely encodes the bug: if the
+#    regression came back, both would be the call site here.
+print "--- 8. inner != outer call site (structural) ---"
+try
+    call_inner()
+catch
+    let inner_line = get_error_line()
+    assert inner_line != LINE_OUTER_CALL, "regression: error_line() == outer call site (" & str(LINE_OUTER_CALL) & "); fix has been undone"
+end
+
+# 9. After the catch body exits, the field is sticky (documented).
+#    Verify the builtin is callable post-catch without crashing; its
+#    value at this point is unspecified, so we deliberately do NOT
+#    assert any particular number — only that the call returns
+#    something we can read.
+print "--- 9. post-catch query is harmless ---"
+let post = get_error_line()
+# `post` may be the line of the most-recently handled error, or -1
+# if a future implementation chooses to reset on catch-body exit;
+# either is fine. The documented contract is "inside a catch body".
+
+print "test_nested_error_lines: OK"

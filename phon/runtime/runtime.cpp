@@ -32,11 +32,24 @@
 
 
 // Convert a generic std::runtime_error caught at an opcode boundary into a RuntimeError
-// carrying the current bytecode line. ScriptException must pass through unchanged so
-// that the carried Variant survives until the catch handler can inspect it; rewrapping
-// it as a plain RuntimeError would discard the value and leave only the message.
+// carrying the current bytecode line.
+//
+// ScriptException must pass through unchanged so that the carried Variant survives until
+// the catch handler can inspect it; rewrapping it as a plain RuntimeError would discard
+// the value and leave only the message.
+//
+// RuntimeError (the parent of ScriptException, but also the type thrown by RUNTIME_ERROR
+// from deeper frames) must also pass through unchanged: it already carries the line of
+// the originating throw, set by whoever raised it. Rewrapping here with `get_current_line()`
+// would clobber that with the line of the *caller's* call site, which is exactly the
+// reporting-stops-at-the-outer-call bug. C++ exception matching tries arms top-down and
+// picks the first that fits, so the ScriptException arm runs ahead of the RuntimeError
+// arm for ScriptException objects (the value-preserving path); plain RuntimeErrors hit
+// the second arm and are rethrown verbatim; only foreign std::runtime_errors from native
+// code (which have no script line of their own) get stamped with the current line.
 #define CATCH_ERROR \
 	catch (ScriptException &) { throw; } \
+	catch (RuntimeError &) { throw; } \
 	catch (std::runtime_error &e) { RUNTIME_ERROR(e.what()); }
 #define RUNTIME_ERROR(...) throw RuntimeError(get_current_line(), __VA_ARGS__)
 
@@ -1480,6 +1493,22 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 					pop(int(cur - h.stack_size));
 				}
 
+				// Record the line of the originating throw so the catch body can
+				// query it via the `get_error_line()` builtin. RuntimeError (and
+				// its subclass ScriptException) carries an accurate line set at
+				// throw time and preserved across call-boundary unwinds by the
+				// pass-through arms of CATCH_ERROR / Runtime::call(). For a bare
+				// std::runtime_error coming from `throw error(...)` in native code
+				// (no embedded line — e.g. check_float_error, out-of-bounds in
+				// array.hpp), we are still in the throwing frame here, so
+				// `get_current_line()` is the right answer.
+				if (auto re = dynamic_cast<RuntimeError*>(&e)) {
+					catch_line = re->line_no();
+				}
+				else {
+					catch_line = get_current_line();
+				}
+
 				// Push the thrown value: the original Variant when the throw came from
 				// the script's `throw` statement, otherwise a String holding the error
 				// message (so `catch e` can still bind something meaningful for runtime
@@ -1498,6 +1527,24 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 
 			// No matching handler in this frame: clean up our frame and rethrow so the
 			// caller's interpret() invocation can dispatch (or propagate further).
+			//
+			// If the exception is a bare std::runtime_error from native code with no
+			// embedded source line (`throw error(...)` rather than `RUNTIME_ERROR(...)`
+			// — check_float_error, the array/list out-of-bounds throws, etc.), upgrade
+			// it to a RuntimeError carrying this frame's current op line BEFORE the
+			// unwind. We are still in the throwing frame here, so `get_current_line()`
+			// resolves to the right answer; once we unwind, `code`/`ip` will point at
+			// the caller and that information is gone. Without this upgrade, the outer
+			// call-boundary CATCH_ERROR would stamp the caller's line — exactly the
+			// "reports stop at the outer call" bug for the non-RUNTIME_ERROR throw
+			// paths. RuntimeError (and ScriptException) already carry an accurate line
+			// and are rethrown verbatim.
+			if (dynamic_cast<RuntimeError*>(&e) == nullptr) {
+				auto inner_line = get_current_line();
+				std::string msg = e.what();
+				unwind_call_frame_for_throw();
+				throw RuntimeError(inner_line, std::move(msg));
+			}
 			unwind_call_frame_for_throw();
 			throw;
 		}
@@ -2536,6 +2583,16 @@ void Runtime::call(int narg)
 			}
 			push(interpret(c));
 		}
+	}
+	catch (RuntimeError &)
+	{
+		// Already carries the line of the originating throw (set by whoever raised
+		// it deeper in the call chain). Pass through verbatim — rewrapping with
+		// `get_current_line()` would clobber the inner line with this call's site,
+		// reverting to the old "errors report at the outer call" behaviour. This
+		// arm also catches ScriptException (which derives from RuntimeError); the
+		// dispatch in interpret() recovers its Variant via dynamic_cast.
+		throw;
 	}
 	catch (std::exception &e)
 	{

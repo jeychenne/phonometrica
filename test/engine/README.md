@@ -25,6 +25,7 @@ phonometrica test_compound_assignment.phon
 | `test_upvalues.phon`              | Upvalue capture across `local function`, mutating natives (`append`)           |
 | `test_try_catch.phon`             | `try`/`catch`, throw/rethrow, cross-frame, return/break inside try             |
 | `test_try_catch_loops.phon`       | Stress test: break/continue × try/catch handler-stack accounting               |
+| `test_nested_error_lines.phon`    | `get_error_line()` reports the inner throw site, not the outer call boundary  |
 
 ## Adding a new test
 

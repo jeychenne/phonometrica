@@ -2,7 +2,7 @@
 <Phonometrica class="Project">
 	<Metadata>
 		<UUID>R1OSeCk10KIiLKCZbp_h</UUID>
-		<ProgramVersion major="0" minor="9" micro="4" />
+		<ProgramVersion major="0" minor="9" micro="5" />
 		<Changelog />
 	</Metadata>
 	<Corpus size="3">
@@ -34,6 +34,9 @@
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/engine/test_upvalues.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_nested_error_lines.phon</Path>
 			</Document>
 		</Directory>
 		<Directory label="frequentist">

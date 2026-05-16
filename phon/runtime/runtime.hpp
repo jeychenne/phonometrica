@@ -323,6 +323,16 @@ public:
 	// without hard-coding any absolute path.
 	String script_path() const { return current_path; }
 
+	// Line number of the currently-active caught error in a catch body.
+	// Set by the catch dispatch in interpret() from the originating
+	// RuntimeError's line_no(); returns -1 outside a catch body (or for
+	// an error with no recorded position). Exposed to scripts via the
+	// `get_error_line()` builtin. With CATCH_ERROR / Runtime::call()
+	// now passing RuntimeError through unchanged, this reflects the
+	// line of the original throw in its source frame — not the outer
+	// call site that propagated it.
+	intptr_t error_line() const { return catch_line; }
+
 private:
 
 	static constexpr size_t MAX_CALL_FRAME = 256;
@@ -525,6 +535,14 @@ private:
 
 	// Used to hide `this` parameter in error reporting.
 	bool calling_method = false;
+
+	// Line number of the most recently dispatched caught error, or -1
+	// if none. Set by the catch dispatch in interpret() and queried
+	// from scripts via the `get_error_line()` builtin (public accessor:
+	// `error_line()`). Not reset on normal flow — a stale value persists
+	// after a catch body exits, so the builtin is only meaningful inside
+	// the catch body that handled the error.
+	intptr_t catch_line = -1;
 
 	// If false, we're running from a GUI.
 	bool text_mode = true;

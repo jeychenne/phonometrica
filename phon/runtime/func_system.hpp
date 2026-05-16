@@ -48,6 +48,18 @@ static Variant system_script_path(Runtime &rt, std::span<Variant>)
 	return rt.script_path();
 }
 
+// Returns the source line of the currently-active caught error, or -1
+// outside a catch body. The line refers to the original throw site,
+// preserved across function-call and module-import boundaries by the
+// pass-through arms of CATCH_ERROR / Runtime::call(). Intended for use
+// inside a `catch` clause to log or report where the error originated;
+// outside a catch body the return value is unspecified (typically -1
+// or the line of the previously-handled error).
+static Variant system_error_line(Runtime &rt, std::span<Variant>)
+{
+	return rt.error_line();
+}
+
 static Variant system_set_current_directory(Runtime &, std::span<Variant> args)
 {
 	auto &path = cast<String>(args[0]);
