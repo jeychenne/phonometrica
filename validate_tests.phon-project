@@ -5,15 +5,7 @@
 		<ProgramVersion major="0" minor="9" micro="5" />
 		<Changelog />
 	</Metadata>
-	<Corpus size="3">
-		<Directory label="data" />
-		<Directory label="engine" />
-		<Directory label="statistics">
-			<Directory label="bayesian" />
-			<Directory label="frequentist" />
-			<Directory label="lib" />
-		</Directory>
-	</Corpus>
+	<Corpus size="0" />
 	<Queries />
 	<Scripts>
 		<Directory label="engine">

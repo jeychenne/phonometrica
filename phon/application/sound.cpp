@@ -31,6 +31,7 @@
 #include <phon/application/sound.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/resampler.hpp>
+#include <phon/application/annotation_ops.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/statistics.hpp>
 #include <phon/third_party/swipe/swipe.h>
@@ -178,6 +179,77 @@ bool Sound::supports_format(const String &format)
 	return false;
 }
 
+String Sound::extension_for(Format fmt)
+{
+	switch (fmt)
+	{
+		case Format::WAV:  return String(".wav");
+		case Format::AIFF: return String(".aiff");
+		case Format::FLAC: return String(".flac");
+		case Format::OGG:  return String(".ogg");
+#ifdef SF_FORMAT_MPEG
+		case Format::MP3:  return String(".mp3");
+#endif
+	}
+	return String(".wav");
+}
+
+Sound::Format Sound::parse_format(const String &name)
+{
+	// Normalize: lowercase, strip leading dot if present.
+	String norm = name.to_lower();
+	if (!norm.empty() && norm.first() == '.') {
+		norm = norm.right(norm.size() - 1);
+	}
+
+	// Map to Format. We accept the common aliases libsndfile itself uses
+	// (e.g. "aif" for AIFF, "oga" for OGG) so that names obtained from
+	// supported_sound_formats() round-trip cleanly.
+	Format fmt;
+	String canonical;  // canonical extension for the runtime check below
+	if (norm == "wav") {
+		fmt = Format::WAV;
+		canonical = "wav";
+	}
+	else if (norm == "aiff" || norm == "aif" || norm == "aifc") {
+		fmt = Format::AIFF;
+		canonical = "aiff";
+	}
+	else if (norm == "flac") {
+		fmt = Format::FLAC;
+		canonical = "flac";
+	}
+	else if (norm == "ogg" || norm == "oga") {
+		fmt = Format::OGG;
+		canonical = "ogg";
+	}
+#ifdef SF_FORMAT_MPEG
+	else if (norm == "mp3") {
+		fmt = Format::MP3;
+		canonical = "mp3";
+	}
+#endif
+	else {
+		throw error("[Argument error] Unknown sound format: \"%\". Expected one of: "
+		            "\"wav\", \"aiff\", \"flac\", \"ogg\", \"mp3\".", name);
+	}
+
+	// Runtime check: does the libsndfile this binary is linked against
+	// actually support the format we just mapped to? The compile-time
+	// SF_FORMAT_MPEG guard only confirms the headers know about MPEG;
+	// the actual library may have been built without mpg123/LAME.
+	bool runtime_ok = false;
+	for (auto &f : the_supported_sound_formats) {
+		if (f == canonical) { runtime_ok = true; break; }
+	}
+	if (!runtime_ok) {
+		throw error("[I/O error] The bundled libsndfile does not support "
+		            "writing \"%\" files on this system.", name);
+	}
+
+	return fmt;
+}
+
 Array<String> Sound::supported_sound_format_names()
 {
 	SF_FORMAT_INFO info;
@@ -230,37 +302,11 @@ SndfileHandle Sound::handle() const
 
 void Sound::convert(const String &path, int sample_rate, Sound::Format fmt)
 {
-	const int BUFFER_SIZE = 1024;
-	double buffer[BUFFER_SIZE];
-	int flags = static_cast<int>(fmt) | SF_FORMAT_PCM_32;
-
-#if PHON_WINDOWS
-	auto wpath = path.to_wide();
-	SndfileHandle outfile(wpath.data(), SFM_WRITE, flags, 1, sample_rate);
-#else
-	SndfileHandle outfile(path.data(), SFM_WRITE, flags, 1, sample_rate);
-#endif
-	auto input = this->handle();
-	Resampler resampler(input.samplerate(), sample_rate, BUFFER_SIZE);
-	input.seek(0, SEEK_SET);
-	auto size = input.frames() * input.channels();
-	double *out = nullptr;
-	intptr_t ol = double(size) * sample_rate / input.samplerate();
-
-	while (ol > 0)
-	{
-		auto count = input.read(buffer, BUFFER_SIZE);
-		if (count == 0) {
-			count = BUFFER_SIZE;
-			memset(buffer, 0, sizeof(double) * BUFFER_SIZE);
-		}
-		auto len = resampler.process(buffer, count, out);
-		if (len > ol) len = ol;
-		outfile.write(out, len);
-		ol -= len;
-	}
-
-	input.seek(0, SEEK_SET);
+	// Delegate to the free function in annotation_ops, which handles
+	// multichannel sources, per-channel resampling, and format-aware
+	// subtype selection. The earlier in-method implementation here was
+	// mono-only and hardcoded PCM_32, so we drop it.
+	convert_sound(*this, path, fmt, sample_rate);
 }
 
 int Sound::get_intensity_window_size() const
@@ -720,6 +766,34 @@ void Sound::initialize(Runtime &rt)
 		return apply(array, f);
 	};
 
+	// convert(sound, output_path, format)            -> keep source sample rate
+	// convert(sound, output_path, format, samplerate)
+	//
+	// `format` is a case-insensitive string: "wav", "aiff", "flac", "ogg",
+	// or "mp3" (the last requires a libsndfile build with MPEG support).
+	// Channel count is preserved; sample-rate conversion uses r8brain.
+	auto sound_convert1 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound      = cast<Sound>(args[0]);
+		auto &out_path   = cast<String>(args[1]);
+		auto &format_str = cast<String>(args[2]);
+		auto fmt = Sound::parse_format(format_str);
+		convert_sound(sound, out_path, fmt, /*target_sample_rate=*/0);
+		return Variant();
+	};
+
+	auto sound_convert2 = [](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound      = cast<Sound>(args[0]);
+		auto &out_path   = cast<String>(args[1]);
+		auto &format_str = cast<String>(args[2]);
+		double sr_d      = args[3].resolve().get_number();
+		if (!(sr_d > 0) || sr_d != std::floor(sr_d)) {
+			throw error("[Argument error] Sample rate must be a positive integer, got %", sr_d);
+		}
+		auto fmt = Sound::parse_format(format_str);
+		convert_sound(sound, out_path, fmt, (int) sr_d);
+		return Variant();
+	};
+
 
 #define CLS(T) phonometrica::get_class<T>()
 	auto cls = CLS(Sound);
@@ -753,6 +827,8 @@ void Sound::initialize(Runtime &rt)
 	rt.add_global("semitones_to_hertz", st2hz2, {CLS(Number), CLS(Number) });
 	rt.add_global("semitones_to_hertz", st2hz3, {CLS(Array<double>) });
 	rt.add_global("semitones_to_hertz", st2hz4, {CLS(Array<double>), CLS(Number) });
+	rt.add_global("convert", sound_convert1, {CLS(Sound), CLS(String), CLS(String) });
+	rt.add_global("convert", sound_convert2, {CLS(Sound), CLS(String), CLS(String), CLS(Number) });
 #undef CLS
 }
 

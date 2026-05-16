@@ -53,8 +53,19 @@ public:
 		WAV  = SF_FORMAT_WAV,
 		AIFF = SF_FORMAT_AIFF,
 		FLAC = SF_FORMAT_FLAC,
-		OGG  = SF_FORMAT_OGG
+		OGG  = SF_FORMAT_OGG,
+#ifdef SF_FORMAT_MPEG
+		MP3  = SF_FORMAT_MPEG
+#endif
 	};
+
+	// Map an output format to an extension (with leading dot), e.g. ".wav".
+	static String extension_for(Format fmt);
+
+	// Parse a format name ("wav", "mp3", …) into a Format. Case-insensitive.
+	// Leading dots are stripped. Throws if the name is unknown or the build's
+	// libsndfile lacks support for the requested format.
+	static Format parse_format(const String &name);
 
 	Sound(Directory *parent, String path);
 
@@ -84,6 +95,11 @@ public:
 
     SndfileHandle handle() const;
 
+    // Convert this sound to `path` in `fmt`, optionally resampling. Pass
+    // sample_rate <= 0 (or equal to the source rate) to skip resampling.
+    // Channel count is preserved. Delegates to the free function in
+    // annotation_ops.hpp; the method is kept for back-compat with older
+    // callers and for symmetry with extract_sound_slice/concatenate_sounds.
     void convert(const String &path, int sample_rate, Format fmt);
 
     double get_pitch(int channel, speech::PitchTracker method, double time, double min_pitch, double max_pitch, double threshold,

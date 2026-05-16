@@ -162,6 +162,26 @@ concatenate_sounds(std::span<const Handle<Sound>> sources,
                    Sound::Format format);
 
 
+// Convert `src` to a new sound file at `out_path`, in the chosen `format`,
+// optionally resampling to `target_sample_rate`. Channel count is preserved.
+// Each channel is resampled independently (r8brain CDSPResampler24) to keep
+// the resampler state per-channel.
+//
+// `target_sample_rate <= 0`, or equal to the source's sample rate, means
+// "no resampling" — frames are streamed directly. Otherwise the expected
+// output frame count is precomputed and the loop drains the resampler tail
+// with zero-padding once the input is exhausted (matching the convention
+// used by the standalone resample() helper).
+//
+// Data is streamed through libsndfile; the source's full sample buffer is
+// not loaded into memory.
+Handle<Sound>
+convert_sound(Sound &src,
+              const String &out_path,
+              Sound::Format format,
+              int target_sample_rate = 0);
+
+
 //----------------------------------------------------------------------------------------------------------------------
 //  Helpers
 //----------------------------------------------------------------------------------------------------------------------

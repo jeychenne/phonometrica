@@ -31,6 +31,7 @@
 #include <phon/gui/project_model.hpp>
 #include <phon/gui/extract_layers_dialog.hpp>
 #include <phon/gui/extract_slice_dialog.hpp>
+#include <phon/gui/convert_sound_dialog.hpp>
 #include <phon/gui/merge_annotations_dialog.hpp>
 #include <phon/gui/concatenate_annotations_dialog.hpp>
 #include <phon/gui/concatenate_sounds_dialog.hpp>
@@ -1329,6 +1330,33 @@ void FileManager::buildDocumentContextMenu(QMenu &menu, const QModelIndex &sourc
 				}
 				catch (std::exception &e) {
 					QMessageBox::warning(this, tr("Extract slice"),
+						QString::fromUtf8(e.what()));
+					return;
+				}
+
+				auto *parent_dir = snd->parent();
+				if (!parent_dir) parent_dir = m_project->corpus().get();
+				register_staged_sound(m_project, staged, Handle<Directory>(parent_dir));
+				refresh();
+			});
+
+			menu.addAction(tr("Convert..."), [this, snd]() {
+				ConvertSoundDialog dlg(this, snd);
+				if (dlg.exec() != QDialog::Accepted)
+					return;
+
+				auto out_path = dlg.outputPath();
+				if (out_path.empty())
+					return;
+
+				Handle<Sound> staged;
+				try {
+					staged = convert_sound(*snd, out_path,
+					                       dlg.outputFormat(),
+					                       dlg.targetSampleRate());
+				}
+				catch (std::exception &e) {
+					QMessageBox::warning(this, tr("Convert sound"),
 						QString::fromUtf8(e.what()));
 					return;
 				}

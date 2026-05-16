@@ -51,11 +51,19 @@ Return a list of the visible channel indices in the current annotation or sound 
 Structural transformations
 --------------------------
 
-These functions produce a **new** sound file on disk and return a fresh ``Sound`` handle. They do
-not modify the source and do not add the result to the current project — call ``import_file(path)``
-if you want the new file in the project. The on-disk format of the result is inferred from the
-output path's extension (``.wav``, ``.aiff``, ``.flac``, or ``.ogg``). Data is streamed through
-libsndfile, so even multi-hour files are processed in constant memory.
+These functions produce a **new** sound file on disk and return a fresh ``Sound`` handle (except
+``convert``, which returns nothing). They do not modify the source and do not add the result to
+the current project — call ``import_file(path)`` if you want the new file in the project. For
+``extract_sound_slice`` and ``concatenate_sounds``, the on-disk format is inferred from the output
+path's extension (``.wav``, ``.aiff``, ``.flac``, ``.ogg``, or ``.mp3``). For ``convert``, the
+format is passed explicitly as a string so you can write to a path whose extension doesn't match
+the desired container, or write to an extensionless path. Data is streamed through libsndfile,
+so even multi-hour files are processed in constant memory.
+
+Support for ``.mp3`` (and equivalently the ``"mp3"`` format string) depends on the libsndfile
+build Phonometrica was linked against. If your platform's libsndfile lacks MPEG support, any
+attempt to write an MP3 raises a clear ``[I/O error]`` rather than silently producing a broken
+file.
 
 
 .. function:: extract_sound_slice(sound as Sound, t_start as Number, t_end as Number, path as String)
@@ -72,6 +80,41 @@ Concatenates the sounds in ``sources`` end-to-end into a new sound file at ``pat
 it. All sources must share the same sample rate and channel count; any mismatch raises an error
 identifying the first offending file. The output keeps the common rate and channel count, with
 the format determined by ``path``'s extension.
+
+------------
+
+.. function:: convert(sound as Sound, path as String, format as String [, sample_rate as Number])
+
+Writes ``sound`` to ``path`` in the given ``format``, optionally resampling to ``sample_rate``
+(in Hz). When the rate argument is omitted, the source's sample rate is preserved and the data
+is streamed straight through libsndfile (a fast path that performs no resampling).
+
+``format`` is a case-insensitive string. The recognised names are ``"wav"``, ``"aiff"`` (also
+``"aif"``), ``"flac"``, ``"ogg"``, and ``"mp3"``. A leading dot is allowed, so ``".wav"`` and
+``"wav"`` behave identically. Unknown names raise an ``[Argument error]``; names that are known
+but unavailable in this libsndfile build raise an ``[I/O error]``.
+
+Channel count is always preserved. When ``sample_rate`` is given, each channel is resampled
+independently using the r8brain CDSPResampler24, so stereo (and any higher channel count) is
+handled correctly. The output bit depth follows the source where the target container allows it:
+PCM_24 stays PCM_24 for WAV/AIFF/FLAC, FLOAT stays FLOAT on WAV, and everything else falls back
+to PCM_16; OGG always writes Vorbis and MP3 always writes Layer III.
+
+``convert`` returns no value. If you want the new file to appear in the current project, call
+``import_file(path)`` after the conversion.
+
+Examples::
+
+   let s = get_current_sound()
+
+   # Re-encode without changing the sample rate.
+   convert(s, "/tmp/copy.flac", "flac")
+
+   # Downsample to 16 kHz, write as a WAV.
+   convert(s, "/tmp/16k.wav", "wav", 16000)
+
+   # The format string takes precedence over the extension.
+   convert(s, "/tmp/take_001.audio", "flac")
 
 ------------
 

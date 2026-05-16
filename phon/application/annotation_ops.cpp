@@ -20,10 +20,13 @@
  ***********************************************************************************************************************/
 
 #include <algorithm>
+#include <cmath>
+#include <memory>
 #include <vector>
 #include <sndfile.hh>
 #include <phon/application/annotation_ops.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/resampler.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/error.hpp>
 
@@ -38,6 +41,8 @@ constexpr int IO_BUFFER_FRAMES = 4096;
 
 // Pick a libsndfile subtype for the chosen output format. PCM_16 is a sensible
 // default for the lossless containers (WAV, AIFF, FLAC). OGG must use VORBIS.
+// MP3 (when the build's libsndfile supports it) uses LAYER_III, the only
+// MPEG audio subtype anyone actually means when they say "mp3".
 // Callers that need a different bit depth can extend Sound::Format in the
 // future; that change does not belong in this file.
 int default_subtype_for(Sound::Format format)
@@ -50,6 +55,54 @@ int default_subtype_for(Sound::Format format)
 			return SF_FORMAT_PCM_16;
 		case Sound::Format::OGG:
 			return SF_FORMAT_VORBIS;
+#ifdef SF_FORMAT_MPEG
+		case Sound::Format::MP3:
+			return SF_FORMAT_MPEG_LAYER_III;
+#endif
+	}
+	return SF_FORMAT_PCM_16;
+}
+
+
+// Pick a subtype for a conversion that knows the source's existing subtype.
+// For the lossless containers we try to preserve depth where the target
+// allows it (so PCM_24 stays PCM_24, FLOAT stays FLOAT on WAV, etc.), falling
+// back to PCM_16. Lossy containers (OGG/MP3) ignore the source subtype since
+// they only accept their own family.
+int pick_subtype_for_convert(Sound::Format format, int src_subtype)
+{
+	switch (format)
+	{
+		case Sound::Format::WAV:
+			if (src_subtype == SF_FORMAT_PCM_24 || src_subtype == SF_FORMAT_PCM_32 ||
+			    src_subtype == SF_FORMAT_FLOAT  || src_subtype == SF_FORMAT_DOUBLE) {
+				return src_subtype;
+			}
+			return SF_FORMAT_PCM_16;
+
+		case Sound::Format::AIFF:
+			// AIFF (specifically AIFC) supports float, but the legacy AIFF
+			// containers many tools expect are PCM-only. Preserve depth up to
+			// 32-bit PCM; float upstream becomes PCM_16 for safety.
+			if (src_subtype == SF_FORMAT_PCM_24 || src_subtype == SF_FORMAT_PCM_32) {
+				return src_subtype;
+			}
+			return SF_FORMAT_PCM_16;
+
+		case Sound::Format::FLAC:
+			// FLAC: 8/16/24-bit PCM only. No float, no 32-bit. Promote to the
+			// nearest valid choice.
+			if (src_subtype == SF_FORMAT_PCM_24) return SF_FORMAT_PCM_24;
+			if (src_subtype == SF_FORMAT_PCM_S8) return SF_FORMAT_PCM_S8;
+			return SF_FORMAT_PCM_16;
+
+		case Sound::Format::OGG:
+			return SF_FORMAT_VORBIS;
+
+#ifdef SF_FORMAT_MPEG
+		case Sound::Format::MP3:
+			return SF_FORMAT_MPEG_LAYER_III;
+#endif
 	}
 	return SF_FORMAT_PCM_16;
 }
@@ -281,6 +334,9 @@ Sound::Format sound_format_from_path(const String &path)
 	if (ext == ".aiff" || ext == ".aif") return Sound::Format::AIFF;
 	if (ext == ".flac") return Sound::Format::FLAC;
 	if (ext == ".ogg")  return Sound::Format::OGG;
+#ifdef SF_FORMAT_MPEG
+	if (ext == ".mp3")  return Sound::Format::MP3;
+#endif
 	throw error("[Argument error] Cannot infer sound format from path extension: %", path);
 }
 
@@ -667,6 +723,179 @@ concatenate_sounds(std::span<const Handle<Sound>> sources,
 			if (got <= 0) break;
 			writer.writef(buf.data(), got);
 			frames_left -= got;
+		}
+	}
+
+	writer = SndfileHandle();  // flush via RAII
+
+	return make_handle<Sound>(nullptr, out_path);
+}
+
+
+Handle<Sound>
+convert_sound(Sound &src,
+              const String &out_path,
+              Sound::Format format,
+              int target_sample_rate)
+{
+	auto reader = open_reader(src.path());
+	if (!reader) {
+		throw error("[I/O error] Cannot open sound file for reading: %", src.path());
+	}
+
+	int channels    = reader.channels();
+	int src_rate    = reader.samplerate();
+	int src_subtype = reader.format() & SF_FORMAT_SUBMASK;
+	int out_rate    = (target_sample_rate > 0) ? target_sample_rate : src_rate;
+
+	if (channels <= 0) {
+		throw error("[I/O error] Source file reports invalid channel count (%)",
+		            intptr_t(channels));
+	}
+	if (out_rate <= 0) {
+		throw error("[Argument error] Invalid output sample rate: %",
+		            intptr_t(out_rate));
+	}
+
+	int subtype    = pick_subtype_for_convert(format, src_subtype);
+	int out_format = static_cast<int>(format) | subtype;
+
+	// Verify libsndfile can actually write this combination. This catches
+	// cases where the build's libsndfile knows about a major format (so the
+	// enum value exists) but the linked library lacks the encoder, or where
+	// the chosen subtype is invalid for the major format.
+	SF_INFO check_info {};
+	check_info.format     = out_format;
+	check_info.channels   = channels;
+	check_info.samplerate = out_rate;
+	if (!sf_format_check(&check_info)) {
+		throw error("[I/O error] libsndfile cannot write this format/subtype/channels/"
+		            "sample-rate combination for \"%\" (channels=%, rate=%). The format may "
+		            "not be enabled in this libsndfile build.",
+		            out_path, intptr_t(channels), intptr_t(out_rate));
+	}
+
+	auto writer = open_writer(out_path, out_format, channels, out_rate);
+	if (!writer) {
+		throw error("[I/O error] Cannot open sound file for writing: %. Reason: %",
+		            out_path, String(writer.strError()));
+	}
+
+	if (reader.seek(0, SEEK_SET) < 0) {
+		throw error("[I/O error] Failed to seek to start of source file: %", src.path());
+	}
+
+	intptr_t total_in_frames = (intptr_t) reader.frames();
+
+	if (out_rate == src_rate)
+	{
+		// Fast path: no resampling. Stream interleaved float frames straight
+		// through libsndfile, which handles sample-format conversion on its
+		// own (e.g. PCM_16 source -> PCM_24 sink).
+		std::vector<float> buf((size_t) IO_BUFFER_FRAMES * channels);
+		intptr_t frames_left = total_in_frames;
+		while (frames_left > 0)
+		{
+			auto to_read = std::min<intptr_t>(IO_BUFFER_FRAMES, frames_left);
+			auto got = reader.readf(buf.data(), to_read);
+			if (got <= 0) break;
+			writer.writef(buf.data(), got);
+			frames_left -= got;
+		}
+	}
+	else
+	{
+		// Resampling path. r8brain's CDSPResampler24 is stateful, so we keep
+		// one instance per channel (mono and stereo share the same code).
+		// Each .process() call on a given channel returns the same number of
+		// output samples as the other channels for the same input length
+		// (r8brain is deterministic given equal rate ratios), so we track a
+		// single out_frames count.
+		//
+		// The output pointer returned by process() points into r8brain's
+		// internal scratch buffer; we copy out of it before the next call.
+		std::vector<std::unique_ptr<Resampler>> resamplers;
+		resamplers.reserve((size_t) channels);
+		for (int c = 0; c < channels; ++c) {
+			resamplers.emplace_back(std::make_unique<Resampler>(
+				(double) src_rate, (double) out_rate, IO_BUFFER_FRAMES));
+		}
+
+		std::vector<std::vector<double>> chan_in(
+			(size_t) channels,
+			std::vector<double>((size_t) IO_BUFFER_FRAMES, 0.0));
+		std::vector<double *> chan_out((size_t) channels, nullptr);
+		std::vector<double>  in_interleaved((size_t) IO_BUFFER_FRAMES * channels, 0.0);
+		std::vector<double>  out_interleaved;
+
+		// Expected output frame count, rounded up. Once the source is
+		// exhausted, we pad with zeros to drain the resampler tail (the same
+		// trick the standalone resample() helper uses).
+		intptr_t out_frames_remaining = (intptr_t) std::ceil(
+			(double) total_in_frames * (double) out_rate / (double) src_rate);
+		bool input_done = false;
+
+		while (out_frames_remaining > 0)
+		{
+			int feed_frames = IO_BUFFER_FRAMES;
+			if (!input_done)
+			{
+				auto got = reader.readf(in_interleaved.data(), IO_BUFFER_FRAMES);
+				if (got <= 0) {
+					input_done = true;
+					std::fill(in_interleaved.begin(), in_interleaved.end(), 0.0);
+				}
+				else {
+					feed_frames = (int) got;
+					// Zero the tail of the buffer in case of a short read,
+					// so the deinterleave loop doesn't read stale samples
+					// past the end.
+					if (feed_frames < IO_BUFFER_FRAMES) {
+						std::fill(
+							in_interleaved.begin() + (size_t) feed_frames * channels,
+							in_interleaved.end(), 0.0);
+					}
+				}
+			}
+			// When input_done, in_interleaved is already zeroed.
+
+			// Deinterleave into per-channel buffers.
+			for (int c = 0; c < channels; ++c) {
+				auto &dst = chan_in[(size_t) c];
+				for (int f = 0; f < feed_frames; ++f) {
+					dst[(size_t) f] = in_interleaved[(size_t) f * channels + c];
+				}
+			}
+
+			// Resample each channel. n is identical across channels (see comment
+			// above on r8brain determinism).
+			intptr_t out_frames = 0;
+			for (int c = 0; c < channels; ++c) {
+				double *out_ptr = nullptr;
+				intptr_t n = resamplers[(size_t) c]->process(
+					chan_in[(size_t) c].data(), feed_frames, out_ptr);
+				chan_out[(size_t) c] = out_ptr;
+				out_frames = n;
+			}
+
+			if (out_frames > out_frames_remaining) {
+				out_frames = out_frames_remaining;
+			}
+
+			if (out_frames > 0)
+			{
+				// Re-interleave into a single buffer and write.
+				out_interleaved.resize((size_t) out_frames * channels);
+				for (int c = 0; c < channels; ++c) {
+					const double *src_ch = chan_out[(size_t) c];
+					for (intptr_t f = 0; f < out_frames; ++f) {
+						out_interleaved[(size_t) f * channels + c] = src_ch[f];
+					}
+				}
+				writer.writef(out_interleaved.data(), out_frames);
+			}
+
+			out_frames_remaining -= out_frames;
 		}
 	}
 
