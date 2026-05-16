@@ -124,6 +124,9 @@ private slots:
 	void onExportPostHocLatex();
 	void onEffectsFocalChanged();
 	void onEffectsRandomChanged();
+	void onCopyEdaSummary();
+	void onSaveEdaSummary();
+	void onEdaSummaryContextMenu(const QPoint &pos);
 
 private:
 
@@ -159,6 +162,13 @@ private:
 	void addRandomSlope(const QString &variable, const QString &group, bool correlated);
 	void removeFromFormula(const QString &name);
 	void updateColumnMarkers();
+
+	// Serialize the current EDA summary table (whatever its state) to a
+	// single string with `sep` between fields and "\n" between rows. Used
+	// by onCopyEdaSummary (sep="\t") and onSaveEdaSummary (sep=","). CSV
+	// mode also quotes fields containing the separator, double-quotes, or
+	// newlines per RFC 4180. Returns an empty string if the table is empty.
+	QString edaSummaryToText(QChar sep, bool csv_quote) const;
 
 	// Parse the current formula bar text. Returns nullopt on parse failure.
 	std::optional<stats::Formula> tryParseFormula();
@@ -363,7 +373,9 @@ private:
 		BarChart,
 		BoxPlot,
 		Scatter,
-		FormantChart
+		FormantChart,
+		Heatmap,
+		Proportion
 	};
 	QLabel *m_eda_plot_type_label = nullptr;
 	QComboBox *m_eda_plot_type_combo = nullptr;

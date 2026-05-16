@@ -460,6 +460,52 @@ void PlotWidget::setBarChartData(std::vector<QString> labels,
 	update();
 }
 
+void PlotWidget::setHeatmapData(std::vector<QString> x_labels,
+                                 std::vector<QString> y_labels,
+                                 std::vector<std::vector<int>> counts,
+                                 const QString &x_label, const QString &y_label,
+                                 const QString &title,
+                                 bool show_zero)
+{
+	m_mode = Mode::Heatmap;
+	m_heatmap_x_labels = std::move(x_labels);
+	m_heatmap_y_labels = std::move(y_labels);
+	m_heatmap_counts = std::move(counts);
+	m_heatmap_show_zero = show_zero;
+	m_x_label = x_label;
+	m_y_label = y_label;
+	m_title = title;
+
+	// Wipe state from other modes — leaving stale m_group_data or m_bins
+	// around is harmless (render dispatch goes by m_mode) but the clear()
+	// pattern other setters follow makes detach/save paths predictable.
+	m_x.clear();
+	m_y.clear();
+	m_point_labels.clear();
+	m_source_rows.clear();
+	m_boxes.clear();
+	m_box_secondary_labels.clear();
+	m_bins.clear();
+	m_hist_group_labels.clear();
+	m_bar_labels.clear();
+	m_bar_counts.clear();
+	m_bar_grouped_counts.clear();
+	m_bar_group_labels.clear();
+	m_group_data.clear();
+	m_color_labels.clear();
+	m_style_labels.clear();
+	m_line_curves.clear();
+	m_eff_curves.clear();
+	m_eff_level_labels.clear();
+	m_eff_caption.clear();
+	m_ppc_points.clear();
+	m_density_curves.clear();
+	m_show_regression = false;
+	m_show_density = false;
+	m_cache_valid = false;
+	update();
+}
+
 void PlotWidget::setLinePlotData(std::vector<LineCurve> curves,
                                   const QString &x_label, const QString &y_label,
                                   const QString &title)
@@ -773,6 +819,26 @@ void PlotWidget::setFacetedData(std::vector<FacetCell> cells,
 }
 
 
+void PlotWidget::setFacetHeatmapShared(std::vector<QString> x_labels,
+                                       std::vector<QString> y_labels,
+                                       int max_count)
+{
+	m_facet_heatmap_x_labels = std::move(x_labels);
+	m_facet_heatmap_y_labels = std::move(y_labels);
+	m_facet_heatmap_max_count = max_count;
+}
+
+
+void PlotWidget::setFacetEffectsShared(std::vector<QString> level_labels,
+                                       std::vector<QString> curve_labels,
+                                       const QString &caption)
+{
+	m_facet_eff_level_labels = std::move(level_labels);
+	m_facet_eff_curve_labels = std::move(curve_labels);
+	m_facet_eff_caption = caption;
+}
+
+
 void PlotWidget::clear()
 {
 	m_mode = Mode::Empty;
@@ -788,6 +854,10 @@ void PlotWidget::clear()
 	m_bar_counts.clear();
 	m_bar_grouped_counts.clear();
 	m_bar_group_labels.clear();
+	m_heatmap_x_labels.clear();
+	m_heatmap_y_labels.clear();
+	m_heatmap_counts.clear();
+	m_heatmap_show_zero = false;
 	m_group_data.clear();
 	m_color_labels.clear();
 	m_style_labels.clear();
@@ -814,6 +884,12 @@ void PlotWidget::clear()
 	m_facet_bar_group_labels.clear();
 	m_facet_color_labels.clear();
 	m_facet_style_labels.clear();
+	m_facet_heatmap_x_labels.clear();
+	m_facet_heatmap_y_labels.clear();
+	m_facet_heatmap_max_count = 0;
+	m_facet_eff_level_labels.clear();
+	m_facet_eff_curve_labels.clear();
+	m_facet_eff_caption.clear();
 	m_facet_var_name.clear();
 	m_facet_render_active = false;
 	m_facet_panel_title.clear();
@@ -1244,6 +1320,7 @@ void PlotWidget::renderPlot(QPainter &p, int w, int h)
 	case Mode::BoxPlot:        renderBoxPlot(p, left, top, pw, ph); break;
 	case Mode::Histogram:      renderHistogram(p, left, top, pw, ph); break;
 	case Mode::BarChart:       renderBarChart(p, left, top, pw, ph); break;
+	case Mode::Heatmap:        renderHeatmap(p, left, top, pw, ph); break;
 	case Mode::LinePlot:       renderLinePlot(p, left, top, pw, ph); break;
 	case Mode::PpcDiscrete:    renderPpcDiscrete(p, left, top, pw, ph); break;
 	case Mode::EffectsPlot:    renderEffectsPlot(p, left, top, pw, ph); break;
@@ -2538,6 +2615,213 @@ void PlotWidget::renderBarChart(QPainter &p, int left, int top, int pw, int ph)
 }
 
 
+void PlotWidget::renderHeatmap(QPainter &p, int left, int top, int pw, int ph)
+{
+	// Layout note: this renderer carves a slightly enlarged left margin out
+	// of the supplied (left, pw) region so row labels of any reasonable
+	// width fit without overlapping the cell grid. The outer plot margins
+	// (set by MARGIN_*) already give us the title space at the top and the
+	// x-axis label space at the bottom; everything else is computed here.
+
+	int nrows = (int)m_heatmap_y_labels.size();
+	int ncols = (int)m_heatmap_x_labels.size();
+	if (nrows == 0 || ncols == 0) return;
+	if ((int)m_heatmap_counts.size() < nrows) return;
+
+	int max_count = 0;
+	int total = 0;
+	for (int r = 0; r < nrows; r++)
+	{
+		if ((int)m_heatmap_counts[r].size() < ncols) return;
+		for (int c = 0; c < ncols; c++)
+		{
+			int v = m_heatmap_counts[r][c];
+			max_count = std::max(max_count, v);
+			total += v;
+		}
+	}
+	if (max_count <= 0) return;
+
+	int bottom = top + ph;
+
+	QFont font;
+	font.setPixelSize(11);
+	p.setFont(font);
+	QFontMetrics fm(font);
+
+	// Inner left margin: row labels live here. Cap at ~30% of pw so a few
+	// long labels don't crowd out the cells.
+	int label_w_max = 0;
+	for (const auto &lbl : m_heatmap_y_labels)
+		label_w_max = std::max(label_w_max, fm.horizontalAdvance(lbl));
+	int row_label_w = std::min(label_w_max + 8, std::max(40, pw / 3));
+
+	// Inner bottom margin: x-tick labels live here. The outer x-axis label
+	// goes below that, drawn after the grid.
+	int x_tick_h = fm.height() + 4;
+
+	int grid_left   = left + row_label_w;
+	int grid_top    = top;
+	int grid_right  = left + pw;
+	int grid_bottom = bottom - x_tick_h;
+	int grid_w = grid_right - grid_left;
+	int grid_h = grid_bottom - grid_top;
+	if (grid_w <= 0 || grid_h <= 0) return;
+
+	double cw = (double)grid_w / ncols;
+	double rh = (double)grid_h / nrows;
+
+	// Single-hue gradient: lerp from white toward GRADIENT_END, intensity
+	// proportional to count / max_count. We base on D3 blue so cell colour
+	// reads as "more / less"; cell labels carry the absolute number.
+	const QColor GRADIENT_END(31, 119, 180); // GROUP_PALETTE[0]
+	auto cell_color = [&](int count) -> QColor {
+		if (count <= 0 && !m_heatmap_show_zero) return QColor(255, 255, 255);
+		double t = (max_count > 0) ? (double)count / (double)max_count : 0.0;
+		// Floor so the smallest non-zero cell is still visible.
+		if (count > 0) t = 0.10 + 0.90 * t;
+		int r = (int)std::lround(255 + (GRADIENT_END.red()   - 255) * t);
+		int g = (int)std::lround(255 + (GRADIENT_END.green() - 255) * t);
+		int b = (int)std::lround(255 + (GRADIENT_END.blue()  - 255) * t);
+		return QColor(r, g, b);
+	};
+
+	// Cells.
+	p.setRenderHint(QPainter::Antialiasing, false);
+	for (int r = 0; r < nrows; r++)
+	{
+		for (int c = 0; c < ncols; c++)
+		{
+			QRectF rect(grid_left + c * cw,
+			            grid_top + r * rh,
+			            cw, rh);
+			int count = m_heatmap_counts[r][c];
+			p.setPen(QPen(GRID_COLOR, 1));
+			p.setBrush(cell_color(count));
+			p.drawRect(rect);
+
+			if (count > 0 || m_heatmap_show_zero)
+			{
+				// Pick label colour for contrast against the cell fill.
+				double t = (max_count > 0) ? (double)count / (double)max_count : 0.0;
+				QColor text_color = (t > 0.55) ? QColor(255, 255, 255) : AXIS_COLOR;
+				p.setPen(text_color);
+				QString text = QString::number(count);
+				int tw = fm.horizontalAdvance(text);
+				if (tw < rect.width() - 4)
+				{
+					p.drawText(QPointF(rect.center().x() - tw / 2.0,
+					                   rect.center().y() + fm.ascent() / 2.0 - 1),
+					           text);
+				}
+			}
+		}
+	}
+	p.setRenderHint(QPainter::Antialiasing, true);
+
+	// Frame around the grid.
+	p.setPen(QPen(AXIS_COLOR, 1));
+	p.setBrush(Qt::NoBrush);
+	p.drawRect(grid_left, grid_top, grid_w, grid_h);
+
+	// Y labels (row labels): right-aligned just to the left of the grid.
+	p.setPen(AXIS_COLOR);
+	for (int r = 0; r < nrows; r++)
+	{
+		QString lbl = m_heatmap_y_labels[r];
+		int tw = fm.horizontalAdvance(lbl);
+		double cy = grid_top + r * rh + rh / 2.0 + fm.ascent() / 2.0 - 1;
+		// Truncate with ellipsis if it would overflow row_label_w.
+		if (tw > row_label_w - 6) {
+			QString trimmed = fm.elidedText(lbl, Qt::ElideRight, row_label_w - 6);
+			tw = fm.horizontalAdvance(trimmed);
+			p.drawText(QPointF(grid_left - 4 - tw, cy), trimmed);
+		} else {
+			p.drawText(QPointF(grid_left - 4 - tw, cy), lbl);
+		}
+	}
+
+	// X labels (column labels): centred under each column, rotated if
+	// any label overflows its column. Rotation is all-or-nothing across
+	// the row so the ticks line up visually.
+	bool need_rotate = false;
+	for (const auto &lbl : m_heatmap_x_labels) {
+		if (fm.horizontalAdvance(lbl) > cw - 4) { need_rotate = true; break; }
+	}
+	for (int c = 0; c < ncols; c++)
+	{
+		QString lbl = m_heatmap_x_labels[c];
+		int tw = fm.horizontalAdvance(lbl);
+		double cx = grid_left + c * cw + cw / 2.0;
+		if (need_rotate) {
+			p.save();
+			p.translate(cx, grid_bottom + 4);
+			p.rotate(-45);
+			p.drawText(QPointF(-tw, fm.ascent()), lbl);
+			p.restore();
+		} else {
+			p.drawText(QPointF(cx - tw / 2.0, grid_bottom + fm.ascent() + 2), lbl);
+		}
+	}
+
+	// Y axis title (rotated, at the far left of the supplied region).
+	{
+		p.save();
+		p.translate(14, top + ph / 2);
+		p.rotate(-90);
+		int tw = fm.horizontalAdvance(m_y_label);
+		p.drawText(-tw / 2, 0, m_y_label);
+		p.restore();
+	}
+
+	// X axis title (centred under the x ticks).
+	{
+		int tw = fm.horizontalAdvance(m_x_label);
+		// MARGIN_BOTTOM gives us room; place near its bottom.
+		p.drawText(grid_left + (grid_w - tw) / 2,
+		           bottom + MARGIN_BOTTOM - 4, m_x_label);
+	}
+
+	// Title.
+	renderTitle(p, left, pw, top);
+
+	// Compact colour-scale legend (top-right of the grid). Shows "0" and
+	// the max count so the user can interpret the gradient. Skipped in
+	// faceted mode — the grid renderer draws one shared gradient legend
+	// at the grid level instead, so each panel keeps its full plot area.
+	if (!m_facet_render_active)
+	{
+		int swatch_w = 14;
+		int swatch_h = std::min(grid_h - 8, 110);
+		if (swatch_h > 30)
+		{
+			int lx = grid_right - swatch_w - 6;
+			// Move outside the grid frame on the right if there's room.
+			if (left + pw - grid_right > swatch_w + 30)
+				lx = grid_right + 8;
+
+			int ly = grid_top + 4;
+
+			// Vertical gradient.
+			for (int i = 0; i < swatch_h; i++) {
+				double t = 1.0 - (double)i / (double)(swatch_h - 1);
+				int count = (int)std::round(t * max_count);
+				p.setPen(cell_color(count));
+				p.drawLine(lx, ly + i, lx + swatch_w, ly + i);
+			}
+			p.setPen(QPen(AXIS_COLOR, 1));
+			p.setBrush(Qt::NoBrush);
+			p.drawRect(lx, ly, swatch_w, swatch_h);
+
+			QString top_lbl = QString::number(max_count);
+			QString bot_lbl = QStringLiteral("0");
+			p.drawText(QPointF(lx + swatch_w + 3, ly + fm.ascent()),    top_lbl);
+			p.drawText(QPointF(lx + swatch_w + 3, ly + swatch_h - 1),   bot_lbl);
+		}
+	}
+}
+
+
 void PlotWidget::renderLinePlot(QPainter &p, int left, int top, int pw, int ph)
 {
 	if (m_line_curves.empty()) return;
@@ -3087,6 +3371,20 @@ void PlotWidget::renderEffectsPlot(QPainter &p, int left, int top, int pw, int p
 	if (!categorical) { xlo -= xpad; xhi += xpad; }
 	ylo -= ypad; yhi += ypad;
 
+	// Forced range overrides honored when set (faceted layout uses these
+	// so panels share comparable axes — see renderFacetGrid). Categorical
+	// x still computes its own range from the data because the curve x
+	// values carry integer focal positions plus a per-curve dodge; the
+	// forced range pre-computed by the caller already covers that span.
+	if (m_forced_xrange.has_value()) {
+		xlo = m_forced_xrange->first;
+		xhi = m_forced_xrange->second;
+	}
+	if (m_forced_yrange.has_value()) {
+		ylo = m_forced_yrange->first;
+		yhi = m_forced_yrange->second;
+	}
+
 	xrange = xhi - xlo;
 	yrange = yhi - ylo;
 	if (xrange <= 0) xrange = 1;
@@ -3452,6 +3750,8 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 		case FacetInnerMode::BarChart:       return &m_facet_bar_group_labels;
 		case FacetInnerMode::GroupedScatter: return &m_facet_color_labels;
 		case FacetInnerMode::Scatter:        return (const std::vector<QString>*)nullptr;
+		case FacetInnerMode::EffectsPlot:    return &m_facet_eff_curve_labels;
+		case FacetInnerMode::Heatmap:        return (const std::vector<QString>*)nullptr;
 		}
 		return nullptr;
 	}();
@@ -3467,6 +3767,16 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 			max_lbl = std::max(max_lbl, fm.horizontalAdvance(lbl));
 		LEGEND_STRIP_W = legend_outer_margin + legend_padding + legend_swatch
 		               + legend_spacing + max_lbl + legend_padding;
+	}
+	// Heatmap: reserve a strip for a single shared gradient legend (a
+	// vertical bar with "0" at the bottom and the global max count at the
+	// top). Width is fixed-ish — accommodating a 4-digit count is plenty.
+	bool heatmap_legend = (m_facet_inner_mode == FacetInnerMode::Heatmap
+	                       && m_facet_heatmap_max_count > 0);
+	if (heatmap_legend) {
+		int max_count_w = fm.horizontalAdvance(
+		    QString::number(m_facet_heatmap_max_count));
+		LEGEND_STRIP_W = legend_outer_margin + 14 + 3 + max_count_w + 6;
 	}
 
 	// Outer title.
@@ -3690,6 +4000,45 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 			std::swap(m_bar_labels, cell.bar_labels);
 			break;
 		}
+		case FacetInnerMode::Heatmap:
+		{
+			// Heatmap swaps mirror the other modes: move per-cell counts
+			// into m_heatmap_counts and the shared X/Y labels into
+			// m_heatmap_x/y_labels for the duration of the inner call.
+			// renderHeatmap detects m_facet_render_active and skips its
+			// own gradient legend; we draw one shared gradient legend at
+			// the grid level after the panel loop.
+			std::swap(m_heatmap_counts, cell.heatmap_counts);
+			std::swap(m_heatmap_x_labels, m_facet_heatmap_x_labels);
+			std::swap(m_heatmap_y_labels, m_facet_heatmap_y_labels);
+			renderHeatmap(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			std::swap(m_heatmap_y_labels, m_facet_heatmap_y_labels);
+			std::swap(m_heatmap_x_labels, m_facet_heatmap_x_labels);
+			std::swap(m_heatmap_counts, cell.heatmap_counts);
+			break;
+		}
+		case FacetInnerMode::EffectsPlot:
+		{
+			// EffectsPlot uses categorical focal positions (one per X
+			// level) shared across panels via m_facet_eff_level_labels,
+			// so cells align column-by-column. Curve labels (per-Group
+			// legend) live in m_facet_eff_curve_labels and are surfaced
+			// via the standard grid-level color-swatch legend.
+			std::swap(m_eff_curves, cell.eff_curves);
+			std::swap(m_eff_level_labels, m_facet_eff_level_labels);
+			QString saved_caption = m_eff_caption;
+			bool saved_show_legend = m_eff_show_legend;
+			// Suppress per-panel caption (would repeat across panels) and
+			// per-panel legend (the grid-level legend covers it).
+			m_eff_caption.clear();
+			m_eff_show_legend = false;
+			renderEffectsPlot(p, cell_left + 2, inner_top, cell_pw - 4, inner_ph);
+			m_eff_show_legend = saved_show_legend;
+			m_eff_caption = saved_caption;
+			std::swap(m_eff_level_labels, m_facet_eff_level_labels);
+			std::swap(m_eff_curves, cell.eff_curves);
+			break;
+		}
 		}
 	}
 
@@ -3758,8 +4107,50 @@ void PlotWidget::renderFacetGrid(QPainter &p, int left, int top, int pw, int ph)
 	case FacetInnerMode::GroupedScatter:
 		draw_legend(m_facet_color_labels, false);
 		break;
+	case FacetInnerMode::EffectsPlot:
+		draw_legend(m_facet_eff_curve_labels, false);
+		break;
 	case FacetInnerMode::Scatter:
 		break;  // no legend for ungrouped scatter
+	case FacetInnerMode::Heatmap:
+	{
+		// Shared gradient legend across all panels. Vertical bar in the
+		// reserved right strip; "0" at the bottom, max_count at the top.
+		// Uses the same white→D3-blue ramp as renderHeatmap so the colour
+		// reading is identical across panels.
+		if (!heatmap_legend) break;
+		int max_count = m_facet_heatmap_max_count;
+		const QColor GRADIENT_END(31, 119, 180); // GROUP_PALETTE[0]
+		auto cell_color = [&](int count) -> QColor {
+			if (count <= 0) return QColor(255, 255, 255);
+			double t = (max_count > 0) ? (double)count / (double)max_count : 0.0;
+			if (count > 0) t = 0.10 + 0.90 * t;
+			int r = (int)std::lround(255 + (GRADIENT_END.red()   - 255) * t);
+			int g = (int)std::lround(255 + (GRADIENT_END.green() - 255) * t);
+			int b = (int)std::lround(255 + (GRADIENT_END.blue()  - 255) * t);
+			return QColor(r, g, b);
+		};
+		int swatch_w = 14;
+		int lx = left + pw - LEGEND_STRIP_W + legend_outer_margin;
+		int ly = top + OUTER_TITLE_H + 4;
+		int swatch_h = std::min(ph - OUTER_TITLE_H - X_LABEL_H - 8, 200);
+		if (swatch_h < 30) break;
+		for (int i = 0; i < swatch_h; i++) {
+			double t = 1.0 - (double)i / (double)(swatch_h - 1);
+			int count = (int)std::round(t * max_count);
+			p.setPen(cell_color(count));
+			p.drawLine(lx, ly + i, lx + swatch_w, ly + i);
+		}
+		p.setPen(QPen(AXIS_COLOR, 1));
+		p.setBrush(Qt::NoBrush);
+		p.drawRect(lx, ly, swatch_w, swatch_h);
+		QString top_lbl = QString::number(max_count);
+		QString bot_lbl = QStringLiteral("0");
+		p.setPen(AXIS_COLOR);
+		p.drawText(QPointF(lx + swatch_w + 3, ly + fm.ascent()),    top_lbl);
+		p.drawText(QPointF(lx + swatch_w + 3, ly + swatch_h - 1),   bot_lbl);
+		break;
+	}
 	}
 }
 

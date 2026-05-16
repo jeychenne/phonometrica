@@ -151,6 +151,21 @@ public:
 	                     const QString &x_label, const QString &y_label,
 	                     const QString &title);
 
+	/// Heatmap of a contingency table for two categorical variables.
+	/// x_labels are the column labels (ordered left-to-right); y_labels are
+	/// the row labels (ordered top-to-bottom). counts[r][c] is the count of
+	/// observations falling in the (y_labels[r], x_labels[c]) cell. Cells
+	/// are painted with a light-to-dark single-hue gradient proportional to
+	/// the count and labelled with the count text. show_zero controls
+	/// whether zero-count cells are painted white (false) or with the
+	/// gradient base colour (true).
+	void setHeatmapData(std::vector<QString> x_labels,
+	                    std::vector<QString> y_labels,
+	                    std::vector<std::vector<int>> counts,
+	                    const QString &x_label, const QString &y_label,
+	                    const QString &title,
+	                    bool show_zero = false);
+
 	/// Line plot: multiple named curves on the same axes.
 	/// Used for posterior density plots and other multi-curve displays.
 	///
@@ -371,7 +386,7 @@ public:
 
 	/// Inner plot type within a faceted grid. One of these is set by the
 	/// caller via setFacetedData() and applied uniformly to every facet panel.
-	enum class FacetInnerMode { Histogram, BoxPlot, Scatter, GroupedScatter, BarChart };
+	enum class FacetInnerMode { Histogram, BoxPlot, Scatter, GroupedScatter, BarChart, Heatmap, EffectsPlot };
 
 	/// Per-panel data for a faceted layout. Only the fields relevant to the
 	/// grid's inner mode are populated by the caller; the rest stay empty.
@@ -413,6 +428,18 @@ public:
 		std::vector<QString> bar_labels;
 		std::vector<int> bar_counts;
 		std::vector<std::vector<int>> bar_grouped_counts;
+
+		// Heatmap. heatmap_counts[r][c] is the count in row r (a Y level
+		// at the grid level — see m_facet_heatmap_y_labels) and column c
+		// (an X level — m_facet_heatmap_x_labels). All cells share the
+		// same axes and the same max_count for a comparable colour scale.
+		std::vector<std::vector<int>> heatmap_counts;
+
+		// EffectsPlot (used by the Proportion plot type when faceted).
+		// Each cell has its own set of curves; level labels (categorical
+		// focal labels for the X axis) and curve labels (the by-Group
+		// legend) live at the grid level for consistency across panels.
+		std::vector<EffectsCurve> eff_curves;
 	};
 
 	/// Faceted layout. cells[i] holds the data for the i-th sub-panel; layout
@@ -450,6 +477,22 @@ public:
 	                    bool show_means = false, bool show_ellipses = false,
 	                    bool show_group_regression = false);
 
+	/// Call BEFORE setFacetedData with inner_mode = Heatmap. Establishes
+	/// the shared X/Y categorical axes (every panel uses the same level
+	/// ordering, so cells line up) and the global max count (every panel
+	/// uses the same gradient end, so cell colours are comparable).
+	void setFacetHeatmapShared(std::vector<QString> x_labels,
+	                           std::vector<QString> y_labels,
+	                           int max_count);
+
+	/// Call BEFORE setFacetedData with inner_mode = EffectsPlot.
+	/// level_labels are the categorical X-axis tick labels (shared across
+	/// panels); curve_labels are the per-curve legend entries. caption is
+	/// optional and is shown as a single small line below the title.
+	void setFacetEffectsShared(std::vector<QString> level_labels,
+	                           std::vector<QString> curve_labels,
+	                           const QString &caption = QString());
+
 	void clear();
 	bool hasData() const;
 
@@ -484,7 +527,7 @@ protected:
 
 private:
 
-	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, LinePlot, EffectsPlot, PpcDiscrete, Facet };
+	enum class Mode { Empty, Scatter, GroupedScatter, BoxPlot, Histogram, BarChart, Heatmap, LinePlot, EffectsPlot, PpcDiscrete, Facet };
 
 	void renderPlot(QPainter &p, int w, int h);
 	void renderScatter(QPainter &p, int left, int top, int pw, int ph,
@@ -493,6 +536,7 @@ private:
 	void renderBoxPlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderHistogram(QPainter &p, int left, int top, int pw, int ph);
 	void renderBarChart(QPainter &p, int left, int top, int pw, int ph);
+	void renderHeatmap(QPainter &p, int left, int top, int pw, int ph);
 	void renderLinePlot(QPainter &p, int left, int top, int pw, int ph);
 	void renderPpcDiscrete(QPainter &p, int left, int top, int pw, int ph);
 	void renderEffectsPlot(QPainter &p, int left, int top, int pw, int ph);
@@ -603,6 +647,17 @@ private:
 	std::vector<std::vector<int>> m_bar_grouped_counts;
 	std::vector<QString> m_bar_group_labels;
 
+	// Heatmap data (Mode::Heatmap).
+	// m_heatmap_counts[r][c] is the count for row r (y level) and column c
+	// (x level). m_heatmap_x_labels indexes the columns; m_heatmap_y_labels
+	// indexes the rows. m_heatmap_show_zero controls whether zero-count
+	// cells are painted with the gradient base colour (true) or left white
+	// (false; the default — keeps sparse tables readable).
+	std::vector<QString> m_heatmap_x_labels;
+	std::vector<QString> m_heatmap_y_labels;
+	std::vector<std::vector<int>> m_heatmap_counts;
+	bool m_heatmap_show_zero = false;
+
 	// Line plot data (multiple curves)
 	std::vector<LineCurve> m_line_curves;
 
@@ -647,6 +702,24 @@ private:
 	std::vector<QString> m_facet_bar_group_labels;
 	std::vector<QString> m_facet_color_labels;
 	std::vector<QString> m_facet_style_labels;
+
+	// Heatmap facet shared state. Every panel uses the same X/Y level lists
+	// (so the cells line up across panels) and the same max_count (so the
+	// gradient is comparable). The grid-level gradient legend is drawn once
+	// outside the panel loop; renderHeatmap suppresses its per-panel gradient
+	// when m_facet_render_active is true.
+	std::vector<QString> m_facet_heatmap_x_labels;
+	std::vector<QString> m_facet_heatmap_y_labels;
+	int m_facet_heatmap_max_count = 0;
+
+	// EffectsPlot facet shared state. Categorical focal-level labels (the
+	// X-axis tick labels — typically the levels of the X variable for a
+	// proportion plot); curve labels (the per-Group legend entries). The
+	// grid-level legend uses curve labels via the existing color-swatch
+	// legend path.
+	std::vector<QString> m_facet_eff_level_labels;
+	std::vector<QString> m_facet_eff_curve_labels;
+	QString m_facet_eff_caption;
 
 	// Inner-pass state set by renderFacetGrid before swapping data into
 	// member fields and calling an inner renderer.

@@ -1002,6 +1002,8 @@ void AnalysisView::setupUi()
 	eda_save_menu->addAction(tr("Save as PNG..."), this, &AnalysisView::onExportEdaPNG);
 	eda_save_menu->addAction(tr("Save as PDF..."), this, &AnalysisView::onExportEdaPDF);
 	eda_save_menu->addAction(tr("Save as SVG..."), this, &AnalysisView::onExportEdaSVG);
+	eda_save_menu->addSeparator();
+	eda_save_menu->addAction(tr("Save summary as CSV..."), this, &AnalysisView::onSaveEdaSummary);
 
 	auto *eda_save_action = new QAction(QIcon(":/icons/save.svg"), tr("Save as..."), this);
 	eda_save_action->setMenu(eda_save_menu);
@@ -1052,6 +1054,8 @@ void AnalysisView::setupUi()
 	m_eda_plot_type_combo->addItem(tr("Boxplot"),       (int)EdaPlotType::BoxPlot);
 	m_eda_plot_type_combo->addItem(tr("Scatter"),       (int)EdaPlotType::Scatter);
 	m_eda_plot_type_combo->addItem(tr("Formant chart"), (int)EdaPlotType::FormantChart);
+	m_eda_plot_type_combo->addItem(tr("Heatmap"),       (int)EdaPlotType::Heatmap);
+	m_eda_plot_type_combo->addItem(tr("Proportion"),    (int)EdaPlotType::Proportion);
 	m_eda_plot_type_combo->setToolTip(tr("Choose a plot type. \"Auto\" picks one "
 	                                      "based on the variables you select."));
 	eda_vars->addWidget(m_eda_plot_type_combo);
@@ -1186,12 +1190,46 @@ void AnalysisView::setupUi()
 	eda_controls_widget->setLayout(eda_controls_layout);
 
 	// ── Summary table ──
+	// The button strip mirrors the post-hoc tab pattern: a top row with
+	// stretch + icon-and-label buttons, so the save/copy paths are visible
+	// at a glance rather than hidden behind a right-click.
+	auto *eda_summary_widget = new QWidget;
+	auto *eda_summary_layout = new QVBoxLayout(eda_summary_widget);
+	eda_summary_layout->setContentsMargins(0, 0, 0, 0);
+	eda_summary_layout->setSpacing(4);
+
+	auto *eda_summary_top = new QHBoxLayout;
+	eda_summary_top->setContentsMargins(2, 2, 2, 0);
+	eda_summary_top->addWidget(new QLabel(tr("<b>Summary</b>")));
+	eda_summary_top->addStretch();
+	auto *eda_summary_copy_button = new QPushButton(QIcon(":/icons/clipboard-copy.svg"),
+	                                                 tr("Copy"));
+	eda_summary_copy_button->setToolTip(tr("Copy the summary table to the clipboard "
+	                                        "as tab-separated values"));
+	eda_summary_top->addWidget(eda_summary_copy_button);
+	auto *eda_summary_save_button = new QPushButton(QIcon(":/icons/save.svg"),
+	                                                 tr("Save as CSV..."));
+	eda_summary_save_button->setToolTip(tr("Save the summary table to a CSV file"));
+	eda_summary_top->addWidget(eda_summary_save_button);
+	eda_summary_layout->addLayout(eda_summary_top);
+
 	m_eda_summary = new QTableWidget;
 	m_eda_summary->setEditTriggers(QAbstractItemView::NoEditTriggers);
 	m_eda_summary->setSelectionMode(QAbstractItemView::NoSelection);
 	m_eda_summary->setAlternatingRowColors(true);
 	m_eda_summary->verticalHeader()->setVisible(false);
 	m_eda_summary->horizontalHeader()->setStretchLastSection(false);
+	// Right-click anywhere in the table for Copy / Save-as-CSV. The summary
+	// is computed work the user wants to get out of the tab; without this
+	// the only way to capture the numbers was to retype them.
+	m_eda_summary->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(m_eda_summary, &QWidget::customContextMenuRequested,
+	        this, &AnalysisView::onEdaSummaryContextMenu);
+	connect(eda_summary_copy_button, &QPushButton::clicked,
+	        this, &AnalysisView::onCopyEdaSummary);
+	connect(eda_summary_save_button, &QPushButton::clicked,
+	        this, &AnalysisView::onSaveEdaSummary);
+	eda_summary_layout->addWidget(m_eda_summary, 1);
 
 	// ── Assemble: splitter between (plot + controls) and stats ──
 	auto *eda_top = new QWidget;
@@ -1228,7 +1266,7 @@ void AnalysisView::setupUi()
 
 	auto *eda_splitter = new QSplitter(Qt::Vertical);
 	eda_splitter->addWidget(eda_top);
-	eda_splitter->addWidget(m_eda_summary);
+	eda_splitter->addWidget(eda_summary_widget);
 	eda_splitter->setStretchFactor(0, 3);
 	eda_splitter->setStretchFactor(1, 1);
 	eda_layout->addWidget(eda_splitter, 1);
@@ -3916,6 +3954,28 @@ void AnalysisView::applyEdaPlotTypeDefaults(EdaPlotType type)
 		guard(m_eda_density_check, false);
 		guard(m_eda_regline_check, false);
 		break;
+	case EdaPlotType::Heatmap:
+		// Heatmap is a 2-D contingency table — no overlays apply. Group /
+		// Facet are not used (the two categorical axes already saturate
+		// the visual dimensions); they're hidden by updateEdaPlot's
+		// visibility logic, but turning off any leftover toggles keeps
+		// the customize state clean.
+		guard(m_eda_density_check, false);
+		guard(m_eda_regline_check, false);
+		guard(m_eda_mean_check, false);
+		guard(m_eda_ellipse_check, false);
+		guard(m_eda_formant_check, false);
+		break;
+	case EdaPlotType::Proportion:
+		// Proportion plot computes mean(Y) per X level with Wilson CIs.
+		// Optional Group splits each X level into one curve per Group
+		// level. Other overlays don't apply.
+		guard(m_eda_density_check, false);
+		guard(m_eda_regline_check, false);
+		guard(m_eda_mean_check, false);
+		guard(m_eda_ellipse_check, false);
+		guard(m_eda_formant_check, false);
+		break;
 	case EdaPlotType::Auto:
 		// Auto preserves whatever state the user had: the existing
 		// inference takes over and we don't second-guess their toggles.
@@ -4211,6 +4271,92 @@ void AnalysisView::onExportEdaSVG()
 	if (!path.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive))
 		path += QStringLiteral(".svg");
 	m_eda_plot->saveSVG(path);
+}
+
+QString AnalysisView::edaSummaryToText(QChar sep, bool csv_quote) const
+{
+	int nrows = m_eda_summary->rowCount();
+	int ncols = m_eda_summary->columnCount();
+	if (nrows == 0 || ncols == 0) return QString();
+
+	auto quote = [&](const QString &s) -> QString {
+		if (!csv_quote) return s;
+		bool need = s.contains(sep) || s.contains(QLatin1Char('"'))
+		         || s.contains(QLatin1Char('\n')) || s.contains(QLatin1Char('\r'));
+		if (!need) return s;
+		QString out = s;
+		out.replace(QStringLiteral("\""), QStringLiteral("\"\""));
+		return QLatin1Char('"') + out + QLatin1Char('"');
+	};
+
+	QString text;
+	// Header row.
+	for (int c = 0; c < ncols; c++) {
+		if (c > 0) text += sep;
+		auto *hdr = m_eda_summary->horizontalHeaderItem(c);
+		text += quote(hdr ? hdr->text() : QString());
+	}
+	text += QLatin1Char('\n');
+
+	// Data rows.
+	for (int r = 0; r < nrows; r++) {
+		for (int c = 0; c < ncols; c++) {
+			if (c > 0) text += sep;
+			auto *item = m_eda_summary->item(r, c);
+			text += quote(item ? item->text() : QString());
+		}
+		text += QLatin1Char('\n');
+	}
+	return text;
+}
+
+void AnalysisView::onCopyEdaSummary()
+{
+	QString text = edaSummaryToText(QLatin1Char('\t'), /*csv_quote=*/false);
+	if (text.isEmpty()) return;
+	QApplication::clipboard()->setText(text);
+
+	auto *main_win = qobject_cast<QMainWindow *>(window());
+	if (main_win && main_win->statusBar()) {
+		main_win->statusBar()->showMessage(tr("Summary copied to clipboard"), 2000);
+	}
+}
+
+void AnalysisView::onSaveEdaSummary()
+{
+	if (m_eda_summary->rowCount() == 0 || m_eda_summary->columnCount() == 0) {
+		QMessageBox::information(this, tr("Save summary"),
+		                          tr("The summary table is empty."));
+		return;
+	}
+	QString path = getSaveFileName(this,
+		tr("Save summary as CSV"), tr("CSV file (*.csv)"));
+	if (path.isEmpty()) return;
+	if (!path.endsWith(QStringLiteral(".csv"), Qt::CaseInsensitive))
+		path += QStringLiteral(".csv");
+
+	QString text = edaSummaryToText(QLatin1Char(','), /*csv_quote=*/true);
+	QFile file(path);
+	if (file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+		file.write(text.toUtf8());
+	} else {
+		QMessageBox::warning(this, tr("Save summary"),
+		                      tr("Could not open file for writing: %1").arg(path));
+	}
+}
+
+void AnalysisView::onEdaSummaryContextMenu(const QPoint &pos)
+{
+	if (m_eda_summary->rowCount() == 0 || m_eda_summary->columnCount() == 0)
+		return;
+
+	QMenu menu(m_eda_summary);
+	auto *copy_action = menu.addAction(tr("Copy"));
+	auto *save_action = menu.addAction(tr("Save as CSV..."));
+
+	QAction *chosen = menu.exec(m_eda_summary->viewport()->mapToGlobal(pos));
+	if (chosen == copy_action) onCopyEdaSummary();
+	else if (chosen == save_action) onSaveEdaSummary();
 }
 
 // ── Detach / reattach implementation ─────────────────────────────────
@@ -4623,7 +4769,7 @@ void AnalysisView::updateEdaPlot()
 
 	bool x_numeric = isColumnNumeric(x_name);
 	bool y_numeric = has_y && isColumnNumeric(y_name);
-	enum Kind { KHistogram, KBarChart, KScatter, KBoxPlot, KUnsupported };
+	enum Kind { KHistogram, KBarChart, KScatter, KBoxPlot, KHeatmap, KProportion, KUnsupported };
 	Kind kind = KUnsupported;
 	QString hint;
 
@@ -4634,6 +4780,8 @@ void AnalysisView::updateEdaPlot()
 		case EdaPlotType::BoxPlot:      return tr("Boxplot");
 		case EdaPlotType::Scatter:      return tr("Scatter");
 		case EdaPlotType::FormantChart: return tr("Formant chart");
+		case EdaPlotType::Heatmap:      return tr("Heatmap");
+		case EdaPlotType::Proportion:   return tr("Proportion");
 		case EdaPlotType::Auto:         return tr("Auto");
 		}
 		return QString();
@@ -4641,10 +4789,15 @@ void AnalysisView::updateEdaPlot()
 
 	if (ptype == EdaPlotType::Auto)
 	{
-		// Original data-driven inference, unchanged.
+		// Original data-driven inference, extended: when both X and Y are
+		// categorical, dispatch to a heatmap of counts instead of leaving
+		// the case unsupported. Auto never picks Proportion — proportion
+		// of what counts as a success isn't unambiguous from a numeric
+		// column without the user opting in.
 		if (!has_y) kind = x_numeric ? KHistogram : KBarChart;
 		else if (x_numeric && y_numeric) kind = KScatter;
 		else if (!x_numeric && y_numeric) kind = KBoxPlot;
+		else if (!x_numeric && !y_numeric) kind = KHeatmap;
 	}
 	else
 	{
@@ -4672,6 +4825,18 @@ void AnalysisView::updateEdaPlot()
 			if (!has_y) hint = tr("%1 needs both X and Y.").arg(type_label);
 			else if (!x_numeric) hint = tr("%1 needs a numeric X.").arg(type_label);
 			else if (!y_numeric) hint = tr("%1 needs a numeric Y.").arg(type_label);
+			break;
+		case EdaPlotType::Heatmap:
+			kind = KHeatmap;
+			if (!has_y) hint = tr("%1 needs both X (categorical) and Y (categorical).").arg(type_label);
+			else if (x_numeric) hint = tr("%1 needs a categorical X.").arg(type_label);
+			else if (y_numeric) hint = tr("%1 needs a categorical Y.").arg(type_label);
+			break;
+		case EdaPlotType::Proportion:
+			kind = KProportion;
+			if (!has_y) hint = tr("%1 needs both X (categorical) and Y (binary 0/1 numeric).").arg(type_label);
+			else if (x_numeric) hint = tr("%1 needs a categorical X.").arg(type_label);
+			else if (!y_numeric) hint = tr("%1 needs a numeric Y (binary 0/1).").arg(type_label);
 			break;
 		case EdaPlotType::Auto:
 			break;
@@ -4714,10 +4879,19 @@ void AnalysisView::updateEdaPlot()
 	QString facet_name_q = (f_col > 0) ? m_eda_facet_combo->currentText() : QString();
 
 	// ── Visibility (uniform across all supported modes) ─────────────
-	m_eda_group_label->setVisible(true);
-	m_eda_group_combo->setVisible(true);
-	m_eda_facet_label->setVisible(true);
-	m_eda_facet_combo->setVisible(true);
+	// Heatmap saturates the visual plane with two categorical axes — Group
+	// has no defined meaning there (Group + cat × cat would just duplicate
+	// Facet semantics) but Facet itself is exposed so the user can split
+	// the table into small multiples by a third variable. Proportion uses
+	// Group as a colour-dodged second factor and Facet as a panel splitter.
+	bool is_heatmap   = (kind == KHeatmap);
+	bool is_proportion = (kind == KProportion);
+	bool show_group = !is_heatmap;
+	bool show_facet = true;
+	m_eda_group_label->setVisible(show_group);
+	m_eda_group_combo->setVisible(show_group);
+	m_eda_facet_label->setVisible(show_facet);
+	m_eda_facet_combo->setVisible(show_facet);
 	m_bins_label->setVisible(kind == KHistogram);
 	m_bins_spin->setVisible(kind == KHistogram);
 	bool density_eligible = (kind == KHistogram);
@@ -4862,11 +5036,266 @@ void AnalysisView::updateEdaPlot()
 	// level, build a per-cell data structure, then ship the whole thing
 	// to PlotWidget::setFacetedData() which lays them out as small
 	// multiples with shared axes. Group remains live inside each panel
-	// (overlaid histograms / dodged bars / dodged boxes / grouped scatter).
+	// (overlaid histograms / dodged bars / dodged boxes / grouped scatter
+	// / dodged proportion curves).
 	// ====================================================================
 	if (f_col > 0) {
 		auto facets = partitionByFacet();
 		if (facets.empty()) { m_eda_plot->clear(); return; }
+
+		// ── Faceted Heatmap ─────────────────────────────────────────
+		// Every panel must share the same X/Y level ordering so cells line
+		// up column-by-column and row-by-row; we also share max_count so
+		// the colour scale is comparable. The shared state lives at the
+		// grid level (m_facet_heatmap_*) and is populated via the helper
+		// before setFacetedData.
+		if (kind == KHeatmap)
+		{
+			std::vector<QString> x_levels, y_levels;
+			std::map<QString, int> x_idx, y_idx;
+			auto ensure_x = [&](const QString &lvl) -> int {
+				auto it = x_idx.find(lvl);
+				if (it != x_idx.end()) return it->second;
+				int i = (int)x_levels.size();
+				x_idx[lvl] = i; x_levels.push_back(lvl);
+				return i;
+			};
+			auto ensure_y = [&](const QString &lvl) -> int {
+				auto it = y_idx.find(lvl);
+				if (it != y_idx.end()) return it->second;
+				int i = (int)y_levels.size();
+				y_idx[lvl] = i; y_levels.push_back(lvl);
+				return i;
+			};
+
+			// First pass: discover the union of X and Y levels across all
+			// facet partitions, in source-row order. This guarantees a
+			// stable, intuitive ordering and that every cell can address
+			// the same row / column index space.
+			for (auto &fp : facets) {
+				for (intptr_t r : fp.second) {
+					auto vx = xc(r); auto vy = yc(r);
+					if (vx.empty() || vy.empty()) continue;
+					ensure_x(QString::fromUtf8(vx.data(), (int)vx.size()));
+					ensure_y(QString::fromUtf8(vy.data(), (int)vy.size()));
+				}
+			}
+			if (x_levels.empty() || y_levels.empty()) {
+				m_eda_plot->clear(); return;
+			}
+			int nx = (int)x_levels.size();
+			int ny = (int)y_levels.size();
+
+			// Second pass: per-panel counts, plus track the global max for
+			// the shared gradient.
+			std::vector<PlotWidget::FacetCell> cells;
+			cells.reserve(facets.size());
+			int max_count = 0;
+			for (auto &fp : facets) {
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				cell.heatmap_counts.assign(ny, std::vector<int>(nx, 0));
+				for (intptr_t r : fp.second) {
+					auto vx = xc(r); auto vy = yc(r);
+					if (vx.empty() || vy.empty()) continue;
+					auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+					auto qy = QString::fromUtf8(vy.data(), (int)vy.size());
+					int ci = x_idx[qx];
+					int ri = y_idx[qy];
+					cell.heatmap_counts[ri][ci]++;
+					max_count = std::max(max_count, cell.heatmap_counts[ri][ci]);
+				}
+				cells.push_back(std::move(cell));
+			}
+
+			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
+			              + QStringLiteral(" | facet: ") + facet_name_q;
+
+			m_eda_plot->setFacetHeatmapShared(x_levels, y_levels, max_count);
+			m_eda_plot->setFacetedData(std::move(cells),
+			                            PlotWidget::FacetInnerMode::Heatmap,
+			                            x_name_q, y_name_q, title, facet_name_q,
+			                            {std::nan(""), std::nan("")},
+			                            {std::nan(""), std::nan("")},
+			                            /*shared_y_count=*/true);
+
+			if (!m_eda_customization.title.isEmpty())
+				m_eda_plot->setTitle(m_eda_customization.title);
+			if (!m_eda_customization.x_label.isEmpty())
+				m_eda_plot->setXLabel(m_eda_customization.x_label);
+			if (!m_eda_customization.y_label.isEmpty())
+				m_eda_plot->setYLabel(m_eda_customization.y_label);
+			m_eda_plot->setFacetNColsOverride(m_eda_customization.facet_ncols);
+			return;
+		}
+
+		// ── Faceted Proportion ──────────────────────────────────────
+		// Categorical X levels and (optional) Group levels are pooled
+		// across panels so panels share their x-axis ticks and per-Group
+		// curve identity. Wilson 95% intervals computed per (facet, X,
+		// Group) cell. Y range fixed to [0, 1] for comparability.
+		if (kind == KProportion)
+		{
+			// Validate binary Y once, on the pooled data — same logic as
+			// the non-faceted path.
+			double v0 = std::nan(""), v1 = std::nan("");
+			int n_unique = 0;
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vy = yc(r);
+				if (vy.empty()) continue;
+				bool ok; double d = vy.to_float(&ok);
+				if (!ok || !std::isfinite(d)) continue;
+				if (n_unique == 0) { v0 = d; n_unique = 1; }
+				else if (n_unique == 1 && d != v0) { v1 = d; n_unique = 2; }
+				else if (n_unique == 2 && d != v0 && d != v1) { n_unique = 3; break; }
+			}
+			if (n_unique != 2) {
+				setEdaHint(tr("Proportion needs a binary Y (exactly two unique numeric values; "
+				              "found %1).").arg(n_unique));
+				m_eda_plot->clear();
+				return;
+			}
+			double success = std::max(v0, v1);
+
+			std::vector<QString> x_levels, g_levels;
+			std::map<QString, int> x_idx, g_idx;
+			auto ensure_x = [&](const QString &lvl) -> int {
+				auto it = x_idx.find(lvl);
+				if (it != x_idx.end()) return it->second;
+				int i = (int)x_levels.size();
+				x_idx[lvl] = i; x_levels.push_back(lvl);
+				return i;
+			};
+			auto ensure_g = [&](const QString &lvl) -> int {
+				auto it = g_idx.find(lvl);
+				if (it != g_idx.end()) return it->second;
+				int i = (int)g_levels.size();
+				g_idx[lvl] = i; g_levels.push_back(lvl);
+				return i;
+			};
+			if (g_col == 0) ensure_g(QString());
+
+			// First pass: discover all X / Group levels for shared axes.
+			for (auto &fp : facets) {
+				for (intptr_t r : fp.second) {
+					auto vx = xc(r); auto vy = yc(r);
+					if (vx.empty() || vy.empty()) continue;
+					bool ok; double d = vy.to_float(&ok);
+					if (!ok || !std::isfinite(d)) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					ensure_x(QString::fromUtf8(vx.data(), (int)vx.size()));
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						ensure_g(QString::fromUtf8(vg.data(), (int)vg.size()));
+					}
+				}
+			}
+			if (x_levels.empty()) { m_eda_plot->clear(); return; }
+			int nx = (int)x_levels.size();
+			int ng = (int)g_levels.size();
+
+			constexpr double z = 1.95996398454005423;
+			auto wilson = [&](int k, int n) -> std::tuple<double, double, double> {
+				if (n <= 0) return {std::nan(""), std::nan(""), std::nan("")};
+				double phat  = (double)k / (double)n;
+				double denom = 1.0 + z*z / n;
+				double center = (phat + z*z / (2.0*n)) / denom;
+				double half   = z * std::sqrt(phat*(1-phat)/n + z*z/(4.0*(double)n*n)) / denom;
+				return {phat, center - half, center + half};
+			};
+
+			auto dodge = [&](int gi) -> double {
+				if (ng <= 1) return 0.0;
+				double span = 0.60;
+				return -span / 2.0 + span * (double)gi / (double)(ng - 1);
+			};
+
+			// Second pass: build per-cell curves, tracking the global y
+			// range so we can pass tight comparable bounds.
+			std::vector<PlotWidget::FacetCell> cells;
+			cells.reserve(facets.size());
+			double y_lo = 0.0, y_hi = 1.0;
+			bool any_data = false;
+			for (auto &fp : facets) {
+				PlotWidget::FacetCell cell;
+				cell.label = fp.first;
+				std::vector<std::vector<int>> n_cell(ng, std::vector<int>(nx, 0));
+				std::vector<std::vector<int>> k_cell(ng, std::vector<int>(nx, 0));
+				for (intptr_t r : fp.second) {
+					auto vx = xc(r); auto vy = yc(r);
+					if (vx.empty() || vy.empty()) continue;
+					bool ok; double d = vy.to_float(&ok);
+					if (!ok || !std::isfinite(d)) continue;
+					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+					int ci = x_idx[qx];
+					int gi = 0;
+					if (g_col > 0) {
+						auto vg = dt->get_cell(r, g_col);
+						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+						gi = g_idx[qg];
+					}
+					n_cell[gi][ci]++;
+					if (d == success) k_cell[gi][ci]++;
+				}
+				cell.eff_curves.reserve(ng);
+				for (int gi = 0; gi < ng; gi++) {
+					PlotWidget::EffectsCurve curve;
+					curve.label = (g_col > 0) ? g_levels[gi] : QString();
+					for (int ci = 0; ci < nx; ci++) {
+						auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
+						curve.x.push_back((double)ci + dodge(gi));
+						curve.fit.push_back(p);
+						curve.ci_lower.push_back(lo);
+						curve.ci_upper.push_back(hi);
+						if (!std::isnan(p)) {
+							any_data = true;
+							if (!std::isnan(lo)) y_lo = std::min(y_lo, lo);
+							if (!std::isnan(hi)) y_hi = std::max(y_hi, hi);
+						}
+					}
+					cell.eff_curves.push_back(std::move(curve));
+				}
+				cells.push_back(std::move(cell));
+			}
+			if (!any_data) { m_eda_plot->clear(); return; }
+
+			// Clamp y to a slightly padded [0, 1] envelope unless the
+			// data CIs push outside it (which can happen at small n).
+			double y_pad = 0.04;
+			std::pair<double, double> y_range{
+				std::min(0.0, y_lo) - y_pad,
+				std::max(1.0, y_hi) + y_pad};
+			// X range covers all levels with a small margin so dodged
+			// curves don't get clipped at the edges.
+			std::pair<double, double> x_range{
+				-0.5, (double)nx - 0.5};
+
+			QString ylab = tr("Proportion (%1 = %2)").arg(y_name_q).arg(success);
+			QString title = ylab + QStringLiteral(" by ") + x_name_q;
+			if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+			title += QStringLiteral(" | facet: ") + facet_name_q;
+
+			QString caption = tr("Error bars are Wilson 95%% intervals");
+			m_eda_plot->setFacetEffectsShared(x_levels,
+			                                   /*curve_labels=*/(g_col > 0 ? g_levels
+			                                                                : std::vector<QString>{}),
+			                                   caption);
+			m_eda_plot->setFacetedData(std::move(cells),
+			                            PlotWidget::FacetInnerMode::EffectsPlot,
+			                            x_name_q, ylab, title, facet_name_q,
+			                            x_range, y_range, true);
+
+			if (!m_eda_customization.title.isEmpty())
+				m_eda_plot->setTitle(m_eda_customization.title);
+			if (!m_eda_customization.x_label.isEmpty())
+				m_eda_plot->setXLabel(m_eda_customization.x_label);
+			if (!m_eda_customization.y_label.isEmpty())
+				m_eda_plot->setYLabel(m_eda_customization.y_label);
+			m_eda_plot->setFacetNColsOverride(m_eda_customization.facet_ncols);
+			return;
+		}
 
 		std::vector<PlotWidget::FacetCell> cells;
 		cells.reserve(facets.size());
@@ -5437,6 +5866,202 @@ void AnalysisView::updateEdaPlot()
 		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
 		                            x_name_q, y_name_q, title,
 		                            std::move(rows), std::move(style_groups));
+	}
+	else if (kind == KHeatmap)
+	{
+		// Two-categorical contingency. Walk rows in source order so first-
+		// seen level becomes the leftmost column / top row — same convention
+		// the bar-chart path uses, so users see the same orderings across
+		// related plots of the same variables.
+		std::vector<QString> x_levels, y_levels;
+		std::map<QString, int> x_idx, y_idx;
+		std::vector<std::vector<int>> counts;
+
+		auto ensure_x = [&](const QString &lvl) -> int {
+			auto it = x_idx.find(lvl);
+			if (it != x_idx.end()) return it->second;
+			int i = (int)x_levels.size();
+			x_idx[lvl] = i;
+			x_levels.push_back(lvl);
+			for (auto &row : counts) row.push_back(0);
+			return i;
+		};
+		auto ensure_y = [&](const QString &lvl) -> int {
+			auto it = y_idx.find(lvl);
+			if (it != y_idx.end()) return it->second;
+			int i = (int)y_levels.size();
+			y_idx[lvl] = i;
+			y_levels.push_back(lvl);
+			counts.emplace_back((int)x_levels.size(), 0);
+			return i;
+		};
+
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = xc(r);
+			auto vy = yc(r);
+			if (vx.empty() || vy.empty()) continue;
+			auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+			auto qy = QString::fromUtf8(vy.data(), (int)vy.size());
+			int ci = ensure_x(qx);
+			int ri = ensure_y(qy);
+			counts[ri][ci]++;
+		}
+
+		if (x_levels.empty() || y_levels.empty()) {
+			m_eda_plot->clear();
+			return;
+		}
+
+		QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
+		m_eda_plot->setHeatmapData(std::move(x_levels), std::move(y_levels),
+		                            std::move(counts),
+		                            x_name_q, y_name_q, title);
+	}
+	else if (kind == KProportion)
+	{
+		// Proportion of Y=success per X level, optionally split by Group.
+		// "Success" is the larger of the two unique numeric Y values (if
+		// the column has exactly two unique non-missing values). For Y that
+		// is already 0/1 this is just "% of 1s"; for arbitrary binary 2-
+		// level numeric coding (e.g. 1/2) the larger level is the success.
+		// Non-binary Y triggers the validation hint earlier — by the time
+		// we get here Y is guaranteed numeric, so we just gate on the
+		// two-unique-values check and surface a runtime hint if not.
+
+		// First pass: discover the two unique Y values across the whole
+		// column, ignoring missing and non-finite. If we find more than
+		// two, abort with a hint (the column isn't binary).
+		double v0 = std::nan(""), v1 = std::nan("");
+		int n_unique = 0;
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vy = yc(r);
+			if (vy.empty()) continue;
+			bool ok; double d = vy.to_float(&ok);
+			if (!ok || !std::isfinite(d)) continue;
+			if (n_unique == 0) { v0 = d; n_unique = 1; }
+			else if (n_unique == 1 && d != v0) { v1 = d; n_unique = 2; }
+			else if (n_unique == 2 && d != v0 && d != v1) { n_unique = 3; break; }
+		}
+		if (n_unique != 2) {
+			setEdaHint(tr("Proportion needs a binary Y (exactly two unique numeric values; "
+			              "found %1).").arg(n_unique));
+			m_eda_plot->clear();
+			return;
+		}
+		double success = std::max(v0, v1);
+
+		// Discover X levels and (optional) Group levels in first-seen order
+		// so the on-screen ordering matches every other plot of the same
+		// columns. counts[g][x] = total n; succ[g][x] = successes.
+		std::vector<QString> x_levels, g_levels;
+		std::map<QString, int> x_idx, g_idx;
+		std::vector<std::vector<int>> n_cell, k_cell;
+
+		auto ensure_x = [&](const QString &lvl) -> int {
+			auto it = x_idx.find(lvl);
+			if (it != x_idx.end()) return it->second;
+			int i = (int)x_levels.size();
+			x_idx[lvl] = i;
+			x_levels.push_back(lvl);
+			for (auto &row : n_cell) row.push_back(0);
+			for (auto &row : k_cell) row.push_back(0);
+			return i;
+		};
+		auto ensure_g = [&](const QString &lvl) -> int {
+			auto it = g_idx.find(lvl);
+			if (it != g_idx.end()) return it->second;
+			int i = (int)g_levels.size();
+			g_idx[lvl] = i;
+			g_levels.push_back(lvl);
+			n_cell.emplace_back((int)x_levels.size(), 0);
+			k_cell.emplace_back((int)x_levels.size(), 0);
+			return i;
+		};
+		// Always have at least one group row, even when ungrouped.
+		if (g_col == 0) ensure_g(QString());
+
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = xc(r);
+			auto vy = yc(r);
+			if (vx.empty() || vy.empty()) continue;
+			bool ok; double d = vy.to_float(&ok);
+			if (!ok || !std::isfinite(d)) continue;
+			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+			int ci = ensure_x(qx);
+			int gi = 0;
+			if (g_col > 0) {
+				auto vg = dt->get_cell(r, g_col);
+				auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+				gi = ensure_g(qg);
+			}
+			n_cell[gi][ci]++;
+			if (d == success) k_cell[gi][ci]++;
+		}
+
+		if (x_levels.empty()) {
+			m_eda_plot->clear();
+			return;
+		}
+
+		// Wilson 95% interval (z = 1.96). Single-CI level is plenty for v1
+		// — a future enhancement can reuse m_eda_ellipse_spin as a generic
+		// confidence-level control across plot types.
+		constexpr double z = 1.95996398454005423;
+		auto wilson = [&](int k, int n) -> std::tuple<double, double, double> {
+			if (n <= 0) return {std::nan(""), std::nan(""), std::nan("")};
+			double phat  = (double)k / (double)n;
+			double denom = 1.0 + z*z / n;
+			double center = (phat + z*z / (2.0*n)) / denom;
+			double half   = z * std::sqrt(phat*(1-phat)/n + z*z/(4.0*(double)n*n)) / denom;
+			return {phat, center - half, center + half};
+		};
+
+		std::vector<PlotWidget::EffectsCurve> curves;
+		curves.reserve(g_levels.size());
+		// Per-curve x dodge so error bars don't overlap when Group is used.
+		// Spread over ±0.30 of a categorical-x unit, mirroring how the
+		// Effects tab dodges its by-curves.
+		int ng = (int)g_levels.size();
+		auto dodge = [&](int gi) -> double {
+			if (ng <= 1) return 0.0;
+			double span = 0.60;
+			return -span / 2.0 + span * (double)gi / (double)(ng - 1);
+		};
+
+		for (int gi = 0; gi < ng; gi++)
+		{
+			PlotWidget::EffectsCurve curve;
+			curve.label = (g_col > 0) ? g_levels[gi] : QString();
+			for (int ci = 0; ci < (int)x_levels.size(); ci++) {
+				auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
+				curve.x.push_back((double)ci + dodge(gi));
+				curve.fit.push_back(p);
+				curve.ci_lower.push_back(lo);
+				curve.ci_upper.push_back(hi);
+			}
+			curves.push_back(std::move(curve));
+		}
+
+		// Reasonable axis title for "what's being proportioned".
+		// Show as e.g. "% schwa = 1" when success is a numeric literal.
+		QString ylab = tr("Proportion (%1 = %2)")
+		    .arg(y_name_q)
+		    .arg(success);
+		QString title = ylab + QStringLiteral(" by ") + x_name_q;
+		if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+
+		std::vector<QString> level_labels = x_levels;
+		QString caption = tr("Error bars are Wilson 95%% intervals");
+		m_eda_plot->setEffectsPlotData(std::move(curves),
+		                                x_name_q, ylab, title,
+		                                caption,
+		                                std::move(level_labels),
+		                                /*show_ci=*/true,
+		                                /*show_legend=*/g_col > 0);
 	}
 	else if (kind == KScatter)
 	{
@@ -6233,6 +6858,150 @@ void AnalysisView::updateEdaSummary()
 	}
 	else if (!x_numeric && y_numeric)
 	{
+		// If the user has explicitly picked Proportion, replace the boxplot-
+		// style summary with per-(X level [, Group level]) counts, observed
+		// proportion, and Wilson 95% interval. Mirrors what the plot shows
+		// so the numbers can be copied / saved as a table.
+		auto ptype_data = m_eda_plot_type_combo->currentData();
+		EdaPlotType ptype = ptype_data.isValid()
+			? static_cast<EdaPlotType>(ptype_data.toInt())
+			: EdaPlotType::Auto;
+		bool proportion_mode = (ptype == EdaPlotType::Proportion);
+		bool has_group = (m_eda_group_combo->currentIndex() > 0);
+
+		if (proportion_mode)
+		{
+			// Resolve Group column.
+			intptr_t g_col = 0;
+			QString group_name_q;
+			if (has_group) {
+				group_name_q = m_eda_group_combo->currentText();
+				auto group_name = String(group_name_q.toUtf8().constData());
+				for (intptr_t j = 1; j <= nc; j++) {
+					if (dt->get_header(j) == group_name) { g_col = j; break; }
+				}
+				if (g_col < 1) has_group = false;
+			}
+
+			// Determine the "success" value: larger of the two unique Y
+			// values across the column. Bail if there aren't exactly two.
+			double v0 = std::nan(""), v1 = std::nan("");
+			int n_unique = 0;
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vy = yc(r);
+				if (vy.empty()) continue;
+				bool ok; double d = vy.to_float(&ok);
+				if (!ok || !std::isfinite(d)) continue;
+				if (n_unique == 0) { v0 = d; n_unique = 1; }
+				else if (n_unique == 1 && d != v0) { v1 = d; n_unique = 2; }
+				else if (n_unique == 2 && d != v0 && d != v1) { n_unique = 3; break; }
+			}
+			if (n_unique != 2) return; // plot already shows the hint
+			double success = std::max(v0, v1);
+
+			// Two-pass aggregation matching the plot logic.
+			std::vector<QString> x_levels, g_levels;
+			std::map<QString, int> x_idx, g_idx;
+			std::vector<std::vector<int>> n_cell, k_cell;
+			auto ensure_x = [&](const QString &lvl) -> int {
+				auto it = x_idx.find(lvl);
+				if (it != x_idx.end()) return it->second;
+				int i = (int)x_levels.size();
+				x_idx[lvl] = i;
+				x_levels.push_back(lvl);
+				for (auto &row : n_cell) row.push_back(0);
+				for (auto &row : k_cell) row.push_back(0);
+				return i;
+			};
+			auto ensure_g = [&](const QString &lvl) -> int {
+				auto it = g_idx.find(lvl);
+				if (it != g_idx.end()) return it->second;
+				int i = (int)g_levels.size();
+				g_idx[lvl] = i;
+				g_levels.push_back(lvl);
+				n_cell.emplace_back((int)x_levels.size(), 0);
+				k_cell.emplace_back((int)x_levels.size(), 0);
+				return i;
+			};
+			if (!has_group) ensure_g(QString());
+			for (intptr_t r = 1; r <= nr; r++)
+			{
+				auto vx = xc(r);
+				auto vy = yc(r);
+				if (vx.empty() || vy.empty()) continue;
+				bool ok; double d = vy.to_float(&ok);
+				if (!ok || !std::isfinite(d)) continue;
+				if (has_group && dt->get_cell(r, g_col).empty()) continue;
+				auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+				int ci = ensure_x(qx);
+				int gi = 0;
+				if (has_group) {
+					auto vg = dt->get_cell(r, g_col);
+					auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
+					gi = ensure_g(qg);
+				}
+				n_cell[gi][ci]++;
+				if (d == success) k_cell[gi][ci]++;
+			}
+			if (x_levels.empty()) return;
+
+			constexpr double z = 1.95996398454005423;
+			auto wilson = [&](int k, int n) -> std::tuple<double, double, double> {
+				if (n <= 0) return {std::nan(""), std::nan(""), std::nan("")};
+				double phat  = (double)k / (double)n;
+				double denom = 1.0 + z*z / n;
+				double center = (phat + z*z / (2.0*n)) / denom;
+				double half   = z * std::sqrt(phat*(1-phat)/n + z*z/(4.0*(double)n*n)) / denom;
+				return {phat, center - half, center + half};
+			};
+
+			QStringList headers;
+			if (has_group) headers << group_name_q;
+			headers << x_name_q << tr("n") << tr("k")
+			        << QStringLiteral("p\u0302") // p-hat
+			        << QStringLiteral("CI\u2082\u2024\u2085")  // CI 2.5%
+			        << QStringLiteral("CI\u2089\u2087\u2024\u2085"); // CI 97.5%
+			int ncols = headers.size();
+
+			int total_rows = (int)g_levels.size() * (int)x_levels.size();
+			m_eda_summary->setColumnCount(ncols);
+			m_eda_summary->setHorizontalHeaderLabels(headers);
+			m_eda_summary->setRowCount(total_rows);
+
+			auto set = [&](int row, int col, const QString &text, bool right=true) {
+				auto *item = new QTableWidgetItem(text);
+				if (right) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(row, col, item);
+			};
+
+			int row = 0;
+			for (int gi = 0; gi < (int)g_levels.size(); gi++)
+			{
+				for (int ci = 0; ci < (int)x_levels.size(); ci++)
+				{
+					int col = 0;
+					if (has_group) set(row, col++, g_levels[gi], /*right=*/false);
+					set(row, col++, x_levels[ci], /*right=*/false);
+					auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
+					set(row, col++, QString::number(n_cell[gi][ci]));
+					set(row, col++, QString::number(k_cell[gi][ci]));
+					if (std::isnan(p)) {
+						set(row, col++, QStringLiteral("\u2014")); // em-dash
+						set(row, col++, QStringLiteral("\u2014"));
+						set(row, col++, QStringLiteral("\u2014"));
+					} else {
+						set(row, col++, QString::number(p,  'f', 4));
+						set(row, col++, QString::number(lo, 'f', 4));
+						set(row, col++, QString::number(hi, 'f', 4));
+					}
+					row++;
+				}
+			}
+			m_eda_summary->resizeColumnsToContents();
+			return;
+		}
+
 		// ── Box plot (X categorical, Y continuous): grouped stats ──
 
 		std::vector<QString> group_order;
@@ -6297,6 +7066,111 @@ void AnalysisView::updateEdaSummary()
 			if (g == 0 && missing > 0)
 				set(7, QString::number(missing));
 		}
+		m_eda_summary->resizeColumnsToContents();
+	}
+	else if (!x_numeric && !y_numeric)
+	{
+		// ── Contingency table (X categorical, Y categorical) ──
+		// Rows = Y levels, columns = X levels, plus a rightmost "Total"
+		// column and a bottom "Total" row. Cells show "count (row%)" —
+		// the most common reading is "of all Y=y_i observations, what %
+		// fall into X=x_j", which is the row percentage. Column and grand
+		// totals stay as raw counts to avoid double-percentage clutter.
+
+		std::vector<QString> x_levels, y_levels;
+		std::map<QString, int> x_idx, y_idx;
+		std::vector<std::vector<int>> counts;
+		auto ensure_x = [&](const QString &lvl) -> int {
+			auto it = x_idx.find(lvl);
+			if (it != x_idx.end()) return it->second;
+			int i = (int)x_levels.size();
+			x_idx[lvl] = i; x_levels.push_back(lvl);
+			for (auto &row : counts) row.push_back(0);
+			return i;
+		};
+		auto ensure_y = [&](const QString &lvl) -> int {
+			auto it = y_idx.find(lvl);
+			if (it != y_idx.end()) return it->second;
+			int i = (int)y_levels.size();
+			y_idx[lvl] = i; y_levels.push_back(lvl);
+			counts.emplace_back((int)x_levels.size(), 0);
+			return i;
+		};
+
+		intptr_t included = 0;
+		for (intptr_t r = 1; r <= nr; r++)
+		{
+			auto vx = xc(r);
+			auto vy = yc(r);
+			if (vx.empty() || vy.empty()) continue;
+			auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
+			auto qy = QString::fromUtf8(vy.data(), (int)vy.size());
+			int ci = ensure_x(qx);
+			int ri = ensure_y(qy);
+			counts[ri][ci]++;
+			included++;
+		}
+		if (x_levels.empty() || y_levels.empty()) return;
+
+		int nx = (int)x_levels.size();
+		int ny = (int)y_levels.size();
+		intptr_t missing = nr - included;
+		// Columns: [Y \ X], one per X level, then Total. We embed the
+		// Y-axis label in the (0,0) header cell so the user sees "vowel \
+		// dialect" clearly.
+		int ncols = 1 + nx + 1;
+		m_eda_summary->setColumnCount(ncols);
+		QStringList headers;
+		headers << QStringLiteral("%1 \\ %2").arg(y_name_q, x_name_q);
+		for (int c = 0; c < nx; c++) headers << x_levels[c];
+		headers << tr("Total");
+		m_eda_summary->setHorizontalHeaderLabels(headers);
+		// Rows: one per Y level, plus a Total row, plus a Missing row when
+		// any rows were skipped due to NA in X or Y.
+		int nrows_out = ny + 1 + (missing > 0 ? 1 : 0);
+		m_eda_summary->setRowCount(nrows_out);
+
+		auto set = [&](int row, int col, const QString &text, bool right) {
+			auto *item = new QTableWidgetItem(text);
+			if (right) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+			m_eda_summary->setItem(row, col, item);
+		};
+
+		std::vector<int> col_totals(nx, 0);
+		int grand_total = 0;
+		for (int r = 0; r < ny; r++)
+		{
+			int row_total = 0;
+			for (int c = 0; c < nx; c++) {
+				row_total    += counts[r][c];
+				col_totals[c] += counts[r][c];
+			}
+			grand_total += row_total;
+			set(r, 0, y_levels[r], /*right=*/false);
+			for (int c = 0; c < nx; c++) {
+				int n = counts[r][c];
+				QString txt = (row_total > 0)
+					? QStringLiteral("%1 (%2%)")
+					      .arg(n)
+					      .arg(100.0 * n / row_total, 0, 'f', 1)
+					: QString::number(n);
+				set(r, 1 + c, txt, /*right=*/true);
+			}
+			set(r, 1 + nx, QString::number(row_total), /*right=*/true);
+		}
+
+		// Totals row.
+		set(ny, 0, tr("Total"), /*right=*/false);
+		for (int c = 0; c < nx; c++)
+			set(ny, 1 + c, QString::number(col_totals[c]), /*right=*/true);
+		set(ny, 1 + nx, QString::number(grand_total), /*right=*/true);
+
+		// Missing row, when applicable.
+		if (missing > 0) {
+			set(ny + 1, 0, tr("Missing"), /*right=*/false);
+			set(ny + 1, 1 + nx, QString::number((int)missing), /*right=*/true);
+		}
+
 		m_eda_summary->resizeColumnsToContents();
 	}
 	// else: unsupported combination — table stays empty.
