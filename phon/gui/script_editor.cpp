@@ -218,6 +218,18 @@ void ScriptEditor::runBackgroundParse()
 		if (!qname.isEmpty())
 			m_apis->add(qname);
 	}
+	// Emit one entry per user-declared routine carrying the formatted parameter
+	// list. QsciAPIs treats entries of the form "name(args)" as both completion
+	// candidates *and* call tips — the same shape built-ins use (see
+	// populate_builtins above). Each RoutineDefinition contributes its own entry,
+	// so overloads (multiple dispatch) naturally stack in the call tip the way
+	// they do for overloaded built-ins.
+	for (auto &sym : m_last_index.symbols()) {
+		if (sym.signature.empty()) continue;
+		QString qsig = QString::fromUtf8(sym.signature.data(), int(sym.signature.size()));
+		if (!qsig.isEmpty())
+			m_apis->add(qsig);
+	}
 	m_apis->prepare();
 
 	// (2) Paint or clear the live-error squiggle. The toggle gates only the

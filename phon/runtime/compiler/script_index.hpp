@@ -48,6 +48,13 @@ struct Symbol
 	SymbolKind kind;
 	int        line;     // 1-based line of the declaring identifier
 	int        column;   // 0-based byte column of the declaring identifier
+
+	// Formatted call-tip signature for routines, e.g. "compute(values as List, mode as String)".
+	// Populated only for SymbolKind::Function and SymbolKind::Method; empty for everything else.
+	// Fed verbatim into QsciAPIs by the script editor so QsciAPIs treats it as both an
+	// autocompletion candidate and a call tip (built-ins use the same shape — see
+	// ScriptEditor::populate_builtins). Empty on partial/failed parses; the editor tolerates that.
+	String     signature;
 };
 
 class ScriptIndex final

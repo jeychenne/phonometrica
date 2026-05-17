@@ -70,7 +70,9 @@ public:
 		if (!synthetic) {
 			if (auto v = dynamic_cast<Variable *>(n->name.get())) {
 				SymbolKind k = n->method ? SymbolKind::Method : SymbolKind::Function;
-				m_index.add({ v->name, k, v->line_no, v->column });
+				Symbol sym{ v->name, k, v->line_no, v->column, String() };
+				sym.signature = format_signature(v->name, n->params, n->method);
+				m_index.add(std::move(sym));
 			}
 		}
 
@@ -142,6 +144,67 @@ private:
 		if (auto v = dynamic_cast<const Variable *>(p)) {
 			m_index.add({ v->name, SymbolKind::Variable, v->line_no, v->column });
 		}
+	}
+
+	// Format a routine declaration's parameter list as a single-line call-tip signature,
+	// e.g. "compute(values as List, mode as String)". Skips the synthetic `this` parameter
+	// that the parser prepends for methods (see parser.cpp:812) so user-facing tips don't
+	// expose the implicit receiver. Falls back gracefully on missing pieces: a null param,
+	// a non-Variable name AST, or a complex type expression all degrade to a partial
+	// signature rather than aborting. Empty return is allowed and is the editor's signal
+	// to skip emitting a call tip entry for this routine.
+	static String format_signature(const String &routine_name, const AstList &params, bool is_method)
+	{
+		String out(routine_name);
+		out.append("(");
+
+		bool first = true;
+		intptr_t i = 0;
+		for (auto &p : params)
+		{
+			// Skip the implicit `this` parameter at index 0 for methods. Defensive on the
+			// index — if a future parser change ever moved `this` elsewhere, the name check
+			// inside the loop body below would still catch it.
+			++i;
+			if (!p) continue;
+			auto param = dynamic_cast<const RoutineParameter *>(p.get());
+			if (!param || !param->variable) continue;
+
+			// Unwrap an enclosing ReferenceExpression (defensive — `ref` is usually carried
+			// by RoutineParameter::by_ref, but the variable AST may itself be wrapped).
+			const Ast *var_ast = param->variable.get();
+			if (auto ref = dynamic_cast<const ReferenceExpression *>(var_ast)) {
+				var_ast = ref->expr.get();
+			}
+			auto var = dynamic_cast<const Variable *>(var_ast);
+			if (!var) continue;
+
+			// Skip the synthetic receiver. Cheap name compare against the parser's
+			// canonical "this" — matches what parse_parameters injects at index 0.
+			if (is_method && i == 1 && var->name == "this") {
+				continue;
+			}
+
+			if (!first) out.append(", ");
+			first = false;
+
+			if (param->by_ref) out.append("ref ");
+			out.append(var->name);
+
+			// Type annotation is optional in Phonometrica. When the user wrote `name as T`,
+			// `type` is typically a Variable node holding the type name. Anything more exotic
+			// (parameterised types if ever added) silently drops the annotation rather than
+			// guessing — the bare parameter name is still useful in a call tip.
+			if (param->type) {
+				if (auto t = dynamic_cast<const Variable *>(param->type.get())) {
+					out.append(" as ");
+					out.append(t->name);
+				}
+			}
+		}
+
+		out.append(")");
+		return out;
 	}
 
 	ScriptIndex &m_index;
