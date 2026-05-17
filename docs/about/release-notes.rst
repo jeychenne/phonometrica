@@ -7,6 +7,7 @@ Release notes
 
 **Sound and annotation views**
 
+- **Mouse-wheel navigation** now follows the convention used by recent versions of Praat and wavesurfer.js: a plain scroll over the waveform, spectrogram, pitch track, intensity track, or annotation layers pans the visible window left (scroll up) or right (scroll down). Zooming has been remapped to ``Ctrl+Scroll`` (``Cmd+Scroll`` on macOS), which still zooms around the time under the cursor. The wave bar's pan-on-scroll behaviour is unchanged.
 - **Annotation file operations** in the file manager context menu: *Duplicate*, *Extract layers...*, *Extract slice...*, *Merge annotations...*, and *Concatenate annotations...*. Each produces a new file on disk and adds it to the project, inheriting properties, description, and (where preserved) sound binding from the source(s). Merge requires matching durations within 1 ms; concatenate accepts per-source explicit durations for unbound inputs. The new annotation keeps the source's format by default (native ``.phon-annot`` or Praat TextGrid), with a selector when sources disagree.
 - **Sound file operations**: *Extract slice...* (single sound or as the sound side of an annotation slice) and *Concatenate sounds...*. Concatenation is strict-mode (matching sample rate and channel count); resample-on-concatenate is planned. Output format (WAV, AIFF, FLAC, OGG) is selectable.
 - *Extract slice...* on a bound annotation offers three modes — annotation only, sound only, or both; the *both* mode binds the new annotation to the new sound automatically.

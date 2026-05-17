@@ -461,13 +461,31 @@ void PitchWidget::mouseReleaseEvent(QMouseEvent *event)
 
 void PitchWidget::wheelEvent(QWheelEvent *event)
 {
-	double t = xToTime(event->position().x());
 	int delta = event->angleDelta().y();
+	if (delta == 0)
+	{
+		event->ignore();
+		return;
+	}
 
-	if (delta > 0)
-		m_model->zoomIn(t);
-	else if (delta < 0)
-		m_model->zoomOut(t);
+	if (event->modifiers() & Qt::ControlModifier)
+	{
+		// Ctrl+wheel: zoom toward the cursor's time position.
+		double t = xToTime(event->position().x());
+		if (delta > 0)
+			m_model->zoomIn(t);
+		else
+			m_model->zoomOut(t);
+	}
+	else
+	{
+		// Plain wheel: pan horizontally (left/right in time).
+		if (delta > 0)
+			m_model->moveBackward();
+		else
+			m_model->moveForward();
+	}
+	event->accept();
 }
 
 void PitchWidget::leaveEvent(QEvent *)

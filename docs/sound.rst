@@ -152,7 +152,9 @@ Changing the current window
 Phonometrica offers a number of ways to navigate through the file, using the wavebar, the navigation buttons in the toolbar, or the mouse.
 
 First, you can select any part of the wavebar to display it as the current window. If you would like to keep the same window size and shift the sound left or right, you can hover
-the mouse over the wavebar and use the scroll wheel: scrolling down will shift the current window forward, and scrolling up will shift it backward.
+the mouse over the wavebar and use the scroll wheel: scrolling down will shift the current window forward, and scrolling up will shift it backward. The same scroll-wheel
+shortcut also works directly over the waveform, spectrogram, pitch, intensity and annotation layers: a plain scroll pans the view left or right, while ``Ctrl+scroll``
+(``Cmd+scroll`` on macOS) zooms in or out around the time under the cursor.
 
 Once you have selected a portion of the file, you can change it using the toolbar's buttons. The forward |forward| and backward |backward| buttons will shift the current window by 
 a small amount, right or left, respectively. You can also zoom in |zoomin| or zoom out |zoomout| on the 

@@ -24,6 +24,7 @@
 #include <QPainter>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QWheelEvent>
 #include <QTextEdit>
 #include <QPixmap>
 #include <QMessageBox>
@@ -1345,6 +1346,35 @@ void LayerWidget::mouseDoubleClickEvent(QMouseEvent *e)
 			return;
 		}
 	}
+}
+
+void LayerWidget::wheelEvent(QWheelEvent *event)
+{
+	int delta = event->angleDelta().y();
+	if (delta == 0)
+	{
+		event->ignore();
+		return;
+	}
+
+	if (event->modifiers() & Qt::ControlModifier)
+	{
+		// Ctrl+wheel: zoom toward the cursor's time position.
+		double t = xToTime(event->position().x());
+		if (delta > 0)
+			m_model->zoomIn(t);
+		else
+			m_model->zoomOut(t);
+	}
+	else
+	{
+		// Plain wheel: pan horizontally (left/right in time).
+		if (delta > 0)
+			m_model->moveBackward();
+		else
+			m_model->moveForward();
+	}
+	event->accept();
 }
 
 void LayerWidget::keyPressEvent(QKeyEvent *e)

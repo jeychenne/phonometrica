@@ -90,8 +90,10 @@ Sound and annotation views
      - Stop playback
    * - ``Middle click`` (scroll wheel)
      - Zoom to the current selection
-   * - ``Scroll wheel`` (over wave bar)
-     - Shift the visible window forward (scroll down) or backward (scroll up)
+   * - ``Scroll wheel`` (over wave bar, plots or layers)
+     - Pan the visible window left (scroll up) or right (scroll down)
+   * - ``Ctrl+Scroll wheel`` (over plots or layers; ``Cmd+Scroll`` on macOS)
+     - Zoom in (scroll up) or out (scroll down) around the cursor's time
    * - ``F5`` / ``Shift+F5``
      - View the FFT spectrum / FFT and LPC spectra at the cursor
    * - ``F6`` / ``Shift+F6``
