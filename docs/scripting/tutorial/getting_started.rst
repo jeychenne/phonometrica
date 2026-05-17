@@ -178,6 +178,8 @@ You can include special characters in a string with *escape sequences*. An escap
      - form feed
    * - ``\a``
      - bell
+   * - ``\$``
+     - literal dollar sign (suppresses ``${...}`` interpolation)
 
 Escape sequences are processed inside both single-line and triple-quoted strings. A backslash followed by any other character is left untouched in the string.
 
@@ -188,7 +190,37 @@ You can use the concatenation operator ``&`` to concatenate two or more values. 
 
     pi = 3.14
     print "The value of pi is " & pi
-    
+
+For diagnostic messages and constructing file paths, building strings out of repeated ``&`` calls quickly becomes hard to read. As a more concise alternative, you can use **string interpolation**: any expression enclosed in ``${...}`` inside a string literal is evaluated and converted to a string at the place it appears. The conversion is the same one that ``&`` performs, so you do not need to call ``str(...)`` explicitly. Compare:
+
+.. code:: phon
+
+    # without interpolation
+    print "Speaker " & speaker & ": F1=" & f1 & " F2=" & f2
+
+    # with interpolation
+    print "Speaker ${speaker}: F1=${f1} F2=${f2}"
+
+Both lines produce the same output. The expression inside ``${...}`` can be any valid expression — a variable, an arithmetic expression, a function call, a table lookup:
+
+.. code:: phon
+
+    let n = 7
+    print "n squared is ${n * n}"          # n squared is 49
+    print "rounded: ${round(3.7)}"         # rounded: 4
+    let info = {"name": "Lobanov"}
+    print "method: ${info["name"]}"        # method: Lobanov
+
+Interpolation is available inside both single-line strings (``"..."`` and ``'...'``) and triple-quoted strings (``"""..."""`` and ``'''...'''``). Inside a triple-quoted string, the embedded expression may span several source lines.
+
+If you need a literal dollar sign followed by an opening brace — which arises occasionally when working with notations that use ``{...}`` for their own purposes, such as some IPA transcription conventions — write ``\$`` to suppress interpolation:
+
+.. code:: phon
+
+    print "the variable \${x} stands for the speaker's F0"
+
+A bare ``$`` that is not followed by ``{`` is always a literal dollar sign, so ``"price: $100"`` does not require any escaping.
+
 Unlike most scripting languages, strings in Phonometrica are *mutable*, which means that some functions can modify them directly:
 
 .. code:: phon

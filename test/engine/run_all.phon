@@ -29,6 +29,7 @@ print "######################################################################"
 # scanner/parser tests first, then the more involved compiler ones.
 
 import("test_scientific_notation")
+import("test_string_interpolation")
 import("test_compound_assignment")
 import("test_upvalues")
 import("test_try_catch")

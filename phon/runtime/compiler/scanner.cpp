@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <vector>
 #include <phon/file.hpp>
 #include <phon/runtime/compiler/scanner.hpp>
 
@@ -148,9 +149,14 @@ void Scanner::scan_digits()
     }
 }
 
-void Scanner::scan_string(char32_t end)
+Token Scanner::scan_string(char32_t end)
 {
-    intptr_t start_line = m_line_no;
+    // Capture the opening-delimiter position. Both the StringLiteral we may
+    // return and the leading LParen / first StringLiteral chunk we may queue
+    // (in the interpolated case) point back to this column so the editor's
+    // squiggle anchors at the start of the literal.
+    intptr_t open_line = m_token_line;
+    intptr_t open_col = m_token_column;
     skip();
 
     // If the character following the opening delimiter is the same delimiter, and the one
@@ -159,9 +165,24 @@ void Scanner::scan_string(char32_t end)
     {
         skip(); // second delimiter
         skip(); // third delimiter
-        scan_triple_string(end);
-        return;
+        return scan_triple_string(end, open_line, open_col);
     }
+
+    return scan_single_string(end, open_line, open_col);
+}
+
+Token Scanner::scan_single_string(char32_t end, intptr_t open_line, intptr_t open_col)
+{
+    intptr_t start_line = m_line_no;
+    bool has_interp = false;
+    // Buffer of synthetic tokens produced by ${...} desugaring for THIS string.
+    // We accumulate the whole desugared sequence locally and only transfer it
+    // onto m_pending in finish_string_token. Pushing onto m_pending earlier
+    // would corrupt subsequent recursive read_token() calls inside later
+    // ${...} segments — those calls drain m_pending before scanning the
+    // source, and would return our own queued tokens instead of new source
+    // tokens, which fails for any string with more than one ${...}.
+    std::vector<Token> synthetic;
 
     while (m_char != end && m_char != Token::ETX)
     {
@@ -173,6 +194,19 @@ void Scanner::scan_string(char32_t end)
                                          "Newline in string literal (use triple quotes \"\"\" or ''' for multi-line strings)",
                                          m_source->filename(), start_line);
             throw RuntimeError(start_line, message);
+        }
+
+        // Interpolation: "${" begins an embedded expression. Detected before
+        // escape handling so that a backslash-escaped "\$" (handled below) can
+        // suppress interpolation. Same-line check via peek_char is implicit:
+        // if m_char is '$' here, we are not on the trailing '\n' of a line
+        // (that case is the newline error above), so peek_char looks at the
+        // very next codepoint in the same line.
+        if (m_char == U'$' && peek_char() == U'{')
+        {
+            scan_interpolation_segment(!has_interp, open_line, open_col, synthetic);
+            has_interp = true;
+            continue;
         }
 
         if (m_char == '\\')
@@ -220,6 +254,14 @@ void Scanner::scan_string(char32_t end)
             {
                 m_char = '\f'; // form feed (new page)
             }
+            else if (m_char == '$')
+            {
+                // \$ suppresses string interpolation: the resulting character is a
+                // literal '$', and because m_char advances to whatever follows on
+                // the next loop iteration, the interpolation check above will not
+                // re-fire on this '$'.
+                m_char = '$';
+            }
             else
             {
                 // Restore
@@ -241,15 +283,20 @@ void Scanner::scan_string(char32_t end)
                                      m_source->filename(), start_line);
         throw RuntimeError(start_line, message);
     }
+
+    return finish_string_token(has_interp, open_line, open_col, synthetic);
 }
 
-void Scanner::scan_triple_string(char32_t end)
+Token Scanner::scan_triple_string(char32_t end, intptr_t open_line, intptr_t open_col)
 {
     // Triple-quoted strings ("""..."""  or  '''...''') may span multiple lines.
     // Newlines and single occurrences of the delimiter are part of the content;
     // the string is closed only by three delimiters in a row. Escape sequences
-    // are processed exactly as in single-line strings.
+    // are processed exactly as in single-line strings, and ${...} interpolation
+    // is supported on the same terms.
     intptr_t start_line = m_line_no;
+    bool has_interp = false;
+    std::vector<Token> synthetic;
 
     while (m_char != Token::ETX)
     {
@@ -265,13 +312,24 @@ void Scanner::scan_triple_string(char32_t end)
                 if (m_char == end)
                 {
                     skip();
-                    return;
+                    return finish_string_token(has_interp, open_line, open_col, synthetic);
                 }
                 m_spelling.append(end);
                 m_spelling.append(end);
                 continue;
             }
             m_spelling.append(end);
+            continue;
+        }
+
+        // Interpolation works inside triple-quoted strings too, with the same
+        // ${...} syntax and the same \$ escape. Inner expressions may span
+        // multiple physical lines; Eol tokens within the embedded expression
+        // are dropped by scan_interpolation_segment.
+        if (m_char == U'$' && peek_char() == U'{')
+        {
+            scan_interpolation_segment(!has_interp, open_line, open_col, synthetic);
+            has_interp = true;
             continue;
         }
 
@@ -289,6 +347,7 @@ void Scanner::scan_triple_string(char32_t end)
             else if (m_char == 'a')  { m_char = '\a'; }
             else if (m_char == 'b')  { m_char = '\b'; }
             else if (m_char == 'f')  { m_char = '\f'; }
+            else if (m_char == '$')  { m_char = '$'; }
             else
             {
                 m_spelling.push_back('\\');
@@ -300,6 +359,156 @@ void Scanner::scan_triple_string(char32_t end)
     auto message = utils::format("[Syntax error] File \"%\" at line %\nUnterminated triple-quoted string literal",
                                  m_source->filename(), start_line);
     throw RuntimeError(start_line, message);
+}
+
+void Scanner::scan_interpolation_segment(bool first_interp, intptr_t open_line, intptr_t open_col, std::vector<Token> &synthetic)
+{
+    // The position of '$' is the most informative anchor for the synthetic
+    // tokens we are about to emit for THIS segment. The leading-LParen and the
+    // very first StringLiteral chunk, however, point back to the string's
+    // opening delimiter (open_line/open_col): they conceptually belong to the
+    // string as a whole, not to any specific ${...}.
+    intptr_t interp_line = m_line_no;
+    intptr_t interp_col = m_char_byte;
+
+    // Snapshot the leading literal chunk BEFORE doing anything that touches
+    // m_spelling. Recursive read_token() calls below overwrite m_spelling
+    // freely (it's the scratch buffer for identifiers, numbers, nested strings,
+    // ...) so we must move it out now.
+    String leading = std::move(m_spelling);
+    m_spelling.clear();
+
+    // Consume the literal "${" from the source before scanning inner tokens.
+    skip(); // '$'
+    skip(); // '{'
+
+    // CRITICAL: scan the embedded-expression tokens by calling read_token
+    // recursively, but accumulate them in a LOCAL vector — and in `synthetic`
+    // (the per-string accumulator) only at the END of this function, never
+    // mid-flight. read_token() drains m_pending before scanning the source,
+    // and `synthetic` is moved into m_pending only by finish_string_token().
+    // The invariant we rely on is therefore: while a string is being scanned,
+    // m_pending is empty except for tokens belonging to a JUST-FINISHED nested
+    // string — those are the legitimate input of the recursive read_token
+    // loop below. Anything we've already produced for the current string sits
+    // in `synthetic` instead. Without this two-buffer split, a second ${...}
+    // in the same string would see the first segment's tokens come back out
+    // of read_token() and never advance the source pointer.
+    //
+    // Brace depth tracks LCurl ('{') tokens (NOT parens — table literals use
+    // braces too, e.g. `${ {a:1}["a"] }`); we stop when an RCurl drops the
+    // depth back to zero — that RCurl is the '}' closing this ${...} and is
+    // NOT recorded. Eol tokens are dropped: the embedded expression is a
+    // single expression regardless of how the user laid it out across source
+    // lines (matters mostly inside triple-quoted strings).
+    std::vector<Token> inner;
+    int depth = 1;
+    while (depth > 0)
+    {
+        Token t = read_token();
+        if (t.is(Token::Lexeme::Eot))
+        {
+            auto message = utils::format("[Syntax error] File \"%\" at line %\n"
+                                         "Unterminated interpolation in string literal "
+                                         "(expected closing '}' for ${...})",
+                                         m_source->filename(), interp_line);
+            throw RuntimeError(interp_line, message);
+        }
+        if (t.is(Token::Lexeme::LCurl))
+        {
+            ++depth;
+            inner.push_back(std::move(t));
+        }
+        else if (t.is(Token::Lexeme::RCurl))
+        {
+            --depth;
+            if (depth == 0) break;
+            inner.push_back(std::move(t));
+        }
+        else if (t.is(Token::Lexeme::Eol))
+        {
+            // drop — embedded expression is a single expression
+        }
+        else
+        {
+            inner.push_back(std::move(t));
+        }
+    }
+
+    if (inner.empty())
+    {
+        auto message = utils::format("[Syntax error] File \"%\" at line %\n"
+                                     "Empty interpolation \"${}\" in string literal",
+                                     m_source->filename(), interp_line);
+        throw RuntimeError(interp_line, message);
+    }
+
+    // Now extend the per-string `synthetic` buffer with this segment's
+    // contribution to the desugared token stream.
+    if (first_interp)
+    {
+        // First ${...} in this string. Wrap the whole desugared chain in an
+        // outer LParen so that the resulting concatenation parses as a single
+        // primary expression regardless of surrounding precedence (e.g. inside
+        // `2 + "x${y}z"` we must NOT let the outer '+' bind tighter than the
+        // synthetic '&'). The leading literal chunk goes in next; it may be
+        // empty (e.g. "${x}foo") and that's fine — Concat coerces everything
+        // to string anyway, and keeping an empty chunk guarantees Concat fires
+        // even when the string contains a single ${expr} and nothing else.
+        synthetic.push_back(Token(Token::Lexeme::LParen, "(", open_line, open_col));
+        synthetic.push_back(Token(Token::Lexeme::StringLiteral, std::move(leading), open_line, open_col));
+    }
+    else
+    {
+        // Subsequent ${...}: continue the existing concat chain.
+        synthetic.push_back(Token(Token::Lexeme::OpConcat, "&", interp_line, interp_col));
+        synthetic.push_back(Token(Token::Lexeme::StringLiteral, std::move(leading), interp_line, interp_col));
+    }
+
+    // Wrap the embedded expression in its own LParen/RParen pair so that we
+    // can substitute *any* expression here without worrying about how it
+    // interacts with the synthetic '&'s on either side (e.g. `${a + b}` must
+    // not let the outer concat split a/b).
+    synthetic.push_back(Token(Token::Lexeme::OpConcat, "&", interp_line, interp_col));
+    synthetic.push_back(Token(Token::Lexeme::LParen, "(", interp_line, interp_col));
+    for (auto &t : inner) synthetic.push_back(std::move(t));
+    // Close the inner-expression wrap. The position is taken from where we
+    // currently are in the source — i.e., just past the matching '}'.
+    synthetic.push_back(Token(Token::Lexeme::RParen, ")", m_line_no, m_char_byte));
+
+    // Make sure m_spelling is empty so the outer literal loop starts fresh.
+    m_spelling.clear();
+}
+
+Token Scanner::finish_string_token(bool has_interp, intptr_t open_line, intptr_t open_col, std::vector<Token> &synthetic)
+{
+    if (!has_interp)
+    {
+        // Fast path / pre-interpolation behavior: a single StringLiteral with
+        // the accumulated literal content. The synthetic buffer is empty in
+        // this case and m_pending is not touched.
+        return Token(Token::Lexeme::StringLiteral, m_spelling, open_line, open_col);
+    }
+
+    // Interpolated string: append the trailing literal chunk (possibly empty,
+    // e.g. for "x${y}") and the closing RParen to the local synthetic buffer,
+    // then transfer everything except the very first token onto m_pending and
+    // hand that first token (an LParen) back to the parser right now. The
+    // parser will see the rest of the desugared sequence on subsequent calls
+    // to read_token, which drains m_pending FIFO.
+    intptr_t close_line = m_line_no;
+    intptr_t close_col = m_char_byte;
+    synthetic.push_back(Token(Token::Lexeme::OpConcat, "&", close_line, close_col));
+    synthetic.push_back(Token(Token::Lexeme::StringLiteral, std::move(m_spelling), close_line, close_col));
+    synthetic.push_back(Token(Token::Lexeme::RParen, ")", close_line, close_col));
+    m_spelling.clear();
+
+    Token first = std::move(synthetic.front());
+    for (size_t i = 1; i < synthetic.size(); ++i)
+    {
+        m_pending.push_back(std::move(synthetic[i]));
+    }
+    return first;
 }
 
 char32_t Scanner::peek_char() const
@@ -327,6 +536,20 @@ char32_t Scanner::peek_char() const
 // Read one token from the source code
 Token Scanner::read_token()
 {
+    // String interpolation has the scanner emit a multi-token sequence
+    // (e.g. ( "foo" & ( x ) & "bar" )) from a single literal in the source.
+    // The first token of that sequence is returned by scan_string itself; the
+    // rest is queued here and returned in FIFO order on subsequent calls. We
+    // must drain this queue before doing any further lexing so the parser sees
+    // exactly the synthetic sequence in order, never interleaved with whatever
+    // happens to follow the closing delimiter in the source.
+    if (!m_pending.empty())
+    {
+        Token t = std::move(m_pending.front());
+        m_pending.pop_front();
+        return t;
+    }
+
     m_spelling.clear();
     skip_white();
 
@@ -443,13 +666,11 @@ Token Scanner::read_token()
 	}
     case U'"':
     {
-        scan_string(U'"');
-        return Token(Token::Lexeme::StringLiteral, m_spelling, m_token_line, m_token_column);
+        return scan_string(U'"');
     }
     case U'\'':
 	{
-		scan_string(U'\'');
-		return Token(Token::Lexeme::StringLiteral, m_spelling, m_token_line, m_token_column);
+		return scan_string(U'\'');
 	}
     case Token::ETX:
     {

@@ -1,0 +1,114 @@
+# =====================================================================
+# test_string_interpolation.phon
+# =====================================================================
+# Smoke test for ${...} string interpolation in the scripting engine.
+# Each block prints a banner so any failure is localized; assert halts
+# the script at the first regression.
+#
+# Interpolation is a scanner-level desugaring:
+#     "foo${x}bar"   scans as   ( "foo" & ( x ) & "bar" )
+# so it leans entirely on the existing Opcode::Concat, which coerces
+# every operand to string. There are no VM, AST, or parser changes;
+# this suite therefore exercises tokenization (scanner) and end-to-end
+# semantics (compiler + runtime) but not any new opcodes.
+# =====================================================================
+
+# 1. Basic single-variable interpolation.
+print "--- 1. single variable ---"
+let name = "world"
+assert "hello ${name}" == "hello world", "single var"
+
+# 2. Multiple interpolation segments in the same literal.
+print "--- 2. multiple segments ---"
+let f1 = 500
+let f2 = 1500
+assert "F1=${f1} F2=${f2}" == "F1=500 F2=1500", "two segments"
+assert "${f1}-${f2}-${f1}" == "500-1500-500", "three segments back-to-back"
+
+# 3. Numeric coercion goes through the same path that '&' uses.
+print "--- 3. numeric coercion ---"
+let n = 42
+assert "n=${n}" == "n=42", "int coercion"
+let x = 3.5
+assert "x=${x}" == "x=3.5", "float coercion"
+
+# 4. Empty leading and trailing literal chunks.
+print "--- 4. empty chunks ---"
+let v = "X"
+assert "${v}" == "X", "no surrounding literal"
+assert "${v}foo" == "Xfoo", "empty leading chunk"
+assert "foo${v}" == "fooX", "empty trailing chunk"
+
+# 5. Arbitrary expressions inside ${...}.
+print "--- 5. expressions ---"
+let a = 3
+let b = 4
+assert "sum=${a + b}" == "sum=7", "arithmetic"
+assert "prod=${a * b}" == "prod=12", "multiplication"
+
+# 6. Function calls inside ${...}.
+print "--- 6. function call ---"
+function twice(z)
+    return z * 2
+end
+assert "d=${twice(7)}" == "d=14", "function call"
+assert "${twice(twice(3))}" == "12", "nested function calls"
+
+# 7. \$ escape suppresses interpolation; the result is a literal '$'.
+print "--- 7. dollar-escape ---"
+let m = "ZZZ"
+assert "price: \${m}" == "price: \${m}", "escaped dollar produces literal"
+assert "\$ then ${m}" == "$ then ZZZ", "escaped then real"
+
+# 8. A bare '$' not followed by '{' is itself a literal '$'.
+print "--- 8. lone dollar ---"
+assert "cost: $100" == "cost: $100", "no interp without brace"
+assert "end$" == "end$", "trailing dollar"
+
+# 9. Single-quoted strings interpolate on the same terms.
+print "--- 9. single quotes ---"
+let q = "hi"
+assert '${q} there' == "hi there", "single-quoted string"
+
+# 10. Triple-quoted strings interpolate as well.
+print "--- 10. triple-quoted ---"
+let who = "Lea"
+assert """welcome ${who}""" == "welcome Lea", "triple double-quote"
+assert '''welcome ${who}''' == "welcome Lea", "triple single-quote"
+
+# 11. Nested interpolation: an inner ${...} inside the embedded
+# expression of an outer ${...}. The scanner reaches the inner string
+# via recursive read_token and the inner desugaring lands in m_pending
+# ahead of the outer's trailing tokens.
+print "--- 11. nested ---"
+let mid = "X"
+assert "a${"b${mid}c"}d" == "abXcd", "two-level nesting"
+
+# 12. Interpolation embedded in a larger expression. The outer
+# parenthesization in the desugaring is what makes this safe — without
+# it, surrounding operators could split the synthetic concat chain.
+print "--- 12. inside larger expression ---"
+let k = 2
+let result = "n=" & "${k}" & "!"
+assert result == "n=2!", "interp as concat operand"
+let s = "[${k}]"
+assert s & " trailing" == "[2] trailing", "interp followed by concat"
+
+# 13. Table-literal braces inside ${...} are tracked by LCurl/RCurl
+# depth, NOT paren depth. The embedded expression can contain its own
+# braces (table literals, table subscripts via bracket notation that
+# happen to wrap braces, etc.) without prematurely terminating the
+# interpolation segment.
+print "--- 13. brace depth ---"
+let t = {"name": "Lobanov"}
+assert "method=${t["name"]}" == "method=Lobanov", "table subscript inside"
+
+# 14. Whitespace inside ${...} is tolerated; the embedded expression
+# is parsed exactly like an ordinary expression.
+print "--- 14. internal whitespace ---"
+let w = 9
+assert "v=${ w }" == "v=9", "spaces around expression"
+assert "v=${  w  }" == "v=9", "multiple spaces"
+
+print ""
+print "All string-interpolation tests passed."
