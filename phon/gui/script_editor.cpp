@@ -236,8 +236,11 @@ void ScriptEditor::runBackgroundParse()
 			showError(m_error_line, m_error_column, m_error_length);
 		} else {
 			// Parse-time error with no precise column (defensive fallback):
-			// highlight the whole line.
-			showError(m_error_line);
+			// highlight the whole line. Use paintLineError, NOT showError(int),
+			// because this path fires on every keystroke-after-pause during
+			// live editing — transient syntax errors are normal while typing,
+			// and the user must keep their caret where it is.
+			paintLineError(m_error_line);
 		}
 	} else {
 		clearErrors();
@@ -249,9 +252,11 @@ void ScriptEditor::runBackgroundParse()
 //  Error highlighting
 // ─────────────────────────────────────────────────
 
-void ScriptEditor::showError(int lineNumber)
+void ScriptEditor::paintLineError(int lineNumber)
 {
-	// lineNumber is 1-based from the runtime.
+	// Pure paint: indicator only, no caret movement, no ensureLineVisible.
+	// lineNumber is 1-based to match the showError() public API; convert here
+	// so callers can keep using the parser's 1-based line numbers directly.
 	int line = lineNumber - 1;
 
 	// Use raw Scintilla messages — QScintilla wrapper signatures vary across versions.
@@ -271,8 +276,19 @@ void ScriptEditor::showError(int lineNumber)
 		}
 		SendScintilla(SCI_INDICATORFILLRANGE, (unsigned long)start, (unsigned long)len);
 	}
+}
 
-	// Scroll to the error line.
+void ScriptEditor::showError(int lineNumber)
+{
+	// Paint then jump-to-error. This overload is the "explicit user action"
+	// path — it's called from ScriptView::execute() after a script run has
+	// failed, where taking the user to the offending line is exactly the
+	// helpful behaviour. The live-parse pipeline must NOT use this overload;
+	// it calls paintLineError directly to avoid stealing the caret while the
+	// user is typing.
+	paintLineError(lineNumber);
+
+	int line = lineNumber - 1;
 	setCursorPosition(line, 0);
 	ensureLineVisible(line);
 }
@@ -284,7 +300,10 @@ void ScriptEditor::showError(int lineNumber, int column, int length)
 	// positions in document bytes, which is what we have.
 	if (lineNumber <= 0 || column < 0 || length <= 0) {
 		// Defensive fallback — should not happen given the caller's checks.
-		showError(lineNumber);
+		// Use paintLineError, NOT showError(int): this three-arg overload
+		// is exclusively the live-parse path (see comment near the end of
+		// this function), and live parse must never steal the caret.
+		paintLineError(lineNumber);
 		return;
 	}
 	int line = lineNumber - 1;
@@ -508,14 +527,20 @@ bool ScriptEditor::event(QEvent *e)
 
 void ScriptEditor::mousePressEvent(QMouseEvent *e)
 {
-	// Ctrl+left-click on an identifier jumps to its definition. We
-	// intentionally do NOT also move the caret to the click position first:
-	// the act of Ctrl-clicking is unambiguously "I want to go there", and a
-	// brief caret stop at the click site would be jarring.
+	// Ctrl+left-click on a USER-DEFINED identifier jumps to its definition.
+	// We intentionally do NOT also move the caret to the click position
+	// first: the act of Ctrl-clicking is unambiguously "I want to go there",
+	// and a brief caret stop at the click site would be jarring.
+	//
+	// For built-in names (or anything else the script index doesn't know
+	// about) we fall through to the default click handler — there is
+	// nothing in the user's script to navigate to, and silently leaving the
+	// click acting as a normal click is preferable to popping a "Definition
+	// not found" tooltip on every Ctrl+click of `print`, `assert`, etc.
 	if (e->button() == Qt::LeftButton && (e->modifiers() & Qt::ControlModifier))
 	{
 		QString word = wordAtPoint(e->pos());
-		if (!word.isEmpty())
+		if (hasUserDefinition(word))
 		{
 			goToDefinition(word);
 			e->accept();
@@ -540,10 +565,19 @@ void ScriptEditor::contextMenuEvent(QContextMenuEvent *e)
 
 	QString word = wordAtPoint(e->pos());
 
-	auto *goto_action = new QAction(tr("Go to definition\tctrl+click"), menu);
+	// Mouse-modifier hint sits inline as a parenthetical rather than using
+	// the `\t`-as-right-aligned-shortcut trick: that idiom is Qt's rendering
+	// of QAction::shortcut(), and Ctrl+Click is not a QKeySequence-shaped
+	// keyboard shortcut. The parenthetical form is portable across styles
+	// and doesn't masquerade as a real keyboard binding.
+	auto *goto_action = new QAction(tr("Go to definition (Ctrl+Click)"), menu);
 	// Disable rather than hide when there's nothing to navigate to — keeps
-	// the feature discoverable.
-	goto_action->setEnabled(!word.isEmpty());
+	// the feature discoverable. We additionally gate on
+	// hasUserDefinition() so the action is greyed out for built-ins and
+	// undeclared names; goToDefinition can only navigate to symbols in the
+	// user's script, and exposing the entry only when it would succeed
+	// avoids the misleading "Definition not found" toast.
+	goto_action->setEnabled(hasUserDefinition(word));
 	connect(goto_action, &QAction::triggered, this, [this, word]() {
 		goToDefinition(word);
 	});
@@ -558,6 +592,14 @@ void ScriptEditor::contextMenuEvent(QContextMenuEvent *e)
 	delete menu;
 }
 
+bool ScriptEditor::hasUserDefinition(const QString &word) const
+{
+	if (word.isEmpty()) return false;
+	QByteArray utf8 = word.toUtf8();
+	String name(utf8.constData(), intptr_t(utf8.size()));
+	return m_last_index.find(name) != nullptr;
+}
+
 void ScriptEditor::goToDefinition(const QString &word)
 {
 	if (word.isEmpty()) return;
@@ -567,9 +609,13 @@ void ScriptEditor::goToDefinition(const QString &word)
 	const Symbol *sym = m_last_index.find(name);
 	if (!sym)
 	{
-		// Either the index is empty (no successful parse yet, or runtime
-		// not wired), or the word is a built-in / undeclared name. Make the
-		// failure visible rather than no-op silently.
+		// Entry points (Ctrl+click, context menu) already gate on
+		// hasUserDefinition, so we expect to reach this branch only when
+		// the index changed between the check and the navigation — e.g.
+		// the user deleted the declaration in the milliseconds between
+		// opening the context menu and selecting the item. The toast is
+		// the safety net for that race; in steady state it should not be
+		// reachable.
 		QToolTip::showText(QCursor::pos(), tr("Definition not found"), this);
 		return;
 	}

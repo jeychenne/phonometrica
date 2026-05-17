@@ -113,6 +113,25 @@ private:
 	void setupApis();
 	void handleSmartIndent();
 
+	// Paint the whole-line error indicator without moving the caret or
+	// scrolling. Shared between the public showError(int) overload (which
+	// adds the caret jump on top, for execute()-style flows where taking
+	// the user to the error site is desired) and runBackgroundParse() (which
+	// must NOT steal focus from the user — that fires on every
+	// keystroke-after-pause and a transient parse error during typing is
+	// normal). `lineNumber` is 1-based, matching the public showError API.
+	void paintLineError(int lineNumber);
+
+	// True iff `word` names a symbol declared in the user's script (as
+	// opposed to a built-in name, an unknown name, or empty). Backs the
+	// Ctrl+click and "Go to definition" context-menu entry-point checks:
+	// goToDefinition itself can only navigate to user symbols, so the entry
+	// points should not even offer the action for anything else. Consults
+	// the most recent successful background-parse index. Const + lightweight
+	// (one hash lookup) so it is safe to call from event handlers and from
+	// the context-menu builder.
+	bool hasUserDefinition(const QString &word) const;
+
 	PhonLexer *m_lexer = nullptr;
 
 	// QsciAPIs is owned by the lexer (parent pointer); we keep a non-owning
