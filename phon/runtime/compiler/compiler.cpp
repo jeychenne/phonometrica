@@ -1025,6 +1025,127 @@ void Compiler::visit_foreach_statement(ForeachStatement *node)
 	close_scope(scope);
 }
 
+void Compiler::visit_list_comprehension(ListComprehension *node)
+{
+	// Lower `[ Y foreach K?,V in C if F else E ]` directly to a foreach-shaped
+	// loop over a hidden accumulator local. The accumulator is initialized to
+	// an empty list before the loop and left on the stack as the expression's
+	// value after the loop, so the comprehension behaves like any other
+	// expression at every use site (RHS of let, function arg, etc.).
+	//
+	// We do NOT lower via an IIFE: that would force every reference from the
+	// yield/filter/else expressions to outer locals through GetUpvalue rather
+	// than GetLocal, scaling the cost with the number of iterations. Inline
+	// lowering keeps outer-local access as a direct GetLocal.
+	//
+	// break/continue can't reach a comprehension at the source level (they're
+	// statements; comprehension subexpressions are expression context), but we
+	// save/restore loop_try_depths and the break/continue counts to keep this
+	// visitor structurally identical to visit_foreach_statement and to remain
+	// safe under future grammar changes.
+
+	static String acc_name("$acc");
+	static String iter_name("$iter");
+	auto scope = open_scope();
+	int previous_break_count = break_count;
+	int previous_continue_count = continue_count;
+	break_count = continue_count = 0;
+	loop_try_depths.push_back(try_depth);
+
+	// Hidden accumulator: empty list, defined in our fresh scope so it can't
+	// collide with user names ($-prefixed identifiers are unutterable in
+	// source — the scanner requires identifiers to start with a letter).
+	EMIT(Opcode::NewList, Instruction(0));
+	auto acc_index = add_local(acc_name);
+	EMIT(Opcode::DefineLocal, acc_index);
+
+	// Loop variables. `value` is always declared; `key` only when the user
+	// wrote the two-variable form. Mirrors visit_foreach_statement's layout
+	// (no `ref` branch — comprehensions don't accept reference loop vars).
+	auto key_index = (std::numeric_limits<Instruction>::max)();
+	bool has_key = bool(node->key);
+	if (has_key)
+	{
+		auto ident = dynamic_cast<Variable*>(node->key.get());
+		key_index = add_local(ident->name);
+	}
+	auto val_ident = dynamic_cast<Variable*>(node->value.get());
+	auto val_index = add_local(val_ident->name);
+
+	auto iter_index = add_local(iter_name);
+
+	// Build the iterator over the collection.
+	node->collection->visit(*this);
+	EMIT(Opcode::NewIterator, Instruction(0));  // ref_val = false (loop vars are by value)
+	EMIT(Opcode::DefineLocal, iter_index);
+
+	// Loop head.
+	auto loop_start = code->get_current_offset();
+	EMIT(Opcode::GetLocal, iter_index);
+	EMIT(Opcode::TestIterator);
+	auto jump_end = code->append_jump(node->line_no, Opcode::JumpFalse);
+
+	// Clear loop var slots before re-binding in case they held a reference
+	// last iteration (mirrors visit_foreach_statement).
+	if (has_key) EMIT(Opcode::ClearLocal, key_index);
+	EMIT(Opcode::ClearLocal, val_index);
+	if (has_key)
+	{
+		EMIT(Opcode::GetLocal, iter_index);
+		EMIT(Opcode::NextKey);
+		EMIT(Opcode::SetLocal, key_index);
+	}
+	EMIT(Opcode::GetLocal, iter_index);
+	EMIT(Opcode::NextValue);
+	EMIT(Opcode::SetLocal, val_index);
+
+	// Body. Three shapes depending on filter/else_expr presence (see the
+	// ListComprehension docstring in ast.hpp).
+	if (!node->filter)
+	{
+		// Unconditional: yield every iteration.
+		node->yield_expr->visit(*this);
+		EMIT(Opcode::ListAppendLocal, acc_index);
+	}
+	else if (!node->else_expr)
+	{
+		// Filter mode: append yield_expr only when filter is true.
+		node->filter->visit(*this);
+		auto skip_jump = code->append_jump(node->line_no, Opcode::JumpFalse);
+		node->yield_expr->visit(*this);
+		EMIT(Opcode::ListAppendLocal, acc_index);
+		code->backpatch(skip_jump);
+	}
+	else
+	{
+		// Conditional mode: append yield_expr when filter is true, else
+		// append else_expr. Total appends equal the iteration count.
+		node->filter->visit(*this);
+		auto else_jump = code->append_jump(node->line_no, Opcode::JumpFalse);
+		node->yield_expr->visit(*this);
+		EMIT(Opcode::ListAppendLocal, acc_index);
+		auto end_jump = code->append_jump(node->line_no, Opcode::Jump);
+		code->backpatch(else_jump);
+		node->else_expr->visit(*this);
+		EMIT(Opcode::ListAppendLocal, acc_index);
+		code->backpatch(end_jump);
+	}
+
+	backpatch_continues(previous_continue_count);
+	code->append_jump(node->line_no, Opcode::Jump, loop_start);
+	code->backpatch(jump_end);
+	backpatch_breaks(previous_break_count);
+
+	loop_try_depths.pop_back();
+
+	// Leave the accumulator on the stack — this is the comprehension's
+	// expression value. The slot index stays valid after close_scope because
+	// close_scope only adjusts name-resolution state, not the locals vector.
+	EMIT(Opcode::GetLocal, acc_index);
+
+	close_scope(scope);
+}
+
 void Compiler::backpatch_breaks(int previous)
 {
 	for (int i = 0; i < break_count; i++)

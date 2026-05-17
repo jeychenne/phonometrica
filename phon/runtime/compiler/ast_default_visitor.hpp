@@ -67,6 +67,7 @@ public:
 	void visit_repeat_statement(RepeatStatement *n) override { visit_opt(n->cond); visit_opt(n->body); }
 	void visit_for_statement(ForStatement *n) override { visit_opt(n->var); visit_opt(n->start); visit_opt(n->end); visit_opt(n->step); visit_opt(n->block); }
 	void visit_foreach_statement(ForeachStatement *n) override { visit_opt(n->key); visit_opt(n->value); visit_opt(n->collection); visit_opt(n->block); }
+	void visit_list_comprehension(ListComprehension *n) override { visit_opt(n->yield_expr); visit_opt(n->key); visit_opt(n->value); visit_opt(n->collection); visit_opt(n->filter); visit_opt(n->else_expr); }
 	void visit_parameter(RoutineParameter *n) override { visit_opt(n->variable); visit_opt(n->type); }
 	void visit_routine(RoutineDefinition *n) override { visit_opt(n->name); visit_all(n->params); visit_opt(n->body); }
 	void visit_class_declaration(ClassDeclaration *n) override { visit_opt(n->name); visit_opt(n->parent); visit_all(n->fields); visit_all(n->methods); }

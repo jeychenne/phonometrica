@@ -74,6 +74,7 @@ enum class Opcode : Instruction
 	JumpTrueOr,
 	Less,
 	LessEqual,
+	ListAppendLocal,    // Append top-of-stack to the List held in local slot N (used by list comprehensions).
 	Modulus,
 	Multiply,
 	Negate,

@@ -379,6 +379,49 @@ struct ForeachStatement final : public Ast
 	AutoAst key, value, collection, block;
 };
 
+// List comprehension expression: `[ yield_expr foreach k, v in coll if filter else else_expr ]`.
+//
+// Semantics by clause combination:
+//   - filter absent:                       append yield_expr every iteration.
+//   - filter present, else_expr absent:    append yield_expr only when filter is true (filter mode).
+//   - filter present, else_expr present:   append yield_expr when filter is true, else else_expr,
+//                                          every iteration (conditional mode — no filtering).
+//
+// The compiler lowers this directly to a foreach-shaped loop with a hidden
+// accumulator local and the ListAppendLocal opcode, avoiding the closure
+// allocation and upvalue overhead of an IIFE-based desugaring.
+struct ListComprehension final : public Ast
+{
+	ListComprehension(int line, int col,
+	                  AutoAst yield_expr, AutoAst key, AutoAst value,
+	                  AutoAst collection, AutoAst filter, AutoAst else_expr)
+		: Ast(line, col),
+		  yield_expr(std::move(yield_expr)),
+		  key(std::move(key)),
+		  value(std::move(value)),
+		  collection(std::move(collection)),
+		  filter(std::move(filter)),
+		  else_expr(std::move(else_expr)) { }
+
+	void visit(AstVisitor &v) override;
+
+	// Expression evaluated per iteration to produce a list element.
+	AutoAst yield_expr;
+
+	// Loop variables. `value` is always present; `key` is non-null only when
+	// the user writes `foreach k, v in coll` (two-variable form for table
+	// iteration). Mirrors the (key, value) shape of ForeachStatement.
+	AutoAst key, value;
+
+	// Collection being iterated. Always wrapped in a ReferenceExpression at
+	// parse time, mirroring the foreach statement so the iterator can borrow it.
+	AutoAst collection;
+
+	// Optional filter and else expressions. See the comment above for how
+	// their combination determines semantics.
+	AutoAst filter, else_expr;
+};
+
 struct LoopExitStatement final : public Ast
 {
 	LoopExitStatement(int line, int col, Lexeme lex) : Ast(line, col), lex(lex) { }
@@ -505,6 +548,7 @@ public:
 	virtual void visit_repeat_statement(RepeatStatement *node) = 0;
 	virtual void visit_for_statement(ForStatement *node) = 0;
 	virtual void visit_foreach_statement(ForeachStatement *node) = 0;
+	virtual void visit_list_comprehension(ListComprehension *node) = 0;
 	virtual void visit_class_declaration(ClassDeclaration *node) = 0;
 	virtual void visit_loop_exit(LoopExitStatement *node) = 0;
 	virtual void visit_return_statement(ReturnStatement *node) = 0;

@@ -1198,9 +1198,18 @@ AutoAst Parser::parse_list_literal()
 	if (accept(Lexeme::RSquare)) {
 		return make<ListLiteral>(AstList());
 	}
-	AstList items;
-	items.push_back(parse_expression());
+	auto first = parse_expression();
 	skip_empty_lines();
+
+	// List comprehension: `[ expr foreach var in coll ... ]`. The `foreach`
+	// keyword is unambiguous here because it can't appear as a binary-operator
+	// continuation of `first`, so peeking is enough — no backtracking.
+	if (token.is(Lexeme::Foreach)) {
+		return parse_list_comprehension_tail(line, col, std::move(first));
+	}
+
+	AstList items;
+	items.push_back(std::move(first));
 
 	while (accept(Lexeme::Comma))
 	{
@@ -1211,6 +1220,66 @@ AutoAst Parser::parse_list_literal()
 	expect(Lexeme::RSquare, "at the end of list or array literal");
 
 	return std::make_unique<ListLiteral>(line, col, std::move(items));
+}
+
+AutoAst Parser::parse_list_comprehension_tail(int line, int col, AutoAst yield_expr)
+{
+	trace_ast();
+	constexpr const char *hint = "in list comprehension";
+	expect(Lexeme::Foreach, hint);
+
+	// Loop variables: `var` or `key, value`. Comprehensions don't accept
+	// `ref` capture — the loop variable is a read-only source for the yield
+	// expression, never a write target — so we don't mirror foreach's
+	// ReferenceExpression branch here.
+	auto first_var = parse_identifier(hint);
+	AutoAst key, value;
+	if (accept(Lexeme::Comma)) {
+		key = std::move(first_var);
+		value = parse_identifier(hint);
+	}
+	else {
+		value = std::move(first_var);
+	}
+
+	expect(Lexeme::In, hint);
+	// IMPORTANT: parse_or_expression rather than parse_expression. Phonometrica
+	// has a postfix conditional expression (`e if cond else else_e`, see
+	// parse_conditional_expression at parser.cpp), so calling parse_expression
+	// here would eagerly consume the comprehension's `if` as the start of a
+	// postfix conditional and then demand `else`. parse_or_expression sits
+	// just below that level in the precedence chain — it accepts every other
+	// operator (or/and/not/comparisons/concat/arithmetic/calls/etc.). A user
+	// who actually wants a conditional expression as the collection can
+	// parenthesize: `[expr foreach n in (xs if cond else ys) if ...]`.
+	auto coll = parse_or_expression();
+	// Mirror foreach: the iterator borrows the collection, so wrap it in
+	// ReferenceExpression unless the user already did.
+	if (!dynamic_cast<ReferenceExpression*>(coll.get())) {
+		coll = make<ReferenceExpression>(std::move(coll));
+	}
+
+	AutoAst filter, else_expr;
+	skip_empty_lines();
+	if (accept(Lexeme::If))
+	{
+		filter = parse_expression();
+		// `if cond else expr` is a conditional expression (no filtering);
+		// `if cond` alone is a filter. `parse_expression` won't consume
+		// `else` because it's a statement keyword with no operator role,
+		// so peeking after the condition is safe.
+		skip_empty_lines();
+		if (accept(Lexeme::Else)) {
+			else_expr = parse_expression();
+		}
+	}
+
+	skip_empty_lines();
+	expect(Lexeme::RSquare, "at the end of list comprehension");
+
+	return std::make_unique<ListComprehension>(line, col,
+		std::move(yield_expr), std::move(key), std::move(value),
+		std::move(coll), std::move(filter), std::move(else_expr));
 }
 
 AutoAst Parser::parse_array_literal()

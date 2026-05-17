@@ -42,6 +42,9 @@
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/engine/test_multiple_declaration.phon</Path>
 			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_list_comprehension.phon</Path>
+			</Document>
 		</Directory>
 		<Directory label="frequentist">
 			<Document class="Script">

@@ -132,6 +132,20 @@ public:
 		if (n->block)      n->block->visit(*this);
 	}
 
+	void visit_list_comprehension(ListComprehension *n) override
+	{
+		// Same shape as foreach: `key` and `value` are Variable nodes that
+		// bind names visible to the yield/filter/else expressions. Comprehensions
+		// don't accept `ref` capture, so no ReferenceExpression unwrapping is
+		// needed (emit_foreach_var still handles it harmlessly if that changes).
+		emit_foreach_var(n->key);
+		emit_foreach_var(n->value);
+		if (n->collection) n->collection->visit(*this);
+		if (n->yield_expr) n->yield_expr->visit(*this);
+		if (n->filter)     n->filter->visit(*this);
+		if (n->else_expr)  n->else_expr->visit(*this);
+	}
+
 private:
 
 	void emit_foreach_var(const AutoAst &node)

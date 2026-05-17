@@ -69,6 +69,7 @@ public:
 	void visit_repeat_statement(RepeatStatement *node) override;
 	void visit_for_statement(ForStatement *node) override;
 	void visit_foreach_statement(ForeachStatement *node) override;
+	void visit_list_comprehension(ListComprehension *node) override;
 	void visit_class_declaration(ClassDeclaration *node) override;
 	void visit_loop_exit(LoopExitStatement *node) override;
 	void visit_return_statement(ReturnStatement *node) override;

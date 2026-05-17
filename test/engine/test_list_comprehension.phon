@@ -1,0 +1,421 @@
+# =====================================================================
+# test_list_comprehension.phon
+# =====================================================================
+# Regression suite for list comprehensions.
+#
+# Syntax:
+#     [ <yield> foreach <var> [, <var>] in <coll> [if <cond> [else <else_expr>]] ]
+#
+# Three semantic shapes, distinguished by which optional clauses appear:
+#   1. No `if`:                       yield every iteration.
+#   2. `if <cond>` only:               filter mode -- yield only when cond is true.
+#   3. `if <cond> else <else_expr>`:   conditional mode -- yield <yield> when
+#                                      cond is true, otherwise <else_expr>;
+#                                      no filtering, output length == input length.
+#
+# The grammar reuses the foreach `var` or `key, value` shape, so single-
+# and two-variable iteration work the same way as in foreach loops.
+#
+# Lowering. Comprehensions compile to a foreach-shaped loop over a hidden
+# accumulator local plus the new ListAppendLocal opcode -- NOT to an IIFE.
+# That means references from the yield/filter/else expressions to outer
+# locals stay as direct GetLocal accesses rather than going through
+# GetUpvalue. The "outer-local access" tests below are the regression
+# guards for that path.
+#
+# A failure surfaces as one of the `assert` calls aborting the script
+# with a clear message and line number.
+# =====================================================================
+
+print "==== list comprehension ===="
+
+# =====================================================================
+# Shape 1: no filter -- yield every iteration
+# =====================================================================
+
+print "--- 1. plain comprehension over a list ---"
+let nums1 = [1, 2, 3, 4]
+let doubled1 = [n * 2 foreach n in nums1]
+assert len(doubled1) == 4, "T1a: expected length 4, got " & len(doubled1)
+assert doubled1[1] == 2, "T1b: expected 2, got " & doubled1[1]
+assert doubled1[2] == 4, "T1c"
+assert doubled1[3] == 6, "T1d"
+assert doubled1[4] == 8, "T1e"
+
+# The source list must not be mutated by the comprehension.
+print "--- 2. source list not mutated ---"
+let src2 = [10, 20, 30]
+let copy2 = [n foreach n in src2]
+assert len(src2) == 3, "T2a: source length changed"
+assert src2[1] == 10, "T2b"
+append(copy2, 999)
+assert len(src2) == 3, "T2c: source mutated through aliasing"
+
+print "--- 3. comprehension over an empty list ---"
+let empty3 = []
+let result3 = [n * 2 foreach n in empty3]
+assert len(result3) == 0, "T3: expected empty result, got length " & len(result3)
+
+print "--- 4. yield a constant ---"
+let xs4 = [1, 2, 3, 4, 5]
+let ones4 = [1 foreach n in xs4]
+assert len(ones4) == 5, "T4a"
+assert ones4[1] == 1, "T4b"
+assert ones4[5] == 1, "T4c"
+
+# Strings are iterable in Phonometrica; the comprehension should be too.
+print "--- 5. comprehension over a string ---"
+let upper5 = [to_upper(c) foreach c in "abc"]
+assert len(upper5) == 3, "T5a: expected length 3, got " & len(upper5)
+assert upper5[1] == "A", "T5b"
+assert upper5[2] == "B", "T5c"
+assert upper5[3] == "C", "T5d"
+
+# =====================================================================
+# Shape 2: filter mode
+# =====================================================================
+
+print "--- 6. filter mode (basic) ---"
+let xs6 = [1, 2, 3, 4, 5, 6]
+let evens6 = [n foreach n in xs6 if n % 2 == 0]
+assert len(evens6) == 3, "T6a: expected length 3, got " & len(evens6)
+assert evens6[1] == 2, "T6b"
+assert evens6[2] == 4, "T6c"
+assert evens6[3] == 6, "T6d"
+
+print "--- 7. filter that rejects everything ---"
+let xs7 = [1, 2, 3]
+let nothing7 = [n foreach n in xs7 if n > 100]
+assert len(nothing7) == 0, "T7: expected empty, got length " & len(nothing7)
+
+print "--- 8. filter that accepts everything ---"
+let xs8 = [1, 2, 3]
+let all8 = [n foreach n in xs8 if true]
+assert len(all8) == 3, "T8a"
+assert all8[1] == 1, "T8b"
+assert all8[2] == 2, "T8c"
+assert all8[3] == 3, "T8d"
+
+# Yield expression and filter expression can refer to the same loop var
+# independently. Filter looks at the raw value, yield transforms it.
+print "--- 9. yield transforms while filter checks original ---"
+let words9 = ["a", "bb", "ccc", "dddd"]
+let longish9 = [to_upper(w) foreach w in words9 if len(w) >= 2]
+assert len(longish9) == 3, "T9a"
+assert longish9[1] == "BB", "T9b"
+assert longish9[2] == "CCC", "T9c"
+assert longish9[3] == "DDDD", "T9d"
+
+# =====================================================================
+# Shape 3: conditional mode (if/else)
+# =====================================================================
+
+print "--- 10. conditional mode preserves length ---"
+let xs10 = [1, 2, 3, 4, 5]
+let tags10 = ["even" foreach n in xs10 if n % 2 == 0 else "odd"]
+assert len(tags10) == 5, "T10a: expected length 5, got " & len(tags10)
+assert tags10[1] == "odd", "T10b"
+assert tags10[2] == "even", "T10c"
+assert tags10[3] == "odd", "T10d"
+assert tags10[4] == "even", "T10e"
+assert tags10[5] == "odd", "T10f"
+
+print "--- 11. conditional mode with computed branches ---"
+let xs11 = [-2, -1, 0, 1, 2]
+let abs11 = [n foreach n in xs11 if n >= 0 else 0 - n]
+assert len(abs11) == 5, "T11a"
+assert abs11[1] == 2, "T11b"
+assert abs11[2] == 1, "T11c"
+assert abs11[3] == 0, "T11d"
+assert abs11[4] == 1, "T11e"
+assert abs11[5] == 2, "T11f"
+
+# =====================================================================
+# Two-variable form: foreach k, v in coll
+# =====================================================================
+
+# Tables are unordered, so we count rather than checking positions.
+print "--- 12. comprehension over a table (k, v) ---"
+let person12 = {"name": "John", "surname": "Smith"}
+let pairs12 = [k & "=" & v foreach k, v in person12]
+assert len(pairs12) == 2, "T12a: expected 2 pairs, got " & len(pairs12)
+# Order is hash-determined, so verify by membership.
+let saw_name = false
+let saw_surname = false
+foreach s in pairs12 do
+    if s == "name=John" then saw_name = true end
+    if s == "surname=Smith" then saw_surname = true end
+end
+assert saw_name, "T12b: missing name=John"
+assert saw_surname, "T12c: missing surname=Smith"
+
+print "--- 13. (i, value) form over a list ---"
+let words13 = ["alpha", "beta", "gamma"]
+let labelled13 = [i & ":" & w foreach i, w in words13]
+assert len(labelled13) == 3, "T13a"
+assert labelled13[1] == "1:alpha", "T13b: got " & labelled13[1]
+assert labelled13[2] == "2:beta", "T13c"
+assert labelled13[3] == "3:gamma", "T13d"
+
+# Filter using the key.
+print "--- 14. two-var filter on key ---"
+let words14 = ["a", "b", "c", "d"]
+let odds14 = [w foreach i, w in words14 if i % 2 == 1]
+assert len(odds14) == 2, "T14a"
+assert odds14[1] == "a", "T14b"
+assert odds14[2] == "c", "T14c"
+
+# =====================================================================
+# Outer-local access (the GetLocal-vs-GetUpvalue path)
+# =====================================================================
+# These tests are the regression guard for the no-IIFE lowering: inside
+# the comprehension body, references to names from the enclosing scope
+# must resolve as local accesses (not closure upvalues), and the values
+# must be the current ones at the time of iteration.
+
+print "--- 15. yield references an outer variable ---"
+let multiplier15 = 10
+let xs15 = [1, 2, 3]
+let result15 = [n * multiplier15 foreach n in xs15]
+assert result15[1] == 10, "T15a"
+assert result15[2] == 20, "T15b"
+assert result15[3] == 30, "T15c"
+
+print "--- 16. filter references an outer variable ---"
+let threshold16 = 3
+let xs16 = [1, 2, 3, 4, 5]
+let above16 = [n foreach n in xs16 if n > threshold16]
+assert len(above16) == 2, "T16a"
+assert above16[1] == 4, "T16b"
+assert above16[2] == 5, "T16c"
+
+# Mutating the outer var between iterations would observe the change
+# if the comprehension reads it each time. We don't promise that
+# semantics formally, but for our compile we do read it each iteration,
+# so confirm we DON'T accidentally cache it.
+print "--- 17. outer variable read each iteration ---"
+let state17 = 1
+function add_and_read17(x)
+    state17 += 1
+    return state17 + x
+end
+let xs17 = [10, 10, 10]
+let observed17 = [add_and_read17(n) foreach n in xs17]
+assert observed17[1] == 12, "T17a: state17 should have been 2 + 10, got " & observed17[1]
+assert observed17[2] == 13, "T17b"
+assert observed17[3] == 14, "T17c"
+
+# Comprehension inside a function body: outer = function locals.
+print "--- 18. comprehension inside a function (locals as outer) ---"
+function scale18(factor, lst)
+    return [x * factor foreach x in lst]
+end
+let scaled18 = scale18(3, [1, 2, 4])
+assert scaled18[1] == 3, "T18a"
+assert scaled18[2] == 6, "T18b"
+assert scaled18[3] == 12, "T18c"
+
+# =====================================================================
+# Scope and shadowing
+# =====================================================================
+
+# The loop variable must NOT leak into the enclosing scope, mirroring
+# foreach's behaviour.
+print "--- 19. loop var does not leak ---"
+# Declare with a value so the name exists in the enclosing scope.
+let s19 = "outer"
+let dummy19 = [to_upper(s) foreach s in ["a", "b"]]
+# Inside the comprehension, `s` was the loop var; outside, the outer
+# binding must be unchanged.
+assert s19 == "outer", "T19a: outer s19 was clobbered, got " & s19
+assert dummy19[1] == "A", "T19b"
+
+# A name from the outer scope can be shadowed by the loop variable.
+# Inside the comprehension, the inner binding wins; outside, the
+# outer is intact.
+print "--- 20. loop var shadows an outer name ---"
+let n20 = 999
+let xs20 = [1, 2, 3]
+let copy20 = [n foreach n in xs20]
+assert n20 == 999, "T20a: outer n20 was clobbered, got " & n20
+assert copy20[1] == 1, "T20b"
+assert copy20[2] == 2, "T20c"
+assert copy20[3] == 3, "T20d"
+
+# =====================================================================
+# Nesting
+# =====================================================================
+
+print "--- 21. comprehension inside another comprehension ---"
+let rows21 = [[1, 2], [3, 4], [5, 6]]
+# Sum each inner list. (No reduce builtin; do it explicitly.)
+let sums21 = [[2 * x foreach x in row] foreach row in rows21]
+assert len(sums21) == 3, "T21a"
+assert sums21[1][1] == 2, "T21b"
+assert sums21[1][2] == 4, "T21c"
+assert sums21[2][1] == 6, "T21d"
+assert sums21[3][2] == 12, "T21e"
+
+print "--- 22. comprehension used as a function argument ---"
+function sum22(lst)
+    let total = 0
+    foreach x in lst do
+        total += x
+    end
+    return total
+end
+let total22 = sum22([n * n foreach n in [1, 2, 3, 4]])
+assert total22 == 30, "T22: expected 1+4+9+16=30, got " & total22
+
+print "--- 23. comprehension as RHS of compound expression ---"
+let xs23 = [1, 2, 3]
+let pair23 = [[n foreach n in xs23], "marker"]
+assert len(pair23) == 2, "T23a"
+assert pair23[1][2] == 2, "T23b"
+assert pair23[2] == "marker", "T23c"
+
+# =====================================================================
+# Multi-line syntax
+# =====================================================================
+# `]` already accepts a leading newline (existing list-literal behaviour);
+# the comprehension parser additionally allows newlines before `if` and
+# before `else` so wide comprehensions remain readable.
+
+print "--- 24. multi-line comprehension ---"
+let xs24 = [1, 2, 3, 4]
+let result24 = [
+    n * 2
+    foreach n in xs24
+    if n > 1
+    else 0
+]
+assert len(result24) == 4, "T24a"
+assert result24[1] == 0, "T24b: expected else branch (0), got " & result24[1]
+assert result24[2] == 4, "T24c"
+assert result24[3] == 6, "T24d"
+assert result24[4] == 8, "T24e"
+
+# =====================================================================
+# Side-effect ordering (left-to-right)
+# =====================================================================
+
+print "--- 25. yield expressions evaluated in order ---"
+let counter25 = 0
+function step25()
+    counter25 += 1
+    return counter25
+end
+let order25 = [step25() foreach n in [10, 20, 30]]
+assert order25[1] == 1, "T25a: expected 1, got " & order25[1]
+assert order25[2] == 2, "T25b"
+assert order25[3] == 3, "T25c"
+assert counter25 == 3, "T25d: counter should be 3, got " & counter25
+
+# Filter runs before yield. A filter side-effect should be visible to
+# a later iteration's yield, and a rejected iteration should NOT
+# invoke yield.
+print "--- 26. filter runs before yield; rejected iters skip yield ---"
+let filter_calls26 = 0
+let yield_calls26 = 0
+function pred26(n)
+    filter_calls26 += 1
+    return n > 2
+end
+function transform26(n)
+    yield_calls26 += 1
+    return n
+end
+let result26 = [transform26(n) foreach n in [1, 2, 3, 4] if pred26(n)]
+assert filter_calls26 == 4, "T26a: pred should run 4x, got " & filter_calls26
+assert yield_calls26 == 2, "T26b: transform should run 2x (only when pred true), got " & yield_calls26
+assert len(result26) == 2, "T26c"
+
+# =====================================================================
+# Comprehensions can contain comprehensions in the yield expression and
+# in the collection expression. Confirm both paths work.
+# =====================================================================
+
+print "--- 27. comprehension in the collection expression ---"
+let xs27 = [10, 20, 30, 40]
+let evens_doubled27 = [n * 2 foreach n in [x foreach x in xs27 if x >= 20]]
+assert len(evens_doubled27) == 3, "T27a"
+assert evens_doubled27[1] == 40, "T27b"
+assert evens_doubled27[2] == 60, "T27c"
+assert evens_doubled27[3] == 80, "T27d"
+
+# =====================================================================
+# The lowering uses a hidden $-prefixed accumulator name. Make sure a
+# user variable that happens to be visible in the enclosing scope is
+# untouched even if we squint at it: declaring an outer `acc` and then
+# running a comprehension should leave the outer `acc` alone.
+# =====================================================================
+
+print "--- 28. hidden accumulator does not collide with user names ---"
+let acc28 = "outer_acc"
+let result28 = [n foreach n in [1, 2, 3]]
+assert acc28 == "outer_acc", "T28a: outer acc was clobbered, got " & acc28
+assert len(result28) == 3, "T28b"
+
+# =====================================================================
+# Interaction with the postfix conditional expression form
+# =====================================================================
+# Phonometrica has a postfix `e if cond else else_e` conditional at the
+# expression level. The comprehension parser must NOT let that form
+# greedily consume the comprehension's own `if` clause as part of the
+# collection expression. The regression: parsing the collection with
+# the full `parse_expression` would do exactly that — see filter mode
+# below, which is the case that originally exposed the bug.
+
+# The comprehension's own `if` is reserved for the filter/conditional
+# clauses. The collection is parsed at `or`-precedence, so any operator
+# below the postfix conditional is fine inline.
+print "--- 29. complex collection expression with operators ---"
+let xs29a = [1, 2, 3]
+let xs29b = [10, 20, 30]
+# Concatenation in the collection (the `+` operator on lists; if your
+# build doesn't include this, the test still exercises the precedence
+# point because parse_or_expression handles it.) -- using a function
+# call instead to stay portable.
+function concat29(a, b)
+    let out = []
+    foreach x in a do append(out, x) end
+    foreach x in b do append(out, x) end
+    return out
+end
+let result29 = [n foreach n in concat29(xs29a, xs29b) if n >= 3]
+assert len(result29) == 4, "T29a: expected 4 elements, got " & len(result29)
+assert result29[1] == 3, "T29b"
+assert result29[2] == 10, "T29c"
+assert result29[3] == 20, "T29d"
+assert result29[4] == 30, "T29e"
+
+# A conditional expression in the collection requires explicit parens
+# (because parse_or_expression doesn't fold in the postfix conditional).
+# This is the documented escape hatch for the precedence choice.
+print "--- 30. parenthesised conditional as collection ---"
+let cond30 = true
+let xs30 = [1, 2]
+let ys30 = [10, 20]
+let result30 = [n foreach n in (xs30 if cond30 else ys30)]
+assert len(result30) == 2, "T30a"
+assert result30[1] == 1, "T30b"
+assert result30[2] == 2, "T30c"
+cond30 = false
+let result30b = [n foreach n in (xs30 if cond30 else ys30)]
+assert result30b[1] == 10, "T30d"
+assert result30b[2] == 20, "T30e"
+
+# A conditional expression in the yield position parses cleanly without
+# parens, because nothing after it looks like an operator that would
+# extend the yield. `foreach` ends the yield expression.
+print "--- 31. conditional expression in yield position ---"
+let xs31 = [1, 2, 3, 4]
+let tagged31 = ["big" if n > 2 else "small" foreach n in xs31]
+assert len(tagged31) == 4, "T31a"
+assert tagged31[1] == "small", "T31b"
+assert tagged31[2] == "small", "T31c"
+assert tagged31[3] == "big", "T31d"
+assert tagged31[4] == "big", "T31e"
+
+print ""
+print "==== ALL list-comprehension tests passed ===="

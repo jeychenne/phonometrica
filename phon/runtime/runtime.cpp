@@ -922,6 +922,20 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				push(value);
 				break;
 			}
+			case Opcode::ListAppendLocal:
+			{
+				// Append top-of-stack to the List in local slot N. The slot is
+				// guaranteed to hold a List by construction (the compiler emits
+				// NewList + DefineLocal before the loop), so we use raw_cast to
+				// skip the type check. unshare() is a no-op when the list isn't
+				// shared, which is the common case inside a comprehension.
+				trace_op();
+				Variant &acc = current_frame->locals[*ip++];
+				auto &storage = raw_cast<List>(acc.unshare()).items();
+				storage.append(peek().resolve());
+				pop();
+				break;
+			}
 			case Opcode::Modulus:
 			{
 				trace_op();
@@ -1903,6 +1917,12 @@ size_t Runtime::disassemble_instruction(const Routine &routine, size_t offset)
 		case Opcode::LessEqual:
 		{
 			return print_simple_instruction("LESS_EQUAL");
+		}
+		case Opcode::ListAppendLocal:
+		{
+			int slot = routine.code[offset+1];
+			printf("LIST_APPEND    %-5d\n", slot);
+			return 2;
 		}
 		case Opcode::Modulus:
 		{

@@ -188,6 +188,11 @@ void ForeachStatement::visit(AstVisitor &v)
 	VISIT(foreach_statement);
 }
 
+void ListComprehension::visit(AstVisitor &v)
+{
+	VISIT(list_comprehension);
+}
+
 void DebugStatement::visit(AstVisitor &v)
 {
 	VISIT(debug_statement);

@@ -178,6 +178,12 @@ private:
 
 	AutoAst parse_list_literal();
 
+	// Parse the suffix of a list comprehension, starting at the `foreach`
+	// keyword. The yield expression (everything to the left of `foreach`)
+	// has already been parsed and is passed in. Consumed range:
+	// `foreach Ident (',' Ident)? 'in' expr ('if' expr ('else' expr)?)? ']'`.
+	AutoAst parse_list_comprehension_tail(int line, int col, AutoAst yield_expr);
+
 	AutoAst parse_array_literal();
 
 	AutoAst parse_table_literal();

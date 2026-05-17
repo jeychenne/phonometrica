@@ -710,6 +710,80 @@ Here are the builtin types that support iteration with the ``foreach`` loop:
 
 
 
+List comprehensions
+~~~~~~~~~~~~~~~~~~~
+
+When the purpose of a ``foreach`` loop is simply to build a new list from another iterable — applying a transformation to each element, keeping only some
+elements, or selecting between two values per element — a *list comprehension* offers a more concise expression-level form. The syntax mirrors that of
+``foreach`` but sits inside square brackets and produces a list as its value:
+
+.. code:: phon
+
+    let nums = [1, 2, 3, 4]
+    let doubled = [n * 2 foreach n in nums]
+    print doubled   # prints [2, 4, 6, 8]
+
+
+An ``if`` clause can be added after the collection to filter the results. Only elements for which the condition is true are included:
+
+.. code:: phon
+
+    let nums = [1, 2, 3, 4, 5, 6]
+    let evens = [n foreach n in nums if n % 2 == 0]
+    print evens   # prints [2, 4, 6]
+
+
+If the ``if`` clause is followed by an ``else`` clause, the comprehension switches to a *conditional* form. The yield expression is appended when the condition is
+true and the ``else`` expression otherwise. Nothing is filtered out, so the resulting list has the same length as the input:
+
+.. code:: phon
+
+    let nums = [1, 2, 3, 4, 5]
+    let tags = ["even" foreach n in nums if n % 2 == 0 else "odd"]
+    print tags   # prints ["odd", "even", "odd", "even", "odd"]
+
+
+As with ``foreach``, a second loop variable iterates over keys (or indexes) together with values. This is especially useful for tables, whose entries are
+accessed as key/value pairs:
+
+.. code:: phon
+
+    let person = { "name": "John", "surname": "Smith" }
+    let pairs = [k & "=" & v foreach k, v in person]
+
+
+The yield expression, the filter and the ``else`` expression may all refer to names from the enclosing scope. The loop variable, on the other hand, is local to
+the comprehension and does not leak out: it exists only while the comprehension is evaluated.
+
+.. code:: phon
+
+    let factor = 3
+    let xs = [1, 2, 4]
+    let scaled = [x * factor foreach x in xs]
+    # `x` is not in scope here.
+
+
+.. note::
+
+    Unlike ``foreach``, list comprehensions iterate **by value only**: the form ``foreach ref x in lst``, which a regular ``foreach`` loop accepts to grab each
+    element by reference, has no comprehension equivalent. The loop variable in a comprehension is a read-only source for the yield expression — the comprehension
+    cannot mutate the elements of the collection it iterates over. If you need to modify elements in place, use a regular ``foreach`` loop with ``ref``.
+
+
+One last note about precedence. Phonometrica also accepts the postfix form ``e if cond else other`` as a regular expression (a conditional expression). To keep
+the comprehension grammar unambiguous, the collection in a comprehension is parsed at a precedence level just below this postfix conditional. If you need a
+conditional expression as the collection itself, simply parenthesise it:
+
+.. code:: phon
+
+    let xs = [1, 2]
+    let ys = [10, 20]
+    let cond = true
+    let result = [n foreach n in (xs if cond else ys)]
+
+
+
+
 Scope of variables
 ~~~~~~~~~~~~~~~~~~
 
