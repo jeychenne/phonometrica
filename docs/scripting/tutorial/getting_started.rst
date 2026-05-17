@@ -785,7 +785,7 @@ This means that ``f`` is now a function (the function ``inner``). When we call i
 Multiple declarations and list destructuring
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Phonometrica lets you declare multiple variables at once, with or without a value:
+Phonometrica lets you declare multiple local variables at once, with or without a value:
 
 .. code:: phon
 
