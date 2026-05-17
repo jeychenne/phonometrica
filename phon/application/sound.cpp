@@ -467,14 +467,16 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 	return 0;
 }
 
-double Sound::get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold, double time_step, bool use_gaussian)
+double Sound::get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold,
+                             double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost,
+                             double time_step, bool use_gaussian)
 {
 	open();
 	auto first_sample = time_to_frame(t1);
 	auto last_sample = time_to_frame(t2);
 	auto input = get_channel(channel, first_sample, last_sample);
 	auto f0 = speech::get_pitch(method, input, sample_rate(), min_pitch, max_pitch, time_step, threshold,
-	                             0.35, 0.14, 0.03, 0.01, use_gaussian);
+	                             octave_jump_cost, voicing_cost, silence_threshold, octave_cost, use_gaussian);
 	double total = 0;
 	int n = 0;
 
@@ -648,6 +650,150 @@ void Sound::initialize(Runtime &rt)
 		return Variant(std::move(table));
 	};
 
+	// ── Options Tables for acoustic queries ────────────────────────────
+	//
+	// Each *_opts overload below takes a trailing `options as Table`. The
+	// Table comes either from an explicit literal { "min_pitch": 80 } or
+	// from the named-argument syntax (min_pitch = 80, max_pitch = 400),
+	// which the parser packs into a Table with the same shape. The three
+	// parse helpers start from per-category defaults in Settings and let
+	// the caller override whatever keys they care about. Validation is
+	// strict: any unknown key is a hard error rather than a silent default
+	// — typos like "min_picth" would otherwise leave the user wondering
+	// why their override had no effect.
+	//
+	// Numeric values use to_integer()/to_float() so callers can write
+	// `lpc_order = 10` or `lpc_order = 10.0` interchangeably. Strings
+	// (method) and booleans (use_gaussian) are strict on type.
+
+	struct PitchOpts {
+		String method;
+		double min_pitch;
+		double max_pitch;
+		double threshold;
+		double octave_jump_cost;
+		double voicing_cost;
+		double silence_threshold;
+		double octave_cost;
+		double time_step;       // only consumed by get_mean_pitch
+		bool   use_gaussian;
+	};
+
+	auto load_pitch_defaults = []() -> PitchOpts {
+		String cat("pitch_tracking");
+		PitchOpts o;
+		o.method            = Settings::get_string(cat, "method");
+		o.min_pitch         = Settings::get_number(cat, "minimum_pitch");
+		o.max_pitch         = Settings::get_number(cat, "maximum_pitch");
+		o.threshold         = Settings::get_number(cat, "voicing_threshold");
+		o.octave_jump_cost  = Settings::get_number(cat, "octave_jump_cost");
+		o.voicing_cost      = Settings::get_number(cat, "voicing_cost");
+		o.silence_threshold = Settings::get_number(cat, "silence_threshold");
+		o.octave_cost       = Settings::get_number(cat, "octave_cost");
+		o.time_step         = Settings::get_number(cat, "time_step");
+		o.use_gaussian      = Settings::get_boolean(cat, "use_gaussian");
+		return o;
+	};
+
+	auto parse_pitch_options = [load_pitch_defaults](const Table &tab, bool allow_time_step) -> PitchOpts {
+		PitchOpts o = load_pitch_defaults();
+		for (auto &pair : tab.data())
+		{
+			if (!pair.first.is_string()) {
+				throw error("[Type error] get_pitch options Table: keys must be strings");
+			}
+			const String &key = cast<String>(pair.first);
+			const Variant &v  = pair.second;
+			if      (key == "method")            { o.method            = cast<String>(v); }
+			else if (key == "min_pitch")         { o.min_pitch         = v.resolve().to_float(); }
+			else if (key == "max_pitch")         { o.max_pitch         = v.resolve().to_float(); }
+			else if (key == "threshold")         { o.threshold         = v.resolve().to_float(); }
+			else if (key == "octave_jump_cost")  { o.octave_jump_cost  = v.resolve().to_float(); }
+			else if (key == "voicing_cost")      { o.voicing_cost      = v.resolve().to_float(); }
+			else if (key == "silence_threshold") { o.silence_threshold = v.resolve().to_float(); }
+			else if (key == "octave_cost")       { o.octave_cost       = v.resolve().to_float(); }
+			else if (key == "use_gaussian")      { o.use_gaussian      = cast<bool>(v); }
+			else if (key == "time_step" && allow_time_step) { o.time_step = v.resolve().to_float(); }
+			else {
+				if (allow_time_step) {
+					throw error("[Value error] get_mean_pitch options: unknown key \"%\". "
+					            "Supported keys: \"method\", \"min_pitch\", \"max_pitch\", \"threshold\", "
+					            "\"octave_jump_cost\", \"voicing_cost\", \"silence_threshold\", "
+					            "\"octave_cost\", \"time_step\", \"use_gaussian\".", key);
+				} else {
+					throw error("[Value error] get_pitch options: unknown key \"%\". "
+					            "Supported keys: \"method\", \"min_pitch\", \"max_pitch\", \"threshold\", "
+					            "\"octave_jump_cost\", \"voicing_cost\", \"silence_threshold\", "
+					            "\"octave_cost\", \"use_gaussian\".", key);
+				}
+			}
+		}
+		return o;
+	};
+
+	struct FormantOpts {
+		intptr_t nformant;
+		double   nyquist;
+		double   window_size;
+		intptr_t lpc_order;
+	};
+
+	auto parse_formant_options = [](const Table &tab) -> FormantOpts {
+		String cat("formants");
+		FormantOpts o;
+		o.nformant    = (intptr_t) Settings::get_number(cat, "number_of_formants");
+		o.nyquist     = Settings::get_number(cat, "max_frequency");
+		o.window_size = Settings::get_number(cat, "window_size");
+		o.lpc_order   = (intptr_t) Settings::get_number(cat, "lpc_order");
+		for (auto &pair : tab.data())
+		{
+			if (!pair.first.is_string()) {
+				throw error("[Type error] get_formants options Table: keys must be strings");
+			}
+			const String &key = cast<String>(pair.first);
+			const Variant &v  = pair.second;
+			if      (key == "nformant")    { o.nformant    = v.resolve().to_integer(); }
+			else if (key == "nyquist")     { o.nyquist     = v.resolve().to_float(); }
+			else if (key == "window_size") { o.window_size = v.resolve().to_float(); }
+			else if (key == "lpc_order")   { o.lpc_order   = v.resolve().to_integer(); }
+			else {
+				throw error("[Value error] get_formants options: unknown key \"%\". "
+				            "Supported keys: \"nformant\", \"nyquist\", \"window_size\", \"lpc_order\".",
+				            key);
+			}
+		}
+		return o;
+	};
+
+	struct VoiceReportOpts {
+		double f0_min;
+		double f0_max;
+	};
+
+	auto parse_voice_report_options = [](const Table &tab) -> VoiceReportOpts {
+		// Defaults match Sound::compute_voice_report (Praat's voice-report
+		// defaults). There is no Settings category for the voice report at
+		// the moment, so these are inlined rather than read from Settings.
+		VoiceReportOpts o { 75.0, 600.0 };
+		for (auto &pair : tab.data())
+		{
+			if (!pair.first.is_string()) {
+				throw error("[Type error] get_voice_report options Table: keys must be strings");
+			}
+			const String &key = cast<String>(pair.first);
+			const Variant &v  = pair.second;
+			if      (key == "f0_min") { o.f0_min = v.resolve().to_float(); }
+			else if (key == "f0_max") { o.f0_max = v.resolve().to_float(); }
+			else {
+				throw error("[Value error] get_voice_report options: unknown key \"%\". "
+				            "Supported keys: \"f0_min\", \"f0_max\".", key);
+			}
+		}
+		return o;
+	};
+
+	// ── Voice report ────────────────────────────────────────────────────
+
 	auto get_voice_report1 = [pack_voice_report](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &sound  = cast<Sound>(args[0]);
 		auto channel = (int) args[1].resolve().get_number();
@@ -657,16 +803,18 @@ void Sound::initialize(Runtime &rt)
 		return pack_voice_report(rt, r);
 	};
 
-	auto get_voice_report2 = [pack_voice_report](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &sound  = cast<Sound>(args[0]);
-		auto channel = (int) args[1].resolve().get_number();
-		auto t1      = args[2].resolve().get_number();
-		auto t2      = args[3].resolve().get_number();
-		auto f0_min  = args[4].resolve().get_number();
-		auto f0_max  = args[5].resolve().get_number();
-		auto r       = sound.compute_voice_report(channel, t1, t2, f0_min, f0_max);
+	auto get_voice_report_opts = [pack_voice_report, parse_voice_report_options](Runtime &rt, std::span<Variant> args) -> Variant {
+		auto &sound   = cast<Sound>(args[0]);
+		auto channel  = (int) args[1].resolve().get_number();
+		auto t1       = args[2].resolve().get_number();
+		auto t2       = args[3].resolve().get_number();
+		auto &options = cast<Table>(args[4]);
+		auto o        = parse_voice_report_options(options);
+		auto r        = sound.compute_voice_report(channel, t1, t2, o.f0_min, o.f0_max);
 		return pack_voice_report(rt, r);
 	};
+
+	// ── Pitch ───────────────────────────────────────────────────────────
 
 	auto get_pitch1 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &sound = cast<Sound>(args[0]);
@@ -681,32 +829,19 @@ void Sound::initialize(Runtime &rt)
 		return sound.get_pitch(channel, m, time, min_pitch, max_pitch, threshold);
 	};
 
-	auto get_pitch2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &sound = cast<Sound>(args[0]);
-		auto channel = (int) args[1].resolve().get_number();
-		auto time = args[2].resolve().get_number();
-		auto min_pitch = args[3].resolve().get_number();
-		auto max_pitch = args[4].resolve().get_number();
-		String category("pitch_tracking");
-		auto threshold = Settings::get_number(category, "voicing_threshold");
-		auto method = Settings::get_string(category, "method");
-		auto m = Sound::get_pitch_tracker(method);
-		return sound.get_pitch(channel, m, time, min_pitch, max_pitch, threshold);
+	auto get_pitch_opts = [parse_pitch_options](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound   = cast<Sound>(args[0]);
+		auto channel  = (int) args[1].resolve().get_number();
+		auto time     = args[2].resolve().get_number();
+		auto &options = cast<Table>(args[3]);
+		auto o        = parse_pitch_options(options, /*allow_time_step*/ false);
+		auto m        = Sound::get_pitch_tracker(o.method);
+		return sound.get_pitch(channel, m, time, o.min_pitch, o.max_pitch, o.threshold,
+		                       o.octave_jump_cost, o.voicing_cost, o.silence_threshold,
+		                       o.octave_cost, o.use_gaussian);
 	};
 
-	auto get_pitch3 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &sound = cast<Sound>(args[0]);
-		auto channel = (int) args[1].resolve().get_number();
-		auto time = args[2].resolve().get_number();
-		auto min_pitch = args[3].resolve().get_number();
-		auto max_pitch = args[4].resolve().get_number();
-		auto threshold = args[5].resolve().get_number();
-		auto method = Settings::get_string("pitch_tracking", "method");
-		auto m = Sound::get_pitch_tracker(method);
-		return sound.get_pitch(channel, m, time, min_pitch, max_pitch, threshold);
-	};
-
-	auto get_mean_pitch = [](Runtime &, std::span<Variant> args) -> Variant {
+	auto get_mean_pitch1 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &sound = cast<Sound>(args[0]);
 		auto channel = (int) args[1].resolve().get_number();
 		auto t1 = args[2].resolve().get_number();
@@ -719,6 +854,21 @@ void Sound::initialize(Runtime &rt)
 		auto m = Sound::get_pitch_tracker(method);
 		return sound.get_mean_pitch(channel, m, t1, t2, min_pitch, max_pitch, threshold);
 	};
+
+	auto get_mean_pitch_opts = [parse_pitch_options](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound   = cast<Sound>(args[0]);
+		auto channel  = (int) args[1].resolve().get_number();
+		auto t1       = args[2].resolve().get_number();
+		auto t2       = args[3].resolve().get_number();
+		auto &options = cast<Table>(args[4]);
+		auto o        = parse_pitch_options(options, /*allow_time_step*/ true);
+		auto m        = Sound::get_pitch_tracker(o.method);
+		return sound.get_mean_pitch(channel, m, t1, t2, o.min_pitch, o.max_pitch, o.threshold,
+		                            o.octave_jump_cost, o.voicing_cost, o.silence_threshold,
+		                            o.octave_cost, o.time_step, o.use_gaussian);
+	};
+
+	// ── Formants ────────────────────────────────────────────────────────
 
 	auto get_formants1 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &sound = cast<Sound>(args[0]);
@@ -733,16 +883,14 @@ void Sound::initialize(Runtime &rt)
 		return sound.get_formants(channel, time, nformant, nyquist, win_size, lpc_order);
 	};
 
-	auto get_formants2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &sound = cast<Sound>(args[0]);
-		auto channel = (int) args[1].resolve().get_number();
-		auto time = args[2].resolve().get_number();
-		intptr_t nformant = cast<intptr_t>(args[3]);
-		double nyquist = args[4].resolve().get_number();
-		double win_size = args[5].resolve().get_number();
-		intptr_t lpc_order = cast<intptr_t>(args[6]);
+	auto get_formants_opts = [parse_formant_options](Runtime &, std::span<Variant> args) -> Variant {
+		auto &sound   = cast<Sound>(args[0]);
+		auto channel  = (int) args[1].resolve().get_number();
+		auto time     = args[2].resolve().get_number();
+		auto &options = cast<Table>(args[3]);
+		auto o        = parse_formant_options(options);
 		sound.open();
-		return sound.get_formants(channel, time, nformant, nyquist, win_size, lpc_order);
+		return sound.get_formants(channel, time, o.nformant, o.nyquist, o.window_size, o.lpc_order);
 	};
 
 	auto hz2bark1 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -880,15 +1028,15 @@ void Sound::initialize(Runtime &rt)
 	cls->add_method(rt.get_field_string, sound_get_field, { CLS(Sound), CLS(String) });
 
 	rt.add_global("get_pitch", get_pitch1, {CLS(Sound), CLS(intptr_t), CLS(Number) });
-	rt.add_global("get_pitch", get_pitch2, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number) });
-	rt.add_global("get_pitch", get_pitch3, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
-	rt.add_global("get_mean_pitch", get_mean_pitch, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number)});
+	rt.add_global("get_pitch", get_pitch_opts, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Table) });
+	rt.add_global("get_mean_pitch", get_mean_pitch1, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number)});
+	rt.add_global("get_mean_pitch", get_mean_pitch_opts, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Table)});
 	rt.add_global("get_formants", get_formants1, {CLS(Sound), CLS(intptr_t), CLS(Number) });
-	rt.add_global("get_formants", get_formants2, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(intptr_t), CLS(Number), CLS(Number), CLS(intptr_t) });
+	rt.add_global("get_formants", get_formants_opts, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Table) });
 	rt.add_global("get_intensity", get_intensity, {CLS(Sound), CLS(intptr_t), CLS(Number) });
 	rt.add_global("get_mean_intensity", get_mean_intensity, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number)});
 	rt.add_global("get_voice_report", get_voice_report1, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number) });
-	rt.add_global("get_voice_report", get_voice_report2, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
+	rt.add_global("get_voice_report", get_voice_report_opts, {CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Table) });
 	rt.add_global("hertz_to_bark", hz2bark1, {CLS(Number) });
 	rt.add_global("hertz_to_bark", hz2bark2, {CLS(Array<double>) });
 	rt.add_global("bark_to_hertz", bark2hz1, {CLS(Number) });

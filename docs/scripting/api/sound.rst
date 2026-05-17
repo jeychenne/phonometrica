@@ -137,38 +137,116 @@ Returns the mean intensity (in dB) between ``t1`` and ``t2`` on the specified ch
 
 ------------
 
-.. function:: get_pitch(sound as Sound, channel as Integer, time [, minimum_pitch [, maximum_pitch [, voicing_threshold]]])
+.. function:: get_pitch(sound as Sound, channel as Integer, time as Number [, options as Table])
 
-Returns the pitch (in Hz) at the given time, or ``undefined`` if the sound is unvoiced at that time. Optionally, you can specify the minimum and maximum pitches, as well as the 
-voicing threshold used by the pitch detection algorithm. If these optional parameters are not provided, your current settings will be used instead.
+Returns the F0 value (in Hz) at the given time on the specified channel, or ``undefined`` if the
+sound is unvoiced at that time. When the ``options`` table is omitted, all tracker settings come
+from your current pitch-tracking preferences.
+
+The ``options`` table can be written as a literal (``{ "min_pitch": 80, "max_pitch": 400 }``) or
+built up with the :ref:`named-argument syntax <named_arguments>`
+(``min_pitch = 80, max_pitch = 400`` as trailing arguments). Both forms are exactly equivalent.
+Validation is strict: any unknown key raises an error rather than being silently ignored, so a
+typo like ``"min_picth"`` does not leave you wondering why your override had no effect. Keys you
+do not supply fall back to your global pitch-tracking settings.
+
+Supported keys:
+
+* ``method`` (string): pitch tracker to use (e.g. ``"reaper"``).
+* ``min_pitch`` (number): lower bound on the candidate F0, in Hz.
+* ``max_pitch`` (number): upper bound on the candidate F0, in Hz.
+* ``threshold`` (number): voicing threshold used by the tracker.
+* ``octave_jump_cost`` (number): penalty applied to large frame-to-frame F0 jumps.
+* ``voicing_cost`` (number): penalty controlling the voiced/unvoiced decision.
+* ``silence_threshold`` (number): amplitude below which frames are treated as silent.
+* ``octave_cost`` (number): bias toward higher candidates within each frame.
+* ``use_gaussian`` (boolean): if ``true``, apply a Gaussian window to the analysis frames.
+
+Example::
+
+   let snd = get_sounds()[1]
+
+   # Defaults from settings.
+   let f0 = get_pitch(snd, 1, 0.5)
+
+   # Override the search range. Named-argument form:
+   let f0b = get_pitch(snd, 1, 0.5, min_pitch = 80, max_pitch = 400)
+
+   # Same call, table-literal form:
+   let f0c = get_pitch(snd, 1, 0.5, { "min_pitch": 80, "max_pitch": 400 })
 
 
 ------------
 
-.. function:: get_mean_pitch(sound as Sound, channel as Integer, t1 as Number, t2 as Number)
+.. function:: get_mean_pitch(sound as Sound, channel as Integer, t1 as Number, t2 as Number [, options as Table])
 
-Returns the mean F0 value (in Hz) between ``t1`` and ``t2`` on the specified channel.
+Returns the mean F0 value (in Hz) between ``t1`` and ``t2`` on the specified channel, averaged over
+the voiced frames in that interval. When the ``options`` table is omitted, all tracker settings
+come from your current pitch-tracking preferences.
+
+``options`` behaves exactly as for :func:`get_pitch`, with the same strict validation and the same
+two equivalent call forms (table literal or :ref:`named arguments <named_arguments>`). All keys
+listed for ``get_pitch`` are accepted, plus:
+
+* ``time_step`` (number): frame step in seconds for the underlying pitch tracker.
+
+Example::
+
+   let snd = get_sounds()[1]
+
+   let m = get_mean_pitch(snd, 1, 0.5, 1.2, min_pitch = 80, max_pitch = 400)
 
 
 ------------
 
-.. function:: get_formants(sound as Sound, channel as Integer, time [, nformant [, maximum_frequency, [, window_length [, lpc_order]]]]])
+.. function:: get_formants(sound as Sound, channel as Integer, time as Number [, options as Table])
 
-Returns an ``Array`` containing ``nformant`` rows and 2 columns. The first column contains formant values (in Hertz), such that F1 is at index (1, 1), F2 is at index (2, 1), etc.
-The second column contains the formants' bandwidths: F1's bandwidth is at index (1, 2), F2's bandwidth is at (2, 2), etc. Optionally, you can specify the number of formants to extract,
-the maximum possible frequency of the last formant, the analysis window length and the LPC order. If these optional parameters are not provided, your current settings
-will be used instead.
+Returns an ``Array`` containing ``nformant`` rows and 2 columns. The first column contains formant
+values (in Hertz), such that F1 is at index (1, 1), F2 is at index (2, 1), etc. The second column
+contains the formants' bandwidths: F1's bandwidth is at index (1, 2), F2's bandwidth is at (2, 2),
+etc.
+
+When the ``options`` table is omitted, all analysis parameters come from your current formant
+settings. As for :func:`get_pitch`, ``options`` can be written as a literal
+(``{ "nformant": 5, "lpc_order": 12 }``) or with the
+:ref:`named-argument syntax <named_arguments>`
+(``nformant = 5, lpc_order = 12``). Unknown keys raise an error.
+
+Supported keys:
+
+* ``nformant`` (integer): number of formants to return.
+* ``nyquist`` (number): maximum frequency considered for the topmost formant, in Hz. A common
+  choice is 5000 Hz for adult male voices and 5500 Hz for adult female voices.
+* ``window_size`` (number): analysis window duration, in seconds.
+* ``lpc_order`` (integer): order of the LPC analysis.
+
+Example::
+
+   let snd = get_sounds()[1]
+
+   # Defaults from settings.
+   let f = get_formants(snd, 1, 0.5)
+
+   # Female-voice band, 5 formants:
+   let f2 = get_formants(snd, 1, 0.5, nformant = 5, nyquist = 5500, lpc_order = 12)
 
 
 ------------
 
-.. function:: get_voice_report(sound as Sound, channel as Integer, t1 as Number, t2 as Number [, f0_min as Number, f0_max as Number])
+.. function:: get_voice_report(sound as Sound, channel as Integer, t1 as Number, t2 as Number [, options as Table])
 
 Computes the full voice-quality battery (jitter, shimmer, harmonics-to-noise ratio, plus a pulse summary) over the half-open
 time interval ``[t1, t2)`` on the specified channel, and returns the result as a ``Table``. When ``channel`` is 0, the per-frame
-mean across channels is analysed (the "average" view). The optional ``f0_min`` and ``f0_max`` arguments bound REAPER's
-periodicity search and the period filter applied to the perturbation aggregates; if omitted, they default to 75 Hz and 600 Hz
-respectively, matching Praat's voice-report defaults.
+mean across channels is analysed (the "average" view).
+
+When the ``options`` table is omitted, F0 search bounds default to 75 Hz and 600 Hz, matching Praat's voice-report defaults.
+``options`` can be written as a literal (``{ "f0_min": 100, "f0_max": 500 }``) or with the
+:ref:`named-argument syntax <named_arguments>` (``f0_min = 100, f0_max = 500``). Unknown keys raise an error.
+
+Supported keys:
+
+* ``f0_min`` (number): lower bound on REAPER's periodicity search and the period filter, in Hz.
+* ``f0_max`` (number): upper bound on REAPER's periodicity search and the period filter, in Hz.
 
 The returned table has 14 fields. ``num_pulses`` is the number of voiced glottal-closure instants detected by REAPER in the
 selection. All other fields are ``Number`` values, and equal ``undefined`` (NaN) when there are not enough valid pulses or

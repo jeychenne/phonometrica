@@ -567,15 +567,20 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 
 	// ── Sound & acoustic measurement ────────────────────────────
 	{ "get_pitch",  {
-		"get_pitch(sound as Sound, channel as Integer, time as Number)\nReturns the F0 value (Hz) at the given time.\002",
-		"get_pitch(sound as Sound, channel as Integer, time as Number, min_pitch as Number, max_pitch as Number)\nReturns the F0 value (Hz) with the specified pitch range.\001"
+		"get_pitch(sound as Sound, channel as Integer, time as Number)\nReturns the F0 value (Hz) at the given time, using the global pitch-tracking settings.\002",
+		"get_pitch(sound as Sound, channel as Integer, time as Number, options as Table)\nReturns the F0 value (Hz). Options keys (any subset, named-argument syntax supported): \"method\", \"min_pitch\", \"max_pitch\", \"threshold\", \"octave_jump_cost\", \"voicing_cost\", \"silence_threshold\", \"octave_cost\", \"use_gaussian\". Unspecified keys fall back to the global pitch-tracking settings.\001"
 	}},
 	{ "get_mean_pitch",  {
-		"get_mean_pitch(sound as Sound, channel as Integer, t1 as Number, t2 as Number)\nReturns the mean F0 value (Hz) between `t1` and `t2`."
+		"get_mean_pitch(sound as Sound, channel as Integer, t1 as Number, t2 as Number)\nReturns the mean F0 value (Hz) between `t1` and `t2`, using the global pitch-tracking settings.\002",
+		"get_mean_pitch(sound as Sound, channel as Integer, t1 as Number, t2 as Number, options as Table)\nReturns the mean F0 value (Hz). Options keys (any subset, named-argument syntax supported): \"method\", \"min_pitch\", \"max_pitch\", \"threshold\", \"octave_jump_cost\", \"voicing_cost\", \"silence_threshold\", \"octave_cost\", \"time_step\", \"use_gaussian\". Unspecified keys fall back to the global pitch-tracking settings.\001"
 	}},
 	{ "get_formants",  {
-		"get_formants(sound as Sound, channel as Integer, time as Number)\nReturns an array of formant values (Hz) at the given time.\002",
-		"get_formants(sound as Sound, channel as Integer, time as Number, nformant as Integer,\n             nyquist as Number, window as Number, lpc_order as Integer)\nReturns formant values with custom analysis parameters.\001"
+		"get_formants(sound as Sound, channel as Integer, time as Number)\nReturns an array of formant values (Hz) at the given time, using the global formant settings.\002",
+		"get_formants(sound as Sound, channel as Integer, time as Number, options as Table)\nReturns formant values at the given time. Options keys (any subset, named-argument syntax supported): \"nformant\", \"nyquist\", \"window_size\", \"lpc_order\". Unspecified keys fall back to the global formant settings.\001"
+	}},
+	{ "get_voice_report",  {
+		"get_voice_report(sound as Sound, channel as Integer, t1 as Number, t2 as Number)\nReturns a Table with jitter, shimmer, HNR and pulse-summary measurements over [t1, t2), using Praat's voice-report F0 defaults (75–600 Hz).\002",
+		"get_voice_report(sound as Sound, channel as Integer, t1 as Number, t2 as Number, options as Table)\nReturns a Table with voice-quality measurements. Options keys (any subset, named-argument syntax supported): \"f0_min\", \"f0_max\".\001"
 	}},
 	{ "get_intensity",  {
 		"get_intensity(sound as Sound, channel as Integer, time as Number)\nReturns the intensity (dB) at the given time."

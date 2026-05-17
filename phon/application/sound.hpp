@@ -107,7 +107,9 @@ public:
                      double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01,
                      bool use_gaussian = false);
 
-	double get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold, double time_step = 0.01, bool use_gaussian = false);
+	double get_mean_pitch(int channel, speech::PitchTracker method, double t1, double t2, double min_pitch, double max_pitch, double threshold,
+	                      double octave_jump_cost = 0.35, double voicing_cost = 0.14, double silence_threshold = 0.03, double octave_cost = 0.01,
+	                      double time_step = 0.01, bool use_gaussian = false);
 
 	double get_intensity(int channel, double time);
 
