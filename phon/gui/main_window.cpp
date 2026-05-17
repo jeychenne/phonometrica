@@ -63,6 +63,7 @@
 #include <phon/gui/conc/pitch_query_editor.hpp>
 #include <phon/gui/conc/intensity_query_editor.hpp>
 #include <phon/gui/conc/spectral_moments_query_editor.hpp>
+#include <phon/gui/conc/voice_quality_query_editor.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/analysis_view.hpp>
 #include <phon/gui/batch_save_dialog.hpp>
@@ -306,6 +307,8 @@ QMenu *MainWindow::createAnalysisMenu()
 	menu->addAction(tr("Measure intensity..."), this, &MainWindow::onMeasureIntensity);
 
 	menu->addAction(tr("Measure spectral moments..."), this, &MainWindow::onMeasureSpectralMoments);
+
+	menu->addAction(tr("Measure voice quality..."), this, &MainWindow::onMeasureVoiceQuality);
 
 	menu->addSeparator();
 
@@ -1671,6 +1674,41 @@ void MainWindow::onMeasureSpectralMoments()
 	}
 }
 
+void MainWindow::onMeasureVoiceQuality()
+{
+	VoiceQualityQueryEditor editor(this);
+
+	if (editor.exec() == QDialog::Accepted)
+	{
+		m_last_query = editor.query();
+		auto conc = editor.concordance();
+
+		// Voice quality is undefined on instants — the kernel needs a span of
+		// samples to detect pulses. Surface a single aggregate warning if any
+		// match's reference target was an instant; the offending rows show NaN.
+		if (auto vq = recast<VoiceQualityQuery>(m_last_query)) {
+			intptr_t n_instants = vq->instant_target_count();
+			if (n_instants > 0) {
+				QMessageBox::warning(this, tr("Voice quality"),
+					tr("%1 match(es) had an instant target and could not be measured "
+					   "(voice quality requires an interval). The corresponding cells are blank.")
+					.arg((qlonglong) n_instants));
+			}
+		}
+
+		if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+		{
+			openConcordance(conc);
+			statusBar()->showMessage(
+				tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+		}
+		else
+		{
+			QMessageBox::information(this, tr("Search"), tr("No matches found."));
+		}
+	}
+}
+
 void MainWindow::onRecordSound()
 {
 	RecordSoundDialog dlg(this);
@@ -1994,6 +2032,38 @@ void MainWindow::onEditLastQuery()
 		{
 			m_last_query = editor.query();
 			auto conc = editor.concordance();
+
+			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+			{
+				openConcordance(conc);
+				statusBar()->showMessage(
+					tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+			}
+			else
+			{
+				QMessageBox::information(this, tr("Search"), tr("No matches found."));
+			}
+		}
+	}
+	else if (m_last_query->is_voice_quality_query())
+	{
+		auto vq = recast<VoiceQualityQuery>(copy);
+		VoiceQualityQueryEditor editor(vq, this);
+
+		if (editor.exec() == QDialog::Accepted)
+		{
+			m_last_query = editor.query();
+			auto conc = editor.concordance();
+
+			if (auto vqr = recast<VoiceQualityQuery>(m_last_query)) {
+				intptr_t n_instants = vqr->instant_target_count();
+				if (n_instants > 0) {
+					QMessageBox::warning(this, tr("Voice quality"),
+						tr("%1 match(es) had an instant target and could not be measured "
+						   "(voice quality requires an interval). The corresponding cells are blank.")
+						.arg((qlonglong) n_instants));
+				}
+			}
 
 			if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 			{
@@ -2331,6 +2401,38 @@ void MainWindow::onDocumentRequested(Document *doc)
 			{
 				m_last_query = editor.query();
 				auto conc = editor.concordance();
+
+				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
+				{
+					openConcordance(conc);
+					statusBar()->showMessage(
+						tr("Found %1 match(es)").arg((int) conc->row_count()), 3000);
+				}
+				else
+				{
+					QMessageBox::information(this, tr("Search"), tr("No matches found."));
+				}
+			}
+		}
+		else if (query_doc->is_voice_quality_query())
+		{
+			auto vq = recast<VoiceQualityQuery>(Handle<Query>(query_doc));
+			VoiceQualityQueryEditor editor(vq, this);
+
+			if (editor.exec() == QDialog::Accepted)
+			{
+				m_last_query = editor.query();
+				auto conc = editor.concordance();
+
+				if (auto vqr = recast<VoiceQualityQuery>(m_last_query)) {
+					intptr_t n_instants = vqr->instant_target_count();
+					if (n_instants > 0) {
+						QMessageBox::warning(this, tr("Voice quality"),
+							tr("%1 match(es) had an instant target and could not be measured "
+							   "(voice quality requires an interval). The corresponding cells are blank.")
+							.arg((qlonglong) n_instants));
+					}
+				}
 
 				if (conc && (!conc->empty() || !Settings::get_boolean("concordance", "discard_empty")))
 				{

@@ -217,6 +217,21 @@ public:
 	/// Set spectral moments metadata. Called by SpectralMomentsQuery::execute().
 	void set_spectral_moments_meta(bool cog, bool spread, bool skewness, bool kurtosis);
 
+	// ── Voice quality metadata ───────────────────────────────────────────
+	// Pulses, jitter, shimmer, HNR are stored per match. No computed columns.
+	// Values are stored in display units (ms, %, µs, dB, Hz) so CSV exports
+	// are immediately readable without per-column scaling.
+
+	bool is_voice_quality() const { return m_is_voice_quality; }
+
+	/// Set voice quality metadata. Called by VoiceQualityQuery::execute().
+	void set_voice_quality_meta(bool num_pulses, bool mean_period, bool mean_f0,
+	                            bool jitter_local, bool jitter_local_abs,
+	                            bool jitter_rap, bool jitter_ppq5, bool jitter_ddp,
+	                            bool shimmer_local, bool shimmer_local_db,
+	                            bool shimmer_apq3, bool shimmer_apq5, bool shimmer_apq11,
+	                            bool hnr);
+
 	// ── Duration metadata ───────────────────────────────────────────────
 
 	bool has_duration() const { return m_has_duration; }
@@ -494,6 +509,24 @@ protected:
 	bool m_sm_spread = true;              // Spread column enabled
 	bool m_sm_skewness = true;            // Skewness column enabled
 	bool m_sm_kurtosis = true;            // Kurtosis column enabled
+
+	// ── Voice quality metadata ───────────────────────────────────────────
+
+	bool m_is_voice_quality = false;      // true if this concordance holds voice quality data
+	bool m_vq_num_pulses       = false;   // Number of pulses
+	bool m_vq_mean_period      = false;   // Mean period (ms)
+	bool m_vq_mean_f0          = false;   // Mean F0 (Hz)
+	bool m_vq_jitter_local     = false;   // Jitter local (%)
+	bool m_vq_jitter_local_abs = false;   // Jitter local absolute (µs)
+	bool m_vq_jitter_rap       = false;   // RAP (%)
+	bool m_vq_jitter_ppq5      = false;   // PPQ5 (%)
+	bool m_vq_jitter_ddp       = false;   // DDP (%)
+	bool m_vq_shimmer_local    = false;   // Shimmer local (%)
+	bool m_vq_shimmer_local_db = false;   // Shimmer local (dB)
+	bool m_vq_shimmer_apq3     = false;   // APQ3 (%)
+	bool m_vq_shimmer_apq5     = false;   // APQ5 (%)
+	bool m_vq_shimmer_apq11    = false;   // APQ11 (%)
+	bool m_vq_hnr              = false;   // HNR (dB)
 
 	// ── Duration metadata ───────────────────────────────────────────────
 

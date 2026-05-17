@@ -11,6 +11,10 @@ Release notes
 - **Sound file operations**: *Extract slice...* (single sound or as the sound side of an annotation slice) and *Concatenate sounds...*. Concatenation is strict-mode (matching sample rate and channel count); resample-on-concatenate is planned. Output format (WAV, AIFF, FLAC, OGG) is selectable.
 - *Extract slice...* on a bound annotation offers three modes — annotation only, sound only, or both; the *both* mode binds the new annotation to the new sound automatically.
 
+**Acoustic queries**
+
+- **Voice quality query** (``Analysis > Measure voice quality...``): batch-mode equivalent of the interactive *Voice report* (``F9`` in the sound view). Runs a text search and then computes jitter, shimmer, HNR, and pulse-summary measures on each matched interval. The dialog exposes the F0 range and a 14-checkbox grid for selecting which measures appear as concordance columns, with *Select essentials* (pulses, mean F0, jitter local, shimmer local, HNR) and *Select all* presets. Measurements are stored in display units (ms, %, µs, dB, Hz, integer pulses) so CSV exports are immediately readable. Voice quality is whole-interval only — there is no midpoint or n-point option — and instant targets are skipped with a single summary warning. Headers mirror Praat's naming.
+
 **Scripting**
 
 - New globals matching the GUI operations: ``duplicate_annotation``, ``extract_layers``, ``merge_annotations``, ``extract_annotation_slice`` (two overloads), ``concatenate_annotations`` (two overloads), ``extract_sound_slice``, ``concatenate_sounds``. All return a fresh handle to a file written on disk; the caller decides whether to import it into the project.

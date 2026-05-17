@@ -272,6 +272,56 @@ or as an **n-point** measurement at user-specified percentages. When n-point mea
 the result concordance can be toggled between wide and long format.
 
 
+Voice quality queries
+~~~~~~~~~~~~~~~~~~~~~
+
+**Voice quality** measures characterise glottal-source perturbation and noise — jitter (period
+perturbation), shimmer (amplitude perturbation), and harmonics-to-noise ratio. They are widely used
+in phoniatric and clinical work as well as in studies of voice register, breathiness, and creak.
+To run a voice quality query, click on ``Analysis > Measure voice quality...``.
+
+The kernel is the same one that powers the interactive *Voice report* (``F9`` in the sound view) and
+the :func:`get_voice_report` scripting function — REAPER-based pulse detection [TAL2014]_ for the
+jitter and shimmer families, Praat-style normalised autocorrelation [BOE1993]_ for HNR. Reported
+values match Praat's "Voice report" for cross-checking. See :ref:`voice-report` for the definition
+of each measure and the filtering rules (out-of-range periods, 1.3× period-ratio cap, 1.6× amplitude-
+ratio cap for shimmer).
+
+The voice quality query editor extends the text query editor with one analysis settings panel:
+
+- **F0 range** (default 75–600 Hz): bounds REAPER's periodicity search and the period filter applied
+  to jitter and shimmer aggregates. Narrow the range for higher- or lower-pitched material.
+- **Measurements**: 14 checkboxes split into three logical columns — *pulses and F0* (number of pulses,
+  mean period in ms, mean F0 in Hz), *jitter family* (local, local absolute in µs, RAP, PPQ5, DDP, all
+  as percentages except the absolute), and *shimmer family + HNR* (local, local in dB, APQ3, APQ5,
+  APQ11, HNR in dB).
+
+Two preset buttons sit below the grid:
+
+- **Select essentials**: checks the five most commonly reported measures — *Number of pulses*,
+  *Mean F0*, *Jitter local*, *Shimmer local*, and *HNR*. This is the default when the dialog opens.
+- **Select all**: checks all 14 measures.
+
+Unlike formant, pitch, intensity, and spectral moments queries, voice quality is **always measured
+over the entire matched interval** — there is no midpoint or n-point option. Jitter, shimmer, and HNR
+all require a span of samples wide enough to detect multiple glottal pulses; a single time-point makes
+no sense for these measures.
+
+For the same reason, voice quality queries cannot measure **instant** annotations (targets where
+``start_time == end_time``). When a query produces one or more matches whose reference target is an
+instant, Phonometrica leaves the corresponding measurement cells blank and shows a single warning
+dialog after the search completes, reporting the number of skipped matches. The non-instant matches
+in the same batch are unaffected.
+
+Each measurement is stored in the concordance in the same unit shown in the GUI Voice report
+(milliseconds for period, percent for the relative jitter and shimmer measures, microseconds for
+absolute jitter, decibels for ``Shimmer (dB)`` and HNR, Hz for mean F0, and an integer for the pulse
+count), so a CSV export is immediately readable without per-column unit conversion. Column headers in
+the concordance mirror Praat's naming: ``Pulses``, ``Period(ms)``, ``F0(Hz)``, ``Jitter(%)``,
+``Jitter(µs)``, ``RAP(%)``, ``PPQ5(%)``, ``DDP(%)``, ``Shimmer(%)``, ``Shimmer(dB)``, ``APQ3(%)``,
+``APQ5(%)``, ``APQ11(%)``, ``HNR(dB)``.
+
+
 References
 ----------
 

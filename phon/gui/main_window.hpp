@@ -131,6 +131,7 @@ private slots:
 	void onMeasurePitch();
 	void onMeasureIntensity();
 	void onMeasureSpectralMoments();
+	void onMeasureVoiceQuality();
 	void onEditLastQuery();
 
 	// Speech menu

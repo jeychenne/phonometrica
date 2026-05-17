@@ -43,7 +43,8 @@ public:
 		Intensity = 8,
 		Duration  = 16,
 		SpectralMoments = 32,
-		Acoustic  = Formant|Pitch|Intensity|Duration|SpectralMoments
+		VoiceQuality = 64,
+		Acoustic  = Formant|Pitch|Intensity|Duration|SpectralMoments|VoiceQuality
 	};
 
 	using Context = Concordance::Context;
@@ -80,6 +81,8 @@ public:
 	virtual bool is_intensity_query() const { return false; }
 
 	virtual bool is_spectral_moments_query() const { return false; }
+
+	virtual bool is_voice_quality_query() const { return false; }
 
 	const Array<AutoMetaConstraint> &metaconstraints() const { return m_metaconstraints; }
 

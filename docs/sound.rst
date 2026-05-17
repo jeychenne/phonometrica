@@ -278,6 +278,9 @@ The same computation is also available from the scripting engine through the
 :func:`get_voice_report` function, which returns a ``Table`` whose keys mirror the fields in
 the printed report; see the :ref:`Sound API <sound-type>` page.
 
+To extract voice quality measures systematically from a corpus, use a voice quality query
+(see :ref:`acoustic-queries`).
+
 
 .. _sound-file-operations:
 

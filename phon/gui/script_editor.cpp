@@ -540,7 +540,7 @@ void ScriptEditor::contextMenuEvent(QContextMenuEvent *e)
 
 	QString word = wordAtPoint(e->pos());
 
-	auto *goto_action = new QAction(tr("Go to Definition"), menu);
+	auto *goto_action = new QAction(tr("Go to definition\tctrl+click"), menu);
 	// Disable rather than hide when there's nothing to navigate to — keeps
 	// the feature discoverable.
 	goto_action->setEnabled(!word.isEmpty());

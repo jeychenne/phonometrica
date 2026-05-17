@@ -89,6 +89,22 @@ Concordance::Concordance(const Concordance &other) :
 	m_sm_skewness = other.m_sm_skewness;
 	m_sm_kurtosis = other.m_sm_kurtosis;
 
+	m_is_voice_quality      = other.m_is_voice_quality;
+	m_vq_num_pulses         = other.m_vq_num_pulses;
+	m_vq_mean_period        = other.m_vq_mean_period;
+	m_vq_mean_f0            = other.m_vq_mean_f0;
+	m_vq_jitter_local       = other.m_vq_jitter_local;
+	m_vq_jitter_local_abs   = other.m_vq_jitter_local_abs;
+	m_vq_jitter_rap         = other.m_vq_jitter_rap;
+	m_vq_jitter_ppq5        = other.m_vq_jitter_ppq5;
+	m_vq_jitter_ddp         = other.m_vq_jitter_ddp;
+	m_vq_shimmer_local      = other.m_vq_shimmer_local;
+	m_vq_shimmer_local_db   = other.m_vq_shimmer_local_db;
+	m_vq_shimmer_apq3       = other.m_vq_shimmer_apq3;
+	m_vq_shimmer_apq5       = other.m_vq_shimmer_apq5;
+	m_vq_shimmer_apq11      = other.m_vq_shimmer_apq11;
+	m_vq_hnr                = other.m_vq_hnr;
+
 	m_has_duration = other.m_has_duration;
 	m_duration_in_ms = other.m_duration_in_ms;
 	m_highlight_targets = other.m_highlight_targets;
@@ -193,6 +209,30 @@ void Concordance::set_spectral_moments_meta(bool cog, bool spread, bool skewness
 	m_sm_kurtosis = kurtosis;
 }
 
+void Concordance::set_voice_quality_meta(bool num_pulses, bool mean_period, bool mean_f0,
+                                          bool jitter_local, bool jitter_local_abs,
+                                          bool jitter_rap, bool jitter_ppq5, bool jitter_ddp,
+                                          bool shimmer_local, bool shimmer_local_db,
+                                          bool shimmer_apq3, bool shimmer_apq5, bool shimmer_apq11,
+                                          bool hnr)
+{
+	m_is_voice_quality      = true;
+	m_vq_num_pulses         = num_pulses;
+	m_vq_mean_period        = mean_period;
+	m_vq_mean_f0            = mean_f0;
+	m_vq_jitter_local       = jitter_local;
+	m_vq_jitter_local_abs   = jitter_local_abs;
+	m_vq_jitter_rap         = jitter_rap;
+	m_vq_jitter_ppq5        = jitter_ppq5;
+	m_vq_jitter_ddp         = jitter_ddp;
+	m_vq_shimmer_local      = shimmer_local;
+	m_vq_shimmer_local_db   = shimmer_local_db;
+	m_vq_shimmer_apq3       = shimmer_apq3;
+	m_vq_shimmer_apq5       = shimmer_apq5;
+	m_vq_shimmer_apq11      = shimmer_apq11;
+	m_vq_hnr                = hnr;
+}
+
 int Concordance::stored_fields_per_point() const
 {
 	if (m_is_pitch || m_is_intensity) return 1;
@@ -203,6 +243,24 @@ int Concordance::stored_fields_per_point() const
 		if (m_sm_skewness) ++n;
 		if (m_sm_kurtosis) ++n;
 		return (n > 0) ? n : 4;
+	}
+	if (m_is_voice_quality) {
+		int n = 0;
+		if (m_vq_num_pulses)       ++n;
+		if (m_vq_mean_period)      ++n;
+		if (m_vq_mean_f0)          ++n;
+		if (m_vq_jitter_local)     ++n;
+		if (m_vq_jitter_local_abs) ++n;
+		if (m_vq_jitter_rap)       ++n;
+		if (m_vq_jitter_ppq5)      ++n;
+		if (m_vq_jitter_ddp)       ++n;
+		if (m_vq_shimmer_local)    ++n;
+		if (m_vq_shimmer_local_db) ++n;
+		if (m_vq_shimmer_apq3)     ++n;
+		if (m_vq_shimmer_apq5)     ++n;
+		if (m_vq_shimmer_apq11)    ++n;
+		if (m_vq_hnr)              ++n;
+		return (n > 0) ? n : 1;
 	}
 	return m_nformant + (m_has_bandwidth ? m_nformant : 0);
 }
@@ -216,9 +274,9 @@ int Concordance::display_fields_per_point() const
 		if (m_has_semitones) n++;
 		if (m_has_pitch_erb) n++;
 	}
-	else if (m_is_spectral_moments || m_is_intensity)
+	else if (m_is_spectral_moments || m_is_intensity || m_is_voice_quality)
 	{
-		// No derived columns for spectral moments or intensity.
+		// No derived columns for spectral moments, intensity, or voice quality.
 	}
 	else
 	{
@@ -272,6 +330,34 @@ void Concordance::rebuild_extra_headers()
 				emit_sm_group(m_extra_headers, "(avg)");
 			}
 		}
+		return;
+	}
+
+	if (m_is_voice_quality)
+	{
+		// ── Voice quality headers ────────────────────────────────────────
+		// Always measured over the whole interval — no per-point variants,
+		// no measurement-time column. Order matches speech::VoiceReport.
+		auto emit_vq_group = [&](Array<String> &headers)
+		{
+			if (m_vq_num_pulses)       headers.append("Pulses");
+			if (m_vq_mean_period)      headers.append("Period(ms)");
+			if (m_vq_mean_f0)          headers.append("F0(Hz)");
+			if (m_vq_jitter_local)     headers.append("Jitter(%)");
+			if (m_vq_jitter_local_abs) headers.append("Jitter(\xC2\xB5s)"); // µs
+			if (m_vq_jitter_rap)       headers.append("RAP(%)");
+			if (m_vq_jitter_ppq5)      headers.append("PPQ5(%)");
+			if (m_vq_jitter_ddp)       headers.append("DDP(%)");
+			if (m_vq_shimmer_local)    headers.append("Shimmer(%)");
+			if (m_vq_shimmer_local_db) headers.append("Shimmer(dB)");
+			if (m_vq_shimmer_apq3)     headers.append("APQ3(%)");
+			if (m_vq_shimmer_apq5)     headers.append("APQ5(%)");
+			if (m_vq_shimmer_apq11)    headers.append("APQ11(%)");
+			if (m_vq_hnr)              headers.append("HNR(dB)");
+		};
+
+		emit_vq_group(m_base_headers);
+		emit_vq_group(m_extra_headers);
 		return;
 	}
 
@@ -579,6 +665,14 @@ double Concordance::resolve_group_value(const std::vector<double> &meas, int sto
 		return std::nan("");
 	}
 
+	if (m_is_voice_quality)
+	{
+		// Voice quality: N stored values (in display units), no computed columns.
+		intptr_t idx = stored_base + within_group;
+		if (idx < (intptr_t)meas.size()) return meas[idx];
+		return std::nan("");
+	}
+
 	if (m_is_pitch)
 	{
 		// Pitch: 1 stored value (F0 in Hz), then optional semitones and ERB computed on the fly.
@@ -675,6 +769,38 @@ String Concordance::format_measurement(double val, int within_group) const
 		// use a heuristic: values > 10 are likely Hz, others are dimensionless.
 		if (std::abs(val) > 10.0) return String::format("%.1f", val);
 		return String::format("%.4f", val);
+	}
+
+	if (m_is_voice_quality)
+	{
+		// Voice quality: column-specific formatting. The order of stored columns
+		// (within_group, 0-based) is determined by the m_vq_* flags, in the same
+		// order as in rebuild_extra_headers(). We walk the enabled flags to map
+		// within_group back to the semantic column type, then format accordingly.
+		auto fmt_field = [&](int decimals, bool as_int) -> String {
+			if (as_int) return String::format("%d", (int)std::round(val));
+			char fmt_buf[16];
+			std::snprintf(fmt_buf, sizeof(fmt_buf), "%%.%df", decimals);
+			return String::format(fmt_buf, val);
+		};
+
+		int wg = 0;
+		if (m_vq_num_pulses)       { if (wg++ == within_group) return fmt_field(0, true);  }
+		if (m_vq_mean_period)      { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_mean_f0)          { if (wg++ == within_group) return fmt_field(1, false); }
+		if (m_vq_jitter_local)     { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_jitter_local_abs) { if (wg++ == within_group) return fmt_field(2, false); }
+		if (m_vq_jitter_rap)       { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_jitter_ppq5)      { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_jitter_ddp)       { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_shimmer_local)    { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_shimmer_local_db) { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_shimmer_apq3)     { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_shimmer_apq5)     { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_shimmer_apq11)    { if (wg++ == within_group) return fmt_field(3, false); }
+		if (m_vq_hnr)              { if (wg++ == within_group) return fmt_field(2, false); }
+		// Fallback (should not happen): default formatting
+		return String::format("%.3f", val);
 	}
 
 	if (m_is_pitch)
@@ -929,7 +1055,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) const
 {
-	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments) return -1;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments && !m_is_voice_quality) return -1;
 
 	int sfpp = stored_fields_per_point();
 	int dfpp = display_fields_per_point();
@@ -1069,7 +1195,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 bool Concordance::is_editable_measurement(intptr_t col) const
 {
-	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments) return false;
+	if (m_nformant == 0 && !m_is_pitch && !m_is_intensity && !m_is_spectral_moments && !m_is_voice_quality) return false;
 	if (!is_measurement_column(col)) return false;
 
 	// Compute extra column index
@@ -1284,6 +1410,21 @@ void Concordance::load()
 	m_sm_spread = true;
 	m_sm_skewness = true;
 	m_sm_kurtosis = true;
+	m_is_voice_quality      = false;
+	m_vq_num_pulses         = false;
+	m_vq_mean_period        = false;
+	m_vq_mean_f0            = false;
+	m_vq_jitter_local       = false;
+	m_vq_jitter_local_abs   = false;
+	m_vq_jitter_rap         = false;
+	m_vq_jitter_ppq5        = false;
+	m_vq_jitter_ddp         = false;
+	m_vq_shimmer_local      = false;
+	m_vq_shimmer_local_db   = false;
+	m_vq_shimmer_apq3       = false;
+	m_vq_shimmer_apq5       = false;
+	m_vq_shimmer_apq11      = false;
+	m_vq_hnr                = false;
 	m_has_duration = false;
 	m_duration_in_ms = false;
 	m_highlight_targets = true;
@@ -1418,6 +1559,27 @@ void Concordance::load()
 					m_has_series = child.text().as_bool(true);
 			}
 		}
+		else if (node.name() == str("VoiceQualityMeta"))
+		{
+			m_is_voice_quality = true;
+			for (auto child = node.first_child(); child; child = child.next_sibling())
+			{
+				if      (child.name() == str("HasNumPulses"))      m_vq_num_pulses        = child.text().as_bool(false);
+				else if (child.name() == str("HasMeanPeriod"))     m_vq_mean_period       = child.text().as_bool(false);
+				else if (child.name() == str("HasMeanF0"))         m_vq_mean_f0           = child.text().as_bool(false);
+				else if (child.name() == str("HasJitterLocal"))    m_vq_jitter_local      = child.text().as_bool(false);
+				else if (child.name() == str("HasJitterLocalAbs")) m_vq_jitter_local_abs  = child.text().as_bool(false);
+				else if (child.name() == str("HasJitterRap"))      m_vq_jitter_rap        = child.text().as_bool(false);
+				else if (child.name() == str("HasJitterPpq5"))     m_vq_jitter_ppq5       = child.text().as_bool(false);
+				else if (child.name() == str("HasJitterDdp"))      m_vq_jitter_ddp        = child.text().as_bool(false);
+				else if (child.name() == str("HasShimmerLocal"))   m_vq_shimmer_local     = child.text().as_bool(false);
+				else if (child.name() == str("HasShimmerLocalDb")) m_vq_shimmer_local_db  = child.text().as_bool(false);
+				else if (child.name() == str("HasShimmerApq3"))    m_vq_shimmer_apq3      = child.text().as_bool(false);
+				else if (child.name() == str("HasShimmerApq5"))    m_vq_shimmer_apq5      = child.text().as_bool(false);
+				else if (child.name() == str("HasShimmerApq11"))   m_vq_shimmer_apq11     = child.text().as_bool(false);
+				else if (child.name() == str("HasHnr"))            m_vq_hnr               = child.text().as_bool(false);
+			}
+		}
 		else if (node.name() == str("ColumnAliases"))
 		{
 			for (auto child = node.first_child(); child; child = child.next_sibling())
@@ -1517,6 +1679,13 @@ void Concordance::normalize_after_load()
 	if (m_is_spectral_moments)
 	{
 		// Spectral moments metadata was loaded from XML. Just rebuild display headers.
+		rebuild_extra_headers();
+		return;
+	}
+
+	if (m_is_voice_quality)
+	{
+		// Voice quality metadata was loaded from XML. Just rebuild display headers.
 		rebuild_extra_headers();
 		return;
 	}
@@ -1900,6 +2069,29 @@ void Concordance::write()
 			.set_value(m_sm_kurtosis ? "true" : "false");
 		sm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
+	}
+
+	// ── Voice quality metadata ──────────────────────────────────────────
+	if (m_is_voice_quality)
+	{
+		auto vq = root.append_child("VoiceQualityMeta");
+		auto emit_flag = [&](const char *name, bool v) {
+			vq.append_child(name).append_child(node_pcdata).set_value(v ? "true" : "false");
+		};
+		emit_flag("HasNumPulses",      m_vq_num_pulses);
+		emit_flag("HasMeanPeriod",     m_vq_mean_period);
+		emit_flag("HasMeanF0",         m_vq_mean_f0);
+		emit_flag("HasJitterLocal",    m_vq_jitter_local);
+		emit_flag("HasJitterLocalAbs", m_vq_jitter_local_abs);
+		emit_flag("HasJitterRap",      m_vq_jitter_rap);
+		emit_flag("HasJitterPpq5",     m_vq_jitter_ppq5);
+		emit_flag("HasJitterDdp",      m_vq_jitter_ddp);
+		emit_flag("HasShimmerLocal",   m_vq_shimmer_local);
+		emit_flag("HasShimmerLocalDb", m_vq_shimmer_local_db);
+		emit_flag("HasShimmerApq3",    m_vq_shimmer_apq3);
+		emit_flag("HasShimmerApq5",    m_vq_shimmer_apq5);
+		emit_flag("HasShimmerApq11",   m_vq_shimmer_apq11);
+		emit_flag("HasHnr",            m_vq_hnr);
 	}
 
 	// ── Measurement metadata for wide/long toggle ─────────────────────────
@@ -2302,6 +2494,15 @@ void Concordance::copy_metadata_to(Concordance &target) const
 	}
 	if (m_is_spectral_moments) {
 		target.set_spectral_moments_meta(m_sm_cog, m_sm_spread, m_sm_skewness, m_sm_kurtosis);
+	}
+	if (m_is_voice_quality) {
+		target.set_voice_quality_meta(
+			m_vq_num_pulses, m_vq_mean_period, m_vq_mean_f0,
+			m_vq_jitter_local, m_vq_jitter_local_abs,
+			m_vq_jitter_rap, m_vq_jitter_ppq5, m_vq_jitter_ddp,
+			m_vq_shimmer_local, m_vq_shimmer_local_db,
+			m_vq_shimmer_apq3, m_vq_shimmer_apq5, m_vq_shimmer_apq11,
+			m_vq_hnr);
 	}
 	if (has_measurement_data()) {
 		target.set_measurement_info(m_measurement_points, m_has_average);
