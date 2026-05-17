@@ -180,11 +180,11 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	auto *row1 = new QHBoxLayout;
 	row1->addWidget(new QLabel(tr("Algorithm:")));
 	m_algorithm_combo = new QComboBox;
-	m_algorithm_combo->addItem("Harvest");
-	m_algorithm_combo->addItem("RAPT");
-	m_algorithm_combo->addItem("REAPER");
-	m_algorithm_combo->addItem("SWIPE");
-	m_algorithm_combo->addItem("Praat");
+	m_algorithm_combo->addItem("Harvest (high accuracy)");
+	m_algorithm_combo->addItem("RAPT (classic)");
+	m_algorithm_combo->addItem("REAPER (default, robust)");
+	m_algorithm_combo->addItem("SWIPE (octave-robust)");
+	m_algorithm_combo->addItem("Praat (autocorrelation)");
 	m_algorithm_combo->setCurrentIndex(2);
 	row1->addWidget(m_algorithm_combo);
 	row1->addSpacing(10);

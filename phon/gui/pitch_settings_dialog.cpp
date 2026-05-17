@@ -91,11 +91,11 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 
 	main_layout->addWidget(new QLabel(tr("Method:")));
 	m_method_combo = new QComboBox;
-	m_method_combo->addItem(tr("Reaper"), QStringLiteral("reaper"));
-	m_method_combo->addItem(tr("Harvest"), QStringLiteral("harvest"));
-	m_method_combo->addItem(tr("RAPT"), QStringLiteral("rapt"));
-	m_method_combo->addItem(tr("Swipe"), QStringLiteral("swipe"));
-	m_method_combo->addItem(tr("Praat"), QStringLiteral("praat"));
+	m_method_combo->addItem(tr("REAPER (default, robust)"), QStringLiteral("reaper"));
+	m_method_combo->addItem(tr("Praat (autocorrelation)"),  QStringLiteral("praat"));
+	m_method_combo->addItem(tr("SWIPE (octave-robust)"),    QStringLiteral("swipe"));
+	m_method_combo->addItem(tr("Harvest (high accuracy)"),  QStringLiteral("harvest"));
+	m_method_combo->addItem(tr("RAPT (classic)"),           QStringLiteral("rapt"));
 	main_layout->addWidget(m_method_combo);
 
 	main_layout->addWidget(new QLabel(tr("Minimum pitch (Hz):")));
