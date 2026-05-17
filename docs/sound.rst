@@ -85,6 +85,7 @@ Pitch track
 The pitch track is a two-dimensional representation of the sound which shows how pitch (measured in Hertz) changes over time. Phonometrica supports five pitch
 tracking algorithms: **REAPER** [TAL2014]_ (the default), **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_.
 Reaper, Harvest, and RAPT come from the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are dedicated implementations.
+REAPER is also the pulse detector used in voice quality analysis (see :ref:`voice-report`) — selecting it for pitch ensures that F0 and jitter/shimmer measurements on the same interval are derived from the same set of detected pulses.
 
 The ``Pitch settings...`` command (available from the pitch menu |pitch| in the toolbar) allows you to choose the algorithm and adjust its parameters:
 

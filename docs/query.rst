@@ -206,7 +206,9 @@ pitch analysis settings:
 - **Algorithm**: Phonometrica supports five pitch tracking algorithms: **REAPER** [TAL2014]_ (the default),
   **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_. Reaper,
   Harvest, and RAPT are provided by the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are
-  dedicated implementations. See :ref:`sound-view` for references.
+  dedicated implementations. See :ref:`sound-view` for references. REAPER is also the pulse detector used
+  in voice quality analysis (see :ref:`voice-report`) — selecting it for pitch ensures that F0 and
+  jitter/shimmer measurements on the same interval are derived from the same set of detected pulses.
 - **Minimum pitch** and **Maximum pitch**: the expected pitch range.
 - **Voicing threshold**: sensitivity to voicing detection. The valid range and default value depend on the
   selected algorithm (for example, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER);
