@@ -60,6 +60,7 @@ public:
 	void visit_routine(RoutineDefinition *node) override;
 	void visit_variable(Variable *node) override;
 	void visit_assignment(Assignment *node) override;
+	void visit_multi_assignment(MultiAssignment *node) override;
 	void visit_assert_statement(AssertStatement *node) override;
 	void visit_concat_expression(ConcatExpression *node) override;
 	void visit_if_condition(IfCondition *node) override;

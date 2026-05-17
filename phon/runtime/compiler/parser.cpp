@@ -355,6 +355,16 @@ AutoAst Parser::parse_expression_statement()
 		report_error("ref cannot appear at the beginning of a statement");
 	}
 	auto e = parse_expression();
+	// Multi-target assignment: `x, y = ...` (parallel) or `x, y = lst`
+	// (destructure). This is the only construct outside of `let` that
+	// introduces a comma-separated LHS at statement level, so a comma here
+	// unambiguously signals a multi-target assignment. parse_multi_assignment
+	// validates that the first LHS was a plain variable name (parse_expression
+	// is permissive, so e.g. `obj.field, x = ...` would otherwise slip through).
+	if (check(Lexeme::Comma))
+	{
+		return parse_multi_assignment(std::move(e));
+	}
 	if (accept(Lexeme::OpAssign))
 	{
 		return make<Assignment>(std::move(e), parse_expression());
@@ -368,6 +378,43 @@ AutoAst Parser::parse_expression_statement()
 		return make<Assignment>(std::move(e), parse_expression(), op);
 	}
 	return e;
+}
+
+// Builds a MultiAssignment AST node starting from the already-parsed first
+// LHS expression (the caller saw the comma and dispatched here). The first
+// LHS came from a generic parse_expression() and may not be a Variable, so
+// we validate it here; subsequent LHS items are read directly through
+// parse_identifier which only accepts identifiers, mirroring how
+// parse_declaration enforces the same rule for `let`.
+AutoAst Parser::parse_multi_assignment(AutoAst first)
+{
+	trace_ast();
+	if (!dynamic_cast<Variable*>(first.get())) {
+		report_error("Multi-target assignment requires plain variable names on the left-hand side; indexed and field targets are not supported");
+	}
+	AstList lhs;
+	lhs.push_back(std::move(first));
+	while (accept(Lexeme::Comma))
+	{
+		lhs.push_back(parse_identifier("in multi-target assignment"));
+	}
+	expect(Lexeme::OpAssign, "in multi-target assignment");
+	AstList rhs;
+	rhs.push_back(parse_expression());
+	while (accept(Lexeme::Comma))
+	{
+		rhs.push_back(parse_expression());
+	}
+	// Same arity rules as parse_declaration: either parallel (one RHS per LHS)
+	// or single-source destructure (exactly one RHS, decomposed at runtime by
+	// the UnpackList opcode). Anything else is a parse error.
+	if (rhs.size() != 1 && rhs.size() != lhs.size()) {
+		report_error("Mismatched number of targets and values in multi-target assignment");
+	}
+	if (!token.is_separator() && !token.is(Lexeme::Eot)) {
+		report_error("Invalid multi-target assignment");
+	}
+	return make<MultiAssignment>(std::move(lhs), std::move(rhs));
 }
 
 AutoAst Parser::parse_expression()

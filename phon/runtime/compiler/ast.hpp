@@ -91,6 +91,23 @@ struct Assignment final : public Ast
 	Lexeme op;
 };
 
+// Multi-target assignment: `x, y = a, b` (parallel) or `x, y = lst`
+// (single-source destructure). Limited to plain variable-name targets;
+// indexed and field LHS forms are rejected at parse time so the
+// stack-discipline corner cases of SetIndex / SetField don't need to be
+// handled here. Mirrors the multi-LHS shape of `Declaration`, but writes
+// through `set_variable()` (which routes to SetLocal / SetUpvalue /
+// SetGlobal) rather than declaring new locals, so it covers existing
+// locals, upvalues, and implicit globals alike.
+struct MultiAssignment final : public Ast
+{
+	MultiAssignment(int line, int col, AstList lhs, AstList rhs) : Ast(line, col), lhs(std::move(lhs)), rhs(std::move(rhs)) { }
+
+	void visit(AstVisitor &v) override;
+
+	AstList lhs, rhs;
+};
+
 struct Literal : public Ast
 {
 	Literal(int line, int col) : Ast(line, col) { }
@@ -479,6 +496,7 @@ public:
 	virtual void visit_routine(RoutineDefinition *node) = 0;
 	virtual void visit_variable(Variable *node) = 0;
 	virtual void visit_assignment(Assignment *node) = 0;
+	virtual void visit_multi_assignment(MultiAssignment *node) = 0;
 	virtual void visit_assert_statement(AssertStatement *node) = 0;
 	virtual void visit_concat_expression(ConcatExpression *node) = 0;
 	virtual void visit_if_condition(IfCondition *node) = 0;

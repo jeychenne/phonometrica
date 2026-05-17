@@ -220,5 +220,137 @@ append(first17, 99)
 assert len(first17) == 3, "T17g: local should have the appended element, got len " & len(first17)
 assert len(src17[1]) == 2, "T17h: source nested list must stay length 2 after COW, got len " & len(src17[1])
 
+# =====================================================================
+# Multi-target bare assignment (no `let`)
+# =====================================================================
+# `x, y = a, b` outside a `let` exercises a separate code path: the
+# parser builds a MultiAssignment node (not a Declaration), and the
+# compiler routes each LHS through set_variable(), so the same syntax
+# works for already-declared locals, upvalues, and implicit globals.
+# Indexed and field LHS are intentionally rejected at parse time; the
+# error cases at the bottom of this block cover that.
+
+print "==== multi-target bare assignment ===="
+
+# ---------- Parallel into already-declared locals ----------
+
+print "--- 18. bare parallel into locals ---"
+let x18, y18
+x18, y18 = 10, 20
+assert x18 == 10, "T18a: expected 10, got " & x18
+assert y18 == 20, "T18b: expected 20, got " & y18
+
+# ---------- Swap. The canonical use case for parallel assignment.
+# All RHS values are evaluated and stacked before any LHS is written,
+# so the right-hand reads of a and b see the pre-assignment values.
+
+print "--- 19. swap a, b = b, a ---"
+let a19 = 1
+let b19 = 2
+a19, b19 = b19, a19
+assert a19 == 2, "T19a: expected a19 == 2 after swap, got " & a19
+assert b19 == 1, "T19b: expected b19 == 1 after swap, got " & b19
+
+# Three-way rotation as a stronger swap test.
+print "--- 20. three-way rotation ---"
+let p20 = "first"
+let q20 = "second"
+let r20 = "third"
+p20, q20, r20 = q20, r20, p20
+assert p20 == "second", "T20a"
+assert q20 == "third", "T20b"
+assert r20 == "first", "T20c"
+
+# ---------- Destructure into already-declared locals ----------
+
+print "--- 21. bare destructure into locals ---"
+let lo21, hi21
+lo21, hi21 = [3, 10]
+assert lo21 == 3, "T21a"
+assert hi21 == 10, "T21b"
+
+print "--- 22. bare destructure from a variable ---"
+let lst22 = ["alpha", "beta", "gamma"]
+let a22, b22, c22
+a22, b22, c22 = lst22
+assert a22 == "alpha", "T22a"
+assert b22 == "beta", "T22b"
+assert c22 == "gamma", "T22c"
+
+# ---------- Implicit globals ----------
+# Names not declared with `let` become globals on first assignment.
+# We prefix them so they don't collide with anything else the test
+# suite might define; bare assignment doesn't have block scope, so
+# these survive past the end of this script.
+
+print "--- 23. parallel into implicit globals ---"
+mdtest_g1, mdtest_g2 = 100, 200
+assert mdtest_g1 == 100, "T23a"
+assert mdtest_g2 == 200, "T23b"
+
+print "--- 24. destructure into implicit globals ---"
+mdtest_g3, mdtest_g4 = ["x", "y"]
+assert mdtest_g3 == "x", "T24a"
+assert mdtest_g4 == "y", "T24b"
+
+# Mixed: one already-declared local, one new global. Each LHS resolves
+# independently via set_variable(), so the routing is per-name.
+print "--- 25. mixed local + global ---"
+let local25
+local25, mdtest_g5 = "to_local", "to_global"
+assert local25 == "to_local", "T25a"
+assert mdtest_g5 == "to_global", "T25b"
+
+# ---------- Inside a function body ----------
+# The same construct must work within a function frame, where the
+# parser+compiler resolve names against the function's locals and
+# upvalues before falling through to globals.
+
+print "--- 26. parallel inside function ---"
+function rotate26(x, y, z)
+    x, y, z = y, z, x
+    return [x, y, z]
+end
+let rotated26 = rotate26(1, 2, 3)
+assert rotated26[1] == 2, "T26a"
+assert rotated26[2] == 3, "T26b"
+assert rotated26[3] == 1, "T26c"
+
+print "--- 27. destructure inside function ---"
+function unpack27(pair)
+    let lo, hi
+    lo, hi = pair
+    return hi - lo
+end
+assert unpack27([5, 12]) == 7, "T27"
+
+# ---------- Error paths for bare destructure ----------
+# Same UnpackList opcode as in the `let` form, so the runtime checks
+# are inherited. We re-cover them here because the parser path is
+# different and we want to make sure both lead to the same diagnostic.
+
+print "--- 28. bare destructure non-list -> runtime error ---"
+let caught28 = false
+let msg28 = ""
+let dest28a, dest28b
+try
+    dest28a, dest28b = 42
+catch e
+    caught28 = true
+    msg28 = e
+end
+assert caught28, "T28a: expected runtime error"
+assert contains(msg28, "destructure"), "T28b: error should mention destructure, got: " & msg28
+
+print "--- 29. bare destructure size mismatch -> runtime error ---"
+let caught29 = false
+let dest29a, dest29b, dest29c
+try
+    dest29a, dest29b, dest29c = [1, 2]
+catch e
+    caught29 = true
+end
+assert caught29, "T29: expected runtime error for size mismatch"
+
 print ""
 print "==== ALL multiple-declaration tests passed ===="

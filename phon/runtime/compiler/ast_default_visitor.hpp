@@ -74,6 +74,7 @@ public:
 	void visit_index(IndexedExpression *n) override { visit_opt(n->expr); visit_all(n->indexes); }
 	void visit_return_statement(ReturnStatement *n) override { visit_opt(n->expr); }
 	void visit_assignment(Assignment *n) override { visit_opt(n->lhs); visit_opt(n->rhs); }
+	void visit_multi_assignment(MultiAssignment *n) override { visit_all(n->lhs); visit_all(n->rhs); }
 
 protected:
 

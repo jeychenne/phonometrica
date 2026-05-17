@@ -108,6 +108,8 @@ private:
 
 	AutoAst parse_expression_statement();
 
+	AutoAst parse_multi_assignment(AutoAst first);
+
 	AutoAst parse_expression();
 
 	AutoAst parse_conditional_expression();

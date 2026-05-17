@@ -85,6 +85,11 @@ void Assignment::visit(AstVisitor &v)
 	VISIT(assignment);
 }
 
+void MultiAssignment::visit(AstVisitor &v)
+{
+	VISIT(multi_assignment);
+}
+
 Ast::Lexeme Assignment::get_operator() const
 {
 	switch (op)

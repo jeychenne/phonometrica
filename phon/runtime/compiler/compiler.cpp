@@ -700,6 +700,77 @@ void Compiler::visit_assignment(Assignment *node)
 	}
 }
 
+// Multi-target assignment compilation. Mirrors the multi-LHS branches of
+// visit_declaration, but writes through `set_variable()` (which routes to
+// SetLocal / SetUpvalue / SetGlobal per the resolution rules) rather than
+// declaring new locals. The parser already constrained every LHS to be a
+// Variable AST node and the LHS/RHS arities to be one of the two valid
+// shapes; we re-assert both here as defence-in-depth before emitting.
+void Compiler::visit_multi_assignment(MultiAssignment *node)
+{
+	const auto n_lhs = node->lhs.size();
+	const auto n_rhs = node->rhs.size();
+
+	// Validate LHS up front so the error message is uniform regardless of which
+	// branch we take below. The parser should already have enforced this, but
+	// the cast is cheap and keeps the contract explicit at the compile boundary.
+	std::vector<Variable*> idents;
+	idents.reserve(n_lhs);
+	for (auto &v : node->lhs)
+	{
+		auto ident = dynamic_cast<Variable*>(v.get());
+		if (!ident) {
+			THROW("[Syntax error] Multi-target assignment requires plain variable names on the left-hand side");
+		}
+		idents.push_back(ident);
+	}
+
+	try
+	{
+		// `x, y, ... = expr` (n_rhs == 1, n_lhs > 1): single-source destructure.
+		// UnpackList does the runtime type-check and length-check, leaving the N
+		// values on the stack with element 0 on top. set_variable per LHS in
+		// source order then consumes them — DefineLocal-equivalent for whichever
+		// scope each name resolves into.
+		if (n_rhs == 1 && n_lhs > 1)
+		{
+			// Visit the RHS *before* writing any LHS, so the expression observes
+			// the pre-assignment values (matches the swap-friendly semantics of
+			// the parallel branch below).
+			node->rhs.front()->visit(*this);
+			EMIT(Opcode::UnpackList, Instruction(n_lhs));
+			for (auto *ident : idents) {
+				set_variable(node, ident->name);
+			}
+			return;
+		}
+
+		// `x, y, ... = e1, e2, ...` (n_rhs == n_lhs > 1): parallel assignment.
+		// Visit all RHS first (left-to-right) so none of them can see the new
+		// value of a name being written on the same line — this is what makes
+		// `a, b = b, a` swap correctly. Then write LHS in reverse, since
+		// set_variable consumes the stack top first.
+		if (n_rhs == n_lhs && n_lhs > 1)
+		{
+			for (auto &rhs : node->rhs) {
+				rhs->visit(*this);
+			}
+			for (auto i = n_lhs; i-- > 0; ) {
+				set_variable(node, idents[i]->name);
+			}
+			return;
+		}
+
+		// Defensive: any other shape is a parser bug — the parser's arity check
+		// rejects everything except the two cases above.
+		THROW("[Internal error] Invalid arity in multi-target assignment");
+	}
+	catch (std::runtime_error &e)
+	{
+		THROW(e.what());
+	}
+}
+
 void Compiler::visit_assert_statement(AssertStatement *node)
 {
 	Instruction narg = (node->msg == nullptr) ? 1 : 2;

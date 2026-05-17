@@ -785,7 +785,7 @@ This means that ``f`` is now a function (the function ``inner``). When we call i
 Multiple declarations and list destructuring
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Phonometrica lets you declare multiple local variables at once, with or without a value:
+Phonometrica lets you declare multiple variables at once, with or without a value:
 
 .. code:: phon
 
@@ -799,7 +799,16 @@ Phonometrica lets you declare multiple local variables at once, with or without 
 
 
 In the example above ``a`` and ``b`` are declared but not assigned a value, and default to the value ``null``. Variables ``c`` and ``d`` are declared and assigned a value: Phonometrica matches each variable on the left hand side
-to an expression on the right hand side, in order. The number of variables on the left must match the number of expressions on the right, both being separated by commas. As a special case, it is possible to declare several variables
+to an expression on the right hand side, in order. The number of variables on the left must match the number of expressions on the right, both being separated by commas. Multiple assignment also works for global variables; however,
+it is not possible to declare several global variables without assigning them a value:
+
+.. code:: phon
+
+    x, y # this is illegal
+    x = null; y = null # use this instead
+
+
+It is possible to declare several variables
 on the left hand side and assign a single expression on the right. In this case, Phonometrica assumes the right hand side expression is a list whose length matches the number of declared variables, and "destructures" the list
 by assigning each value in turn to one of the declared variables:
 
@@ -811,6 +820,16 @@ by assigning each value in turn to one of the declared variables:
     print y # prints "2"
     print z # prints "3"
 
+
+Note that list destructuring also works with global variables and previously declared variables.
+
+.. code:: phon
+
+    let x = "hello"
+    let lst = [1, 2]
+    x, y = lst # x is an existing local, y is a newly created global
+    print x # prints "1"
+    print y # prints "2"
 
 
 Errors
