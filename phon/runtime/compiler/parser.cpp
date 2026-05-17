@@ -399,7 +399,10 @@ AutoAst Parser::parse_declaration()
 		rhs.push_back(parse_expression());
 	}
 
-	if (! rhs.empty() && lhs.size() != rhs.size()) {
+	// Three RHS shapes are valid: empty (declaration only), one expression per LHS
+	// (parallel assignment), or a single expression (treated as a List to destructure
+	// at runtime via the UnpackList opcode).
+	if (!rhs.empty() && rhs.size() != 1 && lhs.size() != rhs.size()) {
 		report_error("Invalid declaration: the number of elements on the left hand side and right and side doesn't match");
 	}
 	if (!token.is_separator() && !token.is(Lexeme::Eot)) {

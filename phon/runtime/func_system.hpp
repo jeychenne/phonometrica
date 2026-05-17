@@ -52,9 +52,12 @@ static Variant system_script_path(Runtime &rt, std::span<Variant>)
 // outside a catch body. The line refers to the original throw site,
 // preserved across function-call and module-import boundaries by the
 // pass-through arms of CATCH_ERROR / Runtime::call(). Intended for use
-// inside a `catch` clause to log or report where the error originated;
-// outside a catch body the return value is unspecified (typically -1
-// or the line of the previously-handled error).
+// inside a `catch` clause to log or report where the error originated.
+// Outside a catch body, within a single script's execution, the value
+// is the line of the most recently handled error (or -1 if none has
+// fired yet). Across script boundaries the value is reset to -1 by
+// Runtime::clear() at every compile_file / compile_string call, so a
+// fresh script never observes a stale value from an earlier import.
 static Variant system_error_line(Runtime &rt, std::span<Variant>)
 {
 	return rt.error_line();

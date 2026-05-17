@@ -1467,6 +1467,44 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				catch (...) { msg = String("[Runtime error] thrown value"); }
 				throw ScriptException(get_current_line(), msg, std::move(value));
 			}
+			case Opcode::UnpackList:
+			{
+				// Implements destructuring assignment for `let x, y, ... = expr`. The
+				// compiler emits this opcode after the RHS expression has pushed its
+				// single value onto the stack. We require that value to be a List
+				// whose size matches the variable count; on success we replace the
+				// list on the stack with its N elements, in reverse, so the first
+				// variable's value ends up on top. The following N DefineLocal
+				// opcodes then bind them in source order.
+				trace_op();
+				int n = *ip++;
+				if (!check_type<List>(peek())) {
+					RUNTIME_ERROR("Cannot destructure value of type % into % variables (expected a List)", peek().class_name(), n);
+				}
+				// Move the variant off the stack so its handle ref-count is preserved
+				// for the duration of the index reads; pop() then destroys the now
+				// moved-from slot. Reading from the underlying List via a raw_cast
+				// reference would be unsafe across the pop if any other code held a
+				// shared handle and could see a moved-from state.
+				Variant v = std::move(peek());
+				pop();
+				auto &lst = raw_cast<List>(v);
+				if (lst.size() != intptr_t(n)) {
+					RUNTIME_ERROR("Cannot destructure a List of size % into % variables", lst.size(), n);
+				}
+				ensure_capacity(n);
+				// Push elements in reverse so that lst[1] (the first element) ends up
+				// on top of the stack; the subsequent DefineLocal opcodes consume the
+				// stack top first, which makes them bind in source order. List uses
+				// 1-based indexing (Array<T>::operator[] in phon/runtime/array.hpp), so
+				// we walk from n down to 1, not from n-1 down to 0 — the latter
+				// dereferences m_data[size_t(-1)] in release builds and silently feeds
+				// a corrupted Variant into the destination local.
+				for (intptr_t i = intptr_t(n); i >= 1; --i) {
+					push(lst[i]);
+				}
+				break;
+			}
 			default:
 				throw error("[Internal error] Invalid opcode: %", (int)op);
 		}
@@ -2079,6 +2117,12 @@ size_t Runtime::disassemble_instruction(const Routine &routine, size_t offset)
 		{
 			return print_simple_instruction("THROW");
 		}
+		case Opcode::UnpackList:
+		{
+			int n = routine.code[offset+1];
+			printf("UNPACK_LIST    %-5d\n", n);
+			return 2;
+		}
 		default:
 			printf("Unknown opcode %d", static_cast<int>(op));
 	}
@@ -2340,6 +2384,23 @@ bool Runtime::needs_reference() const
 void Runtime::clear()
 {
 	needs_ref = false;
+	// Reset the snapshot of the most recently handled error. Both fields are
+	// process-lifetime state that's only written by the catch dispatch in
+	// interpret() — once set, they would otherwise persist forever and leak
+	// across script boundaries. `clear()` runs at every compile_file /
+	// compile_string, so this anchors the documented "outside a catch body the
+	// value is unspecified (typically -1)" guarantee in func_system.hpp to mean
+	// "always -1 at file entry", which is what `get_error_line()`'s
+	// pre-catch-body sanity check in test_nested_error_lines relies on.
+	//
+	// Caveat: an `import()` evaluated *inside* a catch body now wipes
+	// catch_line / catch_trace before the catch body resumes — if you need
+	// the original error line after such an import, snapshot it into a local
+	// first. Nothing in-tree currently depends on the prior behaviour (no test
+	// or production caller imports from inside a catch), and the boundary
+	// reset is the simpler, more easily-reasoned-about contract.
+	catch_line = -1;
+	catch_trace.clear();
 }
 
 Variant &Runtime::operator[](const String &key)

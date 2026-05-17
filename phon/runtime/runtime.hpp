@@ -551,13 +551,16 @@ private:
 	// from scripts via the `get_error_line()` builtin (public accessor:
 	// `error_line()`). Not reset on normal flow — a stale value persists
 	// after a catch body exits, so the builtin is only meaningful inside
-	// the catch body that handled the error.
+	// the catch body that handled the error. Reset to -1 by `clear()`
+	// at every compile_file / compile_string, so cross-script staleness
+	// (e.g. via `import()` chains) is not observable.
 	intptr_t catch_line = -1;
 
 	// Frames the most recently dispatched caught error passed through,
 	// innermost first. Snapshotted from the exception's own trace at
 	// catch-dispatch time so it remains readable after the exception
-	// object has been destroyed. Same staleness rules as `catch_line`.
+	// object has been destroyed. Same staleness rules as `catch_line`,
+	// including the file-boundary reset performed by `clear()`.
 	std::vector<TraceEntry> catch_trace;
 
 	// If false, we're running from a GUI.

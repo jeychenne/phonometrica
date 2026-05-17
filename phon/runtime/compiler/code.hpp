@@ -115,7 +115,8 @@ enum class Opcode : Instruction
 	SetUpvalue,
 	Subtract,
 	TestIterator,
-	Throw
+	Throw,
+	UnpackList
 };
 
 

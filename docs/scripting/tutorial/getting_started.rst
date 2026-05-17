@@ -123,7 +123,7 @@ Number
 ``Number`` is an abstract numeric type, which is the base type for ``Integer`` and ``Float``. Some functions specifically request integers or floats as their arguments,
 while others accept both; in the latter case, the type of the argument(s) is usually ``Number``, which is compatible with both ``Integer`` and ``Float``.
 
-Phonometrica lets you use the underscore ``_`` as a separator for thousands to improve readability. For example, you could write ``1_000_000``instead of ``1000000``, or 
+Phonometrica lets you use the underscore ``_`` as a separator for thousands to improve readability. For example, you could write ``1_000_000`` instead of ``1000000``, or
 ``0.000_001`` instead of ``0.000001``. 
 
 String
@@ -743,7 +743,7 @@ namespace, you should use the keyword ``let`` before the declaration of the vari
 
 .. code:: phon
 
-    local x = "some value"
+    let x = "some value"
 
 
 A top-level variable declared in this way will no longer be visible after the script has been executed. You can also define local functions, which will only be available in the current scope and all embedded scopes, by adding the keyword ``local`` before the function declaration:
@@ -780,6 +780,36 @@ a new scope embedded in ``outer``'s scope, so from ``inner``'s perspective, ``s`
 What is it, then? In this case, ``s`` is regarded as a *non-local* variable in the scope defined by ``inner``. When we declare the variable ``f``, we execute the function ``outer``, 
 which first creates a variable named ``s`` and then creates a function named ``inner``, which  *captures* ``outer``'s local variable ``s``. Finally, ``outer`` returns the function ``inner``. 
 This means that ``f`` is now a function (the function ``inner``). When we call it, it returns the value of the variable ``s``. Functions that capture non-local variables are called :ref:`closures <closures>`.
+
+
+Multiple declarations and list destructuring
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Phonometrica lets you declare multiple variables at once, with or without a value:
+
+.. code:: phon
+
+    let a, b
+    let c, d = 1, 2
+
+    print a # prints "null"
+    print b # prints "null"
+    print c # prints "1"
+    print d # prints "2"
+
+
+In the example above ``a`` and ``b`` are declared but not assigned a value, and default to the value ``null``. Variables ``c`` and ``d`` are declared and assigned a value: Phonometrica matches each variable on the left hand side
+to an expression on the right hand side, in order. The number of variables on the left must match the number of expressions on the right, both being separated by commas. As a special case, it is possible to declare several variables
+on the left hand side and assign a single expression on the right. In this case, Phonometrica assumes the right hand side expression is a list whose length matches the number of declared variables, and "destructures" the list
+by assigning each value in turn to one of the declared variables:
+
+.. code:: phon
+
+    let lst = [1, 2, 3]
+    let x, y, z = lst
+    print x # prints "1"
+    print y # prints "2"
+    print z # prints "3"
 
 
 

@@ -105,7 +105,8 @@ const char *opcode_names[] = {
 	"SetUpvalue",
 	"Subtract",
 	"TestIterator",
-	"Throw"
+	"Throw",
+	"UnpackList"
 };
 
 void Code::add_line(intptr_t line_no)

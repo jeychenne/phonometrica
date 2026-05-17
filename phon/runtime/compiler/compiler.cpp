@@ -305,44 +305,119 @@ void Compiler::visit_statements(StatementList *node)
 
 void Compiler::visit_declaration(Declaration *node)
 {
-	if (node->lhs.size() != 1 || node->rhs.size() > 1) {
-		THROW("Multiple declaration not implemented");
+	const auto n_lhs = node->lhs.size();
+	const auto n_rhs = node->rhs.size();
+
+	// Validate every LHS up front so the error message is the same regardless of
+	// which branch we take below.
+	std::vector<Variable*> idents;
+	idents.reserve(n_lhs);
+	for (auto &v : node->lhs)
+	{
+		auto ident = dynamic_cast<Variable*>(v.get());
+		if (!ident) {
+			THROW("[Syntax error] Expected a variable name in declaration");
+		}
+		idents.push_back(ident);
 	}
-	auto ident = dynamic_cast<Variable*>(node->lhs.front().get());
-	if (!ident) {
-		THROW("[Syntax error] Expected a variable name in declaration");
+
+	// Inside a constructor body, `let name = ...` lowers to a NewField opcode that
+	// expects the enclosing Class object at stack offset -3. Stacking N values
+	// above the Class would break that contract, and supporting it would require
+	// serialising the multi-LHS path per field. Reject it explicitly so the failure
+	// is a clear compile-time message rather than a subtle miscompile.
+	if (visiting_constructor() && n_lhs > 1) {
+		THROW("Multiple variable declarations are not supported inside class field declarations; use separate 'let' statements");
 	}
 
 	try
 	{
-		if (!node->rhs.empty())
+		// === Single LHS: existing behaviour, preserved verbatim. ===
+		if (n_lhs == 1)
 		{
-			// We don't add the local before visiting the RHS, otherwise the RHS could reference the LHS which doesn't exist yet.
-			node->rhs.front()->visit(*this);
+			auto ident = idents.front();
+			if (!node->rhs.empty())
+			{
+				// We don't add the local before visiting the RHS, otherwise the RHS could reference the LHS which doesn't exist yet.
+				node->rhs.front()->visit(*this);
 
-			if (visiting_constructor())
+				if (visiting_constructor())
+				{
+					auto field = routine->add_string_constant(ident->name);
+					EMIT(Opcode::PushString, field);
+					EMIT(Opcode::NewField);
+				}
+				else
+				{
+					auto index = add_local(ident->name);
+					EMIT(Opcode::DefineLocal, index);
+				}
+			}
+			else if (visiting_constructor())
 			{
 				auto field = routine->add_string_constant(ident->name);
+				EMIT(Opcode::PushNull);
 				EMIT(Opcode::PushString, field);
 				EMIT(Opcode::NewField);
 			}
 			else
 			{
+				// Locals don't need to be defined if they are null because they are automatically null-initialized by NewFrame.
+				add_local(ident->name);
+			}
+			return;
+		}
+
+		// === Multi-LHS path: only reached outside constructors (guarded above). ===
+
+		// `let x, y, ...` with no RHS: NewFrame null-initialises every local, so all
+		// we need is to reserve the slots in compile-time scope.
+		if (n_rhs == 0)
+		{
+			for (auto *ident : idents) {
+				add_local(ident->name);
+			}
+			return;
+		}
+
+		// `let x, y, ... = expr` (n_rhs == 1, n_lhs > 1): single-source destructure.
+		// UnpackList does the runtime type-check and length-check and leaves the N
+		// values on the stack with element 0 on top. add_local-then-DefineLocal in
+		// source order then binds each variable.
+		if (n_rhs == 1)
+		{
+			// Visit the RHS *before* adding any local: the expression must not be
+			// able to reference a variable that is about to be declared.
+			node->rhs.front()->visit(*this);
+			EMIT(Opcode::UnpackList, Instruction(n_lhs));
+			for (auto *ident : idents)
+			{
 				auto index = add_local(ident->name);
 				EMIT(Opcode::DefineLocal, index);
 			}
+			return;
 		}
-		else if (visiting_constructor())
-		{
-			auto field = routine->add_string_constant(ident->name);
-			EMIT(Opcode::PushNull);
-			EMIT(Opcode::PushString, field);
-			EMIT(Opcode::NewField);
+
+		// `let x, y, ... = e1, e2, ...` (n_rhs == n_lhs > 1): parallel declaration.
+		// Visit all RHS expressions first, left-to-right, so none of them can refer
+		// to a name being declared on the same line (matching the single-variable
+		// case's invariant). Then reserve all slots in source order, then bind from
+		// the top of the stack downwards (DefineLocal pops the topmost value, which
+		// is the last RHS visited, so we walk the slots in reverse).
+		// Note: the local is named `local_slots` rather than `slots` because Qt's
+		// qobjectdefs.h (pulled in transitively via string.hpp -> <QString>) defines
+		// `slots` as an empty macro unless QT_NO_KEYWORDS is set, which would turn
+		// `std::vector<Instruction> slots;` into a declaration that declares nothing.
+		for (auto &rhs : node->rhs) {
+			rhs->visit(*this);
 		}
-		else
-		{
-			// Locals don't need to be defined if they are null because they are automatically null-initialized by NewFrame.
-			add_local(ident->name);
+		std::vector<Instruction> local_slots;
+		local_slots.reserve(n_lhs);
+		for (auto *ident : idents) {
+			local_slots.push_back(add_local(ident->name));
+		}
+		for (auto i = n_lhs; i-- > 0; ) {
+			EMIT(Opcode::DefineLocal, local_slots[i]);
 		}
 	}
 	catch (std::runtime_error &e)
