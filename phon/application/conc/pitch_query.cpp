@@ -216,7 +216,8 @@ Handle<Concordance> PitchQuery::execute()
 	// Set pitch metadata — semitones and ERB are computed on the fly by the concordance
 	conc->set_pitch_meta(m_semitones, m_semitone_ref, m_erb);
 	// Per-match pitch-range columns when overrides are active
-	conc->set_has_per_match_pitch_range(override_enabled());
+	conc->set_has_per_match_pitch_range(override_enabled() && m_show_params);
+	conc->set_per_match_pitch_range_available(override_enabled());
 
 	// Measurement-time column(s)
 	conc->set_has_time(m_output_time);
@@ -377,6 +378,7 @@ Handle<Query> PitchQuery::copy() const
 	c->m_output_time = m_output_time;
 	c->m_override_category = m_override_category;
 	c->m_override_levels = m_override_levels;
+	c->m_show_params = m_show_params;
 	c->m_content_modified = true;
 
 	return c;
@@ -547,6 +549,10 @@ void PitchQuery::load()
 			if (cat_attr) {
 				m_override_category = String(cat_attr.value());
 			}
+			auto show_attr = node.attribute("show");
+			if (show_attr) {
+				m_show_params = show_attr.as_bool(true);
+			}
 			m_override_levels.clear();
 			for (auto level = node.first_child(); level; level = level.next_sibling())
 			{
@@ -671,6 +677,7 @@ void PitchQuery::write()
 	{
 		auto ov_node = root.append_child("ParameterOverride");
 		ov_node.append_attribute("category").set_value(m_override_category.data());
+		ov_node.append_attribute("show").set_value(m_show_params ? "true" : "false");
 		for (auto &entry : m_override_levels)
 		{
 			auto level_node = ov_node.append_child("Level");

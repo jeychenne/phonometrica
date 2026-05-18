@@ -279,6 +279,26 @@ void ConcordanceView::setupUi()
 
 	}
 
+	// Parameter override values toggle — shown only when the underlying query
+	// used a per-property parameter override (so the data is in the measurement
+	// vector and we can re-display the columns even if they were initially hidden).
+	bool param_values_available = m_conc->per_match_max_freq_available()
+	                            || m_conc->per_match_pitch_range_available();
+	if (param_values_available)
+	{
+		bool param_values_shown = m_conc->has_per_match_max_freq()
+		                        || m_conc->has_per_match_pitch_range();
+		m_param_values_action = display_menu->addAction(tr("Parameter override values"));
+		m_param_values_action->setCheckable(true);
+		m_param_values_action->setChecked(param_values_shown);
+		m_param_values_action->setToolTip(tr(
+			"Show or hide the per-match parameter columns produced by a "
+			"per-property parameter override (Max freq for formants; "
+			"Min pitch and Max pitch for pitch). The data is preserved when "
+			"hidden, so toggling does not require re-running the query."));
+		connect(m_param_values_action, &QAction::toggled, this, &ConcordanceView::onToggleParamValues);
+	}
+
 	display_menu->addSeparator();
 	auto *split_action = display_menu->addAction(tr("Open matches in split view"));
 	split_action->setCheckable(true);
@@ -1557,6 +1577,22 @@ void ConcordanceView::onToggleErb(bool checked)
 void ConcordanceView::onToggleBark(bool checked)
 {
 	m_conc->set_has_bark(checked);
+	m_model->refreshAll();
+	updateColumnVisibility();
+	m_table->resizeColumnsToContents();
+	emit titleChanged(label());
+}
+
+void ConcordanceView::onToggleParamValues(bool checked)
+{
+	// Toggle both flags. A concordance only has one of them set as available
+	// (formant vs pitch query), so the other call is a no-op (`if (m_has_… == b) return;`).
+	if (m_conc->per_match_max_freq_available()) {
+		m_conc->set_has_per_match_max_freq(checked);
+	}
+	if (m_conc->per_match_pitch_range_available()) {
+		m_conc->set_has_per_match_pitch_range(checked);
+	}
 	m_model->refreshAll();
 	updateColumnVisibility();
 	m_table->resizeColumnsToContents();

@@ -252,7 +252,8 @@ Handle<Concordance> FormantQuery::execute()
 	// Tell the concordance about the per-match Max freq trailing column when
 	// we're in manual mode with per-property overrides active (auto mode already
 	// emits Max freq + LPC order via set_formant_meta's last arg).
-	conc->set_has_per_match_max_freq(!m_automatic && override_enabled());
+	conc->set_has_per_match_max_freq(!m_automatic && override_enabled() && m_show_params);
+	conc->set_per_match_max_freq_available(!m_automatic && override_enabled());
 
 	// Measurement-time column(s)
 	conc->set_has_time(m_output_time);
@@ -469,6 +470,7 @@ Handle<Query> FormantQuery::copy() const
 	c->m_output_time = m_output_time;
 	c->m_override_category = m_override_category;
 	c->m_override_levels = m_override_levels;
+	c->m_show_params = m_show_params;
 	c->m_content_modified = true;
 
 	return c;
@@ -622,6 +624,10 @@ void FormantQuery::load()
 			if (cat_attr) {
 				m_override_category = String(cat_attr.value());
 			}
+			auto show_attr = node.attribute("show");
+			if (show_attr) {
+				m_show_params = show_attr.as_bool(true);
+			}
 			m_override_levels.clear();
 			for (auto level = node.first_child(); level; level = level.next_sibling())
 			{
@@ -749,6 +755,7 @@ void FormantQuery::write()
 	{
 		auto ov_node = root.append_child("ParameterOverride");
 		ov_node.append_attribute("category").set_value(m_override_category.data());
+		ov_node.append_attribute("show").set_value(m_show_params ? "true" : "false");
 		for (auto &entry : m_override_levels)
 		{
 			auto level_node = ov_node.append_child("Level");

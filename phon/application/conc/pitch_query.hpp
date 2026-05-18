@@ -122,6 +122,13 @@ public:
 	void set_override_level(const String &value, LevelOverride params) { m_override_levels[value] = params; }
 	void clear_override_levels() { m_override_levels.clear(); }
 
+	// Controls the initial display state of the per-match pitch-range columns
+	// on the resulting concordance. See FormantQuery::show_params for the
+	// rationale: data is always stored, this flag controls only the default
+	// display state; the user can re-show via the concordance's Display menu.
+	bool show_params() const { return m_show_params; }
+	void set_show_params(bool b) { m_show_params = b; }
+
 	// ── N-point output mode ──────────────────────────────────────────────
 	// When method == NPoint, at least one of these must be true.
 
@@ -216,6 +223,7 @@ private:
 	// Per-file pitch-range override (empty category = disabled)
 	String m_override_category;
 	Hashmap<String, LevelOverride> m_override_levels;
+	bool m_show_params = true;     // show per-match parameter columns by default
 };
 
 namespace traits {

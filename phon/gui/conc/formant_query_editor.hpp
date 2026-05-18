@@ -170,6 +170,7 @@ private:
 	QLabel       *m_override_defaults_lbl  = nullptr;
 	QTableWidget *m_override_table         = nullptr;
 	QLabel       *m_override_status_lbl    = nullptr;
+	QCheckBox    *m_show_params_check      = nullptr;
 	Hashmap<String, FormantQuery::LevelOverride> m_pending_overrides;
 	bool m_override_table_updating = false;
 

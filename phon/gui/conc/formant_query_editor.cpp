@@ -468,6 +468,18 @@ QWidget *FormantQueryEditor::buildOverrideSection()
 	m_override_status_lbl->setWordWrap(true);
 	body->addWidget(m_override_status_lbl);
 
+	// Show/hide the per-match parameter columns on the resulting concordance.
+	// Data is always stored when override is active; this only controls the
+	// initial display state. Users can toggle later via the concordance's
+	// Display menu.
+	m_show_params_check = new QCheckBox(tr("Show parameter values in concordance"));
+	m_show_params_check->setChecked(true);
+	m_show_params_check->setToolTip(tr(
+		"When checked, the resulting concordance will display the per-match "
+		"effective Max freq value as an extra column. You can show or hide "
+		"this column later via the concordance's Display menu."));
+	body->addWidget(m_show_params_check);
+
 	vbox->addWidget(m_override_body);
 
 	// Wiring
@@ -1110,6 +1122,7 @@ void FormantQueryEditor::parseQuery()
 	{
 		m_query->set_override_category(String());
 	}
+	m_query->set_show_params(m_show_params_check && m_show_params_check->isChecked());
 }
 
 bool FormantQueryEditor::validateQuery()
@@ -1435,6 +1448,10 @@ void FormantQueryEditor::loadQuery()
 			m_override_category_combo->setCurrentIndex(idx);
 		}
 		refreshOverrideTable();
+	}
+	if (m_show_params_check) {
+		QSignalBlocker b(m_show_params_check);
+		m_show_params_check->setChecked(m_query->show_params());
 	}
 	applyOverrideEnabledState();
 

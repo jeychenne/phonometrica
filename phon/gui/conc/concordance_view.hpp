@@ -142,6 +142,12 @@ private:
 	void onToggleAuxFormantErb(bool checked);
 	void onToggleAuxFormantBark(bool checked);
 
+	// Show/hide trailing per-match parameter columns (Max freq for formants,
+	// Min/Max pitch for pitch concordances). Enabled iff the corresponding data
+	// is available on the concordance (set at query exec time when a per-property
+	// parameter override was active).
+	void onToggleParamValues(bool checked);
+
 	void onHeaderDoubleClick(int section);
 
 	// Select the entire column at `section` using the selection model. The Columns
@@ -198,6 +204,9 @@ private:
 	QAction *m_aux_pitch_erb_action = nullptr;
 	QAction *m_aux_formant_erb_action = nullptr;
 	QAction *m_aux_formant_bark_action = nullptr;
+
+	// Show/hide per-match parameter-override columns
+	QAction *m_param_values_action = nullptr;
 
 	std::unique_ptr<AudioPlayer> m_player;
 	Handle<Concordance> m_conc;

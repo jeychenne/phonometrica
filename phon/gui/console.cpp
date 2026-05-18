@@ -49,19 +49,55 @@ Console::Console(Runtime &rt, QWidget *parent) :
 	{
 		rt.print = [this](const String &s) {
 			auto qs = QString::fromUtf8(s.data(), (int) s.size());
+			// When called outside the REPL flow (e.g. from a query dispatched
+			// from a dialog), the cursor is sitting on the current prompt line
+			// with no follow-up addPrompt(). Add a leading newline so output
+			// doesn't get glued to the prompt, and a fresh prompt afterwards.
+			if (!m_in_runcode)
+			{
+				auto cursor = textCursor();
+				cursor.movePosition(QTextCursor::End);
+				if (!cursor.atBlockStart()) {
+					cursor.insertText("\n");
+					setTextCursor(cursor);
+				}
+			}
 			appendOutput(qs);
 			m_text_written = true;
+			if (!m_in_runcode) {
+				auto cursor = textCursor();
+				cursor.movePosition(QTextCursor::End);
+				if (!cursor.atBlockStart()) {
+					cursor.insertText("\n");
+					setTextCursor(cursor);
+				}
+				addPrompt();
+			}
 		};
 
 		// Route runtime errors/warnings through showError so they render in red
 		// and the console tab is auto-raised. Trailing newlines are stripped
 		// because showError appends one itself; callers shouldn't have to know
-		// about that detail.
+		// about that detail. Same prompt-handling logic as `print` above so
+		// warnings emitted from non-REPL contexts (e.g. queries fired from a
+		// dialog) land on a fresh line and leave a usable prompt behind.
 		rt.show_error = [this](const String &s) {
 			QString qs = QString::fromUtf8(s.data(), (int) s.size());
 			while (qs.endsWith('\n')) qs.chop(1);
+			if (!m_in_runcode)
+			{
+				auto cursor = textCursor();
+				cursor.movePosition(QTextCursor::End);
+				if (!cursor.atBlockStart()) {
+					cursor.insertText("\n");
+					setTextCursor(cursor);
+				}
+			}
 			showError(qs);
 			m_text_written = true;
+			if (!m_in_runcode) {
+				addPrompt();
+			}
 		};
 
 		// Install the default clear-output behaviour. When the scripting
@@ -202,6 +238,8 @@ void Console::contextMenuEvent(QContextMenuEvent *e)
 void Console::runCode(const QString &code)
 {
 	m_text_written = false;
+	m_in_runcode = true;
+	struct RunCodeGuard { Console *c; ~RunCodeGuard() { c->m_in_runcode = false; } } _guard{this};
 	appendPlainText(QString()); // newline after the input
 
 	// Show a busy cursor while the script runs. Script execution is synchronous

@@ -125,6 +125,14 @@ public:
 	void set_override_level(const String &value, LevelOverride params) { m_override_levels[value] = params; }
 	void clear_override_levels() { m_override_levels.clear(); }
 
+	// Controls the initial display state of the per-match parameter columns on
+	// the resulting concordance. Only meaningful when override is enabled; the
+	// data is always written to the measurement vector when override is active,
+	// regardless of this flag, so the user can re-show the columns later via
+	// the concordance's Display menu without re-running the query.
+	bool show_params() const { return m_show_params; }
+	void set_show_params(bool b) { m_show_params = b; }
+
 	// ── N-point output mode ──────────────────────────────────────────────
 	// When method == NPoint, at least one of these must be true.
 
@@ -222,6 +230,7 @@ private:
 	// Per-file parameter override (empty category = disabled)
 	String m_override_category;
 	Hashmap<String, LevelOverride> m_override_levels;
+	bool m_show_params = true;     // show per-match parameter columns by default
 };
 
 namespace traits {

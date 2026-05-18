@@ -102,6 +102,13 @@ private:
 	// Track whether the runtime printed something during execution.
 	bool m_text_written = false;
 
+	// True while runCode() is executing; the runtime print/show_error callbacks
+	// use this to decide whether they need to add a fresh prompt after writing.
+	// When invoked from the REPL flow, runCode itself appends the trailing prompt
+	// and we must not duplicate it; outside the REPL (e.g. queries dispatched
+	// from a dialog), there's no caller to add the prompt, so the callbacks do it.
+	bool m_in_runcode = false;
+
 	static constexpr size_t HISTORY_LIMIT = 50;
 };
 
