@@ -2,7 +2,7 @@ Release notes
 -------------
 
 
-0.9.5 (00/00/2026)
+0.9.5 (18/05/2026)
 ~~~~~~~~~~~~~~~~~~
 
 **Sound and annotation views**
@@ -18,10 +18,9 @@ Release notes
 
 **Scripting**
 
+- **List comprehensions** for building lists in expression form: ``[expr foreach var in coll]``, with optional ``if cond`` filter and ``if cond else other_expr`` conditional clauses. The two-variable form ``foreach k, v in coll`` supports tables and indexed iteration over lists. Lowered directly to a foreach-shaped loop over a hidden accumulator (no closure overhead).
 - New globals matching the GUI operations: ``duplicate_annotation``, ``extract_layers``, ``merge_annotations``, ``extract_annotation_slice`` (two overloads), ``concatenate_annotations`` (two overloads), ``extract_sound_slice``, ``concatenate_sounds``. All return a fresh handle to a file written on disk; the caller decides whether to import it into the project.
-
-
-
+- improved scripting editor: better error reporting, go to definition, auto-complete and call tips for locally defined symbols
 
 0.9.4 (14/05/2026)
 ~~~~~~~~~~~~~~~~~~
