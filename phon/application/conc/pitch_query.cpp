@@ -115,7 +115,7 @@ void PitchQuery::clear()
 	Query::clear();
 	m_points.clear();
 	m_method = Method::Midpoint;
-	m_algorithm = speech::PitchTracker::Reaper;
+	m_algorithm = speech::PitchTracker::Praat;
 	m_min_pitch = 75;
 	m_max_pitch = 600;
 	m_voicing_threshold = 0.5;
@@ -394,7 +394,7 @@ static const char *algorithm_to_string(speech::PitchTracker algo)
 		case speech::PitchTracker::Reaper:  return "reaper";
 		case speech::PitchTracker::Swipe:   return "swipe";
 		case speech::PitchTracker::Praat:   return "praat";
-		default:                            return "reaper";
+		default:                            return "praat";
 	}
 }
 
@@ -405,7 +405,7 @@ static speech::PitchTracker string_to_algorithm(std::string_view s)
 	if (s == "reaper")  return speech::PitchTracker::Reaper;
 	if (s == "swipe")   return speech::PitchTracker::Swipe;
 	if (s == "praat")   return speech::PitchTracker::Praat;
-	return speech::PitchTracker::Reaper;
+	return speech::PitchTracker::Praat;
 }
 
 void PitchQuery::load()

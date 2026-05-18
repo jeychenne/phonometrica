@@ -94,8 +94,8 @@ void PitchWidget::readSettings()
 		m_algorithm = speech::PitchTracker::Praat;
 	}
 	else {
-		// Fallback to reaper if unknown method.
-		m_algorithm = speech::PitchTracker::Reaper;
+		// Unknown method — fall back to Praat (the default).
+		m_algorithm = speech::PitchTracker::Praat;
 	}
 
 	// Praat-specific parameters (read always, used only by Praat).

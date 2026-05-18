@@ -561,20 +561,41 @@ speech::VoiceReport Sound::compute_voice_report(int channel, double t1, double t
 		throw error("Sound::compute_voice_report: invalid F0 range [%, %] Hz", f0_min, f0_max);
 	}
 
-	auto first = time_to_frame(t1);
-	auto last  = time_to_frame(t2);
-	if (last - first < 2) {
+	// Pad the analysis input around [t1, t2] so the Praat-style pitch tracker
+	// has enough context to make confident voicing decisions on short
+	// selections. Without padding, a short vowel (< ~50 ms) sits entirely
+	// inside the tracker's tapered window edges, the Viterbi voicing-cost
+	// penalty dominates over the per-frame correlation evidence, and the
+	// optimal path can come back "all unvoiced" — yielding 0 pulses and
+	// NaN jitter/shimmer on intervals that clearly contain pulses when
+	// analysed in context. Pad = one analysis window (3/f0_min) plus a few
+	// frames of Viterbi neighbourhood, with a 50 ms floor for safety.
+	const double time_step = 0.01; // matches HnrOptions::time_step
+	const double pad = std::max(0.05, 3.0 / f0_min + 3.0 * time_step);
+
+	const double t_lo = std::max(0.0,        t1 - pad);
+	const double t_hi = std::min(duration(), t2 + pad);
+
+	auto first_pad = time_to_frame(t_lo);
+	auto last_pad  = time_to_frame(t_hi);
+
+	// Defensive: the original short-input check stays but now applies to the
+	// padded buffer, which is essentially always satisfied — keeps the error
+	// message useful for truly pathological inputs.
+	if (last_pad - first_pad < 2) {
 		throw error("Sound::compute_voice_report: selection too short (% s — % s)", t1, t2);
 	}
 
-	// Materialise the requested channel (or the mean across channels for
-	// channel == 0) as doubles. get_channel handles channel == 0 by
-	// delegating to average_channels.
-	auto chan = get_channel(channel, first, last);
+	auto chan = get_channel(channel, first_pad, last_pad);
 	std::span<const double> span(chan.data(), static_cast<size_t>(chan.size()));
 
-	return speech::compute_voice_report(span, static_cast<double>(sample_rate()),
-	                                    f0_min, f0_max);
+	// Offsets of the original interval inside the padded buffer.
+	const double sr = static_cast<double>(sample_rate());
+	const double interval_start = (t1 - t_lo);
+	const double interval_end   = (t2 - t_lo);
+
+	return speech::compute_voice_report(span, sr, f0_min, f0_max,
+	                                    interval_start, interval_end);
 }
 
 void Sound::initialize(Runtime &rt)

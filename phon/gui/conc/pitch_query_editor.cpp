@@ -48,9 +48,10 @@ static ThresholdInfo getThresholdInfo(int algo_index)
 	switch (algo_index) {
 		case 0: return {  0.0,  0.2, 0.01 }; // Harvest
 		case 1: return { -0.6,  0.7, 0.0  }; // RAPT
+		case 2: return { -0.5,  1.6, 0.9  }; // REAPER
 		case 3: return {  0.2,  0.5, 0.3  }; // SWIPE
 		case 4: return {  0.0,  1.0, 0.45 }; // Praat
-		default: return { -0.5,  1.6, 0.9  }; // REAPER
+		default: return {  0.0,  1.0, 0.45 }; // Praat (default)
 	}
 }
 
@@ -187,10 +188,10 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	m_algorithm_combo = new QComboBox;
 	m_algorithm_combo->addItem("Harvest (high accuracy)");
 	m_algorithm_combo->addItem("RAPT (classic)");
-	m_algorithm_combo->addItem("REAPER (default, robust)");
+	m_algorithm_combo->addItem("REAPER (robust)");
 	m_algorithm_combo->addItem("SWIPE (octave-robust)");
-	m_algorithm_combo->addItem("Praat (autocorrelation)");
-	m_algorithm_combo->setCurrentIndex(2);
+	m_algorithm_combo->addItem("Praat (default, autocorrelation)");
+	m_algorithm_combo->setCurrentIndex(4);
 	row1->addWidget(m_algorithm_combo);
 	row1->addSpacing(10);
 	row1->addWidget(new QLabel(tr("Min pitch (Hz):")));
@@ -222,8 +223,8 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	row2->addStretch();
 	outer->addLayout(row2);
 
-	// Set initial threshold from REAPER default
-	m_threshold_edit->setText(QString::number(getThresholdInfo(2).default_value, 'g'));
+	// Set initial threshold from Praat default (combo index 4)
+	m_threshold_edit->setText(QString::number(getThresholdInfo(4).default_value, 'g'));
 
 	// Praat-specific parameters (hidden unless Praat is selected)
 	// Split across two rows to keep the layout readable.
@@ -1044,7 +1045,7 @@ void PitchQueryEditor::loadQuery()
 
 	// Algorithm — setting the combo triggers the lambda which sets threshold to the default.
 	// We then override the threshold with the saved value below.
-	int algo_idx = 2;
+	int algo_idx = 4; // Praat is now the default
 	switch (m_query->algorithm()) {
 		case speech::PitchTracker::Harvest: algo_idx = 0; break;
 		case speech::PitchTracker::Rapt:    algo_idx = 1; break;

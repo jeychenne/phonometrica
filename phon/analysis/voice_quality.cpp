@@ -29,7 +29,6 @@
 #include <phon/error.hpp>
 #include <phon/analysis/voice_quality.hpp>
 #include <phon/analysis/signal_processing.hpp>
-#include <REAPER/epoch_tracker/epoch_tracker.h>
 
 namespace phonometrica::speech {
 
@@ -140,17 +139,132 @@ struct JitterAccumulator
 	}
 };
 
+
+// ── Praat-style pulse derivation (Sound_Pitch_to_PointProcess_cc) ─────
+//
+// All pulse-time machinery shares the voicing decisions of the Praat-style
+// pitch tracker. The two helpers below run after a single call to
+// `get_pitch_praat` and turn its (f0_contour, strengths) pair into pulse times
+// suitable for jitter and shimmer.
+
+// Time of the largest |sample| in [t_center - window, t_center + window]
+// seconds. Defensive: returns t_center if the window is empty.
+inline double find_extremum(std::span<const double> samples, double sample_rate,
+                            double t_center, double window)
+{
+	intptr_t lo = static_cast<intptr_t>(std::floor((t_center - window) * sample_rate));
+	intptr_t hi = static_cast<intptr_t>(std::ceil ((t_center + window) * sample_rate));
+	if (lo < 0) lo = 0;
+	if (hi >= static_cast<intptr_t>(samples.size())) hi = static_cast<intptr_t>(samples.size()) - 1;
+	if (lo > hi) return t_center;
+
+	intptr_t best = lo;
+	double   best_v = std::abs(samples[lo]);
+	for (intptr_t s = lo + 1; s <= hi; ++s) {
+		double v = std::abs(samples[s]);
+		if (v > best_v) { best_v = v; best = s; }
+	}
+	return static_cast<double>(best) / sample_rate;
+}
+
+// Linear interpolation of f0 at time t. Frames are equispaced at `time_step`,
+// frame i centred at t = i · time_step. Returns 0 if the two surrounding
+// frames are both unvoiced, or the voiced one if only one is voiced.
+inline double interpolate_pitch(const std::vector<double> &f0_contour,
+                                double time_step, double t)
+{
+	if (f0_contour.empty() || t < 0.0) return 0.0;
+	double frac = t / time_step;
+	intptr_t i = static_cast<intptr_t>(std::floor(frac));
+	intptr_t n = static_cast<intptr_t>(f0_contour.size());
+	if (i < 0) return f0_contour.front();
+	if (i >= n - 1) return f0_contour.back();
+	double a = f0_contour[i];
+	double b = f0_contour[i + 1];
+	if (a <= 0.0 && b <= 0.0) return 0.0;
+	if (a <= 0.0) return b;
+	if (b <= 0.0) return a;
+	double w = frac - static_cast<double>(i);
+	return a + w * (b - a);
+}
+
+// Derive pulses from a pitch contour + voicing strengths. Walks each voiced
+// run, anchoring on a signal peak near its first frame and stepping forward
+// at intervals of the local period (1/F0). Each predicted pulse time is
+// snapped to the nearest local |signal| extremum within ±period/4 — the same
+// search-window fraction Praat's Sound_Pitch_to_PointProcess_cc uses.
+// Returns pulse times in seconds relative to the start of `samples`.
+std::vector<double> derive_pulses_from_pitch(
+        std::span<const double> samples, double sample_rate,
+        const std::vector<double> &f0_contour,
+        const std::vector<double> &strengths,
+        double time_step)
+{
+	std::vector<double> pulses;
+	intptr_t n = std::min<intptr_t>(static_cast<intptr_t>(f0_contour.size()),
+	                                static_cast<intptr_t>(strengths.size()));
+	if (n == 0 || samples.empty() || sample_rate <= 0.0) return pulses;
+
+	intptr_t i = 0;
+	while (i < n)
+	{
+		// Skip unvoiced frames
+		while (i < n && strengths[i] <= 0.0) ++i;
+		if (i >= n) break;
+
+		// Find end of voiced run
+		intptr_t j = i;
+		while (j < n && strengths[j] > 0.0) ++j;
+
+		double run_start = static_cast<double>(i) * time_step;
+		double run_end   = static_cast<double>(j) * time_step;
+
+		double f0 = f0_contour[i];
+		if (f0 > 0.0)
+		{
+			double period = 1.0 / f0;
+
+			// Anchor: snap to the largest peak within ±period/2 of the first
+			// voiced frame. The wider window for the anchor (vs ±period/4 for
+			// subsequent steps) reflects the absence of a reference pulse to
+			// step off of.
+			double t = find_extremum(samples, sample_rate, run_start, period / 2.0);
+			pulses.push_back(t);
+
+			// Walk forward, predicting each next pulse and snapping to the
+			// nearest extremum within ±period/4 of the prediction.
+			while (true)
+			{
+				double f0_t = interpolate_pitch(f0_contour, time_step, t);
+				if (f0_t <= 0.0) break;
+				double per = 1.0 / f0_t;
+				double t_pred = t + per;
+				if (t_pred + per / 4.0 > run_end) break;
+				double t_next = find_extremum(samples, sample_rate, t_pred, per / 4.0);
+				// Defensive: if the snap landed at or before the current pulse
+				// (degenerate signal), abort the run rather than emit duplicates.
+				if (t_next <= t) break;
+				pulses.push_back(t_next);
+				t = t_next;
+			}
+		}
+
+		i = j;
+	}
+
+	return pulses;
+}
+
 } // anonymous namespace
 
 
-// ── Glottal-pulse detection (REAPER) ──────────────────────────────────
+// ── Glottal-pulse detection (Praat-style derivation from F0 contour) ──
 
 std::vector<double> compute_glottal_pulses(
         std::span<const double> samples,
         double sample_rate,
         double f0_min,
-        double f0_max,
-        bool   do_highpass)
+        double f0_max)
 {
 	if (samples.empty() || sample_rate <= 0.0) {
 		throw error("compute_glottal_pulses: empty input or invalid sample rate");
@@ -159,56 +273,27 @@ std::vector<double> compute_glottal_pulses(
 		throw error("compute_glottal_pulses: invalid F0 range");
 	}
 
-	// Peak-normalise to ~0.95 * INT16_MAX before casting to int16_t so REAPER's
-	// internal LPC analysis has enough dynamic range. Mirrors the trick used by
-	// the existing signal_processing.cpp REAPER path, with peak-based scaling
-	// rather than a fixed 32768 multiplier (more robust on quiet recordings).
-	double peak = 0.0;
-	for (double s : samples) peak = std::max(peak, std::abs(s));
-	if (peak <= 0.0) {
-		// All-zero input — REAPER cannot track anything; return empty.
-		return {};
-	}
-	const double scale = 0.95 * 32767.0 / peak;
+	// Run the Praat-style pitch tracker, then derive pulses from the contour.
+	// All other voice-quality measures share this tracker output via
+	// compute_voice_report (which calls get_pitch_praat once and reuses the
+	// result). When called standalone — e.g. from the waveform widget overlay —
+	// we run the tracker here.
+	HnrOptions hopts;
+	hopts.f0_min = f0_min;
+	hopts.f0_max = f0_max;
 
-	std::vector<int16_t> wav(samples.size());
-	for (size_t i = 0; i < samples.size(); ++i) {
-		double v = samples[i] * scale;
-		if (v >  32767.0) v =  32767.0;
-		if (v < -32768.0) v = -32768.0;
-		wav[i] = static_cast<int16_t>(std::lround(v));
-	}
+	Array<double> input(samples.data(), static_cast<intptr_t>(samples.size()));
+	std::vector<double> strengths;
+	std::vector<double> f0_contour = get_pitch_praat(
+		input, sample_rate,
+		hopts.f0_min, hopts.f0_max, hopts.time_step,
+		hopts.voicing_threshold,
+		hopts.octave_jump_cost, hopts.voicing_cost,
+		hopts.silence_threshold, hopts.octave_cost,
+		hopts.use_gaussian, &strengths);
 
-	sptk::reaper::EpochTracker et;
-	if (!et.Init(wav.data(),
-	             static_cast<int32_t>(wav.size()),
-	             static_cast<float>(sample_rate),
-	             static_cast<float>(f0_min),
-	             static_cast<float>(f0_max),
-	             do_highpass,
-	             /*do_hilbert_transform=*/false))
-	{
-		throw error("compute_glottal_pulses: REAPER EpochTracker Init failed");
-	}
-	if (!et.ComputeFeatures()) {
-		throw error("compute_glottal_pulses: REAPER ComputeFeatures failed");
-	}
-	if (!et.TrackEpochs()) {
-		throw error("compute_glottal_pulses: REAPER TrackEpochs failed");
-	}
-
-	// 5 ms unvoiced filler interval matches reaper::kUnvoicedPulseInterval used
-	// by the SPTK wrapper. We discard those below by filtering on voicing.
-	std::vector<float>   times;
-	std::vector<int16_t> voicing;
-	et.GetFilledEpochs(0.005f, &times, &voicing);
-
-	std::vector<double> gcis;
-	gcis.reserve(times.size());
-	for (size_t i = 0; i < times.size(); ++i) {
-		if (voicing[i]) gcis.push_back(static_cast<double>(times[i]));
-	}
-	return gcis;
+	return derive_pulses_from_pitch(samples, sample_rate,
+	                                f0_contour, strengths, hopts.time_step);
 }
 
 
@@ -627,30 +712,70 @@ double mean_in_range_period(std::span<const double> pulses, const PeriodFilter &
 VoiceReport compute_voice_report(std::span<const double> samples,
                                  double sample_rate,
                                  double f0_min,
-                                 double f0_max)
+                                 double f0_max,
+                                 double interval_start_s,
+                                 double interval_end_s)
 {
 	VoiceReport r;
 
-	// REAPER pulse detection. Failures (rare: ComputeFeatures/TrackEpochs
-	// occasionally bail on extremely short or all-silent inputs) leave the
-	// pulse list empty so jitter/shimmer report NaN, but they do not
-	// short-circuit the pitch-tracker pass below — that has its own tracker
-	// and can still produce useful mean_f0 / voicing / HNR values when REAPER
-	// cannot lock onto pulses.
+	if (samples.empty() || sample_rate <= 0.0) return r;
+	if (f0_min <= 0.0 || f0_max <= f0_min)      return r;
+
+	// Effective interval window. Default (interval_end_s < 0) means "report on
+	// the whole samples"; otherwise the tracker runs on the full buffer (so it
+	// has padding context) but the voice-quality tally is restricted to
+	// [interval_start_s, interval_end_s].
+	const double samples_end = static_cast<double>(samples.size()) / sample_rate;
+	const bool   has_interval = (interval_end_s >= 0.0);
+	const double crop_lo = has_interval ? std::max(0.0,           interval_start_s) : 0.0;
+	const double crop_hi = has_interval ? std::min(samples_end,   interval_end_s)   : samples_end;
+	if (crop_hi <= crop_lo) return r;
+
+	// Single Praat-style pitch tracking pass. All voice-quality measures
+	// share its voicing decisions:
+	//   - pulses are derived from this contour (Praat's
+	//     Sound_Pitch_to_PointProcess_cc, ±period/4 peak-snap),
+	//   - mean F0 = arithmetic mean of voiced-frame F0,
+	//   - voiced_frame_fraction = voiced frames / total frames,
+	//   - HNR = mean of r_to_hnr_db over voiced frames,
+	//   - jitter/shimmer = standard accumulators over the derived pulses.
+	// Tracker parameters come from HnrOptions; only f0_min/f0_max are
+	// caller-controllable. The other params are Praat defaults baked in,
+	// same as Praat's own Voice Report.
+	HnrOptions hopts;
+	hopts.f0_min = f0_min;
+	hopts.f0_max = f0_max;
+
+	Array<double> input = samples_to_array(samples);
+	std::vector<double> strengths;
+	std::vector<double> f0_contour = get_pitch_praat(
+		input, sample_rate,
+		hopts.f0_min, hopts.f0_max, hopts.time_step,
+		hopts.voicing_threshold,
+		hopts.octave_jump_cost, hopts.voicing_cost,
+		hopts.silence_threshold, hopts.octave_cost,
+		hopts.use_gaussian, &strengths);
+
+	// Pulse derivation from the shared contour.
+	std::vector<double> all_pulses = derive_pulses_from_pitch(
+		samples, sample_rate, f0_contour, strengths, hopts.time_step);
+
+	// Filter pulses to the interval window. Pulses whose time falls outside
+	// [crop_lo, crop_hi] are dropped before jitter/shimmer accumulation. Note
+	// this also drops boundary periods that would cross into the padding
+	// region — same semantics as the PeriodFilter's treatment of periods that
+	// straddle unvoiced gaps.
 	std::vector<double> pulses;
-	try
+	pulses.reserve(all_pulses.size());
+	for (double t : all_pulses)
 	{
-		pulses = compute_glottal_pulses(samples, sample_rate, f0_min, f0_max);
-	}
-	catch (...)
-	{
-		// Keep pulses empty; downstream measures will return NaN naturally.
+		if (t >= crop_lo && t <= crop_hi) pulses.push_back(t);
 	}
 
 	r.num_pulses = static_cast<intptr_t>(pulses.size());
 
-	// Period filter inherits f0_min/f0_max from the caller so the
-	// in-range definition is consistent with pulse detection.
+	// Period filter inherits f0_min/f0_max so the in-range definition is
+	// consistent with the tracker's search range.
 	PeriodFilter    pf;
 	pf.period_floor   = 1.0 / f0_max;
 	pf.period_ceiling = 1.0 / f0_min;
@@ -673,65 +798,45 @@ VoiceReport compute_voice_report(std::span<const double> samples,
 	r.shimmer_apq5     = shimmer_apq5    (pulses_span, samples, sample_rate, af);
 	r.shimmer_apq11    = shimmer_apq11   (pulses_span, samples, sample_rate, af);
 
-	// One shared call to the Praat-style pitch tracker, used to compute:
-	//   - mean_f0 (arithmetic mean of voiced-frame F0; robust to partial
-	//     voicing in a way that 1/mean_period is not, because REAPER may
-	//     fail to find pulses even when the tracker locks onto frames),
-	//   - voiced_frame_fraction (count of voiced frames / total),
-	//   - hnr (mean of r_to_hnr_db over voiced frames).
-	// Mirrors the parameters declared in HnrOptions.
-	HnrOptions hopts;
-	hopts.f0_min = f0_min;
-	hopts.f0_max = f0_max;
+	// Mean F0, voicing fraction, HNR — all from the shared tracker output,
+	// tallied only over frames whose centre time falls inside [crop_lo, crop_hi].
+	// Frames are equispaced at hopts.time_step, frame i centred at i·time_step.
+	const intptr_t nframes_total = static_cast<intptr_t>(strengths.size());
+	intptr_t frame_lo = static_cast<intptr_t>(std::ceil (crop_lo / hopts.time_step));
+	intptr_t frame_hi = static_cast<intptr_t>(std::floor(crop_hi / hopts.time_step));
+	if (frame_lo < 0)              frame_lo = 0;
+	if (frame_hi >= nframes_total) frame_hi = nframes_total - 1;
 
-	if (!samples.empty() && sample_rate > 0.0)
+	intptr_t total_frames  = 0;
+	intptr_t voiced_frames = 0;
+	double   f0_sum  = 0.0;
+	double   hnr_sum = 0.0;
+	intptr_t hnr_n   = 0;
+	for (intptr_t i = frame_lo; i <= frame_hi; ++i)
 	{
-		Array<double> input = samples_to_array(samples);
-		std::vector<double> strengths;
-		std::vector<double> f0_contour = get_pitch_praat(
-			input, sample_rate,
-			hopts.f0_min, hopts.f0_max, hopts.time_step,
-			hopts.voicing_threshold,
-			hopts.octave_jump_cost, hopts.voicing_cost,
-			hopts.silence_threshold, hopts.octave_cost,
-			hopts.use_gaussian, &strengths);
-
-		intptr_t total_frames  = static_cast<intptr_t>(strengths.size());
-		intptr_t voiced_frames = 0;
-		double   f0_sum  = 0.0;
-		double   hnr_sum = 0.0;
-		intptr_t hnr_n   = 0;
-		for (intptr_t i = 0; i < total_frames; ++i)
+		++total_frames;
+		double rstr = strengths[i];
+		if (rstr > 0.0)
 		{
-			double rstr = strengths[i];
-			if (rstr > 0.0)
-			{
-				++voiced_frames;
-				// f0_contour[i] is the chosen-path F0; for voiced frames this
-				// is > 0 by construction of the candidate set (the unvoiced
-				// candidate sits at frequency = 0 with strength = unvoiced
-				// score, so any frame with strength > 0 has the periodic
-				// candidate selected and its frequency is the F0).
-				if (f0_contour[i] > 0.0) f0_sum += f0_contour[i];
-
-				double db = r_to_hnr_db(rstr);
-				if (!std::isnan(db)) {
-					hnr_sum += db;
-					++hnr_n;
-				}
+			++voiced_frames;
+			if (f0_contour[i] > 0.0) f0_sum += f0_contour[i];
+			double db = r_to_hnr_db(rstr);
+			if (!std::isnan(db)) {
+				hnr_sum += db;
+				++hnr_n;
 			}
 		}
+	}
 
-		if (total_frames > 0) {
-			r.voiced_frame_fraction = static_cast<double>(voiced_frames)
-			                        / static_cast<double>(total_frames);
-		}
-		if (voiced_frames > 0) {
-			r.mean_f0 = f0_sum / static_cast<double>(voiced_frames);
-		}
-		if (hnr_n > 0) {
-			r.hnr = hnr_sum / static_cast<double>(hnr_n);
-		}
+	if (total_frames > 0) {
+		r.voiced_frame_fraction = static_cast<double>(voiced_frames)
+		                        / static_cast<double>(total_frames);
+	}
+	if (voiced_frames > 0) {
+		r.mean_f0 = f0_sum / static_cast<double>(voiced_frames);
+	}
+	if (hnr_n > 0) {
+		r.hnr = hnr_sum / static_cast<double>(hnr_n);
 	}
 
 	return r;

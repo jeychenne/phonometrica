@@ -192,7 +192,7 @@ private:
 	Array<double> m_points;
 
 	// Pitch algorithm
-	speech::PitchTracker m_algorithm = speech::PitchTracker::Reaper;
+	speech::PitchTracker m_algorithm = speech::PitchTracker::Praat;
 
 	// Pitch detection settings
 	double m_min_pitch = 75;          // Hz

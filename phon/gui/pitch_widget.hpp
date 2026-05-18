@@ -111,7 +111,7 @@ private:
 	double m_max_pitch = 500;
 	double m_time_step = 0.01;
 	double m_voicing_threshold = 0.9;
-	speech::PitchTracker m_algorithm = speech::PitchTracker::Reaper;
+	speech::PitchTracker m_algorithm = speech::PitchTracker::Praat;
 	double m_octave_jump_cost = 0.35;
 	double m_voicing_cost = 0.14;
 	double m_silence_threshold = 0.03;

@@ -673,11 +673,11 @@ void Settings::reset_pitch_tracking()
 {
 	auto table = make_handle<Table>(runtime);
 	auto &map = table->data();
-	map["method"] = "reaper";
+	map["method"] = "praat";
 	map["minimum_pitch"] = intptr_t(70);
 	map["maximum_pitch"] = intptr_t(500);
 	map["time_step"] = 0.01;
-	map["voicing_threshold"] = 0.9;
+	map["voicing_threshold"] = 0.45;
 	map["octave_jump_cost"] = 0.35;
 	map["voicing_cost"] = 0.14;
 	map["silence_threshold"] = 0.03;

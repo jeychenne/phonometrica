@@ -66,7 +66,7 @@ public:
 	// first paint after the toggle goes on; the result is cached for the
 	// lifetime of the widget unless parameters or visibility change.
 	void setShowGlottalPulses(bool show);
-	void setGlottalPulseParams(double f0_min, double f0_max, bool do_highpass);
+	void setGlottalPulseParams(double f0_min, double f0_max);
 
 protected:
 
@@ -136,7 +136,6 @@ private:
 	std::vector<double> m_pulses;       // absolute times, seconds
 	double m_pulse_f0_min   = 75.0;
 	double m_pulse_f0_max   = 600.0;
-	bool   m_pulse_highpass = true;
 
 	// Debounce for viewport-driven recompute of pulses. Mirrors the
 	// pattern used by PitchWidget / IntensityWidget so rapid scroll or

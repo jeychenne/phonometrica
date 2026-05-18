@@ -152,7 +152,7 @@ do not supply fall back to your global pitch-tracking settings.
 
 Supported keys:
 
-* ``method`` (string): pitch tracker to use (e.g. ``"reaper"``).
+* ``method`` (string): pitch tracker to use (one of ``"praat"`` (default), ``"harvest"``, ``"rapt"``, ``"reaper"``, ``"swipe"``).
 * ``min_pitch`` (number): lower bound on the candidate F0, in Hz.
 * ``max_pitch`` (number): upper bound on the candidate F0, in Hz.
 * ``threshold`` (number): voicing threshold used by the tracker.
@@ -245,19 +245,20 @@ When the ``options`` table is omitted, F0 search bounds default to 75 Hz and 600
 
 Supported keys:
 
-* ``f0_min`` (number): lower bound on REAPER's periodicity search and the period filter, in Hz.
-* ``f0_max`` (number): upper bound on REAPER's periodicity search and the period filter, in Hz.
+* ``f0_min`` (number): lower bound on the pitch tracker's periodicity search and the period filter, in Hz.
+* ``f0_max`` (number): upper bound on the pitch tracker's periodicity search and the period filter, in Hz.
 
-The returned table has 14 fields. ``num_pulses`` is the number of voiced glottal-closure instants detected by REAPER in the
-selection. All other fields are ``Number`` values, and equal ``undefined`` (NaN) when there are not enough valid pulses or
-voiced frames to compute the corresponding measure.
+The returned table has 15 fields. ``num_pulses`` is the number of pulses derived from the Praat-style pitch contour
+inside the selection. All other fields are ``Number`` values, and equal ``undefined`` (NaN) when there are not enough
+valid pulses or voiced frames to compute the corresponding measure.
 
 ============================  =====================================================================================
 Field                         Description
 ============================  =====================================================================================
 ``num_pulses``                Number of voiced pulses (integer).
 ``mean_period``               Mean period over in-range pulses, in seconds.
-``mean_f0``                   ``1 / mean_period``, in hertz.
+``voiced_frame_fraction``     Fraction of analysed frames classified as voiced, in [0, 1].
+``mean_f0``                   Mean F0 over voiced frames, in hertz (Praat's "Mean pitch").
 ``jitter_local``              Mean ``|T(i+1) − T(i)| / mean(T)``, dimensionless (multiply by 100 for "percent").
 ``jitter_local_abs``          Mean ``|T(i+1) − T(i)|`` in seconds.
 ``jitter_rap``                3-point relative average perturbation (dimensionless).
@@ -271,10 +272,14 @@ Field                         Description
 ``hnr``                       Harmonics-to-noise ratio, mean over voiced frames, in decibels.
 ============================  =====================================================================================
 
-The pulse times come from REAPER [TAL2014]_, restricted to voiced regions; HNR is derived from the normalised autocorrelation
-strength of the Praat-style pitch tracker [BOE1993]_ along its chosen Viterbi path. Jitter and shimmer aggregates apply the
-same period (1.3) and amplitude (1.6) ratio filters as Praat's voice report. See :ref:`voice-report` in the sound view
-documentation for full definitions.
+Pulses, voicing decisions, mean F0 and HNR are all derived from a single pass of the Praat-style autocorrelation pitch
+tracker [BOE1993]_ over the selection. Pulse times are produced by Praat's ``Sound & Pitch: To PointProcess (cc)``
+algorithm — for each voiced run, the contour is walked forward at intervals of the local period and each predicted
+pulse time is snapped to the nearest signal extremum within a quarter-period window. Jitter and shimmer aggregates
+apply the same period (1.3) and amplitude (1.6) ratio filters as Praat's voice report. On short selections, the
+surrounding context is padded so the tracker has enough Viterbi neighbourhood to make confident voicing decisions;
+reported measures are still restricted to ``[t1, t2)``. See :ref:`voice-report` in the sound view documentation for
+full definitions.
 
 Example::
 

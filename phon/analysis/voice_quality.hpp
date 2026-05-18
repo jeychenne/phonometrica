@@ -17,7 +17,7 @@
  *                                                                                                                     *
  * Purpose: voice-quality kernel.                                                                                      *
  *                                                                                                                     *
- *   * Glottal-pulse detection via REAPER's EpochTracker (Talkin/Google).                                              *
+ *   * Glottal-pulse detection via Praat-style Sound_Pitch_to_PointProcess_cc.                                          *
  *   * Jitter family: local (relative), local absolute, RAP, PPQ5, DDP.                                                *
  *   * Shimmer family: local (relative), local dB, APQ3, APQ5, APQ11.                                                  *
  *   * HNR derived from the Viterbi-chosen normalised autocorrelation strength of                                      *
@@ -63,23 +63,23 @@ struct AmplitudeFilter
 };
 
 
-// ── Glottal-pulse detection (REAPER EpochTracker) ─────────────────────
+// ── Glottal-pulse detection (Praat-style) ─────────────────────────────
 //
 // Returns the times (seconds, relative to start of `samples`) of glottal
-// closure instants within voiced regions. Pulses inserted by REAPER's
-// interpolation across unvoiced regions are discarded.
+// pulses within voiced regions. The implementation tracks the F0 contour
+// with the Praat-style autocorrelation tracker (Boersma 1993), then walks
+// each voiced run forward at intervals of the local period (1/F0), snapping
+// each predicted pulse time to the nearest local |signal| extremum within
+// ±period/4 — Praat's Sound_Pitch_to_PointProcess_cc algorithm.
 //
-//   f0_min, f0_max  : bound the periodicity search range.
-//   do_highpass     : apply an 80 Hz high-pass to remove DC/rumble
-//                     (recommended; mirrors REAPER's normal usage).
+//   f0_min, f0_max : bound the periodicity search range.
 //
-// Throws on REAPER init / feature / tracking failure.
+// Throws on invalid input or invalid F0 range.
 std::vector<double> compute_glottal_pulses(
         std::span<const double> samples,
         double sample_rate,
         double f0_min      = 75.0,
-        double f0_max      = 600.0,
-        bool   do_highpass = true);
+        double f0_max      = 600.0);
 
 
 // ── Jitter family ─────────────────────────────────────────────────────
@@ -188,27 +188,30 @@ std::vector<double> hnr_contour(std::span<const double> samples, double sample_r
 // ── Aggregate voice report ────────────────────────────────────────────
 //
 // One-shot computation of the full voice-quality battery on a single
-// channel of speech. All measures share the same set of glottal pulses
-// (REAPER), which is the expensive step. Jitter and shimmer use the
-// default Praat filters; HNR uses the Praat-style pitch tracker with
-// the defaults declared in HnrOptions.
+// channel of speech. The Praat-style pitch tracker is run once and its
+// output (F0 contour + per-frame strengths) is shared across pulse
+// derivation, jitter, shimmer, mean F0, voicing fraction, and HNR.
+// Every measure inherits the same single voicing decision.
 //
 // All double fields are NaN when the underlying measure is undefined
 // (typically not enough valid pulses or no voiced frames). num_pulses
-// is always populated (it is the count of voiced GCIs returned by
-// REAPER); the GUI and scripting bindings rely on a zero count to
-// surface a single "no pulses found" message rather than ten NaNs.
+// is always populated (it is the count of derived pulses from the
+// Praat-style contour); the GUI and scripting bindings rely on a zero
+// count to surface a single "no pulses found" message rather than ten
+// NaNs.
 //
 // Field order is kept close to the layout of the GUI report so a
 // scripting-side dump matches what the user sees in the output panel.
 
 struct VoiceReport
 {
-	// Glottal pulses (REAPER-derived). num_pulses counts voiced GCIs; mean_period
-	// is the mean of consecutive in-range periods (rejects periods that span an
-	// unvoiced gap, so partial voicing still yields a meaningful value provided
-	// REAPER finds at least one pair of consecutive voiced pulses within the
-	// configured F0 range).
+	// Glottal pulses (Praat-derived from the F0 contour via
+	// Sound_Pitch_to_PointProcess_cc). num_pulses counts pulses within
+	// voiced runs; mean_period is the mean of consecutive in-range
+	// periods (rejects periods that span an unvoiced gap, so partial
+	// voicing still yields a meaningful value provided the contour
+	// produces at least one pair of consecutive voiced frames within
+	// the configured F0 range).
 	intptr_t num_pulses     = 0;
 	double   mean_period    = std::numeric_limits<double>::quiet_NaN();  // seconds
 
@@ -221,10 +224,8 @@ struct VoiceReport
 
 	// Mean F0, computed as the arithmetic mean of voiced-frame F0 in the
 	// pitch contour (Praat's "Mean pitch"). NaN only when there are no voiced
-	// frames at all — robust to partial voicing in a way that 1/mean_period is
-	// not, because the pitch tracker reports a frame-level F0 even when REAPER
-	// cannot lock onto pulses. Will differ slightly from 1/mean_period in
-	// general (arithmetic vs harmonic mean over different sampling grids); both
+	// frames at all. Will differ slightly from 1/mean_period in general
+	// (arithmetic vs harmonic mean over different sampling grids); both
 	// values are reported so the user can choose which one to use.
 	double   mean_f0        = std::numeric_limits<double>::quiet_NaN();  // Hz
 
@@ -246,17 +247,31 @@ struct VoiceReport
 	double   hnr              = std::numeric_limits<double>::quiet_NaN();
 };
 
-// Compute the full voice report on `samples` (one channel). REAPER
-// pulse detection is performed once and reused across jitter, shimmer
-// and the period summary. HNR uses its own pitch tracker on the same
-// samples. Pulse detection failures are caught internally so that the
-// HNR field can still be populated even when REAPER cannot lock onto
-// the signal; conversely, HNR failures do not affect the jitter and
-// shimmer fields.
+// Compute the full voice report on `samples` (one channel). A single
+// Praat-style pitch tracking pass drives everything: pulses are derived
+// from the F0 contour, and jitter/shimmer/mean F0/voicing fraction/HNR
+// all consume the same shared output. The single pass means there is no
+// inconsistency between which intervals each measure considers voiced.
+//
+// `interval_start_s` and `interval_end_s` (in seconds, measured from the
+// start of `samples`) restrict the reported measures to a sub-window of
+// the input. The pitch tracker still runs on the full `samples` so it has
+// adequate context for its voicing decisions — typically the caller has
+// padded the buffer around a user-selected interval to escape the
+// short-input edge-effect failure mode of autocorrelation tracking. Only
+// pulses and frames whose time falls inside [interval_start_s,
+// interval_end_s] are tallied; jitter/shimmer/mean-period are computed
+// on the filtered pulse list, and voicing-fraction/mean-F0/HNR over the
+// filtered frame range. The default (interval_end_s < 0) skips cropping
+// entirely — backward-compatible behaviour for callers that already pass
+// the exact analysis window they want reported (the waveform overlay, or
+// script bindings).
 VoiceReport compute_voice_report(std::span<const double> samples,
                                  double sample_rate,
                                  double f0_min = 75.0,
-                                 double f0_max = 600.0);
+                                 double f0_max = 600.0,
+                                 double interval_start_s = 0.0,
+                                 double interval_end_s   = -1.0);
 
 } // namespace phonometrica::speech
 

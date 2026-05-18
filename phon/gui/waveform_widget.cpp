@@ -124,13 +124,12 @@ void WaveformWidget::setShowGlottalPulses(bool show)
 	update();
 }
 
-void WaveformWidget::setGlottalPulseParams(double f0_min, double f0_max, bool do_highpass)
+void WaveformWidget::setGlottalPulseParams(double f0_min, double f0_max)
 {
-	if (m_pulse_f0_min == f0_min && m_pulse_f0_max == f0_max && m_pulse_highpass == do_highpass)
+	if (m_pulse_f0_min == f0_min && m_pulse_f0_max == f0_max)
 		return;
-	m_pulse_f0_min   = f0_min;
-	m_pulse_f0_max   = f0_max;
-	m_pulse_highpass = do_highpass;
+	m_pulse_f0_min = f0_min;
+	m_pulse_f0_max = f0_max;
 	m_pulses_valid = false;
 	if (m_show_pulses)
 		update();
@@ -443,10 +442,10 @@ void WaveformWidget::computeGlottalPulses()
 	try {
 		local_pulses = speech::compute_glottal_pulses(
 		    std::span<const double>(mono.data(), mono.size()),
-		    sr, m_pulse_f0_min, m_pulse_f0_max, m_pulse_highpass);
+		    sr, m_pulse_f0_min, m_pulse_f0_max);
 	}
 	catch (const std::exception &) {
-		// REAPER failed on this window (rare). Leave pulses empty.
+		// Pitch tracker / pulse derivation failed on this window. Leave pulses empty.
 		return;
 	}
 

@@ -47,17 +47,17 @@ static ThresholdInfo getThresholdInfo(const QString &method)
 	if (method == "rapt")    return { -0.6,  0.7, 0.0  };
 	if (method == "swipe")   return {  0.2,  0.5, 0.3  };
 	if (method == "harvest") return {  0.0,  0.2, 0.01 };
-	if (method == "praat")   return {  0.0,  1.0, 0.45 };
-	/* reaper (default) */   return { -0.5,  1.6, 0.9  };
+	if (method == "reaper")  return { -0.5,  1.6, 0.9  };
+	/* praat (default) */    return {  0.0,  1.0, 0.45 };
 }
 
 // Default values. Must match Settings::reset_pitch_tracking() in settings.cpp.
 namespace {
-const QString  DEFAULT_METHOD            = QStringLiteral("reaper");
+const QString  DEFAULT_METHOD            = QStringLiteral("praat");
 constexpr int  DEFAULT_MIN_PITCH         = 70;
 constexpr int  DEFAULT_MAX_PITCH         = 500;
 constexpr double DEFAULT_TIME_STEP       = 0.01;
-constexpr double DEFAULT_VOICING         = 0.9;   // reaper default
+constexpr double DEFAULT_VOICING         = 0.45;  // praat default
 constexpr double DEFAULT_SILENCE         = 0.03;
 constexpr double DEFAULT_OCTAVE_COST     = 0.01;
 constexpr double DEFAULT_OCTAVE_JUMP     = 0.35;
@@ -91,11 +91,11 @@ PitchSettingsDialog::PitchSettingsDialog(QWidget *parent) :
 
 	main_layout->addWidget(new QLabel(tr("Method:")));
 	m_method_combo = new QComboBox;
-	m_method_combo->addItem(tr("REAPER (default, robust)"), QStringLiteral("reaper"));
-	m_method_combo->addItem(tr("Praat (autocorrelation)"),  QStringLiteral("praat"));
-	m_method_combo->addItem(tr("SWIPE (octave-robust)"),    QStringLiteral("swipe"));
-	m_method_combo->addItem(tr("Harvest (high accuracy)"),  QStringLiteral("harvest"));
-	m_method_combo->addItem(tr("RAPT (classic)"),           QStringLiteral("rapt"));
+	m_method_combo->addItem(tr("Praat (default, autocorrelation)"), QStringLiteral("praat"));
+	m_method_combo->addItem(tr("REAPER (robust)"),                  QStringLiteral("reaper"));
+	m_method_combo->addItem(tr("SWIPE (octave-robust)"),            QStringLiteral("swipe"));
+	m_method_combo->addItem(tr("Harvest (high accuracy)"),          QStringLiteral("harvest"));
+	m_method_combo->addItem(tr("RAPT (classic)"),                   QStringLiteral("rapt"));
 	main_layout->addWidget(m_method_combo);
 
 	main_layout->addWidget(new QLabel(tr("Minimum pitch (Hz):")));

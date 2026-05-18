@@ -203,16 +203,17 @@ Pitch queries
 To run a pitch query, click on ``Analysis > Measure pitch...``. The pitch query editor adds a panel for
 pitch analysis settings:
 
-- **Algorithm**: Phonometrica supports five pitch tracking algorithms: **REAPER** [TAL2014]_ (the default),
-  **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_. Reaper,
-  Harvest, and RAPT are provided by the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are
-  dedicated implementations. See :ref:`sound-view` for references. REAPER is also the pulse detector used
-  in voice quality analysis (see :ref:`voice-report`) — selecting it for pitch ensures that F0 and
-  jitter/shimmer measurements on the same interval are derived from the same set of detected pulses.
+- **Algorithm**: Phonometrica supports five pitch tracking algorithms: **Praat (raw autocorrelation)** [BOE1993]_
+  (the default), **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **REAPER** [TAL2014]_, and **SWIPE** [CAM2007]_.
+  Harvest, RAPT, REAPER and SWIPE are provided by the Speech Signal Processing Toolkit (SPTK); Praat is a dedicated
+  port of the algorithm used by the eponymous program. See :ref:`sound-view` for references. The Praat algorithm
+  is also the engine used internally for voice quality analysis (see :ref:`voice-report`), so F0 and
+  jitter/shimmer measurements on the same interval are always derived from a single, consistent set of voicing
+  decisions.
 - **Minimum pitch** and **Maximum pitch**: the expected pitch range.
 - **Voicing threshold**: sensitivity to voicing detection. The valid range and default value depend on the
-  selected algorithm (for example, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER);
-  the editor updates the default automatically when you change algorithm.
+  selected algorithm (for example, 0.0–1.0 with default 0.45 for Praat, 0.2–0.5 with default 0.3 for SWIPE,
+  −0.5–1.6 with default 0.9 for REAPER); the editor updates the default automatically when you change algorithm.
 - **Time step**: determines the temporal resolution of the pitch track.
 
 When **Praat** is selected, four additional parameters are revealed, corresponding to Praat's ``To Pitch (ac)`` command:
@@ -283,24 +284,25 @@ in phoniatric and clinical work as well as in studies of voice register, breathi
 To run a voice quality query, click on ``Analysis > Measure voice quality...``.
 
 The kernel is the same one that powers the interactive *Voice report* (``F9`` in the sound view) and
-the :func:`get_voice_report` scripting function — REAPER-based pulse detection [TAL2014]_ for the
-jitter and shimmer families, Praat-style normalised autocorrelation [BOE1993]_ for HNR. Reported
+the :func:`get_voice_report` scripting function — a single Praat-style autocorrelation pitch
+tracker [BOE1993]_ pass drives pulse derivation (Praat's ``Sound & Pitch: To PointProcess (cc)``
+algorithm), the jitter and shimmer families, the voicing fraction, mean F0, and HNR. Reported
 values match Praat's "Voice report" for cross-checking. See :ref:`voice-report` for the definition
 of each measure and the filtering rules (out-of-range periods, 1.3× period-ratio cap, 1.6× amplitude-
 ratio cap for shimmer).
 
 The voice quality query editor extends the text query editor with one analysis settings panel:
 
-- **F0 range** (default 75–600 Hz): bounds REAPER's periodicity search and the period filter applied
-  to jitter and shimmer aggregates. Narrow the range for higher- or lower-pitched material.
-- **Measurements**: 14 checkboxes split into three logical columns — *pulses and F0* (number of pulses,
-  mean period in ms, mean F0 in Hz), *jitter family* (local, local absolute in µs, RAP, PPQ5, DDP, all
-  as percentages except the absolute), and *shimmer family + HNR* (local, local in dB, APQ3, APQ5,
-  APQ11, HNR in dB).
+- **F0 range** (default 75–600 Hz): bounds the pitch tracker's periodicity search and the period filter
+  applied to jitter and shimmer aggregates. Narrow the range for higher- or lower-pitched material.
+- **Measurements**: 15 checkboxes split into three logical columns — *pulses, voicing and F0* (number
+  of pulses, voicing fraction as a percentage, mean period in ms, mean F0 in Hz), *jitter family*
+  (local, local absolute in µs, RAP, PPQ5, DDP, all as percentages except the absolute), and *shimmer
+  family + HNR* (local, local in dB, APQ3, APQ5, APQ11, HNR in dB).
 
 Two preset buttons sit below the grid:
 
-- **Select essentials**: checks the five most commonly reported measures — *Number of pulses*,
+- **Select essentials**: checks the most commonly reported measures — *Number of pulses*, *Voicing*,
   *Mean F0*, *Jitter local*, *Shimmer local*, and *HNR*. This is the default when the dialog opens.
 - **Select all**: checks all 14 measures.
 
@@ -316,12 +318,12 @@ dialog after the search completes, reporting the number of skipped matches. The 
 in the same batch are unaffected.
 
 Each measurement is stored in the concordance in the same unit shown in the GUI Voice report
-(milliseconds for period, percent for the relative jitter and shimmer measures, microseconds for
-absolute jitter, decibels for ``Shimmer (dB)`` and HNR, Hz for mean F0, and an integer for the pulse
-count), so a CSV export is immediately readable without per-column unit conversion. Column headers in
-the concordance mirror Praat's naming: ``Pulses``, ``Period(ms)``, ``F0(Hz)``, ``Jitter(%)``,
-``Jitter(µs)``, ``RAP(%)``, ``PPQ5(%)``, ``DDP(%)``, ``Shimmer(%)``, ``Shimmer(dB)``, ``APQ3(%)``,
-``APQ5(%)``, ``APQ11(%)``, ``HNR(dB)``.
+(milliseconds for period, percent for the relative jitter and shimmer measures and voicing fraction,
+microseconds for absolute jitter, decibels for ``Shimmer (dB)`` and HNR, Hz for mean F0, and an
+integer for the pulse count), so a CSV export is immediately readable without per-column unit
+conversion. Column headers in the concordance mirror Praat's naming: ``Pulses``, ``Voicing(%)``,
+``Period(ms)``, ``F0(Hz)``, ``Jitter(%)``, ``Jitter(µs)``, ``RAP(%)``, ``PPQ5(%)``, ``DDP(%)``,
+``Shimmer(%)``, ``Shimmer(dB)``, ``APQ3(%)``, ``APQ5(%)``, ``APQ11(%)``, ``HNR(dB)``.
 
 
 References

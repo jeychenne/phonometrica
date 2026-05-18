@@ -83,17 +83,18 @@ Pitch track
 ~~~~~~~~~~~
 
 The pitch track is a two-dimensional representation of the sound which shows how pitch (measured in Hertz) changes over time. Phonometrica supports five pitch
-tracking algorithms: **REAPER** [TAL2014]_ (the default), **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **SWIPE** [CAM2007]_, and **Praat** [BOE1993]_.
-Reaper, Harvest, and RAPT come from the Speech Signal Processing Toolkit (SPTK); SWIPE and Praat are dedicated implementations.
-REAPER is also the pulse detector used in voice quality analysis (see :ref:`voice-report`) — selecting it for pitch ensures that F0 and jitter/shimmer measurements on the same interval are derived from the same set of detected pulses.
+tracking algorithms: **Praat (raw autocorrelation)** [BOE1993]_ (the default), **Harvest** [MOR2017]_, **RAPT** [TAL1995]_, **REAPER** [TAL2014]_, and **SWIPE** [CAM2007]_.
+Harvest, RAPT, REAPER and SWIPE come from the Speech Signal Processing Toolkit (SPTK); Praat is a dedicated port of the algorithm used by the eponymous program.
+The Praat algorithm is what Phonometrica also uses internally for voice quality analysis (see :ref:`voice-report`), so F0 and jitter/shimmer measurements
+on the same interval are always derived from a single, consistent set of voicing decisions.
 
 The ``Pitch settings...`` command (available from the pitch menu |pitch| in the toolbar) allows you to choose the algorithm and adjust its parameters:
 
-* ``method``: the pitch tracking algorithm to use (Reaper, Harvest, RAPT, SWIPE, or Praat).
+* ``method``: the pitch tracking algorithm to use (Praat, Harvest, RAPT, REAPER, or SWIPE).
 * ``minimum pitch``: the lowest pitch value expected to be found in the sound.
 * ``maximum pitch``: the highest pitch value expected to be found in the sound.
 * ``time step``: this determines the number of points used to estimate pitch in the current window.
-* ``voicing threshold``: sensitivity of the algorithm to voicing detection. The valid range and default value depend on the chosen method (for example, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER).
+* ``voicing threshold``: sensitivity of the algorithm to voicing detection. The valid range and default value depend on the chosen method (for example, 0.0–1.0 with default 0.45 for Praat, 0.2–0.5 with default 0.3 for SWIPE, −0.5–1.6 with default 0.9 for REAPER).
 
 When **Praat** is selected, four additional parameters are exposed, matching Praat's ``To Pitch (ac)`` command:
 
@@ -123,14 +124,16 @@ Voice quality
 The voice quality menu |voice| in the toolbar gives access to perturbation measures of a voiced
 signal. Two commands are available:
 
-* ``Show glottal pulses`` overlays the glottal-closure instants (GCIs) detected by REAPER [TAL2014]_
-  on top of each waveform. Pulses inside voiced regions are drawn as short vertical ticks; pulses
-  REAPER would otherwise insert across unvoiced gaps are filtered out.
+* ``Show glottal pulses`` overlays the glottal pulses on top of each waveform. Pulses inside voiced
+  regions are drawn as short vertical ticks. Pulses are derived from the Praat-style pitch contour
+  using the same algorithm as Praat's ``Sound & Pitch: To PointProcess (cc)``: each voiced run is
+  walked forward at intervals of the local period (1/F0), and each predicted pulse time is snapped
+  to the nearest local extremum of the signal within a quarter-period window.
 * ``Get voice report`` (shortcut ``F9``) computes a full voice-quality report — jitter, shimmer and
   harmonics-to-noise ratio — over the current selection. See :ref:`voice-report` below.
 
 All voice-quality measures use the pitch range from the pitch settings (``minimum pitch`` /
-``maximum pitch``) to bound REAPER's period search and to filter out-of-range periods from the
+``maximum pitch``) to bound the periodicity search and to filter out-of-range periods from the
 perturbation aggregates.
 
 
@@ -245,9 +248,17 @@ press ``F9``. A single-point cursor is not enough — jitter, shimmer and HNR al
 
 The report contains four blocks per visible channel:
 
-- **Pulses**: the number of glottal-closure instants detected by REAPER [TAL2014]_ in voiced
-  regions of the selection, together with the mean period and the corresponding mean F0. The
-  mean is taken over periods inside the pitch range only.
+- **Pulses**: the number of glottal pulses derived from the Praat-style pitch contour in voiced
+  regions of the selection, together with the mean period. Pulses are produced by walking each
+  voiced run forward at intervals of the local period (1/F0) and snapping each predicted pulse
+  to the nearest signal extremum within a quarter-period window — the same algorithm as Praat's
+  ``Sound & Pitch: To PointProcess (cc)``. The mean period is taken over periods inside the
+  pitch range only.
+- **Voicing**: the fraction of analysed frames classified as voiced by the pitch tracker
+  (equivalent to ``1 − fraction of locally unvoiced frames`` in Praat's voice report).
+- **Pitch**: the mean F0 over voiced frames in the Praat pitch contour, i.e. Praat's "Mean pitch".
+  This will differ slightly from ``1/mean_period`` in general (arithmetic mean over voiced frames
+  vs. harmonic mean over consecutive in-range pulses).
 - **Jitter**: five period-perturbation measures.
 
   - *Local*: mean absolute difference between consecutive periods, normalised by the mean
@@ -273,9 +284,10 @@ to compute it.
 Jitter and shimmer reject periods that fall outside the pitch range, pairs whose period ratio
 exceeds 1.3, and (for shimmer) pairs whose amplitude ratio exceeds 1.6. These filters match
 Praat's defaults; they are essential on real speech because a single misplaced pulse —
-typically at a voicing boundary — would otherwise dominate the aggregate. The same selection
-can therefore yield a meaningful report even when REAPER inserts a few spurious pulses near
-the edges of the voiced segment.
+typically at a voicing boundary — would otherwise dominate the aggregate. On short selections
+(under ~50 ms), the surrounding context is automatically used to give the pitch tracker enough
+Viterbi neighbourhood to commit to its voicing decisions; the reported measures are still
+restricted to the selected interval.
 
 The same computation is also available from the scripting engine through the
 :func:`get_voice_report` function, which returns a ``Table`` whose keys mirror the fields in
