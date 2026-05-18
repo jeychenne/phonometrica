@@ -22,6 +22,7 @@
 #include <phon/runtime.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -55,6 +56,8 @@ int PitchQuery::field_count() const
 		if (m_average) n += fpp;
 	}
 
+	// Per-match trailing columns: Min pitch + Max pitch when override is active
+	if (override_enabled()) n += 2;
 	return n;
 }
 
@@ -92,6 +95,11 @@ Array<String> PitchQuery::build_headers() const
 		}
 	}
 
+	if (override_enabled()) {
+		headers.append("Min pitch");
+		headers.append("Max pitch");
+	}
+
 	return headers;
 }
 
@@ -123,10 +131,55 @@ void PitchQuery::clear()
 	m_semitone_ref = 100;
 	m_erb = false;
 	m_output_time = false;
+	m_override_category.clear();
+	m_override_levels.clear();
 }
 
 Handle<Concordance> PitchQuery::execute()
 {
+	// Optional: warn about parameter-override coverage before doing any measurement.
+	// Messages are routed through the runtime's error callback so they render in
+	// red in the console panel (and fall back to print if no error sink is set).
+	if (override_enabled())
+	{
+		auto &rt = Project::get()->runtime();
+		auto emit_msg = [&](const String &msg) {
+			if (rt.show_error) rt.show_error(msg);
+			else if (rt.print) rt.print(msg);
+		};
+
+		auto known = Property::get_values(m_override_category);
+		if (known.empty())
+		{
+			emit_msg(String::format(
+				"Warning: parameter override category \"%s\" has no known values "
+				"in the project; all matches will use the default parameters.",
+				m_override_category.data()));
+		}
+		else
+		{
+			Array<String> uncovered;
+			for (auto &v : known) {
+				if (m_override_levels.find(v) == m_override_levels.end()) {
+					uncovered.append(v);
+				}
+			}
+			if (!uncovered.empty())
+			{
+				String msg = String::format(
+					"Warning: parameter override is enabled on category \"%s\" "
+					"but the following level(s) have no override and will fall "
+					"back to the default parameters: ",
+					m_override_category.data());
+				for (intptr_t i = 1; i <= uncovered.size(); i++) {
+					if (i > 1) msg.append(", ");
+					msg.append(uncovered[i]);
+				}
+				emit_msg(msg);
+			}
+		}
+	}
+
 	// Phase 1: text search (reuse the base class search engine)
 	auto matches = search();
 
@@ -162,6 +215,8 @@ Handle<Concordance> PitchQuery::execute()
 
 	// Set pitch metadata — semitones and ERB are computed on the fly by the concordance
 	conc->set_pitch_meta(m_semitones, m_semitone_ref, m_erb);
+	// Per-match pitch-range columns when overrides are active
+	conc->set_has_per_match_pitch_range(override_enabled());
 
 	// Measurement-time column(s)
 	conc->set_has_time(m_output_time);
@@ -204,6 +259,27 @@ void PitchQuery::measure_match(Match &match) const
 	double t1 = target->start_time;
 	double t2 = target->end_time;
 
+	// Per-file parameter override lookup. Local copies of the bounds so the
+	// const member fields stay untouched (and concurrent measurement remains
+	// safe should we ever parallelize).
+	double local_min_pitch = m_min_pitch;
+	double local_max_pitch = m_max_pitch;
+
+	if (override_enabled())
+	{
+		auto value = annot->get_property_value(m_override_category);
+		if (!value.empty())
+		{
+			auto it = m_override_levels.find(value);
+			if (it != m_override_levels.end())
+			{
+				const auto &ov = it->second;
+				if (ov.min_pitch > 0) local_min_pitch = ov.min_pitch;
+				if (ov.max_pitch > 0) local_max_pitch = ov.max_pitch;
+			}
+		}
+	}
+
 	int total = field_count();
 	match.measurements.resize(total, std::nan(""));
 
@@ -212,7 +288,7 @@ void PitchQuery::measure_match(Match &match) const
 	if (m_method == Method::Midpoint)
 	{
 		double t = (t1 + t2) / 2.0;
-		double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
+		double f0 = sound->get_pitch(channel(), m_algorithm, t, local_min_pitch, local_max_pitch, m_voicing_threshold,
 		                             m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost, m_use_gaussian);
 		match.measurements[idx++] = (f0 > 0) ? f0 : std::nan("");
 	}
@@ -227,7 +303,7 @@ void PitchQuery::measure_match(Match &match) const
 		for (auto p : m_points)
 		{
 			double t = t1 + (p / 100.0) * duration;
-			double f0 = sound->get_pitch(channel(), m_algorithm, t, m_min_pitch, m_max_pitch, m_voicing_threshold,
+			double f0 = sound->get_pitch(channel(), m_algorithm, t, local_min_pitch, local_max_pitch, m_voicing_threshold,
 			                              m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost, m_use_gaussian);
 			point_data.append((f0 > 0) ? f0 : std::nan(""));
 		}
@@ -255,6 +331,12 @@ void PitchQuery::measure_match(Match &match) const
 			}
 			match.measurements[idx++] = (n > 0) ? (sum / n) : std::nan("");
 		}
+	}
+
+	// Trailing per-match columns when override is active
+	if (override_enabled()) {
+		match.measurements[idx++] = local_min_pitch;
+		match.measurements[idx++] = local_max_pitch;
 	}
 }
 
@@ -293,6 +375,8 @@ Handle<Query> PitchQuery::copy() const
 	c->m_semitone_ref = m_semitone_ref;
 	c->m_erb = m_erb;
 	c->m_output_time = m_output_time;
+	c->m_override_category = m_override_category;
+	c->m_override_levels = m_override_levels;
 	c->m_content_modified = true;
 
 	return c;
@@ -457,6 +541,33 @@ void PitchQuery::load()
 				}
 			}
 		}
+		else if (node.name() == str("ParameterOverride"))
+		{
+			auto cat_attr = node.attribute("category");
+			if (cat_attr) {
+				m_override_category = String(cat_attr.value());
+			}
+			m_override_levels.clear();
+			for (auto level = node.first_child(); level; level = level.next_sibling())
+			{
+				if (level.name() != str("Level")) continue;
+				auto val_attr = level.attribute("value");
+				if (!val_attr) continue;
+				String value(val_attr.value());
+				LevelOverride ov;
+				for (auto param = level.first_child(); param; param = param.next_sibling())
+				{
+					if (param.name() != str("Param")) continue;
+					auto name_attr = param.attribute("name");
+					if (!name_attr) continue;
+					std::string_view name = name_attr.value();
+					double v = param.text().as_double(0);
+					if      (name == "MinPitch") ov.min_pitch = v;
+					else if (name == "MaxPitch") ov.max_pitch = v;
+				}
+				m_override_levels[value] = ov;
+			}
+		}
 	}
 
 	m_loaded = true;
@@ -554,6 +665,27 @@ void PitchQuery::write()
 	}
 	add_data_node(ps_node, "ERB", String::convert(m_erb));
 	add_data_node(ps_node, "OutputTime", String::convert(m_output_time));
+
+	// Per-file pitch-range override
+	if (override_enabled())
+	{
+		auto ov_node = root.append_child("ParameterOverride");
+		ov_node.append_attribute("category").set_value(m_override_category.data());
+		for (auto &entry : m_override_levels)
+		{
+			auto level_node = ov_node.append_child("Level");
+			level_node.append_attribute("value").set_value(entry.first.data());
+			auto emit_param = [&](const char *name, double v) {
+				if (v > 0) {
+					auto p = level_node.append_child("Param");
+					p.append_attribute("name").set_value(name);
+					p.text().set(String::format("%.1f", v).data());
+				}
+			};
+			emit_param("MinPitch", entry.second.min_pitch);
+			emit_param("MaxPitch", entry.second.max_pitch);
+		}
+	}
 
 	write_xml(doc, m_path);
 }

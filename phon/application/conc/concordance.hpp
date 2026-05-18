@@ -162,8 +162,23 @@ public:
 	bool has_bark() const { return m_has_bark; }
 	bool has_auto_params() const { return m_has_auto_params; }
 
+	/// True iff the concordance carries a trailing per-match "Max freq" column
+	/// (set when FormantQuery is in manual mode with a per-property override active).
+	/// Mutually exclusive with has_auto_params (which is true only in Weenink mode).
+	bool has_per_match_max_freq() const { return m_has_per_match_max_freq; }
+
+	/// True iff the concordance carries two trailing per-match columns "Min pitch"
+	/// and "Max pitch" (set when PitchQuery has a per-property pitch-range override active).
+	bool has_per_match_pitch_range() const { return m_has_per_match_pitch_range; }
+
 	/// Set formant metadata. Called by FormantQuery::execute() when creating a new concordance.
 	void set_formant_meta(int nformant, bool bandwidth, bool erb, bool bark, bool auto_params);
+
+	/// Set the per-match Max freq flag (manual + override case).
+	void set_has_per_match_max_freq(bool b) { m_has_per_match_max_freq = b; }
+
+	/// Set the per-match pitch range columns flag (pitch override case).
+	void set_has_per_match_pitch_range(bool b) { m_has_per_match_pitch_range = b; }
 
 	/// Toggle ERB display columns (recomputed on the fly).
 	void set_has_erb(bool b);
@@ -487,6 +502,8 @@ protected:
 	bool m_has_erb = false;           // whether ERB display columns are active
 	bool m_has_bark = false;          // whether Bark display columns are active
 	bool m_has_auto_params = false;   // whether auto LPC params are stored (2 values at end)
+	bool m_has_per_match_max_freq = false; // manual + override: single Max freq column at end
+	bool m_has_per_match_pitch_range = false; // pitch override: Min pitch + Max pitch columns at end
 	bool m_has_series = true;         // NPoint: per-point series data present
 	bool m_has_average = false;       // NPoint: average group present
 

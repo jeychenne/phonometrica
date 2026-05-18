@@ -74,6 +74,8 @@ Concordance::Concordance(const Concordance &other) :
 	m_has_erb = other.m_has_erb;
 	m_has_bark = other.m_has_bark;
 	m_has_auto_params = other.m_has_auto_params;
+	m_has_per_match_max_freq = other.m_has_per_match_max_freq;
+	m_has_per_match_pitch_range = other.m_has_per_match_pitch_range;
 	m_header_aliases = other.m_header_aliases;
 
 	m_is_pitch = other.m_is_pitch;
@@ -145,6 +147,9 @@ void Concordance::set_formant_meta(int nformant, bool bandwidth, bool erb, bool 
 	m_has_erb = erb;
 	m_has_bark = bark;
 	m_has_auto_params = auto_params;
+	// Caller (FormantQuery::execute) sets m_has_per_match_max_freq explicitly
+	// after this call. Reset here so a re-used Concordance doesn't carry stale state.
+	m_has_per_match_max_freq = false;
 }
 
 void Concordance::set_has_erb(bool b)
@@ -169,6 +174,9 @@ void Concordance::set_pitch_meta(bool semitones, double st_ref, bool erb)
 	m_has_semitones = semitones;
 	m_semitone_ref = st_ref;
 	m_has_pitch_erb = erb;
+	// Caller (PitchQuery::execute) sets m_has_per_match_pitch_range explicitly
+	// after this call. Reset here so a re-used Concordance doesn't carry stale state.
+	m_has_per_match_pitch_range = false;
 }
 
 void Concordance::set_has_semitones(bool b)
@@ -502,6 +510,13 @@ void Concordance::rebuild_extra_headers()
 		m_extra_headers.append("Max freq");
 		m_extra_headers.append("LPC order");
 	}
+	else if (m_has_per_match_max_freq) {
+		m_extra_headers.append("Max freq");
+	}
+	if (m_has_per_match_pitch_range) {
+		m_extra_headers.append("Min pitch");
+		m_extra_headers.append("Max pitch");
+	}
 }
 
 void Concordance::set_measurement_info(Array<double> points, bool has_average)
@@ -592,7 +607,28 @@ String Concordance::get_default_header(intptr_t j) const
 			{
 				if (j == 1) return "Step";
 				if (j == 2) return "Time (normalized)";
-				return m_base_headers[j - 2]; // 1-based
+				intptr_t base_end = 2 + m_base_headers.size();
+				if (j <= base_end) return m_base_headers[j - 2]; // 1-based
+
+				// Trailing per-match columns. The block order matches the rebuild path:
+				//   1. auto-params block (Max freq + LPC order) OR Max freq alone
+				//   2. pitch-range block (Min pitch + Max pitch)
+				intptr_t tail_idx = j - base_end; // 1-based within tail
+				intptr_t cursor = 0;
+				if (m_has_auto_params) {
+					if (tail_idx == cursor + 1) return "Max freq";
+					if (tail_idx == cursor + 2) return "LPC order";
+					cursor += 2;
+				}
+				else if (m_has_per_match_max_freq) {
+					if (tail_idx == cursor + 1) return "Max freq";
+					cursor += 1;
+				}
+				if (m_has_per_match_pitch_range) {
+					if (tail_idx == cursor + 1) return "Min pitch";
+					if (tail_idx == cursor + 2) return "Max pitch";
+				}
+				return String();
 			}
 			else
 			{
@@ -901,8 +937,27 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 			if (m_layout == Layout::Long && has_measurement_data())
 			{
-				// Long mode: Step, Time(normalized), [Time(abs) if m_has_time], then measurement group for this point
+				// Long mode: Step, Time(normalized), [Time(abs) if m_has_time], then measurement group for this point,
+				// then trailing per-match columns (auto-mode Max freq/LPC order, or override Max freq).
 				intptr_t pi = point_for_row(i); // 0-based point index
+
+				// Trailing per-match columns: live past the base_headers group, identical on every row of a match.
+				intptr_t base_end = 2 + m_base_headers.size();
+				if (j > base_end)
+				{
+					intptr_t tail_idx = j - base_end - 1; // 0-based within tail
+					int series_points = m_has_series ? (int)m_measurement_points.size() : 0;
+					int ngroups = series_points + (m_has_average ? 1 : 0);
+					int sfpp_local = stored_fields_per_point();
+					intptr_t idx = (intptr_t)ngroups * sfpp_local + tail_idx;
+					if (idx < (intptr_t)meas.size()) {
+						double val = meas[idx];
+						if (std::isnan(val)) return "nan";
+						// Trailing per-match columns are integer-valued (Max freq / LPC order).
+						return String::convert(intptr_t(val));
+					}
+					return "nan";
+				}
 
 				if (j == 1) {
 					return String::convert(intptr_t(pi + 1));
@@ -937,7 +992,11 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				if (dfpp > 0)
 				{
 					// Auto params (formant auto mode) live at the very end of the extras block.
-					int auto_count = m_has_auto_params ? 2 : 0;
+					// Plus, when manual mode + per-property override is active, a single
+					// trailing "Max freq" column. Both end-of-block columns are integer-valued.
+					int auto_count = (m_has_auto_params ? 2 : 0)
+					               + (m_has_per_match_max_freq ? 1 : 0)
+					               + (m_has_per_match_pitch_range ? 2 : 0);
 					int total_display = (int)m_extra_headers.size();
 					if (auto_count > 0 && d0 >= total_display - auto_count)
 					{
@@ -951,7 +1010,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 						if (idx < (intptr_t)meas.size()) {
 							double val = meas[idx];
 							if (std::isnan(val)) return "nan";
-							// Both Max freq and LPC order are integer-valued.
+							// Auto-params Max freq / LPC order and override Max freq are integer-valued.
 							return String::convert(intptr_t(val));
 						}
 						return "nan";
@@ -1076,7 +1135,9 @@ intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) co
 	int d0 = (int)(extra_j - 1); // 0-based
 
 	// Auto params at the end: not editable
-	int auto_count = m_has_auto_params ? 2 : 0;
+	int auto_count = (m_has_auto_params ? 2 : 0)
+	               + (m_has_per_match_max_freq ? 1 : 0)
+	               + (m_has_per_match_pitch_range ? 2 : 0);
 	int total = (int)m_extra_headers.size();
 	if (auto_count > 0 && d0 >= total - auto_count) return -1;
 
@@ -1215,7 +1276,9 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 	}
 
 	int d0 = (int)(extra_j - 1);
-	int auto_count = m_has_auto_params ? 2 : 0;
+	int auto_count = (m_has_auto_params ? 2 : 0)
+	               + (m_has_per_match_max_freq ? 1 : 0)
+	               + (m_has_per_match_pitch_range ? 2 : 0);
 	int total = (int)m_extra_headers.size();
 	if (auto_count > 0 && d0 >= total - auto_count) return false;
 
@@ -1398,6 +1461,8 @@ void Concordance::load()
 	m_has_erb = false;
 	m_has_bark = false;
 	m_has_auto_params = false;
+	m_has_per_match_max_freq = false;
+	m_has_per_match_pitch_range = false;
 	m_has_series = true;
 	m_has_average = false;
 	m_is_pitch = false;
@@ -1514,6 +1579,8 @@ void Concordance::load()
 					m_has_bark = child.text().as_bool(false);
 				else if (child.name() == str("HasAutoParams"))
 					m_has_auto_params = child.text().as_bool(false);
+				else if (child.name() == str("HasPerMatchMaxFreq"))
+					m_has_per_match_max_freq = child.text().as_bool(false);
 				else if (child.name() == str("HasSeries"))
 					m_has_series = child.text().as_bool(true);
 			}
@@ -1529,6 +1596,8 @@ void Concordance::load()
 					m_semitone_ref = child.text().as_double(100);
 				else if (child.name() == str("HasERB"))
 					m_has_pitch_erb = child.text().as_bool(false);
+				else if (child.name() == str("HasPerMatchPitchRange"))
+					m_has_per_match_pitch_range = child.text().as_bool(false);
 				else if (child.name() == str("HasSeries"))
 					m_has_series = child.text().as_bool(true);
 			}
@@ -2029,6 +2098,8 @@ void Concordance::write()
 			.set_value(m_has_bark ? "true" : "false");
 		fm.append_child("HasAutoParams").append_child(node_pcdata)
 			.set_value(m_has_auto_params ? "true" : "false");
+		fm.append_child("HasPerMatchMaxFreq").append_child(node_pcdata)
+			.set_value(m_has_per_match_max_freq ? "true" : "false");
 		fm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
 	}
@@ -2043,6 +2114,8 @@ void Concordance::write()
 			.set_value(String::format("%.1f", m_semitone_ref).data());
 		pm.append_child("HasERB").append_child(node_pcdata)
 			.set_value(m_has_pitch_erb ? "true" : "false");
+		pm.append_child("HasPerMatchPitchRange").append_child(node_pcdata)
+			.set_value(m_has_per_match_pitch_range ? "true" : "false");
 		pm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
 	}
@@ -2259,7 +2332,9 @@ bool Concordance::is_measurement_time_column(intptr_t col) const
 	if (dfpp == 0) return false;
 
 	// Exclude auto params tail
-	int auto_count = m_has_auto_params ? 2 : 0;
+	int auto_count = (m_has_auto_params ? 2 : 0)
+	               + (m_has_per_match_max_freq ? 1 : 0)
+	               + (m_has_per_match_pitch_range ? 2 : 0);
 	int total = (int)m_extra_headers.size();
 	if (auto_count > 0 && d0 >= total - auto_count) return false;
 
@@ -2486,8 +2561,10 @@ void Concordance::check_columns_compatible(const Concordance &other) const
 void Concordance::copy_metadata_to(Concordance &target) const
 {
 	target.set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
+	target.set_has_per_match_max_freq(m_has_per_match_max_freq);
 	if (m_is_pitch) {
 		target.set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
+		target.set_has_per_match_pitch_range(m_has_per_match_pitch_range);
 	}
 	if (m_is_intensity) {
 		target.set_intensity_meta();
@@ -3293,8 +3370,12 @@ intptr_t Concordance::effective_extra_count() const
 {
 	if (m_layout == Layout::Long && has_measurement_data())
 	{
-		// Step + Time + one group of base headers (un-suffixed)
-		return 2 + m_base_headers.size();
+		// Step + Time(normalized) + one group of base headers (un-suffixed) +
+		// per-match trailing columns (auto-mode Max freq/LPC order, or override Max freq).
+		intptr_t tail = (m_has_auto_params ? 2 : 0)
+		              + (m_has_per_match_max_freq ? 1 : 0)
+	               + (m_has_per_match_pitch_range ? 2 : 0);
+		return 2 + m_base_headers.size() + tail;
 	}
 	return m_extra_headers.size();
 }

@@ -25,6 +25,10 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QHeaderView>
+#include <QSignalBlocker>
 #include <phon/gui/file_dialog.hpp>
 #include <QSplitter>
 #include <QProgressDialog>
@@ -32,6 +36,7 @@
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
@@ -289,11 +294,26 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	outer->addWidget(m_method_stack);
 
 	connect(m_manual_radio, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) m_method_stack->setCurrentIndex(0);
+		if (on) {
+			m_method_stack->setCurrentIndex(0);
+			if (m_override_body && m_override_body->isVisible()) {
+				refreshOverrideTable();
+				applyOverrideEnabledState();
+			}
+		}
 	});
 	connect(m_auto_radio, &QRadioButton::toggled, this, [this](bool on) {
-		if (on) m_method_stack->setCurrentIndex(1);
+		if (on) {
+			m_method_stack->setCurrentIndex(1);
+			if (m_override_body && m_override_body->isVisible()) {
+				refreshOverrideTable();
+				applyOverrideEnabledState();
+			}
+		}
 	});
+
+	// ── Disclosure: per-property frequency override ──────────────────────
+	outer->addWidget(buildOverrideSection());
 
 	// ── Row: measurement location ────────────────────────────────────────
 	auto *loc_row = new QHBoxLayout;
@@ -375,6 +395,350 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	outer->addLayout(opt_row);
 
 	return group;
+}
+
+// ── Per-property frequency-ceiling override section ──────────────────────────
+// Embedded inside the formant settings group as a disclosure triangle below the
+// manual/automatic stack. Expanding the triangle activates the override (the
+// global Max frequency / search-range fields get disabled until it's collapsed).
+
+QWidget *FormantQueryEditor::buildOverrideSection()
+{
+	auto *container = new QWidget;
+	auto *vbox = new QVBoxLayout(container);
+	vbox->setContentsMargins(0, 0, 0, 0);
+	vbox->setSpacing(4);
+
+	// The disclosure triangle row
+	auto *trow = new QHBoxLayout;
+	trow->setContentsMargins(0, 0, 0, 0);
+	m_override_triangle = new QToolButton;
+	m_override_triangle->setCheckable(true);
+	m_override_triangle->setChecked(false);
+	m_override_triangle->setArrowType(Qt::RightArrow);
+	m_override_triangle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	m_override_triangle->setText(tr("Adjust maximum frequency by property"));
+	m_override_triangle->setAutoRaise(true);
+	m_override_triangle->setToolTip(tr(
+		"Override the maximum frequency on a per-file basis using the value of a "
+		"text-typed property (e.g. Gender). When expanded, the global Max frequency "
+		"field above is disabled and the per-level values in the table apply instead. "
+		"Files whose property value isn't listed here fall back to the global value, "
+		"and a warning is printed in the console panel at execution time."));
+	trow->addWidget(m_override_triangle);
+	trow->addStretch();
+	vbox->addLayout(trow);
+
+	// Hidden body — only visible when the triangle is expanded.
+	m_override_body = new QWidget;
+	m_override_body->hide();
+	auto *body = new QVBoxLayout(m_override_body);
+	body->setContentsMargins(20, 0, 0, 0);  // indent under the triangle
+	body->setSpacing(4);
+
+	// Category combo
+	auto *cat_row = new QHBoxLayout;
+	cat_row->addWidget(new QLabel(tr("Property:")));
+	m_override_category_combo = new QComboBox;
+	m_override_category_combo->setMinimumWidth(180);
+	cat_row->addWidget(m_override_category_combo);
+	cat_row->addStretch();
+	body->addLayout(cat_row);
+
+	// Defaults hint
+	m_override_defaults_lbl = new QLabel;
+	m_override_defaults_lbl->setStyleSheet("color: gray;");
+	body->addWidget(m_override_defaults_lbl);
+
+	// Table
+	m_override_table = new QTableWidget;
+	m_override_table->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_override_table->setSelectionBehavior(QAbstractItemView::SelectItems);
+	m_override_table->verticalHeader()->setVisible(false);
+	m_override_table->horizontalHeader()->setStretchLastSection(true);
+	m_override_table->setMinimumHeight(120);
+	m_override_table->setToolTip(tr(
+		"Leave a cell blank to inherit the global setting. Levels not listed here "
+		"also inherit the global setting; a warning is printed in the console panel "
+		"when the query is executed."));
+	body->addWidget(m_override_table);
+
+	// Coverage-summary status line below the table.
+	m_override_status_lbl = new QLabel;
+	m_override_status_lbl->setWordWrap(true);
+	body->addWidget(m_override_status_lbl);
+
+	vbox->addWidget(m_override_body);
+
+	// Wiring
+	connect(m_override_triangle, &QToolButton::toggled, this, [this](bool on) {
+		setOverrideExpanded(on);
+	});
+	connect(m_override_category_combo, &QComboBox::currentTextChanged, this, [this](const QString &) {
+		if (m_override_triangle && m_override_triangle->isChecked()) {
+			refreshOverrideTable();
+		}
+	});
+	connect(m_override_table, &QTableWidget::cellChanged, this, [this](int row, int col) {
+		if (m_override_table_updating) return;
+		syncOverrideCellToCache(row, col);
+	});
+
+	return container;
+}
+
+void FormantQueryEditor::setOverrideExpanded(bool expanded)
+{
+	if (!m_override_triangle || !m_override_body) return;
+	m_override_triangle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+	m_override_body->setVisible(expanded);
+	if (expanded) {
+		refreshOverrideCategoryCombo();
+		refreshOverrideTable();
+	}
+	applyOverrideEnabledState();
+}
+
+void FormantQueryEditor::applyOverrideEnabledState()
+{
+	// "Active" is now decoupled from triangle visibility: the override is active
+	// iff there are pending overrides with at least one non-zero value relevant
+	// to the current mode. The triangle just toggles the configuration panel.
+	// This lets the user collapse the panel to declutter the UI while keeping
+	// overrides in effect.
+	bool automatic = m_auto_radio && m_auto_radio->isChecked();
+	int  rows_with_override = 0;
+	for (auto &entry : m_pending_overrides) {
+		const auto &ov = entry.second;
+		bool covered = automatic
+			? (ov.max_freq_low > 0 || ov.max_freq_high > 0)
+			: (ov.max_freq > 0);
+		if (covered) ++rows_with_override;
+	}
+	bool active = (rows_with_override > 0);
+
+	// Determine whether every known level has an override for the current mode.
+	// If not, the global field is still needed as the fallback for uncovered
+	// levels, so we keep it editable. Disable only when overrides fully cover
+	// the property's value set (no fallback possible).
+	bool fully_covered = false;
+	if (active && m_override_category_combo)
+	{
+		QString cat_qs = m_override_category_combo->currentText();
+		if (!cat_qs.isEmpty()) {
+			String category(cat_qs.toUtf8().constData());
+			auto values = Property::get_values(category);
+			int n = (int) values.size();
+			fully_covered = (n > 0 && rows_with_override == n);
+		}
+	}
+
+	bool disable_global = fully_covered;
+	if (m_max_freq_edit)       m_max_freq_edit->setEnabled(!disable_global);
+	if (m_auto_freq_low_edit)  m_auto_freq_low_edit->setEnabled(!disable_global);
+	if (m_auto_freq_high_edit) m_auto_freq_high_edit->setEnabled(!disable_global);
+}
+
+void FormantQueryEditor::refreshOverrideCategoryCombo()
+{
+	if (!m_override_category_combo) return;
+	QSignalBlocker blocker(m_override_category_combo);
+
+	QString prev = m_override_category_combo->currentText();
+	m_override_category_combo->clear();
+	auto text_cats = Property::get_categories_by_type(typeid(String));
+	int gender_index = -1;
+	int i = 0;
+	for (const auto &cat : text_cats) {
+		auto qs = QString::fromUtf8(cat.data(), (int) cat.size());
+		m_override_category_combo->addItem(qs);
+		if (gender_index < 0 && qs.compare(QStringLiteral("Gender"), Qt::CaseInsensitive) == 0) {
+			gender_index = i;
+		}
+		++i;
+	}
+	// Prefer the previously-selected category, otherwise fall back to Gender if present.
+	int idx = prev.isEmpty() ? -1 : m_override_category_combo->findText(prev, Qt::MatchExactly);
+	if (idx >= 0) m_override_category_combo->setCurrentIndex(idx);
+	else if (gender_index >= 0) m_override_category_combo->setCurrentIndex(gender_index);
+}
+
+void FormantQueryEditor::refreshOverrideTable()
+{
+	if (!m_override_table) return;
+	m_override_table_updating = true;
+
+	bool automatic = m_auto_radio && m_auto_radio->isChecked();
+
+	if (automatic) {
+		QString hint = tr("Default search range: %1 to %2 Hz "
+		                  "(leave a cell blank to inherit)")
+			.arg(m_auto_freq_low_edit  ? m_auto_freq_low_edit->text()  : QStringLiteral("?"))
+			.arg(m_auto_freq_high_edit ? m_auto_freq_high_edit->text() : QStringLiteral("?"));
+		m_override_defaults_lbl->setText(hint);
+	}
+	else {
+		QString hint = tr("Default max frequency: %1 Hz (leave a cell blank to inherit)")
+			.arg(m_max_freq_edit ? m_max_freq_edit->text() : QStringLiteral("?"));
+		m_override_defaults_lbl->setText(hint);
+	}
+
+	if (automatic) {
+		m_override_table->setColumnCount(3);
+		m_override_table->setHorizontalHeaderLabels(QStringList{
+			tr("Value"), tr("Search from (Hz)"), tr("Search to (Hz)")
+		});
+	}
+	else {
+		m_override_table->setColumnCount(2);
+		m_override_table->setHorizontalHeaderLabels(QStringList{
+			tr("Value"), tr("Max frequency (Hz)")
+		});
+	}
+
+	QString cat_qs = m_override_category_combo ? m_override_category_combo->currentText() : QString();
+	if (cat_qs.isEmpty()) {
+		m_override_table->setRowCount(0);
+		m_override_table_updating = false;
+		return;
+	}
+
+	String category(cat_qs.toUtf8().constData());
+	auto values = Property::get_values(category);
+
+	m_override_table->setRowCount((int) values.size());
+	int row = 0;
+	auto format_cell = [](double v) -> QString {
+		if (v > 0) return QString::number(v, 'f', 1);
+		return QString();
+	};
+	for (const auto &v : values)
+	{
+		auto *value_item = new QTableWidgetItem(QString::fromUtf8(v.data(), (int) v.size()));
+		value_item->setFlags(value_item->flags() & ~Qt::ItemIsEditable);
+		m_override_table->setItem(row, 0, value_item);
+
+		FormantQuery::LevelOverride ov;
+		auto it = m_pending_overrides.find(v);
+		if (it != m_pending_overrides.end()) ov = it->second;
+
+		if (automatic) {
+			m_override_table->setItem(row, 1, new QTableWidgetItem(format_cell(ov.max_freq_low)));
+			m_override_table->setItem(row, 2, new QTableWidgetItem(format_cell(ov.max_freq_high)));
+		}
+		else {
+			m_override_table->setItem(row, 1, new QTableWidgetItem(format_cell(ov.max_freq)));
+		}
+		++row;
+	}
+
+	m_override_table->resizeColumnsToContents();
+	m_override_table_updating = false;
+	updateOverrideStatus();
+	applyOverrideEnabledState();
+}
+
+void FormantQueryEditor::syncOverrideCellToCache(int row, int col)
+{
+	if (row < 0 || col < 0) return;
+	auto *value_item = m_override_table->item(row, 0);
+	if (!value_item) return;
+
+	String value(value_item->text().toUtf8().constData());
+	auto *cell_item = m_override_table->item(row, col);
+	if (!cell_item) return;
+
+	QString text = cell_item->text().trimmed();
+	bool ok = false;
+	double parsed = text.isEmpty() ? 0.0 : text.toDouble(&ok);
+	if (!text.isEmpty() && (!ok || parsed <= 0)) {
+		// Invalid entry: clear the cell and the cached slot.
+		m_override_table_updating = true;
+		cell_item->setText(QString());
+		m_override_table_updating = false;
+		parsed = 0.0;
+	}
+
+	auto &entry = m_pending_overrides[value];
+	bool automatic = m_auto_radio && m_auto_radio->isChecked();
+	if (automatic) {
+		if      (col == 1) entry.max_freq_low  = parsed;
+		else if (col == 2) entry.max_freq_high = parsed;
+	}
+	else {
+		if (col == 1) entry.max_freq = parsed;
+	}
+
+	if (entry.max_freq <= 0 && entry.max_freq_low <= 0 && entry.max_freq_high <= 0) {
+		m_pending_overrides.erase(value);
+	}
+	updateOverrideStatus();
+	applyOverrideEnabledState();
+}
+
+// Summarize coverage below the table: how many levels are actually overridden,
+// how many will fall through to the global default. Updates after every cell
+// edit and after a table rebuild so the user sees the effect in real time.
+void FormantQueryEditor::updateOverrideStatus()
+{
+	if (!m_override_status_lbl) return;
+
+	int row_count = m_override_table ? m_override_table->rowCount() : 0;
+	if (row_count == 0) {
+		m_override_status_lbl->setText(tr(
+			"No values available for this property. Add values to the property "
+			"via the Properties panel, then return here."));
+		m_override_status_lbl->setStyleSheet("color: gray; font-style: italic;");
+		return;
+	}
+
+	bool automatic = m_auto_radio && m_auto_radio->isChecked();
+
+	// Count rows with an effective override for the current mode.
+	int overridden = 0;
+	for (int r = 0; r < row_count; r++)
+	{
+		auto *vi = m_override_table->item(r, 0);
+		if (!vi) continue;
+		String value(vi->text().toUtf8().constData());
+		auto it = m_pending_overrides.find(value);
+		if (it == m_pending_overrides.end()) continue;
+		const auto &ov = it->second;
+		bool covered = automatic
+			? (ov.max_freq_low > 0 || ov.max_freq_high > 0)
+			: (ov.max_freq > 0);
+		if (covered) ++overridden;
+	}
+	int uncovered = row_count - overridden;
+
+	// Build the global-default summary string.
+	QString def_text;
+	if (automatic) {
+		def_text = tr("default search range %1–%2 Hz")
+			.arg(m_auto_freq_low_edit  ? m_auto_freq_low_edit->text()  : QStringLiteral("?"))
+			.arg(m_auto_freq_high_edit ? m_auto_freq_high_edit->text() : QStringLiteral("?"));
+	}
+	else {
+		def_text = tr("default max frequency %1 Hz")
+			.arg(m_max_freq_edit ? m_max_freq_edit->text() : QStringLiteral("?"));
+	}
+
+	if (overridden == 0) {
+		m_override_status_lbl->setText(tr(
+			"⚠ No values overridden — all matches will use the %1.").arg(def_text));
+		m_override_status_lbl->setStyleSheet("color: rgb(180, 100, 40);");
+	}
+	else if (uncovered == 0) {
+		m_override_status_lbl->setText(tr(
+			"✓ All %n value(s) overridden.", nullptr, row_count));
+		m_override_status_lbl->setStyleSheet("color: rgb(40, 130, 60);");
+	}
+	else {
+		m_override_status_lbl->setText(tr(
+			"Overriding %1 of %2 values; the remaining %3 will use the %4.")
+			.arg(overridden).arg(row_count).arg(uncovered).arg(def_text));
+		m_override_status_lbl->setStyleSheet("color: gray;");
+	}
 }
 
 // ── Context panel (same as QueryEditor) ──────────────────────────────────────
@@ -718,6 +1082,34 @@ void FormantQueryEditor::parseQuery()
 	m_query->set_output_erb(m_erb_check->isChecked());
 	m_query->set_output_bark(m_bark_check->isChecked());
 	m_query->set_output_time(m_time_check->isChecked());
+
+	// Per-property frequency-ceiling override: active iff there are pending
+	// overrides with at least one non-zero value. The disclosure triangle just
+	// controls panel visibility — a collapsed panel with values still applies.
+	m_query->clear_override_levels();
+	bool has_any_override = false;
+	for (auto &entry : m_pending_overrides) {
+		const auto &ov = entry.second;
+		if (ov.max_freq > 0 || ov.max_freq_low > 0 || ov.max_freq_high > 0) {
+			has_any_override = true;
+			break;
+		}
+	}
+	if (has_any_override && m_override_category_combo)
+	{
+		String category(m_override_category_combo->currentText().toUtf8().constData());
+		m_query->set_override_category(category);
+		for (auto &entry : m_pending_overrides) {
+			auto &ov = entry.second;
+			if (ov.max_freq > 0 || ov.max_freq_low > 0 || ov.max_freq_high > 0) {
+				m_query->set_override_level(entry.first, ov);
+			}
+		}
+	}
+	else
+	{
+		m_query->set_override_category(String());
+	}
 }
 
 bool FormantQueryEditor::validateQuery()
@@ -1019,6 +1411,32 @@ void FormantQueryEditor::loadQuery()
 	m_erb_check->setChecked(m_query->output_erb());
 	m_bark_check->setChecked(m_query->output_bark());
 	m_time_check->setChecked(m_query->output_time());
+
+	// Per-property frequency-ceiling override
+	m_pending_overrides.clear();
+	for (auto &entry : m_query->override_levels()) {
+		m_pending_overrides[entry.first] = entry.second;
+	}
+	bool override_on = m_query->override_enabled();
+	{
+		QSignalBlocker b_triangle(m_override_triangle);
+		m_override_triangle->setChecked(override_on);
+		m_override_triangle->setArrowType(override_on ? Qt::DownArrow : Qt::RightArrow);
+		m_override_body->setVisible(override_on);
+	}
+	if (override_on)
+	{
+		refreshOverrideCategoryCombo();
+		const String &cat = m_query->override_category();
+		QString cat_qs = QString::fromUtf8(cat.data(), (int) cat.size());
+		int idx = m_override_category_combo->findText(cat_qs, Qt::MatchExactly);
+		if (idx >= 0) {
+			QSignalBlocker b_combo(m_override_category_combo);
+			m_override_category_combo->setCurrentIndex(idx);
+		}
+		refreshOverrideTable();
+	}
+	applyOverrideEnabledState();
 
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);

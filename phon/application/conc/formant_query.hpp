@@ -24,6 +24,7 @@
 #define PHONOMETRICA_FORMANT_QUERY_HPP
 
 #include <phon/application/conc/query.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -35,6 +36,16 @@ public:
 	{
 		Midpoint,   // measure at the temporal midpoint of the match
 		NPoint      // measure at user-specified percentages
+	};
+
+	// Per-level parameter override. Zero in any field means "inherit the global setting".
+	// `max_freq` applies in manual mode; `max_freq_low`/`max_freq_high` apply in automatic
+	// (Weenink) mode and override the search range bounds.
+	struct LevelOverride
+	{
+		double max_freq = 0;       // manual mode
+		double max_freq_low = 0;   // automatic (Weenink) mode
+		double max_freq_high = 0;  // automatic (Weenink) mode
 	};
 
 	FormantQuery(Directory *parent, String path);
@@ -97,6 +108,22 @@ public:
 
 	const Array<double> &measurement_points() const { return m_points; }
 	void set_measurement_points(Array<double> pts) { m_points = std::move(pts); }
+
+	// ── Per-file parameter override by property level ────────────────────
+	// When `override_category` is non-empty, the query looks up that property
+	// on each annotation and, if the value matches an entry in `override_levels`,
+	// uses the corresponding ceiling(s) for that match instead of the global
+	// settings. Missing values or uncovered levels silently fall through to
+	// the global defaults; execute() prints a one-shot warning listing
+	// uncovered levels at the start of measurement.
+
+	const String &override_category() const { return m_override_category; }
+	void set_override_category(String c) { m_override_category = std::move(c); }
+	bool override_enabled() const { return !m_override_category.empty(); }
+
+	const Hashmap<String, LevelOverride> &override_levels() const { return m_override_levels; }
+	void set_override_level(const String &value, LevelOverride params) { m_override_levels[value] = params; }
+	void clear_override_levels() { m_override_levels.clear(); }
 
 	// ── N-point output mode ──────────────────────────────────────────────
 	// When method == NPoint, at least one of these must be true.
@@ -191,6 +218,10 @@ private:
 	bool m_erb = false;
 	bool m_bark = false;
 	bool m_output_time = false;    // add measurement-time column(s) to the concordance
+
+	// Per-file parameter override (empty category = disabled)
+	String m_override_category;
+	Hashmap<String, LevelOverride> m_override_levels;
 };
 
 namespace traits {

@@ -25,6 +25,7 @@
 
 #include <phon/application/conc/query.hpp>
 #include <phon/analysis/signal_processing.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -36,6 +37,16 @@ public:
 	{
 		Midpoint,   // measure at the temporal midpoint of the match
 		NPoint      // measure at user-specified percentages
+	};
+
+	// Per-level pitch-range override. Zero in either field = inherit the global
+	// setting. Both bounds are overridable because children and women typically
+	// have a higher floor than the project-wide default (e.g. 100 Hz vs 75 Hz)
+	// as well as a higher ceiling.
+	struct LevelOverride
+	{
+		double min_pitch = 0;   // Hz, 0 = inherit m_min_pitch
+		double max_pitch = 0;   // Hz, 0 = inherit m_max_pitch
 	};
 
 	PitchQuery(Directory *parent, String path);
@@ -94,6 +105,22 @@ public:
 
 	const Array<double> &measurement_points() const { return m_points; }
 	void set_measurement_points(Array<double> pts) { m_points = std::move(pts); }
+
+	// ── Per-file parameter override by property level ────────────────────
+	// Mirrors FormantQuery: when `override_category` is non-empty, the query
+	// looks up that property on each annotation and, if the value matches an
+	// entry in `override_levels`, replaces min_pitch and/or max_pitch with the
+	// per-level value(s) for that match. Missing values or uncovered levels
+	// silently fall through to the global defaults; execute() prints a one-shot
+	// warning listing uncovered levels at the start of measurement.
+
+	const String &override_category() const { return m_override_category; }
+	void set_override_category(String c) { m_override_category = std::move(c); }
+	bool override_enabled() const { return !m_override_category.empty(); }
+
+	const Hashmap<String, LevelOverride> &override_levels() const { return m_override_levels; }
+	void set_override_level(const String &value, LevelOverride params) { m_override_levels[value] = params; }
+	void clear_override_levels() { m_override_levels.clear(); }
 
 	// ── N-point output mode ──────────────────────────────────────────────
 	// When method == NPoint, at least one of these must be true.
@@ -185,6 +212,10 @@ private:
 	double m_semitone_ref = 100;   // Hz (reference for semitone conversion)
 	bool m_erb = false;
 	bool m_output_time = false;    // add measurement-time column(s) to the concordance
+
+	// Per-file pitch-range override (empty category = disabled)
+	String m_override_category;
+	Hashmap<String, LevelOverride> m_override_levels;
 };
 
 namespace traits {

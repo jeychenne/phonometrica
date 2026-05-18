@@ -53,6 +53,17 @@ Console::Console(Runtime &rt, QWidget *parent) :
 			m_text_written = true;
 		};
 
+		// Route runtime errors/warnings through showError so they render in red
+		// and the console tab is auto-raised. Trailing newlines are stripped
+		// because showError appends one itself; callers shouldn't have to know
+		// about that detail.
+		rt.show_error = [this](const String &s) {
+			QString qs = QString::fromUtf8(s.data(), (int) s.size());
+			while (qs.endsWith('\n')) qs.chop(1);
+			showError(qs);
+			m_text_written = true;
+		};
+
 		// Install the default clear-output behaviour. When the scripting
 		// `clear()` global is invoked from the REPL (i.e. while this
 		// callback is active on the runtime), it empties the console.

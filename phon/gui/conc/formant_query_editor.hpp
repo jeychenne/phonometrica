@@ -33,11 +33,16 @@
 #include <QCheckBox>
 #include <QListWidget>
 #include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <QStackedWidget>
+#include <QTableWidget>
+#include <QGroupBox>
+#include <QLabel>
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/gui/conc/constraint_widget.hpp>
 #include <phon/gui/conc/property_widget.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -80,6 +85,15 @@ private:
 	void parseQuery();
 	bool validateQuery();
 	void loadQuery();
+
+	// Override-section internals
+	QWidget *buildOverrideSection();        // panel embedded below the Max-freq row inside the formant settings group
+	void refreshOverrideCategoryCombo();
+	void refreshOverrideTable();            // rebuild rows from category + columns from manual/auto
+	void syncOverrideCellToCache(int row, int col);
+	void setOverrideExpanded(bool expanded);
+	void applyOverrideEnabledState();       // disables global Max-freq / search-range fields when override is on
+	void updateOverrideStatus();            // refresh the coverage-summary label below the table
 
 	Handle<FormantQuery> m_query;
 	Handle<Concordance> m_concordance;
@@ -145,6 +159,19 @@ private:
 	QCheckBox *m_erb_check = nullptr;
 	QCheckBox *m_bark_check = nullptr;
 	QCheckBox *m_time_check = nullptr;
+
+	// Per-property frequency-ceiling override (inline disclosure below the Max-freq row).
+	// Expanding the triangle = override is active. The global Max-freq edit
+	// (manual mode) and search-range edits (automatic mode) are disabled while
+	// the panel is expanded.
+	QToolButton  *m_override_triangle      = nullptr;
+	QWidget      *m_override_body          = nullptr;
+	QComboBox    *m_override_category_combo = nullptr;
+	QLabel       *m_override_defaults_lbl  = nullptr;
+	QTableWidget *m_override_table         = nullptr;
+	QLabel       *m_override_status_lbl    = nullptr;
+	Hashmap<String, FormantQuery::LevelOverride> m_pending_overrides;
+	bool m_override_table_updating = false;
 
 	// File selection
 	QListWidget *m_file_list = nullptr;

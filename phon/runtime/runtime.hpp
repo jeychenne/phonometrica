@@ -289,6 +289,15 @@ public:
 
 	std::function<void(const String &)> print;
 
+	// Optional callback for error-styled output (rendered in red in the GUI
+	// console; falls through to `print` on platforms where it isn't installed).
+	// Application-layer code that wants to surface a warning should prefer
+	// `show_error` over `print` so the message is visually distinguishable from
+	// normal output. Named `show_error` rather than `error` so it doesn't
+	// shadow the free `error(...)` exception-builder function used inside
+	// Runtime's own methods.
+	std::function<void(const String &)> show_error;
+
 	// Callback invoked by the scripting `clear()` global. Clears whatever
 	// surface currently receives `print` output. Set by the component that
 	// installs the matching `print` callback (Console, ScriptView, ...).

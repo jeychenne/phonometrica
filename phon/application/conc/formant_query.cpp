@@ -22,6 +22,7 @@
 #include <phon/runtime.hpp>
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/weenink.hpp>
@@ -65,6 +66,7 @@ int FormantQuery::field_count() const
 	}
 
 	if (m_automatic) n += 2; // max_freq, lpc_order per match
+	else if (override_enabled()) n += 1; // effective max_freq per match (varies by file)
 	return n;
 }
 
@@ -115,6 +117,9 @@ Array<String> FormantQuery::build_headers() const
 		headers.append("Max freq");
 		headers.append("LPC order");
 	}
+	else if (override_enabled()) {
+		headers.append("Max freq");
+	}
 
 	return headers;
 }
@@ -160,10 +165,55 @@ void FormantQuery::clear()
 	m_erb = false;
 	m_bark = false;
 	m_output_time = false;
+	m_override_category.clear();
+	m_override_levels.clear();
 }
 
 Handle<Concordance> FormantQuery::execute()
 {
+	// Optional: warn about parameter-override coverage before doing any measurement.
+	// Messages are routed through the runtime's error callback so they render in
+	// red in the console panel (and fall back to print if no error sink is set).
+	if (override_enabled())
+	{
+		auto &rt = Project::get()->runtime();
+		auto emit_msg = [&](const String &msg) {
+			if (rt.show_error) rt.show_error(msg);
+			else if (rt.print) rt.print(msg);
+		};
+
+		auto known = Property::get_values(m_override_category);
+		if (known.empty())
+		{
+			emit_msg(String::format(
+				"Warning: parameter override category \"%s\" has no known values "
+				"in the project; all matches will use the default parameters.",
+				m_override_category.data()));
+		}
+		else
+		{
+			Array<String> uncovered;
+			for (auto &v : known) {
+				if (m_override_levels.find(v) == m_override_levels.end()) {
+					uncovered.append(v);
+				}
+			}
+			if (!uncovered.empty())
+			{
+				String msg = String::format(
+					"Warning: parameter override is enabled on category \"%s\" "
+					"but the following level(s) have no override and will fall "
+					"back to the default parameters: ",
+					m_override_category.data());
+				for (intptr_t i = 1; i <= uncovered.size(); i++) {
+					if (i > 1) msg.append(", ");
+					msg.append(uncovered[i]);
+				}
+				emit_msg(msg);
+			}
+		}
+	}
+
 	// Phase 1: text search (reuse the base class search engine)
 	auto matches = search();
 
@@ -199,6 +249,10 @@ Handle<Concordance> FormantQuery::execute()
 
 	// Set formant metadata — ERB/Bark are computed on the fly by the concordance
 	conc->set_formant_meta(m_nformant, m_bandwidth, m_erb, m_bark, m_automatic);
+	// Tell the concordance about the per-match Max freq trailing column when
+	// we're in manual mode with per-property overrides active (auto mode already
+	// emits Max freq + LPC order via set_formant_meta's last arg).
+	conc->set_has_per_match_max_freq(!m_automatic && override_enabled());
 
 	// Measurement-time column(s)
 	conc->set_has_time(m_output_time);
@@ -245,6 +299,33 @@ void FormantQuery::measure_match(Match &match) const
 	double t1 = target->start_time;
 	double t2 = target->end_time;
 
+	// Per-file parameter override lookup. We compute *local* copies of the parameters
+	// for this match so the const member fields stay untouched and concurrent matches
+	// (should we parallelize later) remain safe.
+	double local_max_freq   = m_max_freq;
+	double local_max_freq1  = m_max_freq1;
+	double local_max_freq2  = m_max_freq2;
+
+	if (override_enabled())
+	{
+		auto value = annot->get_property_value(m_override_category);
+		if (!value.empty())
+		{
+			auto it = m_override_levels.find(value);
+			if (it != m_override_levels.end())
+			{
+				auto &ov = it->second;
+				if (m_automatic) {
+					if (ov.max_freq_low  > 0) local_max_freq1 = ov.max_freq_low;
+					if (ov.max_freq_high > 0) local_max_freq2 = ov.max_freq_high;
+				}
+				else {
+					if (ov.max_freq > 0) local_max_freq = ov.max_freq;
+				}
+			}
+		}
+	}
+
 	// Determine LPC parameters (manual or automatic)
 	double max_freq;
 	int lpc_order;
@@ -252,14 +333,14 @@ void FormantQuery::measure_match(Match &match) const
 	if (m_automatic)
 	{
 		auto params = find_lpc_parameters(sound.get(), channel(), m_nformant, m_win_size,
-		                                  t1, t2, m_max_freq1, m_max_freq2, m_freq_step,
+		                                  t1, t2, local_max_freq1, local_max_freq2, m_freq_step,
 		                                  m_lpc_order1, m_lpc_order2);
 		max_freq = params.first;
 		lpc_order = (int)params.second;
 	}
 	else
 	{
-		max_freq = m_max_freq;
+		max_freq = local_max_freq;
 		lpc_order = m_lpc_order;
 	}
 
@@ -340,10 +421,13 @@ void FormantQuery::measure_match(Match &match) const
 		}
 	}
 
-	// Per-match LPC parameters (automatic mode)
+	// Per-match LPC parameters (automatic mode) or effective Max freq (manual + override)
 	if (m_automatic) {
 		match.measurements[idx++] = max_freq;
 		match.measurements[idx++] = (double)lpc_order;
+	}
+	else if (override_enabled()) {
+		match.measurements[idx++] = max_freq;
 	}
 }
 
@@ -383,6 +467,8 @@ Handle<Query> FormantQuery::copy() const
 	c->m_erb = m_erb;
 	c->m_bark = m_bark;
 	c->m_output_time = m_output_time;
+	c->m_override_category = m_override_category;
+	c->m_override_levels = m_override_levels;
 	c->m_content_modified = true;
 
 	return c;
@@ -530,6 +616,34 @@ void FormantQuery::load()
 				}
 			}
 		}
+		else if (node.name() == str("ParameterOverride"))
+		{
+			auto cat_attr = node.attribute("category");
+			if (cat_attr) {
+				m_override_category = String(cat_attr.value());
+			}
+			m_override_levels.clear();
+			for (auto level = node.first_child(); level; level = level.next_sibling())
+			{
+				if (level.name() != str("Level")) continue;
+				auto val_attr = level.attribute("value");
+				if (!val_attr) continue;
+				String value(val_attr.value());
+				LevelOverride ov;
+				for (auto param = level.first_child(); param; param = param.next_sibling())
+				{
+					if (param.name() != str("Param")) continue;
+					auto name_attr = param.attribute("name");
+					if (!name_attr) continue;
+					std::string_view name = name_attr.value();
+					double v = param.text().as_double(0);
+					if      (name == "MaxFrequency") ov.max_freq      = v;
+					else if (name == "MaxFreqLow")   ov.max_freq_low  = v;
+					else if (name == "MaxFreqHigh")  ov.max_freq_high = v;
+				}
+				m_override_levels[value] = ov;
+			}
+		}
 	}
 
 	m_loaded = true;
@@ -629,6 +743,28 @@ void FormantQuery::write()
 	add_data_node(fs_node, "ERB", String::convert(m_erb));
 	add_data_node(fs_node, "Bark", String::convert(m_bark));
 	add_data_node(fs_node, "OutputTime", String::convert(m_output_time));
+
+	// Per-file parameter override
+	if (override_enabled())
+	{
+		auto ov_node = root.append_child("ParameterOverride");
+		ov_node.append_attribute("category").set_value(m_override_category.data());
+		for (auto &entry : m_override_levels)
+		{
+			auto level_node = ov_node.append_child("Level");
+			level_node.append_attribute("value").set_value(entry.first.data());
+			auto emit_param = [&](const char *name, double v) {
+				if (v > 0) {
+					auto p = level_node.append_child("Param");
+					p.append_attribute("name").set_value(name);
+					p.text().set(String::format("%.1f", v).data());
+				}
+			};
+			emit_param("MaxFrequency",  entry.second.max_freq);
+			emit_param("MaxFreqLow",    entry.second.max_freq_low);
+			emit_param("MaxFreqHigh",   entry.second.max_freq_high);
+		}
+	}
 
 	write_xml(doc, m_path);
 }

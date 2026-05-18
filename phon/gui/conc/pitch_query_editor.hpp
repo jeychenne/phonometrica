@@ -32,10 +32,15 @@
 #include <QCheckBox>
 #include <QListWidget>
 #include <QPushButton>
+#include <QToolButton>
 #include <QVBoxLayout>
+#include <QTableWidget>
+#include <QGroupBox>
+#include <QLabel>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/gui/conc/constraint_widget.hpp>
 #include <phon/gui/conc/property_widget.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -78,6 +83,15 @@ private:
 	void parseQuery();
 	bool validateQuery();
 	void loadQuery();
+
+	// Override-section internals
+	QWidget *buildOverrideSection();        // panel embedded below the pitch-range row
+	void refreshOverrideCategoryCombo();
+	void refreshOverrideTable();
+	void syncOverrideCellToCache(int row, int col);
+	void setOverrideExpanded(bool expanded);
+	void applyOverrideEnabledState();       // per-field disable of min_pitch / max_pitch when fully covered
+	void updateOverrideStatus();
 
 	Handle<PitchQuery> m_query;
 	Handle<Concordance> m_concordance;
@@ -140,6 +154,19 @@ private:
 	QLineEdit *m_semitone_ref_edit = nullptr;
 	QCheckBox *m_erb_check = nullptr;
 	QCheckBox *m_time_check = nullptr;
+
+	// Per-property pitch-range override (inline disclosure below the pitch-range row).
+	// Expanding the triangle toggles panel visibility only; the override is active
+	// iff there are pending entries with at least one non-zero value. The global
+	// min/max pitch edits are disabled per-field when fully covered.
+	QToolButton  *m_override_triangle      = nullptr;
+	QWidget      *m_override_body          = nullptr;
+	QComboBox    *m_override_category_combo = nullptr;
+	QLabel       *m_override_defaults_lbl  = nullptr;
+	QTableWidget *m_override_table         = nullptr;
+	QLabel       *m_override_status_lbl    = nullptr;
+	Hashmap<String, PitchQuery::LevelOverride> m_pending_overrides;
+	bool m_override_table_updating = false;
 
 	// File selection
 	QListWidget *m_file_list = nullptr;
