@@ -81,7 +81,7 @@ References
 ----------
 
 While most programming languages have reference semantics for non-primitive types such as ``List`` and ``Table``, Phonometrica is not an 
-isolated case since there are a number of languages that have value semantics by default, including R, MATLAB, PHP, Swift and C++, to name a few. 
+isolated case since there are a number of languages that have value semantics, including R, MATLAB, PHP, Swift and C++, to name a few.
 
 Value semantics makes it easier to reason about your code and can prevent a number of subtle bugs because modifying a variable in one place
 will not affect variables with the same value in other places. However, in some circumstances, we do need variables to share the same value,
@@ -99,7 +99,7 @@ Consider the following example:
     print s2 # prints "hello world!"
 
 
-Here, we declare ``s2`` as a reference to ``s1`: this means that ``s1`` and ``s2`` are two aliases for the same value; modifying one will 
+Here, we declare ``s2`` as a reference to ``s1``: this means that ``s1`` and ``s2`` are two aliases for the same value; modifying one will
 modify the other.
 
 References can also be used when you need to modify the element of a collection. Observe the difference between ``x`` and ``y`` in the 

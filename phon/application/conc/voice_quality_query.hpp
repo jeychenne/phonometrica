@@ -27,6 +27,7 @@
 #define PHONOMETRICA_VOICE_QUALITY_QUERY_HPP
 
 #include <phon/application/conc/query.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -55,6 +56,37 @@ public:
 
 	double f0_max() const { return m_f0_max; }
 	void set_f0_max(double v) { m_f0_max = v; }
+
+	// ── Per-file F0-range override by property level ─────────────────────
+	// Mirrors PitchQuery: when `override_category` is non-empty, the query
+	// looks up that property on each annotation and, if the value matches an
+	// entry in `override_levels`, replaces f0_min and/or f0_max with the
+	// per-level value(s) for that match. Missing values or uncovered levels
+	// silently fall through to the global defaults; execute() prints a one-shot
+	// warning listing uncovered levels at the start of measurement.
+	// Both bounds are overridable: children and women typically have a higher
+	// floor than the project-wide default (e.g. 100 Hz vs 75 Hz) as well as a
+	// higher ceiling.
+	struct LevelOverride
+	{
+		double f0_min = 0;   // Hz, 0 = inherit m_f0_min
+		double f0_max = 0;   // Hz, 0 = inherit m_f0_max
+	};
+
+	const String &override_category() const { return m_override_category; }
+	void set_override_category(String c) { m_override_category = std::move(c); }
+	bool override_enabled() const { return !m_override_category.empty(); }
+
+	const Hashmap<String, LevelOverride> &override_levels() const { return m_override_levels; }
+	void set_override_level(const String &value, LevelOverride params) { m_override_levels[value] = params; }
+	void clear_override_levels() { m_override_levels.clear(); }
+
+	// Controls the initial display state of the per-match F0-range columns on
+	// the resulting concordance. Data is always stored when override is active;
+	// this flag controls only the default display state. Users can re-show
+	// via the concordance's Display menu.
+	bool show_params() const { return m_show_params; }
+	void set_show_params(bool b) { m_show_params = b; }
 
 	// ── Feature selection (14 fields, matching speech::VoiceReport) ──────
 
@@ -105,6 +137,11 @@ public:
 	/// Number of enabled features (1-14).
 	int feature_count() const;
 
+	/// Total number of stored fields per match: feature_count() plus the
+	/// trailing per-match parameter columns (Min/Max pitch) when override is
+	/// enabled. Used to size match.measurements.
+	int field_count() const { return feature_count() + (override_enabled() ? 2 : 0); }
+
 	Array<String> build_headers() const;
 
 	int fields_per_point() const { return feature_count(); }
@@ -148,6 +185,11 @@ private:
 
 	// Counter populated during execute() — mutable because measure_match() is const.
 	mutable intptr_t m_instant_target_count = 0;
+
+	// Per-file F0-range override (empty category = disabled)
+	String m_override_category;
+	Hashmap<String, LevelOverride> m_override_levels;
+	bool m_show_params = true;     // show per-match parameter columns by default
 };
 
 namespace traits {

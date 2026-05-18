@@ -304,11 +304,11 @@ QMenu *MainWindow::createAnalysisMenu()
 
 	menu->addAction(tr("Measure pitch..."), this, &MainWindow::onMeasurePitch);
 
+	menu->addAction(tr("Measure voice quality..."), this, &MainWindow::onMeasureVoiceQuality);
+
 	menu->addAction(tr("Measure intensity..."), this, &MainWindow::onMeasureIntensity);
 
 	menu->addAction(tr("Measure spectral moments..."), this, &MainWindow::onMeasureSpectralMoments);
-
-	menu->addAction(tr("Measure voice quality..."), this, &MainWindow::onMeasureVoiceQuality);
 
 	menu->addSeparator();
 

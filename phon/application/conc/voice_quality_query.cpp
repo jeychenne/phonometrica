@@ -22,6 +22,7 @@
 #include <phon/runtime.hpp>
 #include <phon/application/conc/voice_quality_query.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -76,6 +77,13 @@ Array<String> VoiceQualityQuery::build_headers() const
 	if (m_out_shimmer_apq11)     headers.append("APQ11(%)");
 	if (m_out_hnr)               headers.append("HNR(dB)");
 	if (headers.empty())         headers.append("Pulses");
+
+	// Trailing per-match parameter columns when override is active.
+	if (override_enabled()) {
+		headers.append("Min pitch");
+		headers.append("Max pitch");
+	}
+
 	return headers;
 }
 
@@ -99,11 +107,57 @@ void VoiceQualityQuery::clear()
 	m_out_shimmer_apq11    = false;
 	m_out_hnr              = true;
 	m_instant_target_count = 0;
+	m_override_category.clear();
+	m_override_levels.clear();
+	m_show_params = true;
 }
 
 Handle<Concordance> VoiceQualityQuery::execute()
 {
 	m_instant_target_count = 0;
+
+	// Optional: warn about parameter-override coverage before doing any measurement.
+	// Messages are routed through the runtime's error callback so they render in
+	// red in the console panel (and fall back to print if no error sink is set).
+	if (override_enabled())
+	{
+		auto &rt = Project::get()->runtime();
+		auto emit_msg = [&](const String &msg) {
+			if (rt.show_error) rt.show_error(msg);
+			else if (rt.print) rt.print(msg);
+		};
+
+		auto known = Property::get_values(m_override_category);
+		if (known.empty())
+		{
+			emit_msg(String::format(
+				"Warning: parameter override category \"%s\" has no known values "
+				"in the project; all matches will use the default parameters.",
+				m_override_category.data()));
+		}
+		else
+		{
+			Array<String> uncovered;
+			for (auto &v : known) {
+				if (m_override_levels.find(v) == m_override_levels.end()) {
+					uncovered.append(v);
+				}
+			}
+			if (!uncovered.empty())
+			{
+				String msg = String::format(
+					"Warning: parameter override is enabled on category \"%s\" "
+					"but the following level(s) have no override and will fall "
+					"back to the default parameters: ",
+					m_override_category.data());
+				for (intptr_t i = 1; i <= uncovered.size(); i++) {
+					if (i > 1) msg.append(", ");
+					msg.append(uncovered[i]);
+				}
+				emit_msg(msg);
+			}
+		}
+	}
 
 	auto matches = search();
 	int count = (int)matches.size();
@@ -120,7 +174,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 		catch (std::exception &)
 		{
 			auto &m = *matches[i+1];
-			m.measurements.assign(feature_count(), std::nan(""));
+			m.measurements.assign(field_count(), std::nan(""));
 		}
 	}
 
@@ -139,6 +193,13 @@ Handle<Concordance> VoiceQualityQuery::execute()
 		m_out_shimmer_apq3, m_out_shimmer_apq5, m_out_shimmer_apq11,
 		m_out_hnr);
 
+	// Per-match F0-range columns when override is active. Storage flag tracks
+	// whether the data is in match.measurements (set once at execute time);
+	// display flag tracks whether the columns are shown (initially gated by
+	// m_show_params; toggleable post-hoc via the Display menu).
+	conc->set_has_per_match_pitch_range(override_enabled() && m_show_params);
+	conc->set_per_match_pitch_range_available(override_enabled());
+
 	conc->rebuild_extra_headers();
 
 	auto lbl = this->label();
@@ -153,7 +214,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 
 void VoiceQualityQuery::measure_match(Match &match) const
 {
-	int total = feature_count();
+	int total = field_count();
 	match.measurements.assign(total, std::nan(""));
 
 	auto annot = match.annotation();
@@ -180,13 +241,34 @@ void VoiceQualityQuery::measure_match(Match &match) const
 		return;
 	}
 
+	// Per-file F0-range override lookup. Local copies so the const member
+	// fields stay untouched (and concurrent measurement remains safe should
+	// we ever parallelize).
+	double local_f0_min = m_f0_min;
+	double local_f0_max = m_f0_max;
+
+	if (override_enabled())
+	{
+		auto value = annot->get_property_value(m_override_category);
+		if (!value.empty())
+		{
+			auto it = m_override_levels.find(value);
+			if (it != m_override_levels.end())
+			{
+				const auto &ov = it->second;
+				if (ov.f0_min > 0) local_f0_min = ov.f0_min;
+				if (ov.f0_max > 0) local_f0_max = ov.f0_max;
+			}
+		}
+	}
+
 	speech::VoiceReport r;
 	try {
-		r = sound->compute_voice_report(channel(), t1, t2, m_f0_min, m_f0_max);
+		r = sound->compute_voice_report(channel(), t1, t2, local_f0_min, local_f0_max);
 	}
 	catch (...) {
-		// Leave the NaN-filled vector as-is.
-		return;
+		// Leave the NaN-filled vector as-is, but still write trailing slots below
+		// so the per-match columns reflect what range *would* have been applied.
 	}
 
 	// Store the same scaled values the GUI "Voice report" displays, so CSV
@@ -207,6 +289,16 @@ void VoiceQualityQuery::measure_match(Match &match) const
 	if (m_out_shimmer_apq5)      match.measurements[idx++] = r.shimmer_apq5   * 100.0;
 	if (m_out_shimmer_apq11)     match.measurements[idx++] = r.shimmer_apq11  * 100.0;
 	if (m_out_hnr)               match.measurements[idx++] = r.hnr;                           // dB
+
+	// Trailing per-match parameter columns when override is active. We jump to
+	// feature_count() rather than relying on idx, because if all features were
+	// somehow disabled feature_count() returns 1 ("Pulses" fallback) and idx
+	// would be 0 — they'd disagree. feature_count() is authoritative.
+	if (override_enabled()) {
+		int trailing_base = feature_count();
+		match.measurements[trailing_base]     = local_f0_min;
+		match.measurements[trailing_base + 1] = local_f0_max;
+	}
 }
 
 Handle<Query> VoiceQualityQuery::copy() const
@@ -239,6 +331,10 @@ Handle<Query> VoiceQualityQuery::copy() const
 	c->m_out_shimmer_apq5      = m_out_shimmer_apq5;
 	c->m_out_shimmer_apq11     = m_out_shimmer_apq11;
 	c->m_out_hnr               = m_out_hnr;
+
+	c->m_override_category     = m_override_category;
+	c->m_override_levels       = m_override_levels;
+	c->m_show_params           = m_show_params;
 
 	c->m_content_modified = true;
 	return c;
@@ -311,6 +407,37 @@ void VoiceQualityQuery::load()
 				else if (child.name() == str("OutputHnr"))            m_out_hnr              = child.text().as_bool(true);
 			}
 		}
+		else if (node.name() == str("ParameterOverride"))
+		{
+			auto cat_attr = node.attribute("category");
+			if (cat_attr) {
+				m_override_category = String(cat_attr.value());
+			}
+			auto show_attr = node.attribute("show");
+			if (show_attr) {
+				m_show_params = show_attr.as_bool(true);
+			}
+			m_override_levels.clear();
+			for (auto level = node.first_child(); level; level = level.next_sibling())
+			{
+				if (level.name() != str("Level")) continue;
+				auto val_attr = level.attribute("value");
+				if (!val_attr) continue;
+				String value(val_attr.value());
+				LevelOverride ov;
+				for (auto param = level.first_child(); param; param = param.next_sibling())
+				{
+					if (param.name() != str("Param")) continue;
+					auto name_attr = param.attribute("name");
+					if (!name_attr) continue;
+					std::string_view name = name_attr.value();
+					double v = param.text().as_double(0);
+					if      (name == "F0Min") ov.f0_min = v;
+					else if (name == "F0Max") ov.f0_max = v;
+				}
+				m_override_levels[value] = ov;
+			}
+		}
 	}
 
 	m_loaded = true;
@@ -381,6 +508,28 @@ void VoiceQualityQuery::write()
 	add_data_node(vq_node, "OutputShimmerApq5",    String::convert(m_out_shimmer_apq5));
 	add_data_node(vq_node, "OutputShimmerApq11",   String::convert(m_out_shimmer_apq11));
 	add_data_node(vq_node, "OutputHnr",            String::convert(m_out_hnr));
+
+	// Per-file F0-range override
+	if (override_enabled())
+	{
+		auto ov_node = root.append_child("ParameterOverride");
+		ov_node.append_attribute("category").set_value(m_override_category.data());
+		ov_node.append_attribute("show").set_value(m_show_params ? "true" : "false");
+		for (auto &entry : m_override_levels)
+		{
+			auto level_node = ov_node.append_child("Level");
+			level_node.append_attribute("value").set_value(entry.first.data());
+			auto emit_param = [&](const char *name, double v) {
+				if (v > 0) {
+					auto p = level_node.append_child("Param");
+					p.append_attribute("name").set_value(name);
+					p.text().set(String::format("%.1f", v).data());
+				}
+			};
+			emit_param("F0Min", entry.second.f0_min);
+			emit_param("F0Max", entry.second.f0_max);
+		}
+	}
 
 	write_xml(doc, m_path);
 }

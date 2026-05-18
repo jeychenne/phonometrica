@@ -32,10 +32,15 @@
 #include <QCheckBox>
 #include <QListWidget>
 #include <QPushButton>
+#include <QToolButton>
+#include <QTableWidget>
+#include <QGroupBox>
+#include <QLabel>
 #include <QVBoxLayout>
 #include <phon/application/conc/voice_quality_query.hpp>
 #include <phon/gui/conc/constraint_widget.hpp>
 #include <phon/gui/conc/property_widget.hpp>
+#include <phon/hashmap.hpp>
 
 namespace phonometrica {
 
@@ -74,6 +79,15 @@ private:
 	bool validateQuery();
 	void loadQuery();
 
+	// Override-section internals
+	QWidget *buildOverrideSection();        // panel embedded below the F0-range row
+	void refreshOverrideCategoryCombo();
+	void refreshOverrideTable();
+	void syncOverrideCellToCache(int row, int col);
+	void setOverrideExpanded(bool expanded);
+	void applyOverrideEnabledState();       // per-field disable of f0_min / f0_max when fully covered
+	void updateOverrideStatus();
+
 	Handle<VoiceQualityQuery> m_query;
 	Handle<Concordance> m_concordance;
 
@@ -100,6 +114,21 @@ private:
 	// Analysis settings (F0 range)
 	QLineEdit *m_f0_min_edit = nullptr;
 	QLineEdit *m_f0_max_edit = nullptr;
+
+	// Per-property F0-range override (inline disclosure below the F0-range row).
+	// Mirrors the pitch editor: the triangle toggles panel visibility only; the
+	// override is active iff there are pending entries with at least one
+	// non-zero value. The global F0 edits are disabled per-field when fully
+	// covered.
+	QToolButton  *m_override_triangle      = nullptr;
+	QWidget      *m_override_body          = nullptr;
+	QComboBox    *m_override_category_combo = nullptr;
+	QLabel       *m_override_defaults_lbl  = nullptr;
+	QTableWidget *m_override_table         = nullptr;
+	QLabel       *m_override_status_lbl    = nullptr;
+	QCheckBox    *m_show_params_check      = nullptr;
+	Hashmap<String, VoiceQualityQuery::LevelOverride> m_pending_overrides;
+	bool m_override_table_updating = false;
 
 	// Feature selection (14 checkboxes, matching speech::VoiceReport order)
 	QCheckBox *m_num_pulses_check       = nullptr;

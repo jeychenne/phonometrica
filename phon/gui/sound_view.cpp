@@ -478,6 +478,30 @@ void SoundView::createToolBar()
 	if (auto *pb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(pitch_action)))
 		pb->setPopupMode(QToolButton::InstantPopup);
 
+	// ── Voice quality menu button ─────────────────────
+	// Houses the glottal-pulse overlay in v1.0; HNR track and full voice
+	// report (jitter/shimmer/HNR over selection) join in follow-up commits.
+	auto *voice_menu = new QMenu(this);
+
+	m_show_glottal_pulses_action = voice_menu->addAction(tr("Show glottal pulses"));
+	m_show_glottal_pulses_action->setCheckable(true);
+	m_show_glottal_pulses_action->setChecked(false);
+	connect(m_show_glottal_pulses_action, &QAction::toggled, this, &SoundView::onToggleGlottalPulses);
+
+	voice_menu->addSeparator();
+
+	auto *voice_report_action = voice_menu->addAction(tr("Get voice report"));
+	voice_report_action->setShortcut(QKeySequence(Qt::Key_F9));
+	voice_report_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	addAction(voice_report_action);
+	connect(voice_report_action, &QAction::triggered, this, &SoundView::onVoiceReport);
+
+	auto *voice_action = new QAction(QIcon(":/icons/voice.svg"), tr("Voice quality"), this);
+	voice_action->setMenu(voice_menu);
+	m_toolbar->addAction(voice_action);
+	if (auto *vb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(voice_action)))
+		vb->setPopupMode(QToolButton::InstantPopup);
+
 	// ── Intensity menu button ─────────────────────────
 	auto *intensity_menu = new QMenu(this);
 
@@ -510,31 +534,6 @@ void SoundView::createToolBar()
 	m_toolbar->addAction(intensity_action);
 	if (auto *ib = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(intensity_action)))
 		ib->setPopupMode(QToolButton::InstantPopup);
-
-
-	// ── Voice quality menu button ─────────────────────
-	// Houses the glottal-pulse overlay in v1.0; HNR track and full voice
-	// report (jitter/shimmer/HNR over selection) join in follow-up commits.
-	auto *voice_menu = new QMenu(this);
-
-	m_show_glottal_pulses_action = voice_menu->addAction(tr("Show glottal pulses"));
-	m_show_glottal_pulses_action->setCheckable(true);
-	m_show_glottal_pulses_action->setChecked(false);
-	connect(m_show_glottal_pulses_action, &QAction::toggled, this, &SoundView::onToggleGlottalPulses);
-
-	voice_menu->addSeparator();
-
-	auto *voice_report_action = voice_menu->addAction(tr("Get voice report"));
-	voice_report_action->setShortcut(QKeySequence(Qt::Key_F9));
-	voice_report_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
-	addAction(voice_report_action);
-	connect(voice_report_action, &QAction::triggered, this, &SoundView::onVoiceReport);
-
-	auto *voice_action = new QAction(QIcon(":/icons/voice.svg"), tr("Voice quality"), this);
-	voice_action->setMenu(voice_menu);
-	m_toolbar->addAction(voice_action);
-	if (auto *vb = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(voice_action)))
-		vb->setPopupMode(QToolButton::InstantPopup);
 
 	m_toolbar->addSeparator();
 

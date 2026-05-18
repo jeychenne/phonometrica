@@ -24,6 +24,10 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QTableWidget>
+#include <QTableWidgetItem>
+#include <QHeaderView>
+#include <QSignalBlocker>
 #include <phon/gui/file_dialog.hpp>
 #include <QSplitter>
 #include <QProgressDialog>
@@ -31,6 +35,7 @@
 #include <phon/gui/conc/voice_quality_query_editor.hpp>
 #include <phon/gui/help_browser.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/property.hpp>
 #include <phon/application/settings.hpp>
 
 namespace phonometrica {
@@ -177,6 +182,9 @@ QWidget *VoiceQualityQueryEditor::createVoiceQualitySettingsPanel()
 	f0_row->addStretch();
 	outer->addLayout(f0_row);
 
+	// Disclosure: per-property F0-range override
+	outer->addWidget(buildOverrideSection());
+
 	// ── Feature checkbox grid ────────────────────────────────────────────
 	auto *grid_label = new QLabel(tr("Measurements:"));
 	outer->addWidget(grid_label);
@@ -239,6 +247,300 @@ QWidget *VoiceQualityQueryEditor::createVoiceQualitySettingsPanel()
 	onSelectDefault();
 
 	return group;
+}
+
+// ── Per-property F0-range override section ────────────────────────────────
+// Mirrors the pitch editor's disclosure-triangle pattern. Expanding the triangle
+// only toggles panel visibility — the override is active iff there are pending
+// entries with at least one non-zero value. The global f0 min/max edits are
+// disabled per-field when fully covered.
+
+QWidget *VoiceQualityQueryEditor::buildOverrideSection()
+{
+	auto *container = new QWidget;
+	auto *vbox = new QVBoxLayout(container);
+	vbox->setContentsMargins(0, 0, 0, 0);
+	vbox->setSpacing(4);
+
+	auto *trow = new QHBoxLayout;
+	trow->setContentsMargins(0, 0, 0, 0);
+	m_override_triangle = new QToolButton;
+	m_override_triangle->setCheckable(true);
+	m_override_triangle->setChecked(false);
+	m_override_triangle->setArrowType(Qt::RightArrow);
+	m_override_triangle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	m_override_triangle->setText(tr("Adjust F0 range by property"));
+	m_override_triangle->setAutoRaise(true);
+	m_override_triangle->setToolTip(tr(
+		"Override the F0 range on a per-file basis using the value of a "
+		"text-typed property (e.g. Gender). When the override is active, the "
+		"global F0 min/max fields above are disabled per-field once every "
+		"known level has an override. Files whose property value isn't listed "
+		"here fall back to the global values, and a warning is printed in the "
+		"console panel at execution time."));
+	trow->addWidget(m_override_triangle);
+	trow->addStretch();
+	vbox->addLayout(trow);
+
+	m_override_body = new QWidget;
+	m_override_body->hide();
+	auto *body = new QVBoxLayout(m_override_body);
+	body->setContentsMargins(20, 0, 0, 0);
+	body->setSpacing(4);
+
+	auto *cat_row = new QHBoxLayout;
+	cat_row->addWidget(new QLabel(tr("Property:")));
+	m_override_category_combo = new QComboBox;
+	m_override_category_combo->setMinimumWidth(180);
+	cat_row->addWidget(m_override_category_combo);
+	cat_row->addStretch();
+	body->addLayout(cat_row);
+
+	m_override_defaults_lbl = new QLabel;
+	m_override_defaults_lbl->setStyleSheet("color: gray;");
+	body->addWidget(m_override_defaults_lbl);
+
+	m_override_table = new QTableWidget;
+	m_override_table->setSelectionMode(QAbstractItemView::SingleSelection);
+	m_override_table->setSelectionBehavior(QAbstractItemView::SelectItems);
+	m_override_table->verticalHeader()->setVisible(false);
+	m_override_table->horizontalHeader()->setStretchLastSection(true);
+	m_override_table->setMinimumHeight(120);
+	m_override_table->setToolTip(tr(
+		"Leave a cell blank to inherit the global setting. Levels not listed here "
+		"also inherit the global setting; a warning is printed in the console panel "
+		"when the query is executed."));
+	body->addWidget(m_override_table);
+
+	m_override_status_lbl = new QLabel;
+	m_override_status_lbl->setWordWrap(true);
+	body->addWidget(m_override_status_lbl);
+
+	// Show/hide per-match parameter columns on the resulting concordance.
+	m_show_params_check = new QCheckBox(tr("Show parameter values in concordance"));
+	m_show_params_check->setChecked(true);
+	m_show_params_check->setToolTip(tr(
+		"When checked, the resulting concordance will display the per-match "
+		"effective F0 min and F0 max values as extra columns. You can show or "
+		"hide these columns later via the concordance's Display menu."));
+	body->addWidget(m_show_params_check);
+
+	vbox->addWidget(m_override_body);
+
+	connect(m_override_triangle, &QToolButton::toggled, this, [this](bool on) {
+		setOverrideExpanded(on);
+	});
+	connect(m_override_category_combo, &QComboBox::currentTextChanged, this, [this](const QString &) {
+		if (m_override_triangle && m_override_triangle->isChecked()) {
+			refreshOverrideTable();
+		}
+	});
+	connect(m_override_table, &QTableWidget::cellChanged, this, [this](int row, int col) {
+		if (m_override_table_updating) return;
+		syncOverrideCellToCache(row, col);
+	});
+
+	return container;
+}
+
+void VoiceQualityQueryEditor::setOverrideExpanded(bool expanded)
+{
+	if (!m_override_triangle || !m_override_body) return;
+	m_override_triangle->setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+	m_override_body->setVisible(expanded);
+	if (expanded) {
+		refreshOverrideCategoryCombo();
+		refreshOverrideTable();
+	}
+	applyOverrideEnabledState();
+}
+
+void VoiceQualityQueryEditor::applyOverrideEnabledState()
+{
+	int rows_min_covered = 0;
+	int rows_max_covered = 0;
+	for (auto &entry : m_pending_overrides) {
+		if (entry.second.f0_min > 0) ++rows_min_covered;
+		if (entry.second.f0_max > 0) ++rows_max_covered;
+	}
+
+	bool min_fully_covered = false;
+	bool max_fully_covered = false;
+	if (m_override_category_combo)
+	{
+		QString cat_qs = m_override_category_combo->currentText();
+		if (!cat_qs.isEmpty()) {
+			String category(cat_qs.toUtf8().constData());
+			auto values = Property::get_values(category);
+			int n = (int) values.size();
+			min_fully_covered = (n > 0 && rows_min_covered == n);
+			max_fully_covered = (n > 0 && rows_max_covered == n);
+		}
+	}
+
+	if (m_f0_min_edit) m_f0_min_edit->setEnabled(!min_fully_covered);
+	if (m_f0_max_edit) m_f0_max_edit->setEnabled(!max_fully_covered);
+}
+
+void VoiceQualityQueryEditor::refreshOverrideCategoryCombo()
+{
+	if (!m_override_category_combo) return;
+	QSignalBlocker blocker(m_override_category_combo);
+
+	QString prev = m_override_category_combo->currentText();
+	m_override_category_combo->clear();
+	auto text_cats = Property::get_categories_by_type(typeid(String));
+	int gender_index = -1;
+	int i = 0;
+	for (const auto &cat : text_cats) {
+		auto qs = QString::fromUtf8(cat.data(), (int) cat.size());
+		m_override_category_combo->addItem(qs);
+		if (gender_index < 0 && qs.compare(QStringLiteral("Gender"), Qt::CaseInsensitive) == 0) {
+			gender_index = i;
+		}
+		++i;
+	}
+	int idx = prev.isEmpty() ? -1 : m_override_category_combo->findText(prev, Qt::MatchExactly);
+	if (idx >= 0) m_override_category_combo->setCurrentIndex(idx);
+	else if (gender_index >= 0) m_override_category_combo->setCurrentIndex(gender_index);
+}
+
+void VoiceQualityQueryEditor::refreshOverrideTable()
+{
+	if (!m_override_table) return;
+	m_override_table_updating = true;
+
+	QString hint = tr("Defaults: min %1 Hz, max %2 Hz (leave a cell blank to inherit)")
+		.arg(m_f0_min_edit ? m_f0_min_edit->text() : QStringLiteral("?"))
+		.arg(m_f0_max_edit ? m_f0_max_edit->text() : QStringLiteral("?"));
+	m_override_defaults_lbl->setText(hint);
+
+	m_override_table->setColumnCount(3);
+	m_override_table->setHorizontalHeaderLabels(QStringList{
+		tr("Value"), tr("F0 min (Hz)"), tr("F0 max (Hz)")
+	});
+
+	QString cat_qs = m_override_category_combo ? m_override_category_combo->currentText() : QString();
+	if (cat_qs.isEmpty()) {
+		m_override_table->setRowCount(0);
+		m_override_table_updating = false;
+		updateOverrideStatus();
+		applyOverrideEnabledState();
+		return;
+	}
+
+	String category(cat_qs.toUtf8().constData());
+	auto values = Property::get_values(category);
+
+	m_override_table->setRowCount((int) values.size());
+	auto format_cell = [](double v) -> QString {
+		if (v > 0) return QString::number(v, 'f', 1);
+		return QString();
+	};
+	int row = 0;
+	for (const auto &v : values)
+	{
+		auto *value_item = new QTableWidgetItem(QString::fromUtf8(v.data(), (int) v.size()));
+		value_item->setFlags(value_item->flags() & ~Qt::ItemIsEditable);
+		m_override_table->setItem(row, 0, value_item);
+
+		VoiceQualityQuery::LevelOverride ov;
+		auto it = m_pending_overrides.find(v);
+		if (it != m_pending_overrides.end()) ov = it->second;
+
+		m_override_table->setItem(row, 1, new QTableWidgetItem(format_cell(ov.f0_min)));
+		m_override_table->setItem(row, 2, new QTableWidgetItem(format_cell(ov.f0_max)));
+		++row;
+	}
+
+	m_override_table->resizeColumnsToContents();
+	m_override_table_updating = false;
+	updateOverrideStatus();
+	applyOverrideEnabledState();
+}
+
+void VoiceQualityQueryEditor::syncOverrideCellToCache(int row, int col)
+{
+	if (row < 0 || col < 0) return;
+	auto *value_item = m_override_table->item(row, 0);
+	if (!value_item) return;
+
+	String value(value_item->text().toUtf8().constData());
+	auto *cell_item = m_override_table->item(row, col);
+	if (!cell_item) return;
+
+	QString text = cell_item->text().trimmed();
+	bool ok = false;
+	double parsed = text.isEmpty() ? 0.0 : text.toDouble(&ok);
+	if (!text.isEmpty() && (!ok || parsed <= 0)) {
+		m_override_table_updating = true;
+		cell_item->setText(QString());
+		m_override_table_updating = false;
+		parsed = 0.0;
+	}
+
+	auto &entry = m_pending_overrides[value];
+	if      (col == 1) entry.f0_min = parsed;
+	else if (col == 2) entry.f0_max = parsed;
+
+	if (entry.f0_min <= 0 && entry.f0_max <= 0) {
+		m_pending_overrides.erase(value);
+	}
+	updateOverrideStatus();
+	applyOverrideEnabledState();
+}
+
+void VoiceQualityQueryEditor::updateOverrideStatus()
+{
+	if (!m_override_status_lbl) return;
+
+	int row_count = m_override_table ? m_override_table->rowCount() : 0;
+	if (row_count == 0) {
+		m_override_status_lbl->setText(tr(
+			"No values available for this property. Add values to the property "
+			"via the Properties panel, then return here."));
+		m_override_status_lbl->setStyleSheet("color: gray; font-style: italic;");
+		return;
+	}
+
+	int rows_any = 0;
+	int rows_min = 0;
+	int rows_max = 0;
+	for (int r = 0; r < row_count; r++) {
+		auto *vi = m_override_table->item(r, 0);
+		if (!vi) continue;
+		String value(vi->text().toUtf8().constData());
+		auto it = m_pending_overrides.find(value);
+		if (it == m_pending_overrides.end()) continue;
+		const auto &ov = it->second;
+		bool has_min = ov.f0_min > 0;
+		bool has_max = ov.f0_max > 0;
+		if (has_min || has_max) ++rows_any;
+		if (has_min) ++rows_min;
+		if (has_max) ++rows_max;
+	}
+
+	QString def_text = tr("defaults min %1 Hz, max %2 Hz")
+		.arg(m_f0_min_edit ? m_f0_min_edit->text() : QStringLiteral("?"))
+		.arg(m_f0_max_edit ? m_f0_max_edit->text() : QStringLiteral("?"));
+
+	if (rows_any == 0) {
+		m_override_status_lbl->setText(tr(
+			"⚠ No values overridden — all matches will use the %1.").arg(def_text));
+		m_override_status_lbl->setStyleSheet("color: rgb(180, 100, 40);");
+	}
+	else if (rows_min == row_count && rows_max == row_count) {
+		m_override_status_lbl->setText(tr(
+			"✓ All %n value(s) fully overridden.", nullptr, row_count));
+		m_override_status_lbl->setStyleSheet("color: rgb(40, 130, 60);");
+	}
+	else {
+		m_override_status_lbl->setText(tr(
+			"Overriding min for %1 of %2 values, max for %3 of %2 values; "
+			"uncovered rows will use the %4.")
+			.arg(rows_min).arg(row_count).arg(rows_max).arg(def_text));
+		m_override_status_lbl->setStyleSheet("color: gray;");
+	}
 }
 
 QWidget *VoiceQualityQueryEditor::createContextPanel()
@@ -475,6 +777,35 @@ void VoiceQualityQueryEditor::parseQuery()
 	{
 		throw std::runtime_error("At least one voice quality measurement must be selected");
 	}
+
+	// Per-property F0-range override: active iff at least one pending entry
+	// has a non-zero value. The disclosure triangle just controls panel
+	// visibility — a collapsed panel with values still applies.
+	m_query->clear_override_levels();
+	bool has_any_override = false;
+	for (auto &entry : m_pending_overrides) {
+		const auto &ov = entry.second;
+		if (ov.f0_min > 0 || ov.f0_max > 0) {
+			has_any_override = true;
+			break;
+		}
+	}
+	if (has_any_override && m_override_category_combo)
+	{
+		String category(m_override_category_combo->currentText().toUtf8().constData());
+		m_query->set_override_category(category);
+		for (auto &entry : m_pending_overrides) {
+			const auto &ov = entry.second;
+			if (ov.f0_min > 0 || ov.f0_max > 0) {
+				m_query->set_override_level(entry.first, ov);
+			}
+		}
+	}
+	else
+	{
+		m_query->set_override_category(String());
+	}
+	m_query->set_show_params(m_show_params_check && m_show_params_check->isChecked());
 }
 
 bool VoiceQualityQueryEditor::validateQuery()
@@ -631,6 +962,36 @@ void VoiceQualityQueryEditor::loadQuery()
 	m_shimmer_apq5_check    ->setChecked(m_query->output_shimmer_apq5());
 	m_shimmer_apq11_check   ->setChecked(m_query->output_shimmer_apq11());
 	m_hnr_check             ->setChecked(m_query->output_hnr());
+
+	// Per-property F0-range override
+	m_pending_overrides.clear();
+	for (auto &entry : m_query->override_levels()) {
+		m_pending_overrides[entry.first] = entry.second;
+	}
+	bool override_on = m_query->override_enabled();
+	{
+		QSignalBlocker b_triangle(m_override_triangle);
+		m_override_triangle->setChecked(override_on);
+		m_override_triangle->setArrowType(override_on ? Qt::DownArrow : Qt::RightArrow);
+		m_override_body->setVisible(override_on);
+	}
+	if (override_on)
+	{
+		refreshOverrideCategoryCombo();
+		const String &cat = m_query->override_category();
+		QString cat_qs = QString::fromUtf8(cat.data(), (int) cat.size());
+		int idx = m_override_category_combo->findText(cat_qs, Qt::MatchExactly);
+		if (idx >= 0) {
+			QSignalBlocker b_combo(m_override_category_combo);
+			m_override_category_combo->setCurrentIndex(idx);
+		}
+		refreshOverrideTable();
+	}
+	if (m_show_params_check) {
+		QSignalBlocker b(m_show_params_check);
+		m_show_params_check->setChecked(m_query->show_params());
+	}
+	applyOverrideEnabledState();
 
 	m_save_btn->setEnabled(false);
 	m_save_as_btn->setEnabled(false);

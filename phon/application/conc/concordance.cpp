@@ -388,6 +388,14 @@ void Concordance::rebuild_extra_headers()
 
 		emit_vq_group(m_base_headers);
 		emit_vq_group(m_extra_headers);
+
+		// Trailing per-match columns when a per-property F0-range override is active.
+		// Must be emitted inside the VQ branch — the function returns immediately
+		// after, so it never reaches any append further down.
+		if (m_has_per_match_pitch_range) {
+			m_extra_headers.append("Min pitch");
+			m_extra_headers.append("Max pitch");
+		}
 		return;
 	}
 
