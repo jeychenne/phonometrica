@@ -1,5 +1,5 @@
 #define MyAppName          "Phonometrica"
-#define MyAppVersion       "0.9.5"
+#define MyAppVersion       "0.9.6"
 #define MyAppPublisher     "Julien Eychenne & Léa Courdès-Murphy"
 #define MyAppURL           "http://www.phonometrica-ling.org"
 #define MyAppExeName       "phonometrica.exe"
