@@ -1,22 +1,13 @@
 Operating System
 ================
 
-This page documents the ``system`` module.
-
-General concepts
-----------------
-
-This module lets you interact with the operating system, and perform operations such as checking whether a file
+This page documents functions that let you interact with the user's operating system, and perform operations such as checking whether a file
 or directory exists, extracting parts of a file name, etc.
 
 
 Functions
 ---------
 
-
-.. module:: system
-
-------------
 
 .. function:: get_user_directory()
     

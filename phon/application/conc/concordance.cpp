@@ -75,7 +75,9 @@ Concordance::Concordance(const Concordance &other) :
 	m_has_bark = other.m_has_bark;
 	m_has_auto_params = other.m_has_auto_params;
 	m_has_per_match_max_freq = other.m_has_per_match_max_freq;
+	m_per_match_max_freq_available = other.m_per_match_max_freq_available;
 	m_has_per_match_pitch_range = other.m_has_per_match_pitch_range;
+	m_per_match_pitch_range_available = other.m_per_match_pitch_range_available;
 	m_header_aliases = other.m_header_aliases;
 
 	m_is_pitch = other.m_is_pitch;
@@ -147,9 +149,11 @@ void Concordance::set_formant_meta(int nformant, bool bandwidth, bool erb, bool 
 	m_has_erb = erb;
 	m_has_bark = bark;
 	m_has_auto_params = auto_params;
-	// Caller (FormantQuery::execute) sets m_has_per_match_max_freq explicitly
-	// after this call. Reset here so a re-used Concordance doesn't carry stale state.
+	// Caller (FormantQuery::execute) sets m_has_per_match_max_freq and the
+	// availability flag explicitly after this call. Reset here so a re-used
+	// Concordance doesn't carry stale state.
 	m_has_per_match_max_freq = false;
+	m_per_match_max_freq_available = false;
 }
 
 void Concordance::set_has_erb(bool b)
@@ -168,15 +172,33 @@ void Concordance::set_has_bark(bool b)
 	m_content_modified = true;
 }
 
+void Concordance::set_has_per_match_max_freq(bool b)
+{
+	if (m_has_per_match_max_freq == b) return;
+	m_has_per_match_max_freq = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
+void Concordance::set_has_per_match_pitch_range(bool b)
+{
+	if (m_has_per_match_pitch_range == b) return;
+	m_has_per_match_pitch_range = b;
+	rebuild_extra_headers();
+	m_content_modified = true;
+}
+
 void Concordance::set_pitch_meta(bool semitones, double st_ref, bool erb)
 {
 	m_is_pitch = true;
 	m_has_semitones = semitones;
 	m_semitone_ref = st_ref;
 	m_has_pitch_erb = erb;
-	// Caller (PitchQuery::execute) sets m_has_per_match_pitch_range explicitly
-	// after this call. Reset here so a re-used Concordance doesn't carry stale state.
+	// Caller (PitchQuery::execute) sets m_has_per_match_pitch_range and the
+	// availability flag explicitly after this call. Reset here so a re-used
+	// Concordance doesn't carry stale state.
 	m_has_per_match_pitch_range = false;
+	m_per_match_pitch_range_available = false;
 }
 
 void Concordance::set_has_semitones(bool b)
@@ -444,6 +466,14 @@ void Concordance::rebuild_extra_headers()
 				emit_pitch_group(m_extra_headers, "(avg)");
 			}
 		}
+
+		// Trailing per-match columns when a per-property pitch-range override is active.
+		// Must be emitted inside the pitch branch — the function returns immediately
+		// after, so it never reaches the formant-section append below.
+		if (m_has_per_match_pitch_range) {
+			m_extra_headers.append("Min pitch");
+			m_extra_headers.append("Max pitch");
+		}
 		return;
 	}
 
@@ -512,10 +542,6 @@ void Concordance::rebuild_extra_headers()
 	}
 	else if (m_has_per_match_max_freq) {
 		m_extra_headers.append("Max freq");
-	}
-	if (m_has_per_match_pitch_range) {
-		m_extra_headers.append("Min pitch");
-		m_extra_headers.append("Max pitch");
 	}
 }
 
@@ -1462,7 +1488,9 @@ void Concordance::load()
 	m_has_bark = false;
 	m_has_auto_params = false;
 	m_has_per_match_max_freq = false;
+	m_per_match_max_freq_available = false;
 	m_has_per_match_pitch_range = false;
+	m_per_match_pitch_range_available = false;
 	m_has_series = true;
 	m_has_average = false;
 	m_is_pitch = false;
@@ -1581,6 +1609,8 @@ void Concordance::load()
 					m_has_auto_params = child.text().as_bool(false);
 				else if (child.name() == str("HasPerMatchMaxFreq"))
 					m_has_per_match_max_freq = child.text().as_bool(false);
+				else if (child.name() == str("PerMatchMaxFreqAvailable"))
+					m_per_match_max_freq_available = child.text().as_bool(false);
 				else if (child.name() == str("HasSeries"))
 					m_has_series = child.text().as_bool(true);
 			}
@@ -1598,6 +1628,8 @@ void Concordance::load()
 					m_has_pitch_erb = child.text().as_bool(false);
 				else if (child.name() == str("HasPerMatchPitchRange"))
 					m_has_per_match_pitch_range = child.text().as_bool(false);
+				else if (child.name() == str("PerMatchPitchRangeAvailable"))
+					m_per_match_pitch_range_available = child.text().as_bool(false);
 				else if (child.name() == str("HasSeries"))
 					m_has_series = child.text().as_bool(true);
 			}
@@ -2100,6 +2132,8 @@ void Concordance::write()
 			.set_value(m_has_auto_params ? "true" : "false");
 		fm.append_child("HasPerMatchMaxFreq").append_child(node_pcdata)
 			.set_value(m_has_per_match_max_freq ? "true" : "false");
+		fm.append_child("PerMatchMaxFreqAvailable").append_child(node_pcdata)
+			.set_value(m_per_match_max_freq_available ? "true" : "false");
 		fm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
 	}
@@ -2116,6 +2150,8 @@ void Concordance::write()
 			.set_value(m_has_pitch_erb ? "true" : "false");
 		pm.append_child("HasPerMatchPitchRange").append_child(node_pcdata)
 			.set_value(m_has_per_match_pitch_range ? "true" : "false");
+		pm.append_child("PerMatchPitchRangeAvailable").append_child(node_pcdata)
+			.set_value(m_per_match_pitch_range_available ? "true" : "false");
 		pm.append_child("HasSeries").append_child(node_pcdata)
 			.set_value(m_has_series ? "true" : "false");
 	}
@@ -2562,9 +2598,11 @@ void Concordance::copy_metadata_to(Concordance &target) const
 {
 	target.set_formant_meta(m_nformant, m_has_bandwidth, m_has_erb, m_has_bark, m_has_auto_params);
 	target.set_has_per_match_max_freq(m_has_per_match_max_freq);
+	target.set_per_match_max_freq_available(m_per_match_max_freq_available);
 	if (m_is_pitch) {
 		target.set_pitch_meta(m_has_semitones, m_semitone_ref, m_has_pitch_erb);
 		target.set_has_per_match_pitch_range(m_has_per_match_pitch_range);
+		target.set_per_match_pitch_range_available(m_per_match_pitch_range_available);
 	}
 	if (m_is_intensity) {
 		target.set_intensity_meta();
