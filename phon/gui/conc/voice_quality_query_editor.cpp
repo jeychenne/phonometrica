@@ -195,6 +195,11 @@ QWidget *VoiceQualityQueryEditor::createVoiceQualitySettingsPanel()
 
 	// Column 0: pulses + F0
 	m_num_pulses_check       = new QCheckBox(tr("Number of pulses"));
+	m_voicing_check          = new QCheckBox(tr("Voicing (%)"));
+	m_voicing_check->setToolTip(tr(
+		"Fraction of voiced frames in the pitch contour (= 1 − Praat's "
+		"\"fraction of locally unvoiced frames\"). 100 = fully voiced; "
+		"0 = entirely voiceless."));
 	m_mean_period_check      = new QCheckBox(tr("Mean period (ms)"));
 	m_mean_f0_check          = new QCheckBox(tr("Mean F0 (Hz)"));
 	// Column 1: jitter
@@ -212,8 +217,9 @@ QWidget *VoiceQualityQueryEditor::createVoiceQualitySettingsPanel()
 	m_hnr_check              = new QCheckBox(tr("HNR (dB)"));
 
 	grid->addWidget(m_num_pulses_check,       0, 0);
-	grid->addWidget(m_mean_period_check,      1, 0);
-	grid->addWidget(m_mean_f0_check,          2, 0);
+	grid->addWidget(m_voicing_check,          1, 0);
+	grid->addWidget(m_mean_period_check,      2, 0);
+	grid->addWidget(m_mean_f0_check,          3, 0);
 
 	grid->addWidget(m_jitter_local_check,     0, 1);
 	grid->addWidget(m_jitter_local_abs_check, 1, 1);
@@ -234,7 +240,7 @@ QWidget *VoiceQualityQueryEditor::createVoiceQualitySettingsPanel()
 	auto *preset_row = new QHBoxLayout;
 	auto *select_all_btn = new QPushButton(tr("Select all"));
 	auto *select_default_btn = new QPushButton(tr("Select essentials"));
-	select_default_btn->setToolTip(tr("Pulses, mean F0, jitter local, shimmer local, HNR"));
+	select_default_btn->setToolTip(tr("Pulses, voicing, mean F0, jitter local, shimmer local, HNR"));
 	preset_row->addStretch();
 	preset_row->addWidget(select_default_btn);
 	preset_row->addWidget(select_all_btn);
@@ -661,6 +667,7 @@ QWidget *VoiceQualityQueryEditor::createButtonPanel()
 void VoiceQualityQueryEditor::onSelectAll()
 {
 	m_num_pulses_check->setChecked(true);
+	m_voicing_check->setChecked(true);
 	m_mean_period_check->setChecked(true);
 	m_mean_f0_check->setChecked(true);
 	m_jitter_local_check->setChecked(true);
@@ -678,8 +685,9 @@ void VoiceQualityQueryEditor::onSelectAll()
 
 void VoiceQualityQueryEditor::onSelectDefault()
 {
-	// Essentials: pulses, mean F0, jitter local, shimmer local, HNR.
+	// Essentials: pulses, voicing, mean F0, jitter local, shimmer local, HNR.
 	m_num_pulses_check->setChecked(true);
+	m_voicing_check->setChecked(true);
 	m_mean_period_check->setChecked(false);
 	m_mean_f0_check->setChecked(true);
 	m_jitter_local_check->setChecked(true);
@@ -745,6 +753,7 @@ void VoiceQualityQueryEditor::parseQuery()
 
 	// ── Feature selection (at least one must be checked) ───────────────
 	m_query->set_output_num_pulses      (m_num_pulses_check->isChecked());
+	m_query->set_output_voicing         (m_voicing_check->isChecked());
 	m_query->set_output_mean_period     (m_mean_period_check->isChecked());
 	m_query->set_output_mean_f0         (m_mean_f0_check->isChecked());
 	m_query->set_output_jitter_local    (m_jitter_local_check->isChecked());
@@ -761,6 +770,7 @@ void VoiceQualityQueryEditor::parseQuery()
 
 	if (m_query->feature_count() == 0
 	    || (!m_num_pulses_check->isChecked()
+	        && !m_voicing_check->isChecked()
 	        && !m_mean_period_check->isChecked()
 	        && !m_mean_f0_check->isChecked()
 	        && !m_jitter_local_check->isChecked()
@@ -949,6 +959,7 @@ void VoiceQualityQueryEditor::loadQuery()
 
 	// Feature selection
 	m_num_pulses_check      ->setChecked(m_query->output_num_pulses());
+	m_voicing_check         ->setChecked(m_query->output_voicing());
 	m_mean_period_check     ->setChecked(m_query->output_mean_period());
 	m_mean_f0_check         ->setChecked(m_query->output_mean_f0());
 	m_jitter_local_check    ->setChecked(m_query->output_jitter_local());

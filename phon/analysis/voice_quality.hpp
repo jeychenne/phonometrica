@@ -204,10 +204,29 @@ std::vector<double> hnr_contour(std::span<const double> samples, double sample_r
 
 struct VoiceReport
 {
-	// Glottal pulses
+	// Glottal pulses (REAPER-derived). num_pulses counts voiced GCIs; mean_period
+	// is the mean of consecutive in-range periods (rejects periods that span an
+	// unvoiced gap, so partial voicing still yields a meaningful value provided
+	// REAPER finds at least one pair of consecutive voiced pulses within the
+	// configured F0 range).
 	intptr_t num_pulses     = 0;
 	double   mean_period    = std::numeric_limits<double>::quiet_NaN();  // seconds
-	double   mean_f0        = std::numeric_limits<double>::quiet_NaN();  // Hz, = 1 / mean_period
+
+	// Fraction of voiced frames in the Praat-style pitch contour (= 1 - Praat's
+	// "fraction of locally unvoiced frames"). In [0, 1]; NaN only when the pitch
+	// tracker cannot produce any frames (e.g. the input is shorter than one
+	// analysis window). 0 means the entire interval is voiceless; 1 means
+	// fully voiced.
+	double   voiced_frame_fraction = std::numeric_limits<double>::quiet_NaN();
+
+	// Mean F0, computed as the arithmetic mean of voiced-frame F0 in the
+	// pitch contour (Praat's "Mean pitch"). NaN only when there are no voiced
+	// frames at all — robust to partial voicing in a way that 1/mean_period is
+	// not, because the pitch tracker reports a frame-level F0 even when REAPER
+	// cannot lock onto pulses. Will differ slightly from 1/mean_period in
+	// general (arithmetic vs harmonic mean over different sampling grids); both
+	// values are reported so the user can choose which one to use.
+	double   mean_f0        = std::numeric_limits<double>::quiet_NaN();  // Hz
 
 	// Jitter family (all relative, except jitter_local_abs which is in seconds)
 	double   jitter_local     = std::numeric_limits<double>::quiet_NaN();

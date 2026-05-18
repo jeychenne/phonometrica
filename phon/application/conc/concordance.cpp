@@ -95,6 +95,7 @@ Concordance::Concordance(const Concordance &other) :
 
 	m_is_voice_quality      = other.m_is_voice_quality;
 	m_vq_num_pulses         = other.m_vq_num_pulses;
+	m_vq_voicing            = other.m_vq_voicing;
 	m_vq_mean_period        = other.m_vq_mean_period;
 	m_vq_mean_f0            = other.m_vq_mean_f0;
 	m_vq_jitter_local       = other.m_vq_jitter_local;
@@ -239,7 +240,7 @@ void Concordance::set_spectral_moments_meta(bool cog, bool spread, bool skewness
 	m_sm_kurtosis = kurtosis;
 }
 
-void Concordance::set_voice_quality_meta(bool num_pulses, bool mean_period, bool mean_f0,
+void Concordance::set_voice_quality_meta(bool num_pulses, bool voicing, bool mean_period, bool mean_f0,
                                           bool jitter_local, bool jitter_local_abs,
                                           bool jitter_rap, bool jitter_ppq5, bool jitter_ddp,
                                           bool shimmer_local, bool shimmer_local_db,
@@ -248,6 +249,7 @@ void Concordance::set_voice_quality_meta(bool num_pulses, bool mean_period, bool
 {
 	m_is_voice_quality      = true;
 	m_vq_num_pulses         = num_pulses;
+	m_vq_voicing            = voicing;
 	m_vq_mean_period        = mean_period;
 	m_vq_mean_f0            = mean_f0;
 	m_vq_jitter_local       = jitter_local;
@@ -277,6 +279,7 @@ int Concordance::stored_fields_per_point() const
 	if (m_is_voice_quality) {
 		int n = 0;
 		if (m_vq_num_pulses)       ++n;
+		if (m_vq_voicing)          ++n;
 		if (m_vq_mean_period)      ++n;
 		if (m_vq_mean_f0)          ++n;
 		if (m_vq_jitter_local)     ++n;
@@ -371,6 +374,7 @@ void Concordance::rebuild_extra_headers()
 		auto emit_vq_group = [&](Array<String> &headers)
 		{
 			if (m_vq_num_pulses)       headers.append("Pulses");
+			if (m_vq_voicing)          headers.append("Voicing(%)");
 			if (m_vq_mean_period)      headers.append("Period(ms)");
 			if (m_vq_mean_f0)          headers.append("F0(Hz)");
 			if (m_vq_jitter_local)     headers.append("Jitter(%)");
@@ -856,6 +860,7 @@ String Concordance::format_measurement(double val, int within_group) const
 
 		int wg = 0;
 		if (m_vq_num_pulses)       { if (wg++ == within_group) return fmt_field(0, true);  }
+		if (m_vq_voicing)          { if (wg++ == within_group) return fmt_field(1, false); }
 		if (m_vq_mean_period)      { if (wg++ == within_group) return fmt_field(3, false); }
 		if (m_vq_mean_f0)          { if (wg++ == within_group) return fmt_field(1, false); }
 		if (m_vq_jitter_local)     { if (wg++ == within_group) return fmt_field(3, false); }
@@ -1513,6 +1518,7 @@ void Concordance::load()
 	m_sm_kurtosis = true;
 	m_is_voice_quality      = false;
 	m_vq_num_pulses         = false;
+	m_vq_voicing            = false;
 	m_vq_mean_period        = false;
 	m_vq_mean_f0            = false;
 	m_vq_jitter_local       = false;
@@ -1674,6 +1680,7 @@ void Concordance::load()
 			for (auto child = node.first_child(); child; child = child.next_sibling())
 			{
 				if      (child.name() == str("HasNumPulses"))      m_vq_num_pulses        = child.text().as_bool(false);
+				else if (child.name() == str("HasVoicing"))        m_vq_voicing           = child.text().as_bool(false);
 				else if (child.name() == str("HasMeanPeriod"))     m_vq_mean_period       = child.text().as_bool(false);
 				else if (child.name() == str("HasMeanF0"))         m_vq_mean_f0           = child.text().as_bool(false);
 				else if (child.name() == str("HasJitterLocal"))    m_vq_jitter_local      = child.text().as_bool(false);
@@ -2196,6 +2203,7 @@ void Concordance::write()
 			vq.append_child(name).append_child(node_pcdata).set_value(v ? "true" : "false");
 		};
 		emit_flag("HasNumPulses",      m_vq_num_pulses);
+		emit_flag("HasVoicing",        m_vq_voicing);
 		emit_flag("HasMeanPeriod",     m_vq_mean_period);
 		emit_flag("HasMeanF0",         m_vq_mean_f0);
 		emit_flag("HasJitterLocal",    m_vq_jitter_local);
@@ -2620,7 +2628,7 @@ void Concordance::copy_metadata_to(Concordance &target) const
 	}
 	if (m_is_voice_quality) {
 		target.set_voice_quality_meta(
-			m_vq_num_pulses, m_vq_mean_period, m_vq_mean_f0,
+			m_vq_num_pulses, m_vq_voicing, m_vq_mean_period, m_vq_mean_f0,
 			m_vq_jitter_local, m_vq_jitter_local_abs,
 			m_vq_jitter_rap, m_vq_jitter_ppq5, m_vq_jitter_ddp,
 			m_vq_shimmer_local, m_vq_shimmer_local_db,

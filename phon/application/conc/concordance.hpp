@@ -261,7 +261,7 @@ public:
 	bool is_voice_quality() const { return m_is_voice_quality; }
 
 	/// Set voice quality metadata. Called by VoiceQualityQuery::execute().
-	void set_voice_quality_meta(bool num_pulses, bool mean_period, bool mean_f0,
+	void set_voice_quality_meta(bool num_pulses, bool voicing, bool mean_period, bool mean_f0,
 	                            bool jitter_local, bool jitter_local_abs,
 	                            bool jitter_rap, bool jitter_ppq5, bool jitter_ddp,
 	                            bool shimmer_local, bool shimmer_local_db,
@@ -554,6 +554,7 @@ protected:
 
 	bool m_is_voice_quality = false;      // true if this concordance holds voice quality data
 	bool m_vq_num_pulses       = false;   // Number of pulses
+	bool m_vq_voicing          = false;   // Voicing fraction (%)
 	bool m_vq_mean_period      = false;   // Mean period (ms)
 	bool m_vq_mean_f0          = false;   // Mean F0 (Hz)
 	bool m_vq_jitter_local     = false;   // Jitter local (%)

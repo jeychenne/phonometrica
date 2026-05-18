@@ -634,8 +634,9 @@ VoiceReport compute_voice_report(std::span<const double> samples,
 	// REAPER pulse detection. Failures (rare: ComputeFeatures/TrackEpochs
 	// occasionally bail on extremely short or all-silent inputs) leave the
 	// pulse list empty so jitter/shimmer report NaN, but they do not
-	// short-circuit HNR — HNR has its own tracker and can still produce a
-	// useful value when REAPER cannot lock.
+	// short-circuit the pitch-tracker pass below — that has its own tracker
+	// and can still produce useful mean_f0 / voicing / HNR values when REAPER
+	// cannot lock onto pulses.
 	std::vector<double> pulses;
 	try
 	{
@@ -659,9 +660,6 @@ VoiceReport compute_voice_report(std::span<const double> samples,
 	std::span<const double> pulses_span(pulses.data(), pulses.size());
 
 	r.mean_period = mean_in_range_period(pulses_span, pf);
-	r.mean_f0     = std::isnan(r.mean_period) || r.mean_period <= 0.0
-	                  ? NaN
-	                  : 1.0 / r.mean_period;
 
 	r.jitter_local     = jitter_local    (pulses_span, pf);
 	r.jitter_local_abs = jitter_local_abs(pulses_span, pf);
@@ -675,10 +673,66 @@ VoiceReport compute_voice_report(std::span<const double> samples,
 	r.shimmer_apq5     = shimmer_apq5    (pulses_span, samples, sample_rate, af);
 	r.shimmer_apq11    = shimmer_apq11   (pulses_span, samples, sample_rate, af);
 
+	// One shared call to the Praat-style pitch tracker, used to compute:
+	//   - mean_f0 (arithmetic mean of voiced-frame F0; robust to partial
+	//     voicing in a way that 1/mean_period is not, because REAPER may
+	//     fail to find pulses even when the tracker locks onto frames),
+	//   - voiced_frame_fraction (count of voiced frames / total),
+	//   - hnr (mean of r_to_hnr_db over voiced frames).
+	// Mirrors the parameters declared in HnrOptions.
 	HnrOptions hopts;
 	hopts.f0_min = f0_min;
 	hopts.f0_max = f0_max;
-	r.hnr = hnr_mean_db(samples, sample_rate, hopts);
+
+	if (!samples.empty() && sample_rate > 0.0)
+	{
+		Array<double> input = samples_to_array(samples);
+		std::vector<double> strengths;
+		std::vector<double> f0_contour = get_pitch_praat(
+			input, sample_rate,
+			hopts.f0_min, hopts.f0_max, hopts.time_step,
+			hopts.voicing_threshold,
+			hopts.octave_jump_cost, hopts.voicing_cost,
+			hopts.silence_threshold, hopts.octave_cost,
+			hopts.use_gaussian, &strengths);
+
+		intptr_t total_frames  = static_cast<intptr_t>(strengths.size());
+		intptr_t voiced_frames = 0;
+		double   f0_sum  = 0.0;
+		double   hnr_sum = 0.0;
+		intptr_t hnr_n   = 0;
+		for (intptr_t i = 0; i < total_frames; ++i)
+		{
+			double rstr = strengths[i];
+			if (rstr > 0.0)
+			{
+				++voiced_frames;
+				// f0_contour[i] is the chosen-path F0; for voiced frames this
+				// is > 0 by construction of the candidate set (the unvoiced
+				// candidate sits at frequency = 0 with strength = unvoiced
+				// score, so any frame with strength > 0 has the periodic
+				// candidate selected and its frequency is the F0).
+				if (f0_contour[i] > 0.0) f0_sum += f0_contour[i];
+
+				double db = r_to_hnr_db(rstr);
+				if (!std::isnan(db)) {
+					hnr_sum += db;
+					++hnr_n;
+				}
+			}
+		}
+
+		if (total_frames > 0) {
+			r.voiced_frame_fraction = static_cast<double>(voiced_frames)
+			                        / static_cast<double>(total_frames);
+		}
+		if (voiced_frames > 0) {
+			r.mean_f0 = f0_sum / static_cast<double>(voiced_frames);
+		}
+		if (hnr_n > 0) {
+			r.hnr = hnr_sum / static_cast<double>(hnr_n);
+		}
+	}
 
 	return r;
 }

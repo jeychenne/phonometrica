@@ -1130,13 +1130,34 @@ void SoundView::onVoiceReport()
 			body += ind + tr("  Number of pulses: %1\n").arg(r.num_pulses);
 			if (!std::isnan(r.mean_period))
 			{
-				body += ind + tr("  Mean period: %1 ms  (mean F0: %2 Hz)\n")
-					.arg(r.mean_period * 1000.0, 0, 'f', 3)
-					.arg(r.mean_f0, 0, 'f', 1);
+				body += ind + tr("  Mean period: %1 ms\n")
+					.arg(r.mean_period * 1000.0, 0, 'f', 3);
 			}
 			else
 			{
 				body += ind + tr("  Mean period: (undefined — too few in-range periods)\n");
+			}
+
+			body += ind + tr("Voicing\n");
+			if (!std::isnan(r.voiced_frame_fraction))
+			{
+				body += ind + tr("  Fraction of voiced frames: %1 %\n")
+					.arg(100.0 * r.voiced_frame_fraction, 0, 'f', 1);
+			}
+			else
+			{
+				body += ind + tr("  Fraction of voiced frames: (undefined — pitch tracker produced no frames)\n");
+			}
+
+			body += ind + tr("Pitch\n");
+			if (!std::isnan(r.mean_f0))
+			{
+				body += ind + tr("  Mean F0: %1 Hz\n")
+					.arg(r.mean_f0, 0, 'f', 1);
+			}
+			else
+			{
+				body += ind + tr("  Mean F0: (undefined — no voiced frames)\n");
 			}
 
 			body += ind + tr("Jitter\n");

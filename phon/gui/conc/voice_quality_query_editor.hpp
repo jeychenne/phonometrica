@@ -130,8 +130,9 @@ private:
 	Hashmap<String, VoiceQualityQuery::LevelOverride> m_pending_overrides;
 	bool m_override_table_updating = false;
 
-	// Feature selection (14 checkboxes, matching speech::VoiceReport order)
+	// Feature selection (matching speech::VoiceReport order)
 	QCheckBox *m_num_pulses_check       = nullptr;
+	QCheckBox *m_voicing_check          = nullptr;
 	QCheckBox *m_mean_period_check      = nullptr;
 	QCheckBox *m_mean_f0_check          = nullptr;
 	QCheckBox *m_jitter_local_check     = nullptr;

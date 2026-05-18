@@ -93,6 +93,9 @@ public:
 	bool output_num_pulses() const       { return m_out_num_pulses; }
 	void set_output_num_pulses(bool b)   { m_out_num_pulses = b; }
 
+	bool output_voicing() const          { return m_out_voicing; }
+	void set_output_voicing(bool b)      { m_out_voicing = b; }
+
 	bool output_mean_period() const      { return m_out_mean_period; }
 	void set_output_mean_period(bool b)  { m_out_mean_period = b; }
 
@@ -169,6 +172,7 @@ private:
 
 	// Output selection — defaults are the "essentials" reported in voice-report studies.
 	bool m_out_num_pulses       = true;
+	bool m_out_voicing          = true;   // proportion of voiced frames in the pitch contour
 	bool m_out_mean_period      = false;
 	bool m_out_mean_f0          = true;
 	bool m_out_jitter_local     = true;

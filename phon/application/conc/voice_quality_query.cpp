@@ -41,6 +41,7 @@ int VoiceQualityQuery::feature_count() const
 {
 	int n = 0;
 	if (m_out_num_pulses)        ++n;
+	if (m_out_voicing)           ++n;
 	if (m_out_mean_period)       ++n;
 	if (m_out_mean_f0)           ++n;
 	if (m_out_jitter_local)      ++n;
@@ -63,6 +64,7 @@ Array<String> VoiceQualityQuery::build_headers() const
 {
 	Array<String> headers;
 	if (m_out_num_pulses)        headers.append("Pulses");
+	if (m_out_voicing)           headers.append("Voicing(%)");
 	if (m_out_mean_period)       headers.append("Period(ms)");
 	if (m_out_mean_f0)           headers.append("F0(Hz)");
 	if (m_out_jitter_local)      headers.append("Jitter(%)");
@@ -93,6 +95,7 @@ void VoiceQualityQuery::clear()
 	m_f0_min = 75.0;
 	m_f0_max = 600.0;
 	m_out_num_pulses       = true;
+	m_out_voicing          = true;
 	m_out_mean_period      = false;
 	m_out_mean_f0          = true;
 	m_out_jitter_local     = true;
@@ -186,7 +189,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 	}
 
 	conc->set_voice_quality_meta(
-		m_out_num_pulses, m_out_mean_period, m_out_mean_f0,
+		m_out_num_pulses, m_out_voicing, m_out_mean_period, m_out_mean_f0,
 		m_out_jitter_local, m_out_jitter_local_abs,
 		m_out_jitter_rap, m_out_jitter_ppq5, m_out_jitter_ddp,
 		m_out_shimmer_local, m_out_shimmer_local_db,
@@ -276,6 +279,7 @@ void VoiceQualityQuery::measure_match(Match &match) const
 	// reader side.
 	int idx = 0;
 	if (m_out_num_pulses)        match.measurements[idx++] = static_cast<double>(r.num_pulses);
+	if (m_out_voicing)           match.measurements[idx++] = r.voiced_frame_fraction * 100.0; // [0,1] → %
 	if (m_out_mean_period)       match.measurements[idx++] = r.mean_period    * 1000.0;       // s  → ms
 	if (m_out_mean_f0)           match.measurements[idx++] = r.mean_f0;                       // Hz
 	if (m_out_jitter_local)      match.measurements[idx++] = r.jitter_local   * 100.0;        // rel → %
@@ -318,6 +322,7 @@ Handle<Query> VoiceQualityQuery::copy() const
 	c->m_f0_min                = m_f0_min;
 	c->m_f0_max                = m_f0_max;
 	c->m_out_num_pulses        = m_out_num_pulses;
+	c->m_out_voicing           = m_out_voicing;
 	c->m_out_mean_period       = m_out_mean_period;
 	c->m_out_mean_f0           = m_out_mean_f0;
 	c->m_out_jitter_local      = m_out_jitter_local;
@@ -392,6 +397,7 @@ void VoiceQualityQuery::load()
 				if      (child.name() == str("F0Min"))                m_f0_min = child.text().as_double(75.0);
 				else if (child.name() == str("F0Max"))                m_f0_max = child.text().as_double(600.0);
 				else if (child.name() == str("OutputNumPulses"))      m_out_num_pulses       = child.text().as_bool(true);
+				else if (child.name() == str("OutputVoicing"))        m_out_voicing          = child.text().as_bool(true);
 				else if (child.name() == str("OutputMeanPeriod"))     m_out_mean_period      = child.text().as_bool(false);
 				else if (child.name() == str("OutputMeanF0"))         m_out_mean_f0          = child.text().as_bool(true);
 				else if (child.name() == str("OutputJitterLocal"))    m_out_jitter_local     = child.text().as_bool(true);
@@ -495,6 +501,7 @@ void VoiceQualityQuery::write()
 	add_data_node(vq_node, "F0Min", String::format("%.1f", m_f0_min));
 	add_data_node(vq_node, "F0Max", String::format("%.1f", m_f0_max));
 	add_data_node(vq_node, "OutputNumPulses",      String::convert(m_out_num_pulses));
+	add_data_node(vq_node, "OutputVoicing",        String::convert(m_out_voicing));
 	add_data_node(vq_node, "OutputMeanPeriod",     String::convert(m_out_mean_period));
 	add_data_node(vq_node, "OutputMeanF0",         String::convert(m_out_mean_f0));
 	add_data_node(vq_node, "OutputJitterLocal",    String::convert(m_out_jitter_local));
