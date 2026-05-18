@@ -327,9 +327,7 @@ QWidget *QueryEditor::createButtonPanel()
 	layout->setContentsMargins(0, 4, 0, 0);
 
 	m_save_btn = new QPushButton(tr("Save"));
-	m_save_btn->setEnabled(false);
 	m_save_as_btn = new QPushButton(tr("Save as..."));
-	m_save_as_btn->setEnabled(false);
 
 	auto *cancel_btn = new QPushButton(tr("Cancel"));
 	auto *ok_btn = new QPushButton(tr("Search"));
@@ -492,7 +490,6 @@ void QueryEditor::onSave()
 	}
 	parseQuery();
 	m_query->save();
-	m_save_btn->setEnabled(false);
 }
 
 void QueryEditor::onSaveAs()
@@ -520,8 +517,6 @@ void QueryEditor::onSaveAs()
 		Project::get()->add_query(m_query);
 		Project::updated();
 	}
-
-	m_save_btn->setEnabled(false);
 }
 
 void QueryEditor::onAddConstraint()
@@ -656,9 +651,6 @@ void QueryEditor::loadQuery()
 			m_ctx_none->setChecked(true);
 			break;
 	}
-
-	m_save_btn->setEnabled(false);
-	m_save_as_btn->setEnabled(false);
 }
 
 } // namespace phonometrica

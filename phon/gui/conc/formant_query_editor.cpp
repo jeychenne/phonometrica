@@ -907,9 +907,7 @@ QWidget *FormantQueryEditor::createButtonPanel()
 	layout->setContentsMargins(0, 4, 0, 0);
 
 	m_save_btn = new QPushButton(tr("Save"));
-	m_save_btn->setEnabled(false);
 	m_save_as_btn = new QPushButton(tr("Save as..."));
-	m_save_as_btn->setEnabled(false);
 
 	auto *cancel_btn = new QPushButton(tr("Cancel"));
 	auto *ok_btn = new QPushButton(tr("Search"));
@@ -1200,7 +1198,6 @@ void FormantQueryEditor::onSave()
 	{
 		parseQuery();
 		m_query->save();
-		m_save_btn->setEnabled(false);
 	}
 	catch (std::exception &e)
 	{
@@ -1231,7 +1228,6 @@ void FormantQueryEditor::onSaveAs()
 			Project::get()->add_query(m_query);
 			Project::updated();
 		}
-		m_save_btn->setEnabled(false);
 	}
 	catch (std::exception &e)
 	{
@@ -1454,9 +1450,6 @@ void FormantQueryEditor::loadQuery()
 		m_show_params_check->setChecked(m_query->show_params());
 	}
 	applyOverrideEnabledState();
-
-	m_save_btn->setEnabled(false);
-	m_save_as_btn->setEnabled(false);
 }
 
 } // namespace phonometrica

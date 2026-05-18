@@ -323,9 +323,7 @@ QWidget *IntensityQueryEditor::createButtonPanel()
 	auto *layout = new QHBoxLayout(widget);
 	layout->setContentsMargins(0, 4, 0, 0);
 	m_save_btn = new QPushButton(tr("Save"));
-	m_save_btn->setEnabled(false);
 	m_save_as_btn = new QPushButton(tr("Save as..."));
-	m_save_as_btn->setEnabled(false);
 	auto *cancel_btn = new QPushButton(tr("Cancel"));
 	auto *ok_btn = new QPushButton(tr("Search"));
 	ok_btn->setDefault(true);
@@ -446,7 +444,7 @@ void IntensityQueryEditor::onExecute()
 void IntensityQueryEditor::onSave()
 {
 	if (m_query->path().empty()) { onSaveAs(); return; }
-	try { parseQuery(); m_query->save(); m_save_btn->setEnabled(false); }
+	try { parseQuery(); m_query->save(); }
 	catch (std::exception &e) { QMessageBox::warning(this, tr("Save error"), QString::fromUtf8(e.what())); }
 }
 
@@ -466,7 +464,6 @@ void IntensityQueryEditor::onSaveAs()
 		m_query->set_path(String(path.toUtf8().constData()), true);
 		m_query->save();
 		if (is_new) { Project::get()->add_query(m_query); Project::updated(); }
-		m_save_btn->setEnabled(false);
 	} catch (std::exception &e) { QMessageBox::warning(this, tr("Save error"), QString::fromUtf8(e.what())); }
 }
 
@@ -558,9 +555,6 @@ void IntensityQueryEditor::loadQuery()
 	}
 
 	m_time_check->setChecked(m_query->output_time());
-
-	m_save_btn->setEnabled(false);
-	m_save_as_btn->setEnabled(false);
 }
 
 } // namespace phonometrica
