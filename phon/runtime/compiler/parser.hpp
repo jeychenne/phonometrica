@@ -166,7 +166,7 @@ private:
 
 	AutoAst parse_foreach_statement();
 
-	AutoAst parse_class_declaration(bool local);
+	AutoAst parse_class_declaration(bool local, bool is_ref);
 
 	AutoAst parse_function_declaration(bool local, bool method);
 

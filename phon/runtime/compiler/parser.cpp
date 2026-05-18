@@ -185,8 +185,12 @@ AutoAst Parser::parse_statement()
 		if (accept(Lexeme::Function)) {
 			return parse_function_declaration(true, false);
 		}
+		else if (accept(Lexeme::Ref)) {
+			expect(Lexeme::Class, "in class declaration: 'ref' must be followed by 'class'");
+			return parse_class_declaration(true, true);
+		}
 		else if (accept(Lexeme::Class)) {
-			return parse_class_declaration(true);
+			return parse_class_declaration(true, false);
 		}
 		else {
 			report_error("Invalid use of 'local': expected a function or class declaration");
@@ -218,9 +222,14 @@ AutoAst Parser::parse_statement()
 	{
 		return parse_function_declaration(false, false);
 	}
+	else if (accept(Lexeme::Ref))
+	{
+		expect(Lexeme::Class, "in class declaration: 'ref' must be followed by 'class'");
+		return parse_class_declaration(false, true);
+	}
 	else if (accept(Lexeme::Class))
 	{
-		return parse_class_declaration(false);
+		return parse_class_declaration(false, false);
 	}
 	else if (accept(Lexeme::Return))
 	{
@@ -350,10 +359,6 @@ AutoAst Parser::parse_print_statement()
 AutoAst Parser::parse_expression_statement()
 {
 	trace_ast();
-	if (check(Lexeme::Ref))
-	{
-		report_error("ref cannot appear at the beginning of a statement");
-	}
 	auto e = parse_expression();
 	// Multi-target assignment: `x, y = ...` (parallel) or `x, y = lst`
 	// (destructure). This is the only construct outside of `let` that
@@ -1032,7 +1037,7 @@ AutoAst Parser:: parse_conditional_expression()
 	return e;
 }
 
-AutoAst Parser::parse_class_declaration(bool local)
+AutoAst Parser::parse_class_declaration(bool local, bool is_ref)
 {
 	trace_ast();
 	AutoAst parent;
@@ -1045,8 +1050,6 @@ AutoAst Parser::parse_class_declaration(bool local)
 		report_error("[Syntax error] Class declarations cannot be nested");
 	}
 	parsing_class = true;
-	bool is_ref = check(Lexeme::Ref);
-	if (is_ref) accept();
 	auto class_name = token.spelling;
 	constexpr const char *hint = "in class declaration";
 	auto name = parse_identifier(hint);

@@ -2,7 +2,7 @@
 <Phonometrica class="Project">
 	<Metadata>
 		<UUID>R1OSeCk10KIiLKCZbp_h</UUID>
-		<ProgramVersion major="0" minor="9" micro="5" />
+		<ProgramVersion major="0" minor="9" micro="6" />
 		<Changelog />
 	</Metadata>
 	<Corpus size="0" />
@@ -44,6 +44,9 @@
 			</Document>
 			<Document class="Script">
 				<Path>$PHON_PROJECT/test/engine/test_list_comprehension.phon</Path>
+			</Document>
+			<Document class="Script">
+				<Path>$PHON_PROJECT/test/engine/test_class_ref.phon</Path>
 			</Document>
 		</Directory>
 		<Directory label="frequentist">

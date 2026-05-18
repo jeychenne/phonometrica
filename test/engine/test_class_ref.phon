@@ -1,0 +1,40 @@
+class Point
+	x = 0
+	y = 0
+	
+	method initialize(x as Number, y as Number)
+		this.x = x
+		this.y = y
+	end
+end
+
+
+ref class PointRef
+	x = 0
+	y = 0
+	
+	method initialize(x as Number, y as Number)
+		this.x = x
+		this.y = y
+	end
+end
+
+let p1 = Point(10, 5)
+let p2 = p1
+let p3 = Point(10, 5)
+assert p1 == p2
+assert p1 == p3
+p1.x = 100
+assert p2.x == 10
+
+
+let pr1 = PointRef(10, 5)
+let pr2 = pr1
+let pr3 = PointRef(10, 5)
+assert pr1 == pr2
+assert pr1 != pr3
+pr1.x = 100
+assert pr2.x == 100
+
+
+print "All test assertions for class value/reference passed."

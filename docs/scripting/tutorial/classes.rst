@@ -321,11 +321,11 @@ Value semantics is the default behaviour because it makes code safer and easier 
 This behaviour works for many types, such as our ``Point`` example: you would expect two points to be considered equivalent if they have the same coordinates, no matter they 
 correspond to the same instance. Sometimes, however, you do want reference semantics, because each instance should be considered unique in some way, and clonability doesn't really make sense for that type. 
 Suppose you are implementing a graph: you would probably want each node and edge to be unique, so that for example several edges can reference the same node. 
-Phonometrical lets you create reference types by adding the keyword ``ref`` after ``class`` when you declare your type. Here's a (minimalistic) example for nodes and edges with reference semantics:
+Phonometrical lets you create reference types by adding the keyword ``ref`` before ``class`` when you declare your type. Here's a (minimalistic) example for nodes and edges with reference semantics:
 
 .. code:: phon
 
-    class ref Node
+    ref class Node
         label = ""
         edges = []
 
@@ -334,7 +334,7 @@ Phonometrical lets you create reference types by adding the keyword ``ref`` afte
         end
     end
 
-    class ref Edge
+    ref class Edge
         source
         target
 
