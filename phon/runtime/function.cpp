@@ -272,7 +272,9 @@ void Function::add_closure(Handle<Closure> c)
 
 Handle<Closure> Function::find_closure(std::span<Variant> args)
 {
-	std::vector<Class*> arg_types(args.size());
+	thread_local std::vector<Class*> arg_types;
+
+	arg_types.resize(args.size());
 
 	for (size_t i = 0; i < args.size(); i++) {
 		arg_types[i] = args[i].get_class();
@@ -332,7 +334,7 @@ Handle<Closure> Function::find_closure(std::span<Variant> args)
 	}
 
 	// Cache the closure to avoid searching for it on the next call with the same signature
-	cache[std::move(arg_types)] = candidate;
+	cache[arg_types] = candidate;
 
 	return candidate;
 }

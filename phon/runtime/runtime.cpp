@@ -2674,7 +2674,7 @@ String Runtime::find_import(String name)
 		}
 	}
 
-	throw error("[Input/Output error] Cannot find file \"%s\"", name);
+	throw error("[Input/Output error] Cannot find file \"%\"", name);
 }
 
 void Runtime::call(int narg)
