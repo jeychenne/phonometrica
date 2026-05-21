@@ -1,3 +1,24 @@
+phonometrica (0.9.6) unstable; urgency=medium
+
+  * per-property parameter overrides for formant, pitch, and voice quality
+    queries: pick a metadata property (e.g. Gender) and assign
+    category-specific measurement parameters that override the global
+    settings on a per-file basis; uncovered levels fall back to the global
+    defaults with a one-shot warning
+  * Praat raw autocorrelation is now the default pitch-tracking algorithm,
+    replacing REAPER; REAPER, RAPT, SWIPE and Harvest remain selectable
+  * voice quality analysis now derives pulses from the Praat pitch contour;
+    a single pitch pass drives pulses, jitter, shimmer, voicing and HNR
+  * short selections no longer produce 0 pulses / NaN voice-quality measures
+  * scripting: reference classes are now declared "ref class T" instead of
+    "class ref T", for consistency with the rest of the grammar
+  * scripting: runtime errors and warnings are now reported in the console,
+    rendered in red with the console tab raised automatically
+  * save buttons in the query editors are now always enabled
+  * macOS: fixed the exploratory-data-analysis view layout
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Thu, 21 May 2026 12:00:00 +0000
+
 phonometrica (0.9.5) unstable; urgency=medium
 
   * file operations on annotations and sounds: duplicate, extract layers,

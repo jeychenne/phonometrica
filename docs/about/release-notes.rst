@@ -1,6 +1,32 @@
 Release notes
 -------------
 
+0.9.6 (21/05/2026)
+~~~~~~~~~~~~~~~~~~
+
+**Acoustic queries**
+
+- **Per-property parameter overrides** for formant, pitch, and voice quality queries. Each editor now has an inline disclosure panel: choose a metadata property (typically *Gender*, but any property works) and the query looks up that property on every annotation, applying the parameters you assign to each level instead of the global settings. For **formant queries** the override is the frequency ceiling in manual mode, or the search-range bounds in automatic (Weenink) mode; for **pitch queries** it is the pitch range (minimum/maximum F0); for **voice quality queries** it is the F0 range. While the panel is expanded, the corresponding global fields are disabled to make clear that the per-level table is in control. Files whose property value is missing or matches no row in the table silently fall back to the global defaults, and ``execute()`` prints a single warning at the start of measurement listing the uncovered levels. When an override is active, the concordance carries trailing per-match columns recording the parameters actually used — a *Max freq* column for manual formant queries, *Min pitch* / *Max pitch* columns for pitch queries — so the provenance of every measurement stays visible in the exported table. This replaces the previous practice of running a separate query per gender and merging the concordances by hand.
+
+**Pitch tracking and voice quality**
+
+- **Praat raw autocorrelation is now the default pitch algorithm**, replacing REAPER as the default in the pitch settings dialog, the pitch query editor, and new project defaults. REAPER, RAPT, SWIPE and Harvest are still selectable as non-default pitch algorithms. The default voicing threshold changes from ``0.9`` (REAPER) to ``0.45`` (Praat); existing saved settings, queries, and project files carrying ``method = reaper`` continue to work and use REAPER, only the default for new state changes.
+- **Voice quality analysis now uses Praat-derived pulses**, replacing the previous REAPER-based pulse detector. Pulses are produced from the Praat-style pitch contour using the same algorithm as Praat's ``Sound & Pitch: To PointProcess (cc)``: each voiced run is walked forward at intervals of the local period (1/F0) and each predicted pulse time is snapped to the nearest local signal extremum within a quarter-period window. The pitch tracker is run only once per voice report or voice quality query, and the same voicing decisions drive pulse derivation, jitter, shimmer, voicing fraction, mean F0, and HNR — there is no longer any possibility of disagreement between the algorithm that produces pulses and the one that produces voicing/HNR. Reported numbers will shift slightly from previous releases and now match Praat's *Voice report* on the same recording.
+- **Short selections no longer produce 0 pulses / NaN measures.** The voice report and voice quality query automatically pad the analysis window around the selected interval so the pitch tracker has enough Viterbi neighbourhood to commit to its voicing decisions on intervals shorter than the analysis window (≲ 50 ms). Reported measures are still restricted to the original selection.
+
+**Scripting**
+
+- **Reference classes are now declared** ``ref class T`` instead of ``class ref T``, for consistency with the rest of the grammar (the ``ref`` modifier now precedes the keyword it qualifies, as elsewhere in the language). This is a breaking change: existing scripts that declare reference classes with the old ``class ref T`` form must be updated.
+- **Runtime errors and warnings raised during script or console execution are now reported in the console**, rendered in red, with the console tab raised automatically so failures are not missed when output is directed elsewhere.
+
+**General**
+
+- Save buttons in the formant, pitch, intensity, spectral-moments, voice-quality, protocol, and text query editors are now always enabled, rather than being disabled until the query is considered complete.
+
+**macOS**
+
+- Fixed the layout of the analysis view's exploratory-data-analysis tab: the *Add to data…* button no longer has its label elided, and the variable combo boxes no longer inflate the tab's minimum width past what a 15" screen can grant.
+
 
 0.9.5 (18/05/2026)
 ~~~~~~~~~~~~~~~~~~
@@ -16,17 +42,12 @@ Release notes
 
 - **Voice quality query** (``Analysis > Measure voice quality...``): batch-mode equivalent of the interactive *Voice report* (``F9`` in the sound view). Runs a text search and then computes jitter, shimmer, HNR, voicing fraction and pulse-summary measures on each matched interval. The dialog exposes the F0 range and a 15-checkbox grid for selecting which measures appear as concordance columns, with *Select essentials* (pulses, voicing, mean F0, jitter local, shimmer local, HNR) and *Select all* presets. Measurements are stored in display units (ms, %, µs, dB, Hz, integer pulses) so CSV exports are immediately readable. Voice quality is whole-interval only — there is no midpoint or n-point option — and instant targets are skipped with a single summary warning. Headers mirror Praat's naming.
 
-**Pitch tracking and voice quality**
-
-- **Praat raw autocorrelation is now the default pitch algorithm**, replacing REAPER as the default in the pitch settings dialog, the pitch query editor, and new project defaults. REAPER, RAPT, SWIPE and Harvest are still selectable as non-default pitch algorithms. The default voicing threshold changes from ``0.9`` (REAPER) to ``0.45`` (Praat); existing saved settings, queries, and project files carrying ``method = reaper`` continue to work and use REAPER, only the default for new state changes.
-- **Voice quality analysis now uses Praat-derived pulses**, replacing the previous REAPER-based pulse detector. Pulses are produced from the Praat-style pitch contour using the same algorithm as Praat's ``Sound & Pitch: To PointProcess (cc)``: each voiced run is walked forward at intervals of the local period (1/F0) and each predicted pulse time is snapped to the nearest local signal extremum within a quarter-period window. The pitch tracker is run only once per voice report or voice quality query, and the same voicing decisions drive pulse derivation, jitter, shimmer, voicing fraction, mean F0, and HNR — there is no longer any possibility of disagreement between the algorithm that produces pulses and the one that produces voicing/HNR. Reported numbers will shift slightly from previous releases and now match Praat's *Voice report* on the same recording.
-- **Short selections no longer produce 0 pulses / NaN measures.** The voice report and voice quality query automatically pad the analysis window around the selected interval so the pitch tracker has enough Viterbi neighbourhood to commit to its voicing decisions on intervals shorter than the analysis window (≲ 50 ms). Reported measures are still restricted to the original selection.
-
 **Scripting**
 
 - **List comprehensions** for building lists in expression form: ``[expr foreach var in coll]``, with optional ``if cond`` filter and ``if cond else other_expr`` conditional clauses. The two-variable form ``foreach k, v in coll`` supports tables and indexed iteration over lists. Lowered directly to a foreach-shaped loop over a hidden accumulator (no closure overhead).
 - New globals matching the GUI operations: ``duplicate_annotation``, ``extract_layers``, ``merge_annotations``, ``extract_annotation_slice`` (two overloads), ``concatenate_annotations`` (two overloads), ``extract_sound_slice``, ``concatenate_sounds``. All return a fresh handle to a file written on disk; the caller decides whether to import it into the project.
 - improved scripting editor: better error reporting, go to definition, auto-complete and call tips for locally defined symbols
+
 
 0.9.4 (14/05/2026)
 ~~~~~~~~~~~~~~~~~~
