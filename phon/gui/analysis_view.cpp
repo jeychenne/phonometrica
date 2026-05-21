@@ -55,6 +55,8 @@
 #include <QPainter>
 #include <QStyledItemDelegate>
 #include <QTextEdit>
+#include <QScrollArea>
+#include <QStyle>
 #include <boost/math/distributions/normal.hpp>
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/gui/analysis_view.hpp>
@@ -629,13 +631,18 @@ void AnalysisView::setupUi()
 	m_compare_button = new QPushButton(tr("Compare"));
 	m_compare_button->setEnabled(false);
 	model_buttons->addWidget(m_compare_button);
+	model_layout->addLayout(model_buttons);
+
+	// "Add to data…" gets its own full-width row: sharing the row with
+	// Delete/Compare in a panel capped at 280px squeezes it below the width
+	// its label needs, and macOS elides the text rather than letting the
+	// button grow.
 	m_add_to_data_button = new QPushButton(tr("Add to data…"));
 	m_add_to_data_button->setToolTip(tr("Append fitted values, residuals, or scaled "
 	                                     "residuals from the selected model as new "
 	                                     "columns on the source data"));
 	m_add_to_data_button->setEnabled(false);
-	model_buttons->addWidget(m_add_to_data_button);
-	model_layout->addLayout(model_buttons);
+	model_layout->addWidget(m_add_to_data_button);
 
 	// Enable right-click on the model list for Rename / Add to data / Delete.
 	m_model_list->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1118,6 +1125,23 @@ void AnalysisView::setupUi()
 	eda_vars->addWidget(m_eda_facet_combo);
 	eda_vars->addStretch();
 
+	// Keep each combo's size hint content-independent: by default a combo
+	// sizes its minimum to its widest item, so a single long column name
+	// (e.g. "attractor. frequency") would inflate every variable combo and,
+	// with eight of them in this non-wrapping row, push the EDA tab's
+	// minimum width past what a 15" screen can grant while still leaving
+	// room for the side docks. AdjustToMinimumContentsLengthWithIcon caps
+	// the hint at a fixed character count instead; the combos stay
+	// Expanding, so they still grow to fill width when space allows, and
+	// the QScrollArea below absorbs any overflow at narrow widths.
+	for (QComboBox *c : {m_eda_plot_type_combo, m_eda_x_combo, m_eda_y_combo,
+	                     m_eda_group_combo, m_eda_pool_combo, m_eda_style_combo,
+	                     m_eda_label_combo, m_eda_facet_combo})
+	{
+		c->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+		c->setMinimumContentsLength(14);
+	}
+
 	// Row 2: secondary options (bins, checkboxes, smoothing)
 	auto *eda_options = new QHBoxLayout;
 	eda_options->setContentsMargins(0, 5, 0, 5);
@@ -1189,6 +1213,31 @@ void AnalysisView::setupUi()
 	auto *eda_controls_widget = new QWidget;
 	eda_controls_widget->setLayout(eda_controls_layout);
 
+	// Host the controls in a QScrollArea so the toolbar's combined minimum
+	// width does NOT propagate up to the EDA tab (and from there, via the
+	// viewer, to the QMainWindow central widget — which would crush the
+	// file-manager and information docks and leave their splitters
+	// unmovable). The scroll area reports its own small minimum size hint,
+	// so the EDA tab can shrink freely; a horizontal scrollbar appears only
+	// when the window is too narrow to show every control. Height is fixed
+	// to the controls' natural height (plus a scrollbar allowance) so the
+	// strip never steals vertical space from the plot.
+	auto *eda_scroll = new QScrollArea;
+	eda_scroll->setWidget(eda_controls_widget);
+	eda_scroll->setWidgetResizable(true);
+	eda_scroll->setFrameShape(QFrame::NoFrame);
+	eda_scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	eda_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+	eda_scroll->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+	{
+		// Reserve room for the horizontal scrollbar only on platforms where
+		// it actually consumes layout space. macOS uses transient overlay
+		// scrollbars, so no allowance is needed there.
+		bool transient = eda_scroll->style()->styleHint(QStyle::SH_ScrollBar_Transient);
+		int sb = transient ? 0 : eda_scroll->style()->pixelMetric(QStyle::PM_ScrollBarExtent);
+		eda_scroll->setFixedHeight(eda_controls_widget->sizeHint().height() + sb);
+	}
+
 	// ── Summary table ──
 	// The button strip mirrors the post-hoc tab pattern: a top row with
 	// stretch + icon-and-label buttons, so the save/copy paths are visible
@@ -1247,11 +1296,11 @@ void AnalysisView::setupUi()
 	m_eda_hint_label->setWordWrap(true);
 	eda_top_layout->addWidget(m_eda_hint_label);
 
-	eda_top_layout->addWidget(eda_controls_widget);
+	eda_top_layout->addWidget(eda_scroll);
 
 	// Wire the EDA DetachablePlot. The plot lives at index 0 of
-	// eda_top_layout (above eda_controls_widget); on reattach we
-	// re-insert at that same index.
+	// eda_top_layout (above the hint label and the controls scroll area);
+	// on reattach we re-insert at that same index.
 	m_eda_detach.plot          = m_eda_plot;
 	m_eda_detach.home_layout   = eda_top_layout;
 	m_eda_detach.home_index    = 0;
