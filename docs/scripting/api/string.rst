@@ -45,7 +45,7 @@ See also: :func:`prepend`
 
 ------------
 
-.. function:: char(pos as Integer)
+.. function:: char(string as String, pos as Integer)
 
 Get character at position ``pos``. If ``pos`` is negative, counting starts from the end.
 
