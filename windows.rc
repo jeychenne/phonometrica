@@ -1,8 +1,8 @@
 IDI_ICON1 ICON "icons/phonometrica.ico"
 
 1 VERSIONINFO
-FILEVERSION     0,9,6,0
-PRODUCTVERSION  0,9,6,0
+FILEVERSION     0,9,7,0
+PRODUCTVERSION  0,9,7,0
 FILEOS          0x40004L
 FILETYPE        0x1L
 BEGIN
@@ -12,12 +12,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "Julien Eychenne & Léa Courdès-Murphy"
             VALUE "FileDescription",  "Phonometrica"
-            VALUE "FileVersion",      "0.9.6.0"
+            VALUE "FileVersion",      "0.9.7.0"
             VALUE "InternalName",     "phonometrica"
             VALUE "LegalCopyright",   "Copyright (C) 2019-2026 Julien Eychenne. GPL-3.0"
             VALUE "OriginalFilename", "phonometrica.exe"
             VALUE "ProductName",      "Phonometrica"
-            VALUE "ProductVersion",   "0.9.6.0"
+            VALUE "ProductVersion",   "0.9.7.0"
         END
     END
     BLOCK "VarFileInfo"
