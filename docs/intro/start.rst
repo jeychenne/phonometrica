@@ -128,7 +128,7 @@ to define a *file name pattern* instead of an exact file name. To use a regular 
 (the metacharacter that indicates the beginning of a string) and end with ``$`` (the metacharacter that indicates the end of a string). You
 can use any valid regular expression supported by Phonometrica, including capturing parentheses. You can refer to the whole matched pattern or to any subgroup in subsequent fields, using either ``%%`` or the placeholders ``%1`` to ``%9``, respectively. 
 
-By default, properties are assigned the type ``text``. You can add the suffixes ``.bool``, ``.num`` or ``.text`` to the category in 
+By default, properties are assigned the type ``text``. If a column only contains numeric or Boolean values, Phonometrica will automatically set the property's type accordingly.
 the header line to indicate that the property is a Boolean, a number or a text string, respectively. In addition, there are two special fields for columns: ``%SOUND%`` and ``%DESCRIPTION%``. ``%SOUND%`` allows you
 to provide the full path of a sound file for an annotation. If the sound file exists and the file is indeed an 
 annotation, Phonometrica will bind the annotation to the sound; otherwise, the value will be dismissed. ``%DESCRIPTION%`` 

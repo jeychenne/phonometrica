@@ -640,17 +640,65 @@ Query::find_matches(const Handle<Annotation> &annot, const Constraint &constrain
 	{
 		auto &layers = annot->layers();
 
+		// Collect every layer whose name matches the constraint's pattern.
+		Array<intptr_t> target_layers;
 		for (intptr_t i = 1; i <= layers.size(); i++)
 		{
-			auto &layer = layers[i];
-
-            if (constraint.layer_regex->match(layer.label))
-			{
-				matches = find_matches(annot, constraint, std::move(matches), i, blacklist, op, is_ref);
+			if (constraint.layer_regex->match(layers[i].label)) {
+				target_layers.append(i);
 			}
 		}
 
-		return matches;
+		// If the pattern matched no layer, the constraint cannot be satisfied in this annotation.
+		// For a filtering constraint (op != None) this must drop the incoming matches rather than
+		// passing them through unfiltered: otherwise under-length matches (fewer targets than there
+		// are constraints) leak into the concordance and crash Match::get(). For the first
+		// constraint (op == None) the incoming set is already empty, so an empty result is correct.
+		if (target_layers.empty()) {
+			return Array<AutoMatch>();
+		}
+
+		// First constraint: matches are *created* on each matching layer, so chaining the calls
+		// simply accumulates the hits found on every matching layer.
+		if (op == Constraint::Relation::None)
+		{
+			for (auto layer_index : target_layers) {
+				matches = find_matches(annot, constraint, std::move(matches), layer_index, blacklist, op, is_ref);
+			}
+			return matches;
+		}
+
+		// Filtering constraint with one or more candidate layers. A match is kept if it satisfies
+		// the relation on ANY matching layer (existential / OR semantics): the user can always
+		// prune unwanted layers from the concordance afterwards. Each candidate layer must filter
+		// its own copy of the incoming matches, because find_matches consumes (moves and mutates)
+		// the set it is given; the per-layer results are then concatenated. When a single layer
+		// matches (the common case) the set is moved through without any copying.
+		Array<AutoMatch> result;
+		for (intptr_t k = 1; k <= target_layers.size(); k++)
+		{
+			Array<AutoMatch> input;
+			if (k < target_layers.size())
+			{
+				// Earlier candidates need a deep copy so the originals survive for later layers.
+				input.reserve(matches.size());
+				for (auto &m : matches) {
+					input.append(std::make_unique<Match>(*m));
+				}
+			}
+			else
+			{
+				// The last candidate consumes the original set.
+				input = std::move(matches);
+			}
+
+			auto filtered = find_matches(annot, constraint, std::move(input), target_layers[k], blacklist, op, is_ref);
+			for (auto &m : filtered) {
+				result.append(std::move(m));
+			}
+		}
+
+		return result;
 	}
 }
 
