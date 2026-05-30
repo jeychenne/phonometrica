@@ -663,6 +663,8 @@ QWidget *PitchQueryEditor::createContextPanel()
 	auto *layout = new QHBoxLayout(group);
 	m_ctx_none = new QRadioButton(tr("No context"));
 	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
+	m_ctx_event = new QRadioButton(tr("Within event"));
+	m_ctx_event->setToolTip(tr("Text to the left and right of the match inside the matched event only"));
 	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
 	m_ctx_kwic->setChecked(true);
 	m_ctx_length = new QSpinBox;
@@ -670,6 +672,7 @@ QWidget *PitchQueryEditor::createContextPanel()
 	m_ctx_length->setValue(Settings::get_int("concordance", "context_length"));
 	layout->addWidget(m_ctx_none);
 	layout->addWidget(m_ctx_labels);
+	layout->addWidget(m_ctx_event);
 	layout->addWidget(m_ctx_kwic);
 	layout->addWidget(m_ctx_length);
 	layout->addStretch();
@@ -681,6 +684,9 @@ QWidget *PitchQueryEditor::createContextPanel()
 	});
 	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
 		if (on) { m_ctx_length->setEnabled(true); }
+	});
+	connect(m_ctx_event, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) { m_ctx_length->setEnabled(false); }
 	});
 	return group;
 }
@@ -807,6 +813,9 @@ void PitchQueryEditor::parseQuery()
 		m_query->set_context(Query::Context::KWIC);
 		m_query->set_context_length(m_ctx_length->value());
 		Settings::set_value("concordance", "context_length", intptr_t(m_ctx_length->value()));
+	}
+	else if (m_ctx_event->isChecked()) {
+		m_query->set_context(Query::Context::WithinEvent);
 	}
 	for (auto *cw : m_constraints) m_query->add_constraint(cw->parseConstraint(), false);
 
@@ -1037,6 +1046,7 @@ void PitchQueryEditor::loadQuery()
 	switch (m_query->context()) {
 		case Query::Context::Labels: m_ctx_labels->setChecked(true); break;
 		case Query::Context::KWIC: m_ctx_kwic->setChecked(true); m_ctx_length->setValue(m_query->context_length()); break;
+		case Query::Context::WithinEvent: m_ctx_event->setChecked(true); break;
 		default: m_ctx_none->setChecked(true); break;
 	}
 

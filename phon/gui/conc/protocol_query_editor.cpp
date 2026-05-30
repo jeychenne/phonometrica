@@ -181,6 +181,8 @@ QWidget *ProtocolQueryEditor::createContextPanel()
 
 	m_ctx_none = new QRadioButton(tr("No context"));
 	m_ctx_labels = new QRadioButton(tr("Surrounding labels"));
+	m_ctx_event = new QRadioButton(tr("Within event"));
+	m_ctx_event->setToolTip(tr("Text to the left and right of the match inside the matched event only"));
 	m_ctx_kwic = new QRadioButton(tr("Number of characters"));
 	m_ctx_kwic->setChecked(true);
 
@@ -194,6 +196,7 @@ QWidget *ProtocolQueryEditor::createContextPanel()
 	layout->addSpacing(10);
 	layout->addWidget(m_ctx_none);
 	layout->addWidget(m_ctx_labels);
+	layout->addWidget(m_ctx_event);
 	layout->addWidget(m_ctx_kwic);
 	layout->addWidget(m_ctx_length);
 	layout->addStretch();
@@ -206,6 +209,9 @@ QWidget *ProtocolQueryEditor::createContextPanel()
 	});
 	connect(m_ctx_kwic, &QRadioButton::toggled, this, [this](bool on) {
 		if (on) { m_ctx_length->setEnabled(true); m_ref_constraint->setEnabled(true); }
+	});
+	connect(m_ctx_event, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) { m_ctx_length->setEnabled(false); m_ref_constraint->setEnabled(true); }
 	});
 
 	return group;
@@ -425,6 +431,11 @@ void ProtocolQueryEditor::parseQuery()
 		m_query->set_context_length(m_ctx_length->value());
 		m_query->set_reference_constraint(m_ref_constraint->value());
 		Settings::set_value("concordance", "context_length", intptr_t(m_ctx_length->value()));
+	}
+	else if (m_ctx_event->isChecked())
+	{
+		m_query->set_context(Query::Context::WithinEvent);
+		m_query->set_reference_constraint(m_ref_constraint->value());
 	}
 
 	// Build one constraint from the protocol fields.

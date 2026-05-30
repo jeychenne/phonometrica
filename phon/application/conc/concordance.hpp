@@ -39,9 +39,10 @@ public:
 
 	enum class Context
 	{
-		None,   // no context
-		Labels, // labels from surrounding events
-		KWIC    // keyword in context
+		None,       // no context
+		Labels,     // labels from surrounding events
+		KWIC,       // keyword in context (n characters, spanning neighbouring events)
+		WithinEvent // text left/right of the match inside the matched event's own label only
 	};
 
 	enum class Layout
@@ -464,9 +465,13 @@ protected:
 
 	void find_kwic_context();
 
+	void find_event_context();
+
 	std::pair<String, String> get_kwic_context(const Match &match, const String &sep) const;
 
 	std::pair<String, String> get_labels_context(const Match &match) const;
+
+	std::pair<String, String> get_event_context(const Match &match) const;
 
 	int match_region_size() const;
 

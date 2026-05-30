@@ -1920,6 +1920,10 @@ void Concordance::parse_options_from_xml(xml_node root)
 					throw error("Invalid context length in KWIC concordance: %", m_context_length);
 				}
 			}
+			else if (attr.value() == str("event"))
+			{
+				m_context_type = Context::WithinEvent;
+			}
 			else
 			{
 				m_context_type = Context::None;
@@ -2108,6 +2112,10 @@ void Concordance::write()
 		{
 			type_attr.set_value("kwic");
 			ctx_node.append_attribute("length").set_value(m_context_length);
+		} break;
+		case Context::WithinEvent:
+		{
+			type_attr.set_value("event");
 		} break;
 		default:
 			type_attr.set_value("none");
@@ -2342,6 +2350,9 @@ void Concordance::find_context()
 		case Context::KWIC:
 			find_kwic_context();
 			break;
+		case Context::WithinEvent:
+			find_event_context();
+			break;
 		default:
 			break;
 	}
@@ -2438,6 +2449,14 @@ void Concordance::find_labels_context()
 	for (auto &match : m_matches)
 	{
 		m_context.append(get_labels_context(*match));
+	}
+}
+
+void Concordance::find_event_context()
+{
+	for (auto &match : m_matches)
+	{
+		m_context.append(get_event_context(*match));
 	}
 }
 
@@ -3371,6 +3390,11 @@ void Concordance::update_context(intptr_t i)
 			m_context[i] = get_labels_context(*m_matches[i]);
 			m_content_modified = true;
 		}
+		else if (m_context_type == Context::WithinEvent)
+		{
+			m_context[i] = get_event_context(*m_matches[i]);
+			m_content_modified = true;
+		}
 	}
 }
 
@@ -3406,6 +3430,39 @@ std::pair<String, String> Concordance::get_labels_context(const Match &match) co
 		assert(i != 0);
         ctx.first = (i == 1) ? String() : events[i-1].text;
         ctx.second = (i == events.size()) ? String() : events[i+1].text;
+	}
+
+	return ctx;
+}
+
+std::pair<String, String> Concordance::get_event_context(const Match &match) const
+{
+	auto target = match.reference_target();
+	auto annot = match.annotation().get();
+	std::pair<String, String> ctx;
+
+	if (target)
+	{
+		auto i = annot->get_event_index(target->layer, target->start_time);
+		assert(i != 0);
+		auto &label = annot->get_layer_events(target->layer)[i].text;
+
+		// Split the matched event's own label at the match: left = text before the match,
+		// right = text after it. Unlike KWIC this never spans neighbouring events, and unlike
+		// Labels it stays inside the matched event. Offsets are byte positions (as used by
+		// Annotation::left_context / right_context). The bounds are clamped defensively in case
+		// the annotation was edited after the query was run, so a stale offset cannot run the
+		// iterator past the end of the label.
+		auto begin = label.begin();
+		auto end = label.end();
+		intptr_t span = end - begin;
+		intptr_t off = (target->offset < span) ? target->offset : span;
+		auto lo = begin + off;
+		intptr_t vlen = (intptr_t) target->value.size();
+		if (vlen > end - lo) vlen = end - lo;
+		auto hi = lo + vlen;
+		ctx.first = String(label.mid(begin, lo));
+		ctx.second = String(label.mid(hi, end));
 	}
 
 	return ctx;

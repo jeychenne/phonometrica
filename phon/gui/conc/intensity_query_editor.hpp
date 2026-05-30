@@ -85,6 +85,7 @@ private:
 	QRadioButton *m_ctx_none = nullptr;
 	QRadioButton *m_ctx_labels = nullptr;
 	QRadioButton *m_ctx_kwic = nullptr;
+	QRadioButton *m_ctx_event = nullptr;
 	QSpinBox *m_ctx_length = nullptr;
 	QSpinBox *m_ref_constraint = nullptr;
 

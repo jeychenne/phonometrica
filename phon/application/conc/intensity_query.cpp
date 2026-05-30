@@ -371,6 +371,9 @@ void IntensityQuery::write()
 			type_attr.set_value("kwic");
 			ctx_node.append_attribute("length").set_value(m_context_length);
 			break;
+		case Context::WithinEvent:
+			type_attr.set_value("event");
+			break;
 		default:
 			type_attr.set_value("none");
 	}
