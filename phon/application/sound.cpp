@@ -105,10 +105,22 @@ const Array<String> &Sound::common_sound_formats()
 void Sound::load()
 {
     auto h = handle();
+
+    // A missing/wrong path or an undecodable file yields a libsndfile handle with no
+    // channels and no sample rate. Fail with a clear error here instead of allocating an
+    // empty buffer and (previously) spinning forever in the progress loop below, which
+    // froze the whole UI because load() runs on the GUI thread.
+    if (h.channels() < 1 || h.samplerate() < 1) {
+        throw error("File '%' is missing or is not a valid audio file", path());
+    }
+
     h.seek(0, SEEK_SET);
 
     m_data = Array<float>((intptr_t) m_nframes, (intptr_t) m_nchannel);
-    auto slice = size_t(m_nframes / 100);
+    // Clamp to at least 1: when m_nframes < 100, size_t(m_nframes / 100) is 0, which turns
+    // each "while (accumulator >= slice)" below into an infinite loop (an unsigned value is
+    // always >= 0 and subtracting 0 never makes progress).
+    auto slice = std::max<size_t>(size_t(1), size_t(m_nframes / 100));
     auto msg = String::format("Reading file %s from disk...", this->label().data());
     start_loading(msg, "Loading data", 100);
     size_t accumulator = 0;
@@ -122,6 +134,7 @@ void Sound::load()
         while (ptr < end)
         {
             auto count = h.readf(ptr, BUFFER_SIZE);  // readf(float*) overload
+            if (count == 0) break; // stop on a short/truncated read instead of spinning forever
             ptr += count * m_nchannel;
             accumulator += count;
             while (accumulator >= slice)

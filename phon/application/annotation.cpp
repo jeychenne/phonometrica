@@ -781,6 +781,14 @@ void Annotation::metadata_from_xml(xml_node meta_node)
 			// can resolve it after the entire corpus is loaded.
 			auto project = Project::get();
 			String sound_path = node.text().get();
+
+			// An empty <Sound></Sound> means the annotation has no associated sound.
+			// This is a legitimate state (e.g. an annotation that carries metadata but
+			// no audio), so leave it unbound instead of registering a binding that can
+			// never resolve — which previously produced a spurious per-file error.
+			if (String(sound_path).trim().empty())
+				return;
+
 			Project::interpolate(sound_path, project->directory());
 
 			// Try to bind immediately if the sound is already registered.

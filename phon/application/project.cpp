@@ -1219,10 +1219,20 @@ void Project::defer_annotation_binding(Annotation *annot, const String &sound_pa
 
 void Project::bind_annotations()
 {
+	// Collect every binding that cannot be resolved so we can report them in a single
+	// warning instead of raising one dialog per file (a project with many unbound
+	// annotations previously produced one modal warning per annotation).
+	std::vector<String> unresolved;
+
 	for (auto &pair : m_accumulator)
 	{
 		auto annot = pair.first;
 		auto &sound_path = pair.second;
+
+		// An empty path means the annotation has no associated sound: skip it silently,
+		// this is a valid state and not a binding error.
+		if (sound_path.empty())
+			continue;
 
 		auto it = m_files.find(sound_path);
 
@@ -1234,13 +1244,33 @@ void Project::bind_annotations()
 		}
 		else
 		{
-			auto msg = utils::format("Cannot bind annotation \"%\" to sound \"%\" because the sound is not part of the project",
-					annot->path(), sound_path);
-			notify_error(msg);
+			unresolved.push_back(annot->path());
 		}
 	}
 
 	m_accumulator.clear();
+
+	if (!unresolved.empty())
+	{
+		// Cap the list so the message stays readable when many files are affected.
+		const size_t limit = 10;
+		size_t shown = std::min(unresolved.size(), limit);
+
+		std::string msg = utils::format("% annotation(s) could not be linked to a sound file "
+				"because the referenced sound is not part of the project:", (intptr_t) unresolved.size());
+
+		for (size_t i = 0; i < shown; i++)
+		{
+			msg += "\n  - ";
+			msg += unresolved[i].data();
+		}
+		if (unresolved.size() > shown)
+		{
+			msg += utils::format("\n\n... and % more.", (intptr_t) (unresolved.size() - shown));
+		}
+
+		notify_error(msg);
+	}
 }
 
 void Project::close()
