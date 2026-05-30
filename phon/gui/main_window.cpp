@@ -2300,12 +2300,12 @@ void MainWindow::onDocumentRequested(Document *doc)
 		QApplication::setOverrideCursor(Qt::WaitCursor);
 		QApplication::processEvents();
 
-		auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
+		ScopedConnection conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
 			m_progress_bar->setMaximum(max);
 			QApplication::processEvents();
 		});
 
-		auto conn2 = Sound::update_loading.connect([this](int value) {
+		ScopedConnection conn2 = Sound::update_loading.connect([this](int value) {
 			m_progress_bar->setValue(value);
 			QApplication::processEvents();
 		});
@@ -2313,8 +2313,8 @@ void MainWindow::onDocumentRequested(Document *doc)
 		auto *view = new SoundView(Handle<Sound>(sound));
 		addViewTab(view);
 
-		conn1.disconnect();
-		conn2.disconnect();
+		// conn1/conn2 disconnect automatically when they leave scope (including if the
+		// SoundView constructor above throws and the stack unwinds).
 		QApplication::restoreOverrideCursor();
 		m_progress_bar->setVisible(false);
 		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
@@ -2786,20 +2786,20 @@ AnnotationView *MainWindow::createAnnotationView(const Handle<Annotation> &annot
 	QApplication::setOverrideCursor(Qt::WaitCursor);
 	QApplication::processEvents();
 
-	auto conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
+	ScopedConnection conn1 = Sound::start_loading.connect([this](const String &, const String &, int max) {
 		m_progress_bar->setMaximum(max);
 		QApplication::processEvents();
 	});
 
-	auto conn2 = Sound::update_loading.connect([this](int value) {
+	ScopedConnection conn2 = Sound::update_loading.connect([this](int value) {
 		m_progress_bar->setValue(value);
 		QApplication::processEvents();
 	});
 
 	auto *view = new AnnotationView(annot);
 
-	conn1.disconnect();
-	conn2.disconnect();
+	// conn1/conn2 disconnect automatically when they leave scope (including if the
+	// AnnotationView constructor above throws and the stack unwinds).
 	QApplication::restoreOverrideCursor();
 	m_progress_bar->setVisible(false);
 	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);

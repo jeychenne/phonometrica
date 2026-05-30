@@ -30,6 +30,11 @@ namespace phonometrica {
 template <typename... T>
 using Signal = sigslot::signal<T...>;
 
+// RAII connection handle: disconnects automatically when it goes out of scope (including
+// during stack unwinding). Use this instead of a raw connection whenever a slot must not
+// outlive the scope that set it up, so an exception can't leak a live connection.
+using ScopedConnection = sigslot::scoped_connection;
+
 } // namespace phonometrica
 
 #endif // PHONOMETRICA_SIGNAL_HPP
