@@ -110,8 +110,10 @@ struct NumericMetaConstraint : public PropertyMetaConstraint
 		LessEqual,
 		Greater,
 		GreaterEqual,
-		InclusiveRange,
-		ExclusiveRange
+		InclusiveRange,  // [a, b]   a <= x <= b
+		ExclusiveRange,  // (a, b)   a <  x <  b
+		LeftClosedRange, // [a, b)   a <= x <  b
+		RightClosedRange // (a, b]   a <  x <= b
 	};
 
 	NumericMetaConstraint(const String &category, Operator op, const std::pair<double,double> &value) :
@@ -124,13 +126,18 @@ struct NumericMetaConstraint : public PropertyMetaConstraint
 
 	static Operator name_to_op(std::string_view name);
 
+	// True if the operator uses both bounds (value.first and value.second). Single source of
+	// truth for the "this operator has a second value" question, used by the model, the XML
+	// parser and the GUI so the range set can grow without updating scattered conditions.
+	static bool is_range(Operator op);
+
 	void to_xml(xml_node node) override;
 
 	bool check_value(double num) const;
 
 	Operator op;
 
-	// The second member is only used by InclusiveRange.
+	// value.second is only used by the range operators (see is_range()).
 	std::pair<double,double> value;
 };
 

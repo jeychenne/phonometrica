@@ -246,7 +246,7 @@ void Query::parse_metaconstraints_from_xml(xml_node root)
 				if (!ok) {
 					throw error("Invalid numeric value in numeric property");
 				}
-				if (op == NumericMetaConstraint::Operator::InclusiveRange || op == NumericMetaConstraint::Operator::ExclusiveRange)
+				if (NumericMetaConstraint::is_range(op))
 				{
 					auto second_node = first_node.next_sibling();
 					if (!second_node || second_node.name() != str("Value")) {

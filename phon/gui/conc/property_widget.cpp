@@ -72,8 +72,10 @@ void PropertyWidget::setupNumericUi()
 	m_numeric_op->addItem(QStringLiteral("\u2264"), static_cast<int>(NumericMetaConstraint::Operator::LessEqual));
 	m_numeric_op->addItem(QStringLiteral(">"), static_cast<int>(NumericMetaConstraint::Operator::Greater));
 	m_numeric_op->addItem(QStringLiteral("\u2265"), static_cast<int>(NumericMetaConstraint::Operator::GreaterEqual));
-	m_numeric_op->addItem(tr("[a, b]"), static_cast<int>(NumericMetaConstraint::Operator::InclusiveRange));
-	m_numeric_op->addItem(tr("(a, b)"), static_cast<int>(NumericMetaConstraint::Operator::ExclusiveRange));
+	m_numeric_op->addItem(tr("a \u2264 x \u2264 b"), static_cast<int>(NumericMetaConstraint::Operator::InclusiveRange));
+	m_numeric_op->addItem(tr("a \u2264 x < b"), static_cast<int>(NumericMetaConstraint::Operator::LeftClosedRange));
+	m_numeric_op->addItem(tr("a < x \u2264 b"), static_cast<int>(NumericMetaConstraint::Operator::RightClosedRange));
+	m_numeric_op->addItem(tr("a < x < b"), static_cast<int>(NumericMetaConstraint::Operator::ExclusiveRange));
 
 	m_numeric_value1 = new QLineEdit;
 	m_numeric_value1->setPlaceholderText(tr("Value"));
@@ -92,9 +94,7 @@ void PropertyWidget::setupNumericUi()
 
 	connect(m_numeric_op, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
 		auto op = static_cast<NumericMetaConstraint::Operator>(m_numeric_op->currentData().toInt());
-		bool is_range = (op == NumericMetaConstraint::Operator::InclusiveRange ||
-		                 op == NumericMetaConstraint::Operator::ExclusiveRange);
-		m_numeric_value2->setVisible(is_range);
+		m_numeric_value2->setVisible(NumericMetaConstraint::is_range(op));
 		emit modified();
 	});
 	connect(m_numeric_value1, &QLineEdit::textChanged, this, &PropertyWidget::modified);
@@ -163,8 +163,7 @@ AutoMetaConstraint PropertyWidget::buildMetaConstraint() const
 		value.first = m_numeric_value1->text().toDouble(&ok);
 		if (!ok) return nullptr;
 
-		if (op == NumericMetaConstraint::Operator::InclusiveRange ||
-		    op == NumericMetaConstraint::Operator::ExclusiveRange)
+		if (NumericMetaConstraint::is_range(op))
 		{
 			value.second = m_numeric_value2->text().toDouble(&ok);
 			if (!ok) return nullptr;
@@ -208,10 +207,10 @@ void PropertyWidget::loadNumericValue(NumericMetaConstraint::Operator op, std::p
 		}
 	}
 	m_numeric_value1->setText(QString::number(value.first));
-	if (op == NumericMetaConstraint::Operator::InclusiveRange ||
-	    op == NumericMetaConstraint::Operator::ExclusiveRange)
+	if (NumericMetaConstraint::is_range(op))
 	{
 		m_numeric_value2->setText(QString::number(value.second));
+		m_numeric_value2->setVisible(true);
 	}
 }
 

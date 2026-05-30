@@ -160,6 +160,10 @@ bool NumericMetaConstraint::check_value(double num) const
 			return num >= value.first && num <= value.second;
 		case Operator::ExclusiveRange:
 			return num > value.first && num < value.second;
+		case Operator::LeftClosedRange:
+			return num >= value.first && num < value.second;
+		case Operator::RightClosedRange:
+			return num > value.first && num <= value.second;
 		default:
 			throw error("Invalid operator for numeric meta-constraint");
 	}
@@ -178,7 +182,7 @@ void NumericMetaConstraint::to_xml(xml_node node)
 	auto v1_node = value_node.append_child(node_pcdata);
 	v1_node.set_value(String::convert(value.first).data());
 
-	if (op == Operator::InclusiveRange || op == Operator::ExclusiveRange)
+	if (is_range(op))
 	{
 		value_node = prop_node.append_child("Value");
 		auto v2_node = value_node.append_child(node_pcdata);
@@ -206,6 +210,10 @@ const char * NumericMetaConstraint::op_to_name(NumericMetaConstraint::Operator o
 			return "ineq";
 		case Operator::ExclusiveRange:
 			return "in";
+		case Operator::LeftClosedRange:
+			return "lcr";
+		case Operator::RightClosedRange:
+			return "rcr";
 		default:
 			throw error("Invalid operator for numeric meta-constraint");
 	}
@@ -229,8 +237,26 @@ NumericMetaConstraint::Operator NumericMetaConstraint::name_to_op(std::string_vi
 		return Operator::InclusiveRange;
 	if (name == "in")
 		return Operator::ExclusiveRange;
+	if (name == "lcr")
+		return Operator::LeftClosedRange;
+	if (name == "rcr")
+		return Operator::RightClosedRange;
 
 	throw error("Invalid operator name for numeric meta-constraint");
+}
+
+bool NumericMetaConstraint::is_range(Operator op)
+{
+	switch (op)
+	{
+		case Operator::InclusiveRange:
+		case Operator::ExclusiveRange:
+		case Operator::LeftClosedRange:
+		case Operator::RightClosedRange:
+			return true;
+		default:
+			return false;
+	}
 }
 
 bool BooleanMetaConstraint::filter(const Document *file) const
