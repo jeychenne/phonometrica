@@ -1,3 +1,19 @@
+phonometrica (0.9.7) unstable; urgency=medium
+
+  * new "Within event" context option in all query editors: extract the
+    text to the left and right of the match within the matched
+    interval/instant only, without spanning neighbouring events
+  * numeric property filters in the query editors now support half-open
+    ranges (a <= x < b and a < x <= b), alongside the existing closed and
+    open ranges
+  * constraints that select an annotation layer by name now match across
+    every layer whose name matches the pattern (logical OR), instead of
+    only the first
+  * fixed a crash in multi-constraint queries when a constraint's target
+    layer is selected by name and the file has no matching layer
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Sat, 30 May 2026 12:00:00 +0000
+
 phonometrica (0.9.6) unstable; urgency=medium
 
   * per-property parameter overrides for formant, pitch, and voice quality

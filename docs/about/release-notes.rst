@@ -1,6 +1,20 @@
 Release notes
 -------------
 
+0.9.7 (30/05/2026)
+~~~~~~~~~~~~~~~~~~
+
+**Queries**
+
+- New **Within event** context option in all query editors: extracts the text to the left and right of the match inside the matched interval/instant only, without spanning neighbouring events.
+- Numeric **property filters** now support half-open ranges (``a ≤ x < b`` and ``a < x ≤ b``), in addition to the existing closed and open ranges.
+- Constraints that select an annotation layer **by name** now match every layer whose name matches the pattern (logical OR), rather than only the first.
+
+**Fixes**
+
+- Fixed a crash in multi-constraint queries when a constraint's target layer is selected by name and the file has no matching layer.
+
+
 0.9.6 (21/05/2026)
 ~~~~~~~~~~~~~~~~~~
 
