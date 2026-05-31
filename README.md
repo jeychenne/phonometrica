@@ -56,4 +56,4 @@ Phonometrica is free software distributed under the terms of the [GNU General Pu
 
 ## Contact
 
-For questions, bug reports, or feature requests: phonometrica.dev@gmail.com
+For questions, bug reports, or feature requests: jeychenne@gmail.com
