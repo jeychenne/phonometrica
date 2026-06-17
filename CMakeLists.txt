@@ -121,11 +121,7 @@ add_definitions(-DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC=1)
 set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
 set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
-if(WIN32)
-    include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2/interface)
-else()
-    include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2)
-endif()
+include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2/interface)
 
 ###########################
 ##  SCRIPTING ENGINE LIB ##
@@ -348,8 +344,11 @@ if (APPLE)
             MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in"
             MACOSX_BUNDLE_ICON_FILE "phonometrica.icns"
     )
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+            HINTS "${Qt6_DIR}/../../../bin"
+            REQUIRED)
     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND /Users/julieneychenne/Qt/6.11.0/macos/bin/macdeployqt
+            COMMAND ${MACDEPLOYQT_EXECUTABLE}
             ${CMAKE_BINARY_DIR}/phonometrica.app
             COMMENT "Deploying Qt frameworks into bundle...")
 elseif (WIN32)
