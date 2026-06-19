@@ -40,6 +40,11 @@
 #include <QMetaObject>
 #include <QTimer>
 #include <QMimeData>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileOpenEvent>
@@ -429,6 +434,8 @@ QMenu *MainWindow::createHelpMenu()
 
 	menu->addSeparator();
 
+	menu->addAction(tr("Check for Updates..."), this, &MainWindow::onCheckForUpdates);
+
 	menu->addAction(tr("About Phonometrica"), [this]() {
 		auto version = QString::fromStdString(utils::get_version());
 		auto date = QString::fromStdString(utils::get_date());
@@ -443,6 +450,80 @@ QMenu *MainWindow::createHelpMenu()
 	});
 
 	return menu;
+}
+
+void MainWindow::onCheckForUpdates()
+{
+	checkForUpdates(false);
+}
+
+void MainWindow::checkForUpdates(bool silent)
+{
+	static const QString releases_url = QStringLiteral("https://api.github.com/repos/jeychenne/phonometrica/releases/latest");
+	static const QString download_url = QStringLiteral("https://github.com/jeychenne/phonometrica/releases");
+
+	auto *manager = new QNetworkAccessManager(this);
+	QNetworkRequest request{QUrl(releases_url)};
+	request.setHeader(QNetworkRequest::UserAgentHeader,
+	                  QStringLiteral("Phonometrica/") + QString::fromStdString(utils::get_version()));
+	request.setTransferTimeout(10000);
+
+	auto *reply = manager->get(request);
+
+	connect(reply, &QNetworkReply::finished, this, [this, reply, manager, silent]() {
+		manager->deleteLater();
+
+		if (reply->error() != QNetworkReply::NoError) {
+			if (!silent) {
+				QMessageBox::warning(this, tr("Check for Updates"),
+				    tr("Could not check for updates:\n%1").arg(reply->errorString()));
+			}
+			reply->deleteLater();
+			return;
+		}
+
+		auto doc = QJsonDocument::fromJson(reply->readAll());
+		reply->deleteLater();
+
+		if (!doc.isObject()) {
+			if (!silent)
+				QMessageBox::warning(this, tr("Check for Updates"), tr("Unexpected response from server."));
+			return;
+		}
+
+		QString latest = doc.object().value(QStringLiteral("tag_name")).toString();
+		if (latest.startsWith('v') || latest.startsWith('V'))
+			latest.remove(0, 1);
+
+		if (latest.isEmpty()) {
+			if (!silent)
+				QMessageBox::warning(this, tr("Check for Updates"), tr("Could not determine the latest version."));
+			return;
+		}
+
+		QString current = QString::fromStdString(utils::get_version());
+
+		auto parseVer = [](const QString &v) -> std::tuple<int,int,int> {
+			auto p = v.split('.');
+			return { p.value(0).toInt(), p.value(1).toInt(), p.value(2).toInt() };
+		};
+
+		if (parseVer(latest) > parseVer(current)) {
+			QMessageBox msgBox(this);
+			msgBox.setWindowTitle(tr("Check for Updates"));
+			msgBox.setIcon(QMessageBox::Information);
+			msgBox.setText(tr("A new version of Phonometrica is available: <b>%1</b>").arg(latest));
+			msgBox.setInformativeText(tr("You are currently running version %1.").arg(current));
+			auto *download = msgBox.addButton(tr("Download"), QMessageBox::AcceptRole);
+			msgBox.addButton(QMessageBox::Close);
+			msgBox.exec();
+			if (msgBox.clickedButton() == download)
+				QDesktopServices::openUrl(QUrl(download_url));
+		} else if (!silent) {
+			QMessageBox::information(this, tr("Check for Updates"),
+			    tr("Phonometrica %1 is up to date.").arg(current));
+		}
+	});
 }
 
 void MainWindow::createCentralWidget()
@@ -3471,6 +3552,11 @@ void MainWindow::postInitialize()
 				// No saved views or stale paths — silently ignore.
 			}
 		}
+	}
+
+	if (Settings::get_boolean("check_for_updates")) {
+		// Delay the check so the window finishes painting before the network request starts.
+		QTimer::singleShot(3000, this, [this]() { checkForUpdates(true); });
 	}
 }
 

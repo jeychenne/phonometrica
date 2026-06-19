@@ -438,6 +438,9 @@ void Settings::post_initialize()
 	if (!settings.contains("enable_mouse_tracking")) {
 		reset_mouse_tracking();
 	}
+	if (!settings.contains("check_for_updates")) {
+		reset_check_for_updates();
+	}
 
 	// --- Appearance ------------------------------------------------------
 	if (!settings.contains("font")) {
@@ -538,6 +541,7 @@ void Settings::reset()
 	reset_display();
 	reset_statistics();
 	reset_whisper_log();
+	reset_check_for_updates();
 	reset_recording();
 }
 
@@ -580,6 +584,11 @@ void Settings::reset_whisper_log()
 	// buffer allocations, etc.). Silenced by default; when toggled on, routed to the
 	// Phonometrica output panel — never back to stderr/stdout.
 	Settings::set_value("whisper_log", false);
+}
+
+void Settings::reset_check_for_updates()
+{
+	Settings::set_value("check_for_updates", true);
 }
 
 void Settings::reset_autoload()

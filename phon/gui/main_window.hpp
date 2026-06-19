@@ -178,6 +178,9 @@ private slots:
 	// File manager
 	void onDocumentRequested(Document *doc);
 
+	// Help menu
+	void onCheckForUpdates();
+
 private:
 
 	void createMenus();
@@ -192,6 +195,8 @@ private:
 	QMenu *createToolsMenu();
 	QMenu *createWindowMenu();
 	QMenu *createHelpMenu();
+
+	void checkForUpdates(bool silent);
 
 	void updateWindowTitle();
 	void updateRecentProjects(const String &mostRecent = String());

@@ -122,6 +122,8 @@ public:
 
     static void reset_whisper_log();
 
+    static void reset_check_for_updates();
+
     static void reset_recording();
 
     static void reset_last_directory();
