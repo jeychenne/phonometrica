@@ -77,8 +77,10 @@ using Instruction = uint32_t;
 	/* user classes: registration, instances, fields */                         \
 	_(DEFCLASS)    /* A Bx   : register class-def Bx; R[A] = its class obj   */ \
 	_(NEW)         /* A B    : R[A] = fresh instance of class object R[B]    */ \
-	_(GETFIELD)    /* A B C  : R[A] = R[B].field named by R[C]               */ \
-	_(SETFIELD)    /* A B C  : R[A].field R[B] = R[C]  (CoW detach on share) */ \
+	_(GETFIELD)    /* A B C  : R[A] = R[B].field R[C]   (routes get accessor) */ \
+	_(SETFIELD)    /* A B C  : R[A].field R[B] = R[C]   (routes set accessor) */ \
+	_(GETFIELDRAW) /* A B C  : R[A] = R[B].field R[C]   (raw slot, no getter) */ \
+	_(SETFIELDRAW) /* A B C  : R[A].field R[B] = R[C]   (raw slot, no setter) */ \
 	/* type test */                                                             \
 	_(IS)          /* A B C  : R[A] = R[B] is class R[C]                     */ \
 	/* terminator */                                                            \

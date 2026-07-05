@@ -335,8 +335,15 @@ private:
 	// `thisreg`, at construction — so inherited defaults apply regardless of which
 	// (possibly inherited) `init` runs.
 	void emit_full_defaults(ClassDeclaration *cls, int thisreg);
+	int compile_accessor(FieldDeclaration *fd, bool is_setter); // -> module child-proto index
 	void compile_class(ClassDeclaration *c);
 	void construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest);
+	// True when `obj.field` names the field whose own accessor is being compiled,
+	// so it must reach the raw slot (design "Field accessors" recursion rule).
+	bool is_own_accessor_field(Ast *obj, Symbol field) const noexcept
+	{
+		return m_accessor_field != NO_SYMBOL && field == m_accessor_field && obj->is<ThisExpression>();
+	}
 	// Load an object expression for in-place field mutation, mirroring
 	// load_index_object (wb/wbidx select the write-back).
 	int load_object_for_write(Ast *obj, int &wb, int &wbidx);
@@ -356,6 +363,11 @@ private:
 	// construction lowering and `this`/base type resolution). Classes are module
 	// bindings holding a class object; the module slot is module_lookup(name).
 	FlatHashMap<uint32_t, ClassDeclaration *> m_module_classes;
+
+	// The field whose accessor body is currently being compiled (NO_SYMBOL if none),
+	// so `this.<that field>` compiles to a raw slot access rather than re-entering
+	// the accessor (design "Field accessors" recursion-safety rule).
+	Symbol m_accessor_field = NO_SYMBOL;
 };
 
 // --- operator mapping ---------------------------------------------------------
@@ -601,7 +613,9 @@ void Lowerer::expr_to(Ast *node, int dest)
 		int o = expr_any(fa->object.get());
 		int s = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(fa));
-		emit_ABC(Opcode::GETFIELD, dest, o, s, ln(fa));
+		Opcode get = is_own_accessor_field(fa->object.get(), fa->name) ? Opcode::GETFIELDRAW
+		                                                               : Opcode::GETFIELD;
+		emit_ABC(get, dest, o, s, ln(fa));
 		reg_free_to(save);
 		break;
 	}
@@ -953,7 +967,9 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		int s = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(target));
 		int val = expr_any(value);
-		emit_ABC(Opcode::SETFIELD, o, s, val, ln(target));
+		Opcode set = is_own_accessor_field(fa->object.get(), fa->name) ? Opcode::SETFIELDRAW
+		                                                               : Opcode::SETFIELD;
+		emit_ABC(set, o, s, val, ln(target));
 		emit_index_writeback(o, wb, wbidx, ln(target));
 		reg_free_to(save);
 		return;
@@ -1372,6 +1388,39 @@ int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaratio
 	return idx;
 }
 
+int Lowerer::compile_accessor(FieldDeclaration *fd, bool is_setter)
+{
+	// A get/set body compiles like a method: reg 0 is `this`, and a setter also
+	// binds its value parameter at reg 1. Inside, `this.<this field>` reaches the
+	// raw slot (m_accessor_field), so an accessor never re-enters itself.
+	auto child = std::make_unique<Proto>();
+	child->name = fd->name;
+	child->num_params = is_setter ? 2 : 1;
+
+	FuncState cfs(*child, fs, false);
+	FuncState *saved = fs;
+	fs = &cfs;
+
+	declare_local(this_symbol(), true, fd);
+	if (is_setter)
+		declare_local(fd->setter_param, false, fd);
+
+	Symbol prev = m_accessor_field;
+	m_accessor_field = fd->name;
+	compile_block((is_setter ? fd->setter : fd->getter)->as<StatementList>());
+	m_accessor_field = prev;
+
+	// A setter returns the (possibly detached) instance so `obj.field = v` can write
+	// it back to its binding; a getter falling off the end yields null.
+	emit_ABC(Opcode::RET, 0, is_setter ? 1 : 0, 0, ln(fd));
+	child->num_regs = cfs.max_reg > child->num_params ? cfs.max_reg : child->num_params;
+
+	fs = saved;
+	int idx = static_cast<int>(fs->proto.children.size());
+	fs->proto.children.push_back(std::move(child));
+	return idx;
+}
+
 void Lowerer::compile_class(ClassDeclaration *c)
 {
 	int slot = module_lookup(c->name); // reserved in pass 1
@@ -1386,7 +1435,12 @@ void Lowerer::compile_class(ClassDeclaration *c)
 	for (auto &f : c->fields)
 	{
 		auto *fd = f->as<FieldDeclaration>();
-		cd.fields.push_back(FieldDef{fd->name, type_ref(fd->type.get())});
+		FieldDef def{fd->name, type_ref(fd->type.get()), -1, -1};
+		if (fd->getter)
+			def.getter_proto = compile_accessor(fd, /*is_setter*/ false);
+		if (fd->setter)
+			def.setter_proto = compile_accessor(fd, /*is_setter*/ true);
+		cd.fields.push_back(def);
 	}
 	int cdidx = static_cast<int>(fs->proto.class_defs.size());
 	fs->proto.class_defs.push_back(std::move(cd));

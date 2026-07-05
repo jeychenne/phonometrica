@@ -117,9 +117,18 @@ public:
 	// closures. Called by the destructor; exposed for the editor's reload surface.
 	void retract_journal() noexcept;
 
+	// Take ownership of a cell (its current +1) for the Isolate's lifetime; released
+	// on teardown. Used for accessor closures held only by a Class's field layout.
+	void keep_alive(Cell *c);
+
 	// --- errors ---
 
 	[[noreturn]] void raise(String message, int line);
+
+	// Release the live register span and drop all frames after an uncaught error, so
+	// an aborted run leaves no leaked cells (a minimal stand-in until the full
+	// handler-stack unwinding of arch §10.5). Idempotent.
+	void unwind_on_error() noexcept;
 
 private:
 	std::unique_ptr<Value[]> m_stack;
@@ -127,6 +136,7 @@ private:
 	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
 	FlatHashMap<uint64_t, int> m_ic_base;
 	Vector<MethodRegistration> m_journal;
+	Vector<Cell *> m_kept; // cells owned for the Isolate's lifetime (accessor closures)
 };
 
 // The Isolate executing on this thread (M4: process-global). Set while a run is in

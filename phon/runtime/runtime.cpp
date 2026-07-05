@@ -224,6 +224,9 @@ Variant Runtime::do_string(const String &code)
 	}
 	catch (...)
 	{
+		// Release the live register stack of the aborted run so an uncaught error
+		// leaves no leaked cells (full handler-stack unwinding arrives with M5 errors).
+		st.isolate.unwind_on_error();
 		set_current_isolate(prev);
 		throw;
 	}

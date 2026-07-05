@@ -455,7 +455,10 @@ struct FunctionDefinition final : Ast
 	bool is_open;          // `open function`
 };
 
-// `field name as T = default` inside a class body. `type`/`default_value` may be null.
+// `field name as T = default` inside a class body. `type`/`default_value` may be
+// null. A field may also carry `get`/`set` accessor blocks (design "Field
+// accessors"): `getter`/`setter` hold their bodies (StatementList) when present,
+// with `setter_param`/`setter_param_type` describing the setter's value parameter.
 struct FieldDeclaration final : Ast
 {
 	FieldDeclaration(int line, int col, Symbol name, AutoAst type, AutoAst default_value)
@@ -463,6 +466,11 @@ struct FieldDeclaration final : Ast
 	PHON_AST_NODE(FieldDeclaration, FieldDeclaration)
 	Symbol name;
 	AutoAst type, default_value;
+	AutoAst getter;            // `get ... end` body, or null
+	AutoAst setter;            // `set(v) ... end` body, or null
+	Symbol setter_param = NO_SYMBOL;
+	AutoAst setter_param_type; // the setter parameter's declared type, or null
+	bool has_accessors() const noexcept { return getter || setter; }
 };
 
 // `class Name is Parent ... end`, `ref class`, `open class`, `local class`.

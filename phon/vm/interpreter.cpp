@@ -640,9 +640,26 @@ Value run(Isolate &iso)
 			SmallVector<FieldInfo, 4> fields;
 			for (intptr_t i = 0; i < cd.fields.size(); ++i)
 			{
+				const FieldDef &fdef = cd.fields[i];
 				FieldInfo fi;
-				fi.name = cd.fields[i].name;
-				fi.type = resolve_type_ref(cd.fields[i].type, iso);
+				fi.name = fdef.name;
+				fi.type = resolve_type_ref(fdef.type, iso);
+				// Accessor closures capture nothing (top-level protos), so make_closure
+				// is complete; the Isolate owns them for its lifetime.
+				if (fdef.getter_proto >= 0)
+				{
+					Cell *g = reinterpret_cast<Cell *>(
+					    make_closure(proto->children[fdef.getter_proto].get()));
+					iso.keep_alive(g);
+					fi.getter = g;
+				}
+				if (fdef.setter_proto >= 0)
+				{
+					Cell *s = reinterpret_cast<Cell *>(
+					    make_closure(proto->children[fdef.setter_proto].get()));
+					iso.keep_alive(s);
+					fi.setter = s;
+				}
 				fields.push_back(fi);
 			}
 			std::string name(symbol_name(cd.name));
@@ -662,6 +679,7 @@ Value run(Isolate &iso)
 		}
 
 		case Opcode::GETFIELD:
+		case Opcode::GETFIELDRAW:
 		{
 			Value obj = base[op_b(ins)];
 			if (!is_instance(obj))
@@ -673,15 +691,23 @@ Value run(Isolate &iso)
 				iso.raise(String("[Name error] '") + String(c->name).view() +
 				              "' has no field '" + String(symbol_name(fname)).view() + "'",
 				          cur_line());
-			reg_copy(base, a, instance_fields(obj.as_cell())[slot]);
+			const FieldInfo *fi = field_at(c, slot);
+			if (op == Opcode::GETFIELD && fi->getter)
+			{
+				// Route through the getter: get(obj) -> value.
+				Value r = vm_call(iso, Value::make_cell(fi->getter), &obj, 1);
+				reg_move(base, a, r); // r carries +1
+			}
+			else
+				reg_copy(base, a, instance_fields(obj.as_cell())[slot]);
 			break;
 		}
 
 		case Opcode::SETFIELD:
+		case Opcode::SETFIELDRAW:
 		{
-			// R[A].field(R[B]) = R[C]. A value class shared with others detaches a
-			// private copy first (leaving the detached cell in R[A] for the caller to
-			// write back to its binding); a ref class mutates in place.
+			// R[A].field(R[B]) = R[C]. GETFIELD/SETFIELD route through accessors; the
+			// RAW variants (used inside a field's own accessor) reach the slot directly.
 			if (!is_instance(base[a]))
 				iso.raise(String("[Type error] value has no fields"), cur_line());
 			Symbol fname = base[op_b(ins)].as_symbol();
@@ -692,6 +718,22 @@ Value run(Isolate &iso)
 				iso.raise(String("[Name error] '") + String(c->name).view() +
 				              "' has no field '" + String(symbol_name(fname)).view() + "'",
 				          cur_line());
+			const FieldInfo *fi = field_at(c, slot);
+			if (op == Opcode::SETFIELD && fi->setter)
+			{
+				// Route through the setter, which returns the (mutated, possibly
+				// detached) instance so the caller writes it back to its binding.
+				Value args2[2] = {base[a], base[op_c(ins)]};
+				Value r = vm_call(iso, Value::make_cell(fi->setter), args2, 2);
+				reg_move(base, a, r);
+				break;
+			}
+			if (op == Opcode::SETFIELD && fi->getter)
+				iso.raise(String("[Name error] field '") + String(symbol_name(fname)).view() +
+				              "' of '" + String(c->name).view() + "' is read-only",
+				          cur_line());
+			// Raw slot store: a shared value class detaches a private copy first (the
+			// detached cell is left in R[A] for write-back); a ref class mutates in place.
 			if (c->is_value() && obj->refcount() > 1)
 			{
 				Cell *copy = instance_clone(obj); // rc==1

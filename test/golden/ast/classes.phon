@@ -30,6 +30,26 @@ end
 
 open class Extensible
     field value as Integer = 0
+
+    # Field accessors: read-only computed, read/write computed, validated storage.
+    field squared as Integer
+        get
+            return this.value * this.value
+        end
+    end
+    field scaled as Integer
+        get
+            return this.value * 10
+        end
+        set(v as Integer)
+            this.value = v / 10
+        end
+    end
+    field bounded as Integer = 0
+        set(v as Integer)
+            this.bounded = v
+        end
+    end
 end
 
 local class Cursor

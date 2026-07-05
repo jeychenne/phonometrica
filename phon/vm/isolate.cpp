@@ -38,7 +38,14 @@ Isolate::Isolate()
 		m_stack[i] = null;
 }
 
-Isolate::~Isolate() { retract_journal(); }
+Isolate::~Isolate()
+{
+	retract_journal();
+	for (intptr_t i = 0; i < m_kept.size(); ++i)
+		release(m_kept[i]);
+}
+
+void Isolate::keep_alive(Cell *c) { m_kept.push_back(c); }
 
 void Isolate::record_method(GenericFunction *g, SmallVector<Class *, 4> sig, uint64_t ref_mask,
                             Cell *closure)
@@ -58,6 +65,24 @@ void Isolate::retract_journal() noexcept
 			release(r.closure);
 	}
 	m_journal.clear();
+}
+
+void Isolate::unwind_on_error() noexcept
+{
+	if (frames.empty())
+		return;
+	// The live registers form one contiguous span from the root frame's base to the
+	// innermost frame's end (overlapping call windows are covered exactly once).
+	Value *lo = frames.front().base;
+	Value *hi = frames.back().base + frames.back().cl->proto->num_regs;
+	close_upvalues(lo); // detach open upvalues from the dying stack
+	for (Value *p = lo; p < hi; ++p)
+	{
+		if (p->is_cell())
+			release(p->as_cell());
+		*p = Value::make_null();
+	}
+	frames.clear();
 }
 
 UpvalueCell *Isolate::find_or_make_open_upvalue(Value *slot)

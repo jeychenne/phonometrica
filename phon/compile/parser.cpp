@@ -381,6 +381,13 @@ AutoAst Parser::parse_class(DeclModifier modifier, bool is_ref, bool is_open)
 	                              std::move(methods), modifier, is_ref, is_open);
 }
 
+// `get` / `set` are contextual: they matter only at the head of an accessor block
+// inside a field body, and remain ordinary identifiers everywhere else.
+static bool is_contextual(const Token &t, const char *word)
+{
+	return t.is(Lexeme::Identifier) && t.spelling.view() == word;
+}
+
 AutoAst Parser::parse_field()
 {
 	int line = m_tok.line, col = m_tok.column;
@@ -392,7 +399,47 @@ AutoAst Parser::parse_field()
 	AutoAst default_value;
 	if (accept(Lexeme::Assign))
 		default_value = parse_expression();
-	return make<FieldDeclaration>(line, col, name, std::move(type), std::move(default_value));
+
+	auto node = make<FieldDeclaration>(line, col, name, std::move(type), std::move(default_value));
+
+	// Optional accessor block: the header is followed by a newline and then `get`
+	// and/or `set`, closed by the field's own `end`.
+	if (m_tok.is(Lexeme::Newline) && (is_contextual(peek(), "get") || is_contextual(peek(), "set")))
+	{
+		auto *fd = node->as<FieldDeclaration>();
+		advance(); // the newline
+		skip_separators();
+		while (is_contextual(m_tok, "get") || is_contextual(m_tok, "set"))
+		{
+			bool is_get = is_contextual(m_tok, "get");
+			int aline = m_tok.line, acol = m_tok.column;
+			advance(); // 'get' / 'set'
+			// An accessor body is a method body: `this` is valid inside it.
+			++m_method_depth;
+			if (is_get)
+			{
+				if (fd->getter)
+					error_at(aline, acol, 3, "duplicate 'get' accessor");
+				fd->getter = parse_block(/*scope*/ true);
+			}
+			else
+			{
+				if (fd->setter)
+					error_at(aline, acol, 3, "duplicate 'set' accessor");
+				expect(Lexeme::LParen, "'(' after 'set'");
+				fd->setter_param = expect_identifier("the setter's parameter name");
+				if (accept(Lexeme::As))
+					fd->setter_param_type = parse_type();
+				expect(Lexeme::RParen, "')' to close the setter parameter");
+				fd->setter = parse_block(/*scope*/ true);
+			}
+			--m_method_depth;
+			expect(Lexeme::End, "'end' to close the accessor");
+			skip_separators();
+		}
+		expect(Lexeme::End, "'end' to close the field");
+	}
+	return node;
 }
 
 AutoAst Parser::parse_method()

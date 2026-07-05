@@ -53,6 +53,39 @@ Module
   Class Extensible open
     Field value as Integer
       Int 0
+    Field squared as Integer
+      Get
+        Block
+          Return
+            Binary *
+              Field value
+                This
+              Field value
+                This
+    Field scaled as Integer
+      Get
+        Block
+          Return
+            Binary *
+              Field value
+                This
+              Int 10
+      Set v as Integer
+        Block
+          Assign =
+            Field value
+              This
+            Binary /
+              Var v
+              Int 10
+    Field bounded as Integer
+      Int 0
+      Set v as Integer
+        Block
+          Assign =
+            Field bounded
+              This
+            Var v
   Class Cursor local
     Field pos as Integer
       Int 0

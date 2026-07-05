@@ -529,3 +529,41 @@ copy-on-write, a `ref class` has identity.
    `const` local at register 0 named by the reserved `this` keyword, so a closure
    lexically inside a method captures it as an upvalue automatically — closing the
    M3-parser gap that deferred this to scope resolution.
+
+### Step 3 — Field accessors `get`/`set` (checkpoint 1c)
+
+Implements the design's "Field accessors": a `field` may carry `get` and/or `set`
+blocks that intercept reads and writes.
+
+1. **`get`/`set` are contextual keywords.** They are lexed as ordinary identifiers;
+   the parser recognizes them only at the head of an accessor block inside a field
+   body (`parse_field` uses one-token lookahead over the newline), so `get`/`set`
+   remain usable as names elsewhere. An accessor body is parsed with the method-depth
+   bumped so `this` is valid inside it. `FieldDeclaration` gains `getter`/`setter`
+   bodies + the setter's parameter.
+
+2. **Accessors are closures stored in the field descriptor.** `compile_accessor`
+   compiles each `get`/`set` body to a module child proto (getter: `(this)`; setter:
+   `(this, v)`); `FieldDef` records their indices, and `DEFCLASS` builds the closures
+   (`make_closure`, kept alive for the Isolate's lifetime via `keep_alive`) into the
+   `FieldInfo`. Inheritance is automatic — `add_user_class` copies base `FieldInfo`s,
+   accessor cells included.
+
+3. **`GETFIELD`/`SETFIELD` route; `GETFIELDRAW`/`SETFIELDRAW` reach the slot.** A read
+   with a getter invokes it via the re-entrant `vm_call`; a write with a setter
+   invokes it. A write to a getter-only field is a `[Name error] … is read-only`. The
+   **recursion-safety rule** — inside a field's own accessor, `this.<that field>` is
+   the raw slot — is implemented by the lowerer emitting the RAW opcodes when the
+   accessed field matches the accessor being compiled (`m_accessor_field`).
+
+4. **A setter returns `this`.** Because a value-class receiver passed to the setter
+   is refcount-bumped (so its `this.<backing> = …` write copy-on-write **detaches**),
+   the setter implicitly returns the (possibly detached) instance, and `SETFIELD`
+   writes that back to `R[A]` for the caller's binding write-back — mirroring the
+   return-`this` constructor. One clone per setter call on a value class is accepted
+   (optimizable once `this` can be a true reference).
+
+5. **Uncaught errors now release the live register stack** (`Isolate::unwind_on_error`,
+   called from `do_string`'s catch): a minimal stand-in for arch §10.5 handler-stack
+   unwinding, so an aborted run (e.g. a read-only write) leaks no cells. Full
+   `try`/`catch`/`finally` unwinding arrives with M5 errors (Stage 2).

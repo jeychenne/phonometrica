@@ -393,6 +393,23 @@ public:
 		emit(h);
 		if (n->default_value)
 			child(n->default_value.get());
+		if (n->getter)
+		{
+			++m_depth;
+			emit("Get");
+			child(n->getter.get());
+			--m_depth;
+		}
+		if (n->setter)
+		{
+			++m_depth;
+			std::string s = "Set " + sym(n->setter_param);
+			if (n->setter_param_type)
+				s += " as " + render_type(n->setter_param_type.get());
+			emit(s);
+			child(n->setter.get());
+			--m_depth;
+		}
 	}
 
 	void visit_try_statement(TryStatement *n) override

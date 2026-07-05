@@ -60,12 +60,15 @@ struct MethodDef
 	uint64_t ref_mask = 0;          // bit i set => parameter i is `ref`
 };
 
-// One field of a class-def (name + declared type; the default initializer is
-// compiled into the class's `init` prologue, not stored here).
+// One field of a class-def (name + declared type). `getter_proto`/`setter_proto`
+// index the module's child protos for the field's `get`/`set` accessor bodies, or
+// -1 when absent; the default initializer is emitted at construction, not here.
 struct FieldDef
 {
 	Symbol name;
 	TypeRef type;
+	int32_t getter_proto = -1;
+	int32_t setter_proto = -1;
 };
 
 // A user-class registration emitted by DEFCLASS. The interpreter calls

@@ -436,6 +436,60 @@ TEST_CASE("vm: user to_string is dispatched by & and interpolation")
 	              "\"{F()}!\"") == "hi!");
 }
 
+// --- field accessors (design "Field accessors") -------------------------------
+
+TEST_CASE("vm: a getter computes on read")
+{
+	const char *src = "class C\n field r as Integer = 3\n"
+	                  " field sq as Integer\n get\n return this.r * this.r\n end\n end\nend\n"
+	                  "C().sq";
+	CHECK(run_int(src) == 9);
+}
+
+TEST_CASE("vm: a setter runs on write and can update another field")
+{
+	const char *src = "class C\n field r as Integer = 0\n"
+	                  " field twice as Integer\n"
+	                  "  get\n return this.r * 2\n end\n"
+	                  "  set(v as Integer)\n this.r = v / 2\n end\n"
+	                  " end\nend\n"
+	                  "var c = C()\n c.twice = 10\n c.r";
+	CHECK(run_int(src) == 5);
+}
+
+TEST_CASE("vm: a validated setter reaches the raw slot without recursing")
+{
+	const char *src = "class C\n field n as Integer = 0\n"
+	                  "  set(v as Integer)\n this.n = v\n end\n end\nend\n"
+	                  "var c = C()\n c.n = 42\n c.n";
+	CHECK(run_int(src) == 42);
+}
+
+TEST_CASE("vm: writing a getter-only field is a runtime error")
+{
+	bool threw = false;
+	try
+	{
+		run("class C\n field r as Integer = 1\n"
+		    " field ro as Integer\n get\n return this.r\n end\n end\nend\n"
+		    "var c = C()\n c.ro = 5");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("vm: a subclass inherits its base's accessors")
+{
+	const char *src = "class Base\n field r as Integer = 4\n"
+	                  " field dbl as Integer\n get\n return this.r * 2\n end\n end\nend\n"
+	                  "class Sub is Base\nend\n"
+	                  "Sub().dbl";
+	CHECK(run_int(src) == 8);
+}
+
 TEST_CASE("vm: user classes do not leak across runs")
 {
 	{
