@@ -81,6 +81,7 @@ enable_testing()
 add_executable(phon_unit_tests
     test/unit/main.cpp
     test/unit/test_bits.cpp
+    test/unit/test_hash.cpp
     test/unit/test_heap.cpp
     test/unit/test_vector.cpp
     test/unit/test_small_vector.cpp
