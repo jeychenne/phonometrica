@@ -1,8 +1,8 @@
 // Phonometrica engine — atom table (Symbol interning) tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "types/atom.hpp"
-#include "core/value.hpp"
+#include <phon/types/atom.hpp>
+#include <phon/core/value.hpp>
 #include "test_framework.hpp"
 
 #include <string>

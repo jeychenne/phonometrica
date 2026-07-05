@@ -1,7 +1,7 @@
 // Phonometrica engine — FlatHashMap tests, incl. fuzz vs std::unordered_map.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "core/flat_hash_map.hpp"
+#include <phon/core/flat_hash_map.hpp>
 #include "test_framework.hpp"
 
 #include <algorithm>

@@ -227,15 +227,17 @@ var pat = '\b[aeiou]+\b'
 
 ### Declarations and annotations
 
-`var` declares, `const` declares an immutable binding. Type annotations use `as`
+`var` declares, `const` declares an immutable binding, both are local in scope. Type annotations use `as`
 and are optional everywhere; an unannotated name is `Object`. `as` is
 **declarative only** — it never appears as an expression operator (conversion is
-`cast … as`, §7; type testing is `is`).
+`cast … as`, §7; type testing is `is`). 
 
 ```
-var threshold as Float = 0.025
-const SR as Integer = 16000
+var threshold as Float = 0.025 # local variable
+const SR as Integer = 16000    # local variable
 ```
+
+
 
 ### Control flow
 

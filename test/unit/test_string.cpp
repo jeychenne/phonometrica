@@ -3,8 +3,8 @@
 //
 // This file is UTF-8 encoded.
 
-#include "types/string.hpp"
-#include "base/unicode.hpp"
+#include <phon/types/string.hpp>
+#include <phon/base/unicode.hpp>
 #include "test_framework.hpp"
 
 #include <string>

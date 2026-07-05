@@ -77,7 +77,11 @@ recorded here with rationale, for the project owner's review.
    the dependency: `split`/`join` (Array<String>, M6), `replace(Regex,…)` (M5),
    positional `arg`, Qt/wxWidgets conversions, and `wstring`/`wchar_t` (Windows).
 
-7. **Script Map/Set are unordered, reusing the one hash table (FlatHashMap).**
+7. **The script dictionary is named `Table` (design docs' "Map").** Renamed for
+   source compatibility with Phonometrica, whose dictionary type is `Table`
+   (`CID_TABLE`, `types/table.*`). The design docs still call it "Map"; the engine
+   type is `Table`. It and **`Set` are unordered, reusing the one hash table
+   (FlatHashMap).**
    The script `Map`/`Set` are a stable cell wrapping `FlatHashMap<Value,Value>` /
    `FlatHashSet<Value>` (keyed by `value_hash`/`value_equals`), with copy-on-write
    in the wrapper. This follows architecture §4 ("this single implementation backs
@@ -89,6 +93,20 @@ recorded here with rationale, for the project owner's review.
    dispatch memo/compiler scopes) and the script types; the cell stays put on
    growth (only the table's buffer moves), so no slot rewriting is needed (§5.0).
    `keys()`/`values()`/`to_list()` iterate in unspecified order.
+
+## Source layout and includes
+
+**Sources live under `phon/`, included as `<phon/subdir/file.hpp>`.** Architecture
+§0 sketches an `include/phon/` (public headers) + `src/` (implementation) split.
+Instead the engine follows Phonometrica's own convention: everything under a
+top-level `phon/` directory with `.hpp`/`.cpp` together, included via
+`#include <phon/base/…>` etc. (the repo root is the include path). This makes the
+eventual drop-in replacement of Phonometrica's `phon/runtime/` mechanical and
+keeps include style identical across the two codebases. The architecture's layer
+names (`base`, `core`, `object`, `dispatch`, `memory`, `types`, `runtime`) are
+preserved as `phon/<layer>/`. A public-facade split (`phon/string.hpp` →
+`<phon/types/string.hpp>`, as Phonometrica does) can be added at the embedding
+milestone (M8).
 
 ## M2 — Type system + dispatch
 

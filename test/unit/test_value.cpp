@@ -1,7 +1,7 @@
 // Phonometrica engine — Value NaN-boxing encoding tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "core/value.hpp"
+#include <phon/core/value.hpp>
 #include "test_framework.hpp"
 
 #include <cmath>

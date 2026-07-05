@@ -1,7 +1,7 @@
 // Phonometrica engine — heap / size-class allocator tests, incl. stress.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "base/heap.hpp"
+#include <phon/base/heap.hpp>
 #include "test_framework.hpp"
 
 #include <cstdint>

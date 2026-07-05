@@ -1,7 +1,7 @@
 // Phonometrica engine — SmallVector<T, N> tests, incl. fuzz vs std::vector.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "core/small_vector.hpp"
+#include <phon/core/small_vector.hpp>
 #include "test_framework.hpp"
 
 #include <random>

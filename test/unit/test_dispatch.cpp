@@ -1,11 +1,11 @@
 // Phonometrica engine — multiple-dispatch tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "dispatch/generic.hpp"
-#include "object/class.hpp"
-#include "types/atom.hpp"
-#include "types/list.hpp"
-#include "types/string.hpp"
+#include <phon/dispatch/generic.hpp>
+#include <phon/object/class.hpp>
+#include <phon/types/atom.hpp>
+#include <phon/types/list.hpp>
+#include <phon/types/string.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

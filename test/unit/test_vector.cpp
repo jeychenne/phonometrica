@@ -1,7 +1,7 @@
 // Phonometrica engine — Vector<T> tests, incl. fuzz vs std::vector.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "core/vector.hpp"
+#include <phon/core/vector.hpp>
 #include "test_framework.hpp"
 
 #include <random>

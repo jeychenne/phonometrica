@@ -1,8 +1,8 @@
 // Phonometrica engine — List tests (CoW, ownership, ops).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "types/list.hpp"
-#include "types/string.hpp"
+#include <phon/types/list.hpp>
+#include <phon/types/string.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

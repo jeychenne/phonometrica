@@ -1,10 +1,10 @@
 // Phonometrica engine — Cell, Handle, retain/release tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "core/cell.hpp"
-#include "core/handle.hpp"
-#include "core/value.hpp"
-#include "object/class.hpp"
+#include <phon/core/cell.hpp>
+#include <phon/core/handle.hpp>
+#include <phon/core/value.hpp>
+#include <phon/object/class.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

@@ -82,14 +82,18 @@ Options:
 
 ## Layout
 
+Sources live under `phon/` and are included as `#include <phon/subdir/file.hpp>`
+(repo root is the include path), matching Phonometrica's convention so the port
+into the application is mechanical. `.hpp` and `.cpp` sit together per subsystem.
+
 ```
-src/base/     definitions, bits, allocation, size-class heap, Unicode
-src/core/     Value, Cell, Handle, Variant, Symbol, containers, hash
-src/object/   class registry + subtype intervals, value hash/equality
-src/dispatch/ generic functions + multiple dispatch
-src/memory/   cell allocation + finalizer dispatch
-src/types/    String, atom table, List, Map, Set
-src/runtime/  bootstrap (builtin class registration)
-test/unit/    C++ unit tests + minimal single-header harness
-tools/unicode/ Unicode table provenance
+phon/base/     definitions, bits, allocation, size-class heap, Unicode
+phon/core/     Value, Cell, Handle, Variant, Symbol, containers, hash
+phon/object/   class registry + subtype intervals, value hash/equality
+phon/dispatch/ generic functions + multiple dispatch
+phon/memory/   cell allocation + finalizer dispatch
+phon/types/    String, atom table, List, Table, Set
+phon/runtime/  bootstrap (builtin class registration)
+test/unit/     C++ unit tests + minimal single-header harness
+tools/unicode/ Unicode table generator + vendored UCD data
 ```
