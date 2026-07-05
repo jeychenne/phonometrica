@@ -147,3 +147,91 @@ milestone (M8).
    A `Method`'s `code` is an opaque `void*` in M2; binding it to a Routine /
    NativeFunction (and actually invoking) lands with the VM (M4) and the typed
    embedding API (M8). M2 resolves methods but does not call them.
+
+## M3 — Front end
+
+### Step 1 — Scanner
+
+1. **Front end lives in `phon/compile/`.** Architecture §0 lists the pipeline under
+   `compile/`; the tree places it at `phon/compile/` per the `phon/<layer>/`
+   convention already adopted (see "Source layout and includes"). Files:
+   `token.*`, `source.*`, `diagnostic.hpp`, `scanner.*`.
+
+2. **Grammar follows design/design.md, not old Phonometrica.** The scanner targets
+   the *new* language, so its lexeme set diverges from Phonometrica's
+   `token.hpp`: added `var/const/local/global`, `is`, `cast`, `div/mod`,
+   `method/field`, `spawn`, `import`, `finally`, `open`; dropped `foreach`,
+   `let`, `downto`, `option`, `print` (now an ordinary function), `assert`,
+   `debug`, `pass`, `super`, `inherits`, `nan`, and the `%`/`~`/`|`/`@` operators
+   (bitwise ops are library functions per design §12). `->` is the lambda arrow.
+   `break`/`continue` are kept as keywords though design §12 does not list them
+   (every loop construct needs an exit; the reference AST has `LoopExitStatement`).
+
+3. **Two string families, single-line and triple-quoted.** `"…"` / `"""…"""`
+   process escapes and interpolate with `{expr}`; `'…'` / `'''…'''` are raw (no
+   escapes, no interpolation) for regexes/Windows paths. The single-line forms may
+   not span a physical line; the triple-quoted forms may (owner requested the
+   Phonometrica-style multi-line strings on 2026-07-05, so design §12's "two string
+   literal forms" is read as two *families*). A literal `{`/`}` in a double-quoted
+   string is written `\{` / `\}`. Unknown escape sequences are a **hard error**
+   (design principle "start strict"), unlike Phonometrica which passed them
+   through verbatim.
+
+   The `...` token (`Lexeme::Ellipsis`) lexes the variadic-parameter suffix
+   (`values as Object...`, design §6/§12) and the call-site splat (`f(xs...)`).
+   `..` remains unspent (design §15 defers a Range type) and is a scan error.
+
+4. **Interpolation lexes to `InterpStart`/`InterpMid`/`InterpEnd` markers**
+   (PEP-701 style) rather than desugaring into a synthetic `( "…" & (expr) & … )`
+   token stream in the scanner (Phonometrica's approach). The embedded
+   expressions are ordinary token runs delimited by the markers; the parser
+   (step 3) assembles a dedicated `StringInterpolation` AST node, which keeps
+   golden AST dumps clean and readable. Nesting (a string literal inside `{…}`) is
+   supported via a per-interpolation brace-depth stack in the scanner.
+
+5. **Newline/continuation handled in the scanner.** Insignificant newlines
+   (line continuations, blank lines, leading newlines, and any newline inside
+   brackets or an interpolation expression) are suppressed, so every `Newline`
+   token the parser sees is a real statement separator (architecture §9.1). A line
+   continues iff it ends with an operator, a comma, a colon/dot/arrow, or an
+   opening bracket (design §12). `;` is also a separator.
+
+6. **`Source` scans the whole UTF-8 buffer in one pass** (via `unicode::decode`),
+   tracking line starts for diagnostics, rather than Phonometrica's line-by-line
+   `SourceCode`/`Array<String>` model (Array is an M6 type). Errors throw
+   `SyntaxError` (compiler-layer exceptions are permitted, architecture §0)
+   carrying a formatted `[Syntax error] …` message plus (line, column, length).
+
+### Step 2 — AST
+
+1. **`unique_ptr` tree, not an arena.** Architecture §9.1 calls for a bump-allocated
+   AST freed wholesale. Step 2 uses `AutoAst = std::unique_ptr<Ast>` and
+   `AstList = std::vector<AutoAst>` (Phonometrica's model), which is simplest and
+   correct; the AST is transient (built → lowered → discarded). The arena is a
+   compiler-throughput optimization deferred to a later pass — it can be dropped in
+   behind the `AutoAst`/`AstList` aliases without touching node definitions.
+
+2. **RTTI-free node tagging.** Every node carries a `NodeKind` set at construction;
+   `is<T>()`/`as<T>()` compare `kind` against `T::KIND` instead of `dynamic_cast`
+   (Phonometrica's AST used `dynamic_cast`). Cheaper, and keeps the door open to
+   using the AST from lower layers. The visitor still drives traversal.
+
+3. **Grammar-faithful node set for the new language.** Distinct nodes for the
+   design-doc constructs that Phonometrica lacked or spelled differently:
+   `IsExpression`, `CastExpression`, `SliceExpression`, `SplatExpression`,
+   `RefExpression`, `NamedArgument`, `ConditionalExpression` (the `if…then…else…end`
+   *expression* of §13), `ForNumeric` vs `ForEach`, `TryStatement` with multiple
+   `CatchClause`s + `finally`, `SpawnStatement`, `ImportStatement`,
+   `FieldDeclaration`. `[…]` is a `ListLiteral` and `{…}` a `TableLiteral`/
+   `SetLiteral` (reversed from Phonometrica, where `[]`=array, `{}`=list); there is
+   no array-literal node (arrays come from library functions until M6).
+
+4. **No multiple declaration / multiple assignment.** The new design has no
+   `x, y = a, b` or multi-`var` form (the only multi-binding construct is
+   `for k, v in`), so `Declaration` and `Assignment` are single-target — unlike
+   Phonometrica's `Declaration`/`MultiAssignment`.
+
+5. **Lambdas and anonymous functions share `FunctionDefinition`** (`name ==
+   NO_SYMBOL`). The thin-arrow `x -> e` is parsed to an anonymous definition whose
+   body is `return e`, so there is one closure node rather than a separate lambda
+   node.

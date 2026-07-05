@@ -65,6 +65,10 @@ add_library(phon_engine STATIC
     phon/types/string.cpp
     phon/types/list.cpp
     phon/types/table.cpp
+    phon/compile/token.cpp
+    phon/compile/source.cpp
+    phon/compile/scanner.cpp
+    phon/compile/ast.cpp
     phon/runtime/bootstrap.cpp
 )
 target_include_directories(phon_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -99,6 +103,8 @@ add_executable(phon_unit_tests
     test/unit/test_table.cpp
     test/unit/test_set.cpp
     test/unit/test_grapheme_conformance.cpp
+    test/unit/test_scanner.cpp
+    test/unit/test_ast.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)

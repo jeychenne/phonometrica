@@ -49,7 +49,7 @@ engine/
   src/
     base/        # definitions.hpp, assert, bits, allocator, arenas
     core/        # Value, Cell, Handle, containers (Vector, FlatHashMap, SmallVector)
-    types/       # String, List, Map, Set, Array, File, Regex, Channel
+    types/       # String, List, Table, Set, Array, File, Regex, Channel
     object/      # Class, registry, subtype intervals, instances, fields
     dispatch/    # GenericFunction, method tables, inline caches
     memory/      # refcount ops, cycle collector, freeze/transfer
@@ -245,7 +245,7 @@ relocatable).
   where available and a portable scalar fallback; max load factor 7/8;
   power-of-two capacities. Keys: integers, `Symbol`, `String`, `Value`
   (hash via a per-class `hash` hook). This single implementation backs:
-  the script `Map` type, the atom table shards, module namespaces, dispatch
+  the script `Table` type, the atom table shards, module namespaces, dispatch
   memo tables, and the compiler's scopes.
 - **`FlatHashSet<K>`** — thin wrapper over the map.
 - **Function references** — no `std::function`. Native callbacks are
@@ -283,7 +283,7 @@ a `ref` — which is a pointer to a slot). Therefore:
   value semantics. Cell movement can only occur at rc == 1, where no other
   reference exists by definition.
 
-Map and Set instead keep a **stable cell plus one combined side block**
+Table and Set instead keep a **stable cell plus one combined side block**
 (control bytes + entries in a single auxiliary allocation): rehashing moves only
 the block, never the cell, so no slot rewriting is needed where it would be
 error-prone. Array keeps its view/buffer split (§5.3) — that separation is
@@ -292,7 +292,7 @@ load-bearing for slicing and freeze-and-share.
 ### 5.1 String
 
 Single-allocation layout: `Cell | byte_size | capacity | cp_length | flags |
-Breadcrumbs* | hash | char data[]` (data inline, UTF-8, always NUL-terminated for cheap
+Breadcrumbs* | char data[]` (data inline, UTF-8, always NUL-terminated for cheap
 C interop). Growth follows §5.0. `cp_length` (code-point count) computed on
 construction (SIMD-friendly scalar loop is fine initially).
 
@@ -305,16 +305,17 @@ shift-not-divide with ~4/32 bytes overhead; treat it as an M8 tuning knob. Inter
 referenced by `Symbol` (32-bit id): a global, sharded structure — 16 shards, each
 `mutex + FlatHashMap<string-view, Symbol>` for interning; id→string lookup is a
 lock-free read from an append-only chunked array. Grapheme iteration ports the
-existing implementation's logic as library functions. Hash is cached when first computed.
+existing implementation's logic as library functions.
 
-### 5.2 List, Map, Set
+### 5.2 List, Table, Set
 
 `List` = `Cell | size | capacity | Value data[]` — inline payload, growth per
 §5.0 (`LIST_APPEND` and `push(ref …)` write the possibly-moved cell back through
-the owning slot). `Map` = stable cell + one combined side block holding the
+the owning slot). `Table` (the script-level associative type; the C++ container
+remains `FlatHashMap`) = stable cell + one combined side block holding the
 Swiss-table control bytes and a `Vector<Entry>`-style entry region, giving
 insertion-order iteration (compact "indexed hash", like Python's dict). `Set`
-mirrors Map. All three are value classes (CoW).
+mirrors Table. All three are value classes (CoW).
 
 ### 5.3 Array (numeric)
 
@@ -328,7 +329,7 @@ struct ArrayBuffer {              // acyclic class
 };
 struct Array {                    // the script-visible value class
     Cell        header;
-    Handle<ArrayBuffer> buf;             // owned reference
+    ArrayBuffer* buf;             // owned reference
     intptr_t    offset;           // element offset into buffer
     int32_t     rank;             // 1..PHON_MAX_RANK (8)
     uint32_t    flags;            // CONTIGUOUS, ...
@@ -673,7 +674,7 @@ overload registration from C++ and script are the same mechanism.
 ### 11.4 Values from C++
 
 `phon::Variant` conversion helpers (`to<double>()`, `to<Handle<Sound>>()`,
-`make(…)`), plus typed views for String/List/Map/Array with the natural modern
+`make(…)`), plus typed views for String/List/Table/Array with the natural modern
 API (`ArrayView::dim(i)`, `data()`, iteration). Channels are exposed so the GUI
 can `receive` results from worker script threads (with a timeout variant for
 event-loop polling).
@@ -683,7 +684,7 @@ event-loop polling).
 Engine value types are usable from application C++ as ordinary stack objects,
 without any Isolate and on any thread:
 
-- The public types `phon::String`, `phon::Regex`, `phon::List`, `phon::Map`,
+- The public types `phon::String`, `phon::Regex`, `phon::List`, `phon::Table`,
   `phon::Array` are **stack-value RAII wrappers** over their cells (the same
   shape as the current engine's `String` over its `Data`). Construct on the
   stack, automatic lifetime, value semantics via CoW:
@@ -778,7 +779,7 @@ tests, and add its own. Do not start milestone N+1 with failing tests in N.
   *Accept:* container unit tests incl. fuzz-style randomized ops vs. a reference
   model; allocator stress test.
 - **M1 — Values and core types.** `Value` encoding, `Cell`, `Handle`,
-  retain/release, `String` (+ atom table), `List`, `Map`, `Set`, CoW machinery.
+  retain/release, `String` (+ atom table), `List`, `Table`, `Set`, CoW machinery.
   *Accept:* encoding round-trip property tests (every tag, integer boundary
   ±2^47, NaN payloads survive); CoW uniqueness semantics; string breadcrumbs
   correctness on multi-byte text (use IPA samples).
