@@ -622,7 +622,10 @@ Value run(Isolate &iso)
 				              String(symbol_name(sym)).view() + "'",
 				          cur_line());
 			void *callable = nullptr;
-			if (nargs == 1 || nargs == 2)
+			// The inline cache keys on argument classes read directly; a `ref` argument
+			// dispatches on its referent, so those calls take the full-resolve path.
+			bool has_ref = argv[0].is_ref() || (nargs == 2 && argv[1].is_ref());
+			if ((nargs == 1 || nargs == 2) && !has_ref)
 			{
 				ICEntry &ic = iso.ics[slot];
 				uint64_t c0 = class_of(argv[0]);
@@ -682,6 +685,26 @@ Value run(Isolate &iso)
 		case Opcode::CLOSE:
 			iso.close_upvalues(&base[a]);
 			break;
+
+		case Opcode::MAKEREF:
+			// A reference into the caller's frame (never boxed; second-class, §7).
+			reg_move(base, a, Value::make_ref(&base[op_b(ins)]));
+			break;
+		case Opcode::DEREF:
+		{
+			Value v = base[op_b(ins)];
+			reg_copy(base, a, v.is_ref() ? *v.as_ref() : v);
+			break;
+		}
+		case Opcode::SETREF:
+		{
+			Value *slot = base[a].as_ref();
+			Value nv = base[op_b(ins)];
+			retain_value(nv);
+			release_value(*slot);
+			*slot = nv;
+			break;
+		}
 
 		case Opcode::DEFMETHOD:
 		{

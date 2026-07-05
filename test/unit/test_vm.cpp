@@ -747,6 +747,54 @@ TEST_CASE("vm: iterating a non-collection is a type error")
 	CHECK(threw);
 }
 
+// --- ref parameters (design §7) -----------------------------------------------
+
+TEST_CASE("vm: a ref parameter mutates the caller's local")
+{
+	const char *src = "function inc(ref x) x = x + 1 end\n"
+	                  "function run() as Integer\n var n = 5\n inc(ref n)\n inc(ref n)\n return n\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 7);
+}
+
+TEST_CASE("vm: compound assignment through a ref parameter")
+{
+	const char *src = "function scale(ref x, k) x *= k end\n"
+	                  "function run() as Integer\n var v = 10\n scale(ref v, 3)\n return v\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 30);
+}
+
+TEST_CASE("vm: mutating a list element through a ref detaches an alias (CoW)")
+{
+	const char *src = "function put(ref a, i, val) a[i] = val end\n"
+	                  "function run() as Integer\n"
+	                  "  var xs = [1, 2, 3]\n var ys = xs\n put(ref xs, 1, 99)\n"
+	                  "  return xs[1] * 100 + ys[1]\nend\n"
+	                  "run()";
+	// xs[1] became 99; ys stayed 1 (detached).
+	CHECK(run_int(src) == 99 * 100 + 1);
+}
+
+TEST_CASE("vm: a ref is forwarded through a call chain")
+{
+	const char *src = "function bump(ref x) x = x + 100 end\n"
+	                  "function via(ref y) bump(ref y) end\n"
+	                  "function run() as Integer\n var z = 1\n via(ref z)\n return z\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 101);
+}
+
+TEST_CASE("vm: ref-ness participates in dispatch")
+{
+	// speak(ref x) and speak(x) are distinct methods; the call selects by ref-ness.
+	const char *src = "function tag(ref x) return 1 end\n"
+	                  "function tag(x) return 2 end\n"
+	                  "function run() as Integer\n var n = 0\n return tag(ref n) * 10 + tag(5)\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 12);
+}
+
 TEST_CASE("vm: compile errors for undeclared names")
 {
 	bool threw = false;

@@ -38,6 +38,7 @@ struct Local
 	int reg;
 	bool is_const;
 	bool captured;
+	bool is_ref = false; // a `ref` parameter: its register holds a reference (§7)
 };
 
 struct BlockInfo
@@ -156,6 +157,13 @@ private:
 		return r;
 	}
 
+	// Declare a function parameter; a `ref` parameter's register holds a reference (§7).
+	void declare_param(Parameter *p)
+	{
+		declare_local(p->name, false, p);
+		fs->locals.back().is_ref = p->by_ref;
+	}
+
 	int module_define(Symbol name)
 	{
 		auto it = m_ns.name_to_slot.find(name.id);
@@ -204,6 +212,7 @@ private:
 		NameKind kind = NameKind::None;
 		int index = 0;      // reg / upval idx / module slot
 		bool is_const = false;
+		bool is_ref = false; // a `ref` local: `index` holds a reference, not the value
 		Class *cls = nullptr;
 	};
 
@@ -249,6 +258,7 @@ private:
 			r.kind = NameKind::Local;
 			r.index = fs->locals[li].reg;
 			r.is_const = fs->locals[li].is_const;
+			r.is_ref = fs->locals[li].is_ref;
 			return r;
 		}
 		int u = resolve_upvalue(*fs, name);
@@ -303,6 +313,7 @@ private:
 	void compile_logical(BinaryExpression *b, int dest); // and/or
 	void compile_concat_parts(AstList &parts, int dest, uint32_t line);
 	void compile_call(CallExpression *c, int dest);
+	void emit_ref_arg(RefExpression *re, int r); // `ref lvalue` at a call site (§7)
 	void compile_conditional(ConditionalExpression *c, int dest);
 	int compile_function(FunctionDefinition *f);
 
@@ -433,7 +444,8 @@ int Lowerer::expr_any(Ast *node)
 	if (auto *v = node->as<Variable>())
 	{
 		NameRef nr = resolve(v->name);
-		if (nr.kind == NameKind::Local)
+		// A `ref` local must be dereferenced (via expr_to), so it can't be borrowed.
+		if (nr.kind == NameKind::Local && !nr.is_ref)
 			return nr.index; // borrow the local's register
 	}
 	int d = reg_alloc(node);
@@ -483,7 +495,9 @@ void Lowerer::expr_to(Ast *node, int dest)
 		switch (nr.kind)
 		{
 		case NameKind::Local:
-			if (nr.index != dest)
+			if (nr.is_ref)
+				emit_ABC(Opcode::DEREF, dest, nr.index, 0, ln(node)); // read through the ref
+			else if (nr.index != dest)
 				emit_ABC(Opcode::MOVE, dest, nr.index, 0, ln(node));
 			break;
 		case NameKind::Upvalue:
@@ -652,9 +666,10 @@ void Lowerer::expr_to(Ast *node, int dest)
 	}
 	case NodeKind::SliceExpression:
 		error(node, "[Index error] slices arrive in M6");
-	case NodeKind::SplatExpression:
 	case NodeKind::RefExpression:
-		error(node, "[Compile error] ref/splat arguments arrive in M5");
+		error(node, "[Compile error] 'ref' is only valid as a call argument (design §7)");
+	case NodeKind::SplatExpression:
+		error(node, "[Compile error] splat arguments arrive in M6");
 	default:
 		error(node, "[Compile error] unsupported expression");
 	}
@@ -721,6 +736,24 @@ void Lowerer::compile_conditional(ConditionalExpression *c, int dest)
 		patch_jump(j);
 }
 
+void Lowerer::emit_ref_arg(RefExpression *re, int r)
+{
+	// Pass a reference to a caller variable's storage (design §7). A `ref` local is
+	// forwarded as-is; a plain local is captured with MAKEREF.
+	auto *v = re->expr->as<Variable>();
+	if (!v)
+		error(re, "[Compile error] 'ref' requires a variable");
+	NameRef nr = resolve(v->name);
+	if (nr.kind == NameKind::Local)
+		emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(re));
+	else if (nr.kind == NameKind::None)
+		error(re, "[Name error] 'ref' of undeclared variable '" +
+		              std::string(symbol_name(v->name)) + "'");
+	else
+		error(re, "[Compile error] 'ref' is currently supported only for local variables "
+		          "(module/upvalue refs are a follow-up)");
+}
+
 void Lowerer::compile_call(CallExpression *c, int dest)
 {
 	// `ClassName(args)` is construction, not a call (design §6): a user class, or the
@@ -741,10 +774,10 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 	}
 
 	if (!c->options.empty())
-		error(c, "[Compile error] named call options arrive in M5");
+		error(c, "[Compile error] named call options arrive in M6");
 	for (auto &a : c->args)
-		if (a->is<SplatExpression>() || a->is<RefExpression>())
-			error(a.get(), "[Compile error] ref/splat arguments arrive in M5");
+		if (a->is<SplatExpression>())
+			error(a.get(), "[Compile error] splat arguments arrive in M6");
 
 	int save = fs->free_reg;
 	int base = reg_alloc(c);
@@ -756,7 +789,7 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 		switch (nr.kind)
 		{
 		case NameKind::Local:
-			emit_ABC(Opcode::MOVE, base, nr.index, 0, ln(c));
+			emit_ABC(nr.is_ref ? Opcode::DEREF : Opcode::MOVE, base, nr.index, 0, ln(c));
 			break;
 		case NameKind::Upvalue:
 			emit_ABC(Opcode::GETUPVAL, base, nr.index, 0, ln(c));
@@ -784,7 +817,10 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 	for (auto &a : c->args)
 	{
 		int r = reg_alloc(a.get());
-		expr_to(a.get(), r);
+		if (auto *re = a->as<RefExpression>())
+			emit_ref_arg(re, r);
+		else
+			expr_to(a.get(), r);
 	}
 
 	if (generic)
@@ -808,12 +844,10 @@ int Lowerer::compile_function(FunctionDefinition *f)
 	for (auto &p : f->params)
 	{
 		auto *param = p->as<Parameter>();
-		if (param->by_ref)
-			error(p.get(), "[Compile error] 'ref' parameters arrive in M5");
 		if (param->variadic)
-			error(p.get(), "[Compile error] variadic parameters arrive in M5");
+			error(p.get(), "[Compile error] variadic parameters arrive in M6");
 		if (param->default_value)
-			error(p.get(), "[Compile error] default/named parameters arrive in M5");
+			error(p.get(), "[Compile error] default/named parameters arrive in M6");
 	}
 
 	auto child = std::make_unique<Proto>();
@@ -826,7 +860,7 @@ int Lowerer::compile_function(FunctionDefinition *f)
 	cfs.finally_base = static_cast<int>(m_finally_stack.size());
 
 	for (auto &p : f->params)
-		declare_local(p->as<Parameter>()->name, false, p.get());
+		declare_param(p->as<Parameter>());
 
 	auto *body = f->body->as<StatementList>();
 	compile_block(body);
@@ -962,7 +996,17 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			if (nr.is_const)
 				error(target, "[Name error] cannot assign to const '" +
 				                  std::string(symbol_name(v->name)) + "'");
-			expr_to(value, nr.index);
+			if (nr.is_ref)
+			{
+				// Write through the reference so the caller's variable is updated (§7).
+				int save = fs->free_reg;
+				int t = reg_alloc(target);
+				expr_to(value, t);
+				emit_ABC(Opcode::SETREF, nr.index, t, 0, ln(target));
+				reg_free_to(save);
+			}
+			else
+				expr_to(value, nr.index);
 			break;
 		case NameKind::Upvalue:
 		{
@@ -1046,7 +1090,18 @@ int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
 	{
 		NameRef nr = resolve(ov->name);
 		if (nr.kind == NameKind::Local)
+		{
+			if (nr.is_ref)
+			{
+				// Deref to a temp; a detaching mutation writes the copy back through the ref.
+				int o = reg_alloc(obj);
+				emit_ABC(Opcode::DEREF, o, nr.index, 0, ln(obj));
+				wb = 3;
+				wbidx = nr.index;
+				return o;
+			}
 			return nr.index; // the local register IS the storage; mutate it in place
+		}
 		if (nr.kind == NameKind::Module)
 		{
 			int o = reg_alloc(obj);
@@ -1079,6 +1134,8 @@ void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
 		emit_ABx(Opcode::SETMODULE, o, static_cast<uint32_t>(wbidx), line);
 	else if (wb == 2)
 		emit_ABC(Opcode::SETUPVAL, o, wbidx, 0, line);
+	else if (wb == 3)
+		emit_ABC(Opcode::SETREF, wbidx, o, 0, line); // *ref = o (the mutated object)
 }
 
 void Lowerer::compile_assignment(Assignment *a)
@@ -1133,7 +1190,18 @@ void Lowerer::compile_assignment(Assignment *a)
 		case NameKind::Local:
 			if (nr.is_const)
 				error(a->target.get(), "[Name error] cannot assign to const");
-			emit_combine(nr.index, nr.index, a->value.get());
+			if (nr.is_ref)
+			{
+				int save = fs->free_reg;
+				int cur = reg_alloc(a);
+				emit_ABC(Opcode::DEREF, cur, nr.index, 0, ln(a));
+				int res = reg_alloc(a);
+				emit_combine(res, cur, a->value.get());
+				emit_ABC(Opcode::SETREF, nr.index, res, 0, ln(a));
+				reg_free_to(save);
+			}
+			else
+				emit_combine(nr.index, nr.index, a->value.get());
 			break;
 		case NameKind::Upvalue:
 		{
@@ -1485,11 +1553,23 @@ int Lowerer::add_method_def(FunctionDefinition *f, TypeRef self, bool have_self)
 {
 	MethodDef md;
 	md.name = f->name;
-	md.ref_mask = 0; // `ref`/`this`-writeback arrive with the ref/iteration stage of M5
+	md.ref_mask = 0;
+	// The implicit `this` (when present) is never `ref`; explicit `ref` parameters set
+	// their bit so dispatch requires a reference argument at that position (§6/§7).
+	int pos = 0;
 	if (have_self)
+	{
 		md.sig.push_back(self);
+		pos = 1;
+	}
 	for (auto &p : f->params)
-		md.sig.push_back(type_ref(p->as<Parameter>()->type.get()));
+	{
+		auto *param = p->as<Parameter>();
+		md.sig.push_back(type_ref(param->type.get()));
+		if (param->by_ref)
+			md.ref_mask |= (uint64_t(1) << pos);
+		++pos;
+	}
 	int idx = static_cast<int>(fs->proto.method_defs.size());
 	fs->proto.method_defs.push_back(std::move(md));
 	return idx;
@@ -1548,12 +1628,10 @@ int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaratio
 	for (auto &p : m->params)
 	{
 		auto *param = p->as<Parameter>();
-		if (param->by_ref)
-			error(p.get(), "[Compile error] 'ref' parameters arrive later in M5");
 		if (param->variadic)
-			error(p.get(), "[Compile error] variadic parameters arrive later in M5");
+			error(p.get(), "[Compile error] variadic parameters arrive in M6");
 		if (param->default_value)
-			error(p.get(), "[Compile error] default/named parameters arrive later in M5");
+			error(p.get(), "[Compile error] default/named parameters arrive in M6");
 	}
 
 	auto child = std::make_unique<Proto>();
@@ -1568,7 +1646,7 @@ int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaratio
 	(void) cls;
 	declare_local(this_symbol(), true, m); // reg 0 = this (const)
 	for (auto &p : m->params)
-		declare_local(p->as<Parameter>()->name, false, p.get());
+		declare_param(p->as<Parameter>());
 
 	// Field defaults are applied at construction (emit_full_defaults), not here, so
 	// an inherited `init` still sees a fully-defaulted instance.

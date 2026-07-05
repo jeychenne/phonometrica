@@ -680,3 +680,39 @@ so there is no iterator object and no per-step dispatch.
    `iterate`/`next` generic protocol (`method iterate()` delegating to a builtin
    iterator). Mutating the collection mid-iteration is unspecified (a Set/Table
    iterates a snapshot; a List walks live by index).
+
+## M5 — References (`ref` parameters, design §7)
+
+Second-class references: `ref` at both the parameter and the call site, implemented
+as a tagged pointer to a caller register slot (the REF value already in `value.hpp`).
+
+1. **Three opcodes.** `MAKEREF A B` (R[A] = reference to register B, at the call
+   site), `DEREF A B` (read through a reference; identity if R[B] is not a ref), and
+   `SETREF A B` (`*R[A] = R[B]`, write through). A `ref` parameter's register holds a
+   REF; the lowerer flags such locals (`Local::is_ref`) and routes every use: reads
+   emit `DEREF` (and `expr_any` no longer borrows a ref local's register), plain and
+   compound assignment emit `SETREF`, and `x[i] = v` / `x.field = v` deref to a temp,
+   mutate (with copy-on-write detach for a value type), then `SETREF` the possibly
+   detached object back through the ref (write-back mode `wb == 3`, alongside the
+   existing module/upvalue write-backs).
+
+2. **Dispatch keys on ref-ness.** A method's `ref_mask` is built from its parameters'
+   `by_ref` flags (the implicit `this` is never `ref`), so `f(ref x)` and `f(x)` are
+   distinct methods and a `ref` argument selects the `ref` overload. `CALLG` sends any
+   call carrying a `ref` argument down the full-resolve path (the inline cache reads
+   argument classes directly and would misread a REF).
+
+3. **Value-class mutation through `ref` works now.** Mutating an element or field of a
+   value-type variable passed by `ref` detaches an alias correctly (CoW), so a helper
+   can mutate a caller's `List`/instance. This covers much of the Stage-1 "value-class
+   method mutation" gap for the *explicit-`ref`* case; making a method's implicit
+   `this` a reference (so a mutating `method` needs no `ref class`) is still a
+   follow-up.
+
+4. **Scope: `ref` names a local variable.** `ref` of a module or upvalue variable is
+   rejected (a clear `[Compile error]`); it needs the load-temp + post-call write-back
+   dance and is deferred. Second-class discipline (no storing/returning/capturing a
+   ref) is by construction — `ref` is only accepted as a call argument — but is not
+   yet fully enforced against pathological cases (e.g. capturing a ref local in a
+   nested closure); documented as a follow-up. `for ref x in …` (by-reference
+   iteration) and the user `iterate`/`next` protocol remain in Stage 3b.

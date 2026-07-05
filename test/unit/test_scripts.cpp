@@ -24,6 +24,7 @@ const char *SCRIPTS[] = {
     "test_scientific_notation", "test_string_interpolation", "test_compound_assignment",
     "test_upvalues",            "test_functions",           "test_generics",
     "test_classes",             "test_errors",             "test_iteration",
+    "test_refs",
 };
 
 std::string read_file(const std::string &path, bool &ok)

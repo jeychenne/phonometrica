@@ -1,0 +1,76 @@
+# Second-class references: `ref` parameters (design §7). `ref` is required at both
+# the parameter and the call site, and only names a local variable's storage.
+
+# Mutating a scalar local through a ref.
+function inc(ref x)
+    x = x + 1
+end
+function scalar_demo() as Integer
+    var n = 10
+    inc(ref n)
+    inc(ref n)
+    inc(ref n)
+    return n
+end
+assert(scalar_demo() == 13, "scalar mutation via ref")
+
+# Compound assignment through a ref.
+function halve(ref x)
+    x /= 2.0
+end
+function compound_demo() as Float
+    var v = 9.0
+    halve(ref v)
+    return v
+end
+assert(compound_demo() == 4.5, "compound assignment via ref")
+
+# Mutating a value-type element in place, with copy-on-write detach of any alias.
+function zero_first(ref a)
+    a[1] = 0
+end
+function list_demo()
+    var xs = [7, 8, 9]
+    var alias = xs
+    zero_first(ref xs)
+    assert(xs[1] == 0, "list mutated through ref")
+    assert(alias[1] == 7, "alias detached (value semantics)")
+end
+list_demo()
+
+# Mutating a value-class field through a ref (CoW detach applies to the instance).
+class Counter
+    field n as Integer = 0
+end
+function tick(ref c)
+    c.n = c.n + 1
+end
+function field_demo()
+    var c = Counter()
+    var same = c
+    tick(ref c)
+    tick(ref c)
+    assert(c.n == 2, "field mutated through ref")
+    assert(same.n == 0, "value-class alias detached")
+end
+field_demo()
+
+# A ref is forwarded through nested calls, and ref-ness selects the overload.
+function bump(ref x)
+    x = x + 100
+end
+function forward(ref y)
+    bump(ref y)
+end
+function kind(ref x) return "ref" end
+function kind(x) return "value" end
+function dispatch_demo()
+    var z = 1
+    forward(ref z)
+    assert(z == 101, "ref forwarded through a call chain")
+    assert(kind(ref z) == "ref", "ref argument selects the ref overload")
+    assert(kind(z) == "value", "value argument selects the value overload")
+end
+dispatch_demo()
+
+print("ref tests passed")
