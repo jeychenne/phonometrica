@@ -3,6 +3,10 @@
 
 #include <phon/vm/isolate.hpp>
 
+#include <phon/dispatch/generic.hpp>
+
+#include <utility>
+
 namespace phonometrica {
 
 namespace {
@@ -34,7 +38,27 @@ Isolate::Isolate()
 		m_stack[i] = null;
 }
 
-Isolate::~Isolate() = default;
+Isolate::~Isolate() { retract_journal(); }
+
+void Isolate::record_method(GenericFunction *g, SmallVector<Class *, 4> sig, uint64_t ref_mask,
+                            Cell *closure)
+{
+	m_journal.push_back(MethodRegistration{g, std::move(sig), ref_mask, closure});
+}
+
+void Isolate::retract_journal() noexcept
+{
+	// Undo in reverse (a redefinition re-adds the same signature; unwinding LIFO
+	// removes the most recent binding first, mirroring how they were layered on).
+	for (intptr_t i = m_journal.size() - 1; i >= 0; --i)
+	{
+		MethodRegistration &r = m_journal[i];
+		remove_method(r.g, r.sig, r.ref_mask);
+		if (r.closure)
+			release(r.closure);
+	}
+	m_journal.clear();
+}
 
 UpvalueCell *Isolate::find_or_make_open_upvalue(Value *slot)
 {

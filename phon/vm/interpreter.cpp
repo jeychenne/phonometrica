@@ -16,6 +16,7 @@
 #include <phon/vm/opcode.hpp>
 
 #include <cmath>
+#include <utility>
 
 namespace phonometrica {
 
@@ -574,6 +575,30 @@ Value execute(Isolate &iso, ClosureCell *main)
 		case Opcode::CLOSE:
 			iso.close_upvalues(&base[a]);
 			break;
+
+		case Opcode::DEFMETHOD:
+		{
+			// Register R[A] (a closure) as a method on the generic named by the
+			// method-def, then journal it so the Isolate owns the closure and can
+			// retract the whole run's registrations on teardown (design §11).
+			const MethodDef &md = proto->method_defs[op_bx(ins)];
+			GenericFunction *g = get_or_create_generic(md.name);
+			SmallVector<Class *, 4> sig;
+			for (intptr_t i = 0; i < md.class_ids.size(); ++i)
+				sig.push_back(get_class(md.class_ids[i]));
+			Cell *clo = base[a].as_cell(); // the closure holds this register's +1
+			if (add_method(g, sig, md.ref_mask, clo) == AddMethod::Ambiguous)
+			{
+				release_value(base[a]);
+				base[a] = Value::make_null();
+				iso.raise(String("[Type error] ambiguous definition of '") +
+				              String(symbol_name(md.name)).view() + "'",
+				          cur_line());
+			}
+			iso.record_method(g, std::move(sig), md.ref_mask, clo); // takes the +1
+			base[a] = Value::make_null();                           // ownership moved
+			break;
+		}
 
 		case Opcode::NEWLIST:
 		{

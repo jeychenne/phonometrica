@@ -298,6 +298,58 @@ TEST_CASE("vm: separate Runtimes have independent namespaces")
 	CHECK(b.do_string("shared").as_int() == 2);
 }
 
+// --- named functions are generic methods (design §6) --------------------------
+
+TEST_CASE("vm: top-level functions overload by arity")
+{
+	CHECK(run_int("function f() return 0 end\nfunction f(x) return x end\nf() + f(7)") == 7);
+}
+
+TEST_CASE("vm: top-level functions dispatch on argument type")
+{
+	const char *src = "function kind(x as Integer) return 1 end\n"
+	                  "function kind(x as String) return 2 end\n"
+	                  "kind(3) + kind(\"a\") * 10";
+	CHECK(run_int(src) == 21);
+}
+
+TEST_CASE("vm: a type overload extends a builtin generic, then retracts")
+{
+	{
+		// `len` is a builtin generic; a more-specific Boolean method overloads it.
+		Runtime rt;
+		CHECK(rt.do_string("function len(x as Boolean) return 99 end\nlen(true)").as_int() == 99);
+	}
+	// The overload was journaled to that Runtime's Isolate and retracted on
+	// teardown, so a fresh run sees the builtin `len` unchanged.
+	CHECK(run_int("len([1, 2, 3])") == 3);
+}
+
+TEST_CASE("vm: `local function` stays a module-private binding")
+{
+	CHECK(run_int("local function twice(x) return x * 2 end\ntwice(21)") == 42);
+}
+
+TEST_CASE("vm: a run's generic methods do not leak into a later run")
+{
+	{
+		Runtime rt;
+		CHECK(rt.do_string("function only_here() return 1 end\nonly_here()").as_int() == 1);
+	}
+	// After the Runtime is gone its journal is retracted, emptying the generic, so
+	// the name resolves as undeclared again — a compile error, not a stale call.
+	bool threw = false;
+	try
+	{
+		run("only_here()");
+	}
+	catch (const SyntaxError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("vm: compile errors for undeclared names")
 {
 	bool threw = false;

@@ -15,6 +15,7 @@
 #ifndef PHON_VM_PROTO_HPP
 #define PHON_VM_PROTO_HPP
 
+#include <phon/core/small_vector.hpp>
 #include <phon/core/symbol.hpp>
 #include <phon/core/variant.hpp>
 #include <phon/core/vector.hpp>
@@ -33,6 +34,19 @@ struct UpvalDesc
 	uint8_t index = 0;
 };
 
+// A generic-method registration emitted by DEFMETHOD (design §6: a named top-level
+// function or a class `method` is a method on a generic). The signature is stored
+// as stable class ids (builtins are compile-time constants; user-class ids are
+// assigned when the class registers, before its methods, at module load). The
+// closure supplying the code is produced at runtime by the preceding CLOSURE; the
+// interpreter builds the Class* signature from these ids and calls add_method.
+struct MethodDef
+{
+	Symbol name;                        // the generic this method joins
+	SmallVector<uint32_t, 4> class_ids; // per-parameter declared class (stable id)
+	uint64_t ref_mask = 0;              // bit i set => parameter i is `ref`
+};
+
 struct Proto final
 {
 	Proto() = default;
@@ -44,6 +58,7 @@ struct Proto final
 	Vector<std::unique_ptr<Proto>> children;   // nested prototypes (owned)
 	Vector<uint32_t> lines;                    // source line per instruction (parallel to code)
 	Vector<UpvalDesc> upvals;                  // upvalue capture descriptors
+	Vector<MethodDef> method_defs;             // DEFMETHOD targets (generic registrations)
 
 	Symbol name = NO_SYMBOL; // function name (NO_SYMBOL for anonymous / module)
 	int num_params = 0;      // fixed positional parameter count

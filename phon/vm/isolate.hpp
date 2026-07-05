@@ -12,6 +12,7 @@
 #define PHON_VM_ISOLATE_HPP
 
 #include <phon/core/flat_hash_map.hpp>
+#include <phon/core/small_vector.hpp>
 #include <phon/core/value.hpp>
 #include <phon/core/variant.hpp>
 #include <phon/core/vector.hpp>
@@ -23,6 +24,9 @@
 #include <memory>
 
 namespace phonometrica {
+
+struct Class;
+struct GenericFunction;
 
 // One inline-cache slot for a CALLG site (architecture §10.4). Monomorphic in M4:
 // caches the last argument-class tuple and the method it resolved to, guarded by
@@ -45,6 +49,20 @@ struct RuntimeError
 {
 	String message;
 	int line;
+};
+
+// One journaled generic-method registration (design §11 registration journal).
+// The Isolate holds the +1 reference to the closure supplying the method's code;
+// retracting the journal removes the method and releases the closure, restoring
+// the process-global generics to their pre-run state. This is what keeps reloaded
+// modules — and independent unit-test runs — from polluting each other now that
+// named functions are generic methods rather than module bindings.
+struct MethodRegistration
+{
+	GenericFunction *g = nullptr;
+	SmallVector<Class *, 4> sig;
+	uint64_t ref_mask = 0;
+	Cell *closure = nullptr; // owned (+1)
 };
 
 // One activation record. `cl`/`base` drive execution of this frame; `ret_ip`/
@@ -88,6 +106,17 @@ public:
 	int ic_base(Proto *p);
 	Vector<ICEntry> ics;
 
+	// --- registration journal (design §11) ---
+
+	// Record a method this run added to a generic. Takes ownership of the closure's
+	// +1 reference (the caller must not release it).
+	void record_method(GenericFunction *g, SmallVector<Class *, 4> sig, uint64_t ref_mask,
+	                   Cell *closure);
+
+	// Undo every journaled registration: remove the methods and release the
+	// closures. Called by the destructor; exposed for the editor's reload surface.
+	void retract_journal() noexcept;
+
 	// --- errors ---
 
 	[[noreturn]] void raise(String message, int line);
@@ -97,6 +126,7 @@ private:
 	intptr_t m_stack_cap = 0;
 	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
 	FlatHashMap<uint64_t, int> m_ic_base;
+	Vector<MethodRegistration> m_journal;
 };
 
 // The Isolate executing on this thread (M4: process-global). Set while a run is in

@@ -66,6 +66,7 @@ using Instruction = uint32_t;
 	/* closures & upvalue scope */                                              \
 	_(CLOSURE)     /* A Bx   : R[A] = closure over proto Bx                  */ \
 	_(CLOSE)       /* A      : close open upvalues for slots >= A            */ \
+	_(DEFMETHOD)   /* A Bx   : register R[A] (closure) as method-def Bx      */ \
 	/* aggregate construction & indexing */                                     \
 	_(NEWLIST)     /* A B    : R[A] = [R[A+1..A+B]]                          */ \
 	_(NEWTABLE)    /* A B    : R[A] = { B pairs from R[A+1..A+2B] }          */ \

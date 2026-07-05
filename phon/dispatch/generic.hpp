@@ -66,6 +66,13 @@ GenericFunction *find_generic(Symbol name) noexcept;
 AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask,
                      void *code);
 
+// Remove the method with exactly (sig, ref_mask) from `g` (the retraction half of
+// add_method, used by the registration journal on module unload/reload, design
+// §11). Bumps the epoch and clears the memo so inline caches self-invalidate. A
+// no-op if no such method exists. The generic itself is never destroyed; an
+// emptied non-builtin generic is treated as undefined at name resolution.
+void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask);
+
 // Resolve the method for a call. Returns the selected Method (nullptr if none is
 // applicable). `args` may contain REF values for `ref` parameters.
 Method *resolve(GenericFunction *g, const Value *args, int argc);

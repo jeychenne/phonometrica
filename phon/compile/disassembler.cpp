@@ -32,6 +32,7 @@ Form form_of(Opcode op)
 	case Opcode::GETMODULE:
 	case Opcode::SETMODULE:
 	case Opcode::CLOSURE:
+	case Opcode::DEFMETHOD:
 		return Form::ABx;
 	case Opcode::LOADI:
 	case Opcode::JMP:
@@ -143,6 +144,8 @@ void disassemble_proto(const Proto &p, std::string &out, int index)
 			std::snprintf(ops, sizeof ops, "%d %u", op_a(ins), op_bx(ins));
 			if (op == Opcode::LOADK && op_bx(ins) < static_cast<uint32_t>(p.constants.size()))
 				annotation = render_const(p.constants[op_bx(ins)].value());
+			else if (op == Opcode::DEFMETHOD && op_bx(ins) < static_cast<uint32_t>(p.method_defs.size()))
+				annotation = std::string(symbol_name(p.method_defs[op_bx(ins)].name));
 			break;
 		case Form::AsBx:
 			std::snprintf(ops, sizeof ops, "%d %d", op_a(ins), op_sbx(ins));

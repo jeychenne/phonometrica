@@ -257,6 +257,46 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 	return AddMethod::Ok;
 }
 
+void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask)
+{
+	const int argc = static_cast<int>(sig.size());
+	for (intptr_t i = 0; i < g->methods.size(); ++i)
+	{
+		Method &e = g->methods[i];
+		if (e.arity() != argc || e.ref_mask != ref_mask)
+			continue;
+		bool same = true;
+		for (int j = 0; j < argc; ++j)
+			if (e.sig[j] != sig[j])
+			{
+				same = false;
+				break;
+			}
+		if (!same)
+			continue;
+
+		// Order among methods is irrelevant to resolution (most-specific is found by
+		// pairwise comparison), so a swap-and-pop erase is safe.
+		g->methods.erase_unordered(i);
+		++g->generic_epoch;
+		g->memo.clear();
+
+		// Recompute the arity bounds; a stale-low min_arity would merely cost a
+		// fruitless full_resolve, but keeping them tight is cheap and clean.
+		g->min_arity = 255;
+		g->max_arity = 0;
+		for (intptr_t k = 0; k < g->methods.size(); ++k)
+		{
+			int ar = g->methods[k].arity();
+			if (ar < g->min_arity)
+				g->min_arity = static_cast<uint8_t>(ar);
+			if (ar > g->max_arity)
+				g->max_arity = static_cast<uint8_t>(ar);
+		}
+		return;
+	}
+}
+
 Method *resolve(GenericFunction *g, const Value *args, int argc)
 {
 	PHON_ASSERT_MSG(argc <= 8, "dispatch arity > 8 not supported");

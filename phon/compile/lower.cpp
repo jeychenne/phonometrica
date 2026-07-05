@@ -16,6 +16,7 @@
 #include <phon/compile/lower.hpp>
 
 #include <phon/compile/diagnostic.hpp>
+#include <phon/core/flat_hash_set.hpp>
 #include <phon/core/vector.hpp>
 #include <phon/dispatch/generic.hpp>
 #include <phon/object/class.hpp>
@@ -262,7 +263,16 @@ private:
 			r.cls = c;
 			return r;
 		}
-		if (find_generic(name))
+		// A top-level `function` defined anywhere in this module (pass 1), or an
+		// already-registered generic with at least one method (builtins, or a
+		// function from an earlier REPL chunk). A generic emptied by journal
+		// retraction is treated as undefined, so a name resolves to `None` again.
+		if (m_module_generics.contains(name.id))
+		{
+			r.kind = NameKind::Generic;
+			return r;
+		}
+		if (GenericFunction *g = find_generic(name); g && g->methods.size() > 0)
 		{
 			r.kind = NameKind::Generic;
 			return r;
@@ -306,11 +316,22 @@ private:
 	void compile_return(ReturnStatement *s);
 	void compile_named_function(FunctionDefinition *f); // nested (local) named fn
 
+	// A top-level `function` (design §6) is a method on a generic, not a binding.
+	// Resolve one parameter's declared type to a stable class id (Object if
+	// unannotated), and register the whole signature as a Proto MethodDef.
+	uint32_t param_class_id(Parameter *p);
+	int add_method_def(FunctionDefinition *f); // -> index into the module Proto's method_defs
+
 	static Opcode arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare);
 
 	FuncState *fs = nullptr;
 	Vector<LoopCtx> m_loops;
 	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
+
+	// Names declared as generic methods by this module's top-level `function`s
+	// (non-`local`). Populated in pass 1 so a call to a function defined later —
+	// or one that only exists once DEFMETHOD runs — resolves to a generic call.
+	FlatHashSet<uint32_t> m_module_generics;
 };
 
 // --- operator mapping ---------------------------------------------------------
@@ -1123,6 +1144,32 @@ void Lowerer::compile_named_function(FunctionDefinition *f)
 	emit_ABx(Opcode::CLOSURE, L, static_cast<uint32_t>(idx), ln(f));
 }
 
+uint32_t Lowerer::param_class_id(Parameter *p)
+{
+	if (!p->type)
+		return CID_OBJECT; // unannotated parameter is Object (design §12)
+	if (auto *v = p->type->as<Variable>())
+	{
+		if (Class *c = class_by_name(v->name))
+			return c->id;
+		error(p->type.get(), "[Type error] unknown type '" +
+		                         std::string(symbol_name(v->name)) + "' in parameter annotation");
+	}
+	error(p->type.get(), "[Type error] unsupported parameter type annotation");
+}
+
+int Lowerer::add_method_def(FunctionDefinition *f)
+{
+	MethodDef md;
+	md.name = f->name;
+	md.ref_mask = 0; // `ref` parameters arrive with the iteration/ref stage of M5
+	for (auto &p : f->params)
+		md.class_ids.push_back(param_class_id(p->as<Parameter>()));
+	int idx = static_cast<int>(fs->proto.method_defs.size());
+	fs->proto.method_defs.push_back(std::move(md));
+	return idx;
+}
+
 // --- module entry -------------------------------------------------------------
 
 void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
@@ -1137,30 +1184,40 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 	FuncState mfs(main, nullptr, true);
 	fs = &mfs;
 
-	// Pass 1: reserve module slots for top-level bindings so functions may refer to
-	// declarations that appear later (design §11, two-pass top level).
+	// Pass 1: reserve module slots for top-level bindings, and collect the names of
+	// top-level `function`s so forward and mutually-recursive references resolve
+	// (design §11, two-pass top level). A non-`local` `function` becomes a method on
+	// a generic (design §6); a `local function` stays a module-private binding, since
+	// a private method on a shared generic is not a coherent concept (design §11).
 	for (auto &s : list->statements)
 	{
 		if (auto *d = s->as<Declaration>())
 			module_define(d->name);
-		else if (auto *f = s->as<FunctionDefinition>())
-			if (!f->is_anonymous())
+		else if (auto *f = s->as<FunctionDefinition>(); f && !f->is_anonymous())
+		{
+			if (f->modifier == DeclModifier::Local)
 				module_define(f->name);
+			else
+				m_module_generics.insert(f->name.id);
+		}
 	}
 
-	// Pass 2a: hoist top-level function closures into their slots.
+	// Pass 2a: register/hoist top-level functions. Generic methods (the default) are
+	// compiled to a closure and installed via DEFMETHOD; `local` functions keep the
+	// module-slot binding.
 	for (auto &s : list->statements)
 	{
-		if (auto *f = s->as<FunctionDefinition>())
-		{
-			if (f->is_anonymous())
-				continue;
-			int idx = compile_function(f);
-			int t = reg_alloc(f);
-			emit_ABx(Opcode::CLOSURE, t, static_cast<uint32_t>(idx), ln(f));
+		auto *f = s->as<FunctionDefinition>();
+		if (!f || f->is_anonymous())
+			continue;
+		int idx = compile_function(f);
+		int t = reg_alloc(f);
+		emit_ABx(Opcode::CLOSURE, t, static_cast<uint32_t>(idx), ln(f));
+		if (f->modifier == DeclModifier::Local)
 			emit_ABx(Opcode::SETMODULE, t, static_cast<uint32_t>(module_lookup(f->name)), ln(f));
-			reg_free_to(t);
-		}
+		else
+			emit_ABx(Opcode::DEFMETHOD, t, static_cast<uint32_t>(add_method_def(f)), ln(f));
+		reg_free_to(t);
 	}
 
 	// Pass 2b: execute statements top to bottom. The value of a trailing expression

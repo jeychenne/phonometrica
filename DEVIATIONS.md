@@ -407,3 +407,54 @@ default/variadic parameters, `spawn`, and `import`.
     redeclaring a top-level `var` rebinds its slot rather than erroring. The free
     `do_string(src)` runs one-shot in a throwaway session; `Isolate` globals
     (`global var`) and `add_global` (embedder injection) arrive in M5/M8.
+
+## M5 — Objects and errors
+
+### Step 1 — Named functions become generic methods (function→generic migration)
+
+This completes M4 deviation #1: a top-level `function` is now a method on a generic
+(design §6), not a module binding. It reverses that deviation's interim model and
+required a minimal registration journal (design §11), so the mechanism choices are
+recorded here.
+
+1. **A new `DEFMETHOD A Bx` opcode registers a closure as a generic method at load
+   time.** Registration is a *runtime* effect (the closure only exists once `CLOSURE`
+   runs), so pass 2a of the top level emits `CLOSURE` + `DEFMETHOD` instead of
+   `CLOSURE` + `SETMODULE`. `Bx` indexes a per-`Proto` `method_defs` table
+   (`{Symbol name, class-id signature, ref_mask}`); the interpreter rebuilds the
+   `Class*` signature from stable ids and calls `add_method`. Signatures come from
+   parameter annotations resolved to builtin classes (or `Object` when unannotated);
+   `ref_mask` is 0 until `ref` parameters land (iteration/ref step). An ambiguous
+   definition raises `[Type error] ambiguous definition of '…'` at load.
+
+2. **The registration journal lives on the `Isolate` and retracts on teardown.**
+   Because the generic registry is process-global, script methods would otherwise
+   leak across independent runs (the exact pollution M4 #1 avoided). `DEFMETHOD`
+   records each `{generic, sig, ref_mask, closure}` in an `Isolate` journal and takes
+   the closure's +1; `~Isolate` (and an exposed `retract_journal()` for the editor
+   reload surface) removes the methods and releases the closures, restoring the
+   global generics to their builtin-only baseline. Since every `do_string` runs on a
+   fresh `Runtime`/`Isolate` destroyed on return, unit-test isolation is preserved.
+   Full per-run journaling of classes and globals (and the editor "fresh module per
+   run" surface) is still deferred.
+
+3. **`local function` stays a module-private binding, not a generic method.** A
+   private method on a shared generic is not a coherent concept (design §11), so only
+   non-`local` top-level functions migrate; `local function` keeps the M4
+   `CLOSURE` + `SETMODULE` module-slot form. Nested named functions remain register
+   locals and anonymous functions remain register closures — unchanged.
+
+4. **An emptied non-builtin generic resolves as undefined.** Rather than erase
+   generics from the global registry on retraction (which would dangle journal
+   pointers), name resolution treats a generic with zero methods as not-a-name, so a
+   retracted function reads as undeclared again on a later compile. Builtin generics
+   always retain their natively-registered methods, so they are never emptied.
+
+5. **`remove_method` uses swap-and-pop.** Method order does not affect resolution
+   (most-specific is found by pairwise comparison), so retraction erases via
+   `erase_unordered` and recomputes the generic's `min/max_arity`.
+
+6. **A bare named-function reference is still not a first-class value.** `var g = f`
+   where `f` is a generic errors `"…cannot be used as a value yet (M8)"` — the
+   pre-existing policy for builtin generics, now covering script functions too.
+   Functions-as-values are an M8 concern.
