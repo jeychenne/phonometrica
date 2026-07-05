@@ -593,6 +593,29 @@ Rules:
   their accessors, and dispatch reaches the base's getter/setter for an inherited
   field.
 
+#### Private fields (`local field`)
+
+A field marked `local` is **private**: it is reachable only through `this`, never
+through an external `obj.field`. Privacy is protected-style — a subclass's methods
+may read and write an inherited private field through `this`, but code outside the
+class hierarchy cannot. A private field is a plain storage slot (accessors are not
+allowed on it — routing private storage through public accessors would be
+incoherent); writing or reading it from outside raises a `[Name error] … is
+private`.
+
+```
+ref class Account
+    local field balance as Float = 0.0     # private storage
+
+    method init(opening as Float)
+        this.balance = opening
+    end
+    method deposit(amount as Float)
+        this.balance = this.balance + amount
+    end
+end
+```
+
 ### Iteration protocol
 
 `for x in expr` desugars to:

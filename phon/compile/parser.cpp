@@ -367,7 +367,20 @@ AutoAst Parser::parse_class(DeclModifier modifier, bool is_ref, bool is_open)
 	skip_separators();
 	while (!m_tok.is(Lexeme::End) && !m_tok.is(Lexeme::Eot))
 	{
-		if (m_tok.is(Lexeme::Field))
+		if (m_tok.is(Lexeme::Local))
+		{
+			// `local field` — a private field, reachable only through `this`.
+			advance();
+			if (!m_tok.is(Lexeme::Field))
+				error("only 'field' may be marked 'local' in a class body");
+			auto f = parse_field();
+			auto *fd = f->as<FieldDeclaration>();
+			fd->is_private = true;
+			if (fd->has_accessors())
+				error_at(f->line, f->column, 1, "a 'local' field cannot have get/set accessors");
+			fields.push_back(std::move(f));
+		}
+		else if (m_tok.is(Lexeme::Field))
 			fields.push_back(parse_field());
 		else if (m_tok.is(Lexeme::Method))
 			methods.push_back(parse_method());

@@ -338,11 +338,17 @@ private:
 	int compile_accessor(FieldDeclaration *fd, bool is_setter); // -> module child-proto index
 	void compile_class(ClassDeclaration *c);
 	void construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest);
-	// True when `obj.field` names the field whose own accessor is being compiled,
-	// so it must reach the raw slot (design "Field accessors" recursion rule).
-	bool is_own_accessor_field(Ast *obj, Symbol field) const noexcept
+	// `this.field` reaches the raw slot (bypassing accessor routing and the runtime
+	// privacy check) when it names the field whose own accessor is being compiled
+	// (recursion safety) or a private field of the class hierarchy (which has no
+	// accessor and is accessible only through `this`). Any other object expression
+	// goes through the checked/routed GETFIELD/SETFIELD.
+	bool this_raw_field(Ast *obj, Symbol field) const noexcept
 	{
-		return m_accessor_field != NO_SYMBOL && field == m_accessor_field && obj->is<ThisExpression>();
+		if (!obj->is<ThisExpression>())
+			return false;
+		return (m_accessor_field != NO_SYMBOL && field == m_accessor_field) ||
+		       m_local_fields.contains(field.id);
 	}
 	// Load an object expression for in-place field mutation, mirroring
 	// load_index_object (wb/wbidx select the write-back).
@@ -368,6 +374,11 @@ private:
 	// so `this.<that field>` compiles to a raw slot access rather than re-entering
 	// the accessor (design "Field accessors" recursion-safety rule).
 	Symbol m_accessor_field = NO_SYMBOL;
+
+	// Private field names reachable via `this` while compiling the current class's
+	// methods/accessors: the class's own `local field`s plus, protected-style, those
+	// of its in-module base chain.
+	FlatHashSet<uint32_t> m_local_fields;
 };
 
 // --- operator mapping ---------------------------------------------------------
@@ -613,8 +624,8 @@ void Lowerer::expr_to(Ast *node, int dest)
 		int o = expr_any(fa->object.get());
 		int s = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(fa));
-		Opcode get = is_own_accessor_field(fa->object.get(), fa->name) ? Opcode::GETFIELDRAW
-		                                                               : Opcode::GETFIELD;
+		Opcode get = this_raw_field(fa->object.get(), fa->name) ? Opcode::GETFIELDRAW
+		                                                        : Opcode::GETFIELD;
 		emit_ABC(get, dest, o, s, ln(fa));
 		reg_free_to(save);
 		break;
@@ -967,8 +978,8 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		int s = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(target));
 		int val = expr_any(value);
-		Opcode set = is_own_accessor_field(fa->object.get(), fa->name) ? Opcode::SETFIELDRAW
-		                                                               : Opcode::SETFIELD;
+		Opcode set = this_raw_field(fa->object.get(), fa->name) ? Opcode::SETFIELDRAW
+		                                                        : Opcode::SETFIELD;
 		emit_ABC(set, o, s, val, ln(target));
 		emit_index_writeback(o, wb, wbidx, ln(target));
 		reg_free_to(save);
@@ -1339,7 +1350,9 @@ void Lowerer::emit_full_defaults(ClassDeclaration *cls, int thisreg)
 		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fd->name)), ln(fd));
 		int vreg = reg_alloc(fd);
 		expr_to(fd->default_value.get(), vreg);
-		emit_ABC(Opcode::SETFIELD, thisreg, sreg, vreg, ln(fd));
+		// Raw: field defaults set the slot directly, bypassing any setter and the
+		// privacy check (construction runs outside the class).
+		emit_ABC(Opcode::SETFIELDRAW, thisreg, sreg, vreg, ln(fd));
 		reg_free_to(save);
 	}
 }
@@ -1426,6 +1439,28 @@ void Lowerer::compile_class(ClassDeclaration *c)
 	int slot = module_lookup(c->name); // reserved in pass 1
 	TypeRef self{TypeRef::ModuleSlot, static_cast<uint32_t>(slot)};
 
+	// Private fields reachable via `this` in this class's methods/accessors: its own
+	// `local field`s and (protected-style) those of its in-module base chain.
+	m_local_fields = FlatHashSet<uint32_t>();
+	for (ClassDeclaration *k = c; k;)
+	{
+		for (auto &f : k->fields)
+		{
+			auto *fd = f->as<FieldDeclaration>();
+			if (fd->is_private)
+				m_local_fields.insert(fd->name.id);
+		}
+		ClassDeclaration *next = nullptr;
+		if (k->parent)
+			if (auto *pv = k->parent->as<Variable>())
+			{
+				auto it = m_module_classes.find(pv->name.id);
+				if (it != m_module_classes.end())
+					next = it->second;
+			}
+		k = next;
+	}
+
 	// Build and record the ClassDef consumed by DEFCLASS.
 	ClassDef cd;
 	cd.name = c->name;
@@ -1435,7 +1470,7 @@ void Lowerer::compile_class(ClassDeclaration *c)
 	for (auto &f : c->fields)
 	{
 		auto *fd = f->as<FieldDeclaration>();
-		FieldDef def{fd->name, type_ref(fd->type.get()), -1, -1};
+		FieldDef def{fd->name, type_ref(fd->type.get()), -1, -1, fd->is_private};
 		if (fd->getter)
 			def.getter_proto = compile_accessor(fd, /*is_setter*/ false);
 		if (fd->setter)

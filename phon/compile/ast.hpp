@@ -470,6 +470,7 @@ struct FieldDeclaration final : Ast
 	AutoAst setter;            // `set(v) ... end` body, or null
 	Symbol setter_param = NO_SYMBOL;
 	AutoAst setter_param_type; // the setter parameter's declared type, or null
+	bool is_private = false;   // `local field` — reachable only through `this`
 	bool has_accessors() const noexcept { return getter || setter; }
 };
 

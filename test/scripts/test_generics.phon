@@ -1,0 +1,40 @@
+# Named functions are methods on generics (design §6): overloading by arity and
+# by argument type, resolved by multiple dispatch. (M5, function→generic migration.)
+
+# Overload by arity on one generic.
+function greet() return "hi" end
+function greet(name as String) return "hi " & name end
+assert(greet() == "hi", "arity-0 greet")
+assert(greet("ada") == "hi ada", "arity-1 greet")
+
+# Overload by argument type; dispatch picks the most specific applicable method.
+function label(x as Integer) return "int" end
+function label(x as Float) return "float" end
+function label(x as String) return "str" end
+assert(label(3) == "int", "label Integer")
+assert(label(3.5) == "float", "label Float")
+assert(label("z") == "str", "label String")
+
+# An unannotated parameter is Object and matches anything not covered by a more
+# specific overload.
+function describe(x) return "object" end
+function describe(x as Integer) return "integer" end
+assert(describe(7) == "integer", "describe picks Integer over Object")
+assert(describe(true) == "object", "describe falls back to Object")
+
+# Forward and mutual references still resolve (two-pass top level).
+function is_even(n)
+    if n == 0 then return true end
+    return is_odd(n - 1)
+end
+function is_odd(n)
+    if n == 0 then return false end
+    return is_even(n - 1)
+end
+assert(is_even(10), "mutual recursion via generics")
+
+# `local function` is a module-private binding, callable like before.
+local function boost(x) return x + 100 end
+assert(boost(1) == 101, "local function")
+
+print("generics tests passed")

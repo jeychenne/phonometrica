@@ -41,6 +41,7 @@ struct FieldInfo
 	Class *type = nullptr;   // declared type (null => Object/untyped; advisory)
 	Cell *getter = nullptr;  // `get` accessor closure, or null
 	Cell *setter = nullptr;  // `set` accessor closure, or null
+	bool is_private = false; // `local field`: reachable only through `this`
 };
 
 // Per-class hooks. All may be null.

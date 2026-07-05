@@ -1,0 +1,175 @@
+# User-defined classes: fields, defaults, constructors, methods, value semantics,
+# `is`, `cast`, and single inheritance. (M5, checkpoint 1b.)
+
+class Point
+    field x as Float = 0.0
+    field y as Float = 0.0
+
+    method init(x as Float, y as Float)
+        this.x = x
+        this.y = y
+    end
+
+    method sum() as Float
+        return this.x + this.y
+    end
+end
+
+# Construction runs init; fields are set.
+var p = Point(3.0, 4.0)
+assert(p.x == 3, "p.x")
+assert(p.y == 4, "p.y")
+
+# A method is an ordinary generic call dispatched on the instance.
+assert(sum(p) == 7, "sum(p) via method")
+
+# `is` against the class object bound in the module.
+assert(p is Point, "p is Point")
+
+# Default constructor + field defaults (no init needed).
+class Box
+    field label = "empty"
+    field n as Integer = 0
+end
+var b = Box()
+assert(b.label == "empty", "default label")
+assert(b.n == 0, "default n")
+assert(not (b is Point), "b is not a Point")
+
+# cast is a checked identity downcast for now.
+var p2 = cast p as Point
+assert(p2 is Point, "cast p as Point")
+
+# Field assignment with copy-on-write value semantics: aliasing then mutating
+# detaches, leaving the alias untouched.
+var q = p
+p.x = 99.0
+assert(p.x == 99, "p detached and mutated")
+assert(q.x == 3, "q unchanged by p's mutation")
+
+# Single inheritance: a subclass inherits base fields (slots) and constructs.
+class Point3 is Point
+    field z as Float = 7.0
+end
+var r = Point3()
+r.x = 1.0
+r.z = 5.0
+assert(r.x == 1, "inherited field x")
+assert(r.z == 5, "own field z")
+assert(r is Point, "subclass is-a base")
+assert(r is Point3, "subclass is-a self")
+
+# Inherited field defaults chain base -> derived at construction.
+class Circle
+    field radius as Float = 1.5
+end
+class Sphere is Circle
+    field slices as Integer = 12
+end
+var sph = Sphere()
+assert(sph.radius == 1.5, "inherited default applies")
+assert(sph.slices == 12, "own default applies")
+
+# Constructor inheritance: a subclass with no init uses an applicable base init,
+# and the subclass's own fields still get their defaults.
+class Animal
+    field legs as Integer = 4
+    method init(legs as Integer)
+        this.legs = legs
+    end
+end
+class Bird is Animal
+    field can_fly as Boolean = true
+end
+var duck = Bird(2)
+assert(duck.legs == 2, "base init runs for subclass")
+assert(duck.can_fly, "subclass own default still applied")
+
+# A user `to_string` is dispatched by `&`, interpolation, and print.
+class Frac
+    field num as Integer = 0
+    field den as Integer = 1
+    method init(n as Integer, d as Integer)
+        this.num = n
+        this.den = d
+    end
+    method to_string() as String
+        return this.num & "/" & this.den
+    end
+end
+var f = Frac(3, 4)
+assert(to_string(f) == "3/4", "explicit to_string")
+assert(("val: " & f) == "val: 3/4", "& routes through to_string")
+assert("[{f}]" == "[3/4]", "interpolation routes through to_string")
+
+# Field accessors: read-only computed, read/write computed, validated storage with
+# the recursion-safe raw-slot rule, all inherited by subclasses.
+class Circle
+    field radius as Float = 1.0
+
+    field area as Float
+        get
+            return this.radius * this.radius * 3.14159
+        end
+    end
+
+    field diameter as Float
+        get
+            return this.radius * 2
+        end
+        set(v as Float)
+            this.radius = v / 2
+        end
+    end
+
+    field ticks as Integer = 0
+        set(v as Integer)
+            assert(v >= 0, "ticks must be non-negative")
+            this.ticks = v          # raw slot inside its own setter: no recursion
+        end
+    end
+end
+var circ = Circle()
+circ.radius = 5.0
+assert(circ.area > 78.5 and circ.area < 78.6, "getter computes area")
+assert(circ.diameter == 10, "getter computes diameter")
+circ.diameter = 20.0
+assert(circ.radius == 10, "setter round-trips through radius")
+circ.ticks = 7
+assert(circ.ticks == 7, "validated setter stores via raw slot")
+
+class Ball is Circle
+end
+var ball = Ball()
+ball.radius = 3.0
+assert(ball.area > 28.2 and ball.area < 28.3, "subclass inherits the getter")
+
+# Private (`local`) fields: reachable only through `this`. Account is a `ref class`
+# so `deposit` (a mutating method) can update `this` in place — value-class method
+# mutation awaits the ref stage.
+ref class Account
+    local field balance as Float = 0.0
+    method init(opening as Float)
+        this.balance = opening
+    end
+    method deposit(amount as Float)
+        this.balance = this.balance + amount
+    end
+    method statement() as String
+        return "balance: " & this.balance
+    end
+end
+var acc = Account(100.0)
+deposit(acc, 50.0)
+assert(statement(acc) == "balance: 150", "private field mutated through this")
+
+# Protected-style: a subclass reaches its base's private field through `this`.
+ref class Savings is Account
+    method non_negative() as Boolean
+        return this.balance >= 0.0
+    end
+end
+var sav = Savings(10.0)
+assert(non_negative(sav), "subclass reaches base private (protected)")
+
+print("class tests passed")

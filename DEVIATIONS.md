@@ -567,3 +567,26 @@ blocks that intercept reads and writes.
    called from `do_string`'s catch): a minimal stand-in for arch §10.5 handler-stack
    unwinding, so an aborted run (e.g. a read-only write) leaks no cells. Full
    `try`/`catch`/`finally` unwinding arrives with M5 errors (Stage 2).
+
+### Step 4 — Private fields (`local field`)
+
+A `local field` (owner request) is private: reachable only through `this`, and
+**protected-style** — a subclass's methods reach an inherited private field through
+`this`, but no external `obj.field` can (design "Private fields").
+
+1. **Enforcement is a runtime check bypassed by the raw opcodes.** `FieldInfo` gains
+   `is_private`; `GETFIELD`/`SETFIELD` raise `[Name error] … is private` on a private
+   field. `this.<private field>` compiles to `GETFIELDRAW`/`SETFIELDRAW` (which skip
+   both the accessor and the privacy check), so in-class access just works — reusing
+   the raw path already built for the accessor recursion rule. The lowerer chooses
+   the raw path when the object is literally `this` and the field name is in the
+   class's private set (its own `local field`s plus, protected-style, those of its
+   in-module base chain, gathered into `m_local_fields` per class).
+
+2. **Field defaults now use `SETFIELDRAW`.** Construction runs outside the class, so
+   a private field's default would otherwise trip the privacy check; the raw store
+   also correctly bypasses any setter during default initialization.
+
+3. **A `local field` may not declare accessors** (parse error) — private storage
+   behind public accessors is incoherent (matches the design). `local` applies only
+   to `field` in a class body (not `method`).

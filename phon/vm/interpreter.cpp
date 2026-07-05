@@ -644,6 +644,7 @@ Value run(Isolate &iso)
 				FieldInfo fi;
 				fi.name = fdef.name;
 				fi.type = resolve_type_ref(fdef.type, iso);
+				fi.is_private = fdef.is_private;
 				// Accessor closures capture nothing (top-level protos), so make_closure
 				// is complete; the Isolate owns them for its lifetime.
 				if (fdef.getter_proto >= 0)
@@ -692,6 +693,10 @@ Value run(Isolate &iso)
 				              "' has no field '" + String(symbol_name(fname)).view() + "'",
 				          cur_line());
 			const FieldInfo *fi = field_at(c, slot);
+			if (op == Opcode::GETFIELD && fi->is_private)
+				iso.raise(String("[Name error] field '") + String(symbol_name(fname)).view() +
+				              "' of '" + String(c->name).view() + "' is private",
+				          cur_line());
 			if (op == Opcode::GETFIELD && fi->getter)
 			{
 				// Route through the getter: get(obj) -> value.
@@ -719,6 +724,10 @@ Value run(Isolate &iso)
 				              "' has no field '" + String(symbol_name(fname)).view() + "'",
 				          cur_line());
 			const FieldInfo *fi = field_at(c, slot);
+			if (op == Opcode::SETFIELD && fi->is_private)
+				iso.raise(String("[Name error] field '") + String(symbol_name(fname)).view() +
+				              "' of '" + String(c->name).view() + "' is private",
+				          cur_line());
 			if (op == Opcode::SETFIELD && fi->setter)
 			{
 				// Route through the setter, which returns the (mutated, possibly

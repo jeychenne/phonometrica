@@ -387,7 +387,10 @@ public:
 
 	void visit_field_declaration(FieldDeclaration *n) override
 	{
-		std::string h = "Field " + sym(n->name);
+		std::string h = "Field ";
+		if (n->is_private)
+			h += "local ";
+		h += sym(n->name);
 		if (n->type)
 			h += " as " + render_type(n->type.get());
 		emit(h);

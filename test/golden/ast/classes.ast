@@ -89,6 +89,8 @@ Module
   Class Cursor local
     Field pos as Integer
       Int 0
+    Field local buffer as String
+      Str ""
   Class Handle local open ref is Resource
     Field id as Integer
       Int 0

@@ -69,6 +69,7 @@ struct FieldDef
 	TypeRef type;
 	int32_t getter_proto = -1;
 	int32_t setter_proto = -1;
+	bool is_private = false; // `local field`: reachable only through `this`
 };
 
 // A user-class registration emitted by DEFCLASS. The interpreter calls

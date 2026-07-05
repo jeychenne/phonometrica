@@ -490,6 +490,57 @@ TEST_CASE("vm: a subclass inherits its base's accessors")
 	CHECK(run_int(src) == 8);
 }
 
+// --- private (local) fields ---------------------------------------------------
+
+TEST_CASE("vm: a private field is reachable through this")
+{
+	const char *src = "class A\n local field n as Integer = 0\n"
+	                  " method init(x as Integer)\n this.n = x\n end\n"
+	                  " method get() as Integer\n return this.n\n end\nend\n"
+	                  "get(A(9))";
+	CHECK(run_int(src) == 9);
+}
+
+TEST_CASE("vm: external access to a private field is an error")
+{
+	auto denied = [](const char *src) {
+		bool threw = false;
+		try
+		{
+			run(src);
+		}
+		catch (const RuntimeError &)
+		{
+			threw = true;
+		}
+		return threw;
+	};
+	CHECK(denied("class A\n local field s as Integer = 1\nend\n A().s"));
+	CHECK(denied("class A\n local field s as Integer = 1\nend\n var a = A()\n a.s = 2"));
+}
+
+TEST_CASE("vm: a subclass reaches a base private field through this (protected)")
+{
+	const char *src = "class Base\n local field n as Integer = 5\nend\n"
+	                  "class Sub is Base\n method get() as Integer\n return this.n\n end\nend\n"
+	                  "get(Sub())";
+	CHECK(run_int(src) == 5);
+}
+
+TEST_CASE("vm: a private field with accessors is a syntax error")
+{
+	bool threw = false;
+	try
+	{
+		run("class A\n local field x as Integer\n get\n return 1\n end\n end\nend");
+	}
+	catch (const SyntaxError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("vm: user classes do not leak across runs")
 {
 	{

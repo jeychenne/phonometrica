@@ -54,6 +54,7 @@ end
 
 local class Cursor
     field pos as Integer = 0
+    local field buffer as String = ""   # private field: reachable only through `this`
 end
 
 # The full modifier stack, in canonical order: local open ref class.
