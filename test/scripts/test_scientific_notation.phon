@@ -1,0 +1,19 @@
+# Scientific-notation literals and Integer/Float distinction (M4).
+
+assert(1e3 == 1000.0, "1e3")
+assert(2.5e-1 == 0.25, "2.5e-1")
+assert(1.5e2 == 150.0, "1.5e2")
+assert(1_000 == 1000, "underscore separator")
+assert(1e0 == 1.0, "1e0")
+
+# 1 is an Integer, 1.0 a Float (design §12).
+assert(1 is Integer, "1 is Integer")
+assert(1.0 is Float, "1.0 is Float")
+assert(1e3 is Float, "1e3 is Float")
+
+# '/' always yields a Float, even on integers.
+var q = 6 / 2
+assert(q is Float, "'/' yields Float")
+assert(q == 3.0, "6 / 2 == 3.0")
+
+print("scientific-notation tests passed")

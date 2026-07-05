@@ -1,0 +1,16 @@
+proto #0 <anon>  params=0 regs=5 upvals=0 consts=0
+0000  LOADI      0 3
+0001  SETMODULE  0 0
+0002  LOADI      0 4
+0003  SETMODULE  0 1
+0004  GETMODULE  2 0
+0005  GETMODULE  3 0
+0006  MUL        1 2 3
+0007  GETMODULE  3 1
+0008  GETMODULE  4 1
+0009  MUL        2 3 4
+0010  ADD        0 1 2
+0011  SETMODULE  0 2
+0012  GETMODULE  0 2
+0013  HALT       0 1 0
+

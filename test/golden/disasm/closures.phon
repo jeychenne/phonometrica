@@ -1,0 +1,9 @@
+function make_adder(n)
+    function add(x)
+        return x + n
+    end
+    return add
+end
+
+var add5 = make_adder(5)
+add5(10)

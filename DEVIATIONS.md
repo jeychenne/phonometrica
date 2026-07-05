@@ -291,3 +291,101 @@ milestone (M8).
    §6/§12). `name as T...` in a definition packs the remaining positional
    arguments; `f(xs...)` at a call site splats a List into positional arguments,
    parsed to a `SplatExpression`. No deviation.
+
+## M4 — Core VM
+
+### Scope
+
+M4 delivers the register bytecode pipeline (opcodes, `Proto`/chunk, disassembler,
+lowering, interpreter) for: literals, arithmetic/comparison/logic, `&`/concat and
+interpolation, module/local variables, assignment and compound assignment, `if`/
+`elsif`/`else`, the `if…then…else` expression, `while`, `repeat`, numeric `for`
+(with `step`, `break`, `continue`), functions, recursion, closures/upvalues,
+anonymous functions/lambdas, direct and generic (builtin) calls with per-call-site
+inline caches, list/table/set literals, integer/key/grapheme indexing, `is`, and a
+small builtin library (`print`, `len`, `assert`). Deferred **within** M4 to the
+milestones that own them, each rejected at compile time with a `[…]` message:
+classes/fields/`this`/constructors, `cast`, `try`/`throw`/`finally`, `for … in`
+(iteration protocol), `ref`/splat arguments, named call options, script-defined
+default/variadic parameters, `spawn`, and `import`.
+
+1. **Script functions are module/local bindings, not open generics (yet).** Design
+   §6 makes every named function a method on a generic. In M4 a top-level
+   `function f` is a **module binding** holding a Closure (`GET_MODULE` + `CALL`);
+   a nested named function is a **register local**. This gives calls, recursion,
+   mutual recursion (via two-pass hoisting), and closures without the registration
+   journal (§11) or class-based dispatch, and avoids cross-run pollution of the
+   process-global generic tables in the unit tests. Registering *script* functions
+   as generic methods (so user code can overload builtins and dispatch on
+   annotated types) lands in M5 with classes and the journal. Consequently `CALL_G`
+   is exercised only by the **builtin** generic library (`print`, `len`, `assert`)
+   and is where inline caches live.
+
+2. **Operator/`&`/comparison/index slow paths are handled in C++, not by
+   dispatching to operator generics.** The specialized opcodes (`ADD`, `LT`,
+   `CONCAT`, `GET_INDEX`, …) inline the builtin numeric/string/list/table cases and
+   raise a `[Type error]` otherwise. Operator overloading via `function +(a as
+   Fraction, …)` (design §12) needs user classes and is an M5 concern; until then
+   no operator falls back to `CALL_G`.
+
+3. **`to_string` is a C++ function, not yet the generic.** `&`, `print`, and
+   interpolation stringify through `vm_to_string` (builtin coverage: numbers,
+   bool, null, symbol, String, List, Table, Set, functions, class objects). The
+   `to_string` generic with user `method to_string()` overloads arrives in M5.
+
+4. **Switch-dispatch interpreter loop, not computed-goto.** Architecture §10.3
+   specifies computed-goto threading (switch fallback for MSVC). M4 uses a portable
+   `switch` for correctness-first; each opcode body is still a self-contained unit,
+   so the computed-goto conversion (and the copy-and-patch JIT door it keeps open)
+   is a mechanical M8 performance change.
+
+5. **Manual register refcounting is naïve (no elision).** Every register write
+   releases the previous occupant and retains the new value; call frames release
+   their registers on return (nulling as they go, so the overlapping caller/callee
+   register windows never double-release). Design §3.1's refcount elision on
+   borrowed locals is an M8 optimization. Verified leak-clean under ASan/UBSan.
+
+6. **Fixed 64K-slot register stack, no growth.** Architecture §10.2 calls for a
+   geometrically grown stack with base fixup. M4 pre-allocates 64K `Value`s and
+   raises `[Runtime error] stack overflow` past it; growth + base fixup is deferred
+   (rare in practice; fib/loop benchmarks fit easily).
+
+7. **Inline caches are isolate-local, keyed by Proto pointer.** Per architecture
+   §10.4 chunks stay immutable and shareable; the IC table lives in the `Isolate`
+   (`ics` vector + a Proto→ic-base map assigned on first execution). Monomorphic in
+   M4 (one cached arg-class tuple + resolved Callable, guarded by type/generic
+   epochs); polymorphic (2–4 way) ICs are an M8 tuning knob.
+
+8. **Line table is one entry per instruction, not run-length encoded.**
+   Architecture §9.3 specifies an RLE debug line table; M4 stores a parallel
+   `Vector<uint32_t>` of source lines (simplest; used for error positions). RLE
+   compaction is deferred with the M5 backtrace work.
+
+9. **Proto tree owned by `unique_ptr`, borrowed by closures.** A `Proto` owns its
+   nested prototypes as `Vector<unique_ptr<Proto>> children`, and `CompiledModule`
+   owns the module Proto as a `unique_ptr` (singular ownership of non-Cell objects
+   uses `unique_ptr` per architecture §0). A `ClosureCell` holds a non-owning
+   `Proto*` borrow; for M4 (a module runs to completion under one `do_string`) the
+   tree outlives every closure. Refcounted or interned Protos (needed once closures
+   can be stored across module reloads) are a later concern. The Isolate register
+   stack is a `unique_ptr<Value[]>` and `do_string` owns the module closure via a
+   `Handle<ClosureCell>` (RAII) — no owned pointer is held raw.
+
+10. **Numeric `for` loop variable is one shared register across iterations.** A
+    closure created inside the loop that captures the loop variable sees its final
+    value (Lua ≤5.3 / JS `var` semantics), because M4 does not emit a per-iteration
+    `CLOSE`. Per-iteration fresh bindings can be added compatibly if wanted.
+
+11. **`div`/`mod` require Integer operands; `^` and `/` yield Float.** `div`/`mod`
+    raise `[Type error]` on non-integers in M4 (float floor-div/`fmod` can be added
+    later). `^` always produces a Float (`2 ^ 10 == 1024.0`); `/` always produces a
+    Float per design §4. Integer `+ - *` overflow raises `[Math error] integer
+    overflow` (design §4) via `__builtin_*_overflow`.
+
+12. **Files placed under `phon/vm/` and `phon/compile/`.** New: `phon/vm/`
+    (`opcode`, `proto`, `function`, `isolate`, `interpreter`) and
+    `phon/compile/{lower,disassembler}`, plus the `phon/runtime/vm.*` façade
+    (`do_string`, `vm_boot`, builtins) standing in for the full `Runtime` (M8). The
+    per-thread heap/arena allocation path (architecture §8.1) is still the M1
+    FOREIGN `sys_alloc` path; the Isolate-arena switch is orthogonal and unchanged
+    by M4.

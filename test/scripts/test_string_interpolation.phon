@@ -1,0 +1,23 @@
+# String interpolation and '&' concatenation with implicit stringification (M4).
+
+var name = "world"
+assert("hello {name}" == "hello world", "simple interpolation")
+
+var n = 3
+assert("n squared is {n * n}" == "n squared is 9", "expression interpolation")
+
+# '&' stringifies its operands and binds below arithmetic.
+assert("total: " & 1 + 2 == "total: 3", "& below arithmetic")
+assert("a" & "b" & "c" == "abc", "& chain")
+assert("count=" & 42 == "count=42", "& stringifies Integer")
+assert("pi~=" & 3.5 == "pi~=3.5", "& stringifies Float")
+
+# Interpolation of several values and nested expressions.
+var xs = [1, 2, 3]
+assert("list has {len(xs)} items" == "list has 3 items", "interpolate a call")
+
+var a = 5
+var b = 7
+assert("{a} + {b} = {a + b}" == "5 + 7 = 12", "multiple holes")
+
+print("string-interpolation tests passed")

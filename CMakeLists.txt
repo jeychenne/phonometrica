@@ -71,7 +71,14 @@ add_library(phon_engine STATIC
     phon/compile/ast.cpp
     phon/compile/parser.cpp
     phon/compile/ast_printer.cpp
+    phon/compile/disassembler.cpp
+    phon/compile/lower.cpp
+    phon/vm/opcode.cpp
+    phon/vm/function.cpp
+    phon/vm/isolate.cpp
+    phon/vm/interpreter.cpp
     phon/runtime/bootstrap.cpp
+    phon/runtime/vm.cpp
 )
 target_include_directories(phon_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(phon_engine PUBLIC phon_flags)
@@ -109,6 +116,9 @@ add_executable(phon_unit_tests
     test/unit/test_ast.cpp
     test/unit/test_parser.cpp
     test/unit/test_golden_ast.cpp
+    test/unit/test_vm.cpp
+    test/unit/test_golden_disasm.cpp
+    test/unit/test_scripts.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)
@@ -118,5 +128,11 @@ target_compile_definitions(phon_unit_tests PRIVATE
 # Path to the golden AST-dump corpus (test/golden/ast).
 target_compile_definitions(phon_unit_tests PRIVATE
     PHON_GOLDEN_AST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/golden/ast")
+# Path to the golden disassembly corpus (test/golden/disasm).
+target_compile_definitions(phon_unit_tests PRIVATE
+    PHON_GOLDEN_DISASM_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/golden/disasm")
+# Path to the .phon acceptance scripts (test/scripts).
+target_compile_definitions(phon_unit_tests PRIVATE
+    PHON_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/scripts")
 
 add_test(NAME unit COMMAND phon_unit_tests)

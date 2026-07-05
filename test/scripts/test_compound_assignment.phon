@@ -1,0 +1,54 @@
+# Compound-assignment lowering (M4): the compound part must not be lost, and each
+# repeated application must build on the previous value. Covers local variables,
+# module bindings, and List subscripts, for +=, -=, *=, /=, and &=.
+
+# 1. Module binding, repeated += / -= / *=.
+var n = 0
+n += 1
+n += 1
+n += 1
+assert(n == 3, "n += 1 x3")
+
+var x = 10
+x -= 1
+x -= 1
+x -= 1
+assert(x == 7, "x -= 1 x3")
+
+var p = 1
+p *= 2
+p *= 2
+p *= 2
+assert(p == 8, "p *= 2 x3")
+
+# 2. Local variable inside a function.
+function accumulate(k)
+    var s = 0
+    for i = 1 to k do
+        s += i
+    end
+    return s
+end
+assert(accumulate(5) == 15, "local compound in loop")
+
+# 3. List subscript compound assignment (CoW in place).
+var xs = [1, 2, 3]
+xs[1] += 100
+xs[2] *= 10
+xs[3] -= 1
+assert(xs[1] == 101, "xs[1] += 100")
+assert(xs[2] == 20, "xs[2] *= 10")
+assert(xs[3] == 2, "xs[3] -= 1")
+
+# 4. Float division compound.
+var d = 10.0
+d /= 4
+assert(d == 2.5, "d /= 4")
+
+# 5. String concatenation compound.
+var s = "a"
+s &= "b"
+s &= "c"
+assert(s == "abc", "s &= ...")
+
+print("compound-assignment tests passed")
