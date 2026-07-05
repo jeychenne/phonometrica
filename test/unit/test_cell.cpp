@@ -31,8 +31,12 @@ void test_finalize(Cell *c)
 
 // Use a non-builtin id so we don't collide with bootstrap's primitives.
 constexpr uint32_t TEST_CID = 1000;
-Class g_test_class{TEST_CID, "TestCell", nullptr, CLASS_VALUE, intptr_t(sizeof(TestCell)),
-                   &test_finalize};
+Class g_test_class{.id = TEST_CID,
+                   .name = "TestCell",
+                   .base = nullptr,
+                   .flags = CLASS_VALUE,
+                   .instance_size = intptr_t(sizeof(TestCell)),
+                   .finalize = &test_finalize};
 
 Handle<TestCell> make_test(int payload)
 {

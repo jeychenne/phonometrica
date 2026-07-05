@@ -9,7 +9,7 @@ See [`design/design.md`](design/design.md) (language semantics) and
 plan). Deviations from those documents are tracked in
 [`DEVIATIONS.md`](DEVIATIONS.md).
 
-## Status: M1 — Values and core types (complete)
+## Status: M2 — Type system + dispatch (complete)
 
 **M0 — Foundations**
 
@@ -42,10 +42,25 @@ plan). Deviations from those documents are tracked in
   by structural `value_hash`/`value_equals` (unordered; see `DEVIATIONS.md`).
 - **`object/`** — the M1 seed of the class registry + `value_hash`/`value_equals`.
 
+**M2 — Type system + dispatch**
+
+- **`object/class`** — the full class system: a stable registration id (in cell
+  headers) plus a renumbered pre-order **subtype interval** (`is_a` = two compares),
+  `class_of(Value)`, dynamic `add_class` with renumbering + `type_epoch`, and
+  **metaclasses**/class-objects so a class can be a Value (`cast(x, Float)`).
+- **`dispatch/generic`** — `GenericFunction`/`Method` with multiple dispatch:
+  applicable-method filtering (interval subtype + exact `ref`-mask match),
+  most-specific selection, **ambiguity detected at definition time**, and memo
+  tables (arity 1–2 exact keys) that self-invalidate on method-set or type-epoch
+  change. Inspired by calao's `class_id`-indexed applicability, following the
+  spec's memo + definition-time-ambiguity structure.
+
 Acceptance: M0 container fuzz tests + allocator stress; M1 `Value` encoding
 round-trips (every tag, ±2^47 integer boundary, NaN payloads survive), CoW
 uniqueness across String/List/Map/Set, grapheme breadcrumb correctness on IPA
-samples, and Map/Set fuzz vs `std::unordered_map`/`std::set`. The suite is
+samples, Map/Set fuzz vs `std::unordered_map`/`std::set`, and a UAX #29 grapheme
+conformance suite; M2 subtype intervals under renumbering, ref-mask applicability,
+metaclass dispatch, ambiguity-at-definition, and epoch invalidation. The suite is
 warning-clean (`-Wall -Wextra -Werror`) and leak-clean under ASan+UBSan.
 
 ## Building
@@ -68,7 +83,8 @@ Options:
 ```
 src/base/     definitions, bits, allocation, size-class heap, Unicode
 src/core/     Value, Cell, Handle, Variant, Symbol, containers, hash
-src/object/   class registry, value hash/equality
+src/object/   class registry + subtype intervals, value hash/equality
+src/dispatch/ generic functions + multiple dispatch
 src/memory/   cell allocation + finalizer dispatch
 src/types/    String, atom table, List, Map, Set
 src/runtime/  bootstrap (builtin class registration)

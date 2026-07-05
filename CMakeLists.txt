@@ -59,6 +59,7 @@ add_library(phon_engine STATIC
     src/base/unicode_tables.cpp
     src/object/class.cpp
     src/object/value_ops.cpp
+    src/dispatch/generic.cpp
     src/memory/cell_memory.cpp
     src/types/atom.cpp
     src/types/string.cpp
@@ -89,6 +90,8 @@ add_executable(phon_unit_tests
     test/unit/test_flat_hash_set.cpp
     test/unit/test_value.cpp
     test/unit/test_cell.cpp
+    test/unit/test_class.cpp
+    test/unit/test_dispatch.cpp
     test/unit/test_unicode.cpp
     test/unit/test_string.cpp
     test/unit/test_atom.cpp

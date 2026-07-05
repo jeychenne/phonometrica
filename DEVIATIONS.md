@@ -89,3 +89,43 @@ recorded here with rationale, for the project owner's review.
    dispatch memo/compiler scopes) and the script types; the cell stays put on
    growth (only the table's buffer moves), so no slot rewriting is needed (§5.0).
    `keys()`/`values()`/`to_list()` iterate in unspecified order.
+
+## M2 — Type system + dispatch
+
+1. **Two id spaces: a stable id in cells, a separate interval id for subtyping.**
+   §6 uses one `id` for both the cell-header class tag and the subtype interval,
+   but renumbering the interval would invalidate every existing instance's header.
+   The engine splits them: `Class::id` is the stable registration index (in Cell
+   headers, hard-coded in opcodes, never changes); `Class::interval_lo/hi` is the
+   pre-order interval, renumbered on each class addition. `is_a` uses the interval;
+   `class_of` returns the stable id. Builtins register first and sealed, so their
+   intervals equal their stable ids (0..10) and never shift.
+
+2. **Class descriptors are plain structs; class-objects are separate cells.**
+   §6 shows `struct Class { Cell header; … }`. To avoid migrating every static
+   builtin registration to cell allocation, `Class` stays a plain descriptor and a
+   `ClassObjectCell { Cell; Class* desc; }` wraps it when a class is used as a
+   Value (`class_object(C)`). Each class has a lazily-created **leaf metaclass**
+   under the root metaclass `Class` (CID_CLASS); the class-object's dispatch class
+   is that metaclass, which is what makes `cast(x, Float)` resolve to a
+   Float-specific method. Full cell-headed `Class` can come later if needed.
+
+3. **Ambiguity is detected at definition (Julia-style meet rule), returned not thrown.**
+   `add_method` compares the new signature pairwise against existing ones (same
+   arity + ref-mask). Two incomparable signatures conflict only if they *overlap*
+   (comparable at every position); the overlap needs a method equal to the
+   pointwise meet, else `add_method` returns `AddMethod::Ambiguous`. This follows
+   §7 (definition-time detection) rather than calao's resolution-time tie-break,
+   and returns a status (the script-level error surface is M5).
+
+4. **Memo tables cover arity 1–2 with exact keys; arity 0 and ≥3 resolve fully.**
+   Arity-1/2 keys pack `(class_id<<1 | ref_bit)` per position into a uint64
+   losslessly. §7's "hash of the id tuple" for arity ≥3 is deferred (a hashed key
+   risks collision→misdispatch); those arities re-resolve each call. Memo
+   self-invalidates on `generic_epoch` (method-set change) or `type_epoch` change.
+
+5. **Inline caches and Callable binding are deferred to later milestones.**
+   The per-call-site inline cache (§7.1) needs the VM (M4) — M2 has no call sites.
+   A `Method`'s `code` is an opaque `void*` in M2; binding it to a Routine /
+   NativeFunction (and actually invoking) lands with the VM (M4) and the typed
+   embedding API (M8). M2 resolves methods but does not call them.

@@ -484,6 +484,7 @@ sort(ref results)
 - Full method-specificity rules (ranking of `Object`-typed parameters, variadics).
 - Standard library naming conventions (effectively part of the language under
   multiple dispatch).
+- print as a function: how do we handle arbitrary number of arguments, in addition to keyword arguments?
 - Concrete NaN-tag bit assignments.
 - Module system details (`import` semantics, visibility).
 - C++ embedding API: template-based registration of C++ functions with automatic
