@@ -74,6 +74,11 @@ using Instruction = uint32_t;
 	_(LISTAPPEND)  /* A B    : R[A].append(R[B])  (CoW, slot rewrite)        */ \
 	_(GETINDEX)    /* A B C  : R[A] = R[B][R[C]]                             */ \
 	_(SETINDEX)    /* A B C  : R[A][R[B]] = R[C]                             */ \
+	/* user classes: registration, instances, fields */                         \
+	_(DEFCLASS)    /* A Bx   : register class-def Bx; R[A] = its class obj   */ \
+	_(NEW)         /* A B    : R[A] = fresh instance of class object R[B]    */ \
+	_(GETFIELD)    /* A B C  : R[A] = R[B].field named by R[C]               */ \
+	_(SETFIELD)    /* A B C  : R[A].field R[B] = R[C]  (CoW detach on share) */ \
 	/* type test */                                                             \
 	_(IS)          /* A B C  : R[A] = R[B] is class R[C]                     */ \
 	/* terminator */                                                            \

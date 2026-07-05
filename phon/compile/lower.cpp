@@ -167,6 +167,9 @@ private:
 		return it == m_ns.name_to_slot.end() ? -1 : it->second;
 	}
 
+	// Only builtin classes are looked up by name globally; user classes are
+	// module-scoped bindings (resolved via the namespace), so a stale user class
+	// from a prior run in the process-global registry can never be matched here.
 	static Class *class_by_name(Symbol name)
 	{
 		std::string_view want = symbol_name(name);
@@ -176,7 +179,8 @@ private:
 			if (!has_class(static_cast<uint32_t>(i)))
 				continue;
 			Class *c = get_class(static_cast<uint32_t>(i));
-			if (c && c->name && want == c->name && !(c->flags & CLASS_META))
+			if (c && c->name && want == c->name && (c->flags & CLASS_BUILTIN) &&
+			    !(c->flags & CLASS_META))
 				return c;
 		}
 		return nullptr;
@@ -316,11 +320,26 @@ private:
 	void compile_return(ReturnStatement *s);
 	void compile_named_function(FunctionDefinition *f); // nested (local) named fn
 
-	// A top-level `function` (design §6) is a method on a generic, not a binding.
-	// Resolve one parameter's declared type to a stable class id (Object if
-	// unannotated), and register the whole signature as a Proto MethodDef.
-	uint32_t param_class_id(Parameter *p);
-	int add_method_def(FunctionDefinition *f); // -> index into the module Proto's method_defs
+	// A top-level `function` / class `method` (design §6) is a method on a generic.
+	// Resolve a declared type annotation to a TypeRef (Object if unannotated), and
+	// register a method's signature as a Proto MethodDef. `self` is the enclosing
+	// class for a method's implicit `this` param (null for a free function).
+	TypeRef type_ref(Ast *type_node);
+	int add_method_def(FunctionDefinition *f, TypeRef self, bool have_self);
+
+	// --- classes (design §5.6/§6) ---
+	static Symbol this_symbol(); // the reserved `this` local name (a keyword, never a user id)
+	void compile_cast(CastExpression *c, int dest);
+	int compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls);
+	// Apply field defaults for the whole layout (base→derived) to the instance in
+	// `thisreg`, at construction — so inherited defaults apply regardless of which
+	// (possibly inherited) `init` runs.
+	void emit_full_defaults(ClassDeclaration *cls, int thisreg);
+	void compile_class(ClassDeclaration *c);
+	void construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest);
+	// Load an object expression for in-place field mutation, mirroring
+	// load_index_object (wb/wbidx select the write-back).
+	int load_object_for_write(Ast *obj, int &wb, int &wbidx);
 
 	static Opcode arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare);
 
@@ -332,6 +351,11 @@ private:
 	// (non-`local`). Populated in pass 1 so a call to a function defined later —
 	// or one that only exists once DEFMETHOD runs — resolves to a generic call.
 	FlatHashSet<uint32_t> m_module_generics;
+
+	// Names of top-level classes declared in this module → their AST (for
+	// construction lowering and `this`/base type resolution). Classes are module
+	// bindings holding a class object; the module slot is module_lookup(name).
+	FlatHashMap<uint32_t, ClassDeclaration *> m_module_classes;
 };
 
 // --- operator mapping ---------------------------------------------------------
@@ -463,15 +487,15 @@ void Lowerer::expr_to(Ast *node, int dest)
 	}
 	case NodeKind::IsExpression:
 	{
+		// `x is T`: load T's class object (a builtin loads a constant; a user class
+		// loads its module binding) and test membership.
 		auto *e = node->as<IsExpression>();
+		if (!e->type->is<Variable>())
+			error(e->type.get(), "[Type error] expected a class name after 'is'");
 		int save = fs->free_reg;
 		int b = expr_any(e->expr.get());
-		auto *tv = e->type->as<Variable>();
-		Class *c = tv ? class_by_name(tv->name) : nullptr;
-		if (!c)
-			error(e->type.get(), "[Type error] expected a class name after 'is'");
 		int cr = reg_alloc(e->type.get());
-		emit_ABx(Opcode::LOADK, cr, static_cast<uint32_t>(k_class(c)), ln(node));
+		expr_to(e->type.get(), cr);
 		emit_ABC(Opcode::IS, dest, b, cr, ln(node));
 		reg_free_to(save);
 		break;
@@ -552,11 +576,35 @@ void Lowerer::expr_to(Ast *node, int dest)
 		break;
 	}
 	case NodeKind::ThisExpression:
-		error(node, "[Name error] 'this' is only valid in a method (classes arrive in M5)");
+	{
+		// `this` is a hidden local at register 0 of a method; a closure nested in a
+		// method reaches it as an upvalue (via the reserved `this` symbol).
+		NameRef nr = resolve(this_symbol());
+		if (nr.kind == NameKind::Local)
+		{
+			if (nr.index != dest)
+				emit_ABC(Opcode::MOVE, dest, nr.index, 0, ln(node));
+		}
+		else if (nr.kind == NameKind::Upvalue)
+			emit_ABC(Opcode::GETUPVAL, dest, nr.index, 0, ln(node));
+		else
+			error(node, "[Name error] 'this' is only valid inside a method");
+		break;
+	}
 	case NodeKind::CastExpression:
-		error(node, "[Type error] 'cast' arrives in M5");
+		compile_cast(node->as<CastExpression>(), dest);
+		break;
 	case NodeKind::FieldAccess:
-		error(node, "[Name error] field access arrives in M5 (classes)");
+	{
+		auto *fa = node->as<FieldAccess>();
+		int save = fs->free_reg;
+		int o = expr_any(fa->object.get());
+		int s = reg_alloc(fa);
+		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(fa));
+		emit_ABC(Opcode::GETFIELD, dest, o, s, ln(fa));
+		reg_free_to(save);
+		break;
+	}
 	case NodeKind::SliceExpression:
 		error(node, "[Index error] slices arrive in M6");
 	case NodeKind::SplatExpression:
@@ -630,6 +678,17 @@ void Lowerer::compile_conditional(ConditionalExpression *c, int dest)
 
 void Lowerer::compile_call(CallExpression *c, int dest)
 {
+	// `ClassName(args)` is construction, not a call (design §6).
+	if (auto *v = c->callee->as<Variable>())
+	{
+		auto it = m_module_classes.find(v->name.id);
+		if (it != m_module_classes.end())
+		{
+			construct(it->second, module_lookup(v->name), c, dest);
+			return;
+		}
+	}
+
 	if (!c->options.empty())
 		error(c, "[Compile error] named call options arrive in M5");
 	for (auto &a : c->args)
@@ -797,7 +856,7 @@ void Lowerer::compile_stmt(Ast *node)
 	case NodeKind::ForEach:
 		error(node, "[Compile error] 'for … in' (iteration protocol) arrives in M5");
 	case NodeKind::ClassDeclaration:
-		error(node, "[Compile error] class declarations arrive in M5");
+		error(node, "[Compile error] classes may only be declared at the top level of a module");
 	case NodeKind::TryStatement:
 	case NodeKind::ThrowStatement:
 		error(node, "[Compile error] try/throw arrive in M5");
@@ -884,39 +943,74 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		reg_free_to(save);
 		return;
 	}
-	if (target->is<FieldAccess>())
-		error(target, "[Name error] field assignment arrives in M5 (classes)");
+	if (auto *fa = target->as<FieldAccess>())
+	{
+		// obj.field = value: load obj (with write-back for a value class that
+		// detaches under SETFIELD), set the field, then propagate the object back.
+		int save = fs->free_reg;
+		int wb, wbidx;
+		int o = load_object_for_write(fa->object.get(), wb, wbidx);
+		int s = reg_alloc(fa);
+		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(target));
+		int val = expr_any(value);
+		emit_ABC(Opcode::SETFIELD, o, s, val, ln(target));
+		emit_index_writeback(o, wb, wbidx, ln(target));
+		reg_free_to(save);
+		return;
+	}
 	error(target, "[Compile error] invalid assignment target");
 }
 
-int Lowerer::load_index_object(IndexExpression *ix, int &wb, int &wbidx)
+int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
 {
 	wb = 0;
 	wbidx = 0;
-	if (auto *ov = ix->object->as<Variable>())
+	// `this.f = v` mutates the receiver's own register directly (no write-back);
+	// nested-closure `this` is an upvalue and is written back like any upvalue.
+	if (obj->is<ThisExpression>())
+	{
+		NameRef nr = resolve(this_symbol());
+		if (nr.kind == NameKind::Local)
+			return nr.index;
+		if (nr.kind == NameKind::Upvalue)
+		{
+			int o = reg_alloc(obj);
+			emit_ABC(Opcode::GETUPVAL, o, nr.index, 0, ln(obj));
+			wb = 2;
+			wbidx = nr.index;
+			return o;
+		}
+		error(obj, "[Name error] 'this' is only valid inside a method");
+	}
+	if (auto *ov = obj->as<Variable>())
 	{
 		NameRef nr = resolve(ov->name);
 		if (nr.kind == NameKind::Local)
-			return nr.index; // the local register IS the storage; SETINDEX mutates it
+			return nr.index; // the local register IS the storage; mutate it in place
 		if (nr.kind == NameKind::Module)
 		{
-			int o = reg_alloc(ix);
-			emit_ABx(Opcode::GETMODULE, o, static_cast<uint32_t>(nr.index), ln(ix));
+			int o = reg_alloc(obj);
+			emit_ABx(Opcode::GETMODULE, o, static_cast<uint32_t>(nr.index), ln(obj));
 			wb = 1;
 			wbidx = nr.index;
 			return o;
 		}
 		if (nr.kind == NameKind::Upvalue)
 		{
-			int o = reg_alloc(ix);
-			emit_ABC(Opcode::GETUPVAL, o, nr.index, 0, ln(ix));
+			int o = reg_alloc(obj);
+			emit_ABC(Opcode::GETUPVAL, o, nr.index, 0, ln(obj));
 			wb = 2;
 			wbidx = nr.index;
 			return o;
 		}
 	}
 	// A general expression object (e.g. f()[i] = v): mutation targets a temporary.
-	return expr_any(ix->object.get());
+	return expr_any(obj);
+}
+
+int Lowerer::load_index_object(IndexExpression *ix, int &wb, int &wbidx)
+{
+	return load_object_for_write(ix->object.get(), wb, wbidx);
 }
 
 void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
@@ -1144,30 +1238,240 @@ void Lowerer::compile_named_function(FunctionDefinition *f)
 	emit_ABx(Opcode::CLOSURE, L, static_cast<uint32_t>(idx), ln(f));
 }
 
-uint32_t Lowerer::param_class_id(Parameter *p)
+Symbol Lowerer::this_symbol() { return intern("this"); }
+
+TypeRef Lowerer::type_ref(Ast *type_node)
 {
-	if (!p->type)
-		return CID_OBJECT; // unannotated parameter is Object (design §12)
-	if (auto *v = p->type->as<Variable>())
+	TypeRef t;
+	if (!type_node)
 	{
-		if (Class *c = class_by_name(v->name))
-			return c->id;
-		error(p->type.get(), "[Type error] unknown type '" +
-		                         std::string(symbol_name(v->name)) + "' in parameter annotation");
+		t.kind = TypeRef::Concrete;
+		t.value = CID_OBJECT; // unannotated is Object (design §12)
+		return t;
 	}
-	error(p->type.get(), "[Type error] unsupported parameter type annotation");
+	if (auto *v = type_node->as<Variable>())
+	{
+		if (Class *c = class_by_name(v->name)) // builtins only
+		{
+			t.kind = TypeRef::Concrete;
+			t.value = c->id;
+			return t;
+		}
+		if (m_module_classes.find(v->name.id) != m_module_classes.end())
+		{
+			t.kind = TypeRef::ModuleSlot;
+			t.value = static_cast<uint32_t>(module_lookup(v->name));
+			return t;
+		}
+		error(type_node, "[Type error] unknown type '" + std::string(symbol_name(v->name)) + "'");
+	}
+	error(type_node, "[Type error] unsupported type annotation");
 }
 
-int Lowerer::add_method_def(FunctionDefinition *f)
+int Lowerer::add_method_def(FunctionDefinition *f, TypeRef self, bool have_self)
 {
 	MethodDef md;
 	md.name = f->name;
-	md.ref_mask = 0; // `ref` parameters arrive with the iteration/ref stage of M5
+	md.ref_mask = 0; // `ref`/`this`-writeback arrive with the ref/iteration stage of M5
+	if (have_self)
+		md.sig.push_back(self);
 	for (auto &p : f->params)
-		md.class_ids.push_back(param_class_id(p->as<Parameter>()));
+		md.sig.push_back(type_ref(p->as<Parameter>()->type.get()));
 	int idx = static_cast<int>(fs->proto.method_defs.size());
 	fs->proto.method_defs.push_back(std::move(md));
 	return idx;
+}
+
+// --- classes (design §5.6/§6) -------------------------------------------------
+
+void Lowerer::compile_cast(CastExpression *c, int dest)
+{
+	// `cast x as T` lowers to the generic call cast(x, T) (design §7).
+	int save = fs->free_reg;
+	int base = reg_alloc(c);
+	emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(intern("cast"))), ln(c));
+	int xr = reg_alloc(c);
+	expr_to(c->expr.get(), xr);
+	int tr = reg_alloc(c);
+	expr_to(c->type.get(), tr); // the class object (Variable naming a class)
+	emit_ABC(Opcode::CALLG, base, 2, 0, ln(c));
+	emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(P().num_ic++)), ln(c));
+	reg_free_to(save);
+	if (dest != base)
+		emit_ABC(Opcode::MOVE, dest, base, 0, ln(c));
+}
+
+void Lowerer::emit_full_defaults(ClassDeclaration *cls, int thisreg)
+{
+	// Base defaults first (so a subclass's own initializers can, in principle,
+	// override), then this class's own — applied to the fresh, unique instance in
+	// `thisreg`, which is uniquely owned so SETFIELD mutates it in place.
+	if (cls->parent)
+		if (auto *pv = cls->parent->as<Variable>())
+		{
+			auto it = m_module_classes.find(pv->name.id);
+			if (it != m_module_classes.end())
+				emit_full_defaults(it->second, thisreg);
+		}
+	for (auto &f : cls->fields)
+	{
+		auto *fd = f->as<FieldDeclaration>();
+		if (!fd->default_value)
+			continue; // no initializer -> stays null (design: default is null)
+		int save = fs->free_reg;
+		int sreg = reg_alloc(fd);
+		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fd->name)), ln(fd));
+		int vreg = reg_alloc(fd);
+		expr_to(fd->default_value.get(), vreg);
+		emit_ABC(Opcode::SETFIELD, thisreg, sreg, vreg, ln(fd));
+		reg_free_to(save);
+	}
+}
+
+int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls)
+{
+	for (auto &p : m->params)
+	{
+		auto *param = p->as<Parameter>();
+		if (param->by_ref)
+			error(p.get(), "[Compile error] 'ref' parameters arrive later in M5");
+		if (param->variadic)
+			error(p.get(), "[Compile error] variadic parameters arrive later in M5");
+		if (param->default_value)
+			error(p.get(), "[Compile error] default/named parameters arrive later in M5");
+	}
+
+	auto child = std::make_unique<Proto>();
+	child->name = m->name;
+	child->num_params = 1 + static_cast<int>(m->params.size()); // implicit `this` + explicit
+
+	FuncState cfs(*child, fs, false);
+	FuncState *saved = fs;
+	fs = &cfs;
+
+	(void) cls;
+	declare_local(this_symbol(), true, m); // reg 0 = this (const)
+	for (auto &p : m->params)
+		declare_local(p->as<Parameter>()->name, false, p.get());
+
+	// Field defaults are applied at construction (emit_full_defaults), not here, so
+	// an inherited `init` still sees a fully-defaulted instance.
+	compile_block(m->body->as<StatementList>());
+
+	// A constructor implicitly returns the (mutated) instance; other methods fall off
+	// the end returning null.
+	if (is_init)
+		emit_ABC(Opcode::RET, 0, 1, 0, ln(m));
+	else
+		emit_ABC(Opcode::RET, 0, 0, 0, ln(m));
+	child->num_regs = cfs.max_reg > child->num_params ? cfs.max_reg : child->num_params;
+
+	fs = saved;
+	int idx = static_cast<int>(fs->proto.children.size());
+	fs->proto.children.push_back(std::move(child));
+	return idx;
+}
+
+void Lowerer::compile_class(ClassDeclaration *c)
+{
+	int slot = module_lookup(c->name); // reserved in pass 1
+	TypeRef self{TypeRef::ModuleSlot, static_cast<uint32_t>(slot)};
+
+	// Build and record the ClassDef consumed by DEFCLASS.
+	ClassDef cd;
+	cd.name = c->name;
+	cd.is_ref = c->is_ref;
+	cd.is_open = c->is_open;
+	cd.base = c->parent ? type_ref(c->parent.get()) : TypeRef{TypeRef::Concrete, CID_OBJECT};
+	for (auto &f : c->fields)
+	{
+		auto *fd = f->as<FieldDeclaration>();
+		cd.fields.push_back(FieldDef{fd->name, type_ref(fd->type.get())});
+	}
+	int cdidx = static_cast<int>(fs->proto.class_defs.size());
+	fs->proto.class_defs.push_back(std::move(cd));
+
+	// Register the class and bind its class object.
+	int t = reg_alloc(c);
+	emit_ABx(Opcode::DEFCLASS, t, static_cast<uint32_t>(cdidx), ln(c));
+	emit_ABx(Opcode::SETMODULE, t, static_cast<uint32_t>(slot), ln(c));
+	reg_free_to(t);
+
+	// Register the methods (keyed on this class via `self`), and note whether the
+	// user supplied a constructor.
+	Symbol init_name = intern("init");
+	bool has_init = false;
+	for (auto &m : c->methods)
+	{
+		auto *md = m->as<FunctionDefinition>();
+		bool is_init = (md->name == init_name);
+		has_init = has_init || is_init;
+		int idx = compile_method(md, is_init, c);
+		int r = reg_alloc(m.get());
+		emit_ABx(Opcode::CLOSURE, r, static_cast<uint32_t>(idx), ln(md));
+		emit_ABx(Opcode::DEFMETHOD, r, static_cast<uint32_t>(add_method_def(md, self, true)), ln(md));
+		reg_free_to(r);
+	}
+
+	// Synthesize a default constructor `init()` if none was written, so every class
+	// applies its field defaults and is constructible with no arguments.
+	if (!has_init)
+	{
+		auto child = std::make_unique<Proto>();
+		child->name = init_name;
+		child->num_params = 1; // this
+		FuncState cfs(*child, fs, false);
+		FuncState *saved = fs;
+		fs = &cfs;
+		declare_local(this_symbol(), true, c);
+		emit_ABC(Opcode::RET, 0, 1, 0, ln(c)); // empty body: defaults ran at construction; return this
+		child->num_regs = cfs.max_reg > 1 ? cfs.max_reg : 1;
+		fs = saved;
+		int idx = static_cast<int>(fs->proto.children.size());
+		fs->proto.children.push_back(std::move(child));
+
+		MethodDef md;
+		md.name = init_name;
+		md.sig.push_back(self);
+		int mdidx = static_cast<int>(fs->proto.method_defs.size());
+		fs->proto.method_defs.push_back(std::move(md));
+
+		int r = reg_alloc(c);
+		emit_ABx(Opcode::CLOSURE, r, static_cast<uint32_t>(idx), ln(c));
+		emit_ABx(Opcode::DEFMETHOD, r, static_cast<uint32_t>(mdidx), ln(c));
+		reg_free_to(r);
+	}
+}
+
+void Lowerer::construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest)
+{
+	if (!call->options.empty())
+		error(call, "[Compile error] named constructor options arrive later in M5");
+	for (auto &a : call->args)
+		if (a->is<SplatExpression>() || a->is<RefExpression>())
+			error(a.get(), "[Compile error] ref/splat arguments arrive later in M5");
+
+	// NEW a fresh instance directly into the init call's `this` slot, apply the full
+	// (base→derived) field defaults, then dispatch init(this, args...). init returns
+	// the (in-place mutated) instance.
+	int save = fs->free_reg;
+	int base = reg_alloc(call); // holds :init, then the result
+	emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(intern("init"))), ln(call));
+	int thisreg = reg_alloc(call); // base + 1
+	emit_ABx(Opcode::GETMODULE, thisreg, static_cast<uint32_t>(class_slot), ln(call));
+	emit_ABC(Opcode::NEW, thisreg, thisreg, 0, ln(call)); // this = fresh instance (rc 1)
+	emit_full_defaults(cls, thisreg);
+	int nargs = static_cast<int>(call->args.size());
+	for (auto &a : call->args)
+	{
+		int r = reg_alloc(a.get());
+		expr_to(a.get(), r);
+	}
+	emit_ABC(Opcode::CALLG, base, nargs + 1, 0, ln(call));
+	emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(P().num_ic++)), ln(call));
+	reg_free_to(save);
+	if (dest != base)
+		emit_ABC(Opcode::MOVE, dest, base, 0, ln(call));
 }
 
 // --- module entry -------------------------------------------------------------
@@ -1200,11 +1504,27 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			else
 				m_module_generics.insert(f->name.id);
 		}
+		else if (auto *cl = s->as<ClassDeclaration>())
+		{
+			module_define(cl->name); // the class object lives in a module binding
+			m_module_classes.insert(cl->name.id, cl);
+			// A `method` is a generic method (design §6), so its name must resolve to
+			// a generic call even though it only registers at load.
+			for (auto &m : cl->methods)
+				m_module_generics.insert(m->as<FunctionDefinition>()->name.id);
+		}
 	}
 
-	// Pass 2a: register/hoist top-level functions. Generic methods (the default) are
-	// compiled to a closure and installed via DEFMETHOD; `local` functions keep the
-	// module-slot binding.
+	// Pass 2a-classes: register user classes (DEFCLASS + their methods) before
+	// functions, so a class's `this`/base type references resolve at load. Classes
+	// are emitted in declaration order (a base must precede its use).
+	for (auto &s : list->statements)
+		if (auto *cl = s->as<ClassDeclaration>())
+			compile_class(cl);
+
+	// Pass 2a-functions: register/hoist top-level functions. Generic methods (the
+	// default) are compiled to a closure and installed via DEFMETHOD; `local`
+	// functions keep the module-slot binding.
 	for (auto &s : list->statements)
 	{
 		auto *f = s->as<FunctionDefinition>();
@@ -1216,7 +1536,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 		if (f->modifier == DeclModifier::Local)
 			emit_ABx(Opcode::SETMODULE, t, static_cast<uint32_t>(module_lookup(f->name)), ln(f));
 		else
-			emit_ABx(Opcode::DEFMETHOD, t, static_cast<uint32_t>(add_method_def(f)), ln(f));
+			emit_ABx(Opcode::DEFMETHOD, t,
+			         static_cast<uint32_t>(add_method_def(f, TypeRef{}, false)), ln(f));
 		reg_free_to(t);
 	}
 
@@ -1228,6 +1549,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 		Ast *s = list->statements[i].get();
 		if (auto *f = s->as<FunctionDefinition>(); f && !f->is_anonymous())
 			continue; // already hoisted
+		if (s->is<ClassDeclaration>())
+			continue; // already registered
 		if (i == count - 1 && s->is<ExpressionStatement>())
 		{
 			int r = reg_alloc(s);

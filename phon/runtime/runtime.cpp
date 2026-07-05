@@ -29,18 +29,26 @@ namespace {
 
 // --- builtin natives ----------------------------------------------------------
 
-Value builtin_print(Isolate &, Value *args, int argc)
+Value builtin_print(Isolate &iso, Value *args, int argc)
 {
 	String out;
 	for (int i = 0; i < argc; ++i)
 	{
 		if (i > 0)
 			out.append(" ");
-		out.append(stringify(args[i]));
+		out.append(stringify(iso, args[i]));
 	}
 	out.append("\n");
 	std::fwrite(out.data(), 1, static_cast<size_t>(out.size()), stdout);
 	return Value::make_null();
+}
+
+Value builtin_to_string(Isolate &iso, Value *args, int argc)
+{
+	// The builtin `to_string` methods (one per arity-1 call) stringify any value the
+	// way `&`/print do; a user `method to_string()` overrides for its own class.
+	(void) argc;
+	return stringify(iso, args[0]).to_value();
 }
 
 Value builtin_assert(Isolate &iso, Value *args, int argc)
@@ -75,6 +83,26 @@ Value builtin_len(Isolate &iso, Value *args, int argc)
 		}
 	}
 	iso.raise(String("[Type error] 'len' expects a List, String, Table, or Set"), 0);
+}
+
+Value builtin_cast(Isolate &iso, Value *args, int argc)
+{
+	// `cast x as T` -> cast(x, T) (design §7). The default is a checked,
+	// identity-preserving downcast; type-specific conversions are library overloads.
+	(void) argc;
+	Value x = args[0];
+	Class *target = class_denoted_by(args[1]);
+	if (!target)
+		iso.raise(String("[Type error] 'cast' target is not a class"), 0);
+	if (value_is_a(x, target))
+	{
+		if (x.is_cell())
+			retain(x.as_cell());
+		return x;
+	}
+	iso.raise(String("[Type error] cannot cast a ") + String(class_of_desc(x)->name).view() +
+	              " to " + String(target->name).view(),
+	          0);
 }
 
 // Keep native cells alive for the process lifetime (they back builtin generics).
@@ -122,6 +150,8 @@ void register_builtins()
 	register_native("print", builtin_print, 0, 8);
 	register_native("len", builtin_len, 1, 1);
 	register_native("assert", builtin_assert, 1, 2);
+	register_native("cast", builtin_cast, 2, 2);
+	register_native("to_string", builtin_to_string, 1, 1);
 }
 
 bool g_booted = false;

@@ -58,6 +58,7 @@ add_library(phon_engine STATIC
     phon/base/unicode.cpp
     phon/base/unicode_tables.cpp
     phon/object/class.cpp
+    phon/object/instance.cpp
     phon/object/value_ops.cpp
     phon/dispatch/generic.cpp
     phon/memory/cell_memory.cpp
@@ -104,6 +105,7 @@ add_executable(phon_unit_tests
     test/unit/test_value.cpp
     test/unit/test_cell.cpp
     test/unit/test_class.cpp
+    test/unit/test_instance.cpp
     test/unit/test_dispatch.cpp
     test/unit/test_unicode.cpp
     test/unit/test_string.cpp

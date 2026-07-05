@@ -458,3 +458,74 @@ recorded here.
    where `f` is a generic errors `"…cannot be used as a value yet (M8)"` — the
    pre-existing policy for builtin generics, now covering script functions too.
    Functions-as-values are an M8 concern.
+
+### Step 2 — User-defined classes and fields (checkpoint 1b)
+
+Implements `class`/`ref class`, `field`s, instances, `this`, constructors, class
+`method`s (as generic methods), and `cast`. Instance layout follows architecture
+§5.6 (`Cell | Value[]`, `object/instance.*`); a `class` is a value type with
+copy-on-write, a `ref class` has identity.
+
+1. **A class is a module binding holding its class object; registration is a
+   runtime `DEFCLASS`.** Pass 1 reserves a module slot for each top-level class and
+   records it (with its method names) so forward references resolve; a class pass
+   emits `DEFCLASS` (calls `add_user_class`, builds the field layout) then
+   `SETMODULE`. User classes are therefore **module-scoped**, resolved through the
+   namespace, never through `class_by_name` — which is now restricted to builtins.
+   This keeps a stale user class in the process-global registry from being matched
+   by name in a later run (test isolation), at the cost of the registry
+   accumulating dead descriptors (class retraction/dead-marking, design §11, is
+   deferred; user classes are not journaled yet).
+
+2. **A type annotation is a `TypeRef`, resolved at load.** A builtin/`Object` is a
+   `Concrete` stable id; a user class is a `ModuleSlot` reference resolved from the
+   class object at `DEFCLASS`/`DEFMETHOD` time (a class's own id is only assigned at
+   load). `MethodDef` signatures use `TypeRef`, so `function speak(d as Dog)` and
+   `method init(this as Fraction)` both dispatch on user classes. Cross-module
+   (imported) class types and forward references to a class declared **after** its
+   use are deferred (declaration order is required for base/field/param class refs).
+
+3. **Construction avoids `ref` via a return-`this` constructor.** `Foo(args)` lowers
+   to `NEW` (a fresh, uniquely-owned instance placed directly in `init`'s `this`
+   slot) then `CALLG init(this, args…)`; `init` mutates the unique instance in place
+   and **implicitly returns `this`**, which is the construction result. So `this` is
+   an ordinary by-value first parameter (register 0), not a second-class reference —
+   general `ref` parameters and `this`-writeback for *mutating* methods on an
+   existing shared instance (e.g. a user `set_item`) are deferred to the ref/
+   iteration stage. Top-level `obj.field = v` still gets full value semantics:
+   `SETFIELD` detaches a shared value-class instance (CoW) and the object is written
+   back to its binding, mirroring index assignment.
+
+4. **Field defaults are applied at construction, for the whole layout, before
+   `init`.** `Foo(args)` lowers to `NEW` + `emit_full_defaults(Foo)` (walking the
+   base→derived chain, emitting `this.<field> = <default>` for every field with an
+   initializer) + `CALLG init`. Decoupling defaults from `init` makes **inherited
+   defaults** and **constructor inheritance** both work: a subclass with no `init`
+   dispatches an applicable base `init` (`this as Base` matches a subclass instance,
+   design §6), yet the subclass's own fields are still defaulted. A synthesized
+   `init()` is emitted only when the class writes none, so defining any `init`
+   removes the implicit no-arg constructor. An uninitialized field is `null` (owner
+   decision — annotations are advisory). Defaults are arbitrary runtime expressions
+   evaluated at the construction site's scope; they may not reference `this` or
+   other fields. Defaults for an **imported** base are still deferred with imports.
+
+5. **`&`/`print`/interpolation dispatch a user `to_string` (M4 #3 follow-up done).**
+   The interpreter loop was refactored into a re-entrant `run(iso)` (unwinds to the
+   frame depth it started at) plus a `vm_call` seam that places a nested frame above
+   the caller's registers and runs a closure to completion — the general C++→script
+   callback path. `stringify_dispatch` uses it: for a user-class instance with a
+   **script** `to_string` method it invokes that method; a builtin `to_string`
+   native forwards back to `stringify` (so it is deliberately skipped to avoid
+   recursion). A builtin `to_string(Object)` generic makes explicit `to_string(x)`
+   work for every value.
+
+6. **`cast x as T` lowers to the `cast(x, T)` generic (design §7).** The builtin
+   `cast` is a checked, identity-preserving downcast (`value_is_a` → `x`, else a
+   `[Type error]`); type-specific conversions (e.g. Integer→Float, `String(x)`) are
+   library overloads added later. Construction of a **builtin** class as a
+   conversion (`Float(x)`) is not handled here.
+
+7. **`this` in a nested closure resolves as an upvalue.** `this` is a hidden
+   `const` local at register 0 named by the reserved `this` keyword, so a closure
+   lexically inside a method captures it as an upvalue automatically — closing the
+   M3-parser gap that deferred this to scope resolution.

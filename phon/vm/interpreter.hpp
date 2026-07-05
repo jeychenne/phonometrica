@@ -24,10 +24,11 @@ struct ClosureCell;
 // script-level error (division by zero, bad type, arity mismatch, …).
 Value execute(Isolate &iso, ClosureCell *main);
 
-// Stringify a value the way `&`, print, and interpolation do (the pre-M5 stand-in
-// for the to_string generic; user overloads arrive in M5). Lives here because the
-// CONCAT opcode needs it inline; the print builtin reuses it.
+// Stringify a value the way `&`, print, and interpolation do. The Isolate overload
+// dispatches a user-class `to_string` method (design §12); the plain overload is the
+// builtin representation only (no script dispatch), for contexts without an Isolate.
 String stringify(Value v);
+String stringify(Isolate &iso, Value v);
 
 } // namespace phonometrica
 

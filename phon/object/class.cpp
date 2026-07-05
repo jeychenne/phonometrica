@@ -6,6 +6,7 @@
 #include <phon/base/alloc.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/core/vector.hpp>
+#include <phon/object/instance.hpp>
 
 #include <cstring>
 
@@ -34,7 +35,11 @@ struct Registry
 		for (intptr_t i = 0; i < class_objects.size(); ++i)
 			cell_free(class_objects[i]);
 		for (intptr_t i = 0; i < owned.size(); ++i)
+		{
+			if (owned[i]->fields)
+				sys_free(owned[i]->fields);
 			delete owned[i];
+		}
 		for (intptr_t i = 0; i < owned_names.size(); ++i)
 			sys_free(owned_names[i]);
 	}
@@ -112,6 +117,51 @@ Class *add_class(const char *name, Class *base, uint16_t flags, intptr_t instanc
 	register_class(c);
 	renumber_types();
 	return c;
+}
+
+Class *add_user_class(const char *name, Class *base, bool is_ref, bool is_open,
+                      const FieldInfo *own, int32_t n_own)
+{
+	PHON_ASSERT(base != nullptr);
+	uint16_t flags = static_cast<uint16_t>(is_ref ? CLASS_REF : CLASS_VALUE);
+	if (!is_open)
+		flags |= CLASS_SEALED;
+
+	int32_t base_n = base->field_count;
+	int32_t total = base_n + n_own;
+
+	Class *c = add_class(name, base, flags); // assigns id, links, renumbers
+
+	FieldInfo *arr = nullptr;
+	if (total > 0)
+	{
+		arr = static_cast<FieldInfo *>(
+		    sys_alloc(static_cast<intptr_t>(total) * static_cast<intptr_t>(sizeof(FieldInfo))));
+		for (int32_t i = 0; i < base_n; ++i)
+			arr[i] = base->fields[i]; // inherit base fields (and their accessors)
+		for (int32_t i = 0; i < n_own; ++i)
+			arr[base_n + i] = own[i];
+	}
+	c->fields = arr;
+	c->field_count = total;
+	c->instance_size = static_cast<intptr_t>(sizeof(Cell)) +
+	                   static_cast<intptr_t>(total) * static_cast<intptr_t>(sizeof(Value));
+	c->finalize = &instance_finalize;
+	c->clone = &instance_clone_hook;
+	return c;
+}
+
+int32_t field_slot(const Class *c, Symbol name) noexcept
+{
+	for (int32_t i = 0; i < c->field_count; ++i)
+		if (c->fields[i].name == name)
+			return i;
+	return -1;
+}
+
+const FieldInfo *field_at(const Class *c, int32_t slot) noexcept
+{
+	return (slot >= 0 && slot < c->field_count) ? &c->fields[slot] : nullptr;
 }
 
 Class *get_class(uint32_t id) noexcept

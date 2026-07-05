@@ -34,17 +34,50 @@ struct UpvalDesc
 	uint8_t index = 0;
 };
 
+// How a compile-time type annotation names a class. A builtin (or `Object`) is a
+// stable id known at compile time; a user class's id is only assigned when it
+// registers at module load, so it is referenced indirectly through the module slot
+// holding its class object (design §6/§11). Resolved to a Class* at load.
+struct TypeRef
+{
+	enum Kind : uint8_t
+	{
+		Concrete,  // `value` is a stable class id
+		ModuleSlot // `value` is a module slot holding the class object
+	};
+	Kind kind = Concrete;
+	uint32_t value = 0;
+};
+
 // A generic-method registration emitted by DEFMETHOD (design §6: a named top-level
-// function or a class `method` is a method on a generic). The signature is stored
-// as stable class ids (builtins are compile-time constants; user-class ids are
-// assigned when the class registers, before its methods, at module load). The
-// closure supplying the code is produced at runtime by the preceding CLOSURE; the
-// interpreter builds the Class* signature from these ids and calls add_method.
+// function or a class `method` is a method on a generic). The closure supplying the
+// code is produced at runtime by the preceding CLOSURE; the interpreter resolves the
+// TypeRef signature to a Class* signature and calls add_method.
 struct MethodDef
 {
-	Symbol name;                        // the generic this method joins
-	SmallVector<uint32_t, 4> class_ids; // per-parameter declared class (stable id)
-	uint64_t ref_mask = 0;              // bit i set => parameter i is `ref`
+	Symbol name;                    // the generic this method joins
+	SmallVector<TypeRef, 4> sig;    // per-parameter declared type
+	uint64_t ref_mask = 0;          // bit i set => parameter i is `ref`
+};
+
+// One field of a class-def (name + declared type; the default initializer is
+// compiled into the class's `init` prologue, not stored here).
+struct FieldDef
+{
+	Symbol name;
+	TypeRef type;
+};
+
+// A user-class registration emitted by DEFCLASS. The interpreter calls
+// add_user_class (resolving `base`), stores the class object in the class's module
+// slot, then the following DEFMETHODs register its methods keyed on the new class.
+struct ClassDef
+{
+	Symbol name;
+	TypeRef base;               // the parent class (Object if none written)
+	bool is_ref = false;
+	bool is_open = false;
+	SmallVector<FieldDef, 4> fields;
 };
 
 struct Proto final
@@ -59,6 +92,7 @@ struct Proto final
 	Vector<uint32_t> lines;                    // source line per instruction (parallel to code)
 	Vector<UpvalDesc> upvals;                  // upvalue capture descriptors
 	Vector<MethodDef> method_defs;             // DEFMETHOD targets (generic registrations)
+	Vector<ClassDef> class_defs;               // DEFCLASS targets (class registrations)
 
 	Symbol name = NO_SYMBOL; // function name (NO_SYMBOL for anonymous / module)
 	int num_params = 0;      // fixed positional parameter count

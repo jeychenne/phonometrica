@@ -350,6 +350,111 @@ TEST_CASE("vm: a run's generic methods do not leak into a later run")
 	CHECK(threw);
 }
 
+// --- user-defined classes (design §5.6/§6) ------------------------------------
+
+TEST_CASE("vm: construct an instance and read its fields")
+{
+	const char *src = "class P\n field x as Float = 0.0\n field y as Float = 0.0\n"
+	                  " method init(x as Float, y as Float)\n this.x = x\n this.y = y\n end\n"
+	                  "end\n var p = P(2.0, 5.0)\n p.x + p.y";
+	CHECK(run_double(src) == 7.0);
+}
+
+TEST_CASE("vm: field defaults apply via the default constructor")
+{
+	CHECK(run_int("class B\n field n as Integer = 42\nend\nB().n") == 42);
+	// No initializer defaults to null.
+	CHECK(run("class B\n field label\nend\nB().label").is_null());
+}
+
+TEST_CASE("vm: a value class detaches on mutation (copy-on-write)")
+{
+	// q aliases p; mutating p must not change q.
+	const char *src = "class P\n field x as Integer = 0\nend\n"
+	                  "var p = P()\n var q = p\n p.x = 9\n q.x";
+	CHECK(run_int(src) == 0);
+}
+
+TEST_CASE("vm: a ref class has identity semantics (no detach)")
+{
+	const char *src = "ref class C\n field n as Integer = 0\nend\n"
+	                  "var a = C()\n var b = a\n a.n = 5\n b.n";
+	CHECK(run_int(src) == 5);
+}
+
+TEST_CASE("vm: methods and free functions dispatch on user classes")
+{
+	const char *src = "class Dog\nend\nclass Cat\nend\n"
+	                  "function speak(d as Dog) return 1 end\n"
+	                  "function speak(c as Cat) return 2 end\n"
+	                  "speak(Dog()) + speak(Cat()) * 10";
+	CHECK(run_int(src) == 21);
+}
+
+TEST_CASE("vm: `is` and `cast` work on user classes")
+{
+	CHECK(run_bool("class P\nend\nP() is P"));
+	CHECK(run_bool("class P\nend\nclass Q\nend\nnot (Q() is P)"));
+	CHECK(run_bool("class P\nend\nvar p = P()\n(cast p as P) is P"));
+}
+
+TEST_CASE("vm: a subclass inherits base fields and is-a its base")
+{
+	const char *src = "class A\n field a as Integer = 0\nend\n"
+	                  "class B is A\n field b as Integer = 0\nend\n"
+	                  "var x = B()\n x.a = 3\n x.b = 4\n x.a + x.b";
+	CHECK(run_int(src) == 7);
+	CHECK(run_bool("class A\nend\nclass B is A\nend\nB() is A"));
+}
+
+TEST_CASE("vm: inherited field defaults chain at construction")
+{
+	const char *src = "class Base\n field a as Integer = 5\nend\n"
+	                  "class Derived is Base\n field b as Integer = 9\nend\n"
+	                  "var d = Derived()\n d.a + d.b";
+	CHECK(run_int(src) == 14);
+}
+
+TEST_CASE("vm: constructor inheritance applies the full field layout")
+{
+	// Sub has no init, so Base's init runs; Sub's own default must still apply.
+	const char *src = "class Base\n field a as Integer = 0\n"
+	                  " method init(x as Integer)\n this.a = x\n end\nend\n"
+	                  "class Sub is Base\n field b as Integer = 20\nend\n"
+	                  "var s = Sub(7)\n s.a + s.b";
+	CHECK(run_int(src) == 27);
+}
+
+TEST_CASE("vm: user to_string is dispatched by & and interpolation")
+{
+	const char *src = "class F\n field n as Integer = 0\n"
+	                  " method init(n as Integer)\n this.n = n\n end\n"
+	                  " method to_string() as String\n return \"F\" & this.n\n end\nend\n"
+	                  "var f = F(3)\n \"<\" & f & \">\"";
+	CHECK(run_str(src) == "<F3>");
+	CHECK(run_str("class F\n method to_string() as String\n return \"hi\"\n end\nend\n"
+	              "\"{F()}!\"") == "hi!");
+}
+
+TEST_CASE("vm: user classes do not leak across runs")
+{
+	{
+		Runtime rt;
+		CHECK(rt.do_string("class Widget\n field v as Integer = 1\nend\nWidget().v").as_int() == 1);
+	}
+	// The class was module-scoped; a fresh run does not see it.
+	bool threw = false;
+	try
+	{
+		run("Widget()");
+	}
+	catch (const SyntaxError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("vm: compile errors for undeclared names")
 {
 	bool threw = false;

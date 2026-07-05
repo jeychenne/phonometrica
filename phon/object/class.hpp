@@ -22,11 +22,26 @@
 #define PHON_OBJECT_CLASS_HPP
 
 #include <phon/base/definitions.hpp>
+#include <phon/core/symbol.hpp>
 #include <phon/core/value.hpp>
 
 namespace phonometrica {
 
 struct Cell;
+struct Class;
+
+// One field of a user-defined class (design §5.6). Fields are laid out in the
+// instance in declaration order, a subclass's own fields following its base's, so
+// a field's index in `Class::fields` is its slot in the instance payload. `getter`
+// and `setter` are the accessor closures (design "Field accessors"); both null for
+// a plain storage field.
+struct FieldInfo
+{
+	Symbol name;
+	Class *type = nullptr;   // declared type (null => Object/untyped; advisory)
+	Cell *getter = nullptr;  // `get` accessor closure, or null
+	Cell *setter = nullptr;  // `set` accessor closure, or null
+};
 
 // Per-class hooks. All may be null.
 using FinalizeHook = void (*)(Cell *);
@@ -65,6 +80,11 @@ struct Class
 	TraceHook trace = nullptr;
 	Cell *class_object = nullptr; // cached class-object cell (lazy)
 
+	// User-class instance layout (design §5.6): a heap array of `field_count`
+	// descriptors (owned; base fields first, then own), null for builtins.
+	FieldInfo *fields = nullptr;
+	int32_t field_count = 0;
+
 	bool is_value() const noexcept { return flags & CLASS_VALUE; }
 	bool is_ref() const noexcept { return flags & CLASS_REF; }
 	bool is_acyclic() const noexcept { return flags & CLASS_ACYCLIC; }
@@ -98,6 +118,19 @@ uint32_t register_class(Class *c);
 // Create and register a dynamically-owned class (user/library types, tests).
 // Assigns the next stable id, links into base's children, and renumbers.
 Class *add_class(const char *name, Class *base, uint16_t flags, intptr_t instance_size = 0);
+
+// Register an instantiable user class (design §5.6): inherit `base`'s fields, append
+// `own` (n_own), build the instance layout, wire the instance hooks (finalize/clone),
+// and set `instance_size`. Renumbers. The returned Class owns a copy of the field
+// array. `is_ref` selects reference (identity) vs value (copy-on-write) semantics.
+Class *add_user_class(const char *name, Class *base, bool is_ref, bool is_open,
+                      const FieldInfo *own, int32_t n_own);
+
+// The slot of field `name` in `c` (searching declared then inherited fields), or -1.
+int32_t field_slot(const Class *c, Symbol name) noexcept;
+
+// Field descriptor at `slot` (0-based), or null if out of range.
+const FieldInfo *field_at(const Class *c, int32_t slot) noexcept;
 
 Class *get_class(uint32_t id) noexcept;
 bool has_class(uint32_t id) noexcept;

@@ -517,8 +517,24 @@ Classes and generics are sealed after module load by default; `open class` /
 `open function` opt in to extension.
 
 A field declaration may omit its type (defaulting to `Object`) and/or its
-initializer (the field is default-initialized): `field xmin as Float`,
-`field text`, and `field label = ""` are all valid.
+initializer: `field xmin as Float`, `field text`, and `field label = ""` are all
+valid. A field with **no initializer defaults to `null`** (the annotation is
+declarative only — the engine does not synthesize a per-type zero value). A field
+with an initializer runs that expression **once per construction**; the
+initializer is an ordinary runtime expression (not restricted to constants) and
+may reference module bindings, but not `this` or other fields, since the instance
+is still being built. Instances are laid out as a fixed-size `Cell` header
+followed by one `Value` slot per field, in declaration order with a subclass's own
+fields appended after its base's.
+
+Constructing an instance is **calling the class**: `Interval(1, 2, "x")` allocates
+an instance, initializes its fields (defaults, then the matching `init` overload),
+and yields the instance. `Interval()` with no `init` is the default constructor —
+every field takes its default. A value `class` has copy-on-write value semantics
+(sharing bumps a refcount; a mutation of a shared instance detaches a private
+copy); a `ref class` has identity (mutations are visible through every alias).
+`this` inside a method behaves as a `ref` to the receiver, so a method that
+mutates `this` writes back to the caller's variable under the same detach rule.
 
 When a class declaration carries several modifiers they are written in a fixed
 order — **`local open ref class`** — so the reading is unambiguous: `local`
@@ -526,6 +542,56 @@ order — **`local open ref class`** — so the reading is unambiguous: `local`
 Each is independently optional; other orderings are a syntax error. Functions
 likewise take `local` then `open` (`local open function`); `ref` applies only to
 classes and `global` only to `var`/`const`.
+
+#### Field accessors (`get` / `set`)
+
+A `field` may carry an optional `get` and/or `set` block that intercepts reads and
+writes. Reading or writing the field **from outside the class, or from another
+method**, routes through the accessor when one is present; a field with no accessor
+is a plain storage slot.
+
+```
+class Circle
+    field radius as Float = 1.0
+
+    field area as Float          # read-only: getter, no setter
+        get
+            return this.radius * this.radius * 3.14159
+        end
+    end
+
+    field diameter as Float      # computed read/write
+        get
+            return this.radius * 2
+        end
+        set(v as Float)
+            this.radius = v / 2
+        end
+    end
+
+    field count as Integer = 0   # validated storage
+        set(v as Integer)
+            assert(v >= 0, "count must be non-negative")
+            this.count = v        # raw slot here — see the recursion rule
+        end
+    end
+end
+```
+
+Rules:
+
+- **Recursion safety.** Inside an accessor's own body, `this.<that same field>` is
+  the **raw storage slot**, not the accessor — so a setter can write
+  `this.count = v` without recursing. Accesses to *other* fields route normally.
+- A getter with **no** setter is **read-only**: writing it from outside is a
+  runtime error. (A setter with no getter is likewise write-only.)
+- Every field reserves a storage slot even when it is purely computed (uniform
+  layout), so a computed field simply leaves its slot unused.
+- `get` / `set` are **contextual** — meaningful only in a field body — so they
+  remain usable as ordinary identifiers elsewhere.
+- Accessors are **inherited**: a subclass inherits its base's fields together with
+  their accessors, and dispatch reaches the base's getter/setter for an inherited
+  field.
 
 ### Iteration protocol
 

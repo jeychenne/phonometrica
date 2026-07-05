@@ -5,6 +5,7 @@
 
 #include <phon/dispatch/generic.hpp>
 #include <phon/object/class.hpp>
+#include <phon/object/instance.hpp>
 #include <phon/object/value_ops.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
@@ -16,6 +17,7 @@
 #include <phon/vm/opcode.hpp>
 
 #include <cmath>
+#include <string>
 #include <utility>
 
 namespace phonometrica {
@@ -52,6 +54,25 @@ PHON_FORCE_INLINE bool truthy(Value v) noexcept { return !(v.is_null() || v.is_f
 bool is_string(Value v) { return v.is_cell() && class_of(v) == CID_STRING; }
 bool is_list(Value v) { return v.is_cell() && class_of(v) == CID_LIST; }
 bool is_table(Value v) { return v.is_cell() && class_of(v) == CID_TABLE; }
+
+// A user-class instance: a cell whose class is neither a builtin nor a metaclass
+// (i.e. one of the storage-slot-bearing objects of design §5.6).
+bool is_instance(Value v) noexcept
+{
+	return v.is_cell() && !(get_class(class_of(v))->flags & CLASS_BUILTIN);
+}
+
+// Resolve a compile-time type annotation to its Class* at module-load time. A
+// builtin/`Object` is a concrete id; a user class is read from the module slot
+// holding its class object (registered by the preceding DEFCLASS).
+Class *resolve_type_ref(const TypeRef &t, Isolate &iso)
+{
+	if (t.kind == TypeRef::Concrete)
+		return get_class(t.value);
+	Class *c = class_denoted_by(iso.module_slots[t.value].value());
+	PHON_ASSERT_MSG(c != nullptr, "TypeRef module slot does not hold a class object");
+	return c;
+}
 
 // --- stringification (the to_string generic; user overloads arrive in M5) ------
 
@@ -119,6 +140,15 @@ String to_string_value(Value v)
 		return String("<function>");
 	if (Class *c = class_denoted_by(v))
 		return String(c->name ? c->name : "<class>");
+	// A user-class instance. Auto-dispatching a user `to_string` from `&`/print is a
+	// follow-up (it needs CONCAT to lower through the generic); explicit
+	// `to_string(x)` already works. For now show the class name.
+	if (v.is_cell())
+	{
+		Class *c = get_class(class_of(v));
+		if (!(c->flags & CLASS_BUILTIN))
+			return String("<") + String(c->name).view() + ">";
+	}
 	return String("<object>");
 }
 
@@ -173,25 +203,25 @@ Value list_concat(Value a, Value b)
 	return v; // carries +1 (caller reg_move's it)
 }
 
-} // namespace
+// Re-entrant C++→script calls (used by CONCAT/print to dispatch the to_string
+// generic to a user method).
+Value run(Isolate &iso);
+Value vm_call(Isolate &iso, Value callee, Value *args, int argc);
+String stringify_dispatch(Isolate &iso, Value v);
 
-Value execute(Isolate &iso, ClosureCell *main)
+// The interpreter loop. Executes from the current top frame until the frame stack
+// unwinds to the depth it had on entry, then returns that frame's result (+1).
+// execute() drives the module root; vm_call() drives a nested re-entrant call.
+Value run(Isolate &iso)
 {
-	Value *stack = iso.stack();
-	Value *stack_end = stack + iso.stack_capacity();
+	Value *stack_end = iso.stack() + iso.stack_capacity();
+	intptr_t stop_depth = iso.frames.size() - 1;
 
-	// Root frame: leave stack[0] as the result sink; registers start at stack[1].
-	Value *root_base = stack + 1;
-	Proto *mp = main->proto;
-	PHON_CHECK(root_base + mp->num_regs <= stack_end, "[Runtime error] stack overflow");
-	for (int i = 0; i < mp->num_regs; ++i)
-		root_base[i] = Value::make_null();
-	iso.frames.push_back(CallFrame{main, root_base, nullptr, &stack[0]});
-
-	ClosureCell *cl = main;
+	CallFrame &top = iso.frames.back();
+	ClosureCell *cl = top.cl;
 	Proto *proto = cl->proto;
 	const Instruction *ip = proto->code.data();
-	Value *base = root_base;
+	Value *base = top.base;
 	const Variant *K = proto->constants.data();
 	int ic_base_cur = iso.ic_base(proto);
 
@@ -428,7 +458,7 @@ Value execute(Isolate &iso, ClosureCell *main)
 		{
 			String out;
 			for (int r = op_b(ins); r <= op_c(ins); ++r)
-				out.append(to_string_value(base[r]));
+				out.append(stringify_dispatch(iso, base[r]));
 			reg_copy(base, a, out.to_value());
 			break;
 		}
@@ -584,8 +614,8 @@ Value execute(Isolate &iso, ClosureCell *main)
 			const MethodDef &md = proto->method_defs[op_bx(ins)];
 			GenericFunction *g = get_or_create_generic(md.name);
 			SmallVector<Class *, 4> sig;
-			for (intptr_t i = 0; i < md.class_ids.size(); ++i)
-				sig.push_back(get_class(md.class_ids[i]));
+			for (intptr_t i = 0; i < md.sig.size(); ++i)
+				sig.push_back(resolve_type_ref(md.sig[i], iso));
 			Cell *clo = base[a].as_cell(); // the closure holds this register's +1
 			if (add_method(g, sig, md.ref_mask, clo) == AddMethod::Ambiguous)
 			{
@@ -597,6 +627,83 @@ Value execute(Isolate &iso, ClosureCell *main)
 			}
 			iso.record_method(g, std::move(sig), md.ref_mask, clo); // takes the +1
 			base[a] = Value::make_null();                           // ownership moved
+			break;
+		}
+
+		case Opcode::DEFCLASS:
+		{
+			// Register a user class at module load: resolve its base, build the field
+			// layout, and place the class object in R[A] (the caller SETMODULEs it into
+			// the class's binding). Its methods register via the following DEFMETHODs.
+			const ClassDef &cd = proto->class_defs[op_bx(ins)];
+			Class *base_cls = resolve_type_ref(cd.base, iso);
+			SmallVector<FieldInfo, 4> fields;
+			for (intptr_t i = 0; i < cd.fields.size(); ++i)
+			{
+				FieldInfo fi;
+				fi.name = cd.fields[i].name;
+				fi.type = resolve_type_ref(cd.fields[i].type, iso);
+				fields.push_back(fi);
+			}
+			std::string name(symbol_name(cd.name));
+			Class *c = add_user_class(name.c_str(), base_cls, cd.is_ref, cd.is_open,
+			                          fields.data(), static_cast<int32_t>(fields.size()));
+			reg_copy(base, a, class_object(c));
+			break;
+		}
+
+		case Opcode::NEW:
+		{
+			Class *c = class_denoted_by(base[op_b(ins)]);
+			if (!c || (c->flags & CLASS_BUILTIN))
+				iso.raise(String("[Type error] value is not a constructible class"), cur_line());
+			reg_move(base, a, Value::make_cell(make_instance(c))); // fresh, rc==1
+			break;
+		}
+
+		case Opcode::GETFIELD:
+		{
+			Value obj = base[op_b(ins)];
+			if (!is_instance(obj))
+				iso.raise(String("[Type error] value has no fields"), cur_line());
+			Symbol fname = base[op_c(ins)].as_symbol();
+			Class *c = get_class(class_of(obj));
+			int32_t slot = field_slot(c, fname);
+			if (slot < 0)
+				iso.raise(String("[Name error] '") + String(c->name).view() +
+				              "' has no field '" + String(symbol_name(fname)).view() + "'",
+				          cur_line());
+			reg_copy(base, a, instance_fields(obj.as_cell())[slot]);
+			break;
+		}
+
+		case Opcode::SETFIELD:
+		{
+			// R[A].field(R[B]) = R[C]. A value class shared with others detaches a
+			// private copy first (leaving the detached cell in R[A] for the caller to
+			// write back to its binding); a ref class mutates in place.
+			if (!is_instance(base[a]))
+				iso.raise(String("[Type error] value has no fields"), cur_line());
+			Symbol fname = base[op_b(ins)].as_symbol();
+			Cell *obj = base[a].as_cell();
+			Class *c = get_class(obj->class_id());
+			int32_t slot = field_slot(c, fname);
+			if (slot < 0)
+				iso.raise(String("[Name error] '") + String(c->name).view() +
+				              "' has no field '" + String(symbol_name(fname)).view() + "'",
+				          cur_line());
+			if (c->is_value() && obj->refcount() > 1)
+			{
+				Cell *copy = instance_clone(obj); // rc==1
+				release(obj);                      // drop this register's share
+				base[a] = Value::make_cell(copy);
+				obj = copy;
+			}
+			Value *f = instance_fields(obj);
+			Value v = base[op_c(ins)];
+			retain_value(v);
+			release_value(f[slot]);
+			f[slot] = v;
 			break;
 		}
 
@@ -718,8 +825,8 @@ Value execute(Isolate &iso, ClosureCell *main)
 			}
 			CallFrame f = iso.frames.back();
 			iso.frames.pop_back();
-			if (iso.frames.empty())
-				return result; // root: caller adopts the +1
+			if (iso.frames.size() == stop_depth)
+				return result; // this run's top frame returned; caller adopts the +1
 			release_value(*f.ret_slot);
 			*f.ret_slot = result; // adopt the retain into the caller slot
 			CallFrame &caller = iso.frames.back();
@@ -737,5 +844,85 @@ Value execute(Isolate &iso, ClosureCell *main)
 		}
 	}
 }
+
+// Call `callee` with `argc` borrowed args and run it to completion, returning its
+// result (+1). A native runs inline; a closure gets a fresh frame placed above the
+// current top frame's registers, then run() executes it re-entrantly. This is the
+// C++→script seam used for to_string dispatch (and any native→generic callback).
+Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
+{
+	if (is_native(callee))
+	{
+		auto *nf = reinterpret_cast<NativeCell *>(callee.as_cell());
+		return nf->fn(iso, args, argc);
+	}
+	PHON_ASSERT_MSG(is_closure(callee), "vm_call on a non-callable");
+	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
+	Proto *cp = cl->proto;
+	PHON_ASSERT_MSG(argc == cp->num_params, "vm_call arity mismatch");
+
+	CallFrame &top = iso.frames.back();
+	Value *nb = top.base + top.cl->proto->num_regs; // above the caller's live registers
+	Value *stack_end = iso.stack() + iso.stack_capacity();
+	if (nb + cp->num_regs > stack_end)
+		iso.raise(String("[Runtime error] stack overflow"), 0);
+	for (int i = 0; i < argc; ++i)
+	{
+		nb[i] = args[i];
+		if (args[i].is_cell())
+			retain(args[i].as_cell());
+	}
+	for (int i = argc; i < cp->num_regs; ++i)
+		nb[i] = Value::make_null();
+	iso.frames.push_back(CallFrame{cl, nb, nullptr, nullptr}); // ret slot unused: run() stops here
+	return run(iso);
+}
+
+String stringify_dispatch(Isolate &iso, Value v)
+{
+	// A user class with a `to_string` method stringifies through it (design §12);
+	// everything else uses the builtin representation. Only a *script* (closure)
+	// method is invoked — the builtin `to_string` native forwards back here, so
+	// calling it would recurse.
+	if (is_instance(v))
+	{
+		if (GenericFunction *g = find_generic(intern("to_string")))
+		{
+			Method *m = resolve(g, &v, 1);
+			if (m)
+			{
+				Value code = Value::make_cell(reinterpret_cast<Cell *>(m->code));
+				if (is_closure(code))
+				{
+					Value r = vm_call(iso, code, &v, 1);
+					String s = is_string(r) ? String::from_value(r) : to_string_value(r);
+					release_value(r);
+					return s;
+				}
+			}
+		}
+	}
+	return to_string_value(v);
+}
+
+} // namespace
+
+Value execute(Isolate &iso, ClosureCell *main)
+{
+	Value *stack = iso.stack();
+	Value *stack_end = stack + iso.stack_capacity();
+
+	// Root frame: leave stack[0] as the result sink; registers start at stack[1].
+	Value *root_base = stack + 1;
+	Proto *mp = main->proto;
+	PHON_CHECK(root_base + mp->num_regs <= stack_end, "[Runtime error] stack overflow");
+	for (int i = 0; i < mp->num_regs; ++i)
+		root_base[i] = Value::make_null();
+	iso.frames.push_back(CallFrame{main, root_base, nullptr, &stack[0]});
+	return run(iso);
+}
+
+// Stringify dispatching a user to_string (for print and the string library).
+String stringify(Isolate &iso, Value v) { return stringify_dispatch(iso, v); }
 
 } // namespace phonometrica
