@@ -9,9 +9,9 @@ See [`design/design.md`](design/design.md) (language semantics) and
 plan). Deviations from those documents are tracked in
 [`DEVIATIONS.md`](DEVIATIONS.md).
 
-## Status: M0 — Foundations
+## Status: M1 — Values and core types (complete)
 
-Implemented:
+**M0 — Foundations**
 
 - **`base/`** — `definitions.hpp` (assertions, compiler intrinsics), `bits.hpp`
   (alignment/bit utilities), `alloc.hpp`/`.cpp` (byte allocation, 64-byte aligned
@@ -24,9 +24,29 @@ Implemented:
   group probing, 7/8 load factor, tombstone reuse), `FlatHashSet<K>`, plus the
   `TriviallyRelocatable` trait and hashing primitives.
 
-Acceptance (architecture §15, M0): container unit tests including fuzz-style
-randomized ops against reference models (`std::vector`, `std::unordered_map`,
-`std::set`), and an allocator stress test with pattern-fill overlap detection.
+**M1 — Values and core types**
+
+- **Value / Cell / Handle** — 64-bit NaN-boxed `Value` (null/bool/int48/symbol/
+  cell/ref tags) with a single choke-point header; 8-byte `Cell` object header;
+  `Handle<T>` intrusive refcount; non-atomic `retain`/`release` with per-class
+  finalizer dispatch. `Variant` is the public RAII wrapper.
+- **`base/unicode`** — self-contained UTF-8 codec, UAX #29 grapheme segmentation,
+  case mapping, White_Space, and UAX #31 identifier classification over prefetched
+  Unicode 16.0 tables (adapted from calao; no third-party dependency).
+- **`String`** — single-allocation inline UTF-8, copy-on-write, **grapheme-indexed**
+  (see `DEVIATIONS.md`) with lazily built grapheme breadcrumbs for O(1)-amortized
+  random access; API-compatible-in-spirit with Phonometrica's `String`. Plus the
+  **atom table** (Symbol interning).
+- **`List` / `Map` / `Set`** — value-semantic (CoW) containers. `Map`/`Set` are a
+  stable cell wrapping the one engine hash table (`FlatHashMap`/`FlatHashSet`) keyed
+  by structural `value_hash`/`value_equals` (unordered; see `DEVIATIONS.md`).
+- **`object/`** — the M1 seed of the class registry + `value_hash`/`value_equals`.
+
+Acceptance: M0 container fuzz tests + allocator stress; M1 `Value` encoding
+round-trips (every tag, ±2^47 integer boundary, NaN payloads survive), CoW
+uniqueness across String/List/Map/Set, grapheme breadcrumb correctness on IPA
+samples, and Map/Set fuzz vs `std::unordered_map`/`std::set`. The suite is
+warning-clean (`-Wall -Wextra -Werror`) and leak-clean under ASan+UBSan.
 
 ## Building
 
@@ -46,7 +66,12 @@ Options:
 ## Layout
 
 ```
-src/base/    definitions, bits, allocation, size-class heap
-src/core/    Vector, SmallVector, FlatHashMap/Set, hash, relocate trait
-test/unit/   C++ unit tests + minimal single-header harness
+src/base/     definitions, bits, allocation, size-class heap, Unicode
+src/core/     Value, Cell, Handle, Variant, Symbol, containers, hash
+src/object/   class registry, value hash/equality
+src/memory/   cell allocation + finalizer dispatch
+src/types/    String, atom table, List, Map, Set
+src/runtime/  bootstrap (builtin class registration)
+test/unit/    C++ unit tests + minimal single-header harness
+tools/unicode/ Unicode table provenance
 ```

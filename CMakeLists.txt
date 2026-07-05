@@ -55,6 +55,16 @@ endif()
 add_library(phon_engine STATIC
     src/base/alloc.cpp
     src/base/heap.cpp
+    src/base/unicode.cpp
+    src/base/unicode_tables.cpp
+    src/object/class.cpp
+    src/object/value_ops.cpp
+    src/memory/cell_memory.cpp
+    src/types/atom.cpp
+    src/types/string.cpp
+    src/types/list.cpp
+    src/types/map.cpp
+    src/runtime/bootstrap.cpp
 )
 target_include_directories(phon_engine PUBLIC src)
 target_link_libraries(phon_engine PUBLIC phon_flags)
@@ -76,8 +86,20 @@ add_executable(phon_unit_tests
     test/unit/test_small_vector.cpp
     test/unit/test_flat_hash_map.cpp
     test/unit/test_flat_hash_set.cpp
+    test/unit/test_value.cpp
+    test/unit/test_cell.cpp
+    test/unit/test_unicode.cpp
+    test/unit/test_string.cpp
+    test/unit/test_atom.cpp
+    test/unit/test_list.cpp
+    test/unit/test_map.cpp
+    test/unit/test_set.cpp
+    test/unit/test_grapheme_conformance.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE src test)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)
+# Path to the vendored Unicode data, for the UAX #29 conformance test.
+target_compile_definitions(phon_unit_tests PRIVATE
+    PHON_UNICODE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tools/unicode/data")
 
 add_test(NAME unit COMMAND phon_unit_tests)
