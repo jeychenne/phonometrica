@@ -164,6 +164,8 @@ const FieldInfo *field_at(const Class *c, int32_t slot) noexcept
 	return (slot >= 0 && slot < c->field_count) ? &c->fields[slot] : nullptr;
 }
 
+Class *error_class() noexcept { return get_class(CID_ERROR); }
+
 Class *get_class(uint32_t id) noexcept
 {
 	Vector<Class *> &t = reg().by_id;

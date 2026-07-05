@@ -63,14 +63,18 @@ struct FuncState
 	Vector<BlockInfo> blocks;
 	int free_reg = 0;
 	int max_reg = 0;
+	int finally_base = 0; // m_finally_stack size at function entry (return unwinds to here)
 	bool is_module;
 };
 
-// Break/continue patch targets for the innermost enclosing loop.
+// Break/continue patch targets for the innermost enclosing loop. `finally_base` is
+// the enclosing-`try` depth at loop entry, so break/continue run the finally blocks
+// of the `try`s they exit (design §12).
 struct LoopCtx
 {
 	Vector<intptr_t> breaks;
 	Vector<intptr_t> continues;
+	int finally_base = 0;
 };
 
 class Lowerer
@@ -318,6 +322,8 @@ private:
 	void compile_repeat(RepeatStatement *s);
 	void compile_for_numeric(ForNumeric *s);
 	void compile_return(ReturnStatement *s);
+	void compile_try(TryStatement *s);
+	void compile_throw(ThrowStatement *s);
 	void compile_named_function(FunctionDefinition *f); // nested (local) named fn
 
 	// A top-level `function` / class `method` (design §6) is a method on a generic.
@@ -337,7 +343,8 @@ private:
 	void emit_full_defaults(ClassDeclaration *cls, int thisreg);
 	int compile_accessor(FieldDeclaration *fd, bool is_setter); // -> module child-proto index
 	void compile_class(ClassDeclaration *c);
-	void construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest);
+	void construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
+	               int dest);
 	// `this.field` reaches the raw slot (bypassing accessor routing and the runtime
 	// privacy check) when it names the field whose own accessor is being compiled
 	// (recursion safety) or a private field of the class hierarchy (which has no
@@ -355,6 +362,18 @@ private:
 	int load_object_for_write(Ast *obj, int &wb, int &wbidx);
 
 	static Opcode arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare);
+
+	// One enclosing `try` per entry: its finally body (nullable) and whether its
+	// handler is still on the VM handler stack (true in the try body, false once its
+	// catch clauses run). `return`/`break`/`continue` walk this to run the finallys —
+	// and POPTRY the still-active handlers — of the `try`s they exit.
+	struct FinallyCtx
+	{
+		Ast *finally_body;
+		bool handler_active;
+	};
+	Vector<FinallyCtx> m_finally_stack;
+	void emit_finally_unwind(int down_to);
 
 	FuncState *fs = nullptr;
 	Vector<LoopCtx> m_loops;
@@ -703,13 +722,19 @@ void Lowerer::compile_conditional(ConditionalExpression *c, int dest)
 
 void Lowerer::compile_call(CallExpression *c, int dest)
 {
-	// `ClassName(args)` is construction, not a call (design §6).
+	// `ClassName(args)` is construction, not a call (design §6): a user class, or the
+	// builtin Error hierarchy (`throw Error("…")`).
 	if (auto *v = c->callee->as<Variable>())
 	{
 		auto it = m_module_classes.find(v->name.id);
 		if (it != m_module_classes.end())
 		{
-			construct(it->second, module_lookup(v->name), c, dest);
+			construct(it->second, module_lookup(v->name), nullptr, c, dest);
+			return;
+		}
+		if (Class *bc = class_by_name(v->name); bc && is_a(bc, error_class()))
+		{
+			construct(nullptr, -1, bc, c, dest);
 			return;
 		}
 	}
@@ -797,6 +822,7 @@ int Lowerer::compile_function(FunctionDefinition *f)
 	FuncState cfs(*child, fs, false);
 	FuncState *saved = fs;
 	fs = &cfs;
+	cfs.finally_base = static_cast<int>(m_finally_stack.size());
 
 	for (auto &p : f->params)
 		declare_local(p->as<Parameter>()->name, false, p.get());
@@ -868,6 +894,8 @@ void Lowerer::compile_stmt(Ast *node)
 		if (m_loops.empty())
 			error(node, "[Compile error] 'break'/'continue' outside a loop");
 		auto *lc = node->as<LoopControl>();
+		// Run the finally of every `try` between here and the loop before jumping.
+		emit_finally_unwind(m_loops.back().finally_base);
 		intptr_t j = emit_jump(Opcode::JMP, 0, ln(node));
 		if (lc->kind_tok == Lexeme::Break)
 			m_loops.back().breaks.push_back(j);
@@ -878,13 +906,16 @@ void Lowerer::compile_stmt(Ast *node)
 	case NodeKind::FunctionDefinition:
 		compile_named_function(node->as<FunctionDefinition>());
 		break;
+	case NodeKind::TryStatement:
+		compile_try(node->as<TryStatement>());
+		break;
+	case NodeKind::ThrowStatement:
+		compile_throw(node->as<ThrowStatement>());
+		break;
 	case NodeKind::ForEach:
 		error(node, "[Compile error] 'for … in' (iteration protocol) arrives in M5");
 	case NodeKind::ClassDeclaration:
 		error(node, "[Compile error] classes may only be declared at the top level of a module");
-	case NodeKind::TryStatement:
-	case NodeKind::ThrowStatement:
-		error(node, "[Compile error] try/throw arrive in M5");
 	case NodeKind::SpawnStatement:
 		error(node, "[Compile error] 'spawn' arrives in M7");
 	case NodeKind::ImportStatement:
@@ -1169,6 +1200,7 @@ void Lowerer::compile_if(IfStatement *s)
 void Lowerer::compile_while(WhileStatement *s)
 {
 	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
 	intptr_t top = P().code.size();
 	int save = fs->free_reg;
 	int cr = expr_any(s->cond.get());
@@ -1189,6 +1221,7 @@ void Lowerer::compile_while(WhileStatement *s)
 void Lowerer::compile_repeat(RepeatStatement *s)
 {
 	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
 	intptr_t top = P().code.size();
 	compile_stmt(s->body.get());
 	intptr_t cont_target = P().code.size();
@@ -1222,6 +1255,7 @@ void Lowerer::compile_for_numeric(ForNumeric *s)
 	fs->locals.push_back({s->var, var, false, false});
 
 	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
 	intptr_t prep = emit_jump(Opcode::FORPREP, base, ln(s));
 	intptr_t body = P().code.size();
 	compile_stmt(s->body.get());
@@ -1242,18 +1276,122 @@ void Lowerer::compile_for_numeric(ForNumeric *s)
 
 void Lowerer::compile_return(ReturnStatement *s)
 {
+	// The return value is evaluated first, then the finally blocks of every enclosing
+	// `try` run (design §12), then the frame returns.
 	if (s->expr)
 	{
 		int save = fs->free_reg;
 		int t = reg_alloc(s);
-		expr_to(s->expr.get(), t);
+		expr_to(s->expr.get(), t); // keep `t` live across the finallys (regs above it)
+		emit_finally_unwind(fs->finally_base);
 		emit_ABC(Opcode::RET, t, 1, 0, ln(s));
 		reg_free_to(save);
 	}
 	else
 	{
+		emit_finally_unwind(fs->finally_base);
 		emit_ABC(Opcode::RET, 0, 0, 0, ln(s));
 	}
+}
+
+void Lowerer::compile_throw(ThrowStatement *s)
+{
+	int save = fs->free_reg;
+	int r = expr_any(s->expr.get());
+	emit_ABC(Opcode::THROW, r, 0, 0, ln(s));
+	reg_free_to(save);
+}
+
+void Lowerer::emit_finally_unwind(int down_to)
+{
+	// Leaving one or more `try`s early (return/break/continue): POPTRY each still-live
+	// handler and run its finally, innermost first, down to `down_to`.
+	for (intptr_t i = static_cast<intptr_t>(m_finally_stack.size()) - 1; i >= down_to; --i)
+	{
+		if (m_finally_stack[i].handler_active)
+			emit(encode_ABC(Opcode::POPTRY, 0, 0, 0), 0);
+		if (m_finally_stack[i].finally_body)
+			compile_block(m_finally_stack[i].finally_body->as<StatementList>());
+	}
+}
+
+void Lowerer::compile_try(TryStatement *s)
+{
+	// Layout (design §12 / architecture §10.5):
+	//     PUSHTRY err, -> LAND
+	//     <body> ; POPTRY ; pending = null ; JMP -> FINALLY
+	//   LAND:                      ; err holds the thrown value
+	//     for each `catch e as T`: if err is-a T -> bind e, run handler, pending=null, -> FINALLY
+	//     pending = err            ; no clause matched
+	//   FINALLY:
+	//     <finally> ; if pending -> THROW pending
+	int save = fs->free_reg;
+	int err_reg = reg_alloc(s);     // receives the thrown error at LAND
+	int pending_reg = reg_alloc(s); // the error to re-raise after finally (null if handled)
+
+	intptr_t jpush = emit_jump(Opcode::PUSHTRY, err_reg, ln(s)); // -> LAND (patched)
+
+	// The handler is active during the body; `return`/`break`/`continue` in the body
+	// run this finally and POPTRY the handler on the way out.
+	m_finally_stack.push_back(FinallyCtx{s->finally_body.get(), true});
+	compile_block(s->body->as<StatementList>());
+
+	emit(encode_ABC(Opcode::POPTRY, 0, 0, 0), ln(s));
+	emit_ABC(Opcode::LOADNULL, pending_reg, 0, 0, ln(s));
+	intptr_t jnormal = emit_jump(Opcode::JMP, 0, ln(s)); // -> FINALLY
+
+	// LAND: the catch-dispatch block. The handler is no longer on the stack here, so
+	// an early exit from a catch clause runs the finally but must not POPTRY it.
+	patch_jump(jpush);
+	m_finally_stack.back().handler_active = false;
+	Vector<intptr_t> to_finally;
+	for (auto &cl : s->catches)
+	{
+		auto *cc = cl->as<CatchClause>();
+		intptr_t jnext = -1;
+		if (cc->type)
+		{
+			// if not (err is-a T) -> next clause
+			int csave = fs->free_reg;
+			int treg = reg_alloc(cc);
+			expr_to(cc->type.get(), treg); // the exception class object
+			int cond = reg_alloc(cc);
+			emit_ABC(Opcode::IS, cond, err_reg, treg, ln(cc));
+			jnext = emit_jump(Opcode::JMPF, cond, ln(cc));
+			reg_free_to(csave);
+		}
+		// matched: bind the catch variable (if any) and run the handler in a scope.
+		enter_block();
+		if (cc->name != NO_SYMBOL)
+		{
+			int ereg = declare_local(cc->name, false, cc);
+			emit_ABC(Opcode::MOVE, ereg, err_reg, 0, ln(cc));
+		}
+		compile_block(cc->body->as<StatementList>());
+		exit_block(static_cast<uint32_t>(cc->line));
+		emit_ABC(Opcode::LOADNULL, pending_reg, 0, 0, ln(cc)); // handled: nothing pending
+		to_finally.push_back(emit_jump(Opcode::JMP, 0, ln(cc)));
+		if (jnext >= 0)
+			patch_jump(jnext);
+	}
+	// No clause matched: carry the error through finally, then re-raise.
+	emit_ABC(Opcode::MOVE, pending_reg, err_reg, 0, ln(s));
+
+	// The try is exited via one of the paths below; its context leaves the stack so
+	// the shared finally is emitted directly, not through the unwind machinery.
+	m_finally_stack.pop_back();
+
+	// FINALLY: reached from normal completion, a handled catch, or the unmatched path.
+	patch_jump(jnormal);
+	for (intptr_t j : to_finally)
+		patch_jump(j);
+	if (s->finally_body)
+		compile_block(s->finally_body->as<StatementList>());
+	intptr_t jend = emit_jump(Opcode::JMPF, pending_reg, ln(s)); // pending null -> done
+	emit_ABC(Opcode::THROW, pending_reg, 0, 0, ln(s));
+	patch_jump(jend);
+
+	reg_free_to(save);
 }
 
 void Lowerer::compile_named_function(FunctionDefinition *f)
@@ -1377,6 +1515,7 @@ int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaratio
 	FuncState cfs(*child, fs, false);
 	FuncState *saved = fs;
 	fs = &cfs;
+	cfs.finally_base = static_cast<int>(m_finally_stack.size());
 
 	(void) cls;
 	declare_local(this_symbol(), true, m); // reg 0 = this (const)
@@ -1413,6 +1552,7 @@ int Lowerer::compile_accessor(FieldDeclaration *fd, bool is_setter)
 	FuncState cfs(*child, fs, false);
 	FuncState *saved = fs;
 	fs = &cfs;
+	cfs.finally_base = static_cast<int>(m_finally_stack.size());
 
 	declare_local(this_symbol(), true, fd);
 	if (is_setter)
@@ -1512,6 +1652,7 @@ void Lowerer::compile_class(ClassDeclaration *c)
 		FuncState cfs(*child, fs, false);
 		FuncState *saved = fs;
 		fs = &cfs;
+	cfs.finally_base = static_cast<int>(m_finally_stack.size());
 		declare_local(this_symbol(), true, c);
 		emit_ABC(Opcode::RET, 0, 1, 0, ln(c)); // empty body: defaults ran at construction; return this
 		child->num_regs = cfs.max_reg > 1 ? cfs.max_reg : 1;
@@ -1532,7 +1673,8 @@ void Lowerer::compile_class(ClassDeclaration *c)
 	}
 }
 
-void Lowerer::construct(ClassDeclaration *cls, int class_slot, CallExpression *call, int dest)
+void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
+                        int dest)
 {
 	if (!call->options.empty())
 		error(call, "[Compile error] named constructor options arrive later in M5");
@@ -1542,14 +1684,19 @@ void Lowerer::construct(ClassDeclaration *cls, int class_slot, CallExpression *c
 
 	// NEW a fresh instance directly into the init call's `this` slot, apply the full
 	// (base→derived) field defaults, then dispatch init(this, args...). init returns
-	// the (in-place mutated) instance.
+	// the (in-place mutated) instance. The class object comes from the class's module
+	// binding (user class) or a constant (builtin Error subtree).
 	int save = fs->free_reg;
 	int base = reg_alloc(call); // holds :init, then the result
 	emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(intern("init"))), ln(call));
 	int thisreg = reg_alloc(call); // base + 1
-	emit_ABx(Opcode::GETMODULE, thisreg, static_cast<uint32_t>(class_slot), ln(call));
+	if (builtin)
+		emit_ABx(Opcode::LOADK, thisreg, static_cast<uint32_t>(k_class(builtin)), ln(call));
+	else
+		emit_ABx(Opcode::GETMODULE, thisreg, static_cast<uint32_t>(class_slot), ln(call));
 	emit_ABC(Opcode::NEW, thisreg, thisreg, 0, ln(call)); // this = fresh instance (rc 1)
-	emit_full_defaults(cls, thisreg);
+	if (cls)
+		emit_full_defaults(cls, thisreg);
 	int nargs = static_cast<int>(call->args.size());
 	for (auto &a : call->args)
 	{
@@ -1576,6 +1723,7 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 
 	FuncState mfs(main, nullptr, true);
 	fs = &mfs;
+	mfs.finally_base = static_cast<int>(m_finally_stack.size());
 
 	// Pass 1: reserve module slots for top-level bindings, and collect the names of
 	// top-level `function`s so forward and mutually-recursive references resolve

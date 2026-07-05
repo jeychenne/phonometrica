@@ -58,6 +58,10 @@ using Instruction = uint32_t;
 	_(JMPT)        /* A sBx  : if truthy(R[A]) ip += sBx                      */ \
 	_(FORPREP)     /* A sBx  : counted-loop setup, jump to FORLOOP           */ \
 	_(FORLOOP)     /* A sBx  : counted-loop step/test, jump back if running  */ \
+	/* error handling (design §12) */                                           \
+	_(PUSHTRY)     /* A sBx  : push handler; on throw R[A]=error, ip->A+sBx  */ \
+	_(POPTRY)      /* (none) : pop the innermost handler (try body finished) */ \
+	_(THROW)       /* A      : throw R[A] (an Error) to the handler stack    */ \
 	/* calls */                                                                 \
 	_(CALL)        /* A B    : R[A] = R[A](R[A+1..A+B])  direct, 1 result    */ \
 	_(CALLG)       /* A B    : generic call; IC index in following EXTRA_ARG */ \

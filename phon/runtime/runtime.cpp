@@ -12,6 +12,7 @@
 #include <phon/core/vector.hpp>
 #include <phon/dispatch/generic.hpp>
 #include <phon/object/class.hpp>
+#include <phon/object/instance.hpp>
 #include <phon/runtime/bootstrap.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
@@ -105,6 +106,22 @@ Value builtin_cast(Isolate &iso, Value *args, int argc)
 	          0);
 }
 
+Value error_init(Isolate &, Value *args, int argc)
+{
+	// init(this as Error, message): set the message field (slot 0) and return `this`.
+	(void) argc;
+	Cell *self = args[0].as_cell();
+	Value msg = args[1];
+	if (msg.is_cell())
+		retain(msg.as_cell());
+	Value *f = instance_fields(self);
+	if (f[0].is_cell())
+		release(f[0].as_cell());
+	f[0] = msg;
+	retain(self); // native returns a value carrying +1
+	return args[0];
+}
+
 // Keep native cells alive for the process lifetime (they back builtin generics).
 // A function-local static releases them at process exit (matching the class/atom
 // registries), so leak checkers stay clean.
@@ -152,6 +169,19 @@ void register_builtins()
 	register_native("assert", builtin_assert, 1, 2);
 	register_native("cast", builtin_cast, 2, 2);
 	register_native("to_string", builtin_to_string, 1, 1);
+
+	// Error construction: init(this as Error, message). Registered with a typed
+	// signature so subclasses inherit it (constructor inheritance).
+	{
+		Symbol s = intern("init");
+		GenericFunction *g = get_or_create_generic(s);
+		NativeCell *nf = make_native(error_init, s, 2, 2);
+		native_keepalive().cells.push_back(nf);
+		SmallVector<Class *, 4> sig;
+		sig.push_back(error_class());
+		sig.push_back(get_class(CID_OBJECT));
+		add_method(g, sig, 0, nf);
+	}
 }
 
 bool g_booted = false;
@@ -222,10 +252,19 @@ Variant Runtime::do_string(const String &code)
 		if (result.is_cell())
 			release(result.as_cell()); // drop execute's +1
 	}
+	catch (RuntimeError &e)
+	{
+		// An uncaught script error reaches the embedding boundary: release the live
+		// register stack and the in-flight error value, keeping the message/line.
+		st.isolate.unwind_on_error();
+		if (e.error.is_cell())
+			release(e.error.as_cell());
+		e.error = Value::make_null();
+		set_current_isolate(prev);
+		throw;
+	}
 	catch (...)
 	{
-		// Release the live register stack of the aborted run so an uncaught error
-		// leaves no leaked cells (full handler-stack unwinding arrives with M5 errors).
 		st.isolate.unwind_on_error();
 		set_current_isolate(prev);
 		throw;

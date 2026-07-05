@@ -41,6 +41,7 @@ Form form_of(Opcode op)
 	case Opcode::JMPT:
 	case Opcode::FORPREP:
 	case Opcode::FORLOOP:
+	case Opcode::PUSHTRY:
 		return Form::AsBx;
 	case Opcode::EXTRA_ARG:
 		return Form::Ax;
@@ -153,7 +154,7 @@ void disassemble_proto(const Proto &p, std::string &out, int index)
 		case Form::AsBx:
 			std::snprintf(ops, sizeof ops, "%d %d", op_a(ins), op_sbx(ins));
 			if (op == Opcode::JMP || op == Opcode::JMPF || op == Opcode::JMPT ||
-			    op == Opcode::FORPREP || op == Opcode::FORLOOP)
+			    op == Opcode::FORPREP || op == Opcode::FORLOOP || op == Opcode::PUSHTRY)
 			{
 				char tgt[32];
 				std::snprintf(tgt, sizeof tgt, "-> %04td", ip + 1 + op_sbx(ins));

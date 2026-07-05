@@ -560,6 +560,147 @@ TEST_CASE("vm: user classes do not leak across runs")
 	CHECK(threw);
 }
 
+// --- errors: throw / try / catch / finally (design §12) -----------------------
+
+TEST_CASE("vm: throw is caught by a matching catch clause")
+{
+	const char *src = "class IOError is Error\nend\n"
+	                  "var r = \"\"\n"
+	                  "try\n throw IOError(\"disk\")\n"
+	                  "catch e as IOError\n r = e.message\n"
+	                  "catch e as Error\n r = \"other\"\n end\n r";
+	CHECK(run_str(src) == "disk");
+}
+
+TEST_CASE("vm: the first matching catch wins; base Error matches subclasses")
+{
+	const char *src = "class AErr is Error\nend\n"
+	                  "var r = 0\n"
+	                  "try\n throw AErr(\"x\")\n"
+	                  "catch e as Error\n r = 1\n"
+	                  "catch e as AErr\n r = 2\n end\n r";
+	CHECK(run_int(src) == 1);
+}
+
+TEST_CASE("vm: a builtin error is catchable as Error")
+{
+	CHECK(run_int("var r = 0\n try\n var x = 1 div 0\n catch e as Error\n r = 1\n end\n r") == 1);
+}
+
+TEST_CASE("vm: finally runs on the normal, caught, and propagating paths")
+{
+	// normal + caught
+	CHECK(run_str("var s = \"\"\n try\n s = s & \"a\"\n finally\n s = s & \"f\"\n end\n"
+	              "try\n throw Error(\"x\")\n catch e as Error\n s = s & \"c\"\n"
+	              "finally\n s = s & \"F\"\n end\n s") == "afcF");
+}
+
+TEST_CASE("vm: an unmatched inner catch runs finally then propagates")
+{
+	const char *src = "class A1 is Error\nend\nclass B1 is Error\nend\n"
+	                  "var t = \"\"\n"
+	                  "try\n"
+	                  "  try\n throw B1(\"b\")\n catch e as A1\n t = t & \"A\"\n"
+	                  "  finally\n t = t & \"f\"\n end\n"
+	                  "catch e as Error\n t = t & \"o\"\n end\n t";
+	CHECK(run_str(src) == "fo");
+}
+
+TEST_CASE("vm: an error thrown across a call frame is caught in the caller")
+{
+	const char *src = "function boom()\n throw Error(\"deep\")\nend\n"
+	                  "var m = \"\"\n"
+	                  "try\n boom()\n catch e as Error\n m = e.message\n end\n m";
+	CHECK(run_str(src) == "deep");
+}
+
+TEST_CASE("vm: throw re-raises a caught error to an outer handler")
+{
+	const char *src = "var g = \"\"\n"
+	                  "try\n"
+	                  "  try\n throw Error(\"boom\")\n catch e as Error\n throw e\n end\n"
+	                  "catch e as Error\n g = e.message\n end\n g";
+	CHECK(run_str(src) == "boom");
+}
+
+TEST_CASE("vm: an uncaught throw reaches the embedding boundary")
+{
+	bool threw = false;
+	try
+	{
+		run("throw Error(\"nope\")");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("vm: finally runs when a try body returns")
+{
+	const char *src = "var log = \"\"\n"
+	                  "function f() as Integer\n"
+	                  "  try\n log = log & \"t\"\n return 7\n finally\n log = log & \"F\"\n end\n"
+	                  "end\n"
+	                  "var r = f()\n log & r";
+	CHECK(run_str(src) == "tF7");
+}
+
+TEST_CASE("vm: nested-try return runs both finallys, innermost first")
+{
+	const char *src = "var log = \"\"\n"
+	                  "function f() as Integer\n"
+	                  "  try\n try\n return 1\n finally\n log = log & \"i\"\n end\n"
+	                  "  finally\n log = log & \"o\"\n end\n"
+	                  "end\n f()\n log";
+	CHECK(run_str(src) == "io");
+}
+
+TEST_CASE("vm: break inside a try runs its finally and leaves no stale handler")
+{
+	const char *src = "var log = \"\"\n"
+	                  "for i = 1 to 3 do\n"
+	                  "  try\n if i == 2 then break end\n log = log & \"b\"\n"
+	                  "  finally\n log = log & \"f\"\n end\n end\n"
+	                  "log";
+	CHECK(run_str(src) == "bff");
+}
+
+TEST_CASE("vm: throwing a non-Error is a type error")
+{
+	bool threw = false;
+	try
+	{
+		run("throw 42");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("vm: an error carries a backtrace captured at first raise")
+{
+	const char *src = "function inner()\n throw Error(\"x\")\nend\n"
+	                  "function outer()\n inner()\nend\n"
+	                  "var t = \"\"\n"
+	                  "try\n outer()\n catch e as Error\n t = e.trace\n end\n t";
+	CHECK(run_str(src) == "  at inner (line 2)\n  at outer (line 5)\n  at <module> (line 9)\n");
+}
+
+TEST_CASE("vm: re-throwing preserves the original backtrace")
+{
+	const char *src = "function inner()\n throw Error(\"x\")\nend\n"
+	                  "var t = \"\"\n"
+	                  "try\n"
+	                  "  try\n inner()\n catch e as Error\n throw e\n end\n"
+	                  "catch e as Error\n t = e.trace\n end\n t";
+	// Origin is `inner` at line 2 and the outer call at line 7 — not the re-throw site.
+	CHECK(run_str(src) == "  at inner (line 2)\n  at <module> (line 7)\n");
+}
+
 TEST_CASE("vm: compile errors for undeclared names")
 {
 	bool threw = false;

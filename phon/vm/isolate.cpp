@@ -4,10 +4,22 @@
 #include <phon/vm/isolate.hpp>
 
 #include <phon/dispatch/generic.hpp>
+#include <phon/object/instance.hpp>
+#include <phon/types/atom.hpp>
 
 #include <utility>
 
 namespace phonometrica {
+
+Cell *make_error(const String &message)
+{
+	Cell *e = make_instance(error_class());
+	Value mv = message.to_value();
+	if (mv.is_cell())
+		retain(mv.as_cell()); // the instance's field owns this reference
+	instance_fields(e)[0] = mv; // slot 0 = message
+	return e;
+}
 
 namespace {
 
@@ -83,6 +95,7 @@ void Isolate::unwind_on_error() noexcept
 		*p = Value::make_null();
 	}
 	frames.clear();
+	handlers.clear();
 }
 
 UpvalueCell *Isolate::find_or_make_open_upvalue(Value *slot)
@@ -146,6 +159,47 @@ int Isolate::ic_base(Proto *p)
 	return base;
 }
 
-void Isolate::raise(String message, int line) { throw RuntimeError{std::move(message), line}; }
+String Isolate::backtrace(int top_line)
+{
+	String out;
+	intptr_t n = frames.size();
+	for (intptr_t i = n - 1; i >= 0; --i)
+	{
+		Proto *p = frames[i].cl->proto;
+		int line = top_line;
+		if (i != n - 1)
+		{
+			// A non-innermost frame's active line is where it called the frame above.
+			intptr_t idx = (frames[i + 1].ret_ip - p->code.data()) - 1;
+			line = static_cast<int>(p->line_at(idx));
+		}
+		out.append("  at ");
+		out.append(p->name == NO_SYMBOL ? String("<module>") : String(symbol_name(p->name)));
+		out.append(" (line ");
+		out.append(String::convert(static_cast<intptr_t>(line)));
+		out.append(")\n");
+	}
+	return out;
+}
+
+void capture_error_trace(Isolate &iso, Cell *err, int top_line)
+{
+	Value *f = instance_fields(err);
+	if (!f[1].is_null())
+		return; // already captured at first raise
+	String tr = iso.backtrace(top_line); // keep alive while we take ownership
+	Value tv = tr.to_value();
+	if (tv.is_cell())
+		retain(tv.as_cell()); // the instance's field owns this reference
+	f[1] = tv;
+}
+
+void Isolate::raise(String message, int line)
+{
+	// Builtin errors are thrown as Error instances so scripts can `catch` them.
+	Cell *e = make_error(message);
+	capture_error_trace(*this, e, line);
+	throw RuntimeError{std::move(message), line, Value::make_cell(e)};
+}
 
 } // namespace phonometrica

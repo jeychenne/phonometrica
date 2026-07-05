@@ -776,13 +776,15 @@ try
 catch e as IOError
     print("cannot read {path}: {e.message}")
 catch e as Error
-    rethrow(e)
+    throw e
 finally
     cleanup()
 end
 ```
 
-`throw` raises any `Error` value.
+`throw` raises any `Error` value. Re-raising a caught error is just `throw e`; it
+preserves the error's original backtrace (captured when the error is first raised),
+so no separate `rethrow` construct is needed.
 
 ### Concurrency surface
 

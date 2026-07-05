@@ -55,11 +55,11 @@ bool is_string(Value v) { return v.is_cell() && class_of(v) == CID_STRING; }
 bool is_list(Value v) { return v.is_cell() && class_of(v) == CID_LIST; }
 bool is_table(Value v) { return v.is_cell() && class_of(v) == CID_TABLE; }
 
-// A user-class instance: a cell whose class is neither a builtin nor a metaclass
-// (i.e. one of the storage-slot-bearing objects of design §5.6).
+// A field-bearing instance (design §5.6): a cell laid out by the instance machinery
+// — every user class and the builtin Error hierarchy — identified by its finalizer.
 bool is_instance(Value v) noexcept
 {
-	return v.is_cell() && !(get_class(class_of(v))->flags & CLASS_BUILTIN);
+	return v.is_cell() && get_class(class_of(v))->finalize == &instance_finalize;
 }
 
 // Resolve a compile-time type annotation to its Class* at module-load time. A
@@ -277,6 +277,15 @@ Value run(Isolate &iso)
 			iso.raise(String("[Type error] value is not callable"), cur_line());
 		}
 	};
+
+	// Outer retry loop: the inner interpreter loop runs until it returns (RET/HALT at
+	// this run's root) or throws. A RuntimeError is caught here; if an active handler
+	// belongs to this run we unwind to it and re-enter the inner loop at its catch
+	// dispatch, otherwise it propagates (architecture §10.5).
+	for (;;)
+	{
+		try
+		{
 
 	for (;;)
 	{
@@ -673,7 +682,9 @@ Value run(Isolate &iso)
 		case Opcode::NEW:
 		{
 			Class *c = class_denoted_by(base[op_b(ins)]);
-			if (!c || (c->flags & CLASS_BUILTIN))
+			// User classes and the Error hierarchy are constructible; other builtins
+			// (List, Float, …) are not — their `T(x)` is conversion, not construction.
+			if (!c || ((c->flags & CLASS_BUILTIN) && !is_a(c, error_class())))
 				iso.raise(String("[Type error] value is not a constructible class"), cur_line());
 			reg_move(base, a, Value::make_cell(make_instance(c))); // fresh, rc==1
 			break;
@@ -876,6 +887,11 @@ Value run(Isolate &iso)
 			}
 			CallFrame f = iso.frames.back();
 			iso.frames.pop_back();
+			// Discard any handlers belonging to the frame that just returned (a return
+			// from within a try emits POPTRY, but this keeps the stack sound regardless).
+			while (!iso.handlers.empty() &&
+			       iso.handlers.back().frame_depth > static_cast<intptr_t>(iso.frames.size()))
+				iso.handlers.pop_back();
 			if (iso.frames.size() == stop_depth)
 				return result; // this run's top frame returned; caller adopts the +1
 			release_value(*f.ret_slot);
@@ -890,8 +906,64 @@ Value run(Isolate &iso)
 			break;
 		}
 
+		case Opcode::PUSHTRY:
+			iso.handlers.push_back(Isolate::Handler{static_cast<intptr_t>(iso.frames.size()), base,
+			                                        ip + op_sbx(ins), a});
+			break;
+		case Opcode::POPTRY:
+			iso.handlers.pop_back();
+			break;
+		case Opcode::THROW:
+		{
+			Value ev = base[a];
+			Class *ec = ev.is_cell() ? get_class(class_of(ev)) : nullptr;
+			if (!ec || !is_a(ec, error_class()))
+				iso.raise(String("[Type error] only an Error can be thrown"), cur_line());
+			Value msgv = instance_fields(ev.as_cell())[0]; // slot 0 == message
+			String msg = is_string(msgv) ? String::from_value(msgv) : String(ec->name);
+			capture_error_trace(iso, ev.as_cell(), cur_line()); // origin, if not already set
+			retain_value(ev);                                    // the in-flight error owns a reference
+			throw RuntimeError{msg, cur_line(), ev};
+		}
+
 		default:
 			PHON_UNREACHABLE_MSG("unknown opcode");
+		}
+	}
+
+		}
+		catch (RuntimeError &err)
+		{
+			// No handler belongs to this run -> propagate to the caller / do_string.
+			if (iso.handlers.empty() || iso.handlers.back().frame_depth <= stop_depth)
+				throw;
+
+			Isolate::Handler h = iso.handlers.back();
+			iso.handlers.pop_back();
+
+			// Unwind the frames above the try's frame, releasing their registers.
+			while (static_cast<intptr_t>(iso.frames.size()) > h.frame_depth)
+			{
+				CallFrame f = iso.frames.back();
+				iso.close_upvalues(f.base);
+				for (int i = 0; i < f.cl->proto->num_regs; ++i)
+				{
+					release_value(f.base[i]);
+					f.base[i] = Value::make_null();
+				}
+				iso.frames.pop_back();
+			}
+
+			// Resume in the try's frame at its catch dispatch, with the error bound.
+			CallFrame &top = iso.frames.back();
+			cl = top.cl;
+			proto = cl->proto;
+			base = top.base;
+			K = proto->constants.data();
+			ic_base_cur = iso.ic_base(proto);
+			ip = h.land_ip;
+			release_value(base[h.err_reg]);
+			base[h.err_reg] = err.error; // adopt the in-flight error's reference
 		}
 	}
 }

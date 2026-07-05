@@ -4,6 +4,8 @@
 #include <phon/runtime/bootstrap.hpp>
 
 #include <phon/object/class.hpp>
+#include <phon/object/instance.hpp>
+#include <phon/types/atom.hpp>
 
 namespace phonometrica {
 
@@ -37,6 +39,13 @@ Class g_symbol{.id = CID_SYMBOL, .name = "Symbol", .base = &g_object,
 Class g_class{.id = CID_CLASS, .name = "Class", .base = &g_object,
               .flags = CLASS_BUILTIN | CLASS_REF | CLASS_META | CLASS_SEALED};
 
+// The base Error class (design §12): a value class with `message` (slot 0) and
+// `trace` (slot 1, the backtrace captured at first raise) fields, so its instances
+// (and user subclasses) go through the ordinary instance machinery.
+FieldInfo g_error_fields[2];
+Class g_error{.id = CID_ERROR, .name = "Error", .base = &g_object,
+              .flags = CLASS_BUILTIN | CLASS_VALUE};
+
 bool g_done = false;
 
 } // namespace
@@ -63,6 +72,17 @@ void bootstrap()
 	// The root metaclass is registered last so builtin intervals equal their
 	// stable ids (0..10).
 	register_class(&g_class);
+
+	// Error carries `message` and `trace` fields (Strings), via the instance machinery.
+	g_error_fields[0] = FieldInfo{intern("message"), get_class(CID_STRING), nullptr, nullptr, false};
+	g_error_fields[1] = FieldInfo{intern("trace"), get_class(CID_STRING), nullptr, nullptr, false};
+	g_error.fields = g_error_fields;
+	g_error.field_count = 2;
+	g_error.instance_size =
+	    static_cast<intptr_t>(sizeof(Cell)) + 2 * static_cast<intptr_t>(sizeof(Value));
+	g_error.finalize = &instance_finalize;
+	g_error.clone = &instance_clone_hook;
+	register_class(&g_error);
 
 	// Compute subtype intervals from the assembled hierarchy.
 	renumber_types();

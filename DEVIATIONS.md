@@ -590,3 +590,68 @@ A `local field` (owner request) is private: reachable only through `this`, and
 3. **A `local field` may not declare accessors** (parse error) — private storage
    behind public accessors is incoherent (matches the design). `local` applies only
    to `field` in a class body (not `method`).
+
+## M5 — Errors (Stage 2)
+
+Implements the `Error` hierarchy, `throw`, and `try`/`catch`/`finally` (design §12,
+architecture §10.5).
+
+1. **`Error` is a builtin value class with a `message` field (`CID_ERROR`).** It goes
+   through the ordinary instance machinery (`make_instance`, field layout, instance
+   hooks), so user error types are plain subclasses (`class IOError is Error`) that
+   inherit the `message` field and a native `init(this as Error, message)` — giving
+   `IOError("…")` construction by constructor inheritance. `Error` and its subtree are
+   the only builtin classes `NEW` will construct. Builtin errors raised by opcodes and
+   natives (`iso.raise`) now create an `Error` instance via `make_error`, so every
+   `[Type error]`/`[Math error]`/… is a catchable `Error` (category-specific builtin
+   subclasses — `TypeError`, `ValueError`, … — are a later refinement; for now all
+   builtin errors are the base `Error`).
+
+2. **`is_instance` keys on the instance finalizer, not `CLASS_BUILTIN`.** Because
+   `Error` is a builtin *and* field-bearing, "does this cell have fields?" is decided
+   by `class->finalize == instance_finalize` (set by `add_user_class` and Error's
+   registration), which the field opcodes and stringify use.
+
+3. **A per-`Isolate` handler stack drives unwinding.** `PUSHTRY A sBx` records
+   `{frame_depth, base, catch-dispatch ip, err_reg A}`; `POPTRY` drops it on normal
+   completion; `THROW A` (and every `iso.raise`) throws the C++ `RuntimeError` carrying
+   the `Error` value. The interpreter loop runs inside a retry `try`/`catch`: a caught
+   `RuntimeError` whose innermost handler belongs to this run unwinds the frames above
+   the try (releasing their registers, closing upvalues), binds the error into
+   `err_reg`, and resumes at the catch dispatch; otherwise it propagates (to an outer
+   run or `do_string`). This unifies opcode raises, native raises, and re-entrant
+   `vm_call` errors on one mechanism.
+
+4. **`try` lowering uses a single shared `finally` and a `pending` register.** The body
+   is bracketed by `PUSHTRY`/`POPTRY`; the catch dispatch tests each clause with `IS`
+   (same interval check as `is`), binds the catch variable, and on no match sets
+   `pending = error`. All paths fall into one `finally` block, after which a non-null
+   `pending` is re-`THROW`n. Catch clauses are tried in order; a bare `catch` / `catch
+   e` (no type) matches anything. `throw` of a non-`Error` is a `[Type error]`.
+   Re-raising a caught error is just `throw e` — the design doc's `rethrow(e)` function
+   was dropped (owner decision): control flow dressed as a function is a wart, and it
+   was redundant with `throw e` (backtraces are captured once at first raise and
+   preserved across re-throw, so `throw e` re-raises with the original origin). A bare
+   `rethrow` keyword could be added compatibly if a reset-vs-preserve distinction is
+   ever needed.
+
+5. **`return`/`break`/`continue` inside a `try` run the enclosing `finally`s
+   (finally-inlining).** The lowerer keeps a stack of enclosing `try`s (finally body
+   + whether the handler is still live); an early exit emits, innermost-first, a
+   `POPTRY` for each still-active handler and a copy of each `finally` block, then the
+   `RET`/`JMP`. `return` unwinds to the function's try-depth; `break`/`continue` to the
+   enclosing loop's. A `return` value is evaluated before the `finally`s run (Java
+   order). `RET` also defensively discards any handlers left by the returning frame.
+
+6. **Errors carry a backtrace, captured once at first raise** (`Error` gains a
+   `trace` field at slot 1). `iso.raise` and the `THROW` opcode call
+   `capture_error_trace`, which fills `trace` only if empty — so re-raising with
+   `throw e` **preserves the original origin** (this is why no separate `rethrow` is
+   needed). `Isolate::backtrace` walks the frame vector, using each caller frame's
+   `ret_ip` against its line table to render `  at <fn> (line N)` per frame
+   (`<module>` for the top level). `e.trace` is a plain (public) `String` field.
+
+7. **`RuntimeError` carries the thrown `Error` value** alongside `message`/`line`.
+   An uncaught error reaching `do_string` releases the live register stack
+   (`unwind_on_error`, which also clears the handler stack) and the error value, then
+   re-throws with `message`/`line` for the embedder.

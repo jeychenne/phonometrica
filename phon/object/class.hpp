@@ -106,8 +106,13 @@ enum BuiltinClassId : uint32_t
 	CID_TABLE,
 	CID_SET,
 	CID_CLASS, // the root metaclass; per-class metaclasses derive from it
+	CID_ERROR, // base of the thrown-error hierarchy (design §12)
 	CID_BUILTIN_COUNT
 };
+
+// The base Error class (design §12). Its instances carry a `message` field at slot
+// 0; user error types derive from it.
+Class *error_class() noexcept;
 
 // --- registration ---
 
