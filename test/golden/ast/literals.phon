@@ -1,0 +1,22 @@
+# Literals and collection expressions.
+42
+1_000_000
+3.14159
+1.5e-3
+true
+false
+null
+"plain string"
+'raw \d+ regex'
+"line one\nline two"
+"Analyzing {path}: {n} found"
+"""
+triple
+{a + b}
+lines
+"""
+[]
+[1, 2, 3]
+{}
+{"vowel": 1, "consonant": 2}
+{a, b, c}

@@ -1,0 +1,125 @@
+Module
+  ExprStmt
+    Concat
+      Str "total: "
+      Binary +
+        Var n
+        Int 1
+  ExprStmt
+    Binary +
+      Var a
+      Binary *
+        Var b
+        Var c
+  ExprStmt
+    Binary ^
+      Int 2
+      Binary ^
+        Int 3
+        Int 2
+  ExprStmt
+    Unary -
+      Binary ^
+        Int 2
+        Int 2
+  ExprStmt
+    Unary not
+      Binary ==
+        Var a
+        Var b
+  ExprStmt
+    Binary or
+      Binary and
+        Var a
+        Var b
+      Var c
+  ExprStmt
+    Binary mod
+      Binary div
+        Var a
+        Var b
+      Var c
+  ExprStmt
+    Is Sound
+      Var x
+  ExprStmt
+    Cast Float
+      Binary +
+        Var x
+        Int 1
+  ExprStmt
+    Field c
+      Field b
+        Var a
+  ExprStmt
+    Call
+      Var f
+      Var a
+      Var b
+  ExprStmt
+    Call
+      Var pitch
+      Var snd
+      Named floor
+        Int 60
+      Named ceiling
+        Int 300
+  ExprStmt
+    Call
+      Var normalize
+      Ref
+        Var samples
+  ExprStmt
+    Call
+      Var print
+      Var x
+      Splat
+        Var values
+  ExprStmt
+    Index
+      Var a
+      Var i
+  ExprStmt
+    Index
+      Var a
+      Slice
+        Int 2
+        Int 5
+        None
+  ExprStmt
+    Index
+      Var a
+      Slice
+        Int 1
+        Int 100
+        Int 2
+  ExprStmt
+    Index
+      Var m
+      Slice
+        None
+        None
+        None
+      Int 3
+  ExprStmt
+    Index
+      Var samples
+      Slice
+        Unary -
+          Int 400
+        Unary -
+          Int 1
+        None
+  ExprStmt
+    Index
+      Var track
+      Binary >
+        Var track
+        Int 0
+  ExprStmt
+    Index
+      Var a
+      Slice
+        Int 3
+        None
+        None

@@ -69,6 +69,8 @@ add_library(phon_engine STATIC
     phon/compile/source.cpp
     phon/compile/scanner.cpp
     phon/compile/ast.cpp
+    phon/compile/parser.cpp
+    phon/compile/ast_printer.cpp
     phon/runtime/bootstrap.cpp
 )
 target_include_directories(phon_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -105,11 +107,16 @@ add_executable(phon_unit_tests
     test/unit/test_grapheme_conformance.cpp
     test/unit/test_scanner.cpp
     test/unit/test_ast.cpp
+    test/unit/test_parser.cpp
+    test/unit/test_golden_ast.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)
 # Path to the vendored Unicode data, for the UAX #29 conformance test.
 target_compile_definitions(phon_unit_tests PRIVATE
     PHON_UNICODE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tools/unicode/data")
+# Path to the golden AST-dump corpus (test/golden/ast).
+target_compile_definitions(phon_unit_tests PRIVATE
+    PHON_GOLDEN_AST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/golden/ast")
 
 add_test(NAME unit COMMAND phon_unit_tests)

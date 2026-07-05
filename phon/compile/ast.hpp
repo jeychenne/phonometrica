@@ -390,13 +390,18 @@ struct ForNumeric final : Ast
 };
 
 // Iteration loop `for value in coll do ... end`, or `for key, value in coll`.
-// `key` is NO_SYMBOL for the single-variable form.
+// `key` is NO_SYMBOL for the single-variable form. `value_by_ref` is set when the
+// value variable is taken by reference (`for ref x in`, `for k, ref v in`), so
+// the loop variable aliases the collection element; the key/index is never by
+// reference (a parse error).
 struct ForEach final : Ast
 {
-	ForEach(int line, int col, Symbol key, Symbol value, AutoAst collection, AutoAst body)
-	    : Ast(KIND, line, col), key(key), value(value), collection(std::move(collection)), body(std::move(body)) {}
+	ForEach(int line, int col, Symbol key, Symbol value, bool value_by_ref, AutoAst collection, AutoAst body)
+	    : Ast(KIND, line, col), key(key), value(value), value_by_ref(value_by_ref),
+	      collection(std::move(collection)), body(std::move(body)) {}
 	PHON_AST_NODE(ForEach, ForEach)
 	Symbol key, value;
+	bool value_by_ref;
 	AutoAst collection, body;
 };
 

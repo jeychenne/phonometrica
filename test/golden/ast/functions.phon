@@ -1,0 +1,36 @@
+# Functions, parameters, lambdas, and the if-expression.
+function duration(i as Interval) as Float
+    return i.xmax - i.xmin
+end
+
+function pitch(s as Sound, floor as Float = 70, ceiling as Float = 500)
+    return s
+end
+
+function print(values as Object..., sep as String = " ", end_line as String = "\n")
+    return null
+end
+
+function normalize(ref x as Array)
+    x /= max(abs(x))
+end
+
+open function extend()
+    return 1
+end
+
+local function helper(x)
+    return x
+end
+
+function +(a as Fraction, b as Fraction) as Fraction
+    return a
+end
+
+var square = function(x) return x ^ 2 end
+
+var results = map(x -> x * 2, values)
+
+function classify(n)
+    return if n > 0 then mean(n) else 0 end
+end

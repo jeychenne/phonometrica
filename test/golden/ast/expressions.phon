@@ -1,0 +1,22 @@
+# Operator precedence, associativity, and postfix expressions.
+"total: " & n + 1
+a + b * c
+2 ^ 3 ^ 2
+-2 ^ 2
+not a == b
+a and b or c
+a div b mod c
+x is Sound
+cast x + 1 as Float
+a.b.c
+f(a, b)
+pitch(snd, floor = 60, ceiling = 300)
+normalize(ref samples)
+print(x, values...)
+a[i]
+a[2:5]
+a[1:100 step 2]
+m[:, 3]
+samples[-400:-1]
+track[track > 0]
+a[3:]

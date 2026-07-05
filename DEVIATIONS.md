@@ -235,3 +235,59 @@ milestone (M8).
    NO_SYMBOL`). The thin-arrow `x -> e` is parsed to an anonymous definition whose
    body is `return e`, so there is one closure node rather than a separate lambda
    node.
+
+### Step 3 — Parser
+
+1. **Precedence-climbing recursive descent** (`parser.{hpp,cpp}`), single-token
+   lookahead (`peek()`) over the Scanner. The ladder, lowest→highest:
+   `or < and < not < comparison/is < & < additive < multiplicative < unary(± ) <
+   ^ (right-assoc) < postfix(call/index/field) < primary`. `&` binds below
+   arithmetic and above comparison (design §12: `"t: " & n + 1` → `"t: " & (n+1)`);
+   `^` is right-associative and binds tighter than unary `-` (`-2^2` = `-(2^2)`).
+   `cast`, the `if…then…else…end` expression, and anonymous `function…end` are
+   primaries; `cast x as T` parses its operand greedily up to `as`.
+
+2. **`this`, `break`/`continue` validity checked at parse time.** The parser
+   tracks method-nesting and loop-nesting depth and rejects `this` outside a
+   method and loop control outside a loop, with the position on the offending
+   keyword. (Closures lexically inside a method still see `this` — a stricter
+   check needs scope resolution, deferred to M4.)
+
+3. **Parameter-order and call-argument rules enforced in the parser** (design §6):
+   required params cannot follow options; only options may follow the variadic;
+   at most one variadic; a variadic is neither `ref` nor defaulted; a positional
+   argument cannot follow a keyword argument. The **closed method-name set**
+   (`init`/`to_string`/…) and full name-resolution are semantic checks deferred to
+   lowering (M4); the parser accepts any `method` name.
+
+4. **Interpolation → `StringInterpolation`.** The parser consumes the scanner's
+   `InterpStart`/`Mid`/`End` markers, parsing an ordinary expression between each,
+   and drops empty literal chunks so `"{x}"` yields a single-part node.
+
+5. **Numeric literals parsed to values at parse time** (`from_chars` after
+   stripping `_`); an out-of-range integer or malformed float is a syntax error.
+   The 47-bit inline-integer range check (design §4) is left to lowering/runtime.
+
+6. **Operator overloading** parses (`function +(a, b) …`): a function name may be
+   an identifier or an overloadable operator token, interned to a Symbol by its
+   spelling.
+
+### Step 4 — AST dumper + golden corpus
+
+1. **Structural (position-free) AST dumps.** `ast_printer.{hpp,cpp}` renders a node
+   tree showing kinds/attributes but not source positions, so goldens are stable
+   under reformatting; positions are locked separately by the parser's
+   error-position tests. `test/golden/ast/*.phon` (one per construct family) pair
+   with checked-in `*.ast`; `test_golden_ast.cpp` compares them and regenerates
+   with `PHON_UPDATE_GOLDEN=1`.
+
+2. **Reserved words are never usable as identifiers** (owner decision, 2026-07-05).
+   An earlier attempt to allow keywords as names in "unambiguous" positions was
+   reverted. Consequently the `print` newline option is named **`end_line`**, not
+   `end` (design §12 updated: `print(values as Object..., sep as String = " ",
+   end_line as String = "\n")`).
+
+3. **`...` marks both a variadic parameter and a call-site splat** (per design
+   §6/§12). `name as T...` in a definition packs the remaining positional
+   arguments; `f(xs...)` at a call site splats a List into positional arguments,
+   parsed to a `SplatExpression`. No deviation.

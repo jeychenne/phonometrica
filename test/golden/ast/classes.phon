@@ -1,0 +1,42 @@
+# Class declarations: value, ref, inheritance, open; fields and methods.
+class Interval
+    field xmin as Float             # typed, default-initialized (no explicit value)
+    field xmax as Float = 0         # typed, with a default
+    field text                      # untyped (implicitly Object), default-initialized
+    field label = ""                # untyped, with a default
+
+    method init(xmin as Float, xmax as Float, text as String)
+        this.xmin = xmin
+        this.xmax = xmax
+        this.text = text
+    end
+
+    method to_string() as String
+        return "[{this.xmin}, {this.xmax}] {this.text}"
+    end
+end
+
+ref class Tier
+    field intervals as List = []
+
+    method iterate()
+        return iterate(this.intervals)
+    end
+end
+
+class PointTier is Tier
+    field points as List = []
+end
+
+open class Extensible
+    field value as Integer = 0
+end
+
+local class Cursor
+    field pos as Integer = 0
+end
+
+# The full modifier stack, in canonical order: local open ref class.
+local open ref class Handle is Resource
+    field id as Integer = 0
+end

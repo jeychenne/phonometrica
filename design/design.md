@@ -440,7 +440,7 @@ var track = pitch(snd, ceiling = 300)      # pitch(snd, 300) is an error
   fixed parameters, optional vararg, keyword-only options.
 
 ```
-function print(values as Object..., sep as String = " ", end as String = "\n")
+function print(values as Object..., sep as String = " ", end_line as String = "\n")
 function log_run(tag as String, values as Object...)
     print("[" & tag & "]", values...)       # forwarding via splat
 end
@@ -516,6 +516,17 @@ end
 Classes and generics are sealed after module load by default; `open class` /
 `open function` opt in to extension.
 
+A field declaration may omit its type (defaulting to `Object`) and/or its
+initializer (the field is default-initialized): `field xmin as Float`,
+`field text`, and `field label = ""` are all valid.
+
+When a class declaration carries several modifiers they are written in a fixed
+order — **`local open ref class`** — so the reading is unambiguous: `local`
+(namespace visibility) then `open` (sealing) then `ref` (value vs. identity).
+Each is independently optional; other orderings are a syntax error. Functions
+likewise take `local` then `open` (`local open function`); `ref` applies only to
+classes and `global` only to `var`/`const`.
+
 ### Iteration protocol
 
 `for x in expr` desugars to:
@@ -537,6 +548,30 @@ end
 - `for k, v in table` desugars to `next(it, ref k, ref v)`: the loop's variable
   count selects the `next` overload by arity, so pair iteration is not a
   special case and user types may support both shapes.
+
+**By-reference iteration.** The *value* variable may be taken by reference so it
+aliases the collection element and writes propagate back into the collection —
+the loop-body analogue of a `ref` parameter (§7):
+
+```
+for ref sample in samples do    # single value, by reference
+    sample *= 2                 # mutates samples in place
+end
+
+for i, ref v in list do         # index/value; value by reference
+    v += 1
+end
+
+for k, ref v in table do        # key/value; value by reference
+    v = normalize(v)
+end
+```
+
+`ref` attaches only to the value: the **key/index is never by reference**
+(`for ref k, v in …` and `for ref i = … to …` are syntax errors), since it is a
+freshly produced index, not a slot in the collection. By-ref iteration lowers to
+the iteration protocol with the value slot bound to the element's storage rather
+than to a copy; plain (by-value) iteration is unchanged and remains the default.
 
 Performance is two-tier. The VM's `ITER_INIT`/`ITER_NEXT` opcodes recognize
 builtin collections directly and keep iteration state in hidden loop registers —
@@ -629,12 +664,12 @@ with no statement-level special case (a trailing-comma rule would collide with
 the line-continuation rule):
 
 ```
-function print(values as Object..., sep as String = " ", end as String = "\n")
+function print(values as Object..., sep as String = " ", end_line as String = "\n")
 ```
 
 ```
 print(x)                        # ends with newline
-print(x, end = "")              # suppress the newline
+print(x, end_line = "")              # suppress the newline
 print(a, b, c, sep = ", ")
 ```
 

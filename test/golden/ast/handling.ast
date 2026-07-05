@@ -1,0 +1,49 @@
+Module
+  Import textgrid
+  Try
+    Block
+      Var snd
+        Call
+          Var read_sound
+          Var path
+    Catch e as IOError
+      Block
+        ExprStmt
+          Call
+            Var print
+            StringInterp
+              Str "cannot read "
+              Var path
+              Str ": "
+              Field message
+                Var e
+    Catch e as Error
+      Block
+        ExprStmt
+          Call
+            Var rethrow
+            Var e
+    Finally
+      Block
+        ExprStmt
+          Call
+            Var cleanup
+  Try
+    Block
+      ExprStmt
+        Call
+          Var risky
+    Catch
+      Block
+        ExprStmt
+          Call
+            Var recover
+  Throw
+    Call
+      Var MyError
+      Str "boom"
+  Spawn
+    Call
+      Var worker
+      Var jobs
+      Var out
