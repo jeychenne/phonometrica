@@ -1,7 +1,7 @@
 // Phonometrica engine — script execution façade + builtin library (M4).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/runtime/vm.hpp>
+#include <phon/runtime/runtime.hpp>
 
 #include <phon/compile/disassembler.hpp>
 #include <phon/compile/lower.hpp>
@@ -9,6 +9,7 @@
 #include <phon/compile/source.hpp>
 #include <phon/core/handle.hpp>
 #include <phon/core/small_vector.hpp>
+#include <phon/core/vector.hpp>
 #include <phon/dispatch/generic.hpp>
 #include <phon/object/class.hpp>
 #include <phon/runtime/bootstrap.hpp>
@@ -21,7 +22,6 @@
 #include <phon/vm/interpreter.hpp>
 
 #include <cstdio>
-#include <vector>
 
 namespace phonometrica {
 
@@ -36,7 +36,7 @@ Value builtin_print(Isolate &, Value *args, int argc)
 	{
 		if (i > 0)
 			out.append(" ");
-		out.append(vm_to_string(args[i]));
+		out.append(stringify(args[i]));
 	}
 	out.append("\n");
 	std::fwrite(out.data(), 1, static_cast<size_t>(out.size()), stdout);
@@ -52,7 +52,7 @@ Value builtin_assert(Isolate &iso, Value *args, int argc)
 		if (argc >= 2)
 		{
 			msg = String("[Assertion failed] ");
-			msg.append(vm_to_string(args[1]));
+			msg.append(stringify(args[1]));
 		}
 		iso.raise(msg, 0);
 	}
@@ -82,11 +82,11 @@ Value builtin_len(Isolate &iso, Value *args, int argc)
 // registries), so leak checkers stay clean.
 struct NativeKeepalive
 {
-	std::vector<NativeCell *> cells;
+	Vector<NativeCell *> cells;
 	~NativeKeepalive()
 	{
-		for (NativeCell *nf : cells)
-			release(reinterpret_cast<Cell *>(nf));
+		for (intptr_t i = 0; i < cells.size(); ++i)
+			release(reinterpret_cast<Cell *>(cells[i]));
 	}
 };
 
@@ -126,50 +126,71 @@ void register_builtins()
 
 bool g_booted = false;
 
-// Compile `src` into a module; the returned CompiledModule owns the Proto tree.
-void compile_source(const std::string &src, CompiledModule &cm)
+// Parse `src` and compile it against `ns` (the persistent namespace). `Source` is
+// the compiler-layer text buffer: it holds the script as a std::string because it
+// reads files via std::ifstream and scans with std::string_view, so the engine
+// String is converted once here at the boundary (cold path).
+void compile_source(const String &src, ModuleNamespace &ns, CompiledModule &cm)
 {
-	Source source = Source::from_string(src);
+	Source source = Source::from_string(std::string(src.data(), static_cast<size_t>(src.size())));
 	Parser parser(source);
 	AutoAst ast = parser.parse();
-	compile_module(ast.get(), cm);
+	compile_module(ast.get(), ns, cm);
 }
 
 } // namespace
 
-void vm_boot()
+void init_runtime()
 {
 	if (g_booted)
 		return;
 	g_booted = true;
 	bootstrap();
-	vm_register_function_classes();
+	register_function_classes();
 	register_builtins();
 }
 
-Variant do_string(const std::string &src)
+// The session's mutable state: the long-lived Isolate, the persistent module
+// namespace, and the compiled-chunk history that keeps every Proto tree alive for
+// closures stored in module slots across chunks (a growing session cost; the
+// registration journal that unloads them is design §11, deferred to M5).
+struct Runtime::State
 {
-	vm_boot();
+	Isolate isolate;
+	ModuleNamespace shell;
+	Vector<std::unique_ptr<CompiledModule>> history;
+};
 
-	CompiledModule cm;
-	compile_source(src, cm);
+Runtime::Runtime() : m_state(std::make_unique<State>()) { init_runtime(); }
+Runtime::~Runtime() = default;
 
-	Isolate iso;
-	iso.module_slots = Vector<Variant>(cm.num_slots);
+Variant Runtime::do_string(const String &code)
+{
+	State &st = *m_state;
+
+	auto cm = std::make_unique<CompiledModule>();
+	compile_source(code, st.shell, *cm);
+
+	// Grow the Isolate's module-slot vector to the (possibly larger) namespace,
+	// preserving the values of existing slots — indices never move (design §11).
+	if (st.isolate.module_slots.size() < st.shell.num_slots)
+		st.isolate.module_slots.resize(st.shell.num_slots);
+
+	// Keep the Proto tree alive: module-slot closures created by this chunk outlive
+	// the call and borrow their Proto.
+	Proto *main_proto = cm->main.get();
+	st.history.push_back(std::move(cm));
 
 	Isolate *prev = current_isolate();
-	set_current_isolate(&iso);
-
-	// RAII owns the module closure (adopt the +1 from make_closure); it releases on
-	// return or exception.
-	Handle<ClosureCell> main = Handle<ClosureCell>::adopt(make_closure(cm.main.get()));
+	set_current_isolate(&st.isolate);
+	Handle<ClosureCell> main = Handle<ClosureCell>::adopt(make_closure(main_proto));
 	Variant out;
 	try
 	{
-		Value result = vm_execute(iso, main.get());
+		Value result = execute(st.isolate, main.get());
 		out = Variant(result);         // retains
 		if (result.is_cell())
-			release(result.as_cell()); // drop vm_execute's +1
+			release(result.as_cell()); // drop execute's +1
 	}
 	catch (...)
 	{
@@ -180,11 +201,18 @@ Variant do_string(const std::string &src)
 	return out;
 }
 
-std::string disassemble_source(const std::string &src)
+Variant do_string(const String &src)
 {
-	vm_boot();
+	Runtime rt; // one-shot: a fresh session, discarded on return
+	return rt.do_string(src);
+}
+
+std::string disassemble_source(const String &src)
+{
+	init_runtime();
+	ModuleNamespace ns;
 	CompiledModule cm;
-	compile_source(src, cm);
+	compile_source(src, ns, cm);
 	return disassemble(*cm.main);
 }
 

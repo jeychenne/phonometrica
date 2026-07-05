@@ -15,21 +15,37 @@
 #define PHON_COMPILE_LOWER_HPP
 
 #include <phon/compile/ast.hpp>
+#include <phon/core/flat_hash_map.hpp>
 #include <phon/vm/proto.hpp>
 
 #include <memory>
 
 namespace phonometrica {
 
-// The result of compiling one module: the top-level Proto (owns its nested
-// prototypes) and the size of the module namespace the Isolate must allocate.
+// A module's persistent namespace: the name->slot map plus the slot count (design
+// §11). A REPL/editor session keeps one of these across runs so that a binding
+// declared in one chunk resolves to the same slot in the next; new declarations
+// append slots and existing indices never move.
+struct ModuleNamespace
+{
+	FlatHashMap<uint32_t, int> name_to_slot; // Symbol id -> slot index
+	int num_slots = 0;
+};
+
+// The result of compiling one chunk: the top-level Proto (owns its nested
+// prototypes). `num_slots` is the total namespace size after this chunk (so the
+// Isolate can size/grow its module-slot vector to match).
 struct CompiledModule
 {
 	std::unique_ptr<Proto> main;
 	int num_slots = 0;
 };
 
-// Compile a parsed module (the top-level StatementList from Parser::parse()).
+// Compile a parsed chunk (the top-level StatementList from Parser::parse()) against
+// the persistent namespace `ns`, appending any new bindings to it.
+void compile_module(Ast *module_ast, ModuleNamespace &ns, CompiledModule &out);
+
+// Convenience for one-shot compilation against a fresh (throwaway) namespace.
 void compile_module(Ast *module_ast, CompiledModule &out);
 
 } // namespace phonometrica

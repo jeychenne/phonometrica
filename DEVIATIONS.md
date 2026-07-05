@@ -329,7 +329,7 @@ default/variadic parameters, `spawn`, and `import`.
    no operator falls back to `CALL_G`.
 
 3. **`to_string` is a C++ function, not yet the generic.** `&`, `print`, and
-   interpolation stringify through `vm_to_string` (builtin coverage: numbers,
+   interpolation stringify through `stringify` (builtin coverage: numbers,
    bool, null, symbol, String, List, Table, Set, functions, class objects). The
    `to_string` generic with user `method to_string()` overloads arrives in M5.
 
@@ -384,8 +384,26 @@ default/variadic parameters, `spawn`, and `import`.
 
 12. **Files placed under `phon/vm/` and `phon/compile/`.** New: `phon/vm/`
     (`opcode`, `proto`, `function`, `isolate`, `interpreter`) and
-    `phon/compile/{lower,disassembler}`, plus the `phon/runtime/vm.*` façade
-    (`do_string`, `vm_boot`, builtins) standing in for the full `Runtime` (M8). The
-    per-thread heap/arena allocation path (architecture §8.1) is still the M1
-    FOREIGN `sys_alloc` path; the Isolate-arena switch is orthogonal and unchanged
-    by M4.
+    `phon/compile/{lower,disassembler}`, plus the `phon/runtime/runtime.*` façade
+    (`Runtime`, `do_string`, `init_runtime`, builtins) standing in for the full
+    `Runtime` (M8). The per-thread heap/arena allocation path (architecture §8.1) is
+    still the M1 FOREIGN `sys_alloc` path; the Isolate-arena switch is orthogonal
+    and unchanged by M4.
+
+13. **`Runtime` is a persistent session; only the REPL/console surface is
+    implemented.** Mirroring Phonometrica's old API, `Runtime` is a long-lived
+    object owning one Isolate (§10.1) and a persistent `ModuleNamespace`; `do_string`
+    compiles each chunk against that namespace (new bindings append slots, existing
+    indices never move — design §11) and runs it on the session's Isolate, so
+    module-level state persists across calls. This is the **REPL/console surface**
+    (design §11). The other two surfaces are deferred: the editor's "run script"
+    (fresh module instance per run) and the **registration journal** (retract a
+    prior run's methods/classes/globals on reload). Consequently the compiled-chunk
+    history grows unbounded within a session — every chunk's Proto tree is retained
+    so closures stored in module slots keep a valid Proto; unloading it is the
+    journal's job (M5+). The interactive leniencies (auto-declare on bare
+    assignment, redeclaration-rebinds, bare-expression-prints) are not gated by mode
+    yet: bare expressions always yield their value (used as the chunk result), and
+    redeclaring a top-level `var` rebinds its slot rather than erroring. The free
+    `do_string(src)` runs one-shot in a throwaway session; `Isolate` globals
+    (`global var`) and `add_global` (embedder injection) arrive in M5/M8.

@@ -16,14 +16,14 @@
 #include <phon/compile/lower.hpp>
 
 #include <phon/compile/diagnostic.hpp>
+#include <phon/core/vector.hpp>
 #include <phon/dispatch/generic.hpp>
 #include <phon/object/class.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/string.hpp>
 #include <phon/vm/opcode.hpp>
 
-#include <string>
-#include <vector>
+#include <string> // SyntaxError messages (the M3 compiler diagnostic type)
 
 namespace phonometrica {
 
@@ -58,8 +58,8 @@ struct FuncState
 
 	Proto &proto;
 	FuncState *prev;
-	std::vector<Local> locals;
-	std::vector<BlockInfo> blocks;
+	Vector<Local> locals;
+	Vector<BlockInfo> blocks;
 	int free_reg = 0;
 	int max_reg = 0;
 	bool is_module;
@@ -68,13 +68,14 @@ struct FuncState
 // Break/continue patch targets for the innermost enclosing loop.
 struct LoopCtx
 {
-	std::vector<intptr_t> breaks;
-	std::vector<intptr_t> continues;
+	Vector<intptr_t> breaks;
+	Vector<intptr_t> continues;
 };
 
 class Lowerer
 {
 public:
+	explicit Lowerer(ModuleNamespace &ns) : m_ns(ns) {}
 	void compile_module(Ast *module_ast, CompiledModule &out);
 
 private:
@@ -135,11 +136,11 @@ private:
 		BlockInfo b = fs->blocks.back();
 		fs->blocks.pop_back();
 		bool captured = false;
-		for (size_t i = static_cast<size_t>(b.locals_count); i < fs->locals.size(); ++i)
+		for (intptr_t i = b.locals_count; i < fs->locals.size(); ++i)
 			captured = captured || fs->locals[i].captured;
 		if (captured)
 			emit_ABC(Opcode::CLOSE, b.free_reg, 0, 0, line);
-		fs->locals.resize(static_cast<size_t>(b.locals_count));
+		fs->locals.resize(b.locals_count);
 		fs->free_reg = b.free_reg;
 	}
 
@@ -152,17 +153,17 @@ private:
 
 	int module_define(Symbol name)
 	{
-		auto it = m_module_slots.find(name.id);
-		if (it != m_module_slots.end())
-			return it->second;
-		int slot = m_num_slots++;
-		m_module_slots.insert(name.id, slot);
+		auto it = m_ns.name_to_slot.find(name.id);
+		if (it != m_ns.name_to_slot.end())
+			return it->second; // already bound (persists across REPL chunks)
+		int slot = m_ns.num_slots++;
+		m_ns.name_to_slot.insert(name.id, slot);
 		return slot;
 	}
 	int module_lookup(Symbol name) const
 	{
-		auto it = m_module_slots.find(name.id);
-		return it == m_module_slots.end() ? -1 : it->second;
+		auto it = m_ns.name_to_slot.find(name.id);
+		return it == m_ns.name_to_slot.end() ? -1 : it->second;
 	}
 
 	static Class *class_by_name(Symbol name)
@@ -308,9 +309,8 @@ private:
 	static Opcode arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare);
 
 	FuncState *fs = nullptr;
-	std::vector<LoopCtx> m_loops;
-	FlatHashMap<uint32_t, int> m_module_slots;
-	int m_num_slots = 0;
+	Vector<LoopCtx> m_loops;
+	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
 };
 
 // --- operator mapping ---------------------------------------------------------
@@ -591,7 +591,7 @@ void Lowerer::compile_concat_parts(AstList &parts, int dest, uint32_t line)
 
 void Lowerer::compile_conditional(ConditionalExpression *c, int dest)
 {
-	std::vector<intptr_t> end_jumps;
+	Vector<intptr_t> end_jumps;
 	for (intptr_t i = 0; i < static_cast<intptr_t>(c->conds.size()); ++i)
 	{
 		int save = fs->free_reg;
@@ -1006,7 +1006,7 @@ void Lowerer::compile_assignment(Assignment *a)
 
 void Lowerer::compile_if(IfStatement *s)
 {
-	std::vector<intptr_t> end_jumps;
+	Vector<intptr_t> end_jumps;
 	for (intptr_t i = 0; i < static_cast<intptr_t>(s->conds.size()); ++i)
 	{
 		int save = fs->free_reg;
@@ -1177,22 +1177,28 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			expr_to(s->as<ExpressionStatement>()->expr.get(), r);
 			emit_ABC(Opcode::HALT, r, 1, 0, ln(s));
 			main.num_regs = mfs.max_reg;
-			out.num_slots = m_num_slots;
+			out.num_slots = m_ns.num_slots;
 			return;
 		}
 		compile_stmt(s);
 	}
 	emit_ABC(Opcode::HALT, 0, 0, 0, 0);
 	main.num_regs = mfs.max_reg;
-	out.num_slots = m_num_slots;
+	out.num_slots = m_ns.num_slots;
 }
 
 } // namespace
 
+void compile_module(Ast *module_ast, ModuleNamespace &ns, CompiledModule &out)
+{
+	Lowerer lw(ns);
+	lw.compile_module(module_ast, out);
+}
+
 void compile_module(Ast *module_ast, CompiledModule &out)
 {
-	Lowerer lw;
-	lw.compile_module(module_ast, out);
+	ModuleNamespace throwaway;
+	compile_module(module_ast, throwaway, out);
 }
 
 } // namespace phonometrica

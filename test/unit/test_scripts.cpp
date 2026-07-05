@@ -7,7 +7,7 @@
 // scripts used `let`/`assert`/bare `print`, all changed in the new language).
 
 #include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/vm.hpp>
+#include <phon/runtime/runtime.hpp>
 #include <phon/types/string.hpp>
 
 #include "test_framework.hpp"

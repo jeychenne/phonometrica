@@ -63,8 +63,8 @@ struct NativeCell
 	int32_t max_arity; // -1 = variadic
 };
 
-// Register the Closure/Native/Upvalue classes (idempotent). Called by vm_boot().
-void vm_register_function_classes();
+// Register the Closure/Native/Upvalue classes (idempotent). Called by init_runtime().
+void register_function_classes();
 
 Class *closure_class() noexcept;
 Class *native_class() noexcept;

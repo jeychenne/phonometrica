@@ -7,7 +7,7 @@
 // diff. Regenerate with PHON_UPDATE_GOLDEN=1 (as with the AST goldens).
 
 #include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/vm.hpp>
+#include <phon/runtime/runtime.hpp>
 
 #include "test_framework.hpp"
 

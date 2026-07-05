@@ -78,7 +78,7 @@ add_library(phon_engine STATIC
     phon/vm/isolate.cpp
     phon/vm/interpreter.cpp
     phon/runtime/bootstrap.cpp
-    phon/runtime/vm.cpp
+    phon/runtime/runtime.cpp
 )
 target_include_directories(phon_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(phon_engine PUBLIC phon_flags)

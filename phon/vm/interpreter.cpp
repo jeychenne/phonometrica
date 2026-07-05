@@ -124,7 +124,7 @@ String to_string_value(Value v)
 } // namespace
 
 // Exposed for the print/string library (lib/) without pulling in the whole VM.
-String vm_to_string(Value v) { return to_string_value(v); }
+String stringify(Value v) { return to_string_value(v); }
 
 namespace {
 
@@ -174,7 +174,7 @@ Value list_concat(Value a, Value b)
 
 } // namespace
 
-Value vm_execute(Isolate &iso, ClosureCell *main)
+Value execute(Isolate &iso, ClosureCell *main)
 {
 	Value *stack = iso.stack();
 	Value *stack_end = stack + iso.stack_capacity();

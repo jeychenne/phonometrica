@@ -4,7 +4,7 @@
 #include "test_framework.hpp"
 
 #include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/vm.hpp>
+#include <phon/runtime/runtime.hpp>
 #include <phon/types/string.hpp>
 
 #include <string>
@@ -256,6 +256,46 @@ TEST_CASE("vm: runtime errors are raised")
 		threw = true;
 	}
 	CHECK(threw);
+}
+
+// --- persistent sessions (REPL / editor surface) ------------------------------
+
+TEST_CASE("vm: Runtime persists module bindings across do_string")
+{
+	Runtime rt;
+	rt.do_string("var x = 5");
+	rt.do_string("var y = 10");
+	CHECK(rt.do_string("x + y").as_int() == 15);
+
+	// Assignment persists and resolves to the existing binding.
+	rt.do_string("x = 100");
+	CHECK(rt.do_string("x").as_int() == 100);
+
+	// A function defined in one chunk is callable in a later one.
+	rt.do_string("function inc(n) return n + 1 end");
+	CHECK(rt.do_string("inc(41)").as_int() == 42);
+}
+
+TEST_CASE("vm: closures stored in module slots survive across chunks")
+{
+	// The Proto backing `counter` was compiled in an earlier chunk; the Runtime
+	// keeps it alive, so the closure keeps working call after call.
+	Runtime rt;
+	rt.do_string("function make() var c = 0\nfunction f() c += 1\nreturn c end\nreturn f end");
+	rt.do_string("var counter = make()");
+	rt.do_string("counter()");
+	rt.do_string("counter()");
+	CHECK(rt.do_string("counter()").as_int() == 3);
+}
+
+TEST_CASE("vm: separate Runtimes have independent namespaces")
+{
+	Runtime a;
+	Runtime b;
+	a.do_string("var shared = 1");
+	b.do_string("var shared = 2");
+	CHECK(a.do_string("shared").as_int() == 1);
+	CHECK(b.do_string("shared").as_int() == 2);
 }
 
 TEST_CASE("vm: compile errors for undeclared names")

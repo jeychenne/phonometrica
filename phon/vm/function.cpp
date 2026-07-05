@@ -44,7 +44,7 @@ Class *g_upvalue = nullptr;
 
 } // namespace
 
-void vm_register_function_classes()
+void register_function_classes()
 {
 	if (g_closure)
 		return;

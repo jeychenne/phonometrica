@@ -12,6 +12,7 @@
 #define PHON_VM_INTERPRETER_HPP
 
 #include <phon/core/value.hpp>
+#include <phon/types/string.hpp>
 
 namespace phonometrica {
 
@@ -21,7 +22,12 @@ struct ClosureCell;
 // Execute `main` (a closure over a module Proto) to completion on `iso`, returning
 // the module result with one reference the caller adopts. Throws RuntimeError on a
 // script-level error (division by zero, bad type, arity mismatch, …).
-Value vm_execute(Isolate &iso, ClosureCell *main);
+Value execute(Isolate &iso, ClosureCell *main);
+
+// Stringify a value the way `&`, print, and interpolation do (the pre-M5 stand-in
+// for the to_string generic; user overloads arrive in M5). Lives here because the
+// CONCAT opcode needs it inline; the print builtin reuses it.
+String stringify(Value v);
 
 } // namespace phonometrica
 
