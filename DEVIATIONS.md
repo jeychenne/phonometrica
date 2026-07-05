@@ -655,3 +655,28 @@ architecture §10.5).
    An uncaught error reaching `do_string` releases the live register stack
    (`unwind_on_error`, which also clears the handler stack) and the error value, then
    re-throws with `message`/`line` for the embedder.
+
+## M5 — Iteration (Stage 3a: for … in over builtin collections)
+
+Implements `for [k,] v in coll` for List, Table, and Set via the fast path
+(architecture §10.3 / design §12): iteration state lives in hidden loop registers,
+so there is no iterator object and no per-step dispatch.
+
+1. **Two opcodes, `ITER_INIT A` and `ITER_NEXT A B C`.** `ITER_INIT` normalizes the
+   collection in R[A] to an index-walkable form — a List stays put, a Set is
+   materialized to a List (one allocation at loop entry), a Table keeps its cell and
+   stashes its key List in R[A+2] — and zeroes the cursor R[A+1]. `ITER_NEXT` writes
+   the value to R[A+3] and, when `C == 2`, the key/index to R[A+4], advancing the
+   cursor; R[B] receives whether the sequence is exhausted. The lowerer follows it
+   with `JMPT R[B] -> exit`. The loop variables are ordinary locals pinned to A+3/A+4
+   so the opcode writes them directly. `break`→loop exit, `continue`→the `ITER_NEXT`.
+
+2. **Pair form.** `for i, v in list` binds the 1-based index and the element;
+   `for k, v in table` binds key and value (unspecified order — Table/Set are
+   unordered, DEVIATIONS M1 #7). Single-var `for x in …` binds the element/member.
+
+3. **Deferred to Stage 3b (with `ref`):** `for ref x in …` (by-reference iteration,
+   rejected today), String (grapheme) iteration, and user-class iteration via the
+   `iterate`/`next` generic protocol (`method iterate()` delegating to a builtin
+   iterator). Mutating the collection mid-iteration is unspecified (a Set/Table
+   iterates a snapshot; a List walks live by index).

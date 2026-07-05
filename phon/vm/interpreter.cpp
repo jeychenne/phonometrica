@@ -54,6 +54,7 @@ PHON_FORCE_INLINE bool truthy(Value v) noexcept { return !(v.is_null() || v.is_f
 bool is_string(Value v) { return v.is_cell() && class_of(v) == CID_STRING; }
 bool is_list(Value v) { return v.is_cell() && class_of(v) == CID_LIST; }
 bool is_table(Value v) { return v.is_cell() && class_of(v) == CID_TABLE; }
+bool is_set(Value v) { return v.is_cell() && class_of(v) == CID_SET; }
 
 // A field-bearing instance (design §5.6): a cell laid out by the instance machinery
 // — every user class and the builtin Error hierarchy — identified by its finalizer.
@@ -535,6 +536,73 @@ Value run(Isolate &iso)
 				reg_copy(base, a + 3, next);    // user-visible loop variable
 				ip += op_sbx(ins);
 			}
+			break;
+		}
+
+		case Opcode::ITER_INIT:
+		{
+			// Normalize the collection to an index-walkable form (design §12). A Set
+			// is materialized to a List; a Table keeps its cell and stashes its key
+			// List in R[A+2]; a List walks in place. Cursor (R[A+1]) starts at 0.
+			Value coll = base[a];
+			if (is_list(coll))
+				reg_move(base, a + 2, Value::make_null());
+			else if (is_set(coll))
+			{
+				reg_copy(base, a, Set::from_value(coll).to_list().to_value());
+				reg_move(base, a + 2, Value::make_null());
+			}
+			else if (is_table(coll))
+				reg_copy(base, a + 2, Table::from_value(coll).keys().to_value());
+			else
+				iso.raise(String("[Type error] value is not iterable"), cur_line());
+			// reg_move: R[A+1] may still hold a temporary from the collection expression.
+			reg_move(base, a + 1, Value::make_int(0));
+			break;
+		}
+
+		case Opcode::ITER_NEXT:
+		{
+			// Advance one element. R[B] receives whether the sequence is exhausted;
+			// otherwise R[A+3] = value and (when C == 2) R[A+4] = key/index.
+			int ib = a, donereg = op_b(ins), arity = op_c(ins);
+			Value src = base[ib];
+			int64_t cursor = base[ib + 1].as_int();
+			bool exhausted = false;
+			if (is_table(src))
+			{
+				List ks = List::from_value(base[ib + 2]);
+				if (cursor >= ks.size())
+					exhausted = true;
+				else
+				{
+					Variant kv = ks.get(cursor + 1);
+					Variant vv = Table::from_value(src).get(kv);
+					reg_copy(base, ib + 3, vv.value());
+					if (arity == 2)
+						reg_copy(base, ib + 4, kv.value());
+				}
+			}
+			else // List (a materialized Set is a List)
+			{
+				List l = List::from_value(src);
+				if (cursor >= l.size())
+					exhausted = true;
+				else
+				{
+					Variant ev = l.get(cursor + 1);
+					reg_copy(base, ib + 3, ev.value());
+					if (arity == 2)
+						reg_move(base, ib + 4, Value::make_int(cursor + 1)); // 1-based index
+				}
+			}
+			if (exhausted)
+			{
+				reg_move(base, donereg, Value::make_bool(true));
+				break;
+			}
+			base[ib + 1] = Value::make_int(cursor + 1); // advance
+			reg_move(base, donereg, Value::make_bool(false));
 			break;
 		}
 

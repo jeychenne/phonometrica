@@ -321,6 +321,7 @@ private:
 	void compile_while(WhileStatement *s);
 	void compile_repeat(RepeatStatement *s);
 	void compile_for_numeric(ForNumeric *s);
+	void compile_for_each(ForEach *s);
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -913,7 +914,8 @@ void Lowerer::compile_stmt(Ast *node)
 		compile_throw(node->as<ThrowStatement>());
 		break;
 	case NodeKind::ForEach:
-		error(node, "[Compile error] 'for … in' (iteration protocol) arrives in M5");
+		compile_for_each(node->as<ForEach>());
+		break;
 	case NodeKind::ClassDeclaration:
 		error(node, "[Compile error] classes may only be declared at the top level of a module");
 	case NodeKind::SpawnStatement:
@@ -1270,6 +1272,52 @@ void Lowerer::compile_for_numeric(ForNumeric *s)
 		patch_jump(b);
 	for (intptr_t c : lc.continues)
 		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(cont_target - (c + 1)));
+	m_loops.pop_back();
+	exit_block(static_cast<uint32_t>(s->line));
+}
+
+void Lowerer::compile_for_each(ForEach *s)
+{
+	// `for [k,] v in coll` over a builtin collection. Hidden state occupies a
+	// contiguous register block; the loop variables sit at fixed offsets so ITER_NEXT
+	// writes them directly (design §12, fast path — no iterator object, no dispatch).
+	//   base+0 source   base+1 cursor   base+2 aux(table keys)
+	//   base+3 value var   base+4 key var (pair form)
+	if (s->value_by_ref)
+		error(s, "[Compile error] by-reference iteration ('for ref …') arrives with ref params");
+
+	enter_block();
+	int base = reg_alloc(s);
+	expr_to(s->collection.get(), base); // source
+	reg_alloc(s);                       // base+1 cursor
+	reg_alloc(s);                       // base+2 aux
+	int valreg = reg_alloc(s);          // base+3 value
+	fs->locals.push_back({s->value, valreg, false, false});
+	bool pair = (s->key != NO_SYMBOL);
+	if (pair)
+	{
+		int keyreg = reg_alloc(s); // base+4 key
+		fs->locals.push_back({s->key, keyreg, false, false});
+	}
+	int done = reg_alloc(s); // ITER_NEXT's exhausted flag
+
+	emit_ABC(Opcode::ITER_INIT, base, 0, 0, ln(s));
+
+	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
+	intptr_t top = P().code.size();
+	emit_ABC(Opcode::ITER_NEXT, base, done, pair ? 2 : 1, ln(s));
+	intptr_t exit = emit_jump(Opcode::JMPT, done, ln(s)); // exhausted -> leave
+	compile_stmt(s->body.get());
+	emit_AsBx(Opcode::JMP, 0, static_cast<int>(top - (P().code.size() + 1)), ln(s));
+	patch_jump(exit);
+
+	// break -> here; continue -> the ITER_NEXT at `top`.
+	LoopCtx &lc = m_loops.back();
+	for (intptr_t b : lc.breaks)
+		patch_jump(b);
+	for (intptr_t c : lc.continues)
+		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
 	m_loops.pop_back();
 	exit_block(static_cast<uint32_t>(s->line));
 }

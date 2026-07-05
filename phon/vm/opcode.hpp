@@ -58,6 +58,9 @@ using Instruction = uint32_t;
 	_(JMPT)        /* A sBx  : if truthy(R[A]) ip += sBx                      */ \
 	_(FORPREP)     /* A sBx  : counted-loop setup, jump to FORLOOP           */ \
 	_(FORLOOP)     /* A sBx  : counted-loop step/test, jump back if running  */ \
+	/* iteration protocol (design §12): builtin collections, state at R[A..] */   \
+	_(ITER_INIT)   /* A      : init for-in over R[A]; state in R[A],R[A+1..] */ \
+	_(ITER_NEXT)   /* A B C  : advance R[A]; R[B]=exhausted; C=var count     */ \
 	/* error handling (design §12) */                                           \
 	_(PUSHTRY)     /* A sBx  : push handler; on throw R[A]=error, ip->A+sBx  */ \
 	_(POPTRY)      /* (none) : pop the innermost handler (try body finished) */ \

@@ -701,6 +701,52 @@ TEST_CASE("vm: re-throwing preserves the original backtrace")
 	CHECK(run_str(src) == "  at inner (line 2)\n  at <module> (line 7)\n");
 }
 
+// --- iteration protocol: for … in (design §12) --------------------------------
+
+TEST_CASE("vm: for x in list sums its elements")
+{
+	CHECK(run_int("var s = 0\n for x in [10, 20, 30] do s += x end\n s") == 60);
+}
+
+TEST_CASE("vm: for i, v in list binds index and value")
+{
+	CHECK(run_str("var r = \"\"\n for i, v in [7, 8, 9] do r = r & i & \":\" & v & \" \" end\n r") ==
+	      "1:7 2:8 3:9 ");
+}
+
+TEST_CASE("vm: for k, v in table iterates pairs")
+{
+	// Order is unspecified, so check the aggregate.
+	CHECK(run_int("var s = 0\n for k, v in {\"a\": 1, \"b\": 2, \"c\": 3} do s += v end\n s") == 6);
+}
+
+TEST_CASE("vm: for x in set iterates the members")
+{
+	CHECK(run_int("var s = 0\n for x in {2, 4, 6, 8} do s += x end\n s") == 20);
+}
+
+TEST_CASE("vm: break and continue work inside for … in")
+{
+	const char *src = "var s = 0\n"
+	                  "for x in [1, 2, 3, 4, 5, 6] do\n"
+	                  "  if x == 2 then continue end\n if x == 5 then break end\n s += x\n end\n s";
+	CHECK(run_int(src) == 1 + 3 + 4);
+}
+
+TEST_CASE("vm: iterating a non-collection is a type error")
+{
+	bool threw = false;
+	try
+	{
+		run("for x in 42 do end");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("vm: compile errors for undeclared names")
 {
 	bool threw = false;
