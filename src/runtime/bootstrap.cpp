@@ -11,7 +11,7 @@ namespace phonometrica {
 // their builtin id; wired in below.
 void register_string_class();
 void register_list_class();
-void register_map_class();
+void register_table_class();
 void register_set_class();
 
 namespace {
@@ -57,7 +57,7 @@ void bootstrap()
 	// Cell-headed value types install their own hooks (stable ids 6..9).
 	register_string_class();
 	register_list_class();
-	register_map_class();
+	register_table_class();
 	register_set_class();
 
 	// The root metaclass is registered last so builtin intervals equal their

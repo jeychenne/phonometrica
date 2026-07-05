@@ -82,7 +82,7 @@ enum BuiltinClassId : uint32_t
 	CID_SYMBOL,
 	CID_STRING,
 	CID_LIST,
-	CID_MAP,
+	CID_TABLE,
 	CID_SET,
 	CID_CLASS, // the root metaclass; per-class metaclasses derive from it
 	CID_BUILTIN_COUNT

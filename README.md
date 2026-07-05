@@ -37,9 +37,11 @@ plan). Deviations from those documents are tracked in
   (see `DEVIATIONS.md`) with lazily built grapheme breadcrumbs for O(1)-amortized
   random access; API-compatible-in-spirit with Phonometrica's `String`. Plus the
   **atom table** (Symbol interning).
-- **`List` / `Map` / `Set`** — value-semantic (CoW) containers. `Map`/`Set` are a
-  stable cell wrapping the one engine hash table (`FlatHashMap`/`FlatHashSet`) keyed
-  by structural `value_hash`/`value_equals` (unordered; see `DEVIATIONS.md`).
+- **`List` / `Table` / `Set`** — value-semantic (CoW) containers. `Table` is the
+  script dictionary (the design docs' "Map", named `Table` for Phonometrica
+  compatibility). `Table`/`Set` are a stable cell wrapping the one engine hash table
+  (`FlatHashMap`/`FlatHashSet`) keyed by structural `value_hash`/`value_equals`
+  (unordered; see `DEVIATIONS.md`).
 - **`object/`** — the M1 seed of the class registry + `value_hash`/`value_equals`.
 
 **M2 — Type system + dispatch**
@@ -57,8 +59,8 @@ plan). Deviations from those documents are tracked in
 
 Acceptance: M0 container fuzz tests + allocator stress; M1 `Value` encoding
 round-trips (every tag, ±2^47 integer boundary, NaN payloads survive), CoW
-uniqueness across String/List/Map/Set, grapheme breadcrumb correctness on IPA
-samples, Map/Set fuzz vs `std::unordered_map`/`std::set`, and a UAX #29 grapheme
+uniqueness across String/List/Table/Set, grapheme breadcrumb correctness on IPA
+samples, Table/Set fuzz vs `std::unordered_map`/`std::set`, and a UAX #29 grapheme
 conformance suite; M2 subtype intervals under renumbering, ref-mask applicability,
 metaclass dispatch, ambiguity-at-definition, and epoch invalidation. The suite is
 warning-clean (`-Wall -Wextra -Werror`) and leak-clean under ASan+UBSan.

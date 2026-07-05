@@ -1,7 +1,7 @@
-// Phonometrica engine — Map tests (CoW, ordering, String keys, fuzz).
+// Phonometrica engine — Table tests (CoW, ordering, String keys, fuzz).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include "types/map.hpp"
+#include "types/table.hpp"
 #include "types/list.hpp"
 #include "types/string.hpp"
 #include "test_framework.hpp"
@@ -17,9 +17,9 @@ Variant vi(int64_t n) { return Variant::from_int(n); }
 Variant vs(const char *s) { return Variant(String(s).to_value()); }
 } // namespace
 
-TEST_CASE("Map basic set/get/contains/remove")
+TEST_CASE("Table basic set/get/contains/remove")
 {
-	Map m;
+	Table m;
 	CHECK(m.empty());
 	m.set(vi(1), vs("one"));
 	m.set(vi(2), vs("two"));
@@ -39,9 +39,9 @@ TEST_CASE("Map basic set/get/contains/remove")
 	CHECK(!m.contains(vi(1)));
 }
 
-TEST_CASE("Map keys() and values() enumerate all entries")
+TEST_CASE("Table keys() and values() enumerate all entries")
 {
-	Map m;
+	Table m;
 	int order[] = {5, 3, 9, 1, 7, 2};
 	for (int k : order)
 		m.set(vi(k), vi(k * 10));
@@ -65,9 +65,9 @@ TEST_CASE("Map keys() and values() enumerate all entries")
 	CHECK(m.get(vi(9)).as_int() == 999);
 }
 
-TEST_CASE("Map String keys use structural equality")
+TEST_CASE("Table String keys use structural equality")
 {
-	Map m;
+	Table m;
 	m.set(vs("pitch"), vi(1));
 	// A distinct String cell with the same bytes is the same key.
 	CHECK(m.contains(vs("pitch")));
@@ -77,11 +77,11 @@ TEST_CASE("Map String keys use structural equality")
 	CHECK(m.get(vs("pitch")).as_int() == 2);
 }
 
-TEST_CASE("Map copy-on-write value semantics")
+TEST_CASE("Table copy-on-write value semantics")
 {
-	Map a;
+	Table a;
 	a.set(vi(1), vi(10));
-	Map b = a;
+	Table b = a;
 	CHECK(a.use_count() == 2);
 	CHECK(a.cell() == b.cell());
 	b.set(vi(2), vi(20)); // CoW
@@ -91,9 +91,9 @@ TEST_CASE("Map copy-on-write value semantics")
 	CHECK(!a.contains(vi(2)));
 }
 
-TEST_CASE("Map removal keeps remaining entries findable")
+TEST_CASE("Table removal keeps remaining entries findable")
 {
-	Map m;
+	Table m;
 	for (int i = 1; i <= 6; ++i)
 		m.set(vi(i), vi(i));
 	m.remove(vi(3));
@@ -105,12 +105,12 @@ TEST_CASE("Map removal keeps remaining entries findable")
 		CHECK(m.get(vi(k)).as_int() == k);
 }
 
-TEST_CASE("Map structural equality is order-independent")
+TEST_CASE("Table structural equality is order-independent")
 {
-	Map a;
+	Table a;
 	a.set(vi(1), vi(1));
 	a.set(vi(2), vi(2));
-	Map b;
+	Table b;
 	b.set(vi(2), vi(2));
 	b.set(vi(1), vi(1));
 	CHECK(a == b); // same entries, different insertion order
@@ -118,9 +118,9 @@ TEST_CASE("Map structural equality is order-independent")
 	CHECK(a != b);
 }
 
-TEST_CASE("Map clear releases values")
+TEST_CASE("Table clear releases values")
 {
-	Map m;
+	Table m;
 	String s("v");
 	m.set(vi(1), Variant(s.to_value()));
 	CHECK(s.use_count() == 2);
@@ -129,10 +129,10 @@ TEST_CASE("Map clear releases values")
 	CHECK(s.use_count() == 1);
 }
 
-TEST_CASE("Map fuzz vs std::unordered_map")
+TEST_CASE("Table fuzz vs std::unordered_map")
 {
 	std::mt19937_64 rng(31337);
-	Map mine;
+	Table mine;
 	std::unordered_map<int64_t, int64_t> ref;
 	const int KEY_SPACE = 300;
 

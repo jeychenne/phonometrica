@@ -1,7 +1,7 @@
 // Phonometrica engine — Set: a value-semantic set.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
-// Mirrors Map (architecture §4): a stable cell wrapping FlatHashSet<Value>, keyed
+// Mirrors Table (architecture §4): a stable cell wrapping FlatHashSet<Value>, keyed
 // by structural hashing/equality, with copy-on-write value semantics. Iteration
 // order is unspecified.
 

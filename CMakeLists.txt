@@ -64,7 +64,7 @@ add_library(phon_engine STATIC
     src/types/atom.cpp
     src/types/string.cpp
     src/types/list.cpp
-    src/types/map.cpp
+    src/types/table.cpp
     src/runtime/bootstrap.cpp
 )
 target_include_directories(phon_engine PUBLIC src)
@@ -96,7 +96,7 @@ add_executable(phon_unit_tests
     test/unit/test_string.cpp
     test/unit/test_atom.cpp
     test/unit/test_list.cpp
-    test/unit/test_map.cpp
+    test/unit/test_table.cpp
     test/unit/test_set.cpp
     test/unit/test_grapheme_conformance.cpp
 )

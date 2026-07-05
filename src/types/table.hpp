@@ -1,15 +1,15 @@
-// Phonometrica engine — Map: a value-semantic dictionary.
+// Phonometrica engine — Table: a value-semantic dictionary.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
-// The script Map is a stable cell wrapping the engine's one hash table
+// The script Table is a stable cell wrapping the engine's one hash table
 // (FlatHashMap), keyed by Value with structural hashing/equality (architecture
 // §4). The cell provides copy-on-write value semantics and drives retain/release
 // on the contained key/value cells; the FlatHashMap provides the algorithm. The
 // cell never moves on growth (only the table's own buffer does), so no slot
 // rewriting is needed (§5.0). Iteration order is unspecified.
 
-#ifndef PHON_TYPES_MAP_HPP
-#define PHON_TYPES_MAP_HPP
+#ifndef PHON_TYPES_TABLE_HPP
+#define PHON_TYPES_TABLE_HPP
 
 #include "core/cell.hpp"
 #include "core/flat_hash_map.hpp"
@@ -24,25 +24,25 @@ namespace phonometrica {
 
 class List;
 
-using MapTable = FlatHashMap<Value, Value, ValueHash, ValueEqual>;
+using TableStorage = FlatHashMap<Value, Value, ValueHash, ValueEqual>;
 
-struct MapCell
+struct TableCell
 {
 	Cell header;
-	MapTable table;
+	TableStorage table;
 };
 
-void register_map_class();
+void register_table_class();
 
-class Map final
+class Table final
 {
 public:
-	Map();
+	Table();
 
-	Map(const Map &) = default;
-	Map(Map &&) noexcept = default;
-	Map &operator=(const Map &) = default;
-	Map &operator=(Map &&) noexcept = default;
+	Table(const Table &) = default;
+	Table(Table &&) noexcept = default;
+	Table &operator=(const Table &) = default;
+	Table &operator=(Table &&) noexcept = default;
 
 	intptr_t size() const noexcept { return m_impl->table.size(); }
 	bool empty() const noexcept { return m_impl->table.empty(); }
@@ -59,20 +59,20 @@ public:
 	List keys() const;
 	List values() const;
 
-	bool operator==(const Map &o) const noexcept;
-	bool operator!=(const Map &o) const noexcept { return !(*this == o); }
+	bool operator==(const Table &o) const noexcept;
+	bool operator!=(const Table &o) const noexcept { return !(*this == o); }
 
 	Value to_value() const noexcept { return Value::make_cell(m_impl.cell()); }
-	static Map from_value(Value v) noexcept;
-	MapCell *cell() const noexcept { return m_impl.get(); }
+	static Table from_value(Value v) noexcept;
+	TableCell *cell() const noexcept { return m_impl.get(); }
 
 private:
-	explicit Map(Handle<MapCell> h) noexcept : m_impl(std::move(h)) {}
-	MapCell *detach();
+	explicit Table(Handle<TableCell> h) noexcept : m_impl(std::move(h)) {}
+	TableCell *detach();
 
-	Handle<MapCell> m_impl;
+	Handle<TableCell> m_impl;
 };
 
 } // namespace phonometrica
 
-#endif // PHON_TYPES_MAP_HPP
+#endif // PHON_TYPES_TABLE_HPP

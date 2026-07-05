@@ -1,4 +1,4 @@
-// Phonometrica engine — Map and Set implementation.
+// Phonometrica engine — Table and Set implementation.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
 // Both wrap the engine's one hash table (FlatHashMap/FlatHashSet) in a stable,
@@ -7,7 +7,7 @@
 // may differ from a query cell, so mutators release the stored value found via
 // the table, never the caller's argument.
 
-#include "types/map.hpp"
+#include "types/table.hpp"
 #include "types/set.hpp"
 
 #include "object/class.hpp"
@@ -31,32 +31,32 @@ PHON_FORCE_INLINE void release_value(Value v) noexcept
 		release(v.as_cell());
 }
 
-// --- Map cell hooks ---
+// --- Table cell hooks ---
 
-void map_finalize(Cell *c)
+void table_finalize(Cell *c)
 {
-	auto *m = reinterpret_cast<MapCell *>(c);
+	auto *m = reinterpret_cast<TableCell *>(c);
 	for (auto &e : m->table)
 	{
 		release_value(e.first);
 		release_value(e.second);
 	}
-	m->table.~MapTable();
+	m->table.~TableStorage();
 }
 
-MapCell *map_alloc()
+TableCell *table_alloc()
 {
-	Cell *c = cell_alloc(CID_MAP, static_cast<intptr_t>(sizeof(MapCell)));
-	auto *m = reinterpret_cast<MapCell *>(c);
-	::new (&m->table) MapTable();
+	Cell *c = cell_alloc(CID_TABLE, static_cast<intptr_t>(sizeof(TableCell)));
+	auto *m = reinterpret_cast<TableCell *>(c);
+	::new (&m->table) TableStorage();
 	return m;
 }
 
-MapCell *map_clone(MapCell *s)
+TableCell *table_clone(TableCell *s)
 {
-	Cell *c = cell_alloc(CID_MAP, static_cast<intptr_t>(sizeof(MapCell)));
-	auto *m = reinterpret_cast<MapCell *>(c);
-	::new (&m->table) MapTable(s->table); // copies Value bits (no refcount)
+	Cell *c = cell_alloc(CID_TABLE, static_cast<intptr_t>(sizeof(TableCell)));
+	auto *m = reinterpret_cast<TableCell *>(c);
+	::new (&m->table) TableStorage(s->table); // copies Value bits (no refcount)
 	for (auto &e : m->table)               // now claim references on the copies
 	{
 		retain_value(e.first);
@@ -65,10 +65,10 @@ MapCell *map_clone(MapCell *s)
 	return m;
 }
 
-bool map_structural_equals(const Cell *a, const Cell *b)
+bool table_structural_equals(const Cell *a, const Cell *b)
 {
-	auto *ma = reinterpret_cast<MapCell *>(const_cast<Cell *>(a));
-	auto *mb = reinterpret_cast<MapCell *>(const_cast<Cell *>(b));
+	auto *ma = reinterpret_cast<TableCell *>(const_cast<Cell *>(a));
+	auto *mb = reinterpret_cast<TableCell *>(const_cast<Cell *>(b));
 	if (ma->table.size() != mb->table.size())
 		return false;
 	for (auto &e : ma->table)
@@ -120,21 +120,21 @@ bool set_structural_equals(const Cell *a, const Cell *b)
 	return true;
 }
 
-Class g_map_class;
+Class g_table_class;
 Class g_set_class;
 
 } // namespace
 
-void register_map_class()
+void register_table_class()
 {
-	g_map_class.id = CID_MAP;
-	g_map_class.name = "Map";
-	g_map_class.base = get_class(CID_OBJECT);
-	g_map_class.flags = CLASS_BUILTIN | CLASS_VALUE; // may contain itself -> cyclic
-	g_map_class.instance_size = static_cast<intptr_t>(sizeof(MapCell));
-	g_map_class.finalize = &map_finalize;
-	g_map_class.equals = &map_structural_equals;
-	register_class(&g_map_class);
+	g_table_class.id = CID_TABLE;
+	g_table_class.name = "Table";
+	g_table_class.base = get_class(CID_OBJECT);
+	g_table_class.flags = CLASS_BUILTIN | CLASS_VALUE; // may contain itself -> cyclic
+	g_table_class.instance_size = static_cast<intptr_t>(sizeof(TableCell));
+	g_table_class.finalize = &table_finalize;
+	g_table_class.equals = &table_structural_equals;
+	register_class(&g_table_class);
 }
 
 void register_set_class()
@@ -150,29 +150,29 @@ void register_set_class()
 }
 
 // ---------------------------------------------------------------------------
-// Map
+// Table
 // ---------------------------------------------------------------------------
 
-Map::Map() : m_impl(Handle<MapCell>::adopt(map_alloc())) {}
+Table::Table() : m_impl(Handle<TableCell>::adopt(table_alloc())) {}
 
-Map Map::from_value(Value v) noexcept
+Table Table::from_value(Value v) noexcept
 {
-	PHON_ASSERT(v.is_cell() && v.as_cell()->class_id() == CID_MAP);
-	return Map(Handle<MapCell>(reinterpret_cast<MapCell *>(v.as_cell())));
+	PHON_ASSERT(v.is_cell() && v.as_cell()->class_id() == CID_TABLE);
+	return Table(Handle<TableCell>(reinterpret_cast<TableCell *>(v.as_cell())));
 }
 
-MapCell *Map::detach()
+TableCell *Table::detach()
 {
 	if (m_impl.unique())
 		return m_impl.get();
-	MapCell *clone = map_clone(m_impl.get());
-	m_impl = Handle<MapCell>::adopt(clone);
+	TableCell *clone = table_clone(m_impl.get());
+	m_impl = Handle<TableCell>::adopt(clone);
 	return clone;
 }
 
-void Map::set(const Variant &key, const Variant &value)
+void Table::set(const Variant &key, const Variant &value)
 {
-	MapCell *m = detach();
+	TableCell *m = detach();
 	Value k = key.value();
 	Value v = value.value();
 	auto it = m->table.find(k);
@@ -190,23 +190,23 @@ void Map::set(const Variant &key, const Variant &value)
 	}
 }
 
-Variant Map::get(const Variant &key) const
+Variant Table::get(const Variant &key) const
 {
-	MapCell *m = m_impl.get();
+	TableCell *m = m_impl.get();
 	auto it = m->table.find(key.value());
 	if (it == m->table.end())
 		return Variant();
 	return Variant(it->second);
 }
 
-bool Map::contains(const Variant &key) const
+bool Table::contains(const Variant &key) const
 {
 	return m_impl->table.contains(key.value());
 }
 
-bool Map::remove(const Variant &key)
+bool Table::remove(const Variant &key)
 {
-	MapCell *m = detach();
+	TableCell *m = detach();
 	auto it = m->table.find(key.value());
 	if (it == m->table.end())
 		return false;
@@ -216,11 +216,11 @@ bool Map::remove(const Variant &key)
 	return true;
 }
 
-void Map::clear()
+void Table::clear()
 {
 	if (m_impl->table.empty())
 		return;
-	MapCell *m = detach();
+	TableCell *m = detach();
 	for (auto &e : m->table)
 	{
 		release_value(e.first);
@@ -229,7 +229,7 @@ void Map::clear()
 	m->table.clear();
 }
 
-List Map::keys() const
+List Table::keys() const
 {
 	List out;
 	for (auto &e : m_impl->table)
@@ -237,7 +237,7 @@ List Map::keys() const
 	return out;
 }
 
-List Map::values() const
+List Table::values() const
 {
 	List out;
 	for (auto &e : m_impl->table)
@@ -245,11 +245,11 @@ List Map::values() const
 	return out;
 }
 
-bool Map::operator==(const Map &o) const noexcept
+bool Table::operator==(const Table &o) const noexcept
 {
 	if (m_impl.get() == o.m_impl.get())
 		return true;
-	return map_structural_equals(&m_impl->header, &o.m_impl->header);
+	return table_structural_equals(&m_impl->header, &o.m_impl->header);
 }
 
 // ---------------------------------------------------------------------------
