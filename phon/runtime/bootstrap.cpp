@@ -82,6 +82,7 @@ void bootstrap()
 	    static_cast<intptr_t>(sizeof(Cell)) + 2 * static_cast<intptr_t>(sizeof(Value));
 	g_error.finalize = &instance_finalize;
 	g_error.clone = &instance_clone_hook;
+	g_error.trace = &instance_trace; // user subclasses may add cyclic fields (§8.2)
 	register_class(&g_error);
 
 	// Compute subtype intervals from the assembled hierarchy.

@@ -49,7 +49,13 @@ using FinalizeHook = void (*)(Cell *);
 using CloneHook = void (*)(Cell *dst, const Cell *src);
 using HashHook = uint64_t (*)(const Cell *);
 using EqualsHook = bool (*)(const Cell *, const Cell *);
-using TraceHook = void (*)(Cell *, void *visitor);
+// Enumerate a cell's child *cells* for the cycle collector (§8.2): call `visit`
+// once per contained cell reference (immediates are skipped). Null for leaf types.
+using TraceHook = void (*)(Cell *self, void (*visit)(Cell *child));
+// Free a white cell's *auxiliary* storage (e.g. a Table's hash buffer) WITHOUT
+// releasing its child Values — the collector has already accounted for the child
+// edges (§8.2 collect_white). Null when the payload is inline (List, instances).
+using GcFreeHook = void (*)(Cell *);
 
 enum ClassFlags : uint16_t
 {
@@ -79,6 +85,7 @@ struct Class
 	HashHook hash = nullptr;
 	EqualsHook equals = nullptr;
 	TraceHook trace = nullptr;
+	GcFreeHook gc_free = nullptr;
 	Cell *class_object = nullptr; // cached class-object cell (lazy)
 
 	// User-class instance layout (design §5.6): a heap array of `field_count`

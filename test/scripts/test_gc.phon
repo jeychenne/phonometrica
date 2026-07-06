@@ -1,0 +1,80 @@
+# Cycle collector (design/architecture §8.2). Reference counting reclaims everything
+# but cycles of otherwise-dead objects; the backup Bacon–Rajan collector reclaims
+# those. Only `ref class` instances (identity) and closures can form real cycles —
+# value types copy-on-write, which breaks any attempt at self-containment.
+#
+# The script self-checks that LIVE cycles survive collection; that garbage cycles
+# are reclaimed is verified leak-free by the ASan build of the acceptance runner.
+
+ref class Node
+    field next as Object = null
+    field tag as String = ""
+    method init(tag as String)
+        this.tag = tag
+    end
+end
+
+# --- garbage cycle: two mutually-referential nodes dropped on return ---------------
+function make_garbage()
+    var a = Node("a")
+    var b = Node("b")
+    a.next = b
+    b.next = a
+    # a and b reference each other; when this frame returns their only remaining
+    # references are the internal cycle edges -> pure garbage for the collector.
+end
+
+make_garbage()
+collect_garbage()
+
+# --- a live cycle must survive collection and stay usable --------------------------
+var head = Node("head")
+head.next = head                       # self-referential but reachable via `head`
+collect_garbage()
+assert(head.tag == "head", "live self-cycle survives GC")
+assert(head.next.tag == "head", "live cycle still traversable after GC")
+assert(head.next.next.tag == "head", "self-loop chases arbitrarily deep")
+
+# --- a longer live cycle: x -> y -> z -> x -----------------------------------------
+var x = Node("x")
+var y = Node("y")
+var z = Node("z")
+x.next = y
+y.next = z
+z.next = x
+collect_garbage()
+assert(x.next.next.next.tag == "x", "3-cycle intact after GC")
+
+# --- churn: many garbage cycles exercise the loop back-edge safepoint --------------
+function churn(n as Integer)
+    var i = 0
+    while i < n do
+        var p = Node("p")
+        var q = Node("q")
+        p.next = q
+        q.next = p
+        i = i + 1
+    end
+end
+churn(300)
+collect_garbage()
+
+# The live cycle from earlier is still alive after all that.
+assert(head.next.tag == "head", "live cycle outlives unrelated churn")
+
+# --- closures over a shared upvalue can also cycle ---------------------------------
+function make_counter()
+    var n = 0
+    function bump() as Integer
+        n = n + 1
+        return n
+    end
+    return bump
+end
+var c = make_counter()
+assert(c() == 1, "closure works")
+assert(c() == 2, "closure keeps state")
+collect_garbage()
+assert(c() == 3, "closure survives GC")
+
+print("gc tests passed")

@@ -38,6 +38,24 @@ void upvalue_finalize(Cell *c)
 	}
 }
 
+// Cycle-collector traversal (§8.2). A closure's captured upvalues are cells; an
+// upvalue's closed value may be a cell. An *open* upvalue points at a live stack
+// slot (a root the collector never owns), so it enumerates nothing.
+void closure_trace(Cell *c, void (*visit)(Cell *))
+{
+	auto *cl = reinterpret_cast<ClosureCell *>(c);
+	for (int32_t i = 0; i < cl->nupvals; ++i)
+		if (cl->upvals[i])
+			visit(reinterpret_cast<Cell *>(cl->upvals[i]));
+}
+
+void upvalue_trace(Cell *c, void (*visit)(Cell *))
+{
+	auto *uv = reinterpret_cast<UpvalueCell *>(c);
+	if (!uv->is_open() && uv->closed.is_cell())
+		visit(uv->closed.as_cell());
+}
+
 Class *g_closure = nullptr;
 Class *g_native = nullptr;
 Class *g_upvalue = nullptr;
@@ -53,10 +71,12 @@ void register_function_classes()
 	// natives never are.
 	g_closure = add_class("Function", object, CLASS_BUILTIN | CLASS_REF);
 	g_closure->finalize = &closure_finalize;
+	g_closure->trace = &closure_trace;
 	g_native = add_class("Function", object, CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
 	g_native->finalize = nullptr;
 	g_upvalue = add_class("Upvalue", object, CLASS_BUILTIN | CLASS_REF);
 	g_upvalue->finalize = &upvalue_finalize;
+	g_upvalue->trace = &upvalue_trace;
 }
 
 Class *closure_class() noexcept { return g_closure; }

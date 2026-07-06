@@ -52,9 +52,24 @@ Isolate::Isolate()
 
 Isolate::~Isolate()
 {
+	// The teardown releases below must feed *this* Isolate's collector, whichever
+	// Isolate was current (mirrors do_string's current-isolate save/restore).
+	CycleCollector *prev = current_collector();
+	set_current_collector(&m_collector);
+
+	// Release every root the Isolate still owns BEFORE the final collection, so any
+	// garbage cycle they anchored becomes reclaimable. Ordering matters: the module
+	// slots hold the module-level values, which are the usual cycle anchors.
 	retract_journal();
 	for (intptr_t i = 0; i < m_kept.size(); ++i)
 		release(m_kept[i]);
+	m_kept.clear();
+	unwind_on_error();     // drop any live registers/frames from an aborted run
+	module_slots.clear();  // release module-level values
+
+	// Reap the cycles those releases orphaned.
+	m_collector.collect_until_stable();
+	set_current_collector(prev == &m_collector ? nullptr : prev);
 }
 
 void Isolate::keep_alive(Cell *c) { m_kept.push_back(c); }

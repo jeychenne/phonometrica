@@ -52,6 +52,16 @@ void list_finalize(Cell *c)
 		release_value(l->data[i]);
 }
 
+// Enumerate contained cells for the cycle collector (§8.2). The elements are inline,
+// so there is no auxiliary buffer to free (no gc_free hook).
+void list_trace(Cell *c, void (*visit)(Cell *))
+{
+	auto *l = reinterpret_cast<ListCell *>(c);
+	for (intptr_t i = 0; i < l->size; ++i)
+		if (l->data[i].is_cell())
+			visit(l->data[i].as_cell());
+}
+
 bool list_equals_hook(const Cell *a, const Cell *b)
 {
 	auto *la = reinterpret_cast<const ListCell *>(a);
@@ -93,6 +103,7 @@ void register_list_class()
 	g_list_class.flags = CLASS_BUILTIN | CLASS_VALUE;
 	g_list_class.instance_size = -1;
 	g_list_class.finalize = &list_finalize;
+	g_list_class.trace = &list_trace;
 	g_list_class.equals = &list_equals_hook;
 	register_class(&g_list_class);
 }

@@ -148,6 +148,7 @@ Class *add_user_class(const char *name, Class *base, bool is_ref, bool is_open,
 	                   static_cast<intptr_t>(total) * static_cast<intptr_t>(sizeof(Value));
 	c->finalize = &instance_finalize;
 	c->clone = &instance_clone_hook;
+	c->trace = &instance_trace; // fields may reference back -> potentially cyclic (§8.2)
 	return c;
 }
 
@@ -242,8 +243,10 @@ Class *metaclass_of(Class *c)
 		return get_class(c->meta_id);
 	// A metaclass is a leaf under the root metaclass Class; exact match is all
 	// `cast` needs (you never cast to "a subtype of the Float class object").
+	// A class object holds only a Class* descriptor (no Values), so it can never be
+	// part of a cycle: mark the metaclass ACYCLIC so its objects are born GREEN.
 	Class *mc = add_class(c->name, get_class(CID_CLASS),
-	                      CLASS_BUILTIN | CLASS_META | CLASS_REF | CLASS_SEALED);
+	                      CLASS_BUILTIN | CLASS_META | CLASS_REF | CLASS_SEALED | CLASS_ACYCLIC);
 	c->meta_id = mc->id;
 	return mc;
 }

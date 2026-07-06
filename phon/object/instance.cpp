@@ -59,6 +59,15 @@ void instance_finalize(Cell *c)
 		release_value(f[i]);
 }
 
+void instance_trace(Cell *c, void (*visit)(Cell *))
+{
+	Value *f = instance_fields(c);
+	int32_t n = get_class(c->class_id())->field_count;
+	for (int32_t i = 0; i < n; ++i)
+		if (f[i].is_cell())
+			visit(f[i].as_cell());
+}
+
 void instance_clone_hook(Cell *dst, const Cell *src)
 {
 	// Fill a caller-allocated `dst` of matching class from `src` (the CloneHook ABI).

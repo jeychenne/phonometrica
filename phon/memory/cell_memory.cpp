@@ -19,7 +19,11 @@ Cell *cell_alloc(uint32_t class_id, intptr_t total_size)
 	PHON_ASSERT(total_size >= static_cast<intptr_t>(sizeof(Cell)));
 	Cell *c = static_cast<Cell *>(sys_alloc(total_size));
 	c->set_header(class_id, Cell::SC_FOREIGN);
-	c->rc_bits = 1; // refcount 1, no flags
+	// Refcount 1, no flags. The persistent GC color is fixed at birth from the
+	// class: acyclic classes are GREEN forever (so `release` never buffers them as
+	// cycle candidates); potentially-cyclic classes start BLACK ("assumed live").
+	uint32_t color = get_class(class_id)->is_acyclic() ? Cell::COLOR_GREEN : Cell::COLOR_BLACK;
+	c->rc_bits = 1u | (color << Cell::COLOR_SHIFT);
 	return c;
 }
 

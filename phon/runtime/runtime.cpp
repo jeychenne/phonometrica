@@ -122,6 +122,18 @@ Value error_init(Isolate &, Value *args, int argc)
 	return args[0];
 }
 
+Value builtin_collect_garbage(Isolate &iso, Value *args, int argc)
+{
+	(void) args;
+	(void) argc;
+	// Force a cycle-collection pass (design §8.2). Live values are held in counted
+	// registers, so a mid-run collection only reclaims genuine garbage.
+	if (CycleCollector *cc = current_collector())
+		cc->collect();
+	(void) iso;
+	return Value::make_null();
+}
+
 // Keep native cells alive for the process lifetime (they back builtin generics).
 // A function-local static releases them at process exit (matching the class/atom
 // registries), so leak checkers stay clean.
@@ -169,6 +181,7 @@ void register_builtins()
 	register_native("assert", builtin_assert, 1, 2);
 	register_native("cast", builtin_cast, 2, 2);
 	register_native("to_string", builtin_to_string, 1, 1);
+	register_native("collect_garbage", builtin_collect_garbage, 0, 0);
 
 	// Error construction: init(this as Error, message). Registered with a typed
 	// signature so subclasses inherit it (constructor inheritance).
@@ -242,7 +255,9 @@ Variant Runtime::do_string(const String &code)
 	st.history.push_back(std::move(cm));
 
 	Isolate *prev = current_isolate();
+	CycleCollector *prev_cc = current_collector();
 	set_current_isolate(&st.isolate);
+	set_current_collector(&st.isolate.collector());
 	Handle<ClosureCell> main = Handle<ClosureCell>::adopt(make_closure(main_proto));
 	Variant out;
 	try
@@ -261,16 +276,26 @@ Variant Runtime::do_string(const String &code)
 			release(e.error.as_cell());
 		e.error = Value::make_null();
 		set_current_isolate(prev);
+		set_current_collector(prev_cc);
 		throw;
 	}
 	catch (...)
 	{
 		st.isolate.unwind_on_error();
 		set_current_isolate(prev);
+		set_current_collector(prev_cc);
 		throw;
 	}
 	set_current_isolate(prev);
+	set_current_collector(prev_cc);
 	return out;
+}
+
+void Runtime::collect_garbage() { m_state->isolate.collector().collect(); }
+
+intptr_t Runtime::gc_candidate_count() const
+{
+	return m_state->isolate.collector().candidate_count();
 }
 
 Variant do_string(const String &src)

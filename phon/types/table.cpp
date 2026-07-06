@@ -44,6 +44,26 @@ void table_finalize(Cell *c)
 	m->table.~TableStorage();
 }
 
+// Enumerate contained cells (keys and values) for the cycle collector (§8.2).
+void table_trace(Cell *c, void (*visit)(Cell *))
+{
+	auto *m = reinterpret_cast<TableCell *>(c);
+	for (auto &e : m->table)
+	{
+		if (e.first.is_cell())
+			visit(e.first.as_cell());
+		if (e.second.is_cell())
+			visit(e.second.as_cell());
+	}
+}
+
+// Free the hash buffer of a white (garbage) table WITHOUT releasing its entries —
+// the collector already accounted for those edges (§8.2 collect_white).
+void table_gc_free(Cell *c)
+{
+	reinterpret_cast<TableCell *>(c)->table.~TableStorage();
+}
+
 TableCell *table_alloc()
 {
 	Cell *c = cell_alloc(CID_TABLE, static_cast<intptr_t>(sizeof(TableCell)));
@@ -90,6 +110,21 @@ void set_finalize(Cell *c)
 	s->table.~SetTable();
 }
 
+// Enumerate contained cells (members) for the cycle collector (§8.2).
+void set_trace(Cell *c, void (*visit)(Cell *))
+{
+	auto *s = reinterpret_cast<SetCell *>(c);
+	for (const Value &k : s->table)
+		if (k.is_cell())
+			visit(k.as_cell());
+}
+
+// Free the hash buffer of a white (garbage) set WITHOUT releasing its members.
+void set_gc_free(Cell *c)
+{
+	reinterpret_cast<SetCell *>(c)->table.~SetTable();
+}
+
 SetCell *set_alloc()
 {
 	Cell *c = cell_alloc(CID_SET, static_cast<intptr_t>(sizeof(SetCell)));
@@ -133,6 +168,8 @@ void register_table_class()
 	g_table_class.flags = CLASS_BUILTIN | CLASS_VALUE; // may contain itself -> cyclic
 	g_table_class.instance_size = static_cast<intptr_t>(sizeof(TableCell));
 	g_table_class.finalize = &table_finalize;
+	g_table_class.trace = &table_trace;
+	g_table_class.gc_free = &table_gc_free;
 	g_table_class.equals = &table_structural_equals;
 	register_class(&g_table_class);
 }
@@ -145,6 +182,8 @@ void register_set_class()
 	g_set_class.flags = CLASS_BUILTIN | CLASS_VALUE;
 	g_set_class.instance_size = static_cast<intptr_t>(sizeof(SetCell));
 	g_set_class.finalize = &set_finalize;
+	g_set_class.trace = &set_trace;
+	g_set_class.gc_free = &set_gc_free;
 	g_set_class.equals = &set_structural_equals;
 	register_class(&g_set_class);
 }

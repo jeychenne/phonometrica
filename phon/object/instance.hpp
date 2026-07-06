@@ -38,6 +38,7 @@ Cell *instance_clone(const Cell *src);
 // Class hooks (wired by add_user_class).
 void instance_finalize(Cell *c);
 void instance_clone_hook(Cell *dst, const Cell *src);
+void instance_trace(Cell *c, void (*visit)(Cell *child));
 
 } // namespace phonometrica
 

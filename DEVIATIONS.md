@@ -716,3 +716,75 @@ as a tagged pointer to a caller register slot (the REF value already in `value.h
    yet fully enforced against pathological cases (e.g. capturing a ref local in a
    nested closure); documented as a follow-up. `for ref x in …` (by-reference
    iteration) and the user `iterate`/`next` protocol remain in Stage 3b.
+
+## M5 — Cycle collector (architecture §8.2)
+
+The backup Bacon–Rajan synchronous collector (Bacon & Rajan 2001; Jones/Hosking/Moss,
+_The GC Handbook_ p. 66 ff.), ported from Phonometrica's Recycler and adapted to the
+new Cell header. Reference counting reclaims everything except cycles of otherwise-dead
+objects; this reclaims those. Files: `phon/memory/cycle_collector.{hpp,cpp}`.
+
+1. **The GC color lives in the Cell header, narrowing the refcount to 26 bits.**
+   §3.2 sketched `rc_bits` as a 29-bit refcount + BUFFERED/FROZEN/SHARED_BUFFER and
+   mentioned only the BUFFERED bit for the collector; but Bacon–Rajan needs a per-object
+   color. `rc_bits` is now refcount (bits 0–25, 26 bits ≈ 67M, still saturating), a
+   3-bit **color** field (bits 26–28), then BUFFERED/FROZEN/SHARED_BUFFER (bits 29–31).
+   Colors: GREEN (acyclic), BLACK (assumed live), GRAY/WHITE/PURPLE (the collector's
+   working states). The color is fixed at allocation from the class: acyclic classes are
+   born GREEN, potentially-cyclic ones BLACK. `set_refcount`/`set_gc_color`/`set_buffered`
+   edit their subfields without disturbing the others.
+
+2. **`release` gained two collector seams (declared in cell.hpp, defined in
+   cycle_collector.cpp).** A decremented-but-still-live non-GREEN cell that is not yet
+   buffered calls `cc_possible_root` (Bacon–Rajan PossibleRoot: paint PURPLE, push onto
+   the candidate buffer). GREEN cells and already-buffered ones skip this via a cheap
+   inline color/flag test, preserving the acyclic fast path. When the *last* reference to
+   a **buffered** cell drops, `release` cannot free it synchronously (its slot in the
+   candidate vector would dangle), so `cc_collect_deferred` parks it (refcount 0, BLACK)
+   for the next MarkRoots to dispose — the vector analogue of Phonometrica's O(1)
+   intrusive-list removal in `~Collectable`.
+
+3. **The candidate set is a `Vector<Cell*>` (architecture §8.2), not the intrusive
+   doubly-linked list Phonometrica used** — the 8-byte Cell has no room for prev/next
+   pointers. `collect()` therefore snapshots the roots (`std::move`) and processes the
+   snapshot, so fresh candidates buffered by finalizers during the pass accumulate
+   cleanly for the next one. Deferred (parked) frees run last, after CollectWhite, so a
+   finalizer's releases cannot disturb the trial-deletion phases.
+
+4. **Per-class `trace` and `gc_free` hooks (class.hpp).** `trace(self, visit)` enumerates
+   a cell's contained *cell* children (immediates skipped); wired for List, Table, Set,
+   user instances (incl. Error subclasses), Closure (its upvalues), and Upvalue (its
+   closed value — an *open* upvalue points at a live stack slot and enumerates nothing).
+   `gc_free(self)` frees a white cell's *auxiliary* buffer (Table/Set's hash storage)
+   **without** releasing its entries; it is null for inline-payload types (List,
+   instances, closures). CollectWhite frees via `gc_free`+`cell_free`, bypassing the
+   finalizer, because the child edges were already balanced by trial deletion.
+
+5. **Acyclic (GREEN) children stay out of the cycle machinery; CollectWhite releases
+   them normally.** The `trace` hooks enumerate *all* cell children, including acyclic
+   ones (a List's String elements). The collector's MarkGray/ScanBlack skip GREEN
+   children (never trial-adjusting their refcount or recoloring them), and CollectWhite
+   releases a GREEN child through the ordinary `release` path — so an acyclic object whose
+   only referrer was a garbage cycle is reclaimed **through its finalizer** (correct for a
+   future `File` etc.), not silently `cell_free`d. This is stricter than a naïve port,
+   which would have flipped Strings' color to BLACK and skipped their finalizer.
+
+6. **Collection triggers: loop back-edges, a `collect_garbage()` builtin, and Isolate
+   teardown.** The interpreter services the collector at loop back-edges (a backward
+   `JMP`), threshold-gated (`collect_if_needed`, default 1024 candidates) — the §9.4
+   safepoint where all live values sit in counted registers. `collect_garbage()` forces a
+   pass (for scripts/tests). The Isolate destructor releases its roots (journal, kept
+   cells, register stack, then module slots) and runs `collect_until_stable()` so a run's
+   cyclic garbage is reclaimed before teardown (verified leak-clean under ASan). Function
+   call/return safepoints and byte-based thresholds (§8.2/§9.4) are deferred.
+
+7. **The current collector is a process-global, save/restored around a run** (mirroring
+   the process-global current Isolate). `do_string` and the Isolate destructor set/restore
+   it so releases feed the running Isolate's collector even when several Runtimes coexist;
+   the real `thread_local` wiring lands with concurrency (M7).
+
+8. **Deferred / limitations.** MarkGray/Scan/CollectWhite recurse over the object graph
+   (as in Phonometrica), so a pathologically deep graph can overflow the C++ stack — an
+   explicit work-stack is a later hardening. Byte-count collection thresholds, the
+   function-call safepoint, incremental/concurrent collection, and the freeze/transfer
+   interplay (§8.3) are all future work.

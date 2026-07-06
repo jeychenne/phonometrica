@@ -16,6 +16,7 @@
 #include <phon/core/value.hpp>
 #include <phon/core/variant.hpp>
 #include <phon/core/vector.hpp>
+#include <phon/memory/cycle_collector.hpp>
 #include <phon/types/string.hpp>
 #include <phon/vm/function.hpp>
 #include <phon/vm/opcode.hpp>
@@ -100,6 +101,10 @@ public:
 	Value *stack() noexcept { return m_stack.get(); }
 	intptr_t stack_capacity() const noexcept { return m_stack_cap; }
 
+	// The thread's cycle collector (architecture §8.2). Installed as the current
+	// collector for this Isolate's lifetime; the interpreter pokes it at safepoints.
+	CycleCollector &collector() noexcept { return m_collector; }
+
 	Vector<CallFrame> frames;
 
 	// Active `try` handlers (design §12 / architecture §10.5). `PUSHTRY` records where
@@ -163,6 +168,7 @@ public:
 private:
 	std::unique_ptr<Value[]> m_stack;
 	intptr_t m_stack_cap = 0;
+	CycleCollector m_collector;
 	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
 	FlatHashMap<uint64_t, int> m_ic_base;
 	Vector<MethodRegistration> m_journal;

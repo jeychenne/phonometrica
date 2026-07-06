@@ -48,6 +48,14 @@ public:
 	// in a later one.
 	Variant do_string(const String &code);
 
+	// Force a cycle-collection pass now (design/architecture §8.2). Normally the
+	// collector runs itself at safepoints; this is the explicit hook for the
+	// `collect_garbage()` builtin and for tests that assert reclamation.
+	void collect_garbage();
+
+	// Number of live cycle-collection candidates buffered on this session (tests).
+	intptr_t gc_candidate_count() const;
+
 private:
 	struct State;
 	std::unique_ptr<State> m_state;

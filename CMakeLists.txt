@@ -62,6 +62,7 @@ add_library(phon_engine STATIC
     phon/object/value_ops.cpp
     phon/dispatch/generic.cpp
     phon/memory/cell_memory.cpp
+    phon/memory/cycle_collector.cpp
     phon/types/atom.cpp
     phon/types/string.cpp
     phon/types/list.cpp
@@ -104,6 +105,7 @@ add_executable(phon_unit_tests
     test/unit/test_flat_hash_set.cpp
     test/unit/test_value.cpp
     test/unit/test_cell.cpp
+    test/unit/test_cycle_collector.cpp
     test/unit/test_class.cpp
     test/unit/test_instance.cpp
     test/unit/test_dispatch.cpp

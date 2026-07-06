@@ -474,8 +474,16 @@ Value run(Isolate &iso)
 		}
 
 		case Opcode::JMP:
-			ip += op_sbx(ins);
+		{
+			int32_t off = op_sbx(ins);
+			ip += off;
+			// Loop back-edges are safepoints: service the cycle collector here so a
+			// long-running loop that produces garbage cycles reclaims them mid-run
+			// (architecture §8.2/§9.4). All live values sit in counted registers.
+			if (off < 0)
+				iso.collector().collect_if_needed();
 			break;
+		}
 		case Opcode::JMPF:
 			if (!truthy(base[a]))
 				ip += op_sbx(ins);
