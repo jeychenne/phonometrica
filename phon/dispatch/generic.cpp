@@ -3,6 +3,8 @@
 
 #include <phon/dispatch/generic.hpp>
 
+#include <phon/vm/function.hpp> // deref() reads through a first-class reference argument
+
 #include <utility>
 
 namespace phonometrica {
@@ -63,7 +65,7 @@ PHON_FORCE_INLINE uint64_t encode_arg(uint32_t cid) noexcept
 // Dispatch class of an argument: a reference argument dispatches on its referent.
 PHON_FORCE_INLINE uint32_t dispatch_class(Value a) noexcept
 {
-	return a.is_ref() ? class_of(*a.as_ref()) : class_of(a);
+	return class_of(deref(a));
 }
 
 // Full resolution: index of the most-specific applicable method, or -1.

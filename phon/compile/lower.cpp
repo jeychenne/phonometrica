@@ -316,6 +316,9 @@ private:
 	// Promote an lvalue argument to a reference at a `ref` parameter position,
 	// driven by the callee's uniform ref-mask (design/references.md §6).
 	void emit_promote_arg(Ast *arg, int r);
+	// Load argument `arg` into register `r` for an *indirect* call whose callee sits
+	// in register `callee`: the callee's ref-mask is consulted at runtime (§6.2).
+	void emit_maybe_promote_arg(Ast *arg, int r, int callee);
 	void compile_conditional(ConditionalExpression *c, int dest);
 	int compile_function(FunctionDefinition *f);
 
@@ -796,6 +799,25 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 		           "(module/upvalue references are a follow-up)");
 }
 
+void Lowerer::emit_maybe_promote_arg(Ast *arg, int r, int callee)
+{
+	// The callee is only known at runtime, so we cannot decide promotion now. A local
+	// variable is a promotable lvalue: MAYBEPROMOTE forwards/boxes it iff the callee
+	// marks the position `ref`. Any other argument is computed, then MAYBEBOX gives it
+	// a (write-back-less) box only if the callee expects a reference there.
+	if (auto *v = arg->as<Variable>())
+	{
+		NameRef nr = resolve(v->name);
+		if (nr.kind == NameKind::Local)
+		{
+			emit_ABC(Opcode::MAYBEPROMOTE, r, nr.index, callee, ln(arg));
+			return;
+		}
+	}
+	expr_to(arg, r);
+	emit_ABC(Opcode::MAYBEBOX, r, 0, callee, ln(arg));
+}
+
 void Lowerer::compile_call(CallExpression *c, int dest)
 {
 	// `ClassName(args)` is construction, not a call (design §6): a user class, or the
@@ -865,10 +887,19 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 	{
 		Ast *a = c->args[i].get();
 		int r = reg_alloc(a);
-		if ((ref_mask >> i) & 1u)
-			emit_promote_arg(a, r);
+		if (generic)
+		{
+			// Direct call: the callee's uniform ref-mask is known now (§6.1).
+			if ((ref_mask >> i) & 1u)
+				emit_promote_arg(a, r);
+			else
+				expr_to(a, r);
+		}
 		else
-			expr_to(a, r);
+		{
+			// Indirect call through a value: promote per the callee's runtime mask.
+			emit_maybe_promote_arg(a, r, base);
+		}
 	}
 
 	if (generic)
@@ -901,6 +932,7 @@ int Lowerer::compile_function(FunctionDefinition *f)
 	auto child = std::make_unique<Proto>();
 	child->name = f->name;
 	child->num_params = static_cast<int>(f->params.size());
+	child->ref_mask = compute_ref_mask(f, false); // for indirect-call promotion (§6.2)
 
 	FuncState cfs(*child, fs, false);
 	FuncState *saved = fs;

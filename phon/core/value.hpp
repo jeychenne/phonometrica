@@ -14,7 +14,7 @@
 //   tag 010 INTEGER    48-bit two's-complement (range +/-2^47)
 //   tag 011 SYMBOL     32-bit atom-table index
 //   tag 100 CELL       48-bit pointer to a heap Cell
-//   tag 101 REF        48-bit pointer to a Value slot (second-class ref; retired)
+//   tag 101 --         free (was the retired second-class register-pointer ref)
 //   tag 110 REFERENCE  48-bit pointer to a reference box Cell (first-class ref)
 //
 // Because the box signature occupies bits 62..50 and the tag adds bits 63/49/48,
@@ -50,7 +50,7 @@ public:
 	static constexpr uint64_t SIG_INTEGER = 0x7FFE'0000'0000'0000ull;   // box | bit49
 	static constexpr uint64_t SIG_SYMBOL = 0x7FFF'0000'0000'0000ull;    // box | bit49|bit48
 	static constexpr uint64_t SIG_CELL = 0xFFFC'0000'0000'0000ull;      // box | bit63
-	static constexpr uint64_t SIG_REF = 0xFFFD'0000'0000'0000ull;       // box | bit63|bit48
+	// tag 0xFFFD (box|bit63|bit48) is free — the retired second-class ref.
 	// First-class reference (design/references.md §5): a Value tagged REFERENCE
 	// points at a heap box Cell (a UpvalueCell) that owns the aliased value. The tag
 	// is a pure in-register bit test, so DEREF is one predicted branch, no memory load.
@@ -109,13 +109,6 @@ public:
 		return from_bits(SIG_CELL | static_cast<uint64_t>(p));
 	}
 
-	static PHON_FORCE_INLINE Value make_ref(Value *slot) noexcept
-	{
-		auto p = reinterpret_cast<uintptr_t>(slot);
-		PHON_ASSERT_MSG((p & ~PAYLOAD_MASK) == 0, "ref pointer exceeds 48 bits");
-		return from_bits(SIG_REF | static_cast<uint64_t>(p));
-	}
-
 	// A first-class reference to a heap box Cell (design/references.md §3/§5).
 	static PHON_FORCE_INLINE Value make_reference(Cell *box) noexcept
 	{
@@ -142,7 +135,6 @@ public:
 	PHON_FORCE_INLINE bool is_int() const noexcept { return tag() == SIG_INTEGER; }
 	PHON_FORCE_INLINE bool is_symbol() const noexcept { return tag() == SIG_SYMBOL; }
 	PHON_FORCE_INLINE bool is_cell() const noexcept { return tag() == SIG_CELL; }
-	PHON_FORCE_INLINE bool is_ref() const noexcept { return tag() == SIG_REF; }
 	PHON_FORCE_INLINE bool is_reference() const noexcept { return tag() == SIG_REFERENCE; }
 
 	PHON_FORCE_INLINE bool is_null() const noexcept
@@ -200,16 +192,21 @@ public:
 		return reinterpret_cast<Cell *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
 	}
 
-	PHON_FORCE_INLINE Value *as_ref() const noexcept
-	{
-		PHON_ASSERT(is_ref());
-		return reinterpret_cast<Value *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
-	}
-
 	// The reference box a first-class reference points at (design/references.md §3).
 	PHON_FORCE_INLINE Cell *as_reference_box() const noexcept
 	{
 		PHON_ASSERT(is_reference());
+		return reinterpret_cast<Cell *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
+	}
+
+	// True for any Value that owns a refcount on a heap Cell: an ordinary CELL *or*
+	// a REFERENCE (whose payload is the box Cell). This is the retain/release test —
+	// it is NOT a type test, so use is_cell() to ask "is this a heap object?".
+	PHON_FORCE_INLINE bool owns_cell() const noexcept { return is_cell() || is_reference(); }
+	// The Cell a CELL/REFERENCE value points at (for refcounting). Undefined otherwise.
+	PHON_FORCE_INLINE Cell *cell_ptr() const noexcept
+	{
+		PHON_ASSERT(owns_cell());
 		return reinterpret_cast<Cell *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
 	}
 

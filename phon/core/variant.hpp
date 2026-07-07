@@ -84,14 +84,14 @@ public:
 private:
 	PHON_FORCE_INLINE void retain_cell() noexcept
 	{
-		if (m_value.is_cell())
-			retain(m_value.as_cell());
+		if (m_value.owns_cell())
+			retain(m_value.cell_ptr());
 	}
 	PHON_FORCE_INLINE void release_cell() noexcept { release_value(m_value); }
 	static PHON_FORCE_INLINE void release_value(Value v) noexcept
 	{
-		if (v.is_cell())
-			release(v.as_cell());
+		if (v.owns_cell())
+			release(v.cell_ptr());
 	}
 
 	Value m_value;

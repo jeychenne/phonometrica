@@ -36,6 +36,12 @@ class Isolate;
 // Isolate::raise (which throws across the native boundary).
 using NativeFn = Value (*)(Isolate &iso, Value *args, int argc);
 
+// One cell type serves both upvalues and first-class reference boxes: an upvalue
+// *is* a reference to a captured variable (design/references.md §3). "Open" means
+// `slot` points at a live stack register (the caller's local, not yet moved); the
+// box owns no value and the defining frame reads that register directly. "Closed"
+// means `slot == &closed` and the box owns the value (a reference that outlived its
+// source frame). Reading is uniformly `*slot`.
 struct UpvalueCell
 {
 	Cell header;
@@ -45,6 +51,20 @@ struct UpvalueCell
 
 	bool is_open() const noexcept { return slot != &closed; }
 };
+
+// The box an is_reference() Value points at.
+PHON_FORCE_INLINE UpvalueCell *reference_box(Value v) noexcept
+{
+	return reinterpret_cast<UpvalueCell *>(v.as_reference_box());
+}
+
+// Read through a first-class reference to the value it currently stands for
+// (design/references.md §5: PHP's ZVAL_DEREF). Non-references pass through — one
+// predicted branch, an indirection only for actual references.
+PHON_FORCE_INLINE Value deref(Value v) noexcept
+{
+	return v.is_reference() ? *reference_box(v)->slot : v;
+}
 
 struct ClosureCell
 {
@@ -80,11 +100,22 @@ PHON_FORCE_INLINE bool is_native(Value v) noexcept
 }
 PHON_FORCE_INLINE bool is_callable(Value v) noexcept { return is_closure(v) || is_native(v); }
 
+// The uniform `ref` mask of a callable Value (0 if it is not a closure with `ref`
+// parameters). Read at an *indirect* call to decide argument promotion at runtime
+// (design/references.md §6.2). Natives currently never have `ref` parameters.
+PHON_FORCE_INLINE uint64_t callable_ref_mask(Value v) noexcept
+{
+	return is_closure(v) ? reinterpret_cast<ClosureCell *>(v.as_cell())->proto->ref_mask : 0;
+}
+
 // --- construction (each returns a cell with refcount 1) ---
 
 ClosureCell *make_closure(Proto *proto);
 NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity);
 UpvalueCell *make_upvalue(Value *slot);
+// A *closed* reference box that owns `initial` (design/references.md §3): the
+// reference has no write-back target (a non-lvalue passed to a `ref` parameter).
+UpvalueCell *make_reference_box(Value initial);
 
 } // namespace phonometrica
 

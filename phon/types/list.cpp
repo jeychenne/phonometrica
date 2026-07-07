@@ -36,13 +36,13 @@ ListCell *list_alloc(intptr_t capacity)
 
 PHON_FORCE_INLINE void retain_value(Value v) noexcept
 {
-	if (v.is_cell())
-		retain(v.as_cell());
+	if (v.owns_cell())
+		retain(v.cell_ptr());
 }
 PHON_FORCE_INLINE void release_value(Value v) noexcept
 {
-	if (v.is_cell())
-		release(v.as_cell());
+	if (v.owns_cell())
+		release(v.cell_ptr());
 }
 
 void list_finalize(Cell *c)

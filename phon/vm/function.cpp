@@ -11,8 +11,8 @@ namespace {
 
 PHON_FORCE_INLINE void release_value(Value v) noexcept
 {
-	if (v.is_cell())
-		release(v.as_cell());
+	if (v.owns_cell())
+		release(v.cell_ptr());
 }
 
 void closure_finalize(Cell *c)
@@ -114,6 +114,18 @@ UpvalueCell *make_upvalue(Value *slot)
 	auto *uv = reinterpret_cast<UpvalueCell *>(c);
 	uv->slot = slot;
 	uv->closed = Value::make_null();
+	uv->next = nullptr;
+	return uv;
+}
+
+UpvalueCell *make_reference_box(Value initial)
+{
+	Cell *c = cell_alloc(g_upvalue->id, static_cast<intptr_t>(sizeof(UpvalueCell)));
+	auto *uv = reinterpret_cast<UpvalueCell *>(c);
+	uv->closed = initial;
+	if (initial.owns_cell())
+		retain(initial.cell_ptr()); // the box owns the value
+	uv->slot = &uv->closed; // closed: not tracking any stack slot
 	uv->next = nullptr;
 	return uv;
 }

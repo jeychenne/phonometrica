@@ -6,6 +6,7 @@
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
 #include <phon/types/string.hpp>
+#include <phon/vm/function.hpp> // UpvalueCell: build a reference box for a dispatch arg
 #include "test_framework.hpp"
 
 using namespace phonometrica;
@@ -106,7 +107,10 @@ TEST_CASE("ref-mask is uniform per generic")
 
 	List l;
 	Value lv = l.to_value();
-	Value ref = Value::make_ref(&lv);
+	// An open reference box standing in for the List (resolve only reads through it).
+	UpvalueCell box;
+	box.slot = &lv;
+	Value ref = Value::make_reference(reinterpret_cast<Cell *>(&box));
 	CHECK(untag(call1(g, ref)) == 1); // ref-to-List dispatches on List
 	CHECK(untag(call1(g, lv)) == 1);  // a plain List selects the same (uniform) method
 }

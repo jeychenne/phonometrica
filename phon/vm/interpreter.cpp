@@ -26,13 +26,13 @@ namespace {
 
 PHON_FORCE_INLINE void retain_value(Value v) noexcept
 {
-	if (v.is_cell())
-		retain(v.as_cell());
+	if (v.owns_cell())
+		retain(v.cell_ptr());
 }
 PHON_FORCE_INLINE void release_value(Value v) noexcept
 {
-	if (v.is_cell())
-		release(v.as_cell());
+	if (v.owns_cell())
+		release(v.cell_ptr());
 }
 
 // Store into a register by *copying* a borrowed value (retain new, release old).
@@ -630,9 +630,10 @@ Value run(Isolate &iso)
 				              String(symbol_name(sym)).view() + "'",
 				          cur_line());
 			void *callable = nullptr;
-			// The inline cache keys on argument classes read directly; a `ref` argument
-			// dispatches on its referent, so those calls take the full-resolve path.
-			bool has_ref = argv[0].is_ref() || (nargs == 2 && argv[1].is_ref());
+			// The inline cache keys on argument classes read directly; a reference
+			// argument dispatches on its referent, so those calls take the full-resolve
+			// path (which derefs).
+			bool has_ref = argv[0].is_reference() || (nargs == 2 && argv[1].is_reference());
 			if ((nargs == 1 || nargs == 2) && !has_ref)
 			{
 				ICEntry &ic = iso.ics[slot];
@@ -695,22 +696,72 @@ Value run(Isolate &iso)
 			break;
 
 		case Opcode::MAKEREF:
-			// A reference into the caller's frame (never boxed; second-class, §7).
-			reg_move(base, a, Value::make_ref(&base[op_b(ins)]));
-			break;
-		case Opcode::DEREF:
 		{
-			Value v = base[op_b(ins)];
-			reg_copy(base, a, v.is_ref() ? *v.as_ref() : v);
+			// Promote the caller's local R[B] to a first-class boxed reference
+			// (design/references.md §2/§6). The box shares the register while the
+			// frame lives (open upvalue), so the caller and callee alias one value —
+			// mutation writes back with no copy. The same cell serves upvalue capture,
+			// so a captured-and-referenced local shares a single box.
+			UpvalueCell *box = iso.find_or_make_open_upvalue(&base[op_b(ins)]);
+			retain(reinterpret_cast<Cell *>(box)); // R[A] owns a reference to the box
+			reg_move(base, a, Value::make_reference(reinterpret_cast<Cell *>(box)));
 			break;
 		}
+		case Opcode::DEREF:
+			// Read through a reference (identity if R[B] is not one).
+			reg_copy(base, a, deref(base[op_b(ins)]));
+			break;
 		case Opcode::SETREF:
 		{
-			Value *slot = base[a].as_ref();
+			// Write through the reference in R[A] into the box's slot.
+			UpvalueCell *box = reference_box(base[a]);
 			Value nv = base[op_b(ins)];
 			retain_value(nv);
-			release_value(*slot);
-			*slot = nv;
+			release_value(*box->slot);
+			*box->slot = nv;
+			break;
+		}
+		case Opcode::MAYBEPROMOTE:
+		{
+			// Indirect-call argument load (design/references.md §6.2): the source local
+			// R[B] feeds argument position A-C-1 (args sit right after the callee R[C]).
+			// If the callee marks that position `ref`, pass a reference — forwarding an
+			// existing box, or promoting a plain local into a fresh one; otherwise pass
+			// the value (dereferencing the source if it is itself a reference).
+			int c_reg = op_c(ins);
+			int argpos = a - c_reg - 1;
+			Value src = base[op_b(ins)];
+			if ((callable_ref_mask(base[c_reg]) >> argpos) & 1u)
+			{
+				if (src.is_reference())
+				{
+					reg_copy(base, a, src); // forward the existing box
+				}
+				else
+				{
+					UpvalueCell *box = iso.find_or_make_open_upvalue(&base[op_b(ins)]);
+					retain(reinterpret_cast<Cell *>(box));
+					reg_move(base, a, Value::make_reference(reinterpret_cast<Cell *>(box)));
+				}
+			}
+			else
+			{
+				reg_copy(base, a, deref(src));
+			}
+			break;
+		}
+		case Opcode::MAYBEBOX:
+		{
+			// A non-lvalue argument already computed into R[A]: if the callee R[C]
+			// marks this position `ref`, box the value (closed, no write-back) so the
+			// callee still receives a reference; else leave it a plain value.
+			int c_reg = op_c(ins);
+			int argpos = a - c_reg - 1;
+			if ((callable_ref_mask(base[c_reg]) >> argpos) & 1u)
+			{
+				UpvalueCell *box = make_reference_box(base[a]);
+				reg_move(base, a, Value::make_reference(reinterpret_cast<Cell *>(box)));
+			}
 			break;
 		}
 

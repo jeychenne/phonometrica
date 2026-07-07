@@ -163,13 +163,17 @@ TEST_CASE("Value cell pointers round-trip")
 	}
 }
 
-TEST_CASE("Value refs round-trip")
+TEST_CASE("Value references round-trip")
 {
-	Value slot = Value::make_int(7);
-	Value v = Value::make_ref(&slot);
-	CHECK(v.is_ref());
-	CHECK(v.as_ref() == &slot);
-	CHECK(v.as_ref()->as_int() == 7);
+	// A first-class reference carries a pointer to its heap box Cell (§5).
+	void *raw = std::malloc(64);
+	auto *box = reinterpret_cast<Cell *>(raw);
+	Value v = Value::make_reference(box);
+	CHECK(v.is_reference());
+	CHECK(!v.is_cell());
+	CHECK(!v.is_number());
+	CHECK(v.as_reference_box() == box);
+	std::free(raw);
 }
 
 TEST_CASE("Value both_double fast path")
@@ -193,7 +197,7 @@ TEST_CASE("Value tags are mutually exclusive")
 	for (Value v : vals)
 	{
 		int hits = int(v.is_immediate()) + int(v.is_int()) + int(v.is_symbol()) +
-		           int(v.is_cell()) + int(v.is_ref()) + int(v.is_double());
+		           int(v.is_cell()) + int(v.is_reference()) + int(v.is_double());
 		CHECK(hits == 1);
 	}
 }

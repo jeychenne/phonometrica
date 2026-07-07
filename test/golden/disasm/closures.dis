@@ -9,9 +9,10 @@ proto #0 <anon>  params=0 regs=3 upvals=0 consts=1
 0007  SETMODULE  0 0
 0008  GETMODULE  1 0
 0009  LOADI      2 10
-0010  CALL       1 1 0
-0011  MOVE       0 1 0
-0012  HALT       0 1 0
+0010  MAYBEBOX   2 0 1
+0011  CALL       1 1 0
+0012  MOVE       0 1 0
+0013  HALT       0 1 0
 
 proto #0 make_adder  params=1 regs=3 upvals=0 consts=0
 0000  CLOSURE    1 0

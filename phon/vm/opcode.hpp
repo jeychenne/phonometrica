@@ -74,10 +74,12 @@ using Instruction = uint32_t;
 	_(CLOSURE)     /* A Bx   : R[A] = closure over proto Bx                  */ \
 	_(CLOSE)       /* A      : close open upvalues for slots >= A            */ \
 	_(DEFMETHOD)   /* A Bx   : register R[A] (closure) as method-def Bx      */ \
-	/* second-class references (`ref` params, design §7) */                     \
-	_(MAKEREF)     /* A B    : R[A] = reference to register B                */ \
+	/* first-class references (`ref` params, design/references.md) */           \
+	_(MAKEREF)     /* A B    : R[A] = boxed reference promoting local R[B]    */ \
 	_(DEREF)       /* A B    : R[A] = R[B] dereferenced (identity if not ref)*/ \
-	_(SETREF)      /* A B    : *R[A] = R[B]  (write through a reference)     */ \
+	_(SETREF)      /* A B    : write R[B] through the reference in R[A]       */ \
+	_(MAYBEPROMOTE)/* A B C  : R[A] = R[C].ref[A-C-1] ? promote(R[B]) : R[B]  */ \
+	_(MAYBEBOX)    /* A C    : if R[C].ref[A-C-1], box R[A]'s value in place   */ \
 	/* aggregate construction & indexing */                                     \
 	_(NEWLIST)     /* A B    : R[A] = [R[A+1..A+B]]                          */ \
 	_(NEWTABLE)    /* A B    : R[A] = { B pairs from R[A+1..A+2B] }          */ \

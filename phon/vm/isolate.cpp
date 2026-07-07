@@ -32,8 +32,8 @@ Isolate *g_current = nullptr;
 
 PHON_FORCE_INLINE void retain_value(Value v) noexcept
 {
-	if (v.is_cell())
-		retain(v.as_cell());
+	if (v.owns_cell())
+		retain(v.cell_ptr());
 }
 
 } // namespace
@@ -104,8 +104,8 @@ void Isolate::unwind_on_error() noexcept
 	close_upvalues(lo); // detach open upvalues from the dying stack
 	for (Value *p = lo; p < hi; ++p)
 	{
-		if (p->is_cell())
-			release(p->as_cell());
+		if (p->owns_cell())
+			release(p->cell_ptr());
 		*p = Value::make_null();
 	}
 	frames.clear();

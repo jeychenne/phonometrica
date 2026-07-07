@@ -785,6 +785,24 @@ TEST_CASE("vm: a ref is forwarded through a call chain")
 	CHECK(run_int(src) == 101);
 }
 
+TEST_CASE("vm: a ref parameter works through an indirect call")
+{
+	// The callee is a closure held in a variable, so its ref-mask is only known at
+	// runtime (design/references.md §6.2): the maybe-promote load still boxes the
+	// caller's local so the mutation writes back.
+	const char *lvalue = "var f = function(ref x) x = x + 1 end\n"
+	                     "function run() as Integer\n var n = 5\n f(n)\n f(n)\n return n\nend\n"
+	                     "run()";
+	CHECK(run_int(lvalue) == 7);
+
+	// A non-lvalue at a `ref` position of an indirectly-called function is boxed
+	// without a write-back target: it runs (no crash), the mutation is just discarded.
+	const char *rvalue = "var g = function(ref x) x = x + 1\nreturn x end\n"
+	                     "function run() as Integer\n return g(41)\nend\n"
+	                     "run()";
+	CHECK(run_int(rvalue) == 42);
+}
+
 TEST_CASE("vm: ref-ness is uniform per generic")
 {
 	// Ref-ness is uniform per generic (design/references.md §4): it is not a dispatch

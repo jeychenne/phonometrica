@@ -103,6 +103,10 @@ struct Proto final
 	int num_regs = 0;        // frame register count (stack slots to reserve)
 	int num_ic = 0;          // inline-cache slots this proto needs (CALLG sites)
 	bool is_vararg = false;  // trailing variadic parameter
+	// Which parameter positions are `ref` (bit i => param i). Carried on the callable
+	// so an *indirect* call (through a variable/first-class function) can promote the
+	// right argument slots at runtime (design/references.md §6.2).
+	uint64_t ref_mask = 0;
 
 	// --- emission helpers (used by lowering) ---
 
