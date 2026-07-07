@@ -1,0 +1,29 @@
+proto #0 <anon>  params=0 regs=5 upvals=0 consts=2
+0000  CLOSURE    0 0
+0001  DEFMETHOD  0 0             ; pitch
+0002  LOADK      1 0             ; :pitch
+0003  LOADI      2 1
+0004  CALLG      1 1 0
+0005  EXTRA_ARG  0
+0006  MOVE       0 1 0
+0007  SETMODULE  0 0
+0008  LOADK      1 0             ; :pitch
+0009  LOADI      2 1
+0010  LOADK      3 1             ; :ceiling
+0011  LOADI      4 300
+0012  CALLG      1 1 1
+0013  EXTRA_ARG  1
+0014  MOVE       0 1 0
+0015  SETMODULE  0 1
+0016  HALT       0 0 0
+
+proto #0 pitch  params=1 regs=5 upvals=0 consts=0
+0000  JMPSET     1 1             ; -> 0002
+0001  LOADI      1 70
+0002  JMPSET     2 1             ; -> 0004
+0003  LOADI      2 500
+0004  ADD        4 0 1
+0005  ADD        3 4 2
+0006  RET        3 1 0
+0007  RET        0 0 0
+

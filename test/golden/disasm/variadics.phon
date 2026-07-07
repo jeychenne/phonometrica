@@ -1,0 +1,9 @@
+# Variadic parameters: the child proto is flagged `vararg` (its trailing parameter
+# holds the packed List, adapted at call entry, not in bytecode). Fixed parameters
+# precede the vararg; a call stages its positional arguments as usual.
+function collect(tag as String, xs as Object...)
+    return xs
+end
+
+var a = collect("x", 1, 2, 3)
+var b = collect("y")
