@@ -39,6 +39,7 @@ enum class Lexeme : uint8_t
 	// --- punctuation ---
 	LParen, RParen, LBrace, RBrace, LSquare, RSquare,
 	Comma, Colon, Dot, Semicolon,
+	At,       // @  (array literal: @[...])
 	Ellipsis, // ... (variadic parameter `T...` and call-site splat `xs...`)
 
 	// --- literals ---

@@ -32,7 +32,7 @@ enum class NodeKind
 {
 	// expressions
 	NullLiteral, BoolLiteral, IntegerLiteral, FloatLiteral, StringLiteral,
-	StringInterpolation, ListLiteral, TableLiteral, SetLiteral, Variable,
+	StringInterpolation, ListLiteral, ArrayLiteral, TableLiteral, SetLiteral, Variable,
 	ThisExpression, UnaryExpression, BinaryExpression, ConcatExpression,
 	IsExpression, CastExpression, IndexExpression, SliceExpression, FieldAccess,
 	CallExpression, SplatExpression, RefExpression, NamedArgument,
@@ -135,6 +135,19 @@ struct ListLiteral final : Ast
 	ListLiteral(int line, int col, AstList items) : Ast(KIND, line, col), items(std::move(items)) {}
 	PHON_AST_NODE(ListLiteral, ListLiteral)
 	AstList items;
+};
+
+// `@[a, b, c]` (1-D) or `@[a, b; c, d]` (2-D, `;` separates rows) — a numeric Array
+// literal (design §9). `elems` holds every element in row-major source order; `rank`
+// is 1 or 2, with `nrow`/`ncol` the shape (rank 1 → nrow 1). Integer elements are
+// promoted to Float when the array is built.
+struct ArrayLiteral final : Ast
+{
+	ArrayLiteral(int line, int col, AstList elems, int rank, int nrow, int ncol)
+	    : Ast(KIND, line, col), elems(std::move(elems)), rank(rank), nrow(nrow), ncol(ncol) {}
+	PHON_AST_NODE(ArrayLiteral, ArrayLiteral)
+	AstList elems;
+	int rank, nrow, ncol;
 };
 
 // {k: v, ...} — a Table literal. `keys[i]` pairs with `values[i]`.
@@ -556,6 +569,7 @@ public:
 	virtual void visit_string_literal(StringLiteral *node) = 0;
 	virtual void visit_string_interpolation(StringInterpolation *node) = 0;
 	virtual void visit_list_literal(ListLiteral *node) = 0;
+	virtual void visit_array_literal(ArrayLiteral *node) = 0;
 	virtual void visit_table_literal(TableLiteral *node) = 0;
 	virtual void visit_set_literal(SetLiteral *node) = 0;
 	virtual void visit_variable(Variable *node) = 0;

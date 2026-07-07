@@ -15,6 +15,7 @@ void register_string_class();
 void register_list_class();
 void register_table_class();
 void register_set_class();
+void register_array_class();
 
 namespace {
 
@@ -28,9 +29,16 @@ Class g_null{.id = CID_NULL, .name = "Null", .base = &g_object,
              .flags = CLASS_BUILTIN | CLASS_ACYCLIC | CLASS_SEALED};
 Class g_boolean{.id = CID_BOOLEAN, .name = "Boolean", .base = &g_object,
                 .flags = CLASS_BUILTIN | CLASS_VALUE | CLASS_ACYCLIC | CLASS_SEALED};
-Class g_integer{.id = CID_INTEGER, .name = "Integer", .base = &g_object,
+// Abstract numeric bases (design §6): Number is the top of the numeric tower and Real
+// its real-valued branch; both are abstract (no instances — a value's concrete class is
+// always Integer or Float). Complex will later join as a sibling of Real under Number.
+Class g_number{.id = CID_NUMBER, .name = "Number", .base = &g_object,
+               .flags = CLASS_BUILTIN | CLASS_ACYCLIC | CLASS_SEALED};
+Class g_real{.id = CID_REAL, .name = "Real", .base = &g_number,
+             .flags = CLASS_BUILTIN | CLASS_ACYCLIC | CLASS_SEALED};
+Class g_integer{.id = CID_INTEGER, .name = "Integer", .base = &g_real,
                 .flags = CLASS_BUILTIN | CLASS_VALUE | CLASS_ACYCLIC | CLASS_SEALED};
-Class g_float{.id = CID_FLOAT, .name = "Float", .base = &g_object,
+Class g_float{.id = CID_FLOAT, .name = "Float", .base = &g_real,
               .flags = CLASS_BUILTIN | CLASS_VALUE | CLASS_ACYCLIC | CLASS_SEALED};
 Class g_symbol{.id = CID_SYMBOL, .name = "Symbol", .base = &g_object,
                .flags = CLASS_BUILTIN | CLASS_VALUE | CLASS_ACYCLIC | CLASS_SEALED};
@@ -59,6 +67,10 @@ void bootstrap()
 	register_class(&g_object);
 	register_class(&g_null);
 	register_class(&g_boolean);
+	// Numeric tower: Number and Real must register before Integer/Float (register_class
+	// links each class into its base's child list immediately).
+	register_class(&g_number);
+	register_class(&g_real);
 	register_class(&g_integer);
 	register_class(&g_float);
 	register_class(&g_symbol);
@@ -68,9 +80,11 @@ void bootstrap()
 	register_list_class();
 	register_table_class();
 	register_set_class();
+	register_array_class(); // the numeric Array view + its double buffer (design §9)
 
-	// The root metaclass is registered last so builtin intervals equal their
-	// stable ids (0..10).
+	// The root metaclass registers after the concrete value types. (Subtype intervals
+	// no longer equal the stable ids now that the abstract Number/Real bases are spliced
+	// into the tree — intervals come from renumber_types() over the assembled hierarchy.)
 	register_class(&g_class);
 
 	// Error carries `message` and `trace` fields (Strings), via the instance machinery.

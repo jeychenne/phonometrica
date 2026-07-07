@@ -1102,6 +1102,8 @@ AutoAst Parser::parse_primary()
 	}
 	case Lexeme::LSquare:
 		return parse_list_literal();
+	case Lexeme::At:
+		return parse_array_literal();
 	case Lexeme::LBrace:
 		return parse_brace_literal();
 	case Lexeme::Function:
@@ -1132,6 +1134,62 @@ AutoAst Parser::parse_list_literal()
 	}
 	expect(Lexeme::RSquare, "']' to close the list");
 	return make<ListLiteral>(line, col, std::move(items));
+}
+
+AutoAst Parser::parse_array_literal()
+{
+	// `@[a, b, c]` (1-D) or `@[a, b; c, d]` (2-D). Rows are separated by `;` and must
+	// all have the same number of columns (design §9). Elements are in row-major source
+	// order; the shape drives the column-major construction at lowering.
+	int line = m_tok.line, col = m_tok.column;
+	advance(); // '@'
+	expect(Lexeme::LSquare, "'[' after '@' to open an array literal");
+	AstList elems;
+	int rank = 1, nrow = 0, ncol = 0, row_start = 0;
+	if (!m_tok.is(Lexeme::RSquare))
+	{
+		for (;;)
+		{
+			elems.push_back(parse_expression());
+			if (accept(Lexeme::Comma))
+			{
+				if (m_tok.is(Lexeme::RSquare) || m_tok.is(Lexeme::Semicolon))
+					error("expected an array element after ','");
+				continue;
+			}
+			if (accept(Lexeme::Semicolon))
+			{
+				int this_cols = static_cast<int>(elems.size()) - row_start;
+				if (rank == 1)
+				{
+					rank = 2;
+					ncol = this_cols;
+					nrow = 1;
+				}
+				else if (this_cols != ncol)
+					error("array rows must all have the same number of columns");
+				else
+					++nrow;
+				row_start = static_cast<int>(elems.size());
+				continue;
+			}
+			break;
+		}
+		if (rank == 2)
+		{
+			int last_cols = static_cast<int>(elems.size()) - row_start;
+			if (last_cols != ncol)
+				error("array rows must all have the same number of columns");
+			++nrow;
+		}
+	}
+	expect(Lexeme::RSquare, "']' to close the array literal");
+	if (rank == 1)
+	{
+		nrow = 1;
+		ncol = static_cast<int>(elems.size());
+	}
+	return make<ArrayLiteral>(line, col, std::move(elems), rank, nrow, ncol);
 }
 
 AutoAst Parser::parse_brace_literal()

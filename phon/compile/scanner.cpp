@@ -346,6 +346,9 @@ Token Scanner::next()
 		case U';':
 			advance();
 			return make(Lexeme::Semicolon, ";");
+		case U'@':
+			advance();
+			return make(Lexeme::At, "@"); // array literal: @[...]
 		default:
 			break;
 		}

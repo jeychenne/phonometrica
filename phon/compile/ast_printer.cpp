@@ -108,6 +108,15 @@ public:
 			child(it.get());
 	}
 
+	void visit_array_literal(ArrayLiteral *n) override
+	{
+		char buf[48];
+		std::snprintf(buf, sizeof buf, "Array rank=%d %dx%d", n->rank, n->nrow, n->ncol);
+		emit(buf);
+		for (auto &it : n->elems)
+			child(it.get());
+	}
+
 	void visit_table_literal(TableLiteral *n) override
 	{
 		emit("Table");

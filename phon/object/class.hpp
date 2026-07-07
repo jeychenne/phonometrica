@@ -114,6 +114,14 @@ enum BuiltinClassId : uint32_t
 	CID_SET,
 	CID_CLASS, // the root metaclass; per-class metaclasses derive from it
 	CID_ERROR, // base of the thrown-error hierarchy (design §12)
+	// Abstract numeric bases (design §6): Object -> Number -> Real -> {Integer, Float}.
+	// Real is the common base of Integer/Float; Number leaves room for Complex later.
+	// Stable ids need not reflect the hierarchy — subtype intervals are computed from
+	// the tree at renumber time — so these append here while keeping CID_INTEGER/FLOAT.
+	CID_NUMBER,
+	CID_REAL,
+	CID_ARRAY,       // numeric Array view (design §9 / architecture §5.3)
+	CID_ARRAYBUFFER, // the Array's separately-refcounted double buffer (never script-visible)
 	CID_BUILTIN_COUNT
 };
 

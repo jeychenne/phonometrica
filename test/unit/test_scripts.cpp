@@ -26,6 +26,7 @@ const char *SCRIPTS[] = {
     "test_classes",             "test_errors",             "test_iteration",
     "test_refs",                "test_gc",           "test_slices",
     "test_variadics",           "test_options",           "test_splat",
+    "test_numeric",             "test_array",
 };
 
 std::string read_file(const std::string &path, bool &ok)

@@ -14,6 +14,7 @@
 #include <phon/object/class.hpp>
 #include <phon/object/instance.hpp>
 #include <phon/runtime/bootstrap.hpp>
+#include <phon/types/array.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
 #include <phon/types/set.hpp>
@@ -49,7 +50,13 @@ Value builtin_to_string(Isolate &iso, Value *args, int argc)
 	// The builtin `to_string` methods (one per arity-1 call) stringify any value the
 	// way `&`/print do; a user `method to_string()` overrides for its own class.
 	(void) argc;
-	return stringify(iso, args[0]).to_value();
+	// A native returns a value carrying +1. `stringify` yields a temporary String, so
+	// retain its cell before the temporary drops (otherwise a *freshly built* string —
+	// from an Array/List/Table — would be freed out from under the returned value).
+	String s = stringify(iso, args[0]);
+	Value v = s.to_value();
+	retain(v.as_cell());
+	return v;
 }
 
 Value builtin_assert(Isolate &iso, Value *args, int argc)
@@ -80,6 +87,7 @@ Value builtin_len(Isolate &iso, Value *args, int argc)
 		case CID_STRING: return Value::make_int(String::from_value(v).length());
 		case CID_TABLE: return Value::make_int(Table::from_value(v).size());
 		case CID_SET: return Value::make_int(Set::from_value(v).size());
+		case CID_ARRAY: return Value::make_int(Array::from_value(v).size());
 		default: break;
 		}
 	}

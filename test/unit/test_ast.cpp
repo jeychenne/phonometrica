@@ -37,6 +37,7 @@ struct KindRecorder final : AstVisitor
 	void visit_string_literal(StringLiteral *n) override { rec(n); }
 	void visit_string_interpolation(StringInterpolation *n) override { rec(n); }
 	void visit_list_literal(ListLiteral *n) override { rec(n); }
+	void visit_array_literal(ArrayLiteral *n) override { rec(n); }
 	void visit_table_literal(TableLiteral *n) override { rec(n); }
 	void visit_set_literal(SetLiteral *n) override { rec(n); }
 	void visit_variable(Variable *n) override { rec(n); }

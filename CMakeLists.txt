@@ -67,6 +67,8 @@ add_library(phon_engine STATIC
     phon/types/string.cpp
     phon/types/list.cpp
     phon/types/table.cpp
+    phon/types/array.cpp
+    phon/lib/array_kernels.cpp
     phon/compile/token.cpp
     phon/compile/source.cpp
     phon/compile/scanner.cpp
@@ -115,6 +117,7 @@ add_executable(phon_unit_tests
     test/unit/test_list.cpp
     test/unit/test_table.cpp
     test/unit/test_set.cpp
+    test/unit/test_array.cpp
     test/unit/test_grapheme_conformance.cpp
     test/unit/test_scanner.cpp
     test/unit/test_ast.cpp

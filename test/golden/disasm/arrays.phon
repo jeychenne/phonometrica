@@ -1,0 +1,18 @@
+# Array-literal lowering: elements staged in row-major source order, then NEWARRAY
+# (B = element count, C = nrow with 0 meaning a 1-D array). The runtime stores the
+# buffer column-major and promotes integer elements to Float.
+var v = @[1, 2, 3]
+var m = @[1, 2, 3; 4, 5, 6]
+
+# Scalar element read/write. A single index uses GET/SETINDEX; multi-dimensional
+# indexing stages the indices in a block and uses GETIDXN / SETIDXN (rank in EXTRA_ARG).
+var x = v[2]
+var y = m[2, 3]
+v[1] = 10
+m[1, 2] = 99
+
+# Slicing: a single slice uses GETSLICE (1-D view); a multi-axis slice uses GETVIEW
+# with a 3-register block per axis and a scalar-axis bitmask in EXTRA_ARG.
+var row = m[1, :]
+var col = m[:, 2]
+var sub = v[1:2]

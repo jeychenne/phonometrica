@@ -7,6 +7,8 @@
 #include <phon/object/class.hpp>
 #include <phon/object/instance.hpp>
 #include <phon/object/value_ops.hpp>
+#include <phon/lib/array_kernels.hpp>
+#include <phon/types/array.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
 #include <phon/types/set.hpp>
@@ -77,6 +79,130 @@ bool is_string(Value v) { return v.is_cell() && class_of(v) == CID_STRING; }
 bool is_list(Value v) { return v.is_cell() && class_of(v) == CID_LIST; }
 bool is_table(Value v) { return v.is_cell() && class_of(v) == CID_TABLE; }
 bool is_set(Value v) { return v.is_cell() && class_of(v) == CID_SET; }
+bool is_array(Value v) { return v.is_cell() && class_of(v) == CID_ARRAY; }
+
+// Render a numeric Array (design §9). 1-D as `[a, b, c]`, 2-D row-major (natural
+// reading order) with `;` between rows; higher ranks list elements column-major with a
+// shape prefix. Elements are doubles.
+String array_to_string(const ArrayCell *a)
+{
+	auto elem = [&](intptr_t off) { return String::convert(a->buf->data[off]); };
+	if (a->rank == 1)
+	{
+		String out("[");
+		for (intptr_t i = 0; i < a->dim[0]; ++i)
+		{
+			if (i > 0)
+				out.append(", ");
+			out.append(elem(a->offset + i * a->stride[0]));
+		}
+		out.append("]");
+		return out;
+	}
+	if (a->rank == 2)
+	{
+		String out("[");
+		for (intptr_t r = 0; r < a->dim[0]; ++r)
+		{
+			if (r > 0)
+				out.append("; ");
+			for (intptr_t c = 0; c < a->dim[1]; ++c)
+			{
+				if (c > 0)
+					out.append(", ");
+				out.append(elem(a->offset + r * a->stride[0] + c * a->stride[1]));
+			}
+		}
+		out.append("]");
+		return out;
+	}
+	String out("Array(");
+	for (int k = 0; k < a->rank; ++k)
+	{
+		if (k > 0)
+			out.append("x");
+		out.append(String::convert(static_cast<intptr_t>(a->dim[k])));
+	}
+	out.append(")");
+	return out;
+}
+
+// Validate `nidx` 1-based indices (negatives count from the end) against an Array's
+// shape and return the buffer element offset (design §9). The index count must equal
+// the rank. Raises an Index/Type error otherwise.
+intptr_t array_index_offset(Isolate &iso, int line, const ArrayCell *arr, const Value *idx,
+                            int nidx)
+{
+	if (nidx != arr->rank)
+		iso.raise(String("[Index error] an Array of rank ") +
+		              String::convert(static_cast<intptr_t>(arr->rank)).view() +
+		              " was indexed with " + String::convert(static_cast<intptr_t>(nidx)).view() +
+		              " indices",
+		          line);
+	intptr_t off = arr->offset;
+	for (int k = 0; k < arr->rank; ++k)
+	{
+		if (!idx[k].is_int())
+			iso.raise(String("[Index error] Array index must be an Integer"), line);
+		int64_t i = idx[k].as_int();
+		int64_t d = arr->dim[k];
+		int64_t z = i < 0 ? d + i : i - 1; // 1-based, negatives from the end -> 0-based
+		if (z < 0 || z >= d)
+			iso.raise(String("[Index error] Array index out of range"), line);
+		off += z * arr->stride[k];
+	}
+	return off;
+}
+
+// Elementwise Array arithmetic (design §9): array⊕array (shape-checked), array⊕scalar
+// and scalar⊕array (broadcast). Strided operands are gathered contiguous first; the
+// result is a fresh contiguous Array. `op` is one of '+','-','*','/','^'. Returns a
+// Value carrying +1. Raises on a shape or type mismatch.
+Value array_arith(Isolate &iso, int line, char op, Value x, Value y)
+{
+	auto owned = [](Array &res) {
+		Value v = res.to_value();
+		retain(v.as_cell()); // the caller reg_move's this (+1)
+		return v;
+	};
+	if (is_array(x) && is_array(y))
+	{
+		auto *ax = reinterpret_cast<const ArrayCell *>(x.as_cell());
+		auto *ay = reinterpret_cast<const ArrayCell *>(y.as_cell());
+		bool same = ax->rank == ay->rank;
+		for (int k = 0; same && k < ax->rank; ++k)
+			same = ax->dim[k] == ay->dim[k];
+		if (!same)
+			iso.raise(String("[Shape error] Array operands must have the same shape"), line);
+		Array cx = Array::from_value(x).contiguous();
+		Array cy = Array::from_value(y).contiguous();
+		Array res = Array::make(ax->rank, ax->dim);
+		double *out = res.detach();
+		array_binop(op, out, cx.data(), cy.data(), res.size());
+		return owned(res);
+	}
+	if (is_array(x))
+	{
+		if (!y.is_number())
+			iso.raise(String("[Type error] an Array combines only with a number or another Array"),
+			          line);
+		auto *ax = reinterpret_cast<const ArrayCell *>(x.as_cell());
+		Array cx = Array::from_value(x).contiguous();
+		Array res = Array::make(ax->rank, ax->dim);
+		double *out = res.detach();
+		array_binop_as(op, out, cx.data(), y.to_double(), res.size());
+		return owned(res);
+	}
+	// y is the Array, x a scalar.
+	if (!x.is_number())
+		iso.raise(String("[Type error] an Array combines only with a number or another Array"), line);
+	auto *ay = reinterpret_cast<const ArrayCell *>(y.as_cell());
+	Array cy = Array::from_value(y).contiguous();
+	Array res = Array::make(ay->rank, ay->dim);
+	double *out = res.detach();
+	array_binop_sa(op, out, x.to_double(), cy.data(), res.size());
+	return owned(res);
+}
 
 // A field-bearing instance (design §5.6): a cell laid out by the instance machinery
 // — every user class and the builtin Error hierarchy — identified by its finalizer.
@@ -115,6 +241,8 @@ String to_string_value(Value v)
 		return String(symbol_name(v.as_symbol()));
 	if (is_string(v))
 		return String::from_value(v);
+	if (is_array(v))
+		return array_to_string(reinterpret_cast<ArrayCell *>(v.as_cell()));
 	if (is_list(v))
 	{
 		List l = List::from_value(v);
@@ -529,8 +657,10 @@ Value run(Isolate &iso)
 				reg_move(base, a, Value::make(x.to_double() + y.to_double()));
 			else if (is_list(x) && is_list(y))
 				reg_move(base, a, list_concat(x, y));
+			else if (is_array(x) || is_array(y))
+				reg_move(base, a, array_arith(iso, cur_line(), '+', x, y));
 			else
-				iso.raise(String("[Type error] '+' expects two numbers or two lists"), cur_line());
+				iso.raise(String("[Type error] '+' expects two numbers, two lists, or an Array"), cur_line());
 			break;
 		}
 		case Opcode::SUB:
@@ -546,8 +676,10 @@ Value run(Isolate &iso)
 			}
 			else if (x.is_number() && y.is_number())
 				reg_move(base, a, Value::make(x.to_double() - y.to_double()));
+			else if (is_array(x) || is_array(y))
+				reg_move(base, a, array_arith(iso, cur_line(), '-', x, y));
 			else
-				iso.raise(String("[Type error] '-' expects numbers"), cur_line());
+				iso.raise(String("[Type error] '-' expects two numbers or an Array"), cur_line());
 			break;
 		}
 		case Opcode::MUL:
@@ -563,8 +695,10 @@ Value run(Isolate &iso)
 			}
 			else if (x.is_number() && y.is_number())
 				reg_move(base, a, Value::make(x.to_double() * y.to_double()));
+			else if (is_array(x) || is_array(y))
+				reg_move(base, a, array_arith(iso, cur_line(), '*', x, y));
 			else
-				iso.raise(String("[Type error] '*' expects numbers"), cur_line());
+				iso.raise(String("[Type error] '*' expects two numbers or an Array"), cur_line());
 			break;
 		}
 		case Opcode::DIV:
@@ -572,8 +706,10 @@ Value run(Isolate &iso)
 			Value x = base[op_b(ins)], y = base[op_c(ins)];
 			if (x.is_number() && y.is_number())
 				reg_move(base, a, Value::make(x.to_double() / y.to_double())); // '/' always Float
+			else if (is_array(x) || is_array(y))
+				reg_move(base, a, array_arith(iso, cur_line(), '/', x, y));
 			else
-				iso.raise(String("[Type error] '/' expects numbers"), cur_line());
+				iso.raise(String("[Type error] '/' expects two numbers or an Array"), cur_line());
 			break;
 		}
 		case Opcode::POW:
@@ -581,8 +717,10 @@ Value run(Isolate &iso)
 			Value x = base[op_b(ins)], y = base[op_c(ins)];
 			if (x.is_number() && y.is_number())
 				reg_move(base, a, Value::make(std::pow(x.to_double(), y.to_double())));
+			else if (is_array(x) || is_array(y))
+				reg_move(base, a, array_arith(iso, cur_line(), '^', x, y));
 			else
-				iso.raise(String("[Type error] '^' expects numbers"), cur_line());
+				iso.raise(String("[Type error] '^' expects two numbers or an Array"), cur_line());
 			break;
 		}
 		case Opcode::IDIV:
@@ -826,6 +964,10 @@ Value run(Isolate &iso)
 				reg_copy(base, a + 2, t.keys().to_value()); // iterate a snapshot of keys
 				reg_copy(base, a, t.to_value());
 			}
+			else if (is_array(coll))
+				iso.raise(String("[Type error] cannot iterate an Array by reference "
+				                 "(a numeric element is not a boxable value)"),
+				          cur_line());
 			else
 				iso.raise(String("[Type error] by-reference iteration requires a List or Table"),
 				          cur_line());
@@ -1143,6 +1285,10 @@ Value run(Isolate &iso)
 				reg_copy(base, op_b(ins), t.to_value());
 				break;
 			}
+			if (is_array(obj))
+				iso.raise(String("[Type error] cannot take a reference to an Array element "
+				                 "(a numeric element is not a boxable value)"),
+				          cur_line());
 			iso.raise(String("[Type error] only a List element or Table value can be passed by "
 			                 "reference"),
 			          cur_line());
@@ -1412,6 +1558,41 @@ Value run(Isolate &iso)
 			reg_copy(base, a, lst.to_value());
 			break;
 		}
+		case Opcode::NEWARRAY:
+		{
+			// R[A+1..A+B] are the elements in row-major source order; C = nrow (0 => a
+			// 1-D array of B elements). Stored column-major, integers promoted to Float.
+			int count = op_b(ins);
+			int nrow_code = op_c(ins);
+			int rank = (nrow_code == 0) ? 1 : 2;
+			intptr_t nrow = (rank == 1) ? 1 : nrow_code;
+			intptr_t ncol = (rank == 1) ? count : (nrow_code ? count / nrow_code : 0);
+			intptr_t dims[2];
+			if (rank == 1)
+				dims[0] = count;
+			else
+			{
+				dims[0] = nrow;
+				dims[1] = ncol;
+			}
+			Array arr = Array::make(rank, dims);
+			double *d = arr.detach(); // fresh, unique, contiguous
+			for (intptr_t r = 0; r < nrow; ++r)
+				for (intptr_t c = 0; c < ncol; ++c)
+				{
+					Value ev = base[a + 1 + r * ncol + c]; // row-major source
+					double x;
+					if (ev.is_int())
+						x = static_cast<double>(ev.as_int()); // Integer -> Float
+					else if (ev.is_double())
+						x = ev.as_double();
+					else
+						iso.raise(String("[Type error] array elements must be numbers"), cur_line());
+					d[r + c * nrow] = x; // column-major destination
+				}
+			reg_copy(base, a, arr.to_value());
+			break;
+		}
 		case Opcode::NEWTABLE:
 		{
 			int n = op_b(ins);
@@ -1488,8 +1669,28 @@ Value run(Isolate &iso)
 				Substring g = s.at(idx.as_int());
 				reg_copy(base, a, String(g).to_value());
 			}
+			else if (is_array(obj))
+			{
+				// A single scalar index reads one element (a Float); rank must be 1.
+				auto *arr = reinterpret_cast<ArrayCell *>(obj.as_cell());
+				intptr_t off = array_index_offset(iso, cur_line(), arr, &idx, 1);
+				reg_move(base, a, Value::make(arr->buf->data[off]));
+			}
 			else
 				iso.raise(String("[Type error] value is not indexable"), cur_line());
+			break;
+		}
+		case Opcode::GETIDXN:
+		{
+			// R[A] = R[B][ R[B+1 .. B+C] ] — a scalar element of an Array (C indices).
+			int objreg = op_b(ins), nidx = op_c(ins);
+			Value obj = base[objreg];
+			if (!is_array(obj))
+				iso.raise(String("[Type error] multi-dimensional indexing requires an Array"),
+				          cur_line());
+			auto *arr = reinterpret_cast<ArrayCell *>(obj.as_cell());
+			intptr_t off = array_index_offset(iso, cur_line(), arr, &base[objreg + 1], nidx);
+			reg_move(base, a, Value::make(arr->buf->data[off]));
 			break;
 		}
 		case Opcode::SETINDEX:
@@ -1538,8 +1739,51 @@ Value run(Isolate &iso)
 				t.set(Variant(idx), Variant(val));
 				reg_copy(base, a, t.to_value());
 			}
+			else if (is_array(obj))
+			{
+				// Write one element (rank 1, single scalar index). Copy-on-write: detach to
+				// a private contiguous buffer, then store; the offset is recomputed on the
+				// detached view since detach may compact/relocate the buffer.
+				if (!val.is_number())
+					iso.raise(String("[Type error] Array elements must be numbers"), cur_line());
+				double x = val.to_double();
+				auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
+				(void) array_index_offset(iso, cur_line(), arr0, &idx, 1); // validate pre-detach
+				base[a] = Value::make_null();
+				Array arr = Array::adopt(obj);
+				arr.detach();
+				intptr_t off = array_index_offset(iso, cur_line(), arr.cell(), &idx, 1);
+				arr.cell()->buf->data[off] = x;
+				reg_copy(base, a, arr.to_value());
+			}
 			else
 				iso.raise(String("[Type error] value does not support indexed assignment"), cur_line());
+			break;
+		}
+		case Opcode::SETIDXN:
+		{
+			// R[A][ R[B .. B+rank) ] = R[C] — write a scalar Array element. The object at
+			// R[A] is an lvalue mutated in place (then written back to its binding by the
+			// lowerer); indices sit in their own block at R[B]; rank is in EXTRA_ARG.
+			int idxbase = op_b(ins);
+			Value val = base[op_c(ins)];
+			Instruction extra = *ip++; // EXTRA_ARG: rank
+			int nidx = static_cast<int>(op_ax(extra));
+			Value obj = base[a];
+			if (!is_array(obj))
+				iso.raise(String("[Type error] multi-dimensional indexing requires an Array"),
+				          cur_line());
+			if (!val.is_number())
+				iso.raise(String("[Type error] Array elements must be numbers"), cur_line());
+			double x = val.to_double();
+			auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
+			(void) array_index_offset(iso, cur_line(), arr0, &base[idxbase], nidx); // validate
+			base[a] = Value::make_null();
+			Array arr = Array::adopt(obj);
+			arr.detach();
+			intptr_t off = array_index_offset(iso, cur_line(), arr.cell(), &base[idxbase], nidx);
+			arr.cell()->buf->data[off] = x;
+			reg_copy(base, a, arr.to_value());
 			break;
 		}
 		case Opcode::GETSLICE:
@@ -1565,8 +1809,88 @@ Value run(Isolate &iso)
 				for_each_slice_pos(s, str.length(), [&](int64_t k) { out.append(str.at(k + 1)); });
 				reg_copy(base, a, out.to_value());
 			}
+			else if (is_array(obj))
+			{
+				// A single slice indexes a 1-D Array, producing a **zero-copy view** that
+				// shares the buffer (design §9). start0 = 0-based first position; count and
+				// step give the new dim/stride.
+				auto *arr = reinterpret_cast<ArrayCell *>(obj.as_cell());
+				if (arr->rank != 1)
+					iso.raise(String("[Index error] a single slice requires a 1-D Array"), cur_line());
+				SliceSpec s = slice_spec(base[c], base[c + 1], base[c + 2], arr->dim[0]);
+				int64_t count = 0, first = 0;
+				bool got = false;
+				for_each_slice_pos(s, arr->dim[0], [&](int64_t z) {
+					if (!got) { first = z; got = true; }
+					++count;
+				});
+				intptr_t new_off = arr->offset + first * arr->stride[0];
+				intptr_t new_dim = count;
+				intptr_t new_stride = arr->stride[0] * s.step;
+				Array view = Array::make_view(arr->buf, new_off, 1, &new_dim, &new_stride);
+				reg_copy(base, a, view.to_value());
+			}
 			else
 				iso.raise(String("[Type error] value is not sliceable"), cur_line());
+			break;
+		}
+		case Opcode::GETVIEW:
+		{
+			// R[A] = a view of Array R[B] over C axes. Each axis has a 3-register slice-part
+			// block at R[B+1+3k]; a scalar axis (marked in the EXTRA_ARG mask) collapses —
+			// its index is R[B+1+3k] and it drops from the result rank. Zero-copy: the view
+			// shares the buffer (design §9).
+			int objreg = op_b(ins), rank = op_c(ins);
+			Instruction extra = *ip++; // EXTRA_ARG: scalar-axis bitmask
+			uint32_t scalar_mask = op_ax(extra);
+			Value obj = base[objreg];
+			if (!is_array(obj))
+				iso.raise(String("[Type error] multi-dimensional slicing requires an Array"),
+				          cur_line());
+			auto *arr = reinterpret_cast<ArrayCell *>(obj.as_cell());
+			if (rank != arr->rank)
+				iso.raise(String("[Index error] Array indexed with the wrong number of axes"),
+				          cur_line());
+			intptr_t new_off = arr->offset;
+			intptr_t out_dim[PHON_MAX_RANK], out_stride[PHON_MAX_RANK];
+			int out_rank = 0;
+			for (int k = 0; k < rank; ++k)
+			{
+				Value *parts = &base[objreg + 1 + 3 * k];
+				if (scalar_mask & (1u << k))
+				{
+					// Scalar axis: fold the (validated) index into the offset and drop the axis.
+					if (!parts[0].is_int())
+						iso.raise(String("[Index error] Array index must be an Integer"), cur_line());
+					int64_t i = parts[0].as_int();
+					int64_t d = arr->dim[k];
+					int64_t z = i < 0 ? d + i : i - 1;
+					if (z < 0 || z >= d)
+						iso.raise(String("[Index error] Array index out of range"), cur_line());
+					new_off += z * arr->stride[k];
+				}
+				else
+				{
+					SliceSpec s = slice_spec(parts[0], parts[1], parts[2], arr->dim[k]);
+					int64_t count = 0, first = 0;
+					bool got = false;
+					for_each_slice_pos(s, arr->dim[k], [&](int64_t z) {
+						if (!got) { first = z; got = true; }
+						++count;
+					});
+					new_off += first * arr->stride[k];
+					out_dim[out_rank] = count;
+					out_stride[out_rank] = arr->stride[k] * s.step;
+					++out_rank;
+				}
+			}
+			if (out_rank == 0) // every axis was scalar: a single element (a Float)
+				reg_move(base, a, Value::make(arr->buf->data[new_off]));
+			else
+			{
+				Array view = Array::make_view(arr->buf, new_off, out_rank, out_dim, out_stride);
+				reg_copy(base, a, view.to_value());
+			}
 			break;
 		}
 		case Opcode::SETSLICE:
@@ -1577,6 +1901,42 @@ Value run(Isolate &iso)
 			Value val = base[op_c(ins)];
 			if (is_string(obj))
 				iso.raise(String("[Type error] a String slice is read-only"), cur_line());
+			if (is_array(obj))
+			{
+				// 1-D Array slice assignment: element-wise from a same-length 1-D Array rhs,
+				// or a scalar broadcast (mirrors the List slice-assign rule). CoW-detached.
+				auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
+				if (arr0->rank != 1)
+					iso.raise(String("[Index error] slice assignment requires a 1-D Array"), cur_line());
+				SliceSpec s = slice_spec(base[bslice], base[bslice + 1], base[bslice + 2], arr0->dim[0]);
+				int64_t count = 0;
+				for_each_slice_pos(s, arr0->dim[0], [&](int64_t) { ++count; });
+				bool rhs_array = is_array(val);
+				const ArrayCell *rc = rhs_array ? reinterpret_cast<const ArrayCell *>(val.as_cell())
+				                                : nullptr;
+				double scalar = 0;
+				if (rhs_array)
+				{
+					if (rc->rank != 1 || rc->dim[0] != count)
+						iso.raise(String("[Index error] slice-assignment length mismatch"), cur_line());
+				}
+				else if (val.is_number())
+					scalar = val.to_double();
+				else
+					iso.raise(String("[Type error] Array elements must be numbers"), cur_line());
+				base[a] = Value::make_null();
+				Array arr = Array::adopt(obj);
+				arr.detach();
+				ArrayCell *v = arr.cell();
+				int64_t j = 0;
+				for_each_slice_pos(s, v->dim[0], [&](int64_t z) {
+					double x = rhs_array ? rc->buf->data[rc->offset + j * rc->stride[0]] : scalar;
+					v->buf->data[v->offset + z * v->stride[0]] = x;
+					++j;
+				});
+				reg_copy(base, a, arr.to_value());
+				break;
+			}
 			if (!is_list(obj))
 				iso.raise(String("[Type error] value does not support sliced assignment"), cur_line());
 			int64_t n = reinterpret_cast<ListCell *>(obj.as_cell())->size;

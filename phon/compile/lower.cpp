@@ -607,9 +607,11 @@ void Lowerer::expr_to(Ast *node, int dest)
 	case NodeKind::IndexExpression:
 	{
 		auto *e = node->as<IndexExpression>();
-		if (e->indices.size() != 1)
-			error(node, "[Index error] multi-dimensional indexing arrives with Array");
-		if (e->indices[0]->is<SliceExpression>())
+		bool has_slice = false;
+		for (auto &ix : e->indices)
+			if (ix->is<SliceExpression>())
+				has_slice = true;
+		if (e->indices.size() == 1 && has_slice)
 		{
 			int save = fs->free_reg;
 			int b = expr_any(e->object.get());
@@ -618,6 +620,49 @@ void Lowerer::expr_to(Ast *node, int dest)
 			reg_alloc(node);
 			emit_slice_parts(e->indices[0]->as<SliceExpression>(), c);
 			emit_ABC(Opcode::GETSLICE, dest, b, c, ln(node));
+			reg_free_to(save);
+			break;
+		}
+		if (e->indices.size() > 1 && has_slice)
+		{
+			// Multi-dimensional slicing (Array): object then a 3-register slice-part block
+			// per axis; scalar axes (marked in the mask) collapse. GETVIEW builds a view.
+			int save = fs->free_reg;
+			int objbase = reg_alloc(node);
+			expr_to(e->object.get(), objbase);
+			uint32_t scalar_mask = 0;
+			int rank = static_cast<int>(e->indices.size());
+			for (int k = 0; k < rank; ++k)
+			{
+				int pbase = reg_alloc(node); // 3 regs per axis (start, stop, step)
+				reg_alloc(node);
+				reg_alloc(node);
+				if (auto *sl = e->indices[k]->as<SliceExpression>())
+					emit_slice_parts(sl, pbase);
+				else
+				{
+					expr_to(e->indices[k].get(), pbase); // scalar axis: index in the first reg
+					scalar_mask |= (1u << k);
+				}
+			}
+			emit_ABC(Opcode::GETVIEW, dest, objbase, rank, ln(node));
+			emit(encode_Ax(Opcode::EXTRA_ARG, scalar_mask), ln(node));
+			reg_free_to(save);
+			break;
+		}
+		if (e->indices.size() > 1)
+		{
+			// Multi-dimensional scalar indexing (Array only): object then one register per
+			// index, staged contiguously; GETIDXN reads the element.
+			int save = fs->free_reg;
+			int objbase = reg_alloc(node);
+			expr_to(e->object.get(), objbase);
+			for (auto &ix : e->indices)
+			{
+				int r = reg_alloc(node);
+				expr_to(ix.get(), r);
+			}
+			emit_ABC(Opcode::GETIDXN, dest, objbase, static_cast<int>(e->indices.size()), ln(node));
 			reg_free_to(save);
 			break;
 		}
@@ -639,6 +684,25 @@ void Lowerer::expr_to(Ast *node, int dest)
 			expr_to(it.get(), r);
 		}
 		emit_ABC(Opcode::NEWLIST, base, static_cast<int>(e->items.size()), 0, ln(node));
+		reg_free_to(save);
+		if (dest != base)
+			emit_ABC(Opcode::MOVE, dest, base, 0, ln(node));
+		break;
+	}
+	case NodeKind::ArrayLiteral:
+	{
+		// Stage every element (row-major source order) then NEWARRAY. C carries nrow
+		// (0 => a 1-D array); the runtime stores column-major and promotes ints to Float.
+		auto *e = node->as<ArrayLiteral>();
+		int save = fs->free_reg;
+		int base = reg_alloc(node);
+		for (auto &el : e->elems)
+		{
+			int r = reg_alloc(node);
+			expr_to(el.get(), r);
+		}
+		int nrow_code = (e->rank == 1) ? 0 : e->nrow;
+		emit_ABC(Opcode::NEWARRAY, base, static_cast<int>(e->elems.size()), nrow_code, ln(node));
 		reg_free_to(save);
 		if (dest != base)
 			emit_ABC(Opcode::MOVE, dest, base, 0, ln(node));
@@ -1219,12 +1283,14 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 	}
 	if (auto *ix = target->as<IndexExpression>())
 	{
-		if (ix->indices.size() != 1)
-			error(target, "[Index error] multi-dimensional indexing arrives with Array");
+		if (ix->indices.size() > 1)
+			for (auto &ixx : ix->indices)
+				if (ixx->is<SliceExpression>())
+					error(target, "[Index error] assignment to a multi-dimensional Array slice is not yet supported");
 		int save = fs->free_reg;
 		int wb, wbidx;
 		int o = load_index_object(ix, wb, wbidx);
-		if (ix->indices[0]->is<SliceExpression>())
+		if (ix->indices.size() == 1 && ix->indices[0]->is<SliceExpression>())
 		{
 			int c = reg_alloc(target); // slice base: start, stop, step
 			reg_alloc(target);
@@ -1232,6 +1298,23 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			emit_slice_parts(ix->indices[0]->as<SliceExpression>(), c);
 			int val = expr_any(value);
 			emit_ABC(Opcode::SETSLICE, o, c, val, ln(target));
+			emit_index_writeback(o, wb, wbidx, ln(target));
+			reg_free_to(save);
+			return;
+		}
+		if (ix->indices.size() > 1)
+		{
+			// Multi-dimensional scalar assignment (Array): indices in a contiguous block,
+			// value in its own register; the object stays at `o` for in-place / write-back.
+			int rank = static_cast<int>(ix->indices.size());
+			int ibase = reg_alloc(target);
+			for (int k = 1; k < rank; ++k)
+				reg_alloc(target);
+			for (int k = 0; k < rank; ++k)
+				expr_to(ix->indices[k].get(), ibase + k);
+			int val = expr_any(value);
+			emit_ABC(Opcode::SETIDXN, o, ibase, val, ln(target));
+			emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(rank)), ln(target));
 			emit_index_writeback(o, wb, wbidx, ln(target));
 			reg_free_to(save);
 			return;
@@ -1461,7 +1544,8 @@ void Lowerer::compile_assignment(Assignment *a)
 	if (auto *ix = a->target->as<IndexExpression>())
 	{
 		if (ix->indices.size() != 1)
-			error(a->target.get(), "[Index error] multi-dimensional indexing arrives with Array");
+			error(a->target.get(),
+			      "[Index error] compound assignment to a multi-dimensional index is not supported");
 		if (ix->indices[0]->is<SliceExpression>())
 			error(a->target.get(), "[Index error] compound assignment to a slice is not supported");
 		int save = fs->free_reg;

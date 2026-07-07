@@ -22,6 +22,38 @@ TEST_CASE("builtin subtype intervals")
 	CHECK(!is_a(integer, str));
 }
 
+TEST_CASE("numeric tower: Object -> Number -> Real -> {Integer, Float}")
+{
+	Class *obj = get_class(CID_OBJECT);
+	Class *number = get_class(CID_NUMBER);
+	Class *real = get_class(CID_REAL);
+	Class *integer = get_class(CID_INTEGER);
+	Class *flt = get_class(CID_FLOAT);
+	Class *str = get_class(CID_STRING);
+
+	// Integer and Float are subtypes of Real and Number (and still of Object).
+	CHECK(is_a(integer, real));
+	CHECK(is_a(flt, real));
+	CHECK(is_a(integer, number));
+	CHECK(is_a(flt, number));
+	CHECK(is_a(integer, obj));
+	CHECK(is_a(real, number));
+	CHECK(is_a(number, obj));
+
+	// The abstract bases are not subtypes of the leaves, and String is outside the tower.
+	CHECK(!is_a(real, integer));
+	CHECK(!is_a(number, real));
+	CHECK(!is_a(str, number));
+	CHECK(!is_a(integer, flt)); // still siblings
+
+	// A concrete value's class is still the leaf, never the abstract base.
+	CHECK(class_of(Value::make_int(5)) == CID_INTEGER);
+	CHECK(class_of(Value::make(1.5)) == CID_FLOAT);
+	CHECK(value_is_a(Value::make_int(5), real));
+	CHECK(value_is_a(Value::make(1.5), number));
+	CHECK(!value_is_a(Value::make_bool(true), number));
+}
+
 TEST_CASE("class_of maps every Value to its class")
 {
 	CHECK(class_of(Value::make_int(5)) == CID_INTEGER);

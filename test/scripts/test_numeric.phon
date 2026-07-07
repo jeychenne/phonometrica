@@ -1,0 +1,33 @@
+# The numeric class tower (design §6): Object -> Number -> Real -> {Integer, Float}.
+# Real is the common base of Integer and Float; Number is the abstract top (leaving
+# room for Complex later). A value's concrete class is always the leaf.
+
+# `is` follows the tower transitively.
+assert(3 is Integer, "3 is Integer")
+assert(3 is Real, "3 is Real")
+assert(3 is Number, "3 is Number")
+assert(3 is Object, "3 is Object")
+assert(not (3 is Float), "3 is not Float")
+
+assert(1.5 is Float, "1.5 is Float")
+assert(1.5 is Real, "1.5 is Real")
+assert(1.5 is Number, "1.5 is Number")
+assert(not (1.5 is Integer), "1.5 is not Integer")
+
+# Non-numbers are outside the tower.
+assert(not ("x" is Number), "String is not a Number")
+assert(not (true is Real), "Boolean is not a Real")
+
+# A generic method annotated with an abstract base applies to both leaves; a
+# leaf-specific overload is more specific and wins for its exact type.
+function kind(x as Number) return "number" end
+function kind(x as Integer) return "integer" end
+assert(kind(7) == "integer", "Integer overload beats Number")
+assert(kind(2.5) == "number", "Float falls back to the Number overload")
+
+# A method on Real covers Integer and Float uniformly.
+function twice(x as Real) return x + x end
+assert(twice(4) == 8, "twice on Integer")
+assert(twice(2.5) == 5.0, "twice on Float")
+
+print("numeric tower tests passed")

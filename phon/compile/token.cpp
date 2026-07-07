@@ -88,6 +88,7 @@ const char *lexeme_name(Lexeme l) noexcept
 	case Lexeme::Colon: return ":";
 	case Lexeme::Dot: return ".";
 	case Lexeme::Semicolon: return ";";
+	case Lexeme::At: return "@";
 	case Lexeme::Ellipsis: return "...";
 	// variable-text and structural
 	case Lexeme::Identifier: return "identifier";

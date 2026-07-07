@@ -87,6 +87,7 @@ private:
 	AutoAst parse_postfix();
 	AutoAst parse_primary();
 	AutoAst parse_list_literal();
+	AutoAst parse_array_literal();
 	AutoAst parse_brace_literal();
 	AutoAst parse_anonymous_function();
 	AutoAst parse_conditional_expression();

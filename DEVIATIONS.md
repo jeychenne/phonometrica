@@ -936,3 +936,77 @@ convention, and the List/String runtime were extended to execute them.
    small combined List (initial capacity 1) was the first to hit it reliably. `LISTAPPEND`/
    `LISTEXTEND` additionally adopt the target's reference (`List::adopt`) instead of
    retain-then-release, so they no longer buffer the transient at all.
+
+## M-Array — the numeric tower + the Array type (design §9, architecture §5.3)
+
+The `Number → Real → {Integer, Float}` class hierarchy and the numeric `Array` type.
+
+1. **Numeric class tower re-parents Integer/Float.** The builtin hierarchy is now
+   `Object → Number → Real → {Integer, Float}` (owner decision). `Real` is the common
+   base of Integer/Float (Phonometrica's old `Number` role); `Number` is the abstract top,
+   leaving room for `Complex` as a future sibling of `Real`. Complex is **not** built now.
+   This intentionally **reverses the architecture note "[INVARIANT] builtin classes are
+   never re-parented"** — mechanically safe because subtyping is interval-based
+   (recomputed by `renumber_types()`), the stable ids CID_INTEGER=3/CID_FLOAT=4 are
+   unchanged, and the specialized arithmetic opcodes key on the NaN-box tag, not the class
+   id. `Number`/`Real` are abstract (`CLASS_ACYCLIC`, no instances); `class_of` still
+   returns the leaf (Integer/Float) for a value. New ids CID_NUMBER/CID_REAL (and
+   CID_ARRAY/CID_ARRAYBUFFER) were appended before CID_BUILTIN_COUNT.
+
+2. **Array = the architecture's view/buffer split (§5.3), not Calao's layout.** A
+   value-semantic **view** (`ArrayCell`: buf ptr, offset, rank, flags, dim[8], stride[8])
+   over a separately refcounted **buffer** (`ArrayBuffer`: inline `double data[]`), stored
+   **column-major**, so slicing is a **zero-copy view** sharing the buffer. Element type is
+   `double` only. Both cells are `CLASS_ACYCLIC` (a view holds only doubles + one buffer
+   pointer that can never point back) → born GREEN → the cycle collector never touches
+   them. `phon/types/array.*`, registered in `bootstrap.cpp`.
+
+3. **Copy-on-write checks BOTH view and buffer refcounts.** `Array::detach()` mutates in
+   place only when the view is unique, its buffer is unique, and it is contiguous;
+   otherwise it builds a fresh contiguous buffer (compacting a strided/shared view) before
+   dropping the old one, cloning the view cell too when the view itself is shared. All rc
+   reads go through `is_unique()`/`is_shared()` so the M7 atomic-shared-buffer swap is a
+   one-line change. The view cell never grows/moves (fixed shape), so no
+   `reset_reallocated`/`cc_cell_moved` interaction. Hand-rolled like `List` (no clone hook).
+
+4. **`@[…]` literals (Calao syntax); integers promote to Float.** `@[1,2,3]` (1-D),
+   `@[1,2;3,4]` (2-D, `;` = row separator, equal-length rows). New `@` scanner token,
+   `ArrayLiteral` AST node, `NEWARRAY` opcode (`B` = element count, `C` = nrow with 0
+   meaning 1-D). The literal is written row-major but stored column-major (the handler
+   transposes); each element is coerced to `double` (a non-number element is a Type error).
+
+5. **Indexing** (1-based, negatives from the end, bounds-checked). A single scalar index
+   uses GETINDEX/SETINDEX (an `is_array` arm); multi-dimensional scalar indexing (`m[i,j]`)
+   uses new `GETIDXN`/`SETIDXN` (rank in an EXTRA_ARG for the write). A scalar `a[i]` reads
+   a **Float**. Writes are copy-on-write.
+
+6. **Slicing = zero-copy views.** A single slice (`a[i:j]`) reuses GETSLICE (a 1-D view);
+   multi-axis slicing (`m[:,j]`, `m[1:2,2:3]`) uses new `GETVIEW` (a 3-register slice-part
+   block per axis + a scalar-axis bitmask in EXTRA_ARG; scalar axes collapse and drop from
+   the result rank). Inclusive bounds, negatives, `step`. **1-D slice assignment** works
+   (same-length Array element-wise, or scalar broadcast, mirroring the M6 List rule).
+
+7. **No references to Array elements.** A raw `double` cannot be boxed into a reference
+   Value, so `f(ref a[i])` and `for ref x in a` raise a clear runtime error in
+   PROMOTEINDEX / ITER_INITREF (compile-time rejection is impossible — the lowerer does not
+   know the container type).
+
+8. **Elementwise arithmetic** extends the existing `ADD/SUB/MUL/DIV/POW` opcodes with an
+   `is_array` arm (after the int/number arms, before list): array⊕array (shape-checked),
+   array⊕scalar and scalar⊕array (broadcast). Kernels are free functions over contiguous
+   `double` spans in the single file `phon/lib/array_kernels.*` (architecture invariant);
+   strided operands are gathered contiguous first via `Array::contiguous()`. `div`/`mod`
+   and unary `-` on an Array raise (they were never numbers) — floored/negation variants
+   are follow-ups.
+
+9. **Also fixed (pre-existing, surfaced by Array).** `builtin_to_string` returned a
+   *borrowed* pointer into a temporary `String` (`stringify(...).to_value()`); for a
+   *freshly built* string (Array/List/Table) this was a use-after-free. Now it retains the
+   cell so the native's result carries the required `+1`. `len()` gained an Array case.
+
+**Deferred (documented, not blocking):** SIMD/vectorized kernels, the thread pool, and
+64-byte AVX buffer alignment (scalar loops over normally-aligned buffers now — all M7);
+boolean masks + logical indexing; **multi-dimensional slice assignment** (`m[:,j] = …`);
+`Array` as a structural Table/Set key (identity hashing for now, parity with List — it has
+an `equals` hook but no `hash` hook); floored `div`/`mod` and unary `-` on arrays;
+compound assignment to a multi-dimensional index; freeze/transfer (M7).

@@ -20,8 +20,8 @@ using namespace phonometrica;
 
 namespace {
 
-const char *CORPUS[] = {"arithmetic", "controlflow", "closures",
-                        "slices",     "variadics",   "options", "splat"};
+const char *CORPUS[] = {"arithmetic", "controlflow", "closures", "slices",
+                        "variadics",  "options",     "splat",   "arrays"};
 
 std::string read_file(const std::string &path, bool &ok)
 {

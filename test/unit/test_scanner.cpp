@@ -333,7 +333,7 @@ TEST_CASE("scanner: error positions")
 	};
 
 	check_err("\"unterminated", 1, 0);        // string starts at column 0
-	check_err("x = @", 1, 4);                 // stray '@'
+	check_err("x = $", 1, 4);                 // stray '$' (not a token; '@' now starts an array literal)
 	check_err("'raw", 1, 0);                  // unterminated raw string
 	check_err("\"bad\\qesc\"", 1, 4);         // invalid escape (anchored at the '\')
 	check_err("a = 1\n  \"oops", 2, 2);       // error on line 2
