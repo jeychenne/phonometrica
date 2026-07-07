@@ -56,6 +56,30 @@ function field_demo()
 end
 field_demo()
 
+# Passing a list *element* by reference (design/references.md §7): the element is
+# boxed, mutation writes back through the box, and promoting it detaches any alias.
+function inc(ref x)
+    x = x + 1
+end
+function element_demo()
+    var xs = [10, 20, 30]
+    var alias = xs
+    inc(xs[2])
+    inc(xs[2])
+    assert(xs[2] == 22, "list element mutated through ref")
+    assert(alias[2] == 20, "alias detached when an element is referenced")
+end
+element_demo()
+
+# Passing an object field by reference.
+function field_ref_demo()
+    var c = Counter()
+    inc(c.n)
+    inc(c.n)
+    assert(c.n == 2, "field passed by reference and mutated")
+end
+field_ref_demo()
+
 # A ref is forwarded through nested calls. Ref-ness is uniform per generic
 # (design/references.md §4), so it is no longer a dispatch dimension.
 function bump(ref x)

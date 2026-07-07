@@ -49,6 +49,28 @@ PHON_FORCE_INLINE void reg_move(Value *base, int a, Value v) noexcept
 	base[a] = v;
 }
 
+// Read a stored slot (a container element or field), auto-collapsing a spent
+// reference: when the slot holds a *closed* box that no one else references, move the
+// value back out and drop the box, so a temporary borrow does not leave the element
+// permanently boxed (design/references.md §2 — Phonometrica's resolve()). Returns the
+// value the slot now holds (borrowed; the caller reg_copy's it). Open boxes and shared
+// boxes are read through but left in place.
+PHON_FORCE_INLINE Value deref_collapse(Value *slot) noexcept
+{
+	Value v = *slot;
+	if (!v.is_reference())
+		return v;
+	UpvalueCell *box = reference_box(v);
+	Value inner = *box->slot;
+	if (!box->is_open() && reinterpret_cast<Cell *>(box)->refcount() == 1)
+	{
+		retain_value(inner);                     // the slot takes over the value
+		*slot = inner;                           // replace the reference in place
+		release(reinterpret_cast<Cell *>(box));  // rc 1 -> 0: drops the box and its copy
+	}
+	return inner;
+}
+
 PHON_FORCE_INLINE bool truthy(Value v) noexcept { return !(v.is_null() || v.is_false()); }
 
 bool is_string(Value v) { return v.is_cell() && class_of(v) == CID_STRING; }
@@ -764,6 +786,83 @@ Value run(Isolate &iso)
 			}
 			break;
 		}
+		case Opcode::PROMOTEINDEX:
+		{
+			// Promote a list element to a first-class reference (design/references.md §7):
+			// detach the (value-semantic) list so aliases keep the plain value, then box
+			// the element in place. R[A] and the element slot share the box, so mutation
+			// through the reference is visible via the list. R[B] receives the (possibly
+			// detached) list for write-back to its binding.
+			Value obj = base[op_b(ins)], idx = base[op_c(ins)];
+			if (!is_list(obj))
+				iso.raise(String("[Type error] only a List element can be passed by reference"),
+				          cur_line());
+			if (!idx.is_int())
+				iso.raise(String("[Index error] List index must be an Integer"), cur_line());
+			base[op_b(ins)] = Value::make_null();
+			List lst = List::from_value(obj);
+			release(obj.as_cell());
+			Value *slot = reinterpret_cast<Value *>(&lst.ref(idx.as_int())); // detaches
+			Cell *box;
+			if (slot->is_reference())
+			{
+				box = slot->as_reference_box(); // already boxed: share it
+			}
+			else
+			{
+				box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+				release_value(*slot);                 // the box now owns the value
+				*slot = Value::make_reference(box);    // the element slot owns the box (rc 1)
+			}
+			retain(box);                               // R[A] owns a reference to the box
+			reg_move(base, a, Value::make_reference(box));
+			reg_copy(base, op_b(ins), lst.to_value()); // detached list back for write-back
+			break;
+		}
+		case Opcode::PROMOTEFIELD:
+		{
+			// Promote an instance field to a reference (as PROMOTEINDEX, for a field slot).
+			Value obj = base[op_b(ins)];
+			if (!is_instance(obj))
+				iso.raise(String("[Type error] value has no fields"), cur_line());
+			Symbol fname = base[op_c(ins)].as_symbol();
+			Cell *inst = obj.as_cell();
+			Class *c = get_class(inst->class_id());
+			int32_t slotno = field_slot(c, fname);
+			if (slotno < 0)
+				iso.raise(String("[Name error] '") + String(c->name).view() + "' has no field '" +
+				              String(symbol_name(fname)).view() + "'",
+				          cur_line());
+			const FieldInfo *fi = field_at(c, slotno);
+			if (fi->getter || fi->setter)
+				iso.raise(String("[Type error] a computed field cannot be passed by reference"),
+				          cur_line());
+			// Detach a shared value-class instance so aliases keep the plain field value.
+			base[op_b(ins)] = Value::make_null();
+			if (c->is_value() && inst->refcount() > 1)
+			{
+				Cell *copy = instance_clone(inst);
+				release(inst);
+				inst = copy;
+			}
+			Value *slot = &instance_fields(inst)[slotno];
+			Cell *box;
+			if (slot->is_reference())
+			{
+				box = slot->as_reference_box();
+			}
+			else
+			{
+				box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+				release_value(*slot);
+				*slot = Value::make_reference(box);
+			}
+			retain(box);
+			reg_move(base, a, Value::make_reference(box));
+			reg_copy(base, op_b(ins), Value::make_cell(inst)); // (possibly detached) instance back
+			release(inst); // reg_copy retained; drop our transient reference
+			break;
+		}
 
 		case Opcode::DEFMETHOD:
 		{
@@ -879,7 +978,7 @@ Value run(Isolate &iso)
 				reg_move(base, a, r); // r carries +1
 			}
 			else
-				reg_copy(base, a, instance_fields(obj.as_cell())[slot]);
+				reg_copy(base, a, deref_collapse(&instance_fields(obj.as_cell())[slot])); // may be a ref
 			break;
 		}
 
@@ -916,6 +1015,17 @@ Value run(Isolate &iso)
 				iso.raise(String("[Name error] field '") + String(symbol_name(fname)).view() +
 				              "' of '" + String(c->name).view() + "' is read-only",
 				          cur_line());
+			// If the field is a reference, write through its box (the shared mutable
+			// identity); the instance is not detached (design/references.md §7).
+			if (instance_fields(obj)[slot].is_reference())
+			{
+				UpvalueCell *box = reference_box(instance_fields(obj)[slot]);
+				Value v = base[op_c(ins)];
+				retain_value(v);
+				release_value(*box->slot);
+				*box->slot = v;
+				break;
+			}
 			// Raw slot store: a shared value class detaches a private copy first (the
 			// detached cell is left in R[A] for write-back); a ref class mutates in place.
 			if (c->is_value() && obj->refcount() > 1)
@@ -985,7 +1095,7 @@ Value run(Isolate &iso)
 				int64_t k = i < 0 ? l->size + i : i - 1; // 1-based, negatives from end
 				if (k < 0 || k >= l->size)
 					iso.raise(String("[Index error] List index out of range"), cur_line());
-				reg_copy(base, a, l->data[k]);
+				reg_copy(base, a, deref_collapse(&l->data[k])); // element may be a reference (§7)
 			}
 			else if (is_table(obj))
 			{
@@ -1011,6 +1121,19 @@ Value run(Isolate &iso)
 			{
 				if (!idx.is_int())
 					iso.raise(String("[Index error] List index must be an Integer"), cur_line());
+				// If the target element is a reference, write through its box (the shared
+				// mutable identity) — the list is not detached (design/references.md §7).
+				auto *l = reinterpret_cast<ListCell *>(obj.as_cell());
+				int64_t i = idx.as_int();
+				int64_t k = i < 0 ? l->size + i : i - 1;
+				if (k >= 0 && k < l->size && l->data[k].is_reference())
+				{
+					UpvalueCell *box = reference_box(l->data[k]);
+					retain_value(val);
+					release_value(*box->slot);
+					*box->slot = val;
+					break;
+				}
 				base[a] = Value::make_null();
 				List lst = List::from_value(obj);
 				release(obj.as_cell());

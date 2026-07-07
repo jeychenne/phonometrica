@@ -683,6 +683,12 @@ so there is no iterator object and no per-step dispatch.
 
 ## M5 — References (`ref` parameters, design §7)
 
+> **Superseded** by "First-class references" (below). The second-class,
+> register-pointer implementation described in this section was fully reversed:
+> ref-ness is now uniform per generic (not a dispatch dimension), call-site `ref` is
+> gone, and a reference is a heap box rather than a tagged register pointer. This
+> section is kept for history.
+
 Second-class references: `ref` at both the parameter and the call site, implemented
 as a tagged pointer to a caller register slot (the REF value already in `value.hpp`).
 
@@ -716,6 +722,56 @@ as a tagged pointer to a caller register slot (the REF value already in `value.h
    yet fully enforced against pathological cases (e.g. capturing a ref local in a
    nested closure); documented as a follow-up. `for ref x in …` (by-reference
    iteration) and the user `iterate`/`next` protocol remain in Stage 3b.
+
+## First-class references (design/references.md)
+
+Replaces the M5 second-class references above. A reference is now a heap-allocated,
+refcounted **box** that transparently stands in for its value (PHP 7+ `zend_reference`
+/ Phonometrica `Alias`). The box **is** the `UpvalueCell` (an upvalue is a reference to
+a captured variable), so it is cycle-collected by the existing Bacon–Rajan machinery
+with no collector changes.
+
+1. **Uniform ref-ness; not a dispatch dimension.** `ref_mask` moved from `Method` to
+   `GenericFunction`; `add_method` rejects an overload whose mask disagrees
+   (`AddMethod::RefMaskConflict`). Ref-ness is removed from the dispatch/memo keys and
+   the `CALLG` inline-cache path; a reference argument dispatches on its referent's
+   type. `ref` on a reference-class parameter is rejected at DEFMETHOD.
+
+2. **No call-site `ref`.** The parser rejects `ref` at a call site; promotion is driven
+   by the callee's signature. A compile-time `name → ref_mask` map (`compile/lower.cpp`)
+   supplies the mask for a named generic; no forward-declaration rule is imposed (the
+   existing two-pass hoisting already exposes it). Non-lvalue → a `ref` position is a
+   compile error for a direct call.
+
+3. **The box and `DEREF`.** `Value` tag `110` (`SIG_REFERENCE`, `core/value.hpp`) points
+   at a box Cell; tag `101` (register-pointer ref) is retired. `deref` (single-branch,
+   `core/reference.hpp`) reads through a reference from any layer. `MAKEREF` now promotes
+   a local to an **open** box via `find_or_make_open_upvalue` (the caller's register stays
+   the source of truth while its frame lives, so the defining function needs no deref of
+   its own locals); `DEREF`/`SETREF` go through the box. All `retain_value`/`release_value`
+   helpers were unified onto `Value::owns_cell()`/`cell_ptr()` (CELL *or* REFERENCE).
+
+4. **Argument promotion (§6).** Direct calls promote lvalue args at compile-time-known
+   `ref` positions (`MAKEREF` for a plain local, `MOVE` to forward an existing reference).
+   Indirect calls (a callable held in a variable) consult the callee's `ref_mask` at
+   runtime: `Proto::ref_mask` + `callable_ref_mask()`; opcodes `MAYBEPROMOTE` (lvalue) and
+   `MAYBEBOX` (non-lvalue → a closed box with no write-back, `make_reference_box`).
+
+5. **Container-element and field references (§7, CoW × ref).** `f(xs[i])` / `f(o.field)`
+   promote the slot to a **closed** box stored in place (opcodes `PROMOTEINDEX` /
+   `PROMOTEFIELD`), detaching a shared value-semantic container first so aliases keep the
+   plain value. Reads deref (`GETINDEX`/`GETFIELD`); writes to a reference slot go through
+   the box without detaching; clone shares the box, and trace/finalize account for it via
+   `owns_cell`. `value_hash`/`value_equals` deref. **Scope:** List elements and instance
+   fields; Table/Set/String element references raise a clear runtime error.
+
+6. **Auto-collapse (§2).** Reading a stored reference (`deref_collapse` at
+   `GETINDEX`/`GETFIELD`) whose closed box has no other referrer moves the value back out
+   and drops the box, so a temporary borrow does not leave an element permanently boxed.
+
+Follow-ups: Table/Set/String element references; element/field references through an
+*indirect* call (they currently box-without-write-back); the subtle CoW-×-reference
+corner where a reference element is written through a still-shared container.
 
 ## M5 — Cycle collector (architecture §8.2)
 

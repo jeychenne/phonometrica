@@ -6,12 +6,14 @@
 #include <phon/base/bits.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/core/hash.hpp>
+#include <phon/core/reference.hpp>
 #include <phon/object/class.hpp>
 
 namespace phonometrica {
 
 uint64_t value_hash(Value v) noexcept
 {
+	v = deref(v); // a reference hashes as the value it stands for
 	if (v.is_double())
 	{
 		double d = v.as_double();
@@ -33,6 +35,8 @@ uint64_t value_hash(Value v) noexcept
 
 bool value_equals(Value a, Value b) noexcept
 {
+	a = deref(a); // compare the values references stand for, not the boxes
+	b = deref(b);
 	if (a.bits() == b.bits())
 		return true; // identical: same immediate/int/symbol/double-bits/cell pointer
 	if (a.is_cell() && b.is_cell())

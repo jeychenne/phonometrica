@@ -784,19 +784,45 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 	// would have nowhere to go. In this stage the reference is still the second-class
 	// register pointer (MAKEREF); Stage 4 replaces it with a boxed reference, and
 	// container-element / field sources arrive with the CoW×ref stage.
-	auto *v = arg->as<Variable>();
-	if (!v)
-		error(arg, "[Compile error] a 'ref' parameter requires a local variable argument "
-		           "(references to a literal, an element, or a field are not yet allowed)");
-	NameRef nr = resolve(v->name);
-	if (nr.kind == NameKind::Local)
-		emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(arg));
-	else if (nr.kind == NameKind::None)
-		error(arg, "[Name error] reference to undeclared variable '" +
-		               std::string(symbol_name(v->name)) + "'");
-	else
-		error(arg, "[Compile error] a 'ref' parameter currently requires a local variable "
-		           "(module/upvalue references are a follow-up)");
+	if (auto *v = arg->as<Variable>())
+	{
+		NameRef nr = resolve(v->name);
+		if (nr.kind == NameKind::Local)
+			emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(arg));
+		else if (nr.kind == NameKind::None)
+			error(arg, "[Name error] reference to undeclared variable '" +
+			               std::string(symbol_name(v->name)) + "'");
+		else
+			error(arg, "[Compile error] a 'ref' parameter currently requires a local variable "
+			           "(module/upvalue references are a follow-up)");
+		return;
+	}
+	// A list element `c[i]`: load the container for in-place mutation, promote the
+	// element to a boxed reference, then write the (detached) container back (§7).
+	if (auto *ix = arg->as<IndexExpression>())
+	{
+		if (ix->indices.size() != 1 || ix->indices[0]->is<SliceExpression>())
+			error(arg, "[Index error] only a single-element reference is supported");
+		int wb, wbidx;
+		int cont = load_index_object(ix, wb, wbidx);
+		int idxr = expr_any(ix->indices[0].get());
+		emit_ABC(Opcode::PROMOTEINDEX, r, cont, idxr, ln(arg));
+		emit_index_writeback(cont, wb, wbidx, ln(arg));
+		return;
+	}
+	// An object field `o.field`: as above, for a field slot.
+	if (auto *fa = arg->as<FieldAccess>())
+	{
+		int wb, wbidx;
+		int obj = load_object_for_write(fa->object.get(), wb, wbidx);
+		int sreg = reg_alloc(fa);
+		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fa->name)), ln(arg));
+		emit_ABC(Opcode::PROMOTEFIELD, r, obj, sreg, ln(arg));
+		emit_index_writeback(obj, wb, wbidx, ln(arg));
+		return;
+	}
+	error(arg, "[Compile error] a 'ref' parameter requires an lvalue: a variable, a list "
+	           "element, or an object field");
 }
 
 void Lowerer::emit_maybe_promote_arg(Ast *arg, int r, int callee)

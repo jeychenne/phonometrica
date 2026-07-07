@@ -148,16 +148,27 @@ Policies:
 assignment and argument passing bump a refcount; mutation checks uniqueness
 (`refcount == 1`) and clones if shared.
 
-**Second-class references.** `ref` is required at both the parameter declaration
-and the call site. References cannot be stored in data structures, captured by
-closures, or returned. A reference is therefore implementable as a raw pointer to
-a register slot in the caller's frame — no boxing, no write barriers, no escape
-analysis.
+**First-class references.** `ref` is a property of the **parameter**, not the call
+site — `trim(s)`, not `trim(ref s)`. Whether an argument is passed by reference is
+determined by the callee's signature. A reference is a heap-allocated, refcounted
+**box** that transparently stands in for the value it wraps (PHP 7+'s
+`zend_reference` / Phonometrica's `Alias`); the register-pointer "second-class" form
+described in earlier drafts is **retired**. The full specification is
+[references.md](references.md); the implementation is recorded in DEVIATIONS
+("First-class references"). In brief:
 
-- Call-site `ref` keeps the calling convention uniform under multiple dispatch
-  (the compiler emits a register reference without first resolving the overload)
-  and guarantees that any mutation of a caller's variable is visible at the call
-  site.
+- **Uniform ref-ness.** `ref` is a uniform property of a generic, not a per-overload
+  one: all overloads of a name must agree on which positions are `ref`, so ref-ness
+  is *not* a dispatch dimension (overloads are selected by argument types only).
+- **Promotion at the source.** Loading a `ref` argument boxes the source lvalue, so
+  the caller's slot and the callee's parameter share one box and mutation writes back
+  with no copy. The box unifies with the closure upvalue cell (an upvalue *is* a
+  reference to a captured variable). A reference read is a single-branch `DEREF`; a
+  box with no other referrer auto-collapses back to a plain value.
+- **Lvalues only.** A variable, a list element (`c[i]`), or an object field
+  (`o.field`) can be passed by reference; a non-lvalue at a `ref` position is a
+  compile error (for a direct call) or is boxed without write-back (for an indirect
+  call, where the callee's ref-mask is only known at runtime).
 - `ref` is only meaningful for value types. The compiler rejects `ref` on a
   parameter whose declared type is a reference class (it would be a silent no-op).
 - Most in-place mutation needs no `ref` at all: compound assignment (`s &= ".txt"`),

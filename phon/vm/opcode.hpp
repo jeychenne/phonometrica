@@ -80,6 +80,8 @@ using Instruction = uint32_t;
 	_(SETREF)      /* A B    : write R[B] through the reference in R[A]       */ \
 	_(MAYBEPROMOTE)/* A B C  : R[A] = R[C].ref[A-C-1] ? promote(R[B]) : R[B]  */ \
 	_(MAYBEBOX)    /* A C    : if R[C].ref[A-C-1], box R[A]'s value in place   */ \
+	_(PROMOTEINDEX)/* A B C  : R[A] = ref to element R[C] of list R[B] (boxed) */ \
+	_(PROMOTEFIELD)/* A B C  : R[A] = ref to field R[C] of instance R[B]       */ \
 	/* aggregate construction & indexing */                                     \
 	_(NEWLIST)     /* A B    : R[A] = [R[A+1..A+B]]                          */ \
 	_(NEWTABLE)    /* A B    : R[A] = { B pairs from R[A+1..A+2B] }          */ \

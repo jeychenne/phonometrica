@@ -5,6 +5,7 @@
 
 #include <phon/compile/diagnostic.hpp>
 #include <phon/runtime/runtime.hpp>
+#include <phon/types/list.hpp>
 #include <phon/types/string.hpp>
 
 #include <string>
@@ -783,6 +784,42 @@ TEST_CASE("vm: a ref is forwarded through a call chain")
 	                  "function run() as Integer\n var z = 1\n via(z)\n return z\nend\n"
 	                  "run()";
 	CHECK(run_int(src) == 101);
+}
+
+TEST_CASE("vm: a list element passed by reference")
+{
+	// Promoting xs[2] boxes the element; the mutation is visible via the list, and
+	// promoting it detaches any alias (value semantics, design/references.md §7).
+	const char *src = "function inc(ref x) x = x + 1 end\n"
+	                  "function run() as Integer\n"
+	                  "  var xs = [10, 20, 30]\n var ys = xs\n inc(xs[2])\n inc(xs[2])\n"
+	                  "  return xs[2] * 100 + ys[2]\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 22 * 100 + 20);
+}
+
+TEST_CASE("vm: a borrowed element auto-collapses back to a plain value")
+{
+	// After a `ref` borrow, reading the element drops the now-unreferenced box so the
+	// element is a plain value again (design/references.md §2). Observed white-box:
+	// the returned list's element must not be a reference.
+	Variant r = run("function inc(ref x) x = x + 1 end\n"
+	                "function run() as List\n var xs = [10, 20, 30]\n inc(xs[2])\n"
+	                "  var v = xs[2]\n return xs\nend\n"
+	                "run()");
+	List xs = List::from_value(r.value());
+	CHECK(xs.get(2).value().as_int() == 21);
+	CHECK(!xs.cell()->data[1].is_reference()); // collapsed: element 2 is plain again
+}
+
+TEST_CASE("vm: an object field passed by reference")
+{
+	const char *src = "class Box\n field n as Integer = 0\nend\n"
+	                  "function inc(ref x) x = x + 1 end\n"
+	                  "function run() as Integer\n var b = Box()\n inc(b.n)\n inc(b.n)\n"
+	                  "  return b.n\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 2);
 }
 
 TEST_CASE("vm: a ref parameter works through an indirect call")

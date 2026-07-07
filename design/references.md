@@ -1,8 +1,10 @@
 # First-Class References (design)
 
-Status: **proposal** (2026-07-06). Supersedes design.md §7's "second-class references"
-paragraph and reverses the second-class `ref` implementation landed in M5
-(DEVIATIONS "M5 — References"). No code yet; this is the spec to build to.
+Status: **implemented** (2026-07-07; proposal 2026-07-06). Supersedes design.md §7's
+"second-class references" paragraph and reverses the second-class `ref` implementation
+landed in M5 (DEVIATIONS "M5 — References"). See DEVIATIONS "First-class references" for
+what landed and the remaining follow-ups (Table/Set/String element refs; element/field
+refs through an indirect call).
 
 ## 1. Decision and rationale
 

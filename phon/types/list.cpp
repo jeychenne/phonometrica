@@ -58,8 +58,8 @@ void list_trace(Cell *c, void (*visit)(Cell *))
 {
 	auto *l = reinterpret_cast<ListCell *>(c);
 	for (intptr_t i = 0; i < l->size; ++i)
-		if (l->data[i].is_cell())
-			visit(l->data[i].as_cell());
+		if (l->data[i].owns_cell()) // an ordinary cell, or a reference box
+			visit(l->data[i].cell_ptr());
 }
 
 bool list_equals_hook(const Cell *a, const Cell *b)

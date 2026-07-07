@@ -22,10 +22,13 @@
 #define PHON_VM_FUNCTION_HPP
 
 #include <phon/core/cell.hpp>
+#include <phon/core/reference.hpp>
 #include <phon/core/symbol.hpp>
 #include <phon/core/value.hpp>
 #include <phon/object/class.hpp>
 #include <phon/vm/proto.hpp>
+
+#include <cstddef> // offsetof
 
 namespace phonometrica {
 
@@ -52,18 +55,14 @@ struct UpvalueCell
 	bool is_open() const noexcept { return slot != &closed; }
 };
 
-// The box an is_reference() Value points at.
+// The box an is_reference() Value points at (for writing through it; `deref`, in
+// core/reference.hpp, covers reads from any layer). RefBoxView mirrors the prefix
+// `deref` relies on, so keep the `slot` offset in agreement.
+static_assert(offsetof(UpvalueCell, slot) == offsetof(RefBoxView, slot),
+              "reference box slot offset must match RefBoxView");
 PHON_FORCE_INLINE UpvalueCell *reference_box(Value v) noexcept
 {
 	return reinterpret_cast<UpvalueCell *>(v.as_reference_box());
-}
-
-// Read through a first-class reference to the value it currently stands for
-// (design/references.md §5: PHP's ZVAL_DEREF). Non-references pass through — one
-// predicted branch, an indirection only for actual references.
-PHON_FORCE_INLINE Value deref(Value v) noexcept
-{
-	return v.is_reference() ? *reference_box(v)->slot : v;
 }
 
 struct ClosureCell
