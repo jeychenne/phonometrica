@@ -12,14 +12,24 @@ namespace phonometrica {
 namespace {
 
 // --- specificity relations over signatures (single inheritance) ---
+//
+// A method's *effective* type at a position expands the vararg: a fixed position
+// uses its declared class, and any trailing position of a variadic uses the vararg
+// element type. Comparisons happen at a "comparison arity" cmp at which both
+// methods are applicable (cmp = max fixed count); design §6.
 
-// M ≤ E: M is at least as specific as E at every position.
-bool sig_le(const Method &m, const Method &e)
+// Effective declared class at position i, for a method applicable at some argc > i.
+Class *eff_type(const Method &m, int i)
 {
-	if (m.sig.size() != e.sig.size())
-		return false;
-	for (intptr_t i = 0; i < m.sig.size(); ++i)
-		if (!is_a(m.sig[i], e.sig[i]))
+	int fx = m.fixed_count();
+	return (i < fx) ? m.sig[i] : m.vararg_type();
+}
+
+// a ≤ b pointwise over [0, cmp): every effective type of a is-a b's.
+bool pointwise_le(const Method &a, const Method &b, int cmp)
+{
+	for (int i = 0; i < cmp; ++i)
+		if (!is_a(eff_type(a, i), eff_type(b, i)))
 			return false;
 	return true;
 }
@@ -33,6 +43,56 @@ bool comparable(const Class *a, const Class *b)
 const Class *more_specific(const Class *a, const Class *b)
 {
 	return is_a(a, b) ? a : b;
+}
+
+// Whether a and b can be applicable at a common argc (their arity ranges intersect).
+bool arities_overlap(const Method &a, const Method &b)
+{
+	int fa = a.fixed_count(), fb = b.fixed_count();
+	if (a.is_vararg && b.is_vararg)
+		return true;
+	if (a.is_vararg)
+		return fb >= fa; // b fixed at fb; a (variadic) reaches it iff fb >= fa
+	if (b.is_vararg)
+		return fa >= fb;
+	return fa == fb; // both fixed
+}
+
+// The representative argc at which two overlapping methods are compared. The larger
+// fixed count exposes every fixed position; when both are variadic one extra position
+// is added so their vararg element types are compared too (design §6 tie-break). This
+// single arity is representative of the whole co-applicable range.
+int compare_arity(const Method &a, const Method &b)
+{
+	int fa = a.fixed_count(), fb = b.fixed_count();
+	int m = fa > fb ? fa : fb;
+	return (a.is_vararg && b.is_vararg) ? m + 1 : m;
+}
+
+bool applicable_at(const Method &m, int argc)
+{
+	return m.is_vararg ? argc >= m.fixed_count() : argc == m.fixed_count();
+}
+
+// Is a strictly more specific than b, both applicable at argc? Types are primary
+// (pointwise subtyping); when the effective types are identical the design's kind
+// tiebreak decides — a fixed method beats a variadic, then more fixed params win.
+// The co-applicable set is totally ordered (ambiguity is rejected at definition),
+// so this drives an unambiguous argmax in full_resolve.
+bool more_specific_at(const Method &a, const Method &b, int argc)
+{
+	bool ab = pointwise_le(a, b, argc), ba = pointwise_le(b, a, argc);
+	if (ab && !ba)
+		return true;
+	if (ba && !ab)
+		return false;
+	if (ab && ba)
+	{
+		if (a.is_vararg != b.is_vararg)
+			return !a.is_vararg; // fixed beats variadic
+		return a.fixed_count() > b.fixed_count(); // more fixed params wins
+	}
+	return false; // incomparable (a disambiguator exists among the applicable set)
 }
 
 // Registry of generic functions keyed by symbol id.
@@ -68,24 +128,34 @@ PHON_FORCE_INLINE uint32_t dispatch_class(Value a) noexcept
 	return class_of(deref(a));
 }
 
-// Full resolution: index of the most-specific applicable method, or -1.
+// Full resolution: index of the most-specific applicable method, or -1. A variadic
+// method applies when argc ≥ its fixed count and every trailing argument subtypes
+// the element type (design §6); ref-ness is uniform (§4) and plays no part.
 int32_t full_resolve(GenericFunction *g, const uint32_t *arg_class, int argc)
 {
-	// Applicable = same arity, subtype at every position (ref-ness is uniform, §4).
 	SmallVector<int32_t, 8> applicable;
 	for (intptr_t mi = 0; mi < g->methods.size(); ++mi)
 	{
 		const Method &m = g->methods[mi];
-		if (m.arity() != argc)
+		int fx = m.fixed_count();
+		if (m.is_vararg ? argc < fx : argc != fx)
 			continue;
 		bool ok = true;
-		for (int i = 0; i < argc; ++i)
-		{
+		for (int i = 0; i < fx; ++i)
 			if (!is_a(get_class(arg_class[i]), m.sig[i]))
 			{
 				ok = false;
 				break;
 			}
+		if (ok && m.is_vararg)
+		{
+			Class *et = m.vararg_type();
+			for (int i = fx; i < argc; ++i)
+				if (!is_a(get_class(arg_class[i]), et))
+				{
+					ok = false;
+					break;
+				}
 		}
 		if (ok)
 			applicable.push_back(static_cast<int32_t>(mi));
@@ -94,26 +164,13 @@ int32_t full_resolve(GenericFunction *g, const uint32_t *arg_class, int argc)
 	if (applicable.empty())
 		return -1;
 
-	// Most specific = the one that is ≤ every other applicable method. Ambiguity
-	// is prevented at definition time, so exactly one such method exists.
-	for (intptr_t a = 0; a < applicable.size(); ++a)
-	{
-		const Method &ma = g->methods[applicable[a]];
-		bool dominates_all = true;
-		for (intptr_t b = 0; b < applicable.size(); ++b)
-		{
-			if (a == b)
-				continue;
-			if (!sig_le(ma, g->methods[applicable[b]]))
-			{
-				dominates_all = false;
-				break;
-			}
-		}
-		if (dominates_all)
-			return applicable[a];
-	}
-	PHON_UNREACHABLE_MSG("dispatch: no most-specific method (ambiguity escaped definition check)");
+	// Most specific = argmax under more_specific_at. The applicable set is totally
+	// ordered (ambiguity is prevented at definition time), so the maximum is unique.
+	int32_t best = applicable[0];
+	for (intptr_t k = 1; k < applicable.size(); ++k)
+		if (more_specific_at(g->methods[applicable[k]], g->methods[best], argc))
+			best = applicable[k];
+	return best;
 }
 
 } // namespace
@@ -139,9 +196,13 @@ GenericFunction *find_generic(Symbol name) noexcept
 }
 
 AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask,
-                     void *code)
+                     bool is_vararg, void *code)
 {
-	const int argc = static_cast<int>(sig.size());
+	// A view of the incoming method for the effective-type comparisons below.
+	Method incoming;
+	incoming.sig = sig;
+	incoming.is_vararg = is_vararg;
+	const int fixed = incoming.fixed_count();
 
 	// Ref-ness is uniform across a generic's overloads (§4): the first method fixes
 	// the mask; any later overload whose mask disagrees is rejected.
@@ -150,14 +211,15 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 	else if (ref_mask != g->ref_mask)
 		return AddMethod::RefMaskConflict;
 
-	// Redefinition: an identical `sig` overwrites the code in place.
+	// Redefinition: an identical signature (same types AND same vararg-ness)
+	// overwrites the code in place.
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		Method &e = g->methods[i];
-		if (e.arity() != argc)
+		if (e.is_vararg != is_vararg || e.arity() != incoming.arity())
 			continue;
 		bool same = true;
-		for (int j = 0; j < argc; ++j)
+		for (intptr_t j = 0; j < e.sig.size(); ++j)
 			if (e.sig[j] != sig[j])
 			{
 				same = false;
@@ -170,28 +232,24 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 		}
 	}
 
-	// Ambiguity check against every existing method that could co-apply (same
-	// arity). Two signatures conflict when they are incomparable yet overlap
-	// (comparable at every position); the overlap needs a method whose signature is
-	// exactly the pointwise meet, else the definition is ambiguous.
+	// Ambiguity check against every existing method whose arity range overlaps the
+	// incoming one. Compare effective types at the representative arity `cmp` (the
+	// larger fixed count, where both apply). Two methods conflict when they are
+	// incomparable yet overlap (comparable at every position); the overlap needs a
+	// disambiguator whose effective types equal the pointwise meet, else ambiguous.
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		const Method &e = g->methods[i];
-		if (e.arity() != argc)
+		if (!arities_overlap(incoming, e))
 			continue;
+		int cmp = compare_arity(incoming, e);
 
-		// Build a temporary Method view of the new signature for sig_le.
-		Method incoming;
-		for (int j = 0; j < argc; ++j)
-			incoming.sig.push_back(sig[j]);
+		if (pointwise_le(incoming, e, cmp) || pointwise_le(e, incoming, cmp))
+			continue; // comparable -> totally ordered (kind tiebreak at resolve), no conflict
 
-		if (sig_le(incoming, e) || sig_le(e, incoming))
-			continue; // comparable -> totally ordered, no conflict
-
-		// Incomparable. Overlap iff comparable at every position.
 		bool overlap = true;
-		for (int j = 0; j < argc; ++j)
-			if (!comparable(sig[j], e.sig[j]))
+		for (int j = 0; j < cmp; ++j)
+			if (!comparable(eff_type(incoming, j), eff_type(e, j)))
 			{
 				overlap = false;
 				break;
@@ -199,44 +257,27 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 		if (!overlap)
 			continue; // disjoint -> can never both apply
 
-		// Need a disambiguator: a method whose signature equals the pointwise
-		// meet (the more specific class at each position).
 		SmallVector<Class *, 4> meet;
-		for (int j = 0; j < argc; ++j)
-			meet.push_back(const_cast<Class *>(more_specific(sig[j], e.sig[j])));
+		for (int j = 0; j < cmp; ++j)
+			meet.push_back(const_cast<Class *>(more_specific(eff_type(incoming, j), eff_type(e, j))));
 
-		bool has_disambiguator = false;
-		// The incoming method itself may be the meet.
-		bool incoming_is_meet = true;
-		for (int j = 0; j < argc; ++j)
-			if (sig[j] != meet[j])
-			{
-				incoming_is_meet = false;
-				break;
-			}
-		if (incoming_is_meet)
-			has_disambiguator = true;
+		auto eff_equals_meet = [&](const Method &d) {
+			if (!applicable_at(d, cmp))
+				return false;
+			for (int j = 0; j < cmp; ++j)
+				if (eff_type(d, j) != meet[j])
+					return false;
+			return true;
+		};
+
+		bool has_disambiguator = eff_equals_meet(incoming);
 		if (!has_disambiguator)
-		{
 			for (intptr_t k = 0; k < g->methods.size(); ++k)
-			{
-				const Method &d = g->methods[k];
-				if (d.arity() != argc)
-					continue;
-				bool eq = true;
-				for (int j = 0; j < argc; ++j)
-					if (d.sig[j] != meet[j])
-					{
-						eq = false;
-						break;
-					}
-				if (eq)
+				if (eff_equals_meet(g->methods[k]))
 				{
 					has_disambiguator = true;
 					break;
 				}
-			}
-		}
 		if (!has_disambiguator)
 			return AddMethod::Ambiguous;
 	}
@@ -244,26 +285,28 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 	// Commit.
 	Method m;
 	m.code = code;
-	for (int j = 0; j < argc; ++j)
-		m.sig.push_back(sig[j]);
+	m.is_vararg = is_vararg;
+	m.sig = sig;
 	g->methods.push_back(std::move(m));
 
-	if (argc < g->min_arity)
-		g->min_arity = static_cast<uint8_t>(argc);
-	if (argc > g->max_arity)
-		g->max_arity = static_cast<uint8_t>(argc);
+	if (fixed < g->min_arity)
+		g->min_arity = static_cast<uint8_t>(fixed);
+	if (fixed > g->max_arity)
+		g->max_arity = static_cast<uint8_t>(fixed);
+	if (is_vararg)
+		g->has_vararg = true;
 	++g->generic_epoch;
 	g->memo.clear();
 	return AddMethod::Ok;
 }
 
-void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig)
+void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool is_vararg)
 {
 	const int argc = static_cast<int>(sig.size());
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		Method &e = g->methods[i];
-		if (e.arity() != argc)
+		if (e.is_vararg != is_vararg || e.arity() != argc)
 			continue;
 		bool same = true;
 		for (int j = 0; j < argc; ++j)
@@ -281,17 +324,20 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig)
 		++g->generic_epoch;
 		g->memo.clear();
 
-		// Recompute the arity bounds; a stale-low min_arity would merely cost a
-		// fruitless full_resolve, but keeping them tight is cheap and clean.
+		// Recompute the arity bounds and vararg flag; a stale-low min_arity would merely
+		// cost a fruitless full_resolve, but keeping them tight is cheap and clean.
 		g->min_arity = 255;
 		g->max_arity = 0;
+		g->has_vararg = false;
 		for (intptr_t k = 0; k < g->methods.size(); ++k)
 		{
-			int ar = g->methods[k].arity();
-			if (ar < g->min_arity)
-				g->min_arity = static_cast<uint8_t>(ar);
-			if (ar > g->max_arity)
-				g->max_arity = static_cast<uint8_t>(ar);
+			int fx = g->methods[k].fixed_count();
+			if (fx < g->min_arity)
+				g->min_arity = static_cast<uint8_t>(fx);
+			if (fx > g->max_arity)
+				g->max_arity = static_cast<uint8_t>(fx);
+			if (g->methods[k].is_vararg)
+				g->has_vararg = true;
 		}
 		return;
 	}
@@ -299,8 +345,8 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig)
 
 Method *resolve(GenericFunction *g, const Value *args, int argc)
 {
-	PHON_ASSERT_MSG(argc <= 8, "dispatch arity > 8 not supported");
-	if (argc < g->min_arity || argc > g->max_arity)
+	// A variadic overload has no upper arity bound; only the fixed minimum prunes.
+	if (argc < g->min_arity || (!g->has_vararg && argc > g->max_arity))
 		return nullptr;
 
 	// Invalidate the memo on a method-set or type-hierarchy change.
@@ -311,9 +357,12 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 		g->memo_type_epoch = type_epoch();
 	}
 
-	uint32_t arg_class[8];
+	// Argument dispatch classes (a reference dispatches on its referent). Sized to
+	// argc so a variadic call with many arguments needs no fixed-capacity buffer.
+	SmallVector<uint32_t, 8> arg_class;
+	arg_class.reserve(argc);
 	for (int i = 0; i < argc; ++i)
-		arg_class[i] = dispatch_class(args[i]);
+		arg_class.push_back(dispatch_class(args[i]));
 
 	// Fast memo for arity 1 and 2 (exact, collision-free keys).
 	if (argc == 1 || argc == 2)
@@ -323,14 +372,14 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 			key = (key << 25) | encode_arg(arg_class[1]);
 		auto it = g->memo.find(key);
 		int32_t idx = (it != g->memo.end()) ? it->second
-		                                    : full_resolve(g, arg_class, argc);
+		                                    : full_resolve(g, arg_class.data(), argc);
 		if (it == g->memo.end())
 			g->memo.insert(key, idx);
 		return idx < 0 ? nullptr : &g->methods[idx];
 	}
 
 	// Arity 0 and 3..8: resolve fully (no memo).
-	int32_t idx = full_resolve(g, arg_class, argc);
+	int32_t idx = full_resolve(g, arg_class.data(), argc);
 	return idx < 0 ? nullptr : &g->methods[idx];
 }
 

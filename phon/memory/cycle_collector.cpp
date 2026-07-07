@@ -205,12 +205,29 @@ CycleCollector::~CycleCollector()
 		m_candidates[i]->set_buffered(false);
 }
 
+void CycleCollector::cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept
+{
+	// A buffered cell keeps at most one slot in the candidate buffer; repoint it.
+	for (intptr_t i = m_candidates.size() - 1; i >= 0; --i)
+		if (m_candidates[i] == old_ptr)
+		{
+			m_candidates[i] = new_ptr;
+			return;
+		}
+}
+
 // --- seams called from core/cell.hpp release() ------------------------------------
 
 void cc_possible_root(Cell *c) noexcept
 {
 	if (g_collector)
 		g_collector->possible_root(c);
+}
+
+void cc_cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept
+{
+	if (g_collector)
+		g_collector->cell_moved(old_ptr, new_ptr);
 }
 
 void cc_collect_deferred(Cell *c) noexcept

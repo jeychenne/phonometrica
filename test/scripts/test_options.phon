@@ -1,0 +1,70 @@
+# Default & named (keyword-only) options (design §6): a parameter with a default is
+# keyword-only — it never fills positionally, does not participate in dispatch, and
+# takes its default when the caller omits it.
+
+# A single option, defaulted or overridden by name.
+function greet(name as String, greeting as String = "Hello")
+    return greeting & ", " & name
+end
+assert(greet("Ada") == "Hello, Ada", "option takes its default")
+assert(greet("Ada", greeting = "Hi") == "Hi, Ada", "option overridden by name")
+
+# Several options; any subset may be supplied, in any order.
+function box(w as Integer, h as Integer = 1, fill as String = ".", label as String = "")
+    return w & "x" & h & fill & label
+end
+assert(box(3) == "3x1.", "all defaults")
+# An option is keyword-only: it cannot be filled positionally, so box(3, 2) has no
+# applicable method (box takes exactly one fixed parameter).
+var positional_option = false
+try
+    var x = box(3, 2)
+catch e as Error
+    positional_option = true
+end
+assert(positional_option, "an option cannot be filled positionally")
+assert(box(3, h = 2) == "3x2.", "one option by name")
+assert(box(3, fill = "#", h = 4) == "3x4#", "options out of order")
+assert(box(3, label = "top", fill = "*") == "3x1*top", "mix of options")
+
+# A later default may reference an earlier parameter.
+function span(lo as Integer, hi as Integer = lo)
+    return hi - lo
+end
+assert(span(5) == 0, "default references an earlier param")
+assert(span(5, hi = 12) == 7, "explicit overrides the referencing default")
+
+# A default expression is evaluated on each call that omits the option.
+var calls = 0
+function bump(start as Integer, inc as Integer = next_inc())
+    return start + inc
+end
+function next_inc()
+    calls += 1
+    return calls
+end
+assert(bump(10) == 11, "default calls next_inc -> 1")
+assert(bump(10) == 12, "default re-evaluated -> 2")
+assert(bump(10, inc = 100) == 110, "supplied option skips the default expression")
+
+# An unknown option is an error.
+var bad = false
+try
+    var x = greet("Ada", tone = "loud")
+catch e as Error
+    bad = true
+end
+assert(bad, "unknown option raises")
+
+# Options combine with variadics: fixed, then vararg, then options.
+function join(sep as String, xs as Object..., prefix as String = ">")
+    var s = prefix
+    for x in xs do
+        s = s & sep & x
+    end
+    return s
+end
+assert(join("-", 1, 2, 3) == ">-1-2-3", "vararg + defaulted option")
+assert(join("-", 1, 2, prefix = "#") == "#-1-2", "vararg + named option")
+
+print("option tests passed")

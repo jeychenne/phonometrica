@@ -333,6 +333,12 @@ private:
 	// so a mutated value class propagates to its binding; `wbidx` is the slot/index.
 	int load_index_object(IndexExpression *ix, int &wb, int &wbidx);
 	void emit_index_writeback(int o, int wb, int wbidx, uint32_t line);
+	// Emit a slice's start/stop/step into the three consecutive registers base,
+	// base+1, base+2 (an absent part becomes null → the runtime default).
+	void emit_slice_parts(SliceExpression *sl, int base);
+	// Record the keyword-only options (params with a default) on the proto and emit the
+	// prologue that fills each unsupplied slot (the missing sentinel) with its default.
+	void emit_option_prologue(AstList &params);
 	void compile_if(IfStatement *s);
 	void compile_while(WhileStatement *s);
 	void compile_repeat(RepeatStatement *s);
@@ -601,8 +607,20 @@ void Lowerer::expr_to(Ast *node, int dest)
 	case NodeKind::IndexExpression:
 	{
 		auto *e = node->as<IndexExpression>();
-		if (e->indices.size() != 1 || e->indices[0]->is<SliceExpression>())
-			error(node, "[Index error] slices and multi-dimensional indexing arrive in M6");
+		if (e->indices.size() != 1)
+			error(node, "[Index error] multi-dimensional indexing arrives with Array");
+		if (e->indices[0]->is<SliceExpression>())
+		{
+			int save = fs->free_reg;
+			int b = expr_any(e->object.get());
+			int c = reg_alloc(node); // slice base: start, stop, step (3 consecutive regs)
+			reg_alloc(node);
+			reg_alloc(node);
+			emit_slice_parts(e->indices[0]->as<SliceExpression>(), c);
+			emit_ABC(Opcode::GETSLICE, dest, b, c, ln(node));
+			reg_free_to(save);
+			break;
+		}
 		int save = fs->free_reg;
 		int b = expr_any(e->object.get());
 		int c = expr_any(e->indices[0].get());
@@ -706,11 +724,11 @@ void Lowerer::expr_to(Ast *node, int dest)
 		break;
 	}
 	case NodeKind::SliceExpression:
-		error(node, "[Index error] slices arrive in M6");
+		error(node, "[Index error] a slice is only valid inside '[ ]'");
 	case NodeKind::RefExpression:
 		error(node, "[Compile error] 'ref' is only valid as a call argument (design §7)");
 	case NodeKind::SplatExpression:
-		error(node, "[Compile error] splat arguments arrive in M6");
+		error(node, "[Compile error] '...' is only valid as a call argument");
 	default:
 		error(node, "[Compile error] unsupported expression");
 	}
@@ -874,11 +892,10 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 		}
 	}
 
-	if (!c->options.empty())
-		error(c, "[Compile error] named call options arrive in M6");
+	bool has_splat = false;
 	for (auto &a : c->args)
 		if (a->is<SplatExpression>())
-			error(a.get(), "[Compile error] splat arguments arrive in M6");
+			has_splat = true;
 
 	int save = fs->free_reg;
 	int base = reg_alloc(c);
@@ -919,6 +936,40 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 		expr_to(c->callee.get(), base);
 	}
 
+	if (has_splat)
+	{
+		// A splat makes the positional arity dynamic. Build one List of all positional
+		// arguments (singles appended, splats' elements spread in), then CALLD unpacks
+		// it into the callee window at runtime — resolving through the generic memo, not
+		// the inline cache (design §6). Ref promotion and keyword options are not
+		// supported on a splat call in M6 (see DEVIATIONS).
+		if (!c->options.empty())
+			error(c, "[Compile error] a splat call cannot also pass keyword options (M6)");
+		int listreg = reg_alloc(c); // == base + 1; CALLD reads the positional List here
+		emit_ABC(Opcode::NEWLIST, listreg, 0, 0, ln(c));
+		for (auto &arg : c->args)
+		{
+			int save2 = fs->free_reg;
+			int tmp = reg_alloc(arg.get());
+			if (auto *sp = arg->as<SplatExpression>())
+			{
+				expr_to(sp->expr.get(), tmp);
+				emit_ABC(Opcode::LISTEXTEND, listreg, tmp, 0, ln(arg.get()));
+			}
+			else
+			{
+				expr_to(arg.get(), tmp);
+				emit_ABC(Opcode::LISTAPPEND, listreg, tmp, 0, ln(arg.get()));
+			}
+			reg_free_to(save2);
+		}
+		emit_ABC(Opcode::CALLD, base, listreg, 0, ln(c));
+		reg_free_to(save);
+		if (dest != base)
+			emit_ABC(Opcode::MOVE, dest, base, 0, ln(c));
+		return;
+	}
+
 	int nargs = static_cast<int>(c->args.size());
 	for (int i = 0; i < nargs; ++i)
 	{
@@ -939,15 +990,27 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 		}
 	}
 
+	// Keyword options follow the positional args as (Symbol, value) pairs; they do not
+	// dispatch — the callee matches them into its option slots by name (design §6).
+	int nnamed = static_cast<int>(c->options.size());
+	for (auto &opt : c->options)
+	{
+		auto *na = opt->as<NamedArgument>();
+		int symreg = reg_alloc(na);
+		emit_ABx(Opcode::LOADK, symreg, static_cast<uint32_t>(k_symbol(na->name)), ln(na));
+		int valreg = reg_alloc(na);
+		expr_to(na->value.get(), valreg);
+	}
+
 	if (generic)
 	{
-		emit_ABC(Opcode::CALLG, base, nargs, 0, ln(c));
+		emit_ABC(Opcode::CALLG, base, nargs, nnamed, ln(c));
 		int ic = P().num_ic++;
 		emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(ic)), ln(c));
 	}
 	else
 	{
-		emit_ABC(Opcode::CALL, base, nargs, 0, ln(c));
+		emit_ABC(Opcode::CALL, base, nargs, nnamed, ln(c));
 	}
 
 	reg_free_to(save);
@@ -957,18 +1020,23 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 
 int Lowerer::compile_function(FunctionDefinition *f)
 {
+	int num_fixed = 0;
+	bool is_vararg = false;
 	for (auto &p : f->params)
 	{
 		auto *param = p->as<Parameter>();
-		if (param->variadic)
-			error(p.get(), "[Compile error] variadic parameters arrive in M6");
 		if (param->default_value)
-			error(p.get(), "[Compile error] default/named parameters arrive in M6");
+			continue; // keyword-only option: a trailing slot, not a fixed positional
+		if (param->variadic)
+			is_vararg = true; // its slot holds the packed List (design §6)
+		else
+			++num_fixed; // fixed positional (parser guarantees these precede the vararg)
 	}
 
 	auto child = std::make_unique<Proto>();
 	child->name = f->name;
-	child->num_params = static_cast<int>(f->params.size());
+	child->num_params = num_fixed; // fixed positional count; vararg/option slots are locals
+	child->is_vararg = is_vararg;
 	child->ref_mask = compute_ref_mask(f, false); // for indirect-call promotion (§6.2)
 
 	FuncState cfs(*child, fs, false);
@@ -978,6 +1046,7 @@ int Lowerer::compile_function(FunctionDefinition *f)
 
 	for (auto &p : f->params)
 		declare_param(p->as<Parameter>());
+	emit_option_prologue(f->params); // bind keyword-option defaults before the body
 
 	auto *body = f->body->as<StatementList>();
 	compile_block(body);
@@ -1150,11 +1219,23 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 	}
 	if (auto *ix = target->as<IndexExpression>())
 	{
-		if (ix->indices.size() != 1 || ix->indices[0]->is<SliceExpression>())
-			error(target, "[Index error] slice assignment arrives in M6");
+		if (ix->indices.size() != 1)
+			error(target, "[Index error] multi-dimensional indexing arrives with Array");
 		int save = fs->free_reg;
 		int wb, wbidx;
 		int o = load_index_object(ix, wb, wbidx);
+		if (ix->indices[0]->is<SliceExpression>())
+		{
+			int c = reg_alloc(target); // slice base: start, stop, step
+			reg_alloc(target);
+			reg_alloc(target);
+			emit_slice_parts(ix->indices[0]->as<SliceExpression>(), c);
+			int val = expr_any(value);
+			emit_ABC(Opcode::SETSLICE, o, c, val, ln(target));
+			emit_index_writeback(o, wb, wbidx, ln(target));
+			reg_free_to(save);
+			return;
+		}
 		int i = expr_any(ix->indices[0].get());
 		int val = expr_any(value);
 		emit_ABC(Opcode::SETINDEX, o, i, val, ln(target));
@@ -1255,6 +1336,38 @@ void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
 		emit_ABC(Opcode::SETREF, wbidx, o, 0, line); // *ref = o (the mutated object)
 }
 
+void Lowerer::emit_option_prologue(AstList &params)
+{
+	// Options are declared (and therefore registered) after the fixed params and any
+	// vararg, in source order, so their names line up with the slots setup_callee_frame
+	// fills. For each: if the slot is still the missing sentinel (not supplied by the
+	// caller), evaluate the default into it; otherwise JMPSET skips the default.
+	for (auto &p : params)
+	{
+		auto *param = p->as<Parameter>();
+		if (!param->default_value)
+			continue;
+		fs->proto.option_names.push_back(param->name);
+		NameRef nr = resolve(param->name); // the option's own register (a Local)
+		intptr_t j = emit_jump(Opcode::JMPSET, nr.index, ln(param));
+		expr_to(param->default_value.get(), nr.index);
+		patch_jump(j);
+	}
+}
+
+void Lowerer::emit_slice_parts(SliceExpression *sl, int base)
+{
+	auto part = [&](Ast *p, int r) {
+		if (p)
+			expr_to(p, r);
+		else
+			emit_ABC(Opcode::LOADNULL, r, 0, 0, ln(sl)); // absent part → runtime default
+	};
+	part(sl->start.get(), base);
+	part(sl->stop.get(), base + 1);
+	part(sl->step.get(), base + 2);
+}
+
 void Lowerer::compile_assignment(Assignment *a)
 {
 	if (a->op == Lexeme::Assign)
@@ -1347,8 +1460,10 @@ void Lowerer::compile_assignment(Assignment *a)
 	}
 	if (auto *ix = a->target->as<IndexExpression>())
 	{
-		if (ix->indices.size() != 1 || ix->indices[0]->is<SliceExpression>())
-			error(a->target.get(), "[Index error] slice assignment arrives in M6");
+		if (ix->indices.size() != 1)
+			error(a->target.get(), "[Index error] multi-dimensional indexing arrives with Array");
+		if (ix->indices[0]->is<SliceExpression>())
+			error(a->target.get(), "[Index error] compound assignment to a slice is not supported");
 		int save = fs->free_reg;
 		int wb, wbidx;
 		int o = load_index_object(ix, wb, wbidx);
@@ -1775,8 +1890,12 @@ int Lowerer::add_method_def(FunctionDefinition *f, TypeRef self, bool have_self)
 	for (auto &p : f->params)
 	{
 		auto *param = p->as<Parameter>();
+		if (param->default_value)
+			continue; // keyword-only option: not a dispatch position (design §6)
 		md.sig.push_back(type_ref(param->type.get()));
-		if (param->by_ref)
+		if (param->variadic)
+			md.is_vararg = true; // this type is the vararg element type (the last sig entry)
+		else if (param->by_ref)
 			md.ref_mask |= (uint64_t(1) << pos);
 		++pos;
 	}
@@ -1835,18 +1954,23 @@ void Lowerer::emit_full_defaults(ClassDeclaration *cls, int thisreg)
 
 int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls)
 {
+	int num_fixed = 0;
+	bool is_vararg = false;
 	for (auto &p : m->params)
 	{
 		auto *param = p->as<Parameter>();
-		if (param->variadic)
-			error(p.get(), "[Compile error] variadic parameters arrive in M6");
 		if (param->default_value)
-			error(p.get(), "[Compile error] default/named parameters arrive in M6");
+			continue; // keyword-only option: a trailing slot, not a fixed positional
+		if (param->variadic)
+			is_vararg = true;
+		else
+			++num_fixed;
 	}
 
 	auto child = std::make_unique<Proto>();
 	child->name = m->name;
-	child->num_params = 1 + static_cast<int>(m->params.size()); // implicit `this` + explicit
+	child->num_params = 1 + num_fixed; // implicit `this` + fixed explicit (vararg/option slots are locals)
+	child->is_vararg = is_vararg;
 
 	FuncState cfs(*child, fs, false);
 	FuncState *saved = fs;
@@ -1857,6 +1981,7 @@ int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaratio
 	declare_local(this_symbol(), true, m); // reg 0 = this (const)
 	for (auto &p : m->params)
 		declare_param(p->as<Parameter>());
+	emit_option_prologue(m->params); // bind keyword-option defaults before the body
 
 	// Field defaults are applied at construction (emit_full_defaults), not here, so
 	// an inherited `init` still sees a fully-defaulted instance.

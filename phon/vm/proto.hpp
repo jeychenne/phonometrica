@@ -56,8 +56,9 @@ struct TypeRef
 struct MethodDef
 {
 	Symbol name;                    // the generic this method joins
-	SmallVector<TypeRef, 4> sig;    // per-parameter declared type
+	SmallVector<TypeRef, 4> sig;    // per-parameter declared type (last = vararg elem if variadic)
 	uint64_t ref_mask = 0;          // bit i set => parameter i is `ref`
+	bool is_vararg = false;         // trailing variadic parameter (design §6)
 };
 
 // One field of a class-def (name + declared type). `getter_proto`/`setter_proto`
@@ -97,6 +98,7 @@ struct Proto final
 	Vector<UpvalDesc> upvals;                  // upvalue capture descriptors
 	Vector<MethodDef> method_defs;             // DEFMETHOD targets (generic registrations)
 	Vector<ClassDef> class_defs;               // DEFCLASS targets (class registrations)
+	Vector<Symbol> option_names;               // keyword-only options, in slot order (design §6)
 
 	Symbol name = NO_SYMBOL; // function name (NO_SYMBOL for anonymous / module)
 	int num_params = 0;      // fixed positional parameter count

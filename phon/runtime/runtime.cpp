@@ -170,7 +170,7 @@ void register_native(const char *name, NativeFn fn, int min_arity, int max_arity
 		SmallVector<Class *, 4> sig;
 		for (int k = 0; k < arity; ++k)
 			sig.push_back(obj);
-		add_method(g, sig, 0, nf);
+		add_method(g, sig, 0, false, nf);
 	}
 }
 
@@ -193,7 +193,7 @@ void register_builtins()
 		SmallVector<Class *, 4> sig;
 		sig.push_back(error_class());
 		sig.push_back(get_class(CID_OBJECT));
-		add_method(g, sig, 0, nf);
+		add_method(g, sig, 0, false, nf);
 	}
 }
 

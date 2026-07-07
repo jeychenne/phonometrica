@@ -135,6 +135,12 @@ List List::from_value(Value v) noexcept
 	return List(Handle<ListCell>(reinterpret_cast<ListCell *>(v.as_cell())));
 }
 
+List List::adopt(Value v) noexcept
+{
+	PHON_ASSERT(v.is_cell() && v.as_cell()->class_id() == CID_LIST);
+	return List(Handle<ListCell>::adopt(reinterpret_cast<ListCell *>(v.as_cell())));
+}
+
 intptr_t List::normalize(intptr_t i, bool allow_end) const
 {
 	intptr_t n = m_impl->size;

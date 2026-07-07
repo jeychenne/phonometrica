@@ -56,6 +56,7 @@ using Instruction = uint32_t;
 	_(JMP)         /* sBx    : ip += sBx                                      */ \
 	_(JMPF)        /* A sBx  : if not truthy(R[A]) ip += sBx                  */ \
 	_(JMPT)        /* A sBx  : if truthy(R[A]) ip += sBx                      */ \
+	_(JMPSET)      /* A sBx  : if R[A] is not the missing sentinel ip += sBx  */ \
 	_(FORPREP)     /* A sBx  : counted-loop setup, jump to FORLOOP           */ \
 	_(FORLOOP)     /* A sBx  : counted-loop step/test, jump back if running  */ \
 	/* iteration protocol (design §12): builtin collections, state at R[A..] */   \
@@ -68,8 +69,9 @@ using Instruction = uint32_t;
 	_(POPTRY)      /* (none) : pop the innermost handler (try body finished) */ \
 	_(THROW)       /* A      : throw R[A] (an Error) to the handler stack    */ \
 	/* calls */                                                                 \
-	_(CALL)        /* A B    : R[A] = R[A](R[A+1..A+B])  direct, 1 result    */ \
-	_(CALLG)       /* A B    : generic call; IC index in following EXTRA_ARG */ \
+	_(CALL)        /* A B C  : R[A] = R[A](R[A+1..A+B]); C keyword pairs     */ \
+	_(CALLG)       /* A B C  : generic call; C keyword pairs; IC in EXTRA_ARG*/ \
+	_(CALLD)       /* A B    : dynamic call; R[B] = List of positional args  */ \
 	_(EXTRA_ARG)   /* Ax     : wide operand for the preceding instruction    */ \
 	_(RET)         /* A B    : return R[A] (B=1) or null (B=0)               */ \
 	/* closures & upvalue scope */                                              \
@@ -91,8 +93,11 @@ using Instruction = uint32_t;
 	_(NEWTABLE)    /* A B    : R[A] = { B pairs from R[A+1..A+2B] }          */ \
 	_(NEWSET)      /* A B    : R[A] = { R[A+1..A+B] }                        */ \
 	_(LISTAPPEND)  /* A B    : R[A].append(R[B])  (CoW, slot rewrite)        */ \
+	_(LISTEXTEND)  /* A B    : R[A].append all elements of List R[B] (splat) */ \
 	_(GETINDEX)    /* A B C  : R[A] = R[B][R[C]]                             */ \
 	_(SETINDEX)    /* A B C  : R[A][R[B]] = R[C]                             */ \
+	_(GETSLICE)    /* A B C  : R[A] = R[B][slice R[C],R[C+1],R[C+2]]         */ \
+	_(SETSLICE)    /* A B C  : R[A][slice R[B],R[B+1],R[B+2]] = R[C]         */ \
 	/* user classes: registration, instances, fields */                         \
 	_(DEFCLASS)    /* A Bx   : register class-def Bx; R[A] = its class obj   */ \
 	_(NEW)         /* A B    : R[A] = fresh instance of class object R[B]    */ \

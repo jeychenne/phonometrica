@@ -55,6 +55,11 @@ public:
 	void set(intptr_t i, const Variant &v); // CoW
 	Variant &ref(intptr_t i);               // in-place slot view (unshares first)
 
+	// Detach for in-place element writes (CoW, no growth); returns the writable slot
+	// base [0..size). After writing, read the (possibly moved) cell via to_value()/cell().
+	// The caller owns correct retain/release of the slots it overwrites.
+	Value *writable_slots() { return detach_for_write(m_impl->size)->data; }
+
 	// --- modifiers (CoW) ---
 
 	void append(const Variant &v);
@@ -76,6 +81,12 @@ public:
 
 	Value to_value() const noexcept { return Value::make_cell(m_impl.cell()); }
 	static List from_value(Value v) noexcept;
+	// Take ownership of a List value's existing reference *without* retaining — the
+	// caller must have already removed it from its prior owner (e.g. nulled the
+	// register). Unlike from_value (which retains, forcing a balancing release that
+	// buffers the transient in the cycle collector), this leaves the refcount at 1, so
+	// a subsequent growth may realloc the cell in place with no dangling candidate.
+	static List adopt(Value v) noexcept;
 	ListCell *cell() const noexcept { return m_impl.get(); }
 
 private:

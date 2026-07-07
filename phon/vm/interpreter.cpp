@@ -232,6 +232,96 @@ Value run(Isolate &iso);
 Value vm_call(Isolate &iso, Value callee, Value *args, int argc);
 String stringify_dispatch(Isolate &iso, Value v);
 
+// Adapt the arguments already staged in a callee's register window to the closure's
+// parameter layout, then null its non-parameter locals. Shared by the inline `invoke`
+// path and the re-entrant `vm_call`. Layout of the staged window: `npos` positional
+// args at new_base[0..npos), then `nnamed` keyword (Symbol,value) pairs. A variadic
+// callee packs its trailing positional args into a List at the vararg slot; keyword
+// options are matched by name into their slots (unmatched → the missing sentinel, so
+// the prologue evaluates the default) — design §6. Raises on an arity or unknown-option
+// error. `new_base` addresses register 0 of the callee frame.
+void setup_callee_frame(Isolate &iso, Proto *cp, Value *new_base, int npos, int nnamed, int line)
+{
+	const int fixed = cp->num_params; // fixed positional slots (this + fixed explicit)
+	if (cp->is_vararg ? npos < fixed : npos != fixed)
+		iso.raise(String("[Argument error] function called with the wrong number of arguments"),
+		          line);
+
+	// Snapshot the keyword pairs out of the window first: the option slots we fill
+	// below overlap the region where the caller staged these pairs. Symbols are
+	// immediates; each value carries the caller's +1, borrowed into the snapshot, and
+	// its source slots are raw-cleared (their ownership now lives in `named`).
+	struct NamedPair { Symbol name; Value val; };
+	SmallVector<NamedPair, 8> named;
+	named.reserve(nnamed);
+	for (int j = 0; j < nnamed; ++j)
+	{
+		named.push_back({new_base[npos + 2 * j].as_symbol(), new_base[npos + 2 * j + 1]});
+		new_base[npos + 2 * j] = Value::make_null();
+		new_base[npos + 2 * j + 1] = Value::make_null();
+	}
+
+	int option_base = fixed;
+	if (cp->is_vararg)
+	{
+		// Pack the trailing positional args new_base[fixed..npos) into a List at the
+		// vararg slot new_base[fixed]. Each staged arg carries the caller's +1;
+		// Variant(e) retains it into the List, so the staged +1 is then dropped.
+		const int vcount = npos - fixed;
+		List xs(0);
+		xs.reserve(vcount);
+		for (int i = 0; i < vcount; ++i)
+		{
+			Value e = new_base[fixed + i];
+			xs.append(Variant(e));
+			release_value(e);
+			new_base[fixed + i] = Value::make_null();
+		}
+		release_value(new_base[fixed]); // vcount==0: a stale slot; else already null
+		Value lv = xs.to_value();
+		retain_value(lv); // the slot owns the List; xs releases its handle on scope exit
+		new_base[fixed] = lv;
+		option_base = fixed + 1;
+	}
+
+	const int nopt = static_cast<int>(cp->option_names.size());
+	// Initialise every option slot to the missing sentinel (releasing any stale value
+	// the slot held), then bind each supplied keyword into its slot.
+	for (int k = 0; k < nopt; ++k)
+	{
+		release_value(new_base[option_base + k]);
+		new_base[option_base + k] = Value::make_missing();
+	}
+	for (int j = 0; j < static_cast<int>(named.size()); ++j)
+	{
+		int slot = -1;
+		for (int k = 0; k < nopt; ++k)
+			if (cp->option_names[k] == named[j].name)
+			{
+				slot = option_base + k;
+				break;
+			}
+		if (slot < 0)
+		{
+			// Unknown option: release every value still held only by the snapshot
+			// (the already-bound ones live in option slots and unwind with the frame),
+			// then raise.
+			for (int r = j; r < static_cast<int>(named.size()); ++r)
+				release_value(named[r].val);
+			iso.raise(String("[Argument error] no such option '") +
+			              String(symbol_name(named[j].name)).view() + "'",
+			          line);
+		}
+		new_base[slot] = named[j].val; // transfer the snapshot's +1 (slot held MISSING)
+	}
+
+	for (int i = option_base + nopt; i < cp->num_regs; ++i)
+	{
+		release_value(new_base[i]);
+		new_base[i] = Value::make_null();
+	}
+}
+
 // The interpreter loop. Executes from the current top frame until the frame stack
 // unwinds to the depth it had on entry, then returns that frame's result (+1).
 // execute() drives the module root; vm_call() drives a nested re-entrant call.
@@ -256,10 +346,23 @@ Value run(Isolate &iso)
 	// Invoke a callable with `nargs` arguments at base[a+1..], result -> base[a].
 	// For a closure this pushes a frame and rebinds the execution locals; for a
 	// native it runs inline. `pushed` reports whether a new frame was entered.
-	auto invoke = [&](Value callee, int a, int nargs) {
+	auto invoke = [&](Value callee, int a, int nargs, int nnamed) {
 		if (is_native(callee))
 		{
 			auto *nf = reinterpret_cast<NativeCell *>(callee.as_cell());
+			if (nnamed != 0)
+			{
+				// A native generic takes no keyword options in M6: drop the staged pairs
+				// and report it (rather than silently ignoring them).
+				for (int i = 0; i < 2 * nnamed; ++i)
+				{
+					release_value(base[a + 1 + nargs + i]);
+					base[a + 1 + nargs + i] = Value::make_null();
+				}
+				iso.raise(String("[Argument error] '") + String(symbol_name(nf->name)).view() +
+				              "' does not accept keyword options",
+				          cur_line());
+			}
 			if (nargs < nf->min_arity || (nf->max_arity >= 0 && nargs > nf->max_arity))
 				iso.raise(String("[Argument error] '") + String(symbol_name(nf->name)).view() +
 				              "' called with the wrong number of arguments",
@@ -276,17 +379,15 @@ Value run(Isolate &iso)
 		{
 			auto *callee_cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
 			Proto *cp = callee_cl->proto;
-			if (nargs != cp->num_params)
-				iso.raise(String("[Argument error] function called with the wrong number of arguments"),
-				          cur_line());
 			Value *new_base = &base[a + 1];
-			if (new_base + cp->num_regs > stack_end)
+			// The window must hold the positional args, the staged keyword pairs, and
+			// the frame's registers — whichever reaches highest.
+			int span = nargs + 2 * nnamed;
+			if (span < cp->num_regs)
+				span = cp->num_regs;
+			if (new_base + span > stack_end)
 				iso.raise(String("[Runtime error] stack overflow"), cur_line());
-			for (int i = cp->num_params; i < cp->num_regs; ++i)
-			{
-				release_value(new_base[i]);
-				new_base[i] = Value::make_null();
-			}
+			setup_callee_frame(iso, cp, new_base, nargs, nnamed, cur_line());
 			iso.frames.push_back(CallFrame{callee_cl, new_base, ip, &base[a]});
 			cl = callee_cl;
 			proto = cp;
@@ -299,6 +400,50 @@ Value run(Isolate &iso)
 		{
 			iso.raise(String("[Type error] value is not callable"), cur_line());
 		}
+	};
+
+	// Resolve the three slice parts (a null part = default, direction-dependent) to
+	// concrete 1-based bounds. Validates Integer parts and a non-zero step; raises on
+	// error. Used by GETSLICE/SETSLICE; the caller generates and bounds-checks the
+	// stepped positions (design §9: inclusive both ends, negatives from the end).
+	struct SliceSpec { int64_t start, stop, step; };
+	auto slice_spec = [&](Value vstart, Value vstop, Value vstep, int64_t n) -> SliceSpec {
+		int64_t step = 1;
+		if (!vstep.is_null())
+		{
+			if (!vstep.is_int())
+				iso.raise(String("[Index error] slice step must be an Integer"), cur_line());
+			step = vstep.as_int();
+			if (step == 0)
+				iso.raise(String("[Index error] slice step cannot be zero"), cur_line());
+		}
+		auto norm = [&](Value v) -> int64_t {
+			if (!v.is_int())
+				iso.raise(String("[Index error] slice bound must be an Integer"), cur_line());
+			int64_t i = v.as_int();
+			return i < 0 ? n + i + 1 : i; // 1-based, negatives count from the end
+		};
+		int64_t start = vstart.is_null() ? (step > 0 ? 1 : n) : norm(vstart);
+		int64_t stop = vstop.is_null() ? (step > 0 ? n : 1) : norm(vstop);
+		return {start, stop, step};
+	};
+	// Invoke `body(pos0)` for each selected 0-based position, bounds-checking each
+	// generated index against [1, n] (an empty range visits nothing).
+	auto for_each_slice_pos = [&](const SliceSpec &s, int64_t n, auto &&body) {
+		if (s.step > 0)
+			for (int64_t i = s.start; i <= s.stop; i += s.step)
+			{
+				if (i < 1 || i > n)
+					iso.raise(String("[Index error] List slice index out of range"), cur_line());
+				body(i - 1);
+			}
+		else
+			for (int64_t i = s.start; i >= s.stop; i += s.step)
+			{
+				if (i < 1 || i > n)
+					iso.raise(String("[Index error] List slice index out of range"), cur_line());
+				body(i - 1);
+			}
 	};
 
 	// Outer retry loop: the inner interpreter loop runs until it returns (RET/HALT at
@@ -528,6 +673,12 @@ Value run(Isolate &iso)
 			if (truthy(base[a]))
 				ip += op_sbx(ins);
 			break;
+		case Opcode::JMPSET:
+			// Option prologue: skip the default-value evaluation when the slot was
+			// supplied (i.e. it is not the missing sentinel).
+			if (!base[a].is_missing())
+				ip += op_sbx(ins);
+			break;
 
 		case Opcode::FORPREP:
 		{
@@ -737,11 +888,12 @@ Value run(Isolate &iso)
 		}
 
 		case Opcode::CALL:
-			invoke(base[a], a, op_b(ins));
+			invoke(base[a], a, op_b(ins), op_c(ins));
 			break;
 		case Opcode::CALLG:
 		{
 			int nargs = op_b(ins);
+			int nnamed = op_c(ins);
 			Instruction extra = *ip++; // EXTRA_ARG carries the IC index
 			int slot = ic_base_cur + static_cast<int>(op_ax(extra));
 			Symbol sym = base[a].as_symbol();
@@ -791,7 +943,57 @@ Value run(Isolate &iso)
 					          cur_line());
 				callable = m->code;
 			}
-			invoke(Value::make_cell(reinterpret_cast<Cell *>(callable)), a, nargs);
+			invoke(Value::make_cell(reinterpret_cast<Cell *>(callable)), a, nargs, nnamed);
+			break;
+		}
+		case Opcode::CALLD:
+		{
+			// Splat call: R[B] is a List of all positional arguments (design §6). Unpack
+			// it into base[a+1..] to give the call its dynamic arity, then dispatch (via
+			// the generic memo, never the inline cache) or invoke directly.
+			int listreg = op_b(ins);
+			Value listv = base[listreg];
+			if (!is_list(listv))
+				iso.raise(String("[Type error] a splat argument ('...') must be a List"), cur_line());
+			auto *lc = reinterpret_cast<ListCell *>(listv.as_cell());
+			int64_t len = lc->size;
+			if (&base[a + 1 + len] > stack_end)
+				iso.raise(String("[Runtime error] stack overflow"), cur_line());
+			retain_value(listv); // keep the List alive while we overwrite its source slot
+			for (int64_t k = 0; k < len; ++k)
+			{
+				Value e = deref(lc->data[k]); // splat passes values
+				retain_value(e);
+				release_value(base[a + 1 + k]); // release stale (k==0: the List's own slot +1)
+				base[a + 1 + k] = e;
+			}
+			if (len == 0)
+			{
+				release_value(base[listreg]); // no element overwrote the source slot
+				base[listreg] = Value::make_null();
+			}
+			release_value(listv);
+			int npos = static_cast<int>(len);
+
+			Value callee = base[a];
+			if (callee.is_symbol())
+			{
+				GenericFunction *g = find_generic(callee.as_symbol());
+				if (!g)
+					iso.raise(String("[Name error] no function named '") +
+					              String(symbol_name(callee.as_symbol())).view() + "'",
+					          cur_line());
+				Method *m = resolve(g, &base[a + 1], npos);
+				if (!m)
+					iso.raise(String("[Dispatch error] no applicable method for '") +
+					              String(symbol_name(callee.as_symbol())).view() + "'",
+					          cur_line());
+				invoke(Value::make_cell(reinterpret_cast<Cell *>(m->code)), a, npos, 0);
+			}
+			else
+			{
+				invoke(callee, a, npos, 0);
+			}
 			break;
 		}
 		case Opcode::EXTRA_ARG:
@@ -1044,7 +1246,7 @@ Value run(Isolate &iso)
 					          cur_line());
 				}
 			Cell *clo = base[a].as_cell(); // the closure holds this register's +1
-			AddMethod res = add_method(g, sig, md.ref_mask, clo);
+			AddMethod res = add_method(g, sig, md.ref_mask, md.is_vararg, clo);
 			if (res != AddMethod::Ok)
 			{
 				release_value(base[a]);
@@ -1054,7 +1256,7 @@ Value run(Isolate &iso)
 				    : "[Type error] ambiguous definition of '";
 				iso.raise(String(why) + String(symbol_name(md.name)).view() + "'", cur_line());
 			}
-			iso.record_method(g, std::move(sig), clo); // takes the +1
+			iso.record_method(g, std::move(sig), md.is_vararg, clo); // takes the +1
 			base[a] = Value::make_null();              // ownership moved
 			break;
 		}
@@ -1233,10 +1435,29 @@ Value run(Isolate &iso)
 			Value lv = base[a];
 			if (!is_list(lv))
 				iso.raise(String("[Type error] '+=' target is not a List"), cur_line());
-			base[a] = Value::make_null(); // hand ownership to the wrapper
-			List lst = List::from_value(lv);
-			release(lv.as_cell());
+			base[a] = Value::make_null();   // hand ownership to the wrapper (adopt: no buffering)
+			List lst = List::adopt(lv);
 			lst.append(Variant(base[op_b(ins)]));
+			reg_copy(base, a, lst.to_value());
+			break;
+		}
+		case Opcode::LISTEXTEND:
+		{
+			// Append every element of List R[B] to List R[A] (the splat expansion that
+			// builds a call's positional-argument list). R[B] is a distinct List.
+			Value lv = base[a];
+			if (!is_list(lv))
+				iso.raise(String("[Type error] splat target is not a List"), cur_line());
+			Value src = base[op_b(ins)];
+			if (!is_list(src))
+				iso.raise(String("[Type error] a splat argument ('...') must be a List"), cur_line());
+			auto *sc = reinterpret_cast<ListCell *>(src.as_cell());
+			int64_t n = sc->size;
+			base[a] = Value::make_null(); // hand ownership to the wrapper (adopt: no buffering)
+			List lst = List::adopt(lv);
+			lst.reserve(lst.size() + n);
+			for (int64_t k = 0; k < n; ++k)
+				lst.append(Variant(deref(sc->data[k]))); // splat passes values, not references
 			reg_copy(base, a, lst.to_value());
 			break;
 		}
@@ -1319,6 +1540,81 @@ Value run(Isolate &iso)
 			}
 			else
 				iso.raise(String("[Type error] value does not support indexed assignment"), cur_line());
+			break;
+		}
+		case Opcode::GETSLICE:
+		{
+			// R[A] = R[B][ slice(R[C], R[C+1], R[C+2]) ]  (start, stop, step; null = default)
+			Value obj = base[op_b(ins)];
+			int c = op_c(ins);
+			if (is_list(obj))
+			{
+				auto *l = reinterpret_cast<ListCell *>(obj.as_cell());
+				SliceSpec s = slice_spec(base[c], base[c + 1], base[c + 2], l->size);
+				List out(0);
+				for_each_slice_pos(s, l->size, [&](int64_t k) {
+					out.append(Variant(deref(l->data[k]))); // element may be a reference (§7)
+				});
+				reg_copy(base, a, out.to_value());
+			}
+			else if (is_string(obj))
+			{
+				String str = String::from_value(obj);
+				SliceSpec s = slice_spec(base[c], base[c + 1], base[c + 2], str.length());
+				String out;
+				for_each_slice_pos(s, str.length(), [&](int64_t k) { out.append(str.at(k + 1)); });
+				reg_copy(base, a, out.to_value());
+			}
+			else
+				iso.raise(String("[Type error] value is not sliceable"), cur_line());
+			break;
+		}
+		case Opcode::SETSLICE:
+		{
+			// R[A][ slice(R[B], R[B+1], R[B+2]) ] = R[C]
+			Value obj = base[a];
+			int bslice = op_b(ins);
+			Value val = base[op_c(ins)];
+			if (is_string(obj))
+				iso.raise(String("[Type error] a String slice is read-only"), cur_line());
+			if (!is_list(obj))
+				iso.raise(String("[Type error] value does not support sliced assignment"), cur_line());
+			int64_t n = reinterpret_cast<ListCell *>(obj.as_cell())->size;
+			SliceSpec s = slice_spec(base[bslice], base[bslice + 1], base[bslice + 2], n);
+			// Pass 1: validate every position and count the selected slots.
+			int64_t count = 0;
+			for_each_slice_pos(s, n, [&](int64_t) { ++count; });
+			// The right-hand side is either a same-length List (element-wise replace) or a
+			// scalar broadcast to every selected position (owner decision, DEVIATIONS M6).
+			bool rhs_list = is_list(val);
+			ListCell *rl = rhs_list ? reinterpret_cast<ListCell *>(val.as_cell()) : nullptr;
+			if (rhs_list && rl->size != count)
+				iso.raise(String("[Index error] slice-assignment length mismatch"), cur_line());
+			// Detach once (CoW), then write in place. Reference-valued targets write through
+			// their box (the shared mutable identity), mirroring SETINDEX (§7).
+			base[a] = Value::make_null();
+			List lst = List::from_value(obj);
+			release(obj.as_cell());
+			Value *slots = lst.writable_slots();
+			int64_t j = 0;
+			for_each_slice_pos(s, n, [&](int64_t k) {
+				Value nv = rhs_list ? deref(rl->data[j]) : val;
+				if (slots[k].is_reference())
+				{
+					UpvalueCell *box = reference_box(slots[k]);
+					retain_value(nv);
+					release_value(*box->slot);
+					*box->slot = nv;
+				}
+				else
+				{
+					retain_value(nv);
+					release_value(slots[k]);
+					slots[k] = nv;
+				}
+				++j;
+			});
+			reg_copy(base, a, lst.to_value());
 			break;
 		}
 		case Opcode::IS:
@@ -1438,12 +1734,14 @@ Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
 	PHON_ASSERT_MSG(is_closure(callee), "vm_call on a non-callable");
 	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
 	Proto *cp = cl->proto;
-	PHON_ASSERT_MSG(argc == cp->num_params, "vm_call arity mismatch");
 
 	CallFrame &top = iso.frames.back();
 	Value *nb = top.base + top.cl->proto->num_regs; // above the caller's live registers
 	Value *stack_end = iso.stack() + iso.stack_capacity();
-	if (nb + cp->num_regs > stack_end)
+	// The frame needs room for its registers *and* the staged args (a variadic callee
+	// stages more positional args than its packed frame holds).
+	int span = argc > cp->num_regs ? argc : cp->num_regs;
+	if (nb + span > stack_end)
 		iso.raise(String("[Runtime error] stack overflow"), 0);
 	for (int i = 0; i < argc; ++i)
 	{
@@ -1451,8 +1749,11 @@ Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
 		if (args[i].is_cell())
 			retain(args[i].as_cell());
 	}
+	// This window is fresh (uninitialized) stack, so raw-null the non-arg slots before
+	// setup_callee_frame — its release loop assumes every slot holds a releasable value.
 	for (int i = argc; i < cp->num_regs; ++i)
 		nb[i] = Value::make_null();
+	setup_callee_frame(iso, cp, nb, argc, /*nnamed=*/0, 0);
 	iso.frames.push_back(CallFrame{cl, nb, nullptr, nullptr}); // ret slot unused: run() stops here
 	return run(iso);
 }

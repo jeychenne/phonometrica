@@ -1,0 +1,65 @@
+# Splat arguments (design §6): `xs...` at a call site spreads a List into positional
+# arguments. The positional arity becomes dynamic, so the call resolves through the
+# generic's memo rather than the inline cache.
+
+# Splat into fixed parameters.
+function add3(a as Integer, b as Integer, c as Integer)
+    return a + b + c
+end
+var nums = [1, 2, 3]
+assert(add3(nums...) == 6, "splat fills all positionals")
+
+# Splat mixed with leading and trailing singles.
+function tag4(a as Object, b as Object, c as Object, d as Object)
+    return a & "-" & b & "-" & c & "-" & d
+end
+assert(tag4(0, [1, 2]..., 3) == "0-1-2-3", "single, splat, single")
+
+# Splat into a variadic: the spread elements are packed into the vararg list.
+function collect(xs as Object...)
+    return xs
+end
+assert(collect(nums...) == [1, 2, 3], "splat into a vararg")
+assert(collect(0, nums..., 4) == [0, 1, 2, 3, 4], "splat around singles into a vararg")
+
+# Forwarding a vararg via splat (the design's log/print pattern).
+function total(xs as Integer...)
+    var s = 0
+    for x in xs do
+        s += x
+    end
+    return s
+end
+function forward(vals as Integer...)
+    return total(vals...)
+end
+assert(forward(4, 5, 6) == 15, "forward a vararg through a splat")
+
+# An empty list splats to zero arguments.
+function nullary()
+    return 42
+end
+var empty = []
+assert(nullary(empty...) == 42, "empty splat -> zero args")
+assert(collect(empty...) == [], "empty splat into a vararg")
+
+# Splatting a non-List is an error.
+var not_a_list = false
+try
+    var x = add3(5...)
+catch e as Error
+    not_a_list = true
+end
+assert(not_a_list, "splatting a non-List raises")
+
+# Dynamic dispatch on the splatted arity picks the right overload.
+function shape(a as Integer)
+    return "one"
+end
+function shape(a as Integer, b as Integer)
+    return "two"
+end
+assert(shape([9]...) == "one", "splat resolves arity 1")
+assert(shape([9, 9]...) == "two", "splat resolves arity 2")
+
+print("splat tests passed")

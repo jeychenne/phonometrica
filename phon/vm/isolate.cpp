@@ -74,9 +74,10 @@ Isolate::~Isolate()
 
 void Isolate::keep_alive(Cell *c) { m_kept.push_back(c); }
 
-void Isolate::record_method(GenericFunction *g, SmallVector<Class *, 4> sig, Cell *closure)
+void Isolate::record_method(GenericFunction *g, SmallVector<Class *, 4> sig, bool is_vararg,
+                            Cell *closure)
 {
-	m_journal.push_back(MethodRegistration{g, std::move(sig), closure});
+	m_journal.push_back(MethodRegistration{g, std::move(sig), is_vararg, closure});
 }
 
 void Isolate::retract_journal() noexcept
@@ -86,7 +87,7 @@ void Isolate::retract_journal() noexcept
 	for (intptr_t i = m_journal.size() - 1; i >= 0; --i)
 	{
 		MethodRegistration &r = m_journal[i];
-		remove_method(r.g, r.sig);
+		remove_method(r.g, r.sig, r.is_vararg);
 		if (r.closure)
 			release(r.closure);
 	}

@@ -60,6 +60,11 @@ public:
 	static constexpr uint64_t IMM_NULL = 0;
 	static constexpr uint64_t IMM_FALSE = 1;
 	static constexpr uint64_t IMM_TRUE = 2;
+	// A non-user-observable sentinel: an unsupplied keyword-only option slot before
+	// its default is bound (design §6). Immediate, so it owns no refcount — reg
+	// moves and retain/release treat it like null. The function prologue tests for
+	// it (JMPSET) to decide whether to evaluate the default.
+	static constexpr uint64_t IMM_MISSING = 3;
 
 	// Integer range: signed 48-bit.
 	static constexpr int64_t INT_MIN_VALUE = -(int64_t(1) << 47);
@@ -89,6 +94,12 @@ public:
 	static PHON_FORCE_INLINE Value make_bool(bool b) noexcept
 	{
 		return from_bits(SIG_IMMEDIATE | (b ? IMM_TRUE : IMM_FALSE));
+	}
+
+	// The unsupplied-option sentinel (see IMM_MISSING).
+	static PHON_FORCE_INLINE Value make_missing() noexcept
+	{
+		return from_bits(SIG_IMMEDIATE | IMM_MISSING);
 	}
 
 	static PHON_FORCE_INLINE Value make_int(int64_t i) noexcept
@@ -140,6 +151,10 @@ public:
 	PHON_FORCE_INLINE bool is_null() const noexcept
 	{
 		return m_bits == (SIG_IMMEDIATE | IMM_NULL);
+	}
+	PHON_FORCE_INLINE bool is_missing() const noexcept
+	{
+		return m_bits == (SIG_IMMEDIATE | IMM_MISSING);
 	}
 	PHON_FORCE_INLINE bool is_false() const noexcept
 	{

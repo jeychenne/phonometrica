@@ -34,7 +34,13 @@ Cell *cell_realloc(Cell *cell, intptr_t new_total_size)
 	                "cell_realloc: only FOREIGN cells realloc in place (M1)");
 	PHON_ASSERT_MSG(cell->is_unique(), "cell_realloc: cell must be uniquely owned");
 	PHON_ASSERT(new_total_size >= static_cast<intptr_t>(sizeof(Cell)));
-	return static_cast<Cell *>(sys_realloc(cell, new_total_size));
+	// A buffered cell (a live cycle-collection candidate) may move here; the collector
+	// holds a raw pointer to it, so repoint that slot if realloc relocates the cell.
+	bool was_buffered = cell->is_buffered();
+	Cell *moved = static_cast<Cell *>(sys_realloc(cell, new_total_size));
+	if (was_buffered && moved != cell)
+		cc_cell_moved(cell, moved);
+	return moved;
 }
 
 void cell_free(Cell *cell) noexcept

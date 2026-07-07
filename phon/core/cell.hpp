@@ -144,6 +144,11 @@ void cc_possible_root(Cell *cell) noexcept;
 // pass. Defined in memory/cycle_collector.cpp.
 void cc_collect_deferred(Cell *cell) noexcept;
 
+// A *buffered* cell was moved by a reallocation (CoW growth of a FOREIGN cell):
+// repoint its slot in the candidate buffer so it does not dangle. A no-op when no
+// collector is active. Defined in memory/cycle_collector.cpp.
+void cc_cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept;
+
 // --- refcount operations ---
 
 // Add a reference. Saturates at RC_MAX (the object then leaks rather than

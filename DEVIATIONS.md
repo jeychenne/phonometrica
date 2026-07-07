@@ -860,3 +860,79 @@ objects; this reclaims those. Files: `phon/memory/cycle_collector.{hpp,cpp}`.
    explicit work-stack is a later hardening. Byte-count collection thresholds, the
    function-call safepoint, incremental/concurrent collection, and the freeze/transfer
    interplay (§8.3) are all future work.
+
+## M6 — Variadic/default/named parameters, splat & named args, slices (design §6/§9)
+
+Signature segments (design §6) are, in order: fixed positional parameters, one optional
+trailing vararg (`name as T...`), then keyword-only options (`name as T = default`). The
+parser already produced every M6 node; lowering, the Proto/dispatch structures, the calling
+convention, and the List/String runtime were extended to execute them.
+
+1. **Owner decisions (recorded 2026-07-07).**
+   - **List slice assignment** (`a[i:j] = rhs`): an equal-length List rhs replaces the
+     selected positions element-wise; any other rhs is a **scalar broadcast** filling every
+     selected position (`a[i:j] = 0`). A length-mismatched List rhs is an `[Index error]`.
+   - **String slices** are read-only substrings (grapheme-based, inclusive, negatives,
+     `step`); assigning to a String slice is a `[Type error]` (a grapheme is not a mutable
+     slot).
+   - **Multi-dimensional indexing** (`m[:, 3]`) stays deferred — it belongs to `Array`,
+     which does not exist yet; `a[i, j]` errors with "arrives with Array".
+
+2. **Calling convention.** `CALL`/`CALLG` gained operand `C` = the number of keyword
+   arguments; keyword args are staged after the positional args as `(Symbol, value)` pairs.
+   Frame setup is centralised in `setup_callee_frame` (`vm/interpreter.cpp`), shared by the
+   inline `invoke` path and the re-entrant `vm_call`: it validates arity, packs a trailing
+   vararg into a List, binds keyword options by name (snapshotting the pairs first, since the
+   option slots overlap the staged-pair region), and nulls the remaining locals. `vm_call`'s
+   old `argc == num_params` assertion is gone (a user variadic reached re-entrantly no longer
+   trips it).
+
+3. **The missing sentinel.** An unsupplied option is marked with a new immediate,
+   `Value::make_missing()` (`IMM_MISSING`, `core/value.hpp`) — never user-observable, and an
+   immediate so refcount ops treat it like null. The callee's prologue tests each option slot
+   with the new `JMPSET` opcode ("jump if the slot is *not* missing") and evaluates the
+   default otherwise. Option defaults are emitted in declaration order, so a later default may
+   reference an earlier parameter or option (`function span(lo, hi = lo)`).
+
+4. **Options are keyword-only and do not dispatch.** A method's dispatch signature is its
+   fixed params plus (if present) the vararg element type; options are excluded. So an option
+   can never be filled positionally — `box(3, 2)` where `h` is an option is "no applicable
+   method", not `h = 2`. An unknown keyword at a call is an `[Argument error]`. Natives take
+   no keyword options in M6 (a keyword to a native is a clear error, not silently dropped).
+
+5. **Variadic dispatch (design §6).** `Method`/`Proto` gained `is_vararg`; the vararg element
+   type is the last signature entry. Applicability: `argc ≥ fixed` and every trailing argument
+   subtypes the element type. Specificity is **type-primary** — pointwise subtyping decides
+   first, and only when the effective types are identical does the design's kind tiebreak
+   apply (a fixed method beats a variadic; among variadics more fixed params win, then the
+   element type). This matches the design for every case it names and makes a principled
+   choice for the type-differing case. Definition-time ambiguity detection was generalised to
+   compare methods at a representative arity (the larger fixed count, +1 when both are
+   variadic so element types are compared). The arity-8 dispatch cap was lifted (a variadic
+   call can pass any number of arguments).
+
+   *Known limitation:* two zero-fixed variadics with **incomparable** element types
+   (`f(xs as Int...)` vs `f(ys as String...)`) collide only at `argc == 0` (the empty call),
+   which the definition-time check does not flag; such an empty call resolves deterministically
+   rather than raising an ambiguity error. Non-empty calls are unambiguous. There is also no
+   memo for `argc ≥ 3`, so a variadic call with three or more arguments runs full resolution
+   each time (a future tuning knob).
+
+6. **Splat (`f(xs...)`, dynamic arity).** A call containing a splat builds one positional
+   List — `NEWLIST` then `LISTAPPEND` for singles and the new `LISTEXTEND` for splats — and
+   hands it to the new `CALLD` opcode, which unpacks it into the callee window (bounds-checked
+   per element against the stack) and resolves through the generic **memo, never the inline
+   cache** (design §6). Splat forwarding into a vararg (`print(vals...)`) composes; it pays a
+   double copy (spread out, then re-packed into the callee's vararg List) — a move-through
+   optimisation is deferred. Splat combined with keyword options, and ref-promotion of splat
+   arguments, are **not** supported in M6 (splat args are values); both are documented compile
+   limitations.
+
+7. **Cycle-collector fix (general, surfaced by splat).** Reallocating a cell that is a live
+   cycle-collection candidate (`cell_realloc` moving a buffered FOREIGN cell during CoW
+   growth) left a dangling raw pointer in the collector's candidate buffer. `cell_realloc` now
+   notifies the collector (`cc_cell_moved` → `CycleCollector::cell_moved`) to repoint the slot.
+   This was a latent bug for any buffered List/Table/Set that grew past its capacity; splat's
+   small combined List (initial capacity 1) was the first to hit it reliably. `LISTAPPEND`/
+   `LISTEXTEND` additionally adopt the target's reference (`List::adopt`) instead of
+   retain-then-release, so they no longer buffer the transient at all.

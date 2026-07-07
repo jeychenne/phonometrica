@@ -31,8 +31,14 @@ struct Method
 {
 	SmallVector<Class *, 4> sig; // declared parameter classes
 	void *code = nullptr;        // opaque callable identity (native fn / routine, M4+)
+	bool is_vararg = false;      // trailing variadic: sig.back() is the element type
 
 	int arity() const noexcept { return static_cast<int>(sig.size()); }
+	// Number of fixed positional parameters (dispatched exactly). For a variadic
+	// method the last sig entry is the vararg element type, not a fixed parameter.
+	int fixed_count() const noexcept { return is_vararg ? arity() - 1 : arity(); }
+	// The vararg element type (valid only when is_vararg).
+	Class *vararg_type() const noexcept { return sig[sig.size() - 1]; }
 };
 
 struct GenericFunction
@@ -44,8 +50,9 @@ struct GenericFunction
 	// each Method) and is not a dispatch dimension. Set by the first `add_method`;
 	// a later overload whose mask disagrees is rejected (AddMethod::RefMaskConflict).
 	uint64_t ref_mask = 0;
-	uint8_t min_arity = 255;
-	uint8_t max_arity = 0;
+	uint8_t min_arity = 255; // smallest fixed-parameter count across overloads
+	uint8_t max_arity = 0;   // largest fixed arity (ignored for the upper bound if has_vararg)
+	bool has_vararg = false; // any overload is variadic → no upper arity bound
 	bool sealed = false;
 
 	// Memo: encoded arg-tuple -> method index (-1 = no applicable method).
@@ -72,14 +79,14 @@ GenericFunction *find_generic(Symbol name) noexcept;
 // first method sets it, a later disagreement is rejected (RefMaskConflict). An
 // identical `sig` redefines in place. Bumps the epoch.
 AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask,
-                     void *code);
+                     bool is_vararg, void *code);
 
 // Remove the method with exactly `sig` from `g` (the retraction half of add_method,
 // used by the registration journal on module unload/reload, design §11). Bumps the
 // epoch and clears the memo so inline caches self-invalidate. A no-op if no such
 // method exists. The generic itself is never destroyed; an emptied non-builtin
 // generic is treated as undefined at name resolution.
-void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig);
+void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool is_vararg);
 
 // Resolve the method for a call. Returns the selected Method (nullptr if none is
 // applicable). Selection is by argument *types* only; a reference argument

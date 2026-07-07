@@ -45,6 +45,10 @@ public:
 	// next MarkRoots to free, instead of freeing it under the live candidate buffer.
 	void collect_deferred(Cell *c) noexcept;
 
+	// A buffered candidate was reallocated (CoW growth moves a FOREIGN cell): repoint
+	// its slot in the candidate buffer so it does not dangle at the next collection.
+	void cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept;
+
 	// Run one collection cycle (MarkRoots → Scan → CollectWhite) over the current
 	// candidate buffer. A no-op while `paused`.
 	void collect();
