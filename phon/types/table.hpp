@@ -52,6 +52,12 @@ public:
 	void set(const Variant &key, const Variant &value);
 	Variant get(const Variant &key) const; // null if absent
 	bool contains(const Variant &key) const;
+	// Detach (CoW) and return a pointer to the stored value for `key`, or nullptr if
+	// absent — used to promote a Table value to a reference (design/references.md §7).
+	Value *detached_value_slot(const Variant &key);
+	// Ensure this Table is uniquely owned (CoW), so its values may be boxed in place
+	// for by-reference iteration.
+	void make_unique() { detach(); }
 	bool remove(const Variant &key);
 	void clear();
 

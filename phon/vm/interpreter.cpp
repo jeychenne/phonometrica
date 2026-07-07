@@ -349,11 +349,25 @@ Value run(Isolate &iso)
 			break;
 		}
 		case Opcode::GETMODULE:
-			reg_copy(base, a, iso.module_slots[op_bx(ins)].value());
+			// The slot may hold a reference (a module variable passed by `ref`); deref,
+			// auto-collapsing a spent one (§2). A Variant aliases a Value slot.
+			reg_copy(base, a,
+			         deref_collapse(reinterpret_cast<Value *>(&iso.module_slots[op_bx(ins)])));
 			break;
 		case Opcode::SETMODULE:
-			iso.module_slots[op_bx(ins)] = Variant(base[a]);
+		{
+			Value *slot = reinterpret_cast<Value *>(&iso.module_slots[op_bx(ins)]);
+			if (slot->is_reference())
+			{
+				UpvalueCell *box = reference_box(*slot);
+				retain_value(base[a]);
+				release_value(*box->slot);
+				*box->slot = base[a];
+			}
+			else
+				iso.module_slots[op_bx(ins)] = Variant(base[a]);
 			break;
+		}
 
 		case Opcode::ADD:
 		{
@@ -636,6 +650,92 @@ Value run(Isolate &iso)
 			break;
 		}
 
+		case Opcode::ITER_INITREF:
+		{
+			// By-reference iteration (design §12): a List (value by index) or a Table
+			// (value by key), made uniquely owned so boxing a slot (and mutation through
+			// it) does not disturb any alias. The lowerer writes the collection back to
+			// its binding after the loop. Table R[A+2] stashes the key List.
+			Value coll = base[a];
+			if (is_list(coll))
+			{
+				base[a] = Value::make_null();
+				List l = List::from_value(coll);
+				release(coll.as_cell());
+				l.reserve(l.size());             // force a private copy if shared
+				reg_copy(base, a, l.to_value()); // base[A] = the unique list
+				reg_move(base, a + 2, Value::make_null());
+			}
+			else if (is_table(coll))
+			{
+				base[a] = Value::make_null();
+				Table t = Table::from_value(coll);
+				release(coll.as_cell());
+				t.make_unique();                          // private copy if shared
+				reg_copy(base, a + 2, t.keys().to_value()); // iterate a snapshot of keys
+				reg_copy(base, a, t.to_value());
+			}
+			else
+				iso.raise(String("[Type error] by-reference iteration requires a List or Table"),
+				          cur_line());
+			reg_move(base, a + 1, Value::make_int(0));
+			break;
+		}
+
+		case Opcode::ITER_NEXTREF:
+		{
+			// Advance and bind R[A+3] to a *reference* to the current slot (its box), so
+			// the loop body mutates it in place; the index/key (C == 2) is by value. The
+			// container in R[A] is uniquely owned (ITER_INITREF).
+			int ib = a, donereg = op_b(ins), arity = op_c(ins);
+			int64_t cursor = base[ib + 1].as_int();
+			Value *slot;
+			Value keyval;             // the index/key to expose when arity == 2
+			if (is_table(base[ib]))
+			{
+				List ks = List::from_value(base[ib + 2]);
+				if (cursor >= ks.size())
+				{
+					reg_move(base, donereg, Value::make_bool(true));
+					break;
+				}
+				Variant kv = ks.get(cursor + 1);
+				auto *tc = reinterpret_cast<TableCell *>(base[ib].as_cell());
+				auto it = tc->table.find(kv.value());
+				slot = &it->second; // the key came from keys(), so it exists
+				keyval = kv.value();
+			}
+			else // List
+			{
+				auto *l = reinterpret_cast<ListCell *>(base[ib].as_cell());
+				if (cursor >= l->size)
+				{
+					reg_move(base, donereg, Value::make_bool(true));
+					break;
+				}
+				slot = &l->data[cursor];
+				keyval = Value::make_int(cursor + 1); // 1-based index
+			}
+			Cell *box;
+			if (slot->is_reference())
+			{
+				box = slot->as_reference_box();
+			}
+			else
+			{
+				box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+				release_value(*slot);
+				*slot = Value::make_reference(box);
+			}
+			retain(box);
+			reg_move(base, ib + 3, Value::make_reference(box));
+			if (arity == 2)
+				reg_copy(base, ib + 4, keyval);
+			base[ib + 1] = Value::make_int(cursor + 1);
+			reg_move(base, donereg, Value::make_bool(false));
+			break;
+		}
+
 		case Opcode::CALL:
 			invoke(base[a], a, op_b(ins));
 			break;
@@ -788,35 +888,62 @@ Value run(Isolate &iso)
 		}
 		case Opcode::PROMOTEINDEX:
 		{
-			// Promote a list element to a first-class reference (design/references.md §7):
-			// detach the (value-semantic) list so aliases keep the plain value, then box
-			// the element in place. R[A] and the element slot share the box, so mutation
-			// through the reference is visible via the list. R[B] receives the (possibly
-			// detached) list for write-back to its binding.
+			// Promote a List element or Table value to a first-class reference
+			// (design/references.md §7): detach the (value-semantic) container so aliases
+			// keep the plain value, then box the slot in place. R[A] and the slot share the
+			// box, so mutation through the reference is visible via the container. R[B]
+			// receives the (possibly detached) container for write-back to its binding.
+			// A Table *key* can never be referenced (owner invariant), so only its value is.
 			Value obj = base[op_b(ins)], idx = base[op_c(ins)];
-			if (!is_list(obj))
-				iso.raise(String("[Type error] only a List element can be passed by reference"),
-				          cur_line());
-			if (!idx.is_int())
-				iso.raise(String("[Index error] List index must be an Integer"), cur_line());
-			base[op_b(ins)] = Value::make_null();
-			List lst = List::from_value(obj);
-			release(obj.as_cell());
-			Value *slot = reinterpret_cast<Value *>(&lst.ref(idx.as_int())); // detaches
-			Cell *box;
-			if (slot->is_reference())
+			if (is_list(obj))
 			{
-				box = slot->as_reference_box(); // already boxed: share it
+				if (!idx.is_int())
+					iso.raise(String("[Index error] List index must be an Integer"), cur_line());
+				base[op_b(ins)] = Value::make_null();
+				List lst = List::from_value(obj);
+				release(obj.as_cell());
+				Value *slot = reinterpret_cast<Value *>(&lst.ref(idx.as_int())); // detaches
+				Cell *box;
+				if (slot->is_reference())
+					box = slot->as_reference_box();
+				else
+				{
+					box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+					release_value(*slot);
+					*slot = Value::make_reference(box);
+				}
+				retain(box);
+				reg_move(base, a, Value::make_reference(box));
+				reg_copy(base, op_b(ins), lst.to_value());
+				break;
 			}
-			else
+			if (is_table(obj))
 			{
-				box = reinterpret_cast<Cell *>(make_reference_box(*slot));
-				release_value(*slot);                 // the box now owns the value
-				*slot = Value::make_reference(box);    // the element slot owns the box (rc 1)
+				auto *tc = reinterpret_cast<TableCell *>(obj.as_cell());
+				if (!tc->table.contains(idx))
+					iso.raise(String("[Key error] cannot take a reference to a missing Table key"),
+					          cur_line());
+				base[op_b(ins)] = Value::make_null();
+				Table t = Table::from_value(obj);
+				release(obj.as_cell());
+				Value *slot = t.detached_value_slot(Variant(idx)); // exists (checked); detaches
+				Cell *box;
+				if (slot->is_reference())
+					box = slot->as_reference_box();
+				else
+				{
+					box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+					release_value(*slot);
+					*slot = Value::make_reference(box);
+				}
+				retain(box);
+				reg_move(base, a, Value::make_reference(box));
+				reg_copy(base, op_b(ins), t.to_value());
+				break;
 			}
-			retain(box);                               // R[A] owns a reference to the box
-			reg_move(base, a, Value::make_reference(box));
-			reg_copy(base, op_b(ins), lst.to_value()); // detached list back for write-back
+			iso.raise(String("[Type error] only a List element or Table value can be passed by "
+			                 "reference"),
+			          cur_line());
 			break;
 		}
 		case Opcode::PROMOTEFIELD:
@@ -861,6 +988,36 @@ Value run(Isolate &iso)
 			reg_move(base, a, Value::make_reference(box));
 			reg_copy(base, op_b(ins), Value::make_cell(inst)); // (possibly detached) instance back
 			release(inst); // reg_copy retained; drop our transient reference
+			break;
+		}
+		case Opcode::PROMOTEUPVAL:
+		{
+			// An upvalue *is* a reference box (design/references.md §3), so a reference
+			// to a captured variable is simply a reference to that box — writes through
+			// it reach the captured variable's storage.
+			Cell *box = reinterpret_cast<Cell *>(cl->upvals[op_b(ins)]);
+			retain(box);
+			reg_move(base, a, Value::make_reference(box));
+			break;
+		}
+		case Opcode::PROMOTEMODULE:
+		{
+			// Box the module slot in place (a persistent slot needs no write-back); a
+			// later GETMODULE derefs and eventually auto-collapses it.
+			Value *slot = reinterpret_cast<Value *>(&iso.module_slots[op_bx(ins)]);
+			Cell *box;
+			if (slot->is_reference())
+			{
+				box = slot->as_reference_box();
+			}
+			else
+			{
+				box = reinterpret_cast<Cell *>(make_reference_box(*slot));
+				release_value(*slot);
+				*slot = Value::make_reference(box);
+			}
+			retain(box);
+			reg_move(base, a, Value::make_reference(box));
 			break;
 		}
 
@@ -1142,6 +1299,18 @@ Value run(Isolate &iso)
 			}
 			else if (is_table(obj))
 			{
+				// A reference value is written through its box (no detach), like a list
+				// element (design/references.md §7).
+				auto *tc = reinterpret_cast<TableCell *>(obj.as_cell());
+				auto it = tc->table.find(idx);
+				if (it != tc->table.end() && it->second.is_reference())
+				{
+					UpvalueCell *box = reference_box(it->second);
+					retain_value(val);
+					release_value(*box->slot);
+					*box->slot = val;
+					break;
+				}
 				base[a] = Value::make_null();
 				Table t = Table::from_value(obj);
 				release(obj.as_cell());

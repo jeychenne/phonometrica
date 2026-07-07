@@ -769,9 +769,25 @@ with no collector changes.
    `GETINDEX`/`GETFIELD`) whose closed box has no other referrer moves the value back out
    and drops the box, so a temporary borrow does not leave an element permanently boxed.
 
-Follow-ups: Table/Set/String element references; element/field references through an
-*indirect* call (they currently box-without-write-back); the subtle CoW-×-reference
-corner where a reference element is written through a still-shared container.
+7. **By-reference iteration (§12).** `for ref v in xs` (and `for i, ref v in xs`) binds
+   the value variable to each List element's storage — the loop-body analogue of a `ref`
+   parameter. Opcodes `ITER_INITREF` (makes the List uniquely owned) / `ITER_NEXTREF`
+   (boxes the current element, binds the value slot to it, index by value); the collection
+   is written back to its binding after the loop, so a copy taken before the loop detaches.
+   The `List` C++ accessors (`get`/`pop`) deref so by-value readers never see a box. Scope:
+   List and Table collections bound to a variable (Table iterates a snapshot of its keys).
+
+8. **References to any variable kind.** Beyond a local, a `ref` argument may now name an
+   **upvalue** (an upvalue *is* a box, so `PROMOTEUPVAL` just references it) or a **module
+   (global) variable** (`PROMOTEMODULE` boxes the slot in place; `GETMODULE` derefs and
+   auto-collapses, `SETMODULE` writes through). Table **value** references (`f(t[k])`,
+   `PROMOTEINDEX` Table branch) join List elements; a Table **key** is never referenceable
+   (owner invariant), so only its value is boxed. `Table::get`/`List::get`/`pop` deref.
+
+Follow-ups: Set and String element references (a set member / grapheme substring is not a
+mutable slot — kept as a clear error); element/field references through an *indirect* call
+(they currently box-without-write-back); the subtle CoW-×-reference corner where a reference
+element is written through a still-shared container.
 
 ## M5 — Cycle collector (architecture §8.2)
 

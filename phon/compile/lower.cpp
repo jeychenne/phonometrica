@@ -338,6 +338,7 @@ private:
 	void compile_repeat(RepeatStatement *s);
 	void compile_for_numeric(ForNumeric *s);
 	void compile_for_each(ForEach *s);
+	void compile_for_each_ref(ForEach *s); // `for ref v in …` (design §12)
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -787,14 +788,24 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 	if (auto *v = arg->as<Variable>())
 	{
 		NameRef nr = resolve(v->name);
-		if (nr.kind == NameKind::Local)
+		switch (nr.kind)
+		{
+		case NameKind::Local:
+			// A plain local promotes to a fresh box; a `ref` local forwards its box.
 			emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(arg));
-		else if (nr.kind == NameKind::None)
+			break;
+		case NameKind::Upvalue:
+			emit_ABC(Opcode::PROMOTEUPVAL, r, nr.index, 0, ln(arg));
+			break;
+		case NameKind::Module:
+			emit_ABx(Opcode::PROMOTEMODULE, r, static_cast<uint32_t>(nr.index), ln(arg));
+			break;
+		case NameKind::None:
 			error(arg, "[Name error] reference to undeclared variable '" +
 			               std::string(symbol_name(v->name)) + "'");
-		else
-			error(arg, "[Compile error] a 'ref' parameter currently requires a local variable "
-			           "(module/upvalue references are a follow-up)");
+		default:
+			error(arg, "[Compile error] this variable cannot be passed by reference");
+		}
 		return;
 	}
 	// A list element `c[i]`: load the container for in-place mutation, promote the
@@ -1458,7 +1469,10 @@ void Lowerer::compile_for_each(ForEach *s)
 	//   base+0 source   base+1 cursor   base+2 aux(table keys)
 	//   base+3 value var   base+4 key var (pair form)
 	if (s->value_by_ref)
-		error(s, "[Compile error] by-reference iteration ('for ref …') arrives with ref params");
+	{
+		compile_for_each_ref(s);
+		return;
+	}
 
 	enter_block();
 	int base = reg_alloc(s);
@@ -1493,6 +1507,96 @@ void Lowerer::compile_for_each(ForEach *s)
 	for (intptr_t c : lc.continues)
 		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
 	m_loops.pop_back();
+	exit_block(static_cast<uint32_t>(s->line));
+}
+
+void Lowerer::compile_for_each_ref(ForEach *s)
+{
+	// By-reference iteration (design §12): the value variable aliases each List element,
+	// so writes propagate back into the collection. The collection is loaded into the
+	// loop's source register and, if it names a mutable binding, written back after the
+	// loop. A non-lvalue collection still iterates, mutating a copy that is discarded.
+	enter_block();
+	int base = reg_alloc(s);
+
+	// How to restore the (mutated) collection to its binding after the loop. A local is
+	// *moved* into `base` (and its slot nulled) so a uniquely-owned list is not cloned.
+	enum Wb
+	{
+		WB_NONE,
+		WB_LOCAL,
+		WB_MODULE,
+		WB_UPVALUE
+	};
+	Wb wb = WB_NONE;
+	int wbidx = 0;
+	if (auto *cv = s->collection->as<Variable>())
+	{
+		NameRef nr = resolve(cv->name);
+		if (nr.kind == NameKind::Local && !nr.is_ref)
+		{
+			emit_ABC(Opcode::MOVE, base, nr.index, 0, ln(s));
+			emit_ABC(Opcode::LOADNULL, nr.index, 0, 0, ln(s)); // source emptied for the loop
+			wb = WB_LOCAL;
+			wbidx = nr.index;
+		}
+		else if (nr.kind == NameKind::Module)
+		{
+			emit_ABx(Opcode::GETMODULE, base, static_cast<uint32_t>(nr.index), ln(s));
+			wb = WB_MODULE;
+			wbidx = nr.index;
+		}
+		else if (nr.kind == NameKind::Upvalue)
+		{
+			emit_ABC(Opcode::GETUPVAL, base, nr.index, 0, ln(s));
+			wb = WB_UPVALUE;
+			wbidx = nr.index;
+		}
+		else
+			expr_to(s->collection.get(), base);
+	}
+	else
+		expr_to(s->collection.get(), base);
+
+	reg_alloc(s);              // base+1 cursor
+	reg_alloc(s);              // base+2 aux
+	int valreg = reg_alloc(s); // base+3 value — bound by reference
+	fs->locals.push_back({s->value, valreg, false, false, /*is_ref=*/true});
+	bool pair = (s->key != NO_SYMBOL);
+	if (pair)
+	{
+		int keyreg = reg_alloc(s); // base+4 key/index — always by value
+		fs->locals.push_back({s->key, keyreg, false, false});
+	}
+	int done = reg_alloc(s);
+
+	emit_ABC(Opcode::ITER_INITREF, base, 0, 0, ln(s));
+
+	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
+	intptr_t top = P().code.size();
+	emit_ABC(Opcode::ITER_NEXTREF, base, done, pair ? 2 : 1, ln(s));
+	intptr_t exit = emit_jump(Opcode::JMPT, done, ln(s));
+	compile_stmt(s->body.get());
+	emit_AsBx(Opcode::JMP, 0, static_cast<int>(top - (P().code.size() + 1)), ln(s));
+	patch_jump(exit);
+
+	LoopCtx &lc = m_loops.back();
+	for (intptr_t b : lc.breaks)
+		patch_jump(b);
+	for (intptr_t c : lc.continues)
+		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
+	m_loops.pop_back();
+
+	// Write the mutated collection back to its binding (the loop registers, incl. `base`,
+	// are still live until exit_block below).
+	if (wb == WB_LOCAL)
+		emit_ABC(Opcode::MOVE, wbidx, base, 0, ln(s));
+	else if (wb == WB_MODULE)
+		emit_ABx(Opcode::SETMODULE, base, static_cast<uint32_t>(wbidx), ln(s));
+	else if (wb == WB_UPVALUE)
+		emit_ABC(Opcode::SETUPVAL, base, wbidx, 0, ln(s));
+
 	exit_block(static_cast<uint32_t>(s->line));
 }
 

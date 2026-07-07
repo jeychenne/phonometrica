@@ -734,6 +734,61 @@ TEST_CASE("vm: break and continue work inside for … in")
 	CHECK(run_int(src) == 1 + 3 + 4);
 }
 
+TEST_CASE("vm: for ref v in list mutates elements in place")
+{
+	// The value variable aliases each element (design §12): writes propagate back.
+	CHECK(run_int("var xs = [1, 2, 3, 4]\n for ref v in xs do v *= 2 end\n"
+	              " var s = 0\n for x in xs do s += x end\n s") == 20);
+}
+
+TEST_CASE("vm: for i, ref v in list binds index by value, value by reference")
+{
+	CHECK(run_int("var xs = [10, 20, 30]\n for i, ref v in xs do v += i end\n"
+	              " xs[1] * 100 + xs[2] * 10 + xs[3]") == (11 * 100 + 22 * 10 + 33));
+}
+
+TEST_CASE("vm: for ref detaches an alias (value semantics)")
+{
+	// Mutating xs by reference must not disturb an earlier copy.
+	const char *src = "var xs = [5, 6, 7]\n var ys = xs\n"
+	                  " for ref v in xs do v = 0 end\n"
+	                  " xs[1] + xs[2] + xs[3] + ys[1] + ys[2] + ys[3]";
+	CHECK(run_int(src) == 0 + 0 + 0 + 5 + 6 + 7);
+}
+
+TEST_CASE("vm: break and continue work inside for ref … in")
+{
+	const char *src = "var xs = [1, 2, 3, 4, 5]\n"
+	                  " for ref v in xs do\n"
+	                  "  if v == 2 then continue end\n if v == 5 then break end\n v = v * 10\n end\n"
+	                  " xs[1] * 10000 + xs[2] * 1000 + xs[3] * 100 + xs[4] * 10 + xs[5]";
+	// v=1 ->10; v=2 continue (unchanged); v=3 ->30; v=4 ->40; v=5 break (unchanged).
+	CHECK(run_int(src) == 10 * 10000 + 2 * 1000 + 30 * 100 + 40 * 10 + 5);
+}
+
+TEST_CASE("vm: for k, ref v in table mutates values in place")
+{
+	// The value aliases each table entry (design §12); the key stays by value.
+	const char *src = "var t = {\"a\": 1, \"b\": 2, \"c\": 3}\n"
+	                  " for k, ref v in t do v *= 10 end\n"
+	                  " t[\"a\"] + t[\"b\"] + t[\"c\"]";
+	CHECK(run_int(src) == 60);
+}
+
+TEST_CASE("vm: by-reference iteration requires a List or Table")
+{
+	bool threw = false;
+	try
+	{
+		run("for ref v in 42 do end");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("vm: iterating a non-collection is a type error")
 {
 	bool threw = false;
@@ -820,6 +875,59 @@ TEST_CASE("vm: an object field passed by reference")
 	                  "  return b.n\nend\n"
 	                  "run()";
 	CHECK(run_int(src) == 2);
+}
+
+TEST_CASE("vm: a module (global) variable passed by reference")
+{
+	// A top-level `var` is a module binding; passing it by reference boxes the slot,
+	// and the mutation is visible through later reads.
+	const char *src = "var n = 5\n"
+	                  "function inc(ref x) x = x + 1 end\n"
+	                  "inc(n)\n inc(n)\n"
+	                  "n";
+	CHECK(run_int(src) == 7);
+}
+
+TEST_CASE("vm: an upvalue passed by reference")
+{
+	// An inner function captures `n` and passes it by reference to a mutator; the
+	// upvalue is itself the box, so the write reaches the captured variable.
+	const char *src = "function outer() as Integer\n"
+	                  "  var n = 10\n"
+	                  "  function inner() inc(n) end\n"
+	                  "  inner()\n inner()\n"
+	                  "  return n\n"
+	                  "end\n"
+	                  "function inc(ref x) x = x + 1 end\n"
+	                  "outer()";
+	CHECK(run_int(src) == 12);
+}
+
+TEST_CASE("vm: a table value passed by reference")
+{
+	// Promoting t[k] boxes the value; the mutation is visible via the table, and
+	// promoting it detaches any alias (value semantics, keys are never references).
+	const char *src = "function inc(ref x) x = x + 1 end\n"
+	                  "function run() as Integer\n"
+	                  "  var t = {\"a\": 10, \"b\": 20}\n var u = t\n inc(t[\"a\"])\n inc(t[\"a\"])\n"
+	                  "  return t[\"a\"] * 100 + u[\"a\"]\nend\n"
+	                  "run()";
+	CHECK(run_int(src) == 12 * 100 + 10);
+}
+
+TEST_CASE("vm: referencing a missing table key is an error")
+{
+	bool threw = false;
+	try
+	{
+		run("function inc(ref x) x = x + 1 end\n"
+		    "var t = {\"a\": 1}\n inc(t[\"missing\"])");
+	}
+	catch (const RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
 }
 
 TEST_CASE("vm: a ref parameter works through an indirect call")

@@ -61,6 +61,8 @@ using Instruction = uint32_t;
 	/* iteration protocol (design §12): builtin collections, state at R[A..] */   \
 	_(ITER_INIT)   /* A      : init for-in over R[A]; state in R[A],R[A+1..] */ \
 	_(ITER_NEXT)   /* A B C  : advance R[A]; R[B]=exhausted; C=var count     */ \
+	_(ITER_INITREF)/* A      : init by-ref for-in over List R[A] (made unique)*/ \
+	_(ITER_NEXTREF)/* A B C  : advance; R[A+3] = reference to the element     */ \
 	/* error handling (design §12) */                                           \
 	_(PUSHTRY)     /* A sBx  : push handler; on throw R[A]=error, ip->A+sBx  */ \
 	_(POPTRY)      /* (none) : pop the innermost handler (try body finished) */ \
@@ -82,6 +84,8 @@ using Instruction = uint32_t;
 	_(MAYBEBOX)    /* A C    : if R[C].ref[A-C-1], box R[A]'s value in place   */ \
 	_(PROMOTEINDEX)/* A B C  : R[A] = ref to element R[C] of list R[B] (boxed) */ \
 	_(PROMOTEFIELD)/* A B C  : R[A] = ref to field R[C] of instance R[B]       */ \
+	_(PROMOTEUPVAL)/* A B    : R[A] = reference to upvalue B (already a box)    */ \
+	_(PROMOTEMODULE)/*A Bx   : R[A] = reference to module slot Bx (boxed)       */ \
 	/* aggregate construction & indexing */                                     \
 	_(NEWLIST)     /* A B    : R[A] = [R[A+1..A+B]]                          */ \
 	_(NEWTABLE)    /* A B    : R[A] = { B pairs from R[A+1..A+2B] }          */ \

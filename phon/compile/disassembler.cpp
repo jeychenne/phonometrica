@@ -31,6 +31,7 @@ Form form_of(Opcode op)
 	case Opcode::LOADK:
 	case Opcode::GETMODULE:
 	case Opcode::SETMODULE:
+	case Opcode::PROMOTEMODULE:
 	case Opcode::CLOSURE:
 	case Opcode::DEFMETHOD:
 	case Opcode::DEFCLASS:

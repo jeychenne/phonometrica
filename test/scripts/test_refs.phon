@@ -95,4 +95,43 @@ function dispatch_demo()
 end
 dispatch_demo()
 
+# By-reference iteration (design §12): the value variable aliases each element, so
+# writes propagate back into the collection — the loop-body analogue of a ref param.
+function iterate_demo()
+    var xs = [1, 2, 3, 4]
+    var alias = xs
+    for ref v in xs do
+        v *= 10
+    end
+    assert(xs[1] == 10 and xs[4] == 40, "by-reference iteration mutates in place")
+    assert(alias[1] == 1, "by-reference iteration detaches an alias")
+    # The key/index stays by value; only the value aliases the element.
+    for i, ref v in xs do
+        v = v + i
+    end
+    assert(xs[1] == 11 and xs[2] == 22, "index by value, value by reference")
+end
+iterate_demo()
+
+# References beyond locals: a module (global) variable, a Table value, and
+# by-reference iteration over a Table's values.
+var counter = 0
+function bump_it(ref x)
+    x = x + 1
+end
+bump_it(counter)
+bump_it(counter)
+assert(counter == 2, "module variable passed by reference")
+
+function table_demo()
+    var scores = {"a": 1, "b": 2, "c": 3}
+    bump_it(scores["a"])
+    assert(scores["a"] == 2, "table value passed by reference")
+    for k, ref v in scores do
+        v *= 10
+    end
+    assert(scores["a"] == 20 and scores["c"] == 30, "by-reference iteration over table values")
+end
+table_demo()
+
 print("ref tests passed")

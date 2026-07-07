@@ -10,6 +10,7 @@
 #include <phon/types/table.hpp>
 #include <phon/types/set.hpp>
 
+#include <phon/core/reference.hpp>
 #include <phon/object/class.hpp>
 #include <phon/object/value_ops.hpp>
 #include <phon/types/list.hpp>
@@ -44,16 +45,19 @@ void table_finalize(Cell *c)
 	m->table.~TableStorage();
 }
 
-// Enumerate contained cells (keys and values) for the cycle collector (§8.2).
+// Enumerate contained cells (keys and values) for the cycle collector (§8.2). A key
+// can never be a reference — you cannot take a `ref` to a Table key — so `is_cell`
+// suffices for it and duplication (table_clone) need not treat keys specially. Only a
+// *value* could become a reference box (not yet supported); that would use `owns_cell`.
 void table_trace(Cell *c, void (*visit)(Cell *))
 {
 	auto *m = reinterpret_cast<TableCell *>(c);
 	for (auto &e : m->table)
 	{
-		if (e.first.is_cell())
+		if (e.first.is_cell()) // a key is never a reference
 			visit(e.first.as_cell());
-		if (e.second.is_cell())
-			visit(e.second.as_cell());
+		if (e.second.owns_cell()) // a value may be a reference box (§7)
+			visit(e.second.cell_ptr());
 	}
 }
 
@@ -235,7 +239,14 @@ Variant Table::get(const Variant &key) const
 	auto it = m->table.find(key.value());
 	if (it == m->table.end())
 		return Variant();
-	return Variant(it->second);
+	return Variant(deref(it->second)); // a value may be a reference (§7)
+}
+
+Value *Table::detached_value_slot(const Variant &key)
+{
+	TableCell *m = detach();
+	auto it = m->table.find(key.value());
+	return it == m->table.end() ? nullptr : &it->second;
 }
 
 bool Table::contains(const Variant &key) const

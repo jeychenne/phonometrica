@@ -3,6 +3,7 @@
 
 #include <phon/types/list.hpp>
 
+#include <phon/core/reference.hpp>
 #include <phon/object/class.hpp>
 #include <phon/object/value_ops.hpp>
 
@@ -170,7 +171,8 @@ ListCell *List::detach_for_write(intptr_t need)
 
 Variant List::get(intptr_t i) const
 {
-	return Variant(m_impl->data[normalize(i)]);
+	// An element may be a first-class reference (§7); callers want the value it holds.
+	return Variant(deref(m_impl->data[normalize(i)]));
 }
 
 void List::set(intptr_t i, const Variant &v)
@@ -220,8 +222,8 @@ Variant List::pop()
 	PHON_CHECK(m_impl->size > 0, "[Value error] pop from empty List");
 	ListCell *l = detach_for_write(m_impl->size);
 	Value v = l->data[l->size - 1];
-	Variant result(v);  // retains
-	release_value(v);    // drop the list's reference
+	Variant result(deref(v)); // the element may be a reference; return its value
+	release_value(v);         // drop the list's reference (releases the box if any)
 	--l->size;
 	return result;
 }
