@@ -52,37 +52,30 @@ GenericRegistry &registry()
 	return r;
 }
 
-// Encode one argument as (class_id << 1 | ref_bit). Class ids are < 2^24, so the
-// result is < 2^25 and two of them pack losslessly into a uint64 key.
-PHON_FORCE_INLINE uint64_t encode_arg(uint32_t cid, bool ref) noexcept
+// Encode one argument's class id into a key slot. Class ids are < 2^24; the `<< 1`
+// keeps the key format bit-compatible with the interpreter's inline cache. Ref-ness
+// is no longer folded in (it is uniform per generic, §4).
+PHON_FORCE_INLINE uint64_t encode_arg(uint32_t cid) noexcept
 {
-	return (static_cast<uint64_t>(cid) << 1) | (ref ? 1u : 0u);
+	return static_cast<uint64_t>(cid) << 1;
 }
 
-// Dispatch class of an argument: a ref argument dispatches on its referent.
-PHON_FORCE_INLINE uint32_t dispatch_class(Value a, bool &is_ref) noexcept
+// Dispatch class of an argument: a reference argument dispatches on its referent.
+PHON_FORCE_INLINE uint32_t dispatch_class(Value a) noexcept
 {
-	if (a.is_ref())
-	{
-		is_ref = true;
-		return class_of(*a.as_ref());
-	}
-	is_ref = false;
-	return class_of(a);
+	return a.is_ref() ? class_of(*a.as_ref()) : class_of(a);
 }
 
 // Full resolution: index of the most-specific applicable method, or -1.
-int32_t full_resolve(GenericFunction *g, const uint32_t *arg_class, uint64_t arg_ref_mask, int argc)
+int32_t full_resolve(GenericFunction *g, const uint32_t *arg_class, int argc)
 {
-	// Applicable = same arity, exact ref-mask match, subtype at every position.
+	// Applicable = same arity, subtype at every position (ref-ness is uniform, §4).
 	SmallVector<int32_t, 8> applicable;
 	for (intptr_t mi = 0; mi < g->methods.size(); ++mi)
 	{
 		const Method &m = g->methods[mi];
 		if (m.arity() != argc)
 			continue;
-		if (m.ref_mask != arg_ref_mask)
-			continue; // ref-ness participates in applicability, not specificity
 		bool ok = true;
 		for (int i = 0; i < argc; ++i)
 		{
@@ -148,11 +141,18 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 {
 	const int argc = static_cast<int>(sig.size());
 
-	// Redefinition: identical (sig, ref_mask) overwrites the code in place.
+	// Ref-ness is uniform across a generic's overloads (§4): the first method fixes
+	// the mask; any later overload whose mask disagrees is rejected.
+	if (g->methods.empty())
+		g->ref_mask = ref_mask;
+	else if (ref_mask != g->ref_mask)
+		return AddMethod::RefMaskConflict;
+
+	// Redefinition: an identical `sig` overwrites the code in place.
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		Method &e = g->methods[i];
-		if (e.arity() != argc || e.ref_mask != ref_mask)
+		if (e.arity() != argc)
 			continue;
 		bool same = true;
 		for (int j = 0; j < argc; ++j)
@@ -169,18 +169,17 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 	}
 
 	// Ambiguity check against every existing method that could co-apply (same
-	// arity and ref-mask). Two signatures conflict when they are incomparable yet
-	// overlap (comparable at every position); the overlap needs a method whose
-	// signature is exactly the pointwise meet, else the definition is ambiguous.
+	// arity). Two signatures conflict when they are incomparable yet overlap
+	// (comparable at every position); the overlap needs a method whose signature is
+	// exactly the pointwise meet, else the definition is ambiguous.
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		const Method &e = g->methods[i];
-		if (e.arity() != argc || e.ref_mask != ref_mask)
+		if (e.arity() != argc)
 			continue;
 
 		// Build a temporary Method view of the new signature for sig_le.
 		Method incoming;
-		incoming.ref_mask = ref_mask;
 		for (int j = 0; j < argc; ++j)
 			incoming.sig.push_back(sig[j]);
 
@@ -220,7 +219,7 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 			for (intptr_t k = 0; k < g->methods.size(); ++k)
 			{
 				const Method &d = g->methods[k];
-				if (d.arity() != argc || d.ref_mask != ref_mask)
+				if (d.arity() != argc)
 					continue;
 				bool eq = true;
 				for (int j = 0; j < argc; ++j)
@@ -242,7 +241,6 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 
 	// Commit.
 	Method m;
-	m.ref_mask = ref_mask;
 	m.code = code;
 	for (int j = 0; j < argc; ++j)
 		m.sig.push_back(sig[j]);
@@ -257,13 +255,13 @@ AddMethod add_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uin
 	return AddMethod::Ok;
 }
 
-void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, uint64_t ref_mask)
+void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig)
 {
 	const int argc = static_cast<int>(sig.size());
 	for (intptr_t i = 0; i < g->methods.size(); ++i)
 	{
 		Method &e = g->methods[i];
-		if (e.arity() != argc || e.ref_mask != ref_mask)
+		if (e.arity() != argc)
 			continue;
 		bool same = true;
 		for (int j = 0; j < argc; ++j)
@@ -312,31 +310,25 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 	}
 
 	uint32_t arg_class[8];
-	uint64_t arg_ref_mask = 0;
 	for (int i = 0; i < argc; ++i)
-	{
-		bool ref;
-		arg_class[i] = dispatch_class(args[i], ref);
-		if (ref)
-			arg_ref_mask |= (uint64_t(1) << i);
-	}
+		arg_class[i] = dispatch_class(args[i]);
 
 	// Fast memo for arity 1 and 2 (exact, collision-free keys).
 	if (argc == 1 || argc == 2)
 	{
-		uint64_t key = encode_arg(arg_class[0], arg_ref_mask & 1);
+		uint64_t key = encode_arg(arg_class[0]);
 		if (argc == 2)
-			key = (key << 25) | encode_arg(arg_class[1], (arg_ref_mask >> 1) & 1);
+			key = (key << 25) | encode_arg(arg_class[1]);
 		auto it = g->memo.find(key);
 		int32_t idx = (it != g->memo.end()) ? it->second
-		                                    : full_resolve(g, arg_class, arg_ref_mask, argc);
+		                                    : full_resolve(g, arg_class, argc);
 		if (it == g->memo.end())
 			g->memo.insert(key, idx);
 		return idx < 0 ? nullptr : &g->methods[idx];
 	}
 
 	// Arity 0 and 3..8: resolve fully (no memo).
-	int32_t idx = full_resolve(g, arg_class, arg_ref_mask, argc);
+	int32_t idx = full_resolve(g, arg_class, argc);
 	return idx < 0 ? nullptr : &g->methods[idx];
 }
 

@@ -75,7 +75,6 @@ struct MethodRegistration
 {
 	GenericFunction *g = nullptr;
 	SmallVector<Class *, 4> sig;
-	uint64_t ref_mask = 0;
 	Cell *closure = nullptr; // owned (+1)
 };
 
@@ -141,8 +140,7 @@ public:
 
 	// Record a method this run added to a generic. Takes ownership of the closure's
 	// +1 reference (the caller must not release it).
-	void record_method(GenericFunction *g, SmallVector<Class *, 4> sig, uint64_t ref_mask,
-	                   Cell *closure);
+	void record_method(GenericFunction *g, SmallVector<Class *, 4> sig, Cell *closure);
 
 	// Undo every journaled registration: remove the methods and release the
 	// closures. Called by the destructor; exposed for the editor's reload surface.

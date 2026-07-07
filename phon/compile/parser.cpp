@@ -771,18 +771,15 @@ void Parser::parse_call_arguments(AstList &args, AstList &options)
 			error("a positional argument cannot follow a keyword argument");
 
 		int line = m_tok.line, col = m_tok.column;
-		if (accept(Lexeme::Ref))
-		{
-			AutoAst e = parse_expression();
-			args.push_back(make<RefExpression>(line, col, std::move(e)));
-		}
-		else
-		{
-			AutoAst e = parse_expression();
-			if (accept(Lexeme::Ellipsis))
-				e = make<SplatExpression>(line, col, std::move(e)); // `xs...` splat
-			args.push_back(std::move(e));
-		}
+		// Call-site `ref` is gone (design/references.md §1): whether an argument is
+		// passed by reference is determined by the callee's signature, not the call.
+		if (check(Lexeme::Ref))
+			error("'ref' at a call site is no longer used; pass the argument directly "
+			      "(a parameter's 'ref' in the function's signature makes it by-reference)");
+		AutoAst e = parse_expression();
+		if (accept(Lexeme::Ellipsis))
+			e = make<SplatExpression>(line, col, std::move(e)); // `xs...` splat
+		args.push_back(std::move(e));
 	} while (accept(Lexeme::Comma));
 
 	expect(Lexeme::RParen, "')' to close the argument list");

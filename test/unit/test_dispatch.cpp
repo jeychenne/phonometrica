@@ -94,23 +94,21 @@ TEST_CASE("adding a class invalidates the memo (type epoch)")
 	CHECK(untag(call1(g, Value::make_int(1))) == 1);
 }
 
-TEST_CASE("ref-mask participates in applicability")
+TEST_CASE("ref-mask is uniform per generic")
 {
-	GenericFunction *g = get_or_create_generic(intern("byref"));
-	add_method(g, sig({LIST()}), 0b0, tag(1)); // by value
-	add_method(g, sig({LIST()}), 0b1, tag(2)); // ref parameter
+	// Ref-ness is a uniform property of the generic, not a dispatch dimension
+	// (design/references.md §4): all overloads must agree, and a reference argument
+	// dispatches on its referent's type.
+	GenericFunction *g = get_or_create_generic(intern("uniform_ref"));
+	CHECK(add_method(g, sig({LIST()}), 0b1, tag(1)) == AddMethod::Ok); // fixes mask: param 0 is ref
+	CHECK(add_method(g, sig({INT()}), 0b1, tag(2)) == AddMethod::Ok);  // agrees -> ok
+	CHECK(add_method(g, sig({STR()}), 0b0, tag(3)) == AddMethod::RefMaskConflict); // disagrees
 
 	List l;
 	Value lv = l.to_value();
-	CHECK(untag(call1(g, lv)) == 1); // plain arg -> by-value method
-
 	Value ref = Value::make_ref(&lv);
-	CHECK(untag(call1(g, ref)) == 2); // ref arg -> ref method
-
-	// A generic with only a by-value method rejects a ref argument.
-	GenericFunction *g2 = get_or_create_generic(intern("byval_only"));
-	add_method(g2, sig({LIST()}), 0b0, tag(1));
-	CHECK(call1(g2, ref) == nullptr);
+	CHECK(untag(call1(g, ref)) == 1); // ref-to-List dispatches on List
+	CHECK(untag(call1(g, lv)) == 1);  // a plain List selects the same (uniform) method
 }
 
 TEST_CASE("metaclass dispatch: cast(x, Float) pattern")

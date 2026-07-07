@@ -14,7 +14,8 @@
 //   tag 010 INTEGER    48-bit two's-complement (range +/-2^47)
 //   tag 011 SYMBOL     32-bit atom-table index
 //   tag 100 CELL       48-bit pointer to a heap Cell
-//   tag 101 REF        48-bit pointer to a Value slot (second-class ref)
+//   tag 101 REF        48-bit pointer to a Value slot (second-class ref; retired)
+//   tag 110 REFERENCE  48-bit pointer to a reference box Cell (first-class ref)
 //
 // Because the box signature occupies bits 62..50 and the tag adds bits 63/49/48,
 // the type of a boxed value is fully determined by its top 16 bits.
@@ -50,6 +51,10 @@ public:
 	static constexpr uint64_t SIG_SYMBOL = 0x7FFF'0000'0000'0000ull;    // box | bit49|bit48
 	static constexpr uint64_t SIG_CELL = 0xFFFC'0000'0000'0000ull;      // box | bit63
 	static constexpr uint64_t SIG_REF = 0xFFFD'0000'0000'0000ull;       // box | bit63|bit48
+	// First-class reference (design/references.md §5): a Value tagged REFERENCE
+	// points at a heap box Cell (a UpvalueCell) that owns the aliased value. The tag
+	// is a pure in-register bit test, so DEREF is one predicted branch, no memory load.
+	static constexpr uint64_t SIG_REFERENCE = 0xFFFE'0000'0000'0000ull; // box | bit63|bit49
 
 	// Immediate payloads.
 	static constexpr uint64_t IMM_NULL = 0;
@@ -111,6 +116,14 @@ public:
 		return from_bits(SIG_REF | static_cast<uint64_t>(p));
 	}
 
+	// A first-class reference to a heap box Cell (design/references.md §3/§5).
+	static PHON_FORCE_INLINE Value make_reference(Cell *box) noexcept
+	{
+		auto p = reinterpret_cast<uintptr_t>(box);
+		PHON_ASSERT_MSG((p & ~PAYLOAD_MASK) == 0, "box pointer exceeds 48 bits");
+		return from_bits(SIG_REFERENCE | static_cast<uint64_t>(p));
+	}
+
 	// --- raw bits (VM register moves are memcpy-speed) ---
 
 	PHON_FORCE_INLINE uint64_t bits() const noexcept { return m_bits; }
@@ -130,6 +143,7 @@ public:
 	PHON_FORCE_INLINE bool is_symbol() const noexcept { return tag() == SIG_SYMBOL; }
 	PHON_FORCE_INLINE bool is_cell() const noexcept { return tag() == SIG_CELL; }
 	PHON_FORCE_INLINE bool is_ref() const noexcept { return tag() == SIG_REF; }
+	PHON_FORCE_INLINE bool is_reference() const noexcept { return tag() == SIG_REFERENCE; }
 
 	PHON_FORCE_INLINE bool is_null() const noexcept
 	{
@@ -190,6 +204,13 @@ public:
 	{
 		PHON_ASSERT(is_ref());
 		return reinterpret_cast<Value *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
+	}
+
+	// The reference box a first-class reference points at (design/references.md §3).
+	PHON_FORCE_INLINE Cell *as_reference_box() const noexcept
+	{
+		PHON_ASSERT(is_reference());
+		return reinterpret_cast<Cell *>(static_cast<uintptr_t>(m_bits & PAYLOAD_MASK));
 	}
 
 	// Convert a numeric Value to double regardless of int/double representation.

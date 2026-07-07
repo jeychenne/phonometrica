@@ -11,7 +11,7 @@ cast x + 1 as Float
 a.b.c
 f(a, b)
 pitch(snd, floor = 60, ceiling = 300)
-normalize(ref samples)
+normalize(samples)
 print(x, values...)
 a[i]
 a[2:5]

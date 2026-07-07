@@ -1,5 +1,6 @@
-# Second-class references: `ref` parameters (design §7). `ref` is required at both
-# the parameter and the call site, and only names a local variable's storage.
+# First-class references: `ref` parameters (design/references.md). Whether an
+# argument is passed by reference is determined by the callee's signature, not by a
+# call-site marker; the parameter's `ref` makes the caller's variable writable.
 
 # Mutating a scalar local through a ref.
 function inc(ref x)
@@ -7,9 +8,9 @@ function inc(ref x)
 end
 function scalar_demo() as Integer
     var n = 10
-    inc(ref n)
-    inc(ref n)
-    inc(ref n)
+    inc(n)
+    inc(n)
+    inc(n)
     return n
 end
 assert(scalar_demo() == 13, "scalar mutation via ref")
@@ -20,7 +21,7 @@ function halve(ref x)
 end
 function compound_demo() as Float
     var v = 9.0
-    halve(ref v)
+    halve(v)
     return v
 end
 assert(compound_demo() == 4.5, "compound assignment via ref")
@@ -32,7 +33,7 @@ end
 function list_demo()
     var xs = [7, 8, 9]
     var alias = xs
-    zero_first(ref xs)
+    zero_first(xs)
     assert(xs[1] == 0, "list mutated through ref")
     assert(alias[1] == 7, "alias detached (value semantics)")
 end
@@ -48,28 +49,25 @@ end
 function field_demo()
     var c = Counter()
     var same = c
-    tick(ref c)
-    tick(ref c)
+    tick(c)
+    tick(c)
     assert(c.n == 2, "field mutated through ref")
     assert(same.n == 0, "value-class alias detached")
 end
 field_demo()
 
-# A ref is forwarded through nested calls, and ref-ness selects the overload.
+# A ref is forwarded through nested calls. Ref-ness is uniform per generic
+# (design/references.md §4), so it is no longer a dispatch dimension.
 function bump(ref x)
     x = x + 100
 end
 function forward(ref y)
-    bump(ref y)
+    bump(y)
 end
-function kind(ref x) return "ref" end
-function kind(x) return "value" end
 function dispatch_demo()
     var z = 1
-    forward(ref z)
+    forward(z)
     assert(z == 101, "ref forwarded through a call chain")
-    assert(kind(ref z) == "ref", "ref argument selects the ref overload")
-    assert(kind(z) == "value", "value argument selects the value overload")
 end
 dispatch_demo()
 

@@ -67,8 +67,7 @@ Module
   ExprStmt
     Call
       Var normalize
-      Ref
-        Var samples
+      Var samples
   ExprStmt
     Call
       Var print

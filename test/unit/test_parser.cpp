@@ -142,8 +142,18 @@ TEST_CASE("parser: calls — positional, named, ref, splat")
 	REQUIRE(call->options.size() == 1);
 	CHECK(sym_is(call->options[0]->as<NamedArgument>()->name, "ceiling"));
 
-	auto m2 = parse("normalize(ref samples)");
-	CHECK(expr_of(m2)->as<CallExpression>()->args[0]->is<RefExpression>());
+	// Call-site `ref` is no longer accepted (design/references.md §1): ref-ness is a
+	// property of the callee's signature, determined without a call-site marker.
+	bool ref_threw = false;
+	try
+	{
+		parse("normalize(ref samples)");
+	}
+	catch (const SyntaxError &)
+	{
+		ref_threw = true;
+	}
+	CHECK(ref_threw);
 	auto m3 = parse("print(\"x\", values...)");
 	CHECK(expr_of(m3)->as<CallExpression>()->args[1]->is<SplatExpression>());
 

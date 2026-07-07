@@ -724,17 +724,31 @@ Value run(Isolate &iso)
 			SmallVector<Class *, 4> sig;
 			for (intptr_t i = 0; i < md.sig.size(); ++i)
 				sig.push_back(resolve_type_ref(md.sig[i], iso));
+			// `ref` is meaningful only for value types; a `ref` on a reference-class
+			// parameter would be a silent no-op, so it is rejected (§4).
+			for (intptr_t i = 0; i < sig.size(); ++i)
+				if ((md.ref_mask & (uint64_t(1) << i)) && sig[i]->is_ref())
+				{
+					release_value(base[a]);
+					base[a] = Value::make_null();
+					iso.raise(String("[Type error] 'ref' is not allowed on the reference-class "
+					                 "parameter of '") +
+					              String(symbol_name(md.name)).view() + "'",
+					          cur_line());
+				}
 			Cell *clo = base[a].as_cell(); // the closure holds this register's +1
-			if (add_method(g, sig, md.ref_mask, clo) == AddMethod::Ambiguous)
+			AddMethod res = add_method(g, sig, md.ref_mask, clo);
+			if (res != AddMethod::Ok)
 			{
 				release_value(base[a]);
 				base[a] = Value::make_null();
-				iso.raise(String("[Type error] ambiguous definition of '") +
-				              String(symbol_name(md.name)).view() + "'",
-				          cur_line());
+				const char *why = res == AddMethod::RefMaskConflict
+				    ? "[Type error] overloads must agree on 'ref' parameters: '"
+				    : "[Type error] ambiguous definition of '";
+				iso.raise(String(why) + String(symbol_name(md.name)).view() + "'", cur_line());
 			}
-			iso.record_method(g, std::move(sig), md.ref_mask, clo); // takes the +1
-			base[a] = Value::make_null();                           // ownership moved
+			iso.record_method(g, std::move(sig), clo); // takes the +1
+			base[a] = Value::make_null();              // ownership moved
 			break;
 		}
 

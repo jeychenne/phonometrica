@@ -313,7 +313,9 @@ private:
 	void compile_logical(BinaryExpression *b, int dest); // and/or
 	void compile_concat_parts(AstList &parts, int dest, uint32_t line);
 	void compile_call(CallExpression *c, int dest);
-	void emit_ref_arg(RefExpression *re, int r); // `ref lvalue` at a call site (§7)
+	// Promote an lvalue argument to a reference at a `ref` parameter position,
+	// driven by the callee's uniform ref-mask (design/references.md §6).
+	void emit_promote_arg(Ast *arg, int r);
 	void compile_conditional(ConditionalExpression *c, int dest);
 	int compile_function(FunctionDefinition *f);
 
@@ -395,6 +397,41 @@ private:
 	// (non-`local`). Populated in pass 1 so a call to a function defined later —
 	// or one that only exists once DEFMETHOD runs — resolves to a generic call.
 	FlatHashSet<uint32_t> m_module_generics;
+
+	// Uniform `ref` mask of each generic named in this module (bit i => argument
+	// position i is `ref`). Populated in pass 1 so a call can promote the right
+	// argument slots (design/references.md §6) without a runtime mask lookup. For a
+	// generic not defined in this module (a builtin, or an earlier REPL chunk) the
+	// mask comes from the registered GenericFunction instead (see generic_ref_mask).
+	FlatHashMap<uint32_t, uint64_t> m_generic_ref_mask;
+
+	// The compile-time `ref` mask of a call target named `name`: this module's
+	// definition if it has one, else the registered generic's uniform mask, else 0.
+	uint64_t generic_ref_mask(Symbol name) const
+	{
+		auto it = m_generic_ref_mask.find(name.id);
+		if (it != m_generic_ref_mask.end())
+			return it->second;
+		if (GenericFunction *g = find_generic(name))
+			return g->ref_mask;
+		return 0;
+	}
+
+	// The uniform `ref` mask of a function/method definition, computed from its
+	// parameters' `by_ref` flags. `have_self` shifts the explicit params past the
+	// implicit `this` at position 0 (which is never `ref`).
+	static uint64_t compute_ref_mask(FunctionDefinition *f, bool have_self)
+	{
+		uint64_t mask = 0;
+		int pos = have_self ? 1 : 0;
+		for (auto &p : f->params)
+		{
+			if (p->as<Parameter>()->by_ref)
+				mask |= (uint64_t(1) << pos);
+			++pos;
+		}
+		return mask;
+	}
 
 	// Names of top-level classes declared in this module → their AST (for
 	// construction lowering and `this`/base type resolution). Classes are module
@@ -736,22 +773,27 @@ void Lowerer::compile_conditional(ConditionalExpression *c, int dest)
 		patch_jump(j);
 }
 
-void Lowerer::emit_ref_arg(RefExpression *re, int r)
+void Lowerer::emit_promote_arg(Ast *arg, int r)
 {
-	// Pass a reference to a caller variable's storage (design §7). A `ref` local is
-	// forwarded as-is; a plain local is captured with MAKEREF.
-	auto *v = re->expr->as<Variable>();
+	// The callee's signature marks this position `ref`, so the argument must be an
+	// lvalue whose storage the callee can write through (design/references.md §6). A
+	// non-lvalue (literal or computed expression) is a compile error — the mutation
+	// would have nowhere to go. In this stage the reference is still the second-class
+	// register pointer (MAKEREF); Stage 4 replaces it with a boxed reference, and
+	// container-element / field sources arrive with the CoW×ref stage.
+	auto *v = arg->as<Variable>();
 	if (!v)
-		error(re, "[Compile error] 'ref' requires a variable");
+		error(arg, "[Compile error] a 'ref' parameter requires a local variable argument "
+		           "(references to a literal, an element, or a field are not yet allowed)");
 	NameRef nr = resolve(v->name);
 	if (nr.kind == NameKind::Local)
-		emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(re));
+		emit_ABC(nr.is_ref ? Opcode::MOVE : Opcode::MAKEREF, r, nr.index, 0, ln(arg));
 	else if (nr.kind == NameKind::None)
-		error(re, "[Name error] 'ref' of undeclared variable '" +
-		              std::string(symbol_name(v->name)) + "'");
+		error(arg, "[Name error] reference to undeclared variable '" +
+		               std::string(symbol_name(v->name)) + "'");
 	else
-		error(re, "[Compile error] 'ref' is currently supported only for local variables "
-		          "(module/upvalue refs are a follow-up)");
+		error(arg, "[Compile error] a 'ref' parameter currently requires a local variable "
+		           "(module/upvalue references are a follow-up)");
 }
 
 void Lowerer::compile_call(CallExpression *c, int dest)
@@ -782,6 +824,10 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 	int save = fs->free_reg;
 	int base = reg_alloc(c);
 	bool generic = false;
+	// The callee's uniform ref-mask drives which argument slots are promoted to
+	// references (design/references.md §6). Known at compile time for a named
+	// generic; 0 otherwise (an indirect call promotes at runtime — Stage 5).
+	uint64_t ref_mask = 0;
 
 	if (auto *v = c->callee->as<Variable>())
 	{
@@ -799,6 +845,7 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 			break;
 		case NameKind::Generic:
 			generic = true;
+			ref_mask = generic_ref_mask(v->name);
 			emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(v->name)), ln(c));
 			break;
 		case NameKind::ClassObject:
@@ -814,13 +861,14 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 	}
 
 	int nargs = static_cast<int>(c->args.size());
-	for (auto &a : c->args)
+	for (int i = 0; i < nargs; ++i)
 	{
-		int r = reg_alloc(a.get());
-		if (auto *re = a->as<RefExpression>())
-			emit_ref_arg(re, r);
+		Ast *a = c->args[i].get();
+		int r = reg_alloc(a);
+		if ((ref_mask >> i) & 1u)
+			emit_promote_arg(a, r);
 		else
-			expr_to(a.get(), r);
+			expr_to(a, r);
 	}
 
 	if (generic)
@@ -1865,7 +1913,10 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			if (f->modifier == DeclModifier::Local)
 				module_define(f->name);
 			else
+			{
 				m_module_generics.insert(f->name.id);
+				m_generic_ref_mask.insert(f->name.id, compute_ref_mask(f, false));
+			}
 		}
 		else if (auto *cl = s->as<ClassDeclaration>())
 		{
@@ -1874,7 +1925,11 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			// A `method` is a generic method (design §6), so its name must resolve to
 			// a generic call even though it only registers at load.
 			for (auto &m : cl->methods)
-				m_module_generics.insert(m->as<FunctionDefinition>()->name.id);
+			{
+				auto *mf = m->as<FunctionDefinition>();
+				m_module_generics.insert(mf->name.id);
+				m_generic_ref_mask.insert(mf->name.id, compute_ref_mask(mf, true));
+			}
 		}
 	}
 
