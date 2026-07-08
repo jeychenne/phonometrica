@@ -230,6 +230,27 @@ bool Array::unique() const noexcept
 	return m_impl.unique() && m_impl->buf->header.is_unique();
 }
 
+void Array::make_frozen()
+{
+	ArrayCell *v = m_impl.get();
+	if (v->buf->header.is_frozen())
+		return; // idempotent
+	// The shared blob must be a private, contiguous double[] this view owns outright. If
+	// the buffer is aliased or this view is strided/offset, compact into a fresh buffer
+	// first (this leaves element values unchanged, so mutating the view cell in place is
+	// benign even when the view is aliased — every alias keeps identical elements).
+	if (!(v->flags & ARRAY_CONTIGUOUS) || v->buf->header.is_shared())
+	{
+		intptr_t n = size();
+		ArrayBuffer *nb = buffer_alloc(n);
+		gather_column_major(nb->data, v);
+		release(reinterpret_cast<Cell *>(v->buf)); // drop the old (shared/strided) buffer
+		v->buf = nb;                               // adopt nb's rc-1
+		set_contiguous_strides(v);
+	}
+	mark_frozen_shared(&v->buf->header);
+}
+
 intptr_t Array::elem_offset(const intptr_t *idx) const noexcept
 {
 	intptr_t off = m_impl->offset;
@@ -243,7 +264,10 @@ double *Array::detach()
 	ArrayCell *v = m_impl.get();
 	bool view_unique = m_impl.unique();
 	bool buf_unique = v->buf->header.is_unique();
-	if (view_unique && buf_unique && (v->flags & ARRAY_CONTIGUOUS))
+	// A frozen buffer is immutable and possibly shared across threads (§8.3): never write
+	// in place, even if this view is its only local holder — always copy to a fresh one.
+	bool buf_frozen = v->buf->header.is_frozen();
+	if (view_unique && buf_unique && !buf_frozen && (v->flags & ARRAY_CONTIGUOUS))
 		return v->buf->data + v->offset; // uniquely ours and contiguous: mutate in place
 
 	// Build a fresh contiguous buffer holding this view's elements (copy BEFORE

@@ -1010,3 +1010,51 @@ boolean masks + logical indexing; **multi-dimensional slice assignment** (`m[:,j
 `Array` as a structural Table/Set key (identity hashing for now, parity with List — it has
 an `equals` hook but no `hash` hook); floored `div`/`mod` and unary `-` on arrays;
 compound assignment to a multi-dimensional index; freeze/transfer (M7).
+
+## M7 — Concurrency (architecture §8.3, §9.4, §13)
+
+Landed incrementally; each stage is green under the normal, ASan, and TSan builds
+(the M7 acceptance bar). A `PHON_TSAN` CMake option builds with ThreadSanitizer.
+
+### Stage 1 — thread-local plumbing + cooperative interruption
+
+1. **`current_isolate` / `current_collector` are now `thread_local`** (was a
+   process-global stand-in in M4/M5, DEVIATIONS "M4/M5 single-threaded"). Each script
+   thread installs its own on entry.
+2. **Safepoint interrupt.** `Isolate` gains an atomic poll word and
+   `request_interrupt()` / `clear_interrupt()`; `Isolate::safepoint(line)` honours a
+   pending interrupt (raising `[Interrupt]`) then services the collector. Wired at both
+   the `JMP` **and** `FORLOOP` back-edges — architecture §9.4 says "loop back-edges", and
+   the counted loop has its own back-edge opcode, so it needs the check too. Exposed to
+   embedders as `Runtime::request_interrupt()`.
+3. **`bootstrap()` / `init_runtime()` are `std::call_once`** (were non-atomic bool
+   guards). Multiple Runtimes, even on different threads, share one process-global
+   registry initialised exactly once. (The atom table's own single-mutex interning from
+   M1 note #5 is already thread-safe; 16-way sharding stays deferred as a perf item.)
+
+### Stage 2 — atomic shared-buffer refcounts + `freeze()`
+
+Supersedes M1 note #3 ("SHARED_BUFFER atomic regime is stubbed").
+
+4. **Atomic refcounting keyed off `FLAG_SHARED_BUFFER`.** `retain`/`release` branch on
+   the flag: a shared-buffer (frozen) cell increments/decrements with a CAS loop
+   (`acq_rel` on the decrement so the final release synchronizes-with peers before
+   disposal); confined cells keep the lock-free fast path. **Deviation from the "reads
+   stay non-atomic" implication of §3:** every rc/flag read accessor
+   (`refcount`/`is_frozen`/`is_shared_buffer`/`is_buffered`/`gc_color`) now goes through
+   a *relaxed* `std::atomic_ref` load — a plain `mov` on a confined cell, but required so
+   a CoW uniqueness check or transfer test on a *shared* cell never races a concurrent
+   atomic RMW (TSan-clean). The collector's write-side setters stay non-atomic: they run
+   only on confined candidate cells (shared buffers are GREEN/acyclic and never
+   buffered).
+5. **`freeze(x)` builtin** (String/Array; a no-op returning `x` for values that transfer
+   by copy anyway). Strings **eagerly materialize every lazy cache** (grapheme length,
+   hash, breadcrumb index) at freeze time, so a frozen string shared across threads is
+   strictly read-only — otherwise lazy construction on first random access would race
+   (§5.1). Arrays give the view a private, contiguous buffer, then freeze *the buffer*
+   (the view stays confined and CoW). Both `String`/`Array` mutation gates treat a frozen
+   cell as always-copy, so a frozen buffer is never written in place even by a sole local
+   owner.
+
+Zero-copy sharing across threads (transfer walk, channels, spawn) and the thread pool
+land in Stages 3–6.

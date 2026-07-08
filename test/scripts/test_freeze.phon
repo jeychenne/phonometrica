@@ -1,0 +1,29 @@
+# freeze() (design/architecture §8.3): mark a String or Array immutable so it can be
+# shared zero-copy across script threads. freeze() returns its argument; the value stays
+# fully usable, and any later mutation copies-on-write off the frozen original.
+
+# --- a frozen string is still a normal string ------------------------------------
+var s = "héllo wörld"                       # multi-byte: exercises grapheme caches
+var t = freeze(s)
+assert(t == "héllo wörld", "frozen string keeps its value")
+assert(len(t) == 11, "frozen string length (graphemes)")
+assert(freeze(t) == "héllo wörld", "freeze is idempotent")
+
+# --- freezing an array; CoW still holds after freezing ---------------------------
+var a = @[1, 2, 3, 4]
+freeze(a)
+assert(a[1] == 1 and a[4] == 4, "frozen array keeps its elements")
+
+# A copy shares the frozen buffer; mutating the copy copies-on-write and leaves the
+# frozen original untouched.
+var b = a
+b[1] = 99
+assert(a[1] == 1, "frozen original untouched after copy mutates")
+assert(b[1] == 99, "copy mutated off the frozen buffer")
+
+# Mutating the frozen array itself also copies-on-write (in place, transparently).
+a[2] = 42
+assert(a[2] == 42, "mutation of a frozen array copies on write")
+
+# --- freeze is a harmless no-op on values that transfer by copy anyway ------------
+assert(freeze(7) == 7, "freeze on an Integer is a no-op")

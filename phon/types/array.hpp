@@ -104,6 +104,11 @@ public:
 	// (buf->data + offset, with offset now 0). Rewrites the owning Handle slot.
 	double *detach();
 
+	// Freeze this array: give the view a private, contiguous buffer and mark that buffer
+	// frozen + shared, so it becomes an immutable double[] shareable zero-copy across
+	// threads (freeze() builtin, §8.3). Idempotent. Subsequent mutations copy-on-write.
+	void make_frozen();
+
 	// --- engine interop ---
 
 	Value to_value() const noexcept { return Value::make_cell(m_impl.cell()); }

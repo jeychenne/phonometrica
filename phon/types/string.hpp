@@ -121,6 +121,11 @@ public:
 	bool shared() const noexcept { return !m_impl.unique(); }
 	void unshare();       // force a unique copy
 	void shrink_to_fit(); // trim capacity to byte_size + 1
+
+	// Freeze this string: materialize its lazy caches and mark the cell frozen +
+	// shared-buffer, so it becomes immutable and can be shared zero-copy across threads
+	// (freeze() builtin, §8.3). Idempotent. Subsequent mutations copy-on-write.
+	void make_frozen();
 	void swap(String &o) noexcept { m_impl.swap(o.m_impl); }
 
 	bool is_ascii() const;

@@ -131,6 +131,27 @@ Value error_init(Isolate &, Value *args, int argc)
 	return args[0];
 }
 
+Value builtin_freeze(Isolate &iso, Value *args, int argc)
+{
+	(void) iso;
+	(void) argc;
+	// freeze(x): make x an immutable, cross-thread-shareable value (§8.3). Strings and
+	// Array buffers flip to the frozen/shared regime (zero-copy on send); other values
+	// are copied on send anyway, so freezing them is a harmless no-op. Returns x.
+	Value v = args[0];
+	if (v.is_cell())
+	{
+		switch (class_of(v))
+		{
+		case CID_STRING: String::from_value(v).make_frozen(); break;
+		case CID_ARRAY: Array::from_value(v).make_frozen(); break;
+		default: break;
+		}
+		retain(v.as_cell()); // native returns a value carrying +1
+	}
+	return v;
+}
+
 Value builtin_collect_garbage(Isolate &iso, Value *args, int argc)
 {
 	(void) args;
@@ -191,6 +212,7 @@ void register_builtins()
 	register_native("cast", builtin_cast, 2, 2);
 	register_native("to_string", builtin_to_string, 1, 1);
 	register_native("collect_garbage", builtin_collect_garbage, 0, 0);
+	register_native("freeze", builtin_freeze, 1, 1);
 
 	// Error construction: init(this as Error, message). Registered with a typed
 	// signature so subclasses inherit it (constructor inheritance).

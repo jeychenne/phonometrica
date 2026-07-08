@@ -209,7 +209,10 @@ String String::from_value(Value v) noexcept
 StringCell *String::detach_for_write(intptr_t need_bytes)
 {
 	StringCell *s = m_impl.get();
-	bool shared = !m_impl.unique();
+	// A frozen string is immutable and may be shared across threads (§8.3), so any
+	// mutation must clone into a fresh unfrozen cell rather than realloc/write in place —
+	// treat it exactly like the aliased case.
+	bool shared = !m_impl.unique() || s->header.is_frozen();
 	bool too_small = s->capacity < need_bytes;
 
 	if (!shared && !too_small)
@@ -246,6 +249,21 @@ void String::unshare()
 {
 	if (!m_impl.unique())
 		detach_for_write(m_impl->byte_size + 1);
+}
+
+void String::make_frozen()
+{
+	StringCell *s = m_impl.get();
+	if (s->header.is_frozen())
+		return; // idempotent
+	// Eagerly build every lazy cache (grapheme count, hash, breadcrumb index) so a frozen
+	// string shared across threads is strictly read-only afterwards: no reader ever writes
+	// these fields, which would otherwise be a data race on random access (§5.1/§8.3).
+	ensure_grapheme_length(s);
+	string_hash_hook(&s->header);
+	if (!s->crumbs && s->grapheme_length > 0)
+		build_crumbs(s);
+	mark_frozen_shared(&s->header);
 }
 
 void String::shrink_to_fit()

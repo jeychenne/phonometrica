@@ -6,13 +6,16 @@
 
 #include "test_framework.hpp"
 
+#include <phon/core/cell.hpp>
 #include <phon/runtime/runtime.hpp>
+#include <phon/types/array.hpp>
 #include <phon/types/string.hpp>
 #include <phon/vm/isolate.hpp>
 
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include <vector>
 
 using namespace phonometrica;
 
@@ -111,6 +114,105 @@ TEST_CASE("concurrency: a consumed interrupt does not leak into the next run")
 	CHECK(sum == 1000);
 	// And the session is still usable afterwards.
 	CHECK(rt.do_string("40 + 2").as_int() == 42);
+}
+
+// --- Stage 2: freeze() + atomic shared-buffer refcounts ------------------------
+
+// Freezing a String flips it into the frozen / shared-buffer regime, eagerly building
+// its lazy caches, and leaves it fully readable.
+TEST_CASE("concurrency: freeze() makes a String immutable + shared, still readable")
+{
+	String s("héllo wörld"); // multi-byte: exercises grapheme + breadcrumb caches
+	CHECK(!s.cell()->header.is_frozen());
+	CHECK(!s.cell()->header.is_shared_buffer());
+
+	s.make_frozen();
+	CHECK(s.cell()->header.is_frozen());
+	CHECK(s.cell()->header.is_shared_buffer());
+
+	s.make_frozen(); // idempotent
+	CHECK(s.cell()->header.is_shared_buffer());
+
+	CHECK(s == "héllo wörld");
+	CHECK(s.grapheme_count() == 11);
+}
+
+// Freezing an Array freezes its buffer; a value copy shares that buffer zero-copy, and
+// any mutation copies-on-write off the frozen original.
+TEST_CASE("concurrency: freeze() on an Array shares the buffer, mutation copies")
+{
+	Array a = Array::make_1d(4);
+	double *d = a.detach();
+	for (int i = 0; i < 4; ++i)
+		d[i] = i + 1;
+
+	a.make_frozen();
+	auto *ac = reinterpret_cast<ArrayCell *>(a.to_value().as_cell());
+	CHECK(ac->buf->header.is_frozen());
+	CHECK(ac->buf->header.is_shared_buffer());
+
+	const double *base = a.data();
+
+	// A value copy shares the frozen buffer — zero copy, pointer identity.
+	Array b = a;
+	CHECK(b.data() == base);
+
+	// Mutating b copies-on-write off the frozen buffer; a stays put and stays frozen.
+	b.detach()[0] = 99.0;
+	CHECK(b.data() != base);
+	intptr_t i0 = 0;
+	CHECK(a.get(&i0) == 1.0);
+	CHECK(b.get(&i0) == 99.0);
+	CHECK(ac->buf->header.is_frozen());
+}
+
+// The atomic path: many threads hammer retain/release on one shared frozen cell. The
+// count returns to its start and the payload is intact. TSan is the real assertion here.
+TEST_CASE("concurrency: concurrent retain/release on a frozen cell is race-free")
+{
+	String s("shared frozen payload");
+	s.make_frozen();
+	Cell *c = &s.cell()->header;
+	CHECK(c->refcount() == 1);
+
+	constexpr int kThreads = 8;
+	constexpr int kIters = 200000;
+	std::vector<std::thread> ts;
+	for (int t = 0; t < kThreads; ++t)
+		ts.emplace_back([c] {
+			for (int k = 0; k < kIters; ++k)
+			{
+				retain(c);
+				release(c);
+			}
+		});
+	for (auto &th : ts)
+		th.join();
+
+	CHECK(c->refcount() == 1); // s still holds the sole reference
+	CHECK(s == "shared frozen payload");
+}
+
+// The last release of a cross-thread-shared frozen cell must dispose it exactly once —
+// under ASan a double free or leak fails the run, under TSan a race does.
+TEST_CASE("concurrency: last release of a shared frozen cell disposes once")
+{
+	String tmp("disposable frozen payload");
+	tmp.make_frozen();
+	Cell *c = &tmp.cell()->header; // rc == 1 (tmp)
+
+	constexpr int kThreads = 8;
+	for (int i = 0; i < kThreads; ++i)
+		retain(c); // rc == 1 + kThreads
+
+	std::vector<std::thread> ts;
+	for (int i = 0; i < kThreads; ++i)
+		ts.emplace_back([c] { release(c); }); // kThreads releases -> rc == 1
+	for (auto &th : ts)
+		th.join();
+
+	CHECK(c->refcount() == 1);
+	// tmp owns the final reference; its destructor disposes exactly once on scope exit.
 }
 
 } // namespace

@@ -29,6 +29,8 @@
 
 #include <phon/base/definitions.hpp>
 
+#include <atomic>
+
 namespace phonometrica {
 
 struct Cell
@@ -69,19 +71,31 @@ struct Cell
 	{
 		return (hdr >> SIZE_CLASS_SHIFT) & SIZE_CLASS_MASK;
 	}
-	PHON_FORCE_INLINE uint32_t refcount() const noexcept { return rc_bits & RC_MASK; }
+	// Relaxed atomic load of the rc/flag word. A SHARED_BUFFER cell (a frozen buffer
+	// shared across threads, §8.3) has its rc_bits mutated atomically by retain/release
+	// on other threads; reading it non-atomically would be a data race even though the
+	// flag/color bits themselves are immutable once shared. On a confined cell this is a
+	// plain load. All read accessors funnel through it so any of them is safe on a shared
+	// cell. The write-side setters below stay non-atomic: they run only on confined
+	// candidate cells (the collector) or single-threaded at freeze time.
+	PHON_FORCE_INLINE uint32_t rc_bits_load() const noexcept
+	{
+		return std::atomic_ref<uint32_t>(const_cast<uint32_t &>(rc_bits)).load(std::memory_order_relaxed);
+	}
 
-	PHON_FORCE_INLINE bool is_frozen() const noexcept { return rc_bits & FLAG_FROZEN; }
-	PHON_FORCE_INLINE bool is_buffered() const noexcept { return rc_bits & FLAG_BUFFERED; }
+	PHON_FORCE_INLINE uint32_t refcount() const noexcept { return rc_bits_load() & RC_MASK; }
+
+	PHON_FORCE_INLINE bool is_frozen() const noexcept { return rc_bits_load() & FLAG_FROZEN; }
+	PHON_FORCE_INLINE bool is_buffered() const noexcept { return rc_bits_load() & FLAG_BUFFERED; }
 	PHON_FORCE_INLINE bool is_shared_buffer() const noexcept
 	{
-		return rc_bits & FLAG_SHARED_BUFFER;
+		return rc_bits_load() & FLAG_SHARED_BUFFER;
 	}
 
 	// GC color access (used by the cycle collector; §8.2).
 	PHON_FORCE_INLINE uint32_t gc_color() const noexcept
 	{
-		return (rc_bits >> COLOR_SHIFT) & COLOR_MASK;
+		return (rc_bits_load() >> COLOR_SHIFT) & COLOR_MASK;
 	}
 	PHON_FORCE_INLINE void set_gc_color(uint32_t color) noexcept
 	{
@@ -152,27 +166,64 @@ void cc_cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept;
 // --- refcount operations ---
 
 // Add a reference. Saturates at RC_MAX (the object then leaks rather than
-// misbehaving on overflow, §3.2).
+// misbehaving on overflow, §3.2). A SHARED_BUFFER cell increments atomically because
+// it may be retained from several threads at once (§8.3); everything else takes the
+// thread-confined fast path — a relaxed load/store pair, no lock prefix. Both funnel
+// through one atomic_ref so a shared cell is never touched non-atomically.
 PHON_FORCE_INLINE void retain(Cell *c) noexcept
 {
-	uint32_t rc = c->rc_bits & Cell::RC_MASK;
-	if (PHON_LIKELY(rc != Cell::RC_MAX))
-		++c->rc_bits; // rc < RC_MAX guarantees no carry into the flag bits
+	std::atomic_ref<uint32_t> rc(c->rc_bits);
+	uint32_t cur = rc.load(std::memory_order_relaxed);
+	if (PHON_UNLIKELY(cur & Cell::FLAG_SHARED_BUFFER))
+	{
+		for (;;)
+		{
+			if ((cur & Cell::RC_MASK) == Cell::RC_MAX)
+				return; // saturated: intentionally leaked
+			if (rc.compare_exchange_weak(cur, cur + 1, std::memory_order_relaxed))
+				return;
+		}
+	}
+	if (PHON_LIKELY((cur & Cell::RC_MASK) != Cell::RC_MAX))
+		rc.store(cur + 1, std::memory_order_relaxed); // no carry into the flag bits
 }
 
 // Drop a reference; dispose the cell when the last one goes away.
 PHON_FORCE_INLINE void release(Cell *c) noexcept
 {
-	uint32_t rc = c->rc_bits & Cell::RC_MASK;
-	PHON_ASSERT_MSG(rc != 0, "release on a cell with refcount 0");
-	if (rc == Cell::RC_MAX)
+	std::atomic_ref<uint32_t> rc(c->rc_bits);
+	uint32_t cur = rc.load(std::memory_order_relaxed);
+	PHON_ASSERT_MSG((cur & Cell::RC_MASK) != 0, "release on a cell with refcount 0");
+	if (PHON_UNLIKELY(cur & Cell::FLAG_SHARED_BUFFER))
+	{
+		// Cross-thread shared (frozen, hence acyclic) cell: atomic saturating decrement.
+		// acq_rel so the final release synchronizes-with all prior ones and disposal
+		// happens-after every other thread's last use. No candidate bookkeeping — a
+		// shared buffer is GREEN and never buffered.
+		for (;;)
+		{
+			uint32_t n = cur & Cell::RC_MASK;
+			if (n == Cell::RC_MAX)
+				return; // saturated: intentionally leaked
+			if (rc.compare_exchange_weak(cur, cur - 1, std::memory_order_acq_rel,
+			                             std::memory_order_relaxed))
+			{
+				if (n == 1)
+					cell_dispose(c);
+				return;
+			}
+		}
+	}
+	// Thread-confined fast path.
+	uint32_t n = cur & Cell::RC_MASK;
+	if (n == Cell::RC_MAX)
 		return; // saturated: intentionally leaked
-	if (rc == 1)
+	if (n == 1)
 	{
 		// Last reference gone. A buffered cell (a live cycle-collection candidate)
 		// cannot be freed here — its slot in the candidate buffer would dangle — so
 		// its destruction is deferred to the collector (§8.2).
-		if (PHON_UNLIKELY(c->is_buffered()))
+		if (PHON_UNLIKELY(cur & Cell::FLAG_BUFFERED))
 		{
 			cc_collect_deferred(c);
 			return;
@@ -180,12 +231,23 @@ PHON_FORCE_INLINE void release(Cell *c) noexcept
 		cell_dispose(c);
 		return;
 	}
-	--c->rc_bits; // rc > 1 guarantees no borrow into the color/flag bits
+	rc.store(cur - 1, std::memory_order_relaxed); // no borrow into the color/flag bits
 	// PossibleRoot: a decremented but still-live, potentially-cyclic cell may be the
 	// root of a garbage cycle. Acyclic (GREEN) cells and already-buffered candidates
 	// skip this (architecture §8.2).
-	if (PHON_UNLIKELY(c->gc_color() != Cell::COLOR_GREEN && !c->is_buffered()))
+	uint32_t color = (cur >> Cell::COLOR_SHIFT) & Cell::COLOR_MASK;
+	if (PHON_UNLIKELY(color != Cell::COLOR_GREEN && !(cur & Cell::FLAG_BUFFERED)))
 		cc_possible_root(c);
+}
+
+// Flip a cell into the frozen / shared-buffer regime (freeze(), §8.3): its bytes are
+// now immutable and its refcount switches to the atomic path above. Done single-thread
+// on an owned cell before it is ever shared, so the atomic OR only needs relaxed order.
+// Idempotent.
+PHON_FORCE_INLINE void mark_frozen_shared(Cell *c) noexcept
+{
+	std::atomic_ref<uint32_t> rc(c->rc_bits);
+	rc.fetch_or(Cell::FLAG_FROZEN | Cell::FLAG_SHARED_BUFFER, std::memory_order_relaxed);
 }
 
 } // namespace phonometrica
