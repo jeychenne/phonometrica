@@ -409,6 +409,9 @@ private:
 	Vector<LoopCtx> m_loops;
 	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
 	CompileEnv *m_env;     // import loader + slot allocator (null: imports forbidden)
+	// Import alias -> the module it names, so `M.x` resolves to a GET_MODULE of x's
+	// session-global slot in M's namespace (design §11).
+	FlatHashMap<uint32_t, LoadedModule *> m_import_aliases;
 
 	// Names declared as generic methods by this module's top-level `function`s
 	// (non-`local`). Populated in pass 1 so a call to a function defined later —
@@ -784,6 +787,22 @@ void Lowerer::expr_to(Ast *node, int dest)
 	case NodeKind::FieldAccess:
 	{
 		auto *fa = node->as<FieldAccess>();
+		// `M.x` where M is an imported module: resolve x to its session-global slot in
+		// M's namespace and load it directly (design §11) — not a field access at all.
+		if (auto *mv = fa->object->as<Variable>())
+		{
+			if (auto it = m_import_aliases.find(mv->name.id); it != m_import_aliases.end())
+			{
+				LoadedModule *m = it->second;
+				if (!m->ns.exported.contains(fa->name.id))
+					error(fa, "[Name error] module '" + std::string(symbol_name(mv->name)) +
+					              "' has no public member '" + std::string(symbol_name(fa->name)) +
+					              "'");
+				int slot = m->ns.name_to_slot.find(fa->name.id)->second;
+				emit_ABx(Opcode::GETMODULE, dest, static_cast<uint32_t>(slot), ln(fa));
+				break;
+			}
+		}
 		int save = fs->free_reg;
 		int o = expr_any(fa->object.get());
 		int s = reg_alloc(fa);
@@ -2273,6 +2292,8 @@ void Lowerer::compile_import(ImportStatement *s)
 	m_env->imports.push_back(m);
 	for (intptr_t i = 0; i < m->functions.size(); ++i)
 		m_module_generics.insert(m->functions[i]);
+	// Bind the module name so `M.x` reaches M's public vars/consts/classes.
+	m_import_aliases.insert(s->module.id, m);
 }
 
 void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
@@ -2342,7 +2363,11 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 	for (auto &s : list->statements)
 	{
 		if (auto *d = s->as<Declaration>())
+		{
 			module_define(d->name);
+			if (d->modifier == DeclModifier::None) // public var/const: visible as M.name
+				m_ns.exported.insert(d->name.id);
+		}
 		else if (auto *f = s->as<FunctionDefinition>(); f && !f->is_anonymous())
 		{
 			if (f->modifier == DeclModifier::Local)
@@ -2358,6 +2383,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 		else if (auto *cl = s->as<ClassDeclaration>())
 		{
 			module_define(cl->name); // the class object lives in a module binding
+			if (cl->modifier == DeclModifier::None) // public class: visible as M.Name
+				m_ns.exported.insert(cl->name.id);
 			m_module_classes.insert(cl->name.id, cl);
 			// A `method` is a generic method (design §6), so its name must resolve to
 			// a generic call even though it only registers at load.

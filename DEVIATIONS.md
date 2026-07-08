@@ -1192,3 +1192,17 @@ reached qualified (`M.x`) or brought bare via `for`.
    enforcement land in later stages. A cyclic import is caught (in-progress cache marker)
    and reported; an unresolved module raises `[Import error] module 'M' not found` at the
    import node.
+
+### Stage 2 — qualified access `M.x` (vars/consts/classes) + exported set
+
+5. **`M.x` is compile-time slot resolution, not field access.** A module namespace now
+   carries an `exported` set (non-`local` top-level var/const/class names). `import M`
+   binds the module name as an alias; a `FieldAccess` whose object is an import alias is
+   intercepted in lowering and emitted as a plain `GET_MODULE` of x's session-global slot
+   (checked against `exported`) — so `M.x` costs exactly one array load, and a `local`
+   member or a non-member is a compile error (`[Name error] … has no public member …`).
+   The bare module name `M` on its own is not a value (only `M.x` is meaningful).
+6. **Class *values* via `M.C`, construction deferred.** `M.C` loads the class object (it
+   lives in a module slot). Constructing through a qualified name (`M.C(...)`) or `x is
+   M.C` is not yet wired — the call-lowering treats only a bare `Variable` class name as
+   construction. Deferred to a later stage.

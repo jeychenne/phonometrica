@@ -76,6 +76,46 @@ TEST_CASE("modules: importing an unknown module is a compile error")
 	CHECK(threw);
 }
 
+TEST_CASE("modules: qualified access M.x reads a module's public var/const")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	CHECK(rt.do_string("import config\nconfig.MAX_ITEMS").value().as_int() == 100);
+	CHECK(String::from_value(rt.do_string("import config\nconfig.version").value()) == "1.0");
+}
+
+TEST_CASE("modules: qualified access to a `local` member is a compile error")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	bool threw = false;
+	try
+	{
+		rt.do_string("import config\nconfig.secret_key");
+	}
+	catch (const SyntaxError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("modules: qualified access to a non-member is a compile error")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	bool threw = false;
+	try
+	{
+		rt.do_string("import config\nconfig.nope");
+	}
+	catch (const SyntaxError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
 TEST_CASE("modules: a cached module is not re-run on a second import")
 {
 	Runtime rt;
