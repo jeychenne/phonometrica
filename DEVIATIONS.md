@@ -1138,3 +1138,26 @@ land in Stages 3–6.
     taken and released on the spawner (stored in the handle), never refcounted across
     threads; the worker only reads it. An uncaught, never-waited worker error is printed to
     stderr at finalize rather than silently swallowed.
+
+### Stage 6 — thread pool + pooled kernels (`concurrency/thread_pool.*`)
+
+16. **Process-global pool, not Runtime-owned.** §13 says the Runtime owns the pool. It is
+    instead a lazily-created process singleton (`global_thread_pool()`), sized
+    `hardware_concurrency() - 1`, joined at process exit. The elementwise kernels
+    (`lib/array_kernels.cpp`) live below the Runtime and can be called from the C++
+    embedding without one, so a singleton is the reachable, robust choice.
+17. **Static partition + caller serialization, no std::function.** `parallel_for` splits
+    [0, n) into `worker_count()+1` contiguous ranges (workers + caller), each participant
+    writing a disjoint output slice — so kernels need no data locking. Type erasure is a
+    plain `void(*)(void*, intptr_t, intptr_t)` + `void*` (no `std::function`, keeping to
+    the STL policy). A single job slot is guarded by a caller mutex, so concurrent callers
+    (e.g. a pooled kernel triggered from a spawned script thread) serialize rather than
+    corrupt the slot; workers only ever run the numeric callback and never re-enter the
+    pool, so this cannot deadlock. Work-stealing / dynamic load balancing is an M8 concern.
+18. **Threshold + kernels-only.** Kernels fan out only above `PHON_PARALLEL_THRESHOLD`
+    (32768 elements, the §13 start value); below it they run inline. Parallel and serial
+    paths compute bit-identically (same arithmetic, disjoint indices), so results never
+    depend on element count. `parallel_map` with a script lambda (per-worker scratch
+    Isolate) is deferred to M8, as §13 sequences ("implement kernels-only first,
+    script-lambda parallel_map last"). `request_interrupt` — the other M7 §15 item —
+    landed in Stage 1 (the safepoint poll word).

@@ -7,7 +7,9 @@
 #include "test_framework.hpp"
 
 #include <phon/concurrency/channel.hpp>
+#include <phon/concurrency/thread_pool.hpp>
 #include <phon/concurrency/transfer.hpp>
+#include <phon/lib/array_kernels.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/core/variant.hpp>
 #include <phon/memory/cycle_collector.hpp>
@@ -611,6 +613,75 @@ TEST_CASE("concurrency: spawn stress — many workers aggregate via a channel")
 	    "total\n";
 	Variant r = rt.do_string(src);
 	CHECK(r.as_int() == 32004000); // sum 1..8000
+}
+
+// --- Stage 6: pooled elementwise kernels ---------------------------------------
+
+// Above PHON_PARALLEL_THRESHOLD the kernels fan out across the thread pool. Verify they
+// compute bit-identically to a serial reference (disjoint output ranges, same arithmetic).
+TEST_CASE("concurrency: pooled elementwise kernels match the scalar reference")
+{
+	constexpr intptr_t N = 100000; // > PHON_PARALLEL_THRESHOLD
+	std::vector<double> a(N), b(N), out(N);
+	for (intptr_t i = 0; i < N; ++i)
+	{
+		a[i] = static_cast<double>(i) * 0.5;
+		b[i] = static_cast<double>(i % 7) + 1.0;
+	}
+
+	array_binop('+', out.data(), a.data(), b.data(), N);
+	bool ok = true;
+	for (intptr_t i = 0; i < N; ++i)
+		ok = ok && out[i] == a[i] + b[i];
+	CHECK(ok);
+
+	array_binop('*', out.data(), a.data(), b.data(), N);
+	ok = true;
+	for (intptr_t i = 0; i < N; ++i)
+		ok = ok && out[i] == a[i] * b[i];
+	CHECK(ok);
+
+	array_binop_as('-', out.data(), a.data(), 3.0, N);
+	ok = true;
+	for (intptr_t i = 0; i < N; ++i)
+		ok = ok && out[i] == a[i] - 3.0;
+	CHECK(ok);
+
+	array_binop_sa('/', out.data(), 10.0, b.data(), N);
+	ok = true;
+	for (intptr_t i = 0; i < N; ++i)
+		ok = ok && out[i] == 10.0 / b[i];
+	CHECK(ok);
+}
+
+// Two threads driving the shared pool at once: the caller lock serializes them and each
+// still fans out correctly. TSan validates the pool's synchronization.
+TEST_CASE("concurrency: concurrent pooled kernels are race-free")
+{
+	constexpr intptr_t N = 80000;
+	std::vector<double> a(N), b(N), o1(N), o2(N);
+	for (intptr_t i = 0; i < N; ++i)
+	{
+		a[i] = static_cast<double>(i);
+		b[i] = 2.0;
+	}
+	std::atomic<bool> ok1{true}, ok2{true};
+	std::thread t1([&] {
+		array_binop('+', o1.data(), a.data(), b.data(), N);
+		for (intptr_t i = 0; i < N; ++i)
+			if (o1[i] != a[i] + 2.0)
+				ok1 = false;
+	});
+	std::thread t2([&] {
+		array_binop('*', o2.data(), a.data(), b.data(), N);
+		for (intptr_t i = 0; i < N; ++i)
+			if (o2[i] != a[i] * 2.0)
+				ok2 = false;
+	});
+	t1.join();
+	t2.join();
+	CHECK(ok1.load());
+	CHECK(ok2.load());
 }
 
 } // namespace
