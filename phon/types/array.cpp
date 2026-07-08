@@ -251,6 +251,39 @@ void Array::make_frozen()
 	mark_frozen_shared(&v->buf->header);
 }
 
+Array Array::transfer_to_thread() const
+{
+	ArrayCell *v = m_impl.get();
+	ArrayCell *nv = view_alloc();
+	nv->rank = v->rank;
+	for (int k = 0; k < v->rank; ++k)
+		nv->dim[k] = v->dim[k];
+
+	if (v->buf->header.is_frozen())
+	{
+		// The buffer is an immutable shared blob (§8.3): the receiving thread shares it
+		// zero-copy (atomic retain). Only the small view is copied, keeping this view's
+		// offset/strides so a frozen slice transfers as a slice.
+		retain(reinterpret_cast<Cell *>(v->buf));
+		nv->buf = v->buf;
+		nv->offset = v->offset;
+		nv->flags = v->flags;
+		for (int k = 0; k < v->rank; ++k)
+			nv->stride[k] = v->stride[k];
+	}
+	else
+	{
+		// Unfrozen: hand over a fully independent, contiguous copy so the two threads
+		// never share a mutable buffer.
+		ArrayBuffer *nb = buffer_alloc(size());
+		gather_column_major(nb->data, v);
+		nv->buf = nb; // adopt nb's +1
+		nv->flags = 0;
+		set_contiguous_strides(nv);
+	}
+	return Array(Handle<ArrayCell>::adopt(nv));
+}
+
 intptr_t Array::elem_offset(const intptr_t *idx) const noexcept
 {
 	intptr_t off = m_impl->offset;

@@ -6,10 +6,16 @@
 
 #include "test_framework.hpp"
 
+#include <phon/concurrency/transfer.hpp>
 #include <phon/core/cell.hpp>
+#include <phon/core/variant.hpp>
+#include <phon/object/class.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/types/array.hpp>
+#include <phon/types/list.hpp>
+#include <phon/types/set.hpp>
 #include <phon/types/string.hpp>
+#include <phon/types/table.hpp>
 #include <phon/vm/isolate.hpp>
 
 #include <atomic>
@@ -213,6 +219,219 @@ TEST_CASE("concurrency: last release of a shared frozen cell disposes once")
 
 	CHECK(c->refcount() == 1);
 	// tmp owns the final reference; its destructor disposes exactly once on scope exit.
+}
+
+// --- Stage 3: the transfer walk ------------------------------------------------
+
+namespace {
+
+// A transferred cell Value carries +1; drop it.
+void drop(Value v)
+{
+	if (v.is_cell())
+		release(v.as_cell());
+}
+
+Cell *cell_of_string(const String &s) { return &s.cell()->header; }
+
+} // namespace
+
+TEST_CASE("concurrency: transfer copies immediates trivially")
+{
+	Isolate iso;
+	Value r = transfer_across_threads(iso, Value::make_int(42));
+	CHECK(!r.is_cell());
+	CHECK(r.as_int() == 42);
+}
+
+TEST_CASE("concurrency: transfer deep-copies an unfrozen String")
+{
+	Isolate iso;
+	String s("hello");
+	Value r = transfer_across_threads(iso, s.to_value());
+	CHECK(r.is_cell());
+	CHECK(r.as_cell() != cell_of_string(s)); // a fresh, independent cell
+	CHECK(String::from_value(r) == "hello");
+	drop(r);
+}
+
+TEST_CASE("concurrency: transfer shares a frozen String zero-copy")
+{
+	Isolate iso;
+	String s("frozen payload");
+	s.make_frozen();
+	Cell *orig = cell_of_string(s);
+	uint32_t rc0 = orig->refcount();
+
+	Value r = transfer_across_threads(iso, s.to_value());
+	CHECK(r.as_cell() == orig);              // same cell — shared, not copied
+	CHECK(orig->refcount() == rc0 + 1);      // and retained (atomically)
+	drop(r);
+	CHECK(orig->refcount() == rc0);
+}
+
+TEST_CASE("concurrency: transfer deep-copies a List")
+{
+	Isolate iso;
+	List l{Variant::from_int(1), Variant::from_int(2), Variant::from_int(3)};
+	Value r = transfer_across_threads(iso, l.to_value());
+	CHECK(r.as_cell() != reinterpret_cast<Cell *>(l.cell())); // independent cell
+	List rl = List::from_value(r);
+	CHECK(rl.size() == 3);
+	CHECK(rl.get(1).value().as_int() == 1);
+	CHECK(rl.get(3).value().as_int() == 3);
+	drop(r);
+}
+
+TEST_CASE("concurrency: transfer preserves in-graph sharing (seen-map)")
+{
+	Isolate iso;
+	List inner{Variant::from_int(7), Variant::from_int(8)};
+	Value innerv = inner.to_value();
+	List outer{Variant(innerv), Variant(innerv)}; // the same inner list twice
+
+	Value r = transfer_across_threads(iso, outer.to_value());
+	List ro = List::from_value(r);
+	Value a = ro.get(1).value();
+	Value b = ro.get(2).value();
+	CHECK(a.is_cell());
+	CHECK(b.is_cell());
+	CHECK(a.as_cell() == b.as_cell());          // one copy, referenced twice
+	CHECK(a.as_cell() != innerv.as_cell());     // but a copy, not the original
+	drop(r);
+}
+
+TEST_CASE("concurrency: transfer deep-copies a Table and a Set")
+{
+	Isolate iso;
+	Table t;
+	t.set(Variant(String("k").to_value()), Variant::from_int(10));
+	Value tr = transfer_across_threads(iso, t.to_value());
+	CHECK(tr.as_cell() != reinterpret_cast<Cell *>(t.cell()));
+	Table rt = Table::from_value(tr);
+	CHECK(rt.get(Variant(String("k").to_value())).value().as_int() == 10);
+	drop(tr);
+
+	Set s;
+	s.add(Variant::from_int(1));
+	s.add(Variant::from_int(2));
+	Value sr = transfer_across_threads(iso, s.to_value());
+	Set rs = Set::from_value(sr);
+	CHECK(rs.size() == 2);
+	CHECK(rs.contains(Variant::from_int(1)));
+	drop(sr);
+}
+
+TEST_CASE("concurrency: transfer of an unfrozen Array is an independent copy")
+{
+	Isolate iso;
+	Array a = Array::make_1d(3);
+	double *d = a.detach();
+	d[0] = 1, d[1] = 2, d[2] = 3;
+
+	Value r = transfer_across_threads(iso, a.to_value());
+	Array ra = Array::from_value(r);
+	CHECK(ra.data() != a.data()); // a fresh, independent buffer
+	intptr_t i0 = 0, i2 = 2;
+	CHECK(ra.get(&i0) == 1.0);
+	CHECK(ra.get(&i2) == 3.0);
+	drop(r);
+}
+
+TEST_CASE("concurrency: transfer of a frozen Array shares the buffer zero-copy")
+{
+	Isolate iso;
+	Array f = Array::make_1d(3);
+	double *fd = f.detach();
+	fd[0] = 5, fd[1] = 6, fd[2] = 7;
+	f.make_frozen();
+	const double *base = f.data();
+
+	Value r = transfer_across_threads(iso, f.to_value());
+	Array rf = Array::from_value(r);
+	CHECK(rf.data() == base); // same buffer — zero copy
+	drop(r);
+}
+
+TEST_CASE("concurrency: transfer rejects a reference-type value")
+{
+	Isolate iso;
+	Value cls = class_object(get_class(CID_STRING)); // a class object: a reference type
+	bool raised = false;
+	try
+	{
+		transfer_across_threads(iso, cls);
+	}
+	catch (RuntimeError &e)
+	{
+		raised = true;
+		if (e.error.is_cell())
+			release(e.error.as_cell());
+	}
+	CHECK(raised);
+}
+
+// The integration shape channels/spawn will rely on: build a value on this thread,
+// transfer it, and hand the copy to a worker that owns it exclusively. No CHECK runs off
+// the main thread (the test harness is single-threaded); results come back via atomics.
+TEST_CASE("concurrency: a transferred copy is owned exclusively by the receiver")
+{
+	Isolate iso;
+	List l{Variant::from_int(10), Variant::from_int(20), Variant::from_int(30)};
+	Value copy = transfer_across_threads(iso, l.to_value()); // +1, allocated here
+
+	std::atomic<int> worker_sum{0};
+	std::thread worker([&] {
+		List wl = List::from_value(copy); // the worker now owns the graph
+		int sum = 0;
+		for (intptr_t i = 1; i <= wl.size(); ++i)
+			sum += static_cast<int>(wl.get(i).value().as_int());
+		worker_sum = sum;
+		drop(copy); // release the transfer's +1 on the worker thread
+	});
+	worker.join();
+
+	CHECK(worker_sum.load() == 60);
+	// The original is untouched and independent.
+	CHECK(l.get(1).value().as_int() == 10);
+	CHECK(l.size() == 3);
+}
+
+// The zero-copy acceptance case: a frozen Array buffer is shared across two threads by
+// pointer identity, read concurrently, with atomic refcounts. TSan is the assertion.
+TEST_CASE("concurrency: a frozen Array buffer is shared across threads by identity")
+{
+	Isolate iso;
+	constexpr intptr_t N = 4096;
+	Array shared = Array::make_1d(N);
+	double *sd = shared.detach();
+	for (intptr_t i = 0; i < N; ++i)
+		sd[i] = static_cast<double>(i);
+	shared.make_frozen();
+	const double *base = shared.data();
+
+	Value copy = transfer_across_threads(iso, shared.to_value()); // shares the buffer
+
+	std::atomic<bool> same_buffer{false};
+	std::atomic<double> worker_sum{0};
+	std::thread worker([&] {
+		Array wa = Array::from_value(copy);
+		same_buffer = (wa.data() == base);
+		double s = 0;
+		for (intptr_t i = 0; i < N; ++i)
+			s += wa.get(&i);
+		worker_sum = s;
+		drop(copy);
+	});
+
+	// The main thread reads the same frozen buffer concurrently.
+	double ms = 0;
+	for (intptr_t i = 0; i < N; ++i)
+		ms += shared.get(&i);
+	worker.join();
+
+	CHECK(same_buffer.load());         // pointer identity across threads: zero copy
+	CHECK(worker_sum.load() == ms);    // both threads saw the same data
 }
 
 } // namespace

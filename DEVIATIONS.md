@@ -1058,3 +1058,26 @@ Supersedes M1 note #3 ("SHARED_BUFFER atomic regime is stubbed").
 
 Zero-copy sharing across threads (transfer walk, channels, spawn) and the thread pool
 land in Stages 3–6.
+
+### Stage 3 — the transfer walk (`concurrency/transfer.*`)
+
+6. **Central switch, not a per-class `transfer` hook.** §8.3 describes a "per-class
+   `transfer` hook". Instead the walk is one function in `concurrency/` that switches on
+   the class id (String/List/Table/Set/Array), deep-copies value-class instances
+   generically via the instance field array, and rejects reference types. Rationale:
+   a hook whose signature carried the recursion context (seen-map + recurse callback)
+   would force `types/`/`object/` (lower layers) to depend on `concurrency/`, breaking
+   the strict layering; the concrete type set is fixed in M7 anyway. Application types
+   (M8/M9) and Channel's send-by-sharing opt-in can be added as a class flag or a hook
+   with a low-layer signature later.
+7. **Frozen leaves are shared, not copied.** A frozen String or frozen Array buffer is
+   handed to the receiver by an atomic retain (zero-copy); only an Array's small view is
+   copied so a frozen slice transfers as a slice. Everything else (unfrozen String,
+   List, Table, Set, unfrozen Array, value-class instance) is deep-copied. The seen-map
+   is keyed on the *source* cell so an in-graph DAG copies each node once; reference
+   types are rejected before recursion, so the walked subgraph is always acyclic and the
+   walk terminates without cycle detection.
+8. **Partial-copy cleanup on rejection.** If a nested reference type is found mid-walk,
+   the raise unwinds through RAII (`List`/`Set`/`Table` locals, a `Handle<Cell>` for the
+   in-progress instance), releasing everything copied so far; the seen-map holds only
+   borrowed pointers and is discarded. No two-pass validate-then-copy needed.

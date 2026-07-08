@@ -109,6 +109,11 @@ public:
 	// threads (freeze() builtin, §8.3). Idempotent. Subsequent mutations copy-on-write.
 	void make_frozen();
 
+	// Produce a copy safe to hand to another thread (transfer walk, §8.3): if the buffer
+	// is frozen it is shared zero-copy (atomic retain) and only the view is copied;
+	// otherwise a fully independent contiguous copy is made. Returns a +1 view.
+	Array transfer_to_thread() const;
+
 	// --- engine interop ---
 
 	Value to_value() const noexcept { return Value::make_cell(m_impl.cell()); }
