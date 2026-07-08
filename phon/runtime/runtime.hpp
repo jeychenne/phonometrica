@@ -48,6 +48,11 @@ public:
 	// in a later one.
 	Variant do_string(const String &code);
 
+	// Add a directory to this session's module search path (design §11). `import M`
+	// looks for `M.phon` or `M/initialize.phon` in the importing file's directory, then
+	// in each directory added here, then in $PHON_MODULE_PATH.
+	void add_import_path(const String &dir);
+
 	// Cooperatively interrupt the script currently running on this session (the GUI's
 	// "stop script" button, architecture §9.4). Safe to call from another thread while
 	// do_string runs: the interpreter notices at its next safepoint and the in-flight

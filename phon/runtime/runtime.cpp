@@ -25,8 +25,16 @@
 #include <phon/vm/function.hpp>
 #include <phon/vm/interpreter.hpp>
 
+#include <phon/compile/diagnostic.hpp>
+
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <memory>
 #include <mutex>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 namespace phonometrica {
 
@@ -240,13 +248,112 @@ std::once_flag g_init_once;
 // the compiler-layer text buffer: it holds the script as a std::string because it
 // reads files via std::ifstream and scans with std::string_view, so the engine
 // String is converted once here at the boundary (cold path).
-void compile_source(const String &src, ModuleNamespace &ns, CompiledModule &cm)
+void compile_source(const String &src, ModuleNamespace &ns, CompiledModule &cm,
+                    CompileEnv *env = nullptr)
 {
 	Source source = Source::from_string(std::string(src.data(), static_cast<size_t>(src.size())));
 	Parser parser(source);
 	AutoAst ast = parser.parse();
-	compile_module(ast.get(), ns, cm);
+	compile_module(ast.get(), ns, cm, env);
 }
+
+// The session's module loader (design §11): resolves `import M` to a file, compiles it
+// once, caches it, and hands out session-global slots. Modules are compiled here; their
+// top-level code is *run* by do_string (which owns the Isolate) before the main chunk.
+namespace fs = std::filesystem;
+
+class ModuleManager final : public ModuleLoader
+{
+public:
+	void add_import_path(const std::string &dir) { m_paths.push_back(dir); }
+
+	int alloc_slot() override { return m_next_slot++; }
+	int total_slots() const noexcept { return m_next_slot; }
+	const std::vector<LoadedModule *> &load_order() const noexcept { return m_order; }
+
+	LoadedModule *load(Symbol name, const std::string &from_dir) override
+	{
+		std::string path = resolve(symbol_name(name), from_dir);
+		if (path.empty())
+			return nullptr; // compile_import reports "module not found" at the import node
+
+		auto it = m_cache.find(path);
+		if (it != m_cache.end())
+		{
+			if (it->second == nullptr) // still compiling: a cyclic import
+				throw SyntaxError("[Compile error] import cycle through module '" +
+				                      std::string(symbol_name(name)) + "'",
+				                  0, 0, 1);
+			return it->second;
+		}
+
+		m_cache[path] = nullptr; // in-progress marker (cycle guard)
+		Source source = Source::from_file(path);
+		Parser parser(source);
+		AutoAst ast = parser.parse();
+
+		auto lm = std::make_unique<LoadedModule>();
+		lm->path = path;
+		lm->dir = fs::path(path).parent_path().string();
+		CompileEnv env;
+		env.loader = this;
+		env.dir = lm->dir;
+		CompiledModule cm;
+		compile_module(ast.get(), lm->ns, cm, &env); // recursively loads this module's imports
+		lm->functions = std::move(env.public_functions);
+		lm->main = std::move(cm.main);
+
+		LoadedModule *raw = lm.get();
+		m_cache[path] = raw;             // replace the in-progress marker
+		m_owned.push_back(std::move(lm));
+		m_order.push_back(raw);          // post-order: this module's deps are already listed
+		return raw;
+	}
+
+private:
+	std::string resolve(std::string_view name, const std::string &from_dir) const
+	{
+		std::vector<std::string> dirs;
+		if (!from_dir.empty())
+			dirs.push_back(from_dir);
+		for (const auto &p : m_paths)
+			dirs.push_back(p);
+		if (const char *env = std::getenv("PHON_MODULE_PATH"))
+		{
+			std::string s(env), cur;
+			for (char c : s)
+			{
+				if (c == ':')
+				{
+					if (!cur.empty())
+						dirs.push_back(cur);
+					cur.clear();
+				}
+				else
+					cur += c;
+			}
+			if (!cur.empty())
+				dirs.push_back(cur);
+		}
+		for (const auto &d : dirs)
+		{
+			fs::path base(d);
+			fs::path single = base / (std::string(name) + ".phon");
+			if (fs::is_regular_file(single))
+				return fs::weakly_canonical(single).string();
+			fs::path dirmod = base / std::string(name) / "initialize.phon";
+			if (fs::is_regular_file(dirmod))
+				return fs::weakly_canonical(dirmod).string();
+		}
+		return "";
+	}
+
+	std::unordered_map<std::string, LoadedModule *> m_cache; // path -> module (null=compiling)
+	std::vector<std::unique_ptr<LoadedModule>> m_owned;
+	std::vector<LoadedModule *> m_order; // dependency order (deps before dependents)
+	std::vector<std::string> m_paths;
+	int m_next_slot = 0;
+};
 
 } // namespace
 
@@ -271,6 +378,7 @@ struct Runtime::State
 {
 	Isolate isolate;
 	ModuleNamespace shell;
+	ModuleManager modules;
 	Vector<std::unique_ptr<CompiledModule>> history;
 };
 
@@ -282,12 +390,18 @@ Variant Runtime::do_string(const String &code)
 	State &st = *m_state;
 
 	auto cm = std::make_unique<CompiledModule>();
-	compile_source(code, st.shell, *cm);
+	CompileEnv env;
+	env.loader = &st.modules; // resolves `import`, allocates session-global slots
+	env.dir = "";             // a <string> chunk has no file directory
+	compile_source(code, st.shell, *cm, &env);
 
-	// Grow the Isolate's module-slot vector to the (possibly larger) namespace,
-	// preserving the values of existing slots — indices never move (design §11).
-	if (st.isolate.module_slots.size() < st.shell.num_slots)
-		st.isolate.module_slots.resize(st.shell.num_slots);
+	// Grow the Isolate's module-slot vector to cover every module's session-global slots
+	// (design §11: one shared vector; indices never move, so growth preserves values).
+	int total = st.modules.total_slots();
+	if (total < st.shell.num_slots)
+		total = st.shell.num_slots;
+	if (st.isolate.module_slots.size() < total)
+		st.isolate.module_slots.resize(total);
 
 	// Keep the Proto tree alive: module-slot closures created by this chunk outlive
 	// the call and borrow their Proto.
@@ -299,10 +413,24 @@ Variant Runtime::do_string(const String &code)
 	set_current_isolate(&st.isolate);
 	set_current_collector(&st.isolate.collector());
 	st.isolate.clear_interrupt(); // a stale request only affects the run it targeted
+
 	Handle<ClosureCell> main = Handle<ClosureCell>::adopt(make_closure(main_proto));
 	Variant out;
 	try
 	{
+		// Run each imported module's top-level once, in dependency order, before the main
+		// chunk — so their functions/classes are registered and their state initialized.
+		for (LoadedModule *lm : st.modules.load_order())
+		{
+			if (lm->has_run)
+				continue;
+			Handle<ClosureCell> mc = Handle<ClosureCell>::adopt(make_closure(lm->main.get()));
+			Value r = execute(st.isolate, mc.get());
+			if (r.is_cell())
+				release(r.as_cell());
+			lm->has_run = true;
+		}
+
 		Value result = execute(st.isolate, main.get());
 		out = Variant(result);         // retains
 		if (result.is_cell())
@@ -330,6 +458,11 @@ Variant Runtime::do_string(const String &code)
 	set_current_isolate(prev);
 	set_current_collector(prev_cc);
 	return out;
+}
+
+void Runtime::add_import_path(const String &dir)
+{
+	m_state->modules.add_import_path(std::string(dir.data(), static_cast<size_t>(dir.size())));
 }
 
 void Runtime::request_interrupt() noexcept { m_state->isolate.request_interrupt(); }

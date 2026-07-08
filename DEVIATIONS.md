@@ -1161,3 +1161,34 @@ land in Stages 3–6.
     Isolate) is deferred to M8, as §13 sequences ("implement kernels-only first,
     script-lambda parallel_map last"). `request_interrupt` — the other M7 §15 item —
     landed in Stage 1 (the safepoint poll word).
+
+## Modules & imports (design §11, Calao-style)
+
+The `import` system, staged. Syntax and semantics follow Calao (~/Devel/calao): functions
+are global generics (callable bare after import), module state is per-module, types are
+reached qualified (`M.x`) or brought bare via `for`.
+
+### Stage 1 — loader, resolution, cache; `import M` (functions)
+
+1. **Shared slot vector, per-module namespaces, session-global slot numbering.** Rather
+   than per-module slot vectors + a new cross-module opcode, or Calao's module-as-instance
+   lowering, the engine keeps its single `iso.module_slots` vector and hands every module's
+   bindings a *process-unique* slot from one session allocator (`ModuleLoader::alloc_slot`).
+   `GET_MODULE`/`SET_MODULE` are unchanged, and a future `M.x` is just a `GET_MODULE` of
+   x's (globally-unique) slot. Least invasive; reuses the hot path verbatim.
+2. **Compile-time loading, run-before-main execution.** `import M` during compilation
+   resolves + compiles M once (recursively, via `ModuleManager`, cached by canonical path),
+   so M's public function names are known generics when the importer is lowered. M's
+   top-level is *run* by `do_string` before the main chunk, in dependency (post) order —
+   no IMPORT opcode; the import statement emits nothing.
+3. **Resolution matches Calao.** `import M` → `M.phon` or `M/initialize.phon`, searched in
+   the importing file's directory, then `Runtime::add_import_path` dirs, then
+   `$PHON_MODULE_PATH` (colon-separated). Canonical path is the cache key.
+4. **Functions are the export surface (Stage 1).** A module's non-`local` top-level
+   functions / class methods are recorded on the `LoadedModule` and injected into the
+   importer's known-generics set, so `f()` from an imported module compiles and dispatches
+   (it is already in the global table once M's top-level runs). `local` functions stay
+   module-private (not recorded). Qualified `M.x`, `import as`, `for`, and full privacy
+   enforcement land in later stages. A cyclic import is caught (in-progress cache marker)
+   and reported; an unresolved module raises `[Import error] module 'M' not found` at the
+   import node.

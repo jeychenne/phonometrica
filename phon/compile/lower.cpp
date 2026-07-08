@@ -81,7 +81,7 @@ struct LoopCtx
 class Lowerer
 {
 public:
-	explicit Lowerer(ModuleNamespace &ns) : m_ns(ns) {}
+	explicit Lowerer(ModuleNamespace &ns, CompileEnv *env = nullptr) : m_ns(ns), m_env(env) {}
 	void compile_module(Ast *module_ast, CompiledModule &out);
 
 private:
@@ -169,8 +169,12 @@ private:
 		auto it = m_ns.name_to_slot.find(name.id);
 		if (it != m_ns.name_to_slot.end())
 			return it->second; // already bound (persists across REPL chunks)
-		int slot = m_ns.num_slots++;
+		// With a loader, slots come from the session-global allocator so no two modules
+		// share an index in the isolate's single slot vector; standalone, they are local.
+		int slot = (m_env && m_env->loader) ? m_env->loader->alloc_slot() : m_ns.num_slots;
 		m_ns.name_to_slot.insert(name.id, slot);
+		if (slot + 1 > m_ns.num_slots)
+			m_ns.num_slots = slot + 1;
 		return slot;
 	}
 	int module_lookup(Symbol name) const
@@ -345,7 +349,8 @@ private:
 	void compile_for_numeric(ForNumeric *s);
 	void compile_for_each(ForEach *s);
 	void compile_for_each_ref(ForEach *s); // `for ref v in …` (design §12)
-	void compile_spawn(SpawnStatement *s); // `spawn f(args…)` (design §13)
+	void compile_spawn(SpawnStatement *s);   // `spawn f(args…)` (design §13)
+	void compile_import(ImportStatement *s); // `import M` (design §11)
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -403,6 +408,7 @@ private:
 	FuncState *fs = nullptr;
 	Vector<LoopCtx> m_loops;
 	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
+	CompileEnv *m_env;     // import loader + slot allocator (null: imports forbidden)
 
 	// Names declared as generic methods by this module's top-level `function`s
 	// (non-`local`). Populated in pass 1 so a call to a function defined later —
@@ -1207,7 +1213,8 @@ void Lowerer::compile_stmt(Ast *node)
 		compile_spawn(node->as<SpawnStatement>());
 		break;
 	case NodeKind::ImportStatement:
-		error(node, "[Compile error] 'import' arrives with modules (M8)");
+		// Top-level imports are consumed in pass 0; reaching here means a nested one.
+		error(node, "[Compile error] 'import' is only allowed at the top level of a module");
 	default:
 		error(node, "[Compile error] unsupported statement");
 	}
@@ -2252,6 +2259,22 @@ void Lowerer::compile_spawn(SpawnStatement *s)
 	reg_free_to(save);
 }
 
+void Lowerer::compile_import(ImportStatement *s)
+{
+	// `import M` (design §11): resolve + compile M (once, cached), then make its public
+	// functions callable bare — they live in the shared dispatch table, so nothing needs
+	// to be emitted here. Qualified access to M's types/vars (`M.x`) arrives in a later
+	// stage. M's top-level code is run before this module's, by the loader.
+	if (!m_env || !m_env->loader)
+		error(s, "[Compile error] 'import' requires a module loader (unavailable here)");
+	LoadedModule *m = m_env->loader->load(s->module, m_env->dir); // may throw SyntaxError
+	if (!m)
+		error(s, "[Import error] module '" + std::string(symbol_name(s->module)) + "' not found");
+	m_env->imports.push_back(m);
+	for (intptr_t i = 0; i < m->functions.size(); ++i)
+		m_module_generics.insert(m->functions[i]);
+}
+
 void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
                         int dest)
 {
@@ -2304,6 +2327,13 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 	fs = &mfs;
 	mfs.finally_base = static_cast<int>(m_finally_stack.size());
 
+	// Pass 0: resolve imports first (design §11), so an imported module's public function
+	// names are known generics before any code — including forward references — is lowered.
+	// Imports are top-level only; a nested one is caught in compile_stmt.
+	for (auto &s : list->statements)
+		if (auto *imp = s->as<ImportStatement>())
+			compile_import(imp);
+
 	// Pass 1: reserve module slots for top-level bindings, and collect the names of
 	// top-level `function`s so forward and mutually-recursive references resolve
 	// (design §11, two-pass top level). A non-`local` `function` becomes a method on
@@ -2321,6 +2351,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			{
 				m_module_generics.insert(f->name.id);
 				m_generic_ref_mask.insert(f->name.id, compute_ref_mask(f, false));
+				if (m_env)
+					m_env->public_functions.push_back(f->name.id); // exported to importers
 			}
 		}
 		else if (auto *cl = s->as<ClassDeclaration>())
@@ -2334,6 +2366,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 				auto *mf = m->as<FunctionDefinition>();
 				m_module_generics.insert(mf->name.id);
 				m_generic_ref_mask.insert(mf->name.id, compute_ref_mask(mf, true));
+				if (m_env)
+					m_env->public_functions.push_back(mf->name.id);
 			}
 		}
 	}
@@ -2374,6 +2408,8 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 			continue; // already hoisted
 		if (s->is<ClassDeclaration>())
 			continue; // already registered
+		if (s->is<ImportStatement>())
+			continue; // already resolved in pass 0
 		if (i == count - 1 && s->is<ExpressionStatement>())
 		{
 			int r = reg_alloc(s);
@@ -2392,16 +2428,16 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 
 } // namespace
 
-void compile_module(Ast *module_ast, ModuleNamespace &ns, CompiledModule &out)
+void compile_module(Ast *module_ast, ModuleNamespace &ns, CompiledModule &out, CompileEnv *env)
 {
-	Lowerer lw(ns);
+	Lowerer lw(ns, env);
 	lw.compile_module(module_ast, out);
 }
 
 void compile_module(Ast *module_ast, CompiledModule &out)
 {
 	ModuleNamespace throwaway;
-	compile_module(module_ast, throwaway, out);
+	compile_module(module_ast, throwaway, out, nullptr);
 }
 
 } // namespace phonometrica

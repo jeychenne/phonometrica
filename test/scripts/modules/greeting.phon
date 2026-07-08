@@ -1,0 +1,8 @@
+# A tiny importable module: its public function joins the global dispatch table.
+function greet(name as String) as String
+    return "Hello, " & name & "!"
+end
+
+local function secret()
+    return 42
+end
