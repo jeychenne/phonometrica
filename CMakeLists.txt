@@ -23,7 +23,12 @@ endif()
 # ---------------------------------------------------------------------------
 
 option(PHON_SANITIZE "Build with AddressSanitizer + UndefinedBehaviorSanitizer" OFF)
+option(PHON_TSAN "Build with ThreadSanitizer (M7 concurrency acceptance bar)" OFF)
 option(PHON_WERROR "Treat warnings as errors" OFF)
+
+if(PHON_SANITIZE AND PHON_TSAN)
+    message(FATAL_ERROR "PHON_SANITIZE (ASan) and PHON_TSAN are mutually exclusive")
+endif()
 
 # ---------------------------------------------------------------------------
 # Warnings and sanitizers (applied to all engine targets)
@@ -45,6 +50,11 @@ else()
         target_compile_options(phon_flags INTERFACE
             -fsanitize=address,undefined -fno-omit-frame-pointer -g)
         target_link_options(phon_flags INTERFACE -fsanitize=address,undefined)
+    endif()
+    if(PHON_TSAN)
+        target_compile_options(phon_flags INTERFACE
+            -fsanitize=thread -fno-omit-frame-pointer -g)
+        target_link_options(phon_flags INTERFACE -fsanitize=thread)
     endif()
 endif()
 
@@ -126,6 +136,7 @@ add_executable(phon_unit_tests
     test/unit/test_vm.cpp
     test/unit/test_golden_disasm.cpp
     test/unit/test_scripts.cpp
+    test/unit/test_concurrency.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)

@@ -9,10 +9,11 @@
 
 namespace phonometrica {
 
-// M4/M5 are single-threaded: one process-global current collector, mirroring the
-// process-global current Isolate. Becomes thread_local with concurrency (M7).
+// Each script thread collects its own heap (architecture §8.2): the current
+// collector is thread-local, so a spawned Isolate's release()/possible_root traffic
+// feeds its own candidate buffer, never another thread's.
 namespace {
-CycleCollector *g_collector = nullptr;
+thread_local CycleCollector *g_collector = nullptr;
 } // namespace
 
 CycleCollector *current_collector() noexcept { return g_collector; }

@@ -7,6 +7,8 @@
 #include <phon/object/instance.hpp>
 #include <phon/types/atom.hpp>
 
+#include <mutex>
+
 namespace phonometrica {
 
 // Type modules install their own class hooks (finalize/hash/equals) and register
@@ -54,16 +56,10 @@ FieldInfo g_error_fields[2];
 Class g_error{.id = CID_ERROR, .name = "Error", .base = &g_object,
               .flags = CLASS_BUILTIN | CLASS_VALUE};
 
-bool g_done = false;
+std::once_flag g_boot_once;
 
-} // namespace
-
-void bootstrap()
+void do_bootstrap()
 {
-	if (g_done)
-		return;
-	g_done = true;
-
 	register_class(&g_object);
 	register_class(&g_null);
 	register_class(&g_boolean);
@@ -102,5 +98,9 @@ void bootstrap()
 	// Compute subtype intervals from the assembled hierarchy.
 	renumber_types();
 }
+
+} // namespace
+
+void bootstrap() { std::call_once(g_boot_once, do_bootstrap); }
 
 } // namespace phonometrica

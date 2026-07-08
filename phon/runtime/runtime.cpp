@@ -24,6 +24,7 @@
 #include <phon/vm/interpreter.hpp>
 
 #include <cstdio>
+#include <mutex>
 
 namespace phonometrica {
 
@@ -205,7 +206,7 @@ void register_builtins()
 	}
 }
 
-bool g_booted = false;
+std::once_flag g_init_once;
 
 // Parse `src` and compile it against `ns` (the persistent namespace). `Source` is
 // the compiler-layer text buffer: it holds the script as a std::string because it
@@ -223,12 +224,13 @@ void compile_source(const String &src, ModuleNamespace &ns, CompiledModule &cm)
 
 void init_runtime()
 {
-	if (g_booted)
-		return;
-	g_booted = true;
-	bootstrap();
-	register_function_classes();
-	register_builtins();
+	// Idempotent and thread-safe: multiple Runtimes (even on different threads) share
+	// one process-global registry, atom table, and builtin generics, initialized once.
+	std::call_once(g_init_once, [] {
+		bootstrap();
+		register_function_classes();
+		register_builtins();
+	});
 }
 
 // The session's mutable state: the long-lived Isolate, the persistent module
@@ -266,6 +268,7 @@ Variant Runtime::do_string(const String &code)
 	CycleCollector *prev_cc = current_collector();
 	set_current_isolate(&st.isolate);
 	set_current_collector(&st.isolate.collector());
+	st.isolate.clear_interrupt(); // a stale request only affects the run it targeted
 	Handle<ClosureCell> main = Handle<ClosureCell>::adopt(make_closure(main_proto));
 	Variant out;
 	try
@@ -298,6 +301,8 @@ Variant Runtime::do_string(const String &code)
 	set_current_collector(prev_cc);
 	return out;
 }
+
+void Runtime::request_interrupt() noexcept { m_state->isolate.request_interrupt(); }
 
 void Runtime::collect_garbage() { m_state->isolate.collector().collect(); }
 

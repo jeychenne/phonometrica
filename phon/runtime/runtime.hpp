@@ -48,6 +48,13 @@ public:
 	// in a later one.
 	Variant do_string(const String &code);
 
+	// Cooperatively interrupt the script currently running on this session (the GUI's
+	// "stop script" button, architecture §9.4). Safe to call from another thread while
+	// do_string runs: the interpreter notices at its next safepoint and the in-flight
+	// do_string throws a RuntimeError carrying an "[Interrupt]" message. A no-op if no
+	// run is in progress by the time the next run clears it.
+	void request_interrupt() noexcept;
+
 	// Force a cycle-collection pass now (design/architecture §8.2). Normally the
 	// collector runs itself at safepoints; this is the explicit hook for the
 	// `collect_garbage()` builtin and for tests that assert reclamation.

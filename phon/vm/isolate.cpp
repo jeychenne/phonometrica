@@ -28,7 +28,10 @@ namespace {
 // (architecture §10.2) is deferred; recorded in DEVIATIONS.
 constexpr intptr_t STACK_CAPACITY = 1 << 16;
 
-Isolate *g_current = nullptr;
+// Thread-local: every script thread (the main one and any spawned Isolate) has its
+// own "current Isolate" so native callbacks and upvalue finalizers find the Isolate
+// running on *their* thread (architecture §10.1).
+thread_local Isolate *g_current = nullptr;
 
 PHON_FORCE_INLINE void retain_value(Value v) noexcept
 {
@@ -207,6 +210,19 @@ void capture_error_trace(Isolate &iso, Cell *err, int top_line)
 	if (tv.is_cell())
 		retain(tv.as_cell()); // the instance's field owns this reference
 	f[1] = tv;
+}
+
+void Isolate::safepoint(int line)
+{
+	uint32_t poll = m_poll.load(std::memory_order_relaxed);
+	if (PHON_UNLIKELY(poll & POLL_INTERRUPT))
+	{
+		// Consume the request so a caught interrupt does not immediately re-fire, then
+		// raise. Uncaught, this unwinds to the do_string boundary as a RuntimeError.
+		m_poll.fetch_and(~POLL_INTERRUPT, std::memory_order_relaxed);
+		raise(String("[Interrupt] script interrupted"), line);
+	}
+	m_collector.collect_if_needed();
 }
 
 void Isolate::raise(String message, int line)

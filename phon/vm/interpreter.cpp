@@ -796,11 +796,12 @@ Value run(Isolate &iso)
 		{
 			int32_t off = op_sbx(ins);
 			ip += off;
-			// Loop back-edges are safepoints: service the cycle collector here so a
-			// long-running loop that produces garbage cycles reclaims them mid-run
-			// (architecture §8.2/§9.4). All live values sit in counted registers.
+			// Loop back-edges are safepoints (architecture §8.2/§9.4): honour a pending
+			// interrupt and service the cycle collector so a long-running loop that
+			// produces garbage cycles reclaims them mid-run. All live values sit in
+			// counted registers, so raising here unwinds cleanly.
 			if (off < 0)
-				iso.collector().collect_if_needed();
+				iso.safepoint(cur_line());
 			break;
 		}
 		case Opcode::JMPF:
@@ -868,6 +869,9 @@ Value run(Isolate &iso)
 				reg_move(base, a, next);        // internal index
 				reg_copy(base, a + 3, next);    // user-visible loop variable
 				ip += op_sbx(ins);
+				// Counted-loop back-edge is a safepoint too, so a long `for` is both
+				// interruptible and cycle-collected mid-run (architecture §9.4).
+				iso.safepoint(cur_line());
 			}
 			break;
 		}

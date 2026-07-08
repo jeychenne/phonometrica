@@ -22,6 +22,7 @@
 #include <phon/vm/opcode.hpp>
 #include <phon/vm/proto.hpp>
 
+#include <atomic>
 #include <memory>
 
 namespace phonometrica {
@@ -151,6 +152,24 @@ public:
 	// on teardown. Used for accessor closures held only by a Class's field layout.
 	void keep_alive(Cell *c);
 
+	// --- safepoints & cooperative interruption (architecture §9.4) ---
+
+	// Service the periodic obligations the interpreter defers to safepoints (function
+	// entry and loop back-edges): honour a pending interrupt (raising if set), then let
+	// the cycle collector run if its candidate buffer has grown past threshold. `line`
+	// is the current source line, used as the origin of a raised interrupt error.
+	void safepoint(int line);
+
+	// Request cooperative interruption of the script running on this Isolate (the GUI's
+	// "stop script" button, architecture §9.4). Safe to call from another thread: the
+	// poll word is atomic, and the target notices at its next safepoint and raises an
+	// "[Interrupt]" error that unwinds to the embedding boundary. Idempotent.
+	void request_interrupt() noexcept { m_poll.fetch_or(POLL_INTERRUPT, std::memory_order_relaxed); }
+
+	// Clear any pending interrupt. Called before a fresh run so a stale request from a
+	// previous run does not abort the next one.
+	void clear_interrupt() noexcept { m_poll.store(0, std::memory_order_relaxed); }
+
 	// --- errors ---
 
 	[[noreturn]] void raise(String message, int line);
@@ -164,9 +183,16 @@ public:
 	// handler-stack unwinding of arch §10.5). Idempotent.
 	void unwind_on_error() noexcept;
 
+	// Safepoint poll word: a bitset of pending obligations, read at every safepoint.
+	// Atomic because request_interrupt() may set it from another thread while this
+	// Isolate runs. Bit0 = interrupt requested; more reasons (registry rendezvous)
+	// can be folded in later without touching the fast path.
+	static constexpr uint32_t POLL_INTERRUPT = 1u << 0;
+
 private:
 	std::unique_ptr<Value[]> m_stack;
 	intptr_t m_stack_cap = 0;
+	std::atomic<uint32_t> m_poll{0};
 	CycleCollector m_collector;
 	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
 	FlatHashMap<uint64_t, int> m_ic_base;
