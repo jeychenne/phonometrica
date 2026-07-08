@@ -3,6 +3,7 @@
 
 #include <phon/concurrency/transfer.hpp>
 
+#include <phon/concurrency/channel.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/core/flat_hash_map.hpp>
 #include <phon/core/handle.hpp>
@@ -170,9 +171,15 @@ Value do_transfer(Isolate &iso, Value v, SeenMap &seen)
 	}
 
 	Class *k = get_class(c->class_id());
-	// Reference types (functions, class objects, ref-class instances) have identity and
-	// cannot be reconstructed by copy — not sendable. Value-class instances (Error, user
-	// value classes) deep-copy their fields.
+	// A Channel is the one reference type that IS sendable: its cell is SHARED_BUFFER
+	// (atomic refcount) with its own internal locking, so both threads may hold and use
+	// it. Sharing (an atomic retain) is exactly the point — a spawned worker talks back
+	// through the same channel.
+	if (k == channel_class())
+		return share_cell(c);
+	// Other reference types (functions, class objects, ref-class instances) have identity
+	// and cannot be reconstructed by copy — not sendable. Value-class instances (Error,
+	// user value classes) deep-copy their fields.
 	if (k->is_ref())
 		reject(iso, k);
 	return transfer_instance(iso, v, seen);

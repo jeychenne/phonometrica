@@ -1989,6 +1989,37 @@ Value run(Isolate &iso)
 			break;
 		}
 
+		case Opcode::SPAWN:
+		{
+			// base[a] holds the generic name symbol; base[a+1..a+B] the arguments. Resolve
+			// the method here (arg classes are unchanged by transfer), then hand the
+			// callable + args to the concurrency seam, which transfers the args and launches
+			// the worker. The resulting handle is owned by the Isolate (async; joined at
+			// teardown), so the statement leaves no live register.
+			int nargs = op_b(ins);
+			Symbol sym = base[a].as_symbol();
+			Value *argv = &base[a + 1];
+			GenericFunction *g = find_generic(sym);
+			if (!g)
+				iso.raise(String("[Name error] no function named '") +
+				              String(symbol_name(sym)).view() + "'",
+				          cur_line());
+			Method *m = resolve(g, argv, nargs);
+			if (!m)
+				iso.raise(String("[Dispatch error] no applicable method for '") +
+				              String(symbol_name(sym)).view() + "'",
+				          cur_line());
+			Value code = Value::make_cell(reinterpret_cast<Cell *>(m->code));
+			Cell *handle = vm_spawn(iso, code, argv, nargs, cur_line());
+			iso.adopt_thread(handle); // Isolate owns the worker (joined at teardown)
+			for (int i = 0; i <= nargs; ++i)
+			{
+				release_value(base[a + i]);
+				base[a + i] = Value::make_null();
+			}
+			break;
+		}
+
 		case Opcode::RET:
 		case Opcode::HALT:
 		{
@@ -2163,6 +2194,37 @@ Value execute(Isolate &iso, ClosureCell *main)
 	for (int i = 0; i < mp->num_regs; ++i)
 		root_base[i] = Value::make_null();
 	iso.frames.push_back(CallFrame{main, root_base, nullptr, &stack[0]});
+	return run(iso);
+}
+
+Value run_callable(Isolate &iso, Value callee, Value *args, int argc)
+{
+	if (is_native(callee))
+	{
+		auto *nf = reinterpret_cast<NativeCell *>(callee.as_cell());
+		return nf->fn(iso, args, argc);
+	}
+	PHON_ASSERT_MSG(is_closure(callee), "run_callable on a non-callable");
+	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
+	Proto *cp = cl->proto;
+
+	// A fresh Isolate has no frames: build the root frame at the base of the stack, the
+	// same layout execute() uses for a module main (stack[0] is the result sink).
+	Value *stack = iso.stack();
+	Value *stack_end = stack + iso.stack_capacity();
+	Value *base = stack + 1;
+	int span = argc > cp->num_regs ? argc : cp->num_regs;
+	PHON_CHECK(base + span <= stack_end, "[Runtime error] stack overflow");
+	for (int i = 0; i < argc; ++i)
+	{
+		base[i] = args[i];
+		if (args[i].is_cell())
+			retain(args[i].as_cell());
+	}
+	for (int i = argc; i < cp->num_regs; ++i)
+		base[i] = Value::make_null();
+	setup_callee_frame(iso, cp, base, argc, /*nnamed=*/0, 0);
+	iso.frames.push_back(CallFrame{cl, base, nullptr, &stack[0]});
 	return run(iso);
 }
 

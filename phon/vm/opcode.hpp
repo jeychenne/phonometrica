@@ -111,6 +111,8 @@ using Instruction = uint32_t;
 	_(SETFIELDRAW) /* A B C  : R[A].field R[B] = R[C]   (raw slot, no setter) */ \
 	/* type test */                                                             \
 	_(IS)          /* A B C  : R[A] = R[B] is class R[C]                     */ \
+	/* concurrency (design §13) */                                              \
+	_(SPAWN)       /* A B    : R[A]=thread(R[A] as generic sym, R[A+1..A+B]) */ \
 	/* terminator */                                                            \
 	_(HALT)        /* A B    : stop; module result is R[A] (B=1) or null    */
 // clang-format on

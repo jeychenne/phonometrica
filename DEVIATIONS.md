@@ -1111,3 +1111,30 @@ land in Stages 3–6.
     (RAII-restored). Safe because the transferable subgraph is all value types, which are
     acyclic — refcounting alone reclaims them; the receiver buffers them on its own
     collector when it first releases them.
+
+### Stage 5 — spawn + thread handles (`concurrency/spawn.*`)
+
+13. **`spawn` is a statement, async, joined at Isolate teardown.** The parser makes
+    `spawn f(args…)` a statement (no handle surfaced to scripts). The SPAWN opcode hands
+    the created thread handle to the spawning Isolate (`adopt_thread`), which owns it and
+    joins every worker when the Isolate is torn down (structured concurrency). Workers
+    coordinate through channels — the design sample's pattern — so the acceptance
+    producer/consumer needs no `wait`. `wait(handle)` (join-only, re-raises the worker's
+    error) is implemented and registered but not yet reachable from scripts; surfacing the
+    handle needs an expression form of `spawn` (deferred). Consequently `is Thread` is also
+    deferred (the Thread class is non-`CLASS_BUILTIN`, like Channel).
+14. **Only a named-function target; no captured state.** `spawn` requires the callee to
+    resolve to a generic (a top-level function); the SPAWN opcode resolves the method on
+    the current thread (arg classes are unchanged by transfer) and hands the concrete
+    callable to the worker. `vm_spawn` rejects a closure with upvalues (`nupvals != 0`) —
+    a capturing closure would share mutable upvalue boxes across threads. Arguments are
+    transferred (§8.3); a non-sendable argument raises at the spawn site before any thread
+    starts.
+15. **The vm→concurrency seam.** vm sits below concurrency, so the SPAWN opcode calls
+    `vm_spawn` (declared in `vm/interpreter.hpp`, defined in `concurrency/spawn.cpp`) —
+    the same declaration-seam inversion as the `cc_*` collector hooks. The worker runs its
+    target through `run_callable` (exposed from the interpreter), which builds a root frame
+    on the fresh Isolate like `execute` does. The callee closure is kept alive by a +1
+    taken and released on the spawner (stored in the handle), never refcounted across
+    threads; the worker only reads it. An uncaught, never-waited worker error is printed to
+    stderr at finalize rather than silently swallowed.

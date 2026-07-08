@@ -81,6 +81,7 @@ add_library(phon_engine STATIC
     phon/lib/array_kernels.cpp
     phon/concurrency/transfer.cpp
     phon/concurrency/channel.cpp
+    phon/concurrency/spawn.cpp
     phon/compile/token.cpp
     phon/compile/source.cpp
     phon/compile/scanner.cpp

@@ -60,6 +60,14 @@ Isolate::~Isolate()
 	CycleCollector *prev = current_collector();
 	set_current_collector(&m_collector);
 
+	// Join every spawned worker first, while this Isolate's roots — the channels the
+	// workers share, the callee closures the journal still holds — are all still alive.
+	// Releasing a thread handle runs its finalizer, which joins the OS thread (structured
+	// concurrency, architecture §13).
+	for (intptr_t i = 0; i < m_threads.size(); ++i)
+		release(m_threads[i]);
+	m_threads.clear();
+
 	// Release every root the Isolate still owns BEFORE the final collection, so any
 	// garbage cycle they anchored becomes reclaimable. Ordering matters: the module
 	// slots hold the module-level values, which are the usual cycle anchors.
@@ -76,6 +84,8 @@ Isolate::~Isolate()
 }
 
 void Isolate::keep_alive(Cell *c) { m_kept.push_back(c); }
+
+void Isolate::adopt_thread(Cell *handle) { m_threads.push_back(handle); }
 
 void Isolate::record_method(GenericFunction *g, SmallVector<Class *, 4> sig, bool is_vararg,
                             Cell *closure)

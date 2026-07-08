@@ -587,4 +587,30 @@ TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-cop
 	drop(ch);
 }
 
+// --- Stage 5: spawn (end-to-end through the VM) --------------------------------
+
+// Eight spawned workers each sum a disjoint range and report through one channel; the
+// main thread aggregates. Exercises thread creation/teardown, argument transfer, and
+// channel coordination all through real script — heavy grist for TSan.
+TEST_CASE("concurrency: spawn stress — many workers aggregate via a channel")
+{
+	Runtime rt;
+	const char *src =
+	    "function partial(lo, hi, out)\n"
+	    "    var s = 0\n"
+	    "    for i = lo to hi do s += i end\n"
+	    "    send(out, s)\n"
+	    "end\n"
+	    "var out = Channel()\n"
+	    "var workers = 8\n"
+	    "for w = 0 to workers - 1 do\n"
+	    "    spawn partial(w * 1000 + 1, w * 1000 + 1000, out)\n"
+	    "end\n"
+	    "var total = 0\n"
+	    "for i = 1 to workers do total += receive(out) end\n"
+	    "total\n";
+	Variant r = rt.do_string(src);
+	CHECK(r.as_int() == 32004000); // sum 1..8000
+}
+
 } // namespace

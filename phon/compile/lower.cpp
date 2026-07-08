@@ -345,6 +345,7 @@ private:
 	void compile_for_numeric(ForNumeric *s);
 	void compile_for_each(ForEach *s);
 	void compile_for_each_ref(ForEach *s); // `for ref v in …` (design §12)
+	void compile_spawn(SpawnStatement *s); // `spawn f(args…)` (design §13)
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -1203,7 +1204,8 @@ void Lowerer::compile_stmt(Ast *node)
 	case NodeKind::ClassDeclaration:
 		error(node, "[Compile error] classes may only be declared at the top level of a module");
 	case NodeKind::SpawnStatement:
-		error(node, "[Compile error] 'spawn' arrives in M7");
+		compile_spawn(node->as<SpawnStatement>());
+		break;
 	case NodeKind::ImportStatement:
 		error(node, "[Compile error] 'import' arrives with modules (M8)");
 	default:
@@ -2216,6 +2218,38 @@ void Lowerer::compile_class(ClassDeclaration *c)
 		emit_ABx(Opcode::DEFMETHOD, r, static_cast<uint32_t>(mdidx), ln(c));
 		reg_free_to(r);
 	}
+}
+
+void Lowerer::compile_spawn(SpawnStatement *s)
+{
+	// `spawn f(args…)` (design §13): the parser guarantees the operand is a call. Only a
+	// named-function (generic) target is supported; a bound closure/local would need its
+	// captured state shared across threads. Emit the callee symbol + evaluated args, then
+	// SPAWN — which resolves the method, transfers the args, and launches the worker.
+	auto *call = s->call->as<CallExpression>();
+	auto *v = call->callee->as<Variable>();
+	if (!v)
+		error(call->callee.get(), "[Compile error] 'spawn' target must be a named function");
+	NameRef nr = resolve(v->name);
+	if (nr.kind != NameKind::Generic)
+		error(call->callee.get(), "[Compile error] 'spawn' target must be a named function");
+	if (!call->options.empty())
+		error(call, "[Compile error] 'spawn' does not take keyword options");
+	for (auto &a : call->args)
+		if (a->is<SplatExpression>() || a->is<RefExpression>())
+			error(a.get(), "[Compile error] 'spawn' arguments cannot use splat or ref");
+
+	int save = fs->free_reg;
+	int base = reg_alloc(call);
+	emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(v->name)), ln(call));
+	int nargs = static_cast<int>(call->args.size());
+	for (auto &a : call->args)
+	{
+		int r = reg_alloc(a.get());
+		expr_to(a.get(), r);
+	}
+	emit_ABC(Opcode::SPAWN, base, nargs, 0, ln(call));
+	reg_free_to(save);
 }
 
 void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,

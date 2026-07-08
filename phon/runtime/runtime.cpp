@@ -5,6 +5,7 @@
 
 #include <phon/compile/disassembler.hpp>
 #include <phon/concurrency/channel.hpp>
+#include <phon/concurrency/spawn.hpp>
 #include <phon/compile/lower.hpp>
 #include <phon/compile/parser.hpp>
 #include <phon/compile/source.hpp>
@@ -217,6 +218,7 @@ void register_builtins()
 	register_native("Channel", builtin_channel, 0, 1);
 	register_native("send", builtin_send, 2, 2);
 	register_native("receive", builtin_receive, 1, 1);
+	register_native("wait", builtin_wait, 1, 1);
 
 	// Error construction: init(this as Error, message). Registered with a typed
 	// signature so subclasses inherit it (constructor inheritance).
@@ -256,6 +258,7 @@ void init_runtime()
 		bootstrap();
 		register_function_classes();
 		register_channel_class();
+		register_thread_class();
 		register_builtins();
 	});
 }

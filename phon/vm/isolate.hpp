@@ -152,6 +152,12 @@ public:
 	// on teardown. Used for accessor closures held only by a Class's field layout.
 	void keep_alive(Cell *c);
 
+	// Adopt a spawned thread handle (its +1): the Isolate owns it so the worker runs
+	// asynchronously past the `spawn` statement, and every spawned worker is joined when
+	// the Isolate is torn down (structured concurrency — architecture §13). Called by the
+	// SPAWN opcode.
+	void adopt_thread(Cell *handle);
+
 	// --- safepoints & cooperative interruption (architecture §9.4) ---
 
 	// Service the periodic obligations the interpreter defers to safepoints (function
@@ -197,7 +203,8 @@ private:
 	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
 	FlatHashMap<uint64_t, int> m_ic_base;
 	Vector<MethodRegistration> m_journal;
-	Vector<Cell *> m_kept; // cells owned for the Isolate's lifetime (accessor closures)
+	Vector<Cell *> m_kept;    // cells owned for the Isolate's lifetime (accessor closures)
+	Vector<Cell *> m_threads; // spawned thread handles (+1 each); joined at teardown
 };
 
 // The Isolate executing on this thread (M4: process-global). Set while a run is in

@@ -1,0 +1,79 @@
+# spawn (design/architecture §13): run a function on a fresh thread + heap. Arguments
+# are transferred (copied, or shared for frozen data / channels); the worker talks back
+# through channels. Every spawned worker is joined when the session ends.
+
+# --- a worker sends a result back through a channel -------------------------------
+function greet(out)
+    send(out, "hello from a worker")
+end
+
+var ch = Channel()
+spawn greet(ch)
+assert(receive(ch) == "hello from a worker", "spawned worker sends through a channel")
+
+# --- arguments are transferred by value: mutating the original after spawn does not
+#     affect the worker's copy --------------------------------------------------------
+function sum_list(data, out)
+    var s = 0
+    for x in data do
+        s += x
+    end
+    send(out, s)
+end
+
+var xs = [1, 2, 3, 4, 5]
+var out = Channel()
+spawn sum_list(xs, out)
+xs[1] = 100                          # the worker holds its own copy
+assert(receive(out) == 15, "worker summed its own transferred copy (1..5)")
+
+# --- producer/consumer: a bounded worker processes exactly N jobs -----------------
+function square_worker(jobs, results, n)
+    for i = 1 to n do
+        var x = receive(jobs)
+        send(results, x * x)
+    end
+end
+
+var job_ch = Channel()
+var result_ch = Channel()
+spawn square_worker(job_ch, result_ch, 10)
+for i = 1 to 10 do
+    send(job_ch, i)
+end
+var total = 0
+for i = 1 to 10 do
+    total += receive(result_ch)
+end
+assert(total == 385, "sum of squares 1..10 through a spawned worker")
+
+# --- multiple workers share one result channel ------------------------------------
+function emit(value, out)
+    send(out, value)
+end
+
+var collected = Channel()
+spawn emit(10, collected)
+spawn emit(20, collected)
+spawn emit(30, collected)
+var acc = 0
+for i = 1 to 3 do
+    acc += receive(collected)
+end
+assert(acc == 60, "three workers each sent one value")
+
+# --- a reference-type argument is not sendable and is rejected at the spawn site ---
+ref class Widget
+    field n as Integer = 0
+end
+
+function take(w)
+end
+
+var rejected = false
+try
+    spawn take(Widget())
+catch e
+    rejected = true
+end
+assert(rejected, "a reference-type instance cannot be sent to a worker")
