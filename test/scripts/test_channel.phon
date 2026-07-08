@@ -1,0 +1,37 @@
+# Channels (design/architecture §13): a cross-thread queue. `send` copies the value
+# across (the transfer walk, §8.3) before enqueuing; `receive` dequeues in FIFO order.
+# This script exercises the value semantics and FIFO ordering on a single thread;
+# cross-thread producer/consumer behaviour is covered by the C++ tests (and spawn, M7).
+
+var ch = Channel()
+send(ch, 42)
+send(ch, "hello")
+send(ch, [1, 2, 3])
+assert(receive(ch) == 42, "int through a channel")
+assert(receive(ch) == "hello", "string through a channel")
+var lst = receive(ch)
+assert(lst[1] == 1 and lst[3] == 3, "list transferred through a channel")
+
+# A bounded channel accepts up to its capacity without blocking (same thread).
+var b = Channel(2)
+send(b, 1)
+send(b, 2)                       # now full (capacity 2)
+assert(receive(b) == 1, "bounded FIFO, first out")
+send(b, 3)                       # space freed by the receive above
+assert(receive(b) == 2, "bounded FIFO, second out")
+assert(receive(b) == 3, "bounded FIFO, third out")
+
+# The transfer walk gives value semantics: mutating the original after sending does
+# not affect the received copy.
+var original = [10, 20]
+send(ch, original)
+original[1] = 99
+var received = receive(ch)
+assert(received[1] == 10, "the received copy is independent of later mutation")
+
+# freeze() + send shares an immutable payload; it still reads back correctly.
+var f = @[1, 2, 3, 4]
+freeze(f)
+send(ch, f)
+var g = receive(ch)
+assert(g[1] == 1 and g[4] == 4, "frozen array sent through a channel")

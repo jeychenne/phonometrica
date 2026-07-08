@@ -6,9 +6,11 @@
 
 #include "test_framework.hpp"
 
+#include <phon/concurrency/channel.hpp>
 #include <phon/concurrency/transfer.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/core/variant.hpp>
+#include <phon/memory/cycle_collector.hpp>
 #include <phon/object/class.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/types/array.hpp>
@@ -432,6 +434,157 @@ TEST_CASE("concurrency: a frozen Array buffer is shared across threads by identi
 
 	CHECK(same_buffer.load());         // pointer identity across threads: zero copy
 	CHECK(worker_sum.load() == ms);    // both threads saw the same data
+}
+
+// --- Stage 4: Channel (cross-thread producer/consumer) -------------------------
+
+namespace {
+
+// Install a fresh Isolate + collector for the current worker thread, mirroring what a
+// spawned Isolate will do (M7 Stage 5). Returned by value; keep it alive for the run.
+struct WorkerScope
+{
+	Isolate iso;
+	WorkerScope()
+	{
+		set_current_isolate(&iso);
+		set_current_collector(&iso.collector());
+	}
+	~WorkerScope()
+	{
+		set_current_isolate(nullptr);
+		set_current_collector(nullptr);
+	}
+};
+
+} // namespace
+
+// A bounded channel exercises both condition variables: the producer blocks when the
+// queue is full, the consumer when it is empty. TSan validates the locking.
+TEST_CASE("concurrency: producer/consumer over a bounded Channel")
+{
+	Isolate main_iso;
+	Value cap = Value::make_int(4);
+	Value ch = builtin_channel(main_iso, &cap, 1);
+
+	constexpr int N = 5000;
+	std::atomic<long> total{0};
+	std::thread consumer([&] {
+		WorkerScope w;
+		long sum = 0;
+		for (int i = 0; i < N; ++i)
+		{
+			Value a[1] = {ch};
+			Value v = builtin_receive(w.iso, a, 1);
+			sum += static_cast<long>(v.as_int());
+		}
+		total = sum;
+	});
+	std::thread producer([&] {
+		WorkerScope w;
+		for (int i = 1; i <= N; ++i)
+		{
+			Value a[2] = {ch, Value::make_int(i)};
+			builtin_send(w.iso, a, 2);
+		}
+	});
+	producer.join();
+	consumer.join();
+
+	CHECK(total.load() == static_cast<long>(N) * (N + 1) / 2);
+	drop(ch);
+}
+
+// Payloads with cells: the producer builds Lists and sends them; each is transferred to
+// an independent copy the consumer owns and frees. Exercises the transfer walk across a
+// real thread boundary with the channel mutex providing the happens-before edge.
+TEST_CASE("concurrency: a Channel transfers List payloads across threads")
+{
+	Isolate main_iso;
+	Value none;
+	Value ch = builtin_channel(main_iso, &none, 0); // unbounded
+
+	constexpr int N = 2000;
+	std::atomic<long> total{0};
+	std::atomic<bool> shapes_ok{true};
+	std::thread consumer([&] {
+		WorkerScope w;
+		long sum = 0;
+		for (int i = 0; i < N; ++i)
+		{
+			Value a[1] = {ch};
+			Value v = builtin_receive(w.iso, a, 1);
+			List l = List::from_value(v);
+			if (l.size() != 2)
+				shapes_ok = false;
+			else
+				sum += static_cast<long>(l.get(1).value().as_int()) +
+				       static_cast<long>(l.get(2).value().as_int());
+			release(v.as_cell());
+		}
+		total = sum;
+	});
+	std::thread producer([&] {
+		WorkerScope w;
+		for (int i = 1; i <= N; ++i)
+		{
+			List l{Variant::from_int(i), Variant::from_int(i * 2)};
+			Value a[2] = {ch, l.to_value()};
+			builtin_send(w.iso, a, 2);
+		}
+	});
+	producer.join();
+	consumer.join();
+
+	CHECK(shapes_ok.load());
+	long expect = 0;
+	for (int i = 1; i <= N; ++i)
+		expect += i + i * 2;
+	CHECK(total.load() == expect);
+	drop(ch);
+}
+
+// A frozen Array sent through a channel is shared zero-copy: the consumer sees the same
+// buffer pointer the producer froze, read concurrently while the producer still holds it.
+TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-copy")
+{
+	Isolate main_iso;
+	Value none;
+	Value ch = builtin_channel(main_iso, &none, 0);
+
+	constexpr intptr_t M = 2048;
+	Array shared = Array::make_1d(M);
+	double *sd = shared.detach();
+	for (intptr_t i = 0; i < M; ++i)
+		sd[i] = static_cast<double>(i);
+	shared.make_frozen();
+	const double *base = shared.data();
+
+	std::atomic<bool> same{false};
+	std::atomic<double> wsum{0};
+	std::thread consumer([&] {
+		WorkerScope w;
+		Value a[1] = {ch};
+		Value v = builtin_receive(w.iso, a, 1);
+		Array wa = Array::from_value(v);
+		same = (wa.data() == base);
+		double s = 0;
+		for (intptr_t i = 0; i < M; ++i)
+			s += wa.get(&i);
+		wsum = s;
+		release(v.as_cell());
+	});
+
+	Value a[2] = {ch, shared.to_value()};
+	builtin_send(main_iso, a, 2);
+	consumer.join();
+
+	CHECK(same.load()); // same frozen buffer across threads: zero copy through the channel
+	double ms = 0;
+	for (intptr_t i = 0; i < M; ++i)
+		ms += shared.get(&i);
+	CHECK(wsum.load() == ms);
+	drop(ch);
 }
 
 } // namespace

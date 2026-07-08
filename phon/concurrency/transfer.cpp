@@ -6,6 +6,7 @@
 #include <phon/core/cell.hpp>
 #include <phon/core/flat_hash_map.hpp>
 #include <phon/core/handle.hpp>
+#include <phon/memory/cycle_collector.hpp>
 #include <phon/object/class.hpp>
 #include <phon/object/instance.hpp>
 #include <phon/types/array.hpp>
@@ -181,6 +182,21 @@ Value do_transfer(Isolate &iso, Value v, SeenMap &seen)
 
 Value transfer_across_threads(Isolate &iso, Value v)
 {
+	// Detach this thread's cycle collector for the walk. Building each copy briefly drops
+	// a wrapper's reference (rc 2 -> 1), which would otherwise enroll the copy as a cycle
+	// candidate on the *sender's* collector — but the copy is about to be handed to
+	// another thread, so the sender's collector must never reference it (it would race the
+	// receiver's release and, worse, the receiver frees it). Skipping candidate tracking
+	// is safe: the transferable subgraph is all value types, which are acyclic, so
+	// refcounting alone reclaims it. A RAII guard restores the collector even if the walk
+	// raises on a non-sendable payload.
+	struct CollectorDetach
+	{
+		CycleCollector *prev;
+		CollectorDetach() : prev(current_collector()) { set_current_collector(nullptr); }
+		~CollectorDetach() { set_current_collector(prev); }
+	} detach;
+
 	SeenMap seen;
 	return do_transfer(iso, v, seen);
 }

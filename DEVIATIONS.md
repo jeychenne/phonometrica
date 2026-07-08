@@ -1081,3 +1081,33 @@ land in Stages 3–6.
    the raise unwinds through RAII (`List`/`Set`/`Table` locals, a `Handle<Cell>` for the
    in-progress instance), releasing everything copied so far; the seen-map holds only
    borrowed pointers and is discarded. No two-pass validate-then-copy needed.
+
+### Stage 4 — Channel (`concurrency/channel.*`)
+
+9. **Channel is a non-builtin ref class + a `Channel` builtin generic.** §13 makes
+   Channel a reference class. It is registered *without* `CLASS_BUILTIN`, so the
+   compiler's name resolver does not see it and `Channel(...)` resolves to the `Channel`
+   builtin native (construction), not the class-object constructor path (which only
+   handles field-based user classes / the Error subtree — a channel's payload is a
+   mutex+condvars+queue, not Value fields). Consequence: `x is Channel` is not yet
+   available. Adding it needs either name-resolver visibility plus a native-constructor
+   hook in the call-lowering, or exposing the class object separately — deferred.
+10. **Channel cells are born SHARED_BUFFER.** A channel is shared across threads, so its
+    refcount must be atomic; `builtin_channel` sets `FLAG_SHARED_BUFFER` at creation (only
+    that bit — `FROZEN` governs copy-on-write, which a ref class never does). The class is
+    `CLASS_ACYCLIC` (a channel never joins a reference cycle: payloads are transferred
+    copies, and channels are not yet sendable through channels).
+11. **The queue is a Vector with a head cursor, not a ring.** `send`/`receive` use a
+    `Vector<Value>` FIFO with a consumed-prefix compaction once the head passes a small
+    threshold, keeping the backing storage bounded (~2×capacity) without ring-index
+    bookkeeping. `Channel()` is unbounded; `Channel(n)` blocks the sender when the live
+    count reaches n; rendezvous (`Channel(0)` as a synchronous handoff) is not supported
+    (0 means unbounded here — architecture §13 defers rendezvous).
+12. **The transfer walk detaches the sender's cycle collector.** Building a copy briefly
+    drops a wrapper's reference (rc 2→1), which would enroll the copy as a cycle candidate
+    on the *sender's* collector — but the copy is handed to another thread, so the sender
+    must not track it (found by TSan: the sender's teardown collect raced the receiver's
+    release/free). `transfer_across_threads` nulls `current_collector()` for the walk
+    (RAII-restored). Safe because the transferable subgraph is all value types, which are
+    acyclic — refcounting alone reclaims them; the receiver buffers them on its own
+    collector when it first releases them.

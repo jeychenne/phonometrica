@@ -4,6 +4,7 @@
 #include <phon/runtime/runtime.hpp>
 
 #include <phon/compile/disassembler.hpp>
+#include <phon/concurrency/channel.hpp>
 #include <phon/compile/lower.hpp>
 #include <phon/compile/parser.hpp>
 #include <phon/compile/source.hpp>
@@ -213,6 +214,9 @@ void register_builtins()
 	register_native("to_string", builtin_to_string, 1, 1);
 	register_native("collect_garbage", builtin_collect_garbage, 0, 0);
 	register_native("freeze", builtin_freeze, 1, 1);
+	register_native("Channel", builtin_channel, 0, 1);
+	register_native("send", builtin_send, 2, 2);
+	register_native("receive", builtin_receive, 1, 1);
 
 	// Error construction: init(this as Error, message). Registered with a typed
 	// signature so subclasses inherit it (constructor inheritance).
@@ -251,6 +255,7 @@ void init_runtime()
 	std::call_once(g_init_once, [] {
 		bootstrap();
 		register_function_classes();
+		register_channel_class();
 		register_builtins();
 	});
 }
