@@ -142,6 +142,7 @@ add_executable(phon_unit_tests
     test/unit/test_scripts.cpp
     test/unit/test_concurrency.cpp
     test/unit/test_modules.cpp
+    test/unit/test_embed.cpp
 )
 target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)

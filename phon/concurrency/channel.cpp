@@ -96,7 +96,7 @@ void register_channel_class()
 
 Class *channel_class() noexcept { return g_channel; }
 
-Value builtin_channel(Isolate &iso, Value *args, int argc)
+Value builtin_channel(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	intptr_t cap = 0;
 	if (argc >= 1)
@@ -115,7 +115,7 @@ Value builtin_channel(Isolate &iso, Value *args, int argc)
 	return Value::make_cell(c); // +1
 }
 
-Value builtin_send(Isolate &iso, Value *args, int argc)
+Value builtin_send(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) argc;
 	if (!is_channel(args[0]))
@@ -136,7 +136,7 @@ Value builtin_send(Isolate &iso, Value *args, int argc)
 	return Value::make_null();
 }
 
-Value builtin_receive(Isolate &iso, Value *args, int argc)
+Value builtin_receive(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) argc;
 	if (!is_channel(args[0]))

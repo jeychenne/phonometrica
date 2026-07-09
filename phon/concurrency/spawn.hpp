@@ -22,6 +22,7 @@
 namespace phonometrica {
 
 class Isolate;
+struct NativeCell;
 struct Class;
 
 // Register the Thread reference class (idempotent; called by init_runtime()).
@@ -30,7 +31,7 @@ Class *thread_class() noexcept;
 
 // wait(handle): block until the worker finishes; re-raise (join-only) an error it died
 // with. Returns null.
-Value builtin_wait(Isolate &iso, Value *args, int argc);
+Value builtin_wait(Isolate &iso, NativeCell *, Value *args, int argc);
 
 } // namespace phonometrica
 

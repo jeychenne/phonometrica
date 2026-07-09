@@ -1249,3 +1249,107 @@ reached qualified (`M.x`) or brought bare via `for`.
     application into a per-class thunk compiled in the defining module (a class-system
     change, not a module-binding one). Until then the idiom is a factory function, which is
     flat-global after import: `function make_point(x, y) as Point … end` then `make_point(…)`.
+
+## M8 — Embedding + stdlib + performance (architecture §11, §12)
+
+Landed incrementally; each stage stays green under the normal, ASan, and TSan builds
+(the concurrency acceptance bar carries forward). M8 leads with the typed registration
+API (§11.3), the primary surface for exposing C++ to scripts.
+
+### Stage 1 — typed registration front end (`rt.add_function`, `runtime/native_traits.hpp`)
+
+1. **Native callback ABI gains `self`.** `NativeFn` is now
+   `Value(*)(Isolate&, NativeCell*, Value*, int)` (was without the `NativeCell*`). The
+   thunk generated for a typed registration recovers its captured C++ callable through
+   `self->env`; hand-written natives ignore the parameter (declared unnamed). All three
+   VM call sites (`invoke`, `vm_call`, `run_callable`) and every builtin native were
+   updated mechanically. This is the design's intent ("recovers the environment through
+   the NativeFunction object", §11.3) made concrete in the ABI.
+2. **Captured callables live in a `NativeEnvCell`.** A capturing lambda is moved into a
+   cell (`native_env_class()`, registered in `register_function_classes`) that stores the
+   callable inline after a fixed prefix `{Cell, void(*destroy)(void*), uint32_t
+   payload_off}`; its finalizer runs the erased destructor, so a lambda that captures
+   Handles/Variants releases them when the owning `NativeCell` dies. `NativeCell` gained a
+   `Cell *env` field (null for hand-written/non-capturing natives) released on finalize —
+   so `native_class()` now has a finalizer where it previously had none. The env prefix is
+   duplicated as `NativeEnvHeader` in `vm/function.cpp` (which finalizes it without seeing
+   the template) and `detail::NativeEnvCell` in `native_traits.hpp`; the two layouts must
+   stay in sync (noted in both files).
+3. **Env cells are marked acyclic (a known, bounded leak).** The collector never traces
+   into a C++ callable, so a script cell captured *by value into a C++ lambda* is an
+   uncollectable root: a reference cycle routed through such a capture leaks rather than
+   being reclaimed. This matches natives already being GC-leaves and is acceptable —
+   embedders capturing live script objects into long-lived callbacks is rare and the leak
+   is bounded by the callback's lifetime. Revisit if a real embedding hits it.
+4. **Type mapping (`ArgTraits`/`RetTraits`).** A C++ `double` (any floating type)
+   dispatches on `Real` and unboxes via `to_double()`, so an integer argument satisfies it
+   and coerces; any integer type dispatches on `Integer`; `bool` on `Boolean`; the
+   `String`/`List`/`Table`/`Array` wrappers on their classes (owning unbox via
+   `from_value`, `+1` box via `to_value`); `Variant`/`Value` are untyped pass-throughs on
+   `Object`; `Handle<T>` dispatches on `T::phon_class` (usable once stage 2's `add_class<T>`
+   sets that static). Registration goes through the ordinary `add_method`, so a C++ overload
+   and a script method of the same name coexist and dispatch by argument type.
+5. **Optional leading `Isolate&`.** If the callable's first parameter is `Isolate&`, the
+   thunk passes the running isolate through and it is *not* part of the dispatch signature
+   — the hook for callables that raise or call back into the VM. Detected by
+   `strip_isolate` over the deduced argument tuple.
+6. **`ref` parameters use the natural `T&` spelling (not `phon::Ref<T>`).** A **non-const
+   lvalue-reference** parameter is a `ref` that writes back to the caller's slot; a by-value
+   or `const T&` parameter is read-only. This departs from the design doc's `phon::Ref<Array>`
+   sketch (§11.3) — the plain-reference spelling is more idiomatic C++ and the owner preferred
+   it. Mechanics (`native_traits.hpp`): `is_ref_param<A>` drives the ref-mask installed via
+   `add_method`, so a direct call promotes the argument (references.md §6) and the native
+   receives a first-class reference box. Per argument the thunk builds a `Binder`: a
+   by-reference binder **moves the referent out of the box slot** (transferring the slot's
+   reference, nulling the slot) so a CoW value type mutates in place when uniquely held and
+   copies when shared, then writes the possibly-changed value back on destruction (after the
+   call). Binders are stack locals threaded through a recursion — never moved — so lifetimes
+   and write-back ordering are exact. Supported ref types: numeric scalars and the
+   String/List/Table/Array wrappers (`RefMarshal`); an unsupported `T&` is a compile error.
+   Two accepted limitations, both matching existing reference behaviour: (a) the box slot is
+   null for the duration of the call (shared with `for ref`), and (b) an **indirect** call
+   (native reached through a first-class function value, not by name) does not promote —
+   `callable_ref_mask` still returns 0 for natives — so the ref parameter silently degrades
+   to by-value there; direct calls by name (the design's motivating `trim(str)` /
+   `normalize(x)` cases) work.
+7. **Registration is process-global; `add_function` is a `Runtime` method for ergonomics
+   and to guarantee initialization.** It forwards to the free `phon::register_function`,
+   which stdlib modules (stage 4) will call directly. An ambiguous signature against an
+   existing overload throws `std::runtime_error` (an embedding bug, surfaced eagerly) rather
+   than the script-level `AddMethod::Ambiguous` path.
+
+### Stage 2 — class registration for C++ types (`add_class<T>`, `Handle<T>::make`)
+
+8. **`rt.add_class<T>("Name", base, ClassKind)`** registers a C++ type as a phon class:
+   records `sizeof(T)`, wires `~T()` as the finalizer, binds the static `T::phon_class`
+   (which the stage-1 `Handle<T>` ArgTraits/RetTraits already keyed on — so typed
+   registration of functions over `T` now works), and for a `ClassKind::Value` class wires a
+   CoW clone hook. `T` must be cell-headed (first member `Cell header`) with a
+   `static Class *phon_class` slot — the design's `T::phon_class` convention (§11.2), no macro
+   required. `ClassKind` replaces the design's unspecified third argument with an explicit
+   `{Reference, Value}` enum.
+9. **Foreign classes are marked `CLASS_BUILTIN`.** This is what makes them nameable by the
+   compiler's global resolver (`class_by_name` is builtin-only), so a registered class works
+   in `is`/`as`/type annotations and dispatch. A deliberate consequence: `CLASS_BUILTIN`
+   classes are **not script-constructible** (`Name(...)` in a script is rejected, as for any
+   builtin except Error), which matches the design — instances come from C++ (`Handle<T>::make`)
+   or a registered factory function (`make_point(...)`), never a script constructor. `find_class`
+   (new, public) backs `rt.get_class("Object")`; it returns the first non-metaclass of that
+   name (an embedder owns its namespace, so first-match is unambiguous in practice — the unit
+   test uses a unique class name only because the *shared test process* already has another
+   `Point` from `test_instance`).
+10. **`Handle<T>::make(args…)` (design §11.5, replaces `rt.create<T>`).** cell_alloc'ing then
+    placement-constructing `T` over the same bytes would clobber the header cell_alloc just
+    stamped (T's leading `Cell header` is default-constructed by T's ctor), so `make` saves
+    `hdr`/`rc_bits` and restores them after construction. Allocation is Isolate-independent
+    (the FOREIGN cell path is still the only allocator — the M4 arena path was never needed),
+    so `make` works on any thread with or without an Isolate, matching §11.5's foreign-allocation
+    contract. The finalizer runs via the existing `cell_dispose` seam.
+11. **No cycle-collector trace hook for foreign classes (a bounded leak, like the native env).**
+    A registered C++ type that captures script cells (a `Handle`/`Variant` member) is a GC leaf:
+    a cycle routed through it leaks rather than being reclaimed. A per-class trace hook could be
+    added later (an embedder-supplied enumerator); deferred as most app classes wrap C++ data,
+    not script objects. **Value-class registration is implemented but lightly exercised** — the
+    tests cover reference classes (the primary case); the CoW clone path for a foreign value
+    class only fires if something invokes the clone hook, which no script opcode does for a
+    foreign type today.

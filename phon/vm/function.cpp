@@ -56,8 +56,35 @@ void upvalue_trace(Cell *c, void (*visit)(Cell *))
 		visit(uv->closed.as_cell());
 }
 
+// A NativeCell that carries a captured C++ callable (typed registration, M8)
+// releases its environment cell when it dies; a plain native has env == null.
+void native_finalize(Cell *c)
+{
+	auto *nf = reinterpret_cast<NativeCell *>(c);
+	if (nf->env)
+		release(nf->env);
+}
+
+// A NativeEnvCell (runtime/native_traits.hpp) owns one C++ callable stored inline.
+// Its finalizer runs the erased destructor via the stored function pointer; the
+// callable's own captures (Handles/Variants) are freed by that destructor. The
+// header prefix is fixed, so this file can finalize it without seeing the template.
+struct NativeEnvHeader
+{
+	Cell header;
+	void (*destroy)(void *payload);
+	uint32_t payload_off; // byte offset of the callable from the cell base
+};
+
+void native_env_finalize(Cell *c)
+{
+	auto *env = reinterpret_cast<NativeEnvHeader *>(c);
+	env->destroy(reinterpret_cast<char *>(c) + env->payload_off);
+}
+
 Class *g_closure = nullptr;
 Class *g_native = nullptr;
+Class *g_native_env = nullptr;
 Class *g_upvalue = nullptr;
 
 } // namespace
@@ -73,7 +100,13 @@ void register_function_classes()
 	g_closure->finalize = &closure_finalize;
 	g_closure->trace = &closure_trace;
 	g_native = add_class("Function", object, CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
-	g_native->finalize = nullptr;
+	g_native->finalize = &native_finalize;
+	// The captured-callable environment for typed natives. Acyclic from the
+	// collector's view: it never traces into the C++ callable, so a script cell
+	// captured by a C++ lambda is an uncollectable root (a leak, not a crash) —
+	// noted in DEVIATIONS. Never script-visible.
+	g_native_env = add_class("NativeEnv", object, CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
+	g_native_env->finalize = &native_env_finalize;
 	g_upvalue = add_class("Upvalue", object, CLASS_BUILTIN | CLASS_REF);
 	g_upvalue->finalize = &upvalue_finalize;
 	g_upvalue->trace = &upvalue_trace;
@@ -81,6 +114,7 @@ void register_function_classes()
 
 Class *closure_class() noexcept { return g_closure; }
 Class *native_class() noexcept { return g_native; }
+Class *native_env_class() noexcept { return g_native_env; }
 Class *upvalue_class() noexcept { return g_upvalue; }
 
 ClosureCell *make_closure(Proto *proto)
@@ -97,7 +131,7 @@ ClosureCell *make_closure(Proto *proto)
 	return cl;
 }
 
-NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity)
+NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity, Cell *env)
 {
 	Cell *c = cell_alloc(g_native->id, static_cast<intptr_t>(sizeof(NativeCell)));
 	auto *nf = reinterpret_cast<NativeCell *>(c);
@@ -105,6 +139,7 @@ NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity)
 	nf->name = name;
 	nf->min_arity = min_arity;
 	nf->max_arity = max_arity;
+	nf->env = env; // adopts the +1 the caller allocated (released on finalize)
 	return nf;
 }
 

@@ -16,6 +16,7 @@
 #include <phon/object/class.hpp>
 #include <phon/object/instance.hpp>
 #include <phon/runtime/bootstrap.hpp>
+#include <phon/runtime/native_traits.hpp>
 #include <phon/types/array.hpp>
 #include <phon/types/atom.hpp>
 #include <phon/types/list.hpp>
@@ -32,6 +33,7 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <stdexcept>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
@@ -42,7 +44,7 @@ namespace {
 
 // --- builtin natives ----------------------------------------------------------
 
-Value builtin_print(Isolate &iso, Value *args, int argc)
+Value builtin_print(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	String out;
 	for (int i = 0; i < argc; ++i)
@@ -56,7 +58,7 @@ Value builtin_print(Isolate &iso, Value *args, int argc)
 	return Value::make_null();
 }
 
-Value builtin_to_string(Isolate &iso, Value *args, int argc)
+Value builtin_to_string(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	// The builtin `to_string` methods (one per arity-1 call) stringify any value the
 	// way `&`/print do; a user `method to_string()` overrides for its own class.
@@ -70,7 +72,7 @@ Value builtin_to_string(Isolate &iso, Value *args, int argc)
 	return v;
 }
 
-Value builtin_assert(Isolate &iso, Value *args, int argc)
+Value builtin_assert(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	Value cond = args[0];
 	if (cond.is_null() || cond.is_false())
@@ -86,7 +88,7 @@ Value builtin_assert(Isolate &iso, Value *args, int argc)
 	return Value::make_null();
 }
 
-Value builtin_len(Isolate &iso, Value *args, int argc)
+Value builtin_len(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) argc;
 	Value v = args[0];
@@ -105,7 +107,7 @@ Value builtin_len(Isolate &iso, Value *args, int argc)
 	iso.raise(String("[Type error] 'len' expects a List, String, Table, or Set"), 0);
 }
 
-Value builtin_cast(Isolate &iso, Value *args, int argc)
+Value builtin_cast(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	// `cast x as T` -> cast(x, T) (design §7). The default is a checked,
 	// identity-preserving downcast; type-specific conversions are library overloads.
@@ -125,7 +127,7 @@ Value builtin_cast(Isolate &iso, Value *args, int argc)
 	          0);
 }
 
-Value error_init(Isolate &, Value *args, int argc)
+Value error_init(Isolate &, NativeCell *, Value *args, int argc)
 {
 	// init(this as Error, message): set the message field (slot 0) and return `this`.
 	(void) argc;
@@ -141,7 +143,7 @@ Value error_init(Isolate &, Value *args, int argc)
 	return args[0];
 }
 
-Value builtin_freeze(Isolate &iso, Value *args, int argc)
+Value builtin_freeze(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) iso;
 	(void) argc;
@@ -162,7 +164,7 @@ Value builtin_freeze(Isolate &iso, Value *args, int argc)
 	return v;
 }
 
-Value builtin_collect_garbage(Isolate &iso, Value *args, int argc)
+Value builtin_collect_garbage(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) args;
 	(void) argc;
@@ -213,6 +215,44 @@ void register_native(const char *name, NativeFn fn, int min_arity, int max_arity
 		add_method(g, sig, 0, false, nf);
 	}
 }
+
+} // namespace
+
+// The typed registration front end's installation core (native_traits.hpp): install a
+// generated thunk as one method on the generic `name`, dispatched on `sig` (the C++
+// parameter classes). Unlike register_native (Object-typed, arity-ranged), this adds a
+// single precisely-typed overload — C++ registration and script method definition go
+// through the same add_method path.
+void register_typed_native(const char *name, NativeFn fn, Cell *env,
+                           const SmallVector<Class *, 4> &sig, int arity, uint64_t ref_mask)
+{
+	Symbol s = intern(name);
+	GenericFunction *g = get_or_create_generic(s);
+	NativeCell *nf = make_native(fn, s, arity, arity, env); // adopts env's +1
+	native_keepalive().cells.push_back(nf);                 // retains via make_native's +1
+	AddMethod res = add_method(g, sig, ref_mask, false, nf);
+	if (res == AddMethod::RefMaskConflict)
+		throw std::runtime_error(std::string("[Registration error] method '") + name +
+		                         "' has `ref` parameters that disagree with an existing overload");
+	if (res != AddMethod::Ok)
+		throw std::runtime_error(std::string("[Registration error] method '") + name +
+		                         "' is ambiguous against an existing overload");
+}
+
+// Register a C++ type as a phon class (native_traits.hpp add_class<T>). Marked
+// CLASS_BUILTIN so the compiler's name resolver finds it (usable in `is`/annotations and
+// dispatch), which also makes it non-script-constructible — instances come from C++.
+Class *register_foreign_class(const char *name, Class *base, bool is_reference,
+                              intptr_t instance_size, FinalizeHook finalize, CloneHook clone)
+{
+	uint16_t flags = CLASS_BUILTIN | (is_reference ? CLASS_REF : CLASS_VALUE);
+	Class *c = add_class(name, base, flags, instance_size);
+	c->finalize = finalize;
+	c->clone = clone;
+	return c;
+}
+
+namespace {
 
 void register_builtins()
 {

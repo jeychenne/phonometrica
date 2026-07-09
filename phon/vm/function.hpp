@@ -33,11 +33,15 @@
 namespace phonometrica {
 
 class Isolate;
+struct NativeCell;
 
 // Native callback ABI (architecture §10.2): borrowed argument span, returns a
-// value carrying one reference the caller adopts. Runtime errors are raised via
-// Isolate::raise (which throws across the native boundary).
-using NativeFn = Value (*)(Isolate &iso, Value *args, int argc);
+// value carrying one reference the caller adopts. `self` is the NativeCell being
+// invoked, so a callback can reach its own name (for error messages) and, for the
+// typed registration front end (M8, runtime/native_traits.hpp), the cell-managed
+// environment holding a captured C++ callable. Hand-written natives ignore `self`.
+// Runtime errors are raised via Isolate::raise (which throws across the boundary).
+using NativeFn = Value (*)(Isolate &iso, NativeCell *self, Value *args, int argc);
 
 // One cell type serves both upvalues and first-class reference boxes: an upvalue
 // *is* a reference to a captured variable (design/references.md §3). "Open" means
@@ -80,6 +84,11 @@ struct NativeCell
 	Symbol name;
 	int32_t min_arity;
 	int32_t max_arity; // -1 = variadic
+	// Optional cell-managed environment for the typed registration front end (M8):
+	// a NativeEnvCell (runtime/native_traits.hpp) owning a captured C++ callable the
+	// thunk recovers via `self`. Null for hand-written natives and non-capturing
+	// callables. Owned (one reference); released when this NativeCell is finalized.
+	Cell *env;
 };
 
 // Register the Closure/Native/Upvalue classes (idempotent). Called by init_runtime().
@@ -87,6 +96,7 @@ void register_function_classes();
 
 Class *closure_class() noexcept;
 Class *native_class() noexcept;
+Class *native_env_class() noexcept; // captured-callable env for typed natives (M8)
 Class *upvalue_class() noexcept;
 
 PHON_FORCE_INLINE bool is_closure(Value v) noexcept
@@ -110,7 +120,10 @@ PHON_FORCE_INLINE uint64_t callable_ref_mask(Value v) noexcept
 // --- construction (each returns a cell with refcount 1) ---
 
 ClosureCell *make_closure(Proto *proto);
-NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity);
+// `env`, if non-null, is a NativeEnvCell whose +1 reference this NativeCell adopts
+// (released on finalize). Used by the typed registration front end (M8).
+NativeCell *make_native(NativeFn fn, Symbol name, int min_arity, int max_arity,
+                        Cell *env = nullptr);
 UpvalueCell *make_upvalue(Value *slot);
 // A *closed* reference box that owns `initial` (design/references.md §3): the
 // reference has no write-back target (a non-lvalue passed to a `ref` parameter).

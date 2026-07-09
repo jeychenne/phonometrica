@@ -186,6 +186,18 @@ intptr_t class_count() noexcept
 	return reg().by_id.size();
 }
 
+Class *find_class(const char *name) noexcept
+{
+	Vector<Class *> &t = reg().by_id;
+	for (intptr_t i = 0; i < t.size(); ++i)
+	{
+		Class *c = t[i];
+		if (c && c->name && !(c->flags & CLASS_META) && std::strcmp(c->name, name) == 0)
+			return c;
+	}
+	return nullptr;
+}
+
 void renumber_types()
 {
 	uint32_t counter = 0;

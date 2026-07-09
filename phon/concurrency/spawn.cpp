@@ -121,7 +121,7 @@ void register_thread_class()
 
 Class *thread_class() noexcept { return g_thread; }
 
-Value builtin_wait(Isolate &iso, Value *args, int argc)
+Value builtin_wait(Isolate &iso, NativeCell *, Value *args, int argc)
 {
 	(void) argc;
 	if (!is_thread_handle(args[0]))

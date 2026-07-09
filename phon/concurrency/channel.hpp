@@ -22,6 +22,7 @@
 namespace phonometrica {
 
 class Isolate;
+struct NativeCell;
 struct Class;
 
 // Register the Channel reference class (idempotent; called by init_runtime()).
@@ -30,9 +31,9 @@ Class *channel_class() noexcept;
 
 // Builtins (registered by register_builtins()): Channel()/Channel(n), send(ch, value),
 // receive(ch). Each returns a value carrying +1 (receive) or null (send).
-Value builtin_channel(Isolate &iso, Value *args, int argc);
-Value builtin_send(Isolate &iso, Value *args, int argc);
-Value builtin_receive(Isolate &iso, Value *args, int argc);
+Value builtin_channel(Isolate &iso, NativeCell *, Value *args, int argc);
+Value builtin_send(Isolate &iso, NativeCell *, Value *args, int argc);
+Value builtin_receive(Isolate &iso, NativeCell *, Value *args, int argc);
 
 } // namespace phonometrica
 

@@ -495,7 +495,7 @@ Value run(Isolate &iso)
 				iso.raise(String("[Argument error] '") + String(symbol_name(nf->name)).view() +
 				              "' called with the wrong number of arguments",
 				          cur_line());
-			Value result = nf->fn(iso, &base[a + 1], nargs);
+			Value result = nf->fn(iso, nf, &base[a + 1], nargs);
 			for (int i = 0; i <= nargs; ++i)
 			{
 				release_value(base[a + i]);
@@ -2124,7 +2124,7 @@ Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
 	if (is_native(callee))
 	{
 		auto *nf = reinterpret_cast<NativeCell *>(callee.as_cell());
-		return nf->fn(iso, args, argc);
+		return nf->fn(iso, nf, args, argc);
 	}
 	PHON_ASSERT_MSG(is_closure(callee), "vm_call on a non-callable");
 	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
@@ -2202,7 +2202,7 @@ Value run_callable(Isolate &iso, Value callee, Value *args, int argc)
 	if (is_native(callee))
 	{
 		auto *nf = reinterpret_cast<NativeCell *>(callee.as_cell());
-		return nf->fn(iso, args, argc);
+		return nf->fn(iso, nf, args, argc);
 	}
 	PHON_ASSERT_MSG(is_closure(callee), "run_callable on a non-callable");
 	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());

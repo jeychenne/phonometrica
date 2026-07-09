@@ -12,6 +12,7 @@
 
 #include <phon/base/definitions.hpp>
 #include <phon/core/cell.hpp>
+#include <new>
 #include <utility>
 
 namespace phonometrica {
@@ -79,6 +80,23 @@ public:
 
 	// Adopt a raw pointer that already carries the reference we should own.
 	static Handle adopt(T *p) noexcept { return Handle(p, Adopt{}); }
+
+	// Allocate and construct a new instance of a registered cell type (design §11.5:
+	// replaces `rt.create<T>`). `T` must be a registered class (`T::phon_class`, bound
+	// by add_class<T>); allocation is Isolate-independent (the FOREIGN cell path), so
+	// this works on any thread, including with no Isolate. Returns an owning Handle.
+	template<class... Args>
+	static Handle make(Args &&...args)
+	{
+		Cell *c = cell_alloc(T::phon_class->id, static_cast<intptr_t>(sizeof(T)));
+		// cell_alloc stamped the header + refcount; the constructor writes over T's
+		// leading Cell member, so save and restore them around placement-construction.
+		uint32_t hdr = c->hdr, rc = c->rc_bits;
+		T *p = ::new (static_cast<void *>(c)) T(std::forward<Args>(args)...);
+		c->hdr = hdr;
+		c->rc_bits = rc;
+		return Handle(p, Adopt{});
+	}
 
 	// --- access ---
 

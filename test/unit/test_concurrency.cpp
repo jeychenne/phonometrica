@@ -467,7 +467,7 @@ TEST_CASE("concurrency: producer/consumer over a bounded Channel")
 {
 	Isolate main_iso;
 	Value cap = Value::make_int(4);
-	Value ch = builtin_channel(main_iso, &cap, 1);
+	Value ch = builtin_channel(main_iso, nullptr, &cap, 1);
 
 	constexpr int N = 5000;
 	std::atomic<long> total{0};
@@ -477,7 +477,7 @@ TEST_CASE("concurrency: producer/consumer over a bounded Channel")
 		for (int i = 0; i < N; ++i)
 		{
 			Value a[1] = {ch};
-			Value v = builtin_receive(w.iso, a, 1);
+			Value v = builtin_receive(w.iso, nullptr, a, 1);
 			sum += static_cast<long>(v.as_int());
 		}
 		total = sum;
@@ -487,7 +487,7 @@ TEST_CASE("concurrency: producer/consumer over a bounded Channel")
 		for (int i = 1; i <= N; ++i)
 		{
 			Value a[2] = {ch, Value::make_int(i)};
-			builtin_send(w.iso, a, 2);
+			builtin_send(w.iso, nullptr, a, 2);
 		}
 	});
 	producer.join();
@@ -504,7 +504,7 @@ TEST_CASE("concurrency: a Channel transfers List payloads across threads")
 {
 	Isolate main_iso;
 	Value none;
-	Value ch = builtin_channel(main_iso, &none, 0); // unbounded
+	Value ch = builtin_channel(main_iso, nullptr, &none, 0); // unbounded
 
 	constexpr int N = 2000;
 	std::atomic<long> total{0};
@@ -515,7 +515,7 @@ TEST_CASE("concurrency: a Channel transfers List payloads across threads")
 		for (int i = 0; i < N; ++i)
 		{
 			Value a[1] = {ch};
-			Value v = builtin_receive(w.iso, a, 1);
+			Value v = builtin_receive(w.iso, nullptr, a, 1);
 			List l = List::from_value(v);
 			if (l.size() != 2)
 				shapes_ok = false;
@@ -532,7 +532,7 @@ TEST_CASE("concurrency: a Channel transfers List payloads across threads")
 		{
 			List l{Variant::from_int(i), Variant::from_int(i * 2)};
 			Value a[2] = {ch, l.to_value()};
-			builtin_send(w.iso, a, 2);
+			builtin_send(w.iso, nullptr, a, 2);
 		}
 	});
 	producer.join();
@@ -552,7 +552,7 @@ TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-cop
 {
 	Isolate main_iso;
 	Value none;
-	Value ch = builtin_channel(main_iso, &none, 0);
+	Value ch = builtin_channel(main_iso, nullptr, &none, 0);
 
 	constexpr intptr_t M = 2048;
 	Array shared = Array::make_1d(M);
@@ -567,7 +567,7 @@ TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-cop
 	std::thread consumer([&] {
 		WorkerScope w;
 		Value a[1] = {ch};
-		Value v = builtin_receive(w.iso, a, 1);
+		Value v = builtin_receive(w.iso, nullptr, a, 1);
 		Array wa = Array::from_value(v);
 		same = (wa.data() == base);
 		double s = 0;
@@ -578,7 +578,7 @@ TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-cop
 	});
 
 	Value a[2] = {ch, shared.to_value()};
-	builtin_send(main_iso, a, 2);
+	builtin_send(main_iso, nullptr, a, 2);
 	consumer.join();
 
 	CHECK(same.load()); // same frozen buffer across threads: zero copy through the channel

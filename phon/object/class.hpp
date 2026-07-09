@@ -157,6 +157,11 @@ Class *get_class(uint32_t id) noexcept;
 bool has_class(uint32_t id) noexcept;
 intptr_t class_count() noexcept;
 
+// Look up a class by name (the embedding API's `Runtime::get_class(name)`). Returns the
+// first non-metaclass whose name matches, or null. Used to resolve a base class for C++
+// class registration (design §11.2).
+Class *find_class(const char *name) noexcept;
+
 // Recompute pre-order intervals from the class tree and bump type_epoch.
 void renumber_types();
 uint32_t type_epoch() noexcept;

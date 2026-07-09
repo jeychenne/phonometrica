@@ -20,11 +20,13 @@
 #define PHON_RUNTIME_RUNTIME_HPP
 
 #include <phon/core/variant.hpp>
+#include <phon/runtime/native_traits.hpp> // typed add_function front end (M8 §11.3)
 #include <phon/types/string.hpp>
 #include <phon/vm/isolate.hpp> // RuntimeError (the error embedders catch)
 
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace phonometrica {
 
@@ -47,6 +49,40 @@ public:
 	// `do_string("x + 1")` yields 6, and a function defined in one call is callable
 	// in a later one.
 	Variant do_string(const String &code);
+
+	// Expose a C++ callable to scripts as a method on the generic `name` (the typed
+	// registration front end, design §11.3). The callable's parameter types map to a
+	// dispatch signature and its return type is boxed automatically:
+	//
+	//     rt.add_function("duration", [](Handle<Interval> i) -> double {
+	//         return i->xmax - i->xmin;
+	//     });
+	//
+	// Each call with an existing name adds an overload (same mechanism as script method
+	// definition). An optional leading `Isolate &` parameter is passed through and is not
+	// part of the signature. See native_traits.hpp for the supported parameter/return
+	// types. Registration is process-global; a Runtime is required only to guarantee the
+	// engine is initialized.
+	template<class F>
+	void add_function(const char *name, F &&f)
+	{
+		register_function(name, std::forward<F>(f));
+	}
+
+	// Register a C++ type `T` as a phon class named `name` deriving from `base` (design
+	// §11.2), e.g. `rt.add_class<Sound>("Sound", rt.get_class("Object"))`. Records
+	// sizeof(T), wires ~T() (and, for a Value class, a CoW clone), and binds
+	// `T::phon_class` so Handle<T> arguments/returns and `is`/annotation dispatch work.
+	// Instances are created from C++ via Handle<T>::make; the class is not
+	// script-constructible. Registration is process-global.
+	template<class T>
+	Class *add_class(const char *name, Class *base, ClassKind kind = ClassKind::Reference)
+	{
+		return phonometrica::add_class<T>(name, base, kind);
+	}
+
+	// Look up a registered class by name (e.g. "Object" for a base). Null if none.
+	Class *get_class(const char *name) const noexcept { return find_class(name); }
 
 	// Add a directory to this session's module search path (design §11). `import M`
 	// looks for `M.phon` or `M/initialize.phon` in the importing file's directory, then
