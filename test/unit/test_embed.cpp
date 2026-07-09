@@ -10,6 +10,7 @@
 #include <phon/core/handle.hpp>
 #include <phon/core/variant.hpp>
 #include <phon/runtime/runtime.hpp>
+#include <phon/types/array.hpp>
 #include <phon/types/list.hpp>
 #include <phon/types/string.hpp>
 #include <phon/vm/isolate.hpp>
@@ -17,6 +18,7 @@
 #include "test_framework.hpp"
 
 #include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -286,4 +288,53 @@ TEST_CASE("embed: register a C++ reference class, construct and dispatch on it")
 	}
 	// The Runtime released its module slots on teardown; both finalizers ran.
 	CHECK(g_points_alive == 0);
+}
+
+TEST_CASE("embed: Variant::to<T> extracts typed C++ values")
+{
+	Runtime rt;
+	CHECK(rt.do_string("2.5").to<double>() == 2.5);
+	CHECK(rt.do_string("7").to<int64_t>() == 7);
+	CHECK(rt.do_string("7").to<double>() == 7.0); // an Integer widens to double
+	CHECK(rt.do_string("true").to<bool>() == true);
+
+	String s = rt.do_string("\"hi\"").to<String>();
+	CHECK(std::string(s.data(), static_cast<size_t>(s.size())) == "hi");
+}
+
+TEST_CASE("embed: Variant::to<T> throws on a type mismatch")
+{
+	Runtime rt;
+	Variant s = rt.do_string("\"nope\"");
+	bool threw = false;
+	try
+	{
+		(void) s.to<int64_t>();
+	}
+	catch (const std::runtime_error &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("embed: Variant::make round-trips through to<T>")
+{
+	CHECK(Variant::make(2.5).to<double>() == 2.5);
+	CHECK(Variant::make<int64_t>(42).to<int64_t>() == 42);
+	CHECK(Variant::make(true).to<bool>() == true);
+	Variant v = Variant::make(String("xyz"));
+	String s = v.to<String>();
+	CHECK(std::string(s.data(), static_cast<size_t>(s.size())) == "xyz");
+}
+
+TEST_CASE("embed: Array view from C++ (size/dim/data)")
+{
+	Runtime rt;
+	Array a = rt.do_string("@[1.0, 2.0, 3.0]").to<Array>();
+	CHECK(a.size() == 3);
+	CHECK(a.dim(0) == 3);
+	const double *d = a.data();
+	CHECK(d[0] == 1.0);
+	CHECK(d[2] == 3.0);
 }

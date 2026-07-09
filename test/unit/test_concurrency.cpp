@@ -497,6 +497,42 @@ TEST_CASE("concurrency: producer/consumer over a bounded Channel")
 	drop(ch);
 }
 
+// The C++-side receive API (design §11.4): a GUI thread pulls results a worker pushed,
+// using a timed poll for event-loop friendliness.
+TEST_CASE("concurrency: C++ channel_receive and channel_try_receive")
+{
+	Isolate main_iso;
+	Value none = Value::make_int(0);
+	Value ch = builtin_channel(main_iso, nullptr, &none, 0); // unbounded
+
+	// Empty channel: a timed poll returns false without blocking indefinitely.
+	Variant out;
+	CHECK(channel_try_receive(ch, 0.0, out) == false);
+	CHECK(out.is_null());
+
+	std::thread producer([&] {
+		WorkerScope w;
+		Value a[2] = {ch, Value::make_int(11)};
+		builtin_send(w.iso, nullptr, a, 2);
+		a[1] = Value::make_int(22);
+		builtin_send(w.iso, nullptr, a, 2);
+	});
+
+	Variant first = channel_receive(ch); // blocking
+	CHECK(first.is_int());
+
+	Variant second;
+	bool got = false;
+	for (int i = 0; i < 500 && !got; ++i)
+		got = channel_try_receive(ch, 0.01, second);
+	CHECK(got);
+	CHECK(second.is_int());
+	CHECK(first.as_int() + second.as_int() == 33);
+
+	producer.join();
+	drop(ch);
+}
+
 // Payloads with cells: the producer builds Lists and sends them; each is transferred to
 // an independent copy the consumer owns and frees. Exercises the transfer walk across a
 // real thread boundary with the channel mutex providing the happens-before edge.

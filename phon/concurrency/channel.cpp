@@ -11,6 +11,7 @@
 #include <phon/vm/isolate.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <mutex>
 
@@ -75,12 +76,12 @@ void channel_finalize(Cell *c)
 	delete st;
 }
 
+} // namespace
+
 bool is_channel(Value v) noexcept
 {
 	return v.is_cell() && g_channel && v.as_cell()->class_id() == g_channel->id;
 }
-
-} // namespace
 
 void register_channel_class()
 {
@@ -154,6 +155,52 @@ Value builtin_receive(Isolate &iso, NativeCell *, Value *args, int argc)
 	if (was_bounded)
 		st->not_full.notify_one();
 	return v; // +1 handed to the caller
+}
+
+Variant channel_receive(Value channel)
+{
+	PHON_ASSERT(is_channel(channel));
+	ChannelState *st = state_of(channel.as_cell());
+	Value v;
+	bool was_bounded;
+	{
+		std::unique_lock<std::mutex> lock(st->mtx);
+		st->not_empty.wait(lock, [st] { return st->count() > 0; });
+		v = st->pop();
+		was_bounded = st->cap > 0;
+	}
+	if (was_bounded)
+		st->not_full.notify_one();
+	return Variant::adopt(v); // the Variant takes the +1 the queue held
+}
+
+bool channel_try_receive(Value channel, double timeout_seconds, Variant &out)
+{
+	PHON_ASSERT(is_channel(channel));
+	ChannelState *st = state_of(channel.as_cell());
+	Value v;
+	bool got;
+	bool was_bounded;
+	{
+		std::unique_lock<std::mutex> lock(st->mtx);
+		auto has_item = [st] { return st->count() > 0; };
+		if (timeout_seconds <= 0.0)
+			got = has_item(); // poll without blocking
+		else
+		{
+			auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+			    std::chrono::duration<double>(timeout_seconds));
+			got = st->not_empty.wait_for(lock, ns, has_item);
+		}
+		if (got)
+			v = st->pop();
+		was_bounded = st->cap > 0;
+	}
+	if (got && was_bounded)
+		st->not_full.notify_one();
+	if (got)
+		out = Variant::adopt(v);
+	return got;
 }
 
 } // namespace phonometrica

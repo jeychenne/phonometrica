@@ -18,6 +18,19 @@
 
 namespace phonometrica {
 
+class Variant;
+
+// The typed-conversion helpers behind Variant::to<T>() / Variant::make() (design §11.4).
+// Declared here but *defined* in runtime/native_traits.hpp, where every value type is
+// complete — the container wrappers include this header, so Variant cannot include them
+// back. Using `to`/`make` therefore requires the embedding header (runtime.hpp).
+namespace detail {
+template<class T>
+T variant_to(Value v);
+template<class T>
+Variant variant_from(const T &x);
+} // namespace detail
+
 class Variant
 {
 public:
@@ -61,6 +74,35 @@ public:
 	static Variant from_int(int64_t i) noexcept { return Variant(Value::make_int(i)); }
 	static Variant from_bool(bool b) noexcept { return Variant(Value::make_bool(b)); }
 	static Variant null() noexcept { return Variant(); }
+
+	// Take ownership of a Value that already carries one reference (the +1 handed out by a
+	// native return / RetTraits box), without an extra retain — the counterpart of value().
+	static Variant adopt(Value v) noexcept
+	{
+		Variant out;
+		out.m_value = v;
+		return out;
+	}
+
+	// --- typed conversions (design §11.4; defined via runtime/native_traits.hpp) ---
+
+	// Extract a typed C++ value: `v.to<double>()`, `v.to<String>()`, `v.to<Handle<Sound>>()`.
+	// Throws std::runtime_error if the held value is not of (a subtype of) the requested
+	// type. Numeric widening follows the same rules as parameter unboxing (an Integer
+	// satisfies `to<double>()`).
+	template<class T>
+	T to() const
+	{
+		return detail::variant_to<T>(m_value);
+	}
+
+	// Build a Variant from a C++ value: `Variant::make(2.5)`, `Variant::make(some_string)`,
+	// `Variant::make(handle)`. The inverse of to<T>().
+	template<class T>
+	static Variant make(const T &x)
+	{
+		return detail::variant_from<T>(x);
+	}
 
 	// --- access ---
 

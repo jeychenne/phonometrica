@@ -29,6 +29,7 @@
 
 #include <phon/core/cell.hpp>
 #include <phon/core/handle.hpp>
+#include <phon/core/reference.hpp>
 #include <phon/core/small_vector.hpp>
 #include <phon/core/value.hpp>
 #include <phon/core/variant.hpp>
@@ -42,6 +43,8 @@
 
 #include <cstddef>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -571,6 +574,30 @@ void foreign_clone(Cell *dst, const Cell *src)
 	::new (static_cast<void *>(dst)) T(*reinterpret_cast<const T *>(src));
 	dst->hdr = hdr;
 	dst->rc_bits = rc;
+}
+
+// --- Variant typed conversions (design §11.4) ---------------------------------
+//
+// Definitions of the helpers Variant::to<T>()/make() forward to (declared in
+// core/variant.hpp). They reuse the same type mapping as function registration:
+// `to<T>` type-checks then unboxes (an owning result); `make` boxes then adopts the
+// +1 into a Variant.
+
+template<class T>
+T variant_to(Value v)
+{
+	Value d = deref(v);
+	Class *want = ArgTraits<T>::dispatch_class();
+	if (!value_is_a(d, want))
+		throw std::runtime_error(std::string("[Type error] cannot convert a ") +
+		                         class_of_desc(d)->name + " to " + want->name);
+	return ArgTraits<T>::unbox(d);
+}
+
+template<class T>
+Variant variant_from(const T &x)
+{
+	return Variant::adopt(RetTraits<std::decay_t<T>>::box(x));
 }
 
 } // namespace detail

@@ -1353,3 +1353,31 @@ API (§11.3), the primary surface for exposing C++ to scripts.
     tests cover reference classes (the primary case); the CoW clone path for a foreign value
     class only fires if something invokes the clone hook, which no script opcode does for a
     foreign type today.
+
+### Stage 3 — values from C++ (`Variant::to<T>()` / `make()`, channel receive)
+
+12. **`Variant::to<T>()` / `Variant::make()` reuse the registration type mapping.** `to<T>()`
+    derefs, checks `value_is_a(v, ArgTraits<T>::dispatch_class())` (throwing
+    `std::runtime_error` with a `<actual> to <expected>` message on mismatch), then returns
+    `ArgTraits<T>::unbox` — an *owning* C++ value (a widening Integer→double is allowed, as in
+    parameter passing). `make(x)` is `Variant::adopt(RetTraits<T>::box(x))` — box mints the +1,
+    the new `Variant::adopt` takes it without a second retain. So the two conversion directions
+    share one type table with function registration; no parallel mapping.
+13. **The conversion helpers live in `native_traits.hpp`, not core.** The container wrappers
+    (List/Table/Set) include `core/variant.hpp`, so Variant cannot include them back to
+    implement `to<List>()` inline. `Variant::to`/`make` are thin members that forward to
+    `detail::variant_to`/`variant_from`, *declared* in `core/variant.hpp` and *defined* in
+    `runtime/native_traits.hpp` where every type is complete. Consequence: `v.to<T>()` requires
+    the embedding header (runtime.hpp) at the use site — an embedder already has it.
+14. **Typed container views were already present.** §11.4's "typed views for
+    String/List/Table/Array (`ArrayView::dim(i)`, `data()`, iteration)" are the existing
+    stack-value wrappers from the M-Array / M5 work — `Array` already exposes `dim(k)`, `size()`,
+    `data()`. Stage 3 adds no new view type; the acceptance is a C++ test reading a
+    script-produced Array's `data()`/`dim()`/`size()`.
+15. **C++-side channel receive (`channel_receive`, `channel_try_receive`).** Free functions in
+    `concurrency/channel.*` for a GUI/host thread to pull results a worker script pushed
+    (design §11.4). No Isolate needed — queued values were already transferred into a
+    standalone graph, so a pop is just a locked dequeue wrapped in `Variant::adopt`. The timed
+    form uses `condition_variable::wait_for` (a non-positive timeout polls); it is the
+    event-loop-polling variant the design calls for. `is_channel(Value)` is now public (moved
+    out of the file-local anonymous namespace).

@@ -18,6 +18,7 @@
 #define PHON_CONCURRENCY_CHANNEL_HPP
 
 #include <phon/core/value.hpp>
+#include <phon/core/variant.hpp>
 
 namespace phonometrica {
 
@@ -34,6 +35,24 @@ Class *channel_class() noexcept;
 Value builtin_channel(Isolate &iso, NativeCell *, Value *args, int argc);
 Value builtin_send(Isolate &iso, NativeCell *, Value *args, int argc);
 Value builtin_receive(Isolate &iso, NativeCell *, Value *args, int argc);
+
+// --- C++-side channel access for embedders (design §11.4) ---------------------
+//
+// A GUI thread receives results a worker script pushed onto a Channel. The queued
+// values were already transferred into a standalone graph, so these need no Isolate
+// and are safe to call from any thread (e.g. a Qt event-loop slot).
+
+// Is `v` a Channel?
+bool is_channel(Value v) noexcept;
+
+// Block until an item is available, returning it (the Variant owns the +1). Precondition:
+// `channel` is a Channel (is_channel).
+Variant channel_receive(Value channel);
+
+// Event-loop polling: wait at most `timeout_seconds` for an item. Returns true and moves
+// the item into `out` if one arrived, else false (leaving `out` unchanged). A
+// non-positive timeout polls without blocking.
+bool channel_try_receive(Value channel, double timeout_seconds, Variant &out);
 
 } // namespace phonometrica
 
