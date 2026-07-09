@@ -376,12 +376,20 @@ void init_runtime()
 // namespace, and the compiled-chunk history that keeps every Proto tree alive for
 // closures stored in module slots across chunks (a growing session cost; the
 // registration journal that unloads them is design §11, deferred to M5).
+//
+// Declaration order is load-bearing for teardown. Members destruct in reverse, so
+// `isolate` (declared last) is destroyed FIRST: ~Isolate joins every outstanding
+// spawned worker before anything else is freed (structured concurrency, architecture
+// §13). A worker can still be executing bytecode over a Proto owned by `history` right
+// up until it is joined, so `history` MUST outlive the Isolate — declare it first so it
+// is torn down LAST. Reordering these (e.g. putting `history` last) resurrects a
+// shutdown data race where the Proto trees are freed while a worker still reads them.
 struct Runtime::State
 {
-	Isolate isolate;
+	Vector<std::unique_ptr<CompiledModule>> history;
 	ModuleNamespace shell;
 	ModuleManager modules;
-	Vector<std::unique_ptr<CompiledModule>> history;
+	Isolate isolate;
 };
 
 Runtime::Runtime() : m_state(std::make_unique<State>()) { init_runtime(); }
