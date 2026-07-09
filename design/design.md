@@ -865,8 +865,13 @@ sort(ref results)
   deferred; positional splat plus explicit re-passing covers wrappers, and
   adding it later is compatible.
 - Concrete NaN-tag bit assignments.
-- `import` semantics details (selective import, renaming, qualified access) —
-  visibility and storage are settled in §11.
+- `import` semantics (selective import, renaming, qualified access) are now
+  implemented (Calao-style): `import M`, `import M as A`, `import M for X, Y`,
+  `import M for X as Z`, `import M for *`, and comma-chained clauses. Functions
+  are flat-global once imported; vars/consts/classes are reached qualified (`M.x`)
+  or brought bare with `for`. Types are usable in `is` and annotations; the one
+  remaining gap is *constructing* a class defined in another module (a factory
+  function is the idiom — see DEVIATIONS "Modules & imports", Stage 5).
 - First-class Range values are deliberately deferred: slice syntax is
   bracket-only and the counted loop is its own form, so `..` is unspent and a
   Range type (constructed by `seq()` or by reintroducing `a..b` as an

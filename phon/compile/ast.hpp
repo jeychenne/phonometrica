@@ -17,6 +17,7 @@
 #include <phon/types/string.hpp>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace phonometrica {
@@ -543,13 +544,28 @@ struct SpawnStatement final : Ast
 	AutoAst call;
 };
 
-// `import name`. (Selective import / renaming / qualified access are deferred —
-// design §15; the parser accepts a single module identifier.)
+// One clause of an `import` statement (design §11): a module name, an optional
+// `as` alias, and an optional `for` selector bringing public names into local
+// scope. `for *` sets `for_all`; otherwise `names` holds each `X` (or `X as Z`)
+// pair, with `Z` == NO_SYMBOL when no rename is given.
+struct ImportClause
+{
+	Symbol module;                                   // the imported module's name
+	Symbol alias;                                    // `as N` bound name, or NO_SYMBOL
+	bool for_all = false;                            // `for *`
+	std::vector<std::pair<Symbol, Symbol>> names;    // `for X, Y as Z`: (X, 0), (Y, Z)
+};
+
+// `import M`, `import M as N`, `import M for X, Y`, `import M for *`, and any of
+// these chained with commas: `import M1, M2 as N` (design §11). Each clause binds
+// one module; a `for` name-list greedily consumes trailing commas, so a clause
+// with a non-`*` `for` selector is the last one on the line.
 struct ImportStatement final : Ast
 {
-	ImportStatement(int line, int col, Symbol module) : Ast(KIND, line, col), module(module) {}
+	ImportStatement(int line, int col, std::vector<ImportClause> clauses)
+	    : Ast(KIND, line, col), clauses(std::move(clauses)) {}
 	PHON_AST_NODE(ImportStatement, ImportStatement)
-	Symbol module;
+	std::vector<ImportClause> clauses;
 };
 
 // ---------------------------------------------------------------------------

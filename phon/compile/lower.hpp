@@ -78,6 +78,7 @@ struct LoadedModule
 	std::string dir;                 // directory, for resolving this module's own imports
 	ModuleNamespace ns;           // vars/consts/classes: name -> session-global slot
 	Vector<uint32_t> functions;   // public function/method names (global generics)
+	FlatHashSet<uint32_t> classes;   // public class names (subset of ns.exported)
 	std::unique_ptr<Proto> main;  // top-level code
 	bool has_run = false;         // its top-level statements have executed
 };
@@ -94,6 +95,7 @@ struct CompileEnv
 	std::string dir;                    // importing module's directory ("" for <string>)
 	Vector<LoadedModule *> imports;     // out: modules imported (in encounter order)
 	Vector<uint32_t> public_functions;  // out: this module's public generic names
+	Vector<uint32_t> public_classes;    // out: this module's public class names
 };
 
 void compile_module(Ast *module_ast, ModuleNamespace &ns, CompiledModule &out,

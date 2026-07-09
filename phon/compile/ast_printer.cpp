@@ -462,7 +462,31 @@ public:
 		child(n->call.get());
 	}
 
-	void visit_import_statement(ImportStatement *n) override { emit("Import " + sym(n->module)); }
+	void visit_import_statement(ImportStatement *n) override
+	{
+		std::string s = "Import";
+		for (const auto &c : n->clauses)
+		{
+			s += ' ';
+			s += sym(c.module);
+			if (c.alias != NO_SYMBOL)
+				s += " as " + sym(c.alias);
+			if (c.for_all)
+				s += " for *";
+			else if (!c.names.empty())
+			{
+				s += " for";
+				for (const auto &nm : c.names)
+				{
+					s += ' ';
+					s += sym(nm.first);
+					if (nm.second != NO_SYMBOL)
+						s += " as " + sym(nm.second);
+				}
+			}
+		}
+		emit(s);
+	}
 
 private:
 	int m_depth = 0;

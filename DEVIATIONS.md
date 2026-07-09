@@ -1206,3 +1206,46 @@ reached qualified (`M.x`) or brought bare via `for`.
    lives in a module slot). Constructing through a qualified name (`M.C(...)`) or `x is
    M.C` is not yet wired — the call-lowering treats only a bare `Variable` class name as
    construction. Deferred to a later stage.
+
+### Stage 3 — `import M as A` + chained `import M1, M2`
+
+7. **One statement, a list of clauses.** `ImportStatement` now holds a `std::vector<
+   ImportClause>`; each clause is `{module, alias, for_all, names}`. The parser reads
+   `M [as N] [for (X [as Z], … | *)]`, chained with commas. Because a `for` name-list
+   greedily consumes its own commas, the top-level clause separator and the name separator
+   share one token with no ambiguity: a non-`*` `for` clause is necessarily last on the
+   line (matching Calao). `import M as A` binds the alias (not `M`) as the qualified-access
+   name; functions stay flat-global regardless of the alias.
+
+### Stage 4 — selective import `import M for X, Y` / `for *`
+
+8. **`for` binds bare names to M's slots; functions need no binding.** A `for X` (or
+   `for X as Z`) selector makes the name resolve to M's session-global slot for a public
+   var/const/class — the same `GET_MODULE` as `M.X`, so reads/`is`/type annotations all
+   work bare. Public *functions* are already flat-global after `import M` (design §11: no
+   per-module function namespace), so naming one in `for` is an accepted no-op. `for *`
+   brings every `exported` name in. Selecting a `local` or non-existent member is a
+   compile error (`[Name error] module 'M' has no public member 'X'`).
+9. **`for *` and the line-continuation rule.** A line ending in `*` normally continues
+   (design §12), which would glue the next statement onto `import M for *`. The scanner now
+   tracks the second-to-last token and treats a `*` immediately after `for` as the wildcard
+   selector, not a trailing operator, so the newline still terminates the statement.
+
+### Stage 5 — imported classes in `is`/annotations; construction still deferred
+
+10. **`x is M.C` / `x is C` and `as M.C` / `as C` now resolve.** The `is` guard accepts a
+    qualified `M.C` (import alias + exported class) as well as a bare name; `type_ref`
+    resolves both a bare imported class (via `for`) and a qualified `M.C` to a
+    `TypeRef::ModuleSlot`, since the imported class object lives in the shared slot vector
+    that imported modules populate before `main` runs. `LoadedModule` records its public
+    class names (`classes`) to drive these checks.
+11. **Cross-module *construction* remains deferred — by design, with a directed error.**
+    Constructing a class defined in another module (`M.C(...)` or a bare `C()` brought in
+    via `for`) is rejected at compile time with a message pointing at the workaround. The
+    obstacle is real, not incidental: field-default initializers are applied at the
+    *construction site* today (`emit_full_defaults`), and those initializer expressions
+    belong to the *defining* module's scope — evaluating them at the importer would resolve
+    names against the wrong namespace. Doing it correctly means relocating default
+    application into a per-class thunk compiled in the defining module (a class-system
+    change, not a module-binding one). Until then the idiom is a factory function, which is
+    flat-global after import: `function make_point(x, y) as Point … end` then `make_point(…)`.

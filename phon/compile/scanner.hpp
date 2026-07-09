@@ -103,6 +103,11 @@ private:
 	// continuation rule. Unknown at the start of input.
 	Lexeme m_last = Lexeme::Unknown;
 
+	// The significant token before `m_last`, so the continuation rule can special-case
+	// the `import M for *` wildcard: a trailing `*` normally continues the line, but a
+	// `*` right after `for` is a selector, not multiplication (design §11).
+	Lexeme m_last2 = Lexeme::Unknown;
+
 	// Interpolation stack: one frame per open "{…}" interpolation. `brace_depth`
 	// counts '{' braces opened inside the current expression — a '}' seen while
 	// it is 0 closes the interpolation. `triple` records whether the enclosing

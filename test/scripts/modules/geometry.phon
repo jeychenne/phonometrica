@@ -1,0 +1,25 @@
+# A module exposing a public class, a public function, and a public const, plus a
+# private helper — used to exercise `import ... as`, `for`, `for *`, qualified
+# access, `is`, and type annotations across a module boundary (design §11).
+const PI = 3.14159
+
+class Point
+    field x as Float
+    field y as Float
+end
+
+function origin() as Point
+    return make_point(0.0, 0.0)
+end
+
+function make_point(x as Float, y as Float) as Point
+    var p = Point()
+    p.x = x
+    p.y = y
+    return p
+end
+
+local function clamp(v as Float) as Float
+    if v < 0.0 then return 0.0 end
+    return v
+end

@@ -464,7 +464,25 @@ TEST_CASE("parser: try / catch / finally, throw, spawn, import")
 	auto m3 = parse("spawn worker(jobs, out)");
 	CHECK(stmt(m3, 0)->as<SpawnStatement>()->call->is<CallExpression>());
 	auto m4 = parse("import textgrid");
-	CHECK(sym_is(stmt(m4, 0)->as<ImportStatement>()->module, "textgrid"));
+	auto *imp = stmt(m4, 0)->as<ImportStatement>();
+	REQUIRE(imp->clauses.size() == 1);
+	CHECK(sym_is(imp->clauses[0].module, "textgrid"));
+
+	// Chained imports, `as` alias, and `for` selectors (design §11).
+	auto m5 = parse("import system as sys, regex for match, sub as replace");
+	auto *imp5 = stmt(m5, 0)->as<ImportStatement>();
+	REQUIRE(imp5->clauses.size() == 2);
+	CHECK(sym_is(imp5->clauses[0].module, "system"));
+	CHECK(sym_is(imp5->clauses[0].alias, "sys"));
+	CHECK(sym_is(imp5->clauses[1].module, "regex"));
+	REQUIRE(imp5->clauses[1].names.size() == 2);
+	CHECK(sym_is(imp5->clauses[1].names[0].first, "match"));
+	CHECK(imp5->clauses[1].names[0].second == NO_SYMBOL);
+	CHECK(sym_is(imp5->clauses[1].names[1].first, "sub"));
+	CHECK(sym_is(imp5->clauses[1].names[1].second, "replace"));
+
+	auto m6 = parse("import textgrid for *");
+	CHECK(stmt(m6, 0)->as<ImportStatement>()->clauses[0].for_all);
 }
 
 TEST_CASE("parser: line continuation across operators")

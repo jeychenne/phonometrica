@@ -301,6 +301,8 @@ public:
 		CompiledModule cm;
 		compile_module(ast.get(), lm->ns, cm, &env); // recursively loads this module's imports
 		lm->functions = std::move(env.public_functions);
+		for (intptr_t i = 0; i < env.public_classes.size(); ++i)
+			lm->classes.insert(env.public_classes[i]);
 		lm->main = std::move(cm.main);
 
 		LoadedModule *raw = lm.get();

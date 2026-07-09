@@ -165,27 +165,63 @@ void cc_cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept;
 
 // --- refcount operations ---
 
+// Cold path of retain(): a SHARED_BUFFER cell may be retained from several threads at
+// once (§8.3), so it takes a saturating atomic increment via a CAS loop. Kept out of
+// line (PHON_NOINLINE) so the CAS loop lives once in the binary instead of at every
+// retain() site; retain()'s hot path just branches here on the rare FLAG_SHARED_BUFFER.
+PHON_NOINLINE inline void retain_shared(Cell *c) noexcept
+{
+	std::atomic_ref<uint32_t> rc(c->rc_bits);
+	uint32_t cur = rc.load(std::memory_order_relaxed);
+	for (;;)
+	{
+		if ((cur & Cell::RC_MASK) == Cell::RC_MAX)
+			return; // saturated: intentionally leaked
+		if (rc.compare_exchange_weak(cur, cur + 1, std::memory_order_relaxed))
+			return;
+	}
+}
+
 // Add a reference. Saturates at RC_MAX (the object then leaks rather than
-// misbehaving on overflow, §3.2). A SHARED_BUFFER cell increments atomically because
-// it may be retained from several threads at once (§8.3); everything else takes the
-// thread-confined fast path — a relaxed load/store pair, no lock prefix. Both funnel
-// through one atomic_ref so a shared cell is never touched non-atomically.
+// misbehaving on overflow, §3.2). A SHARED_BUFFER cell increments atomically (the cold
+// retain_shared path above); everything else takes the thread-confined fast path — a
+// relaxed load/store pair, no lock prefix. Both funnel through one atomic_ref so a
+// shared cell is never touched non-atomically.
 PHON_FORCE_INLINE void retain(Cell *c) noexcept
 {
 	std::atomic_ref<uint32_t> rc(c->rc_bits);
 	uint32_t cur = rc.load(std::memory_order_relaxed);
 	if (PHON_UNLIKELY(cur & Cell::FLAG_SHARED_BUFFER))
 	{
-		for (;;)
-		{
-			if ((cur & Cell::RC_MASK) == Cell::RC_MAX)
-				return; // saturated: intentionally leaked
-			if (rc.compare_exchange_weak(cur, cur + 1, std::memory_order_relaxed))
-				return;
-		}
+		retain_shared(c);
+		return;
 	}
 	if (PHON_LIKELY((cur & Cell::RC_MASK) != Cell::RC_MAX))
 		rc.store(cur + 1, std::memory_order_relaxed); // no carry into the flag bits
+}
+
+// Cold path of release(): a cross-thread shared (frozen, hence acyclic) cell takes a
+// saturating atomic decrement. acq_rel so the final release synchronizes-with all prior
+// ones and disposal happens-after every other thread's last use. No candidate
+// bookkeeping — a shared buffer is GREEN and never buffered. Out of line for the same
+// reason as retain_shared: keep the CAS loop out of every release() site.
+PHON_NOINLINE inline void release_shared(Cell *c) noexcept
+{
+	std::atomic_ref<uint32_t> rc(c->rc_bits);
+	uint32_t cur = rc.load(std::memory_order_relaxed);
+	for (;;)
+	{
+		uint32_t n = cur & Cell::RC_MASK;
+		if (n == Cell::RC_MAX)
+			return; // saturated: intentionally leaked
+		if (rc.compare_exchange_weak(cur, cur - 1, std::memory_order_acq_rel,
+		                             std::memory_order_relaxed))
+		{
+			if (n == 1)
+				cell_dispose(c);
+			return;
+		}
+	}
 }
 
 // Drop a reference; dispose the cell when the last one goes away.
@@ -196,23 +232,8 @@ PHON_FORCE_INLINE void release(Cell *c) noexcept
 	PHON_ASSERT_MSG((cur & Cell::RC_MASK) != 0, "release on a cell with refcount 0");
 	if (PHON_UNLIKELY(cur & Cell::FLAG_SHARED_BUFFER))
 	{
-		// Cross-thread shared (frozen, hence acyclic) cell: atomic saturating decrement.
-		// acq_rel so the final release synchronizes-with all prior ones and disposal
-		// happens-after every other thread's last use. No candidate bookkeeping — a
-		// shared buffer is GREEN and never buffered.
-		for (;;)
-		{
-			uint32_t n = cur & Cell::RC_MASK;
-			if (n == Cell::RC_MAX)
-				return; // saturated: intentionally leaked
-			if (rc.compare_exchange_weak(cur, cur - 1, std::memory_order_acq_rel,
-			                             std::memory_order_relaxed))
-			{
-				if (n == 1)
-					cell_dispose(c);
-				return;
-			}
-		}
+		release_shared(c);
+		return;
 	}
 	// Thread-confined fast path.
 	uint32_t n = cur & Cell::RC_MASK;

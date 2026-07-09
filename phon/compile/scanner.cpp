@@ -91,6 +91,7 @@ Token Scanner::make(Lexeme id, String spelling)
 	default:
 		break;
 	}
+	m_last2 = m_last;
 	m_last = id;
 	return Token(id, std::move(spelling), m_tok_line, m_tok_col);
 }
@@ -203,9 +204,12 @@ Token Scanner::next()
 		if (c == U'\n')
 		{
 			advance();
+			// A `*` right after `for` is the `import M for *` wildcard, not a trailing
+			// multiplication operator, so it must not continue the line (design §11).
+			bool for_star = (m_last == Lexeme::Star && m_last2 == Lexeme::For);
 			bool suppress = m_bracket_depth > 0 || !m_interp.empty()
 			                || m_last == Lexeme::Newline || m_last == Lexeme::Unknown
-			                || continues_line(m_last);
+			                || (!for_star && continues_line(m_last));
 			if (suppress)
 				continue;
 			return make(Lexeme::Newline, "\n");

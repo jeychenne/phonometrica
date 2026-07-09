@@ -659,10 +659,38 @@ AutoAst Parser::parse_spawn_statement()
 
 AutoAst Parser::parse_import_statement()
 {
+	// `import M [as N] [for (X [as Z], … | *)]`, chained with commas (design §11).
+	// A `for` name-list greedily eats its commas, so the top-level clause loop and the
+	// name loop share the same separator without ambiguity: a non-`*` `for` clause is
+	// necessarily the last on the line.
 	int line = m_tok.line, col = m_tok.column;
 	advance(); // 'import'
-	Symbol module = expect_identifier("a module name");
-	return make<ImportStatement>(line, col, module);
+	std::vector<ImportClause> clauses;
+	do
+	{
+		ImportClause clause;
+		clause.module = expect_identifier("a module name");
+		if (accept(Lexeme::As))
+			clause.alias = expect_identifier("an alias name after 'as'");
+		if (accept(Lexeme::For))
+		{
+			if (accept(Lexeme::Star))
+				clause.for_all = true; // `for *`: bring in every public name
+			else
+			{
+				do
+				{
+					Symbol name = expect_identifier("a name to import after 'for'");
+					Symbol rename = NO_SYMBOL;
+					if (accept(Lexeme::As))
+						rename = expect_identifier("an alias name after 'as'");
+					clause.names.emplace_back(name, rename);
+				} while (accept(Lexeme::Comma));
+			}
+		}
+		clauses.push_back(std::move(clause));
+	} while (accept(Lexeme::Comma));
+	return make<ImportStatement>(line, col, std::move(clauses));
 }
 
 AutoAst Parser::parse_expression_or_assignment()

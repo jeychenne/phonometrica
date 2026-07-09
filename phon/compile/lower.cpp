@@ -279,6 +279,13 @@ private:
 			r.index = slot;
 			return r;
 		}
+		// A name pulled in bare by `import M for X` reads M's slot in the shared vector.
+		if (auto it = m_imported_names.find(name.id); it != m_imported_names.end())
+		{
+			r.kind = NameKind::Module;
+			r.index = it->second;
+			return r;
+		}
 		if (Class *c = class_by_name(name))
 		{
 			r.kind = NameKind::ClassObject;
@@ -351,6 +358,20 @@ private:
 	void compile_for_each_ref(ForEach *s); // `for ref v in …` (design §12)
 	void compile_spawn(SpawnStatement *s);   // `spawn f(args…)` (design §13)
 	void compile_import(ImportStatement *s); // `import M` (design §11)
+	// Bind one `for X [as Z]` selector: make the (possibly renamed) name resolve to M's
+	// public binding. `modname` is M's display name, for diagnostics.
+	void bind_imported_name(Ast *s, LoadedModule *m, Symbol modname, Symbol name, Symbol rename);
+
+	// Directing message for the one deferred module feature: constructing a class defined
+	// in another module. Its field-default initializers belong to the defining module's
+	// scope, so applying them at the importer's call site (as construction does today)
+	// would resolve names wrongly. A factory function is the idiom in the meantime.
+	static std::string cross_module_ctor_msg(const std::string &name)
+	{
+		return "[Compile error] cannot construct '" + name +
+		       "' across a module boundary; expose a factory function from its module "
+		       "(functions are flat-global after import) and call that instead";
+	}
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -410,8 +431,20 @@ private:
 	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
 	CompileEnv *m_env;     // import loader + slot allocator (null: imports forbidden)
 	// Import alias -> the module it names, so `M.x` resolves to a GET_MODULE of x's
-	// session-global slot in M's namespace (design §11).
+	// session-global slot in M's namespace (design §11). Keyed by the bound name (the
+	// `as` alias if given, else the module name).
 	FlatHashMap<uint32_t, LoadedModule *> m_import_aliases;
+
+	// `import M for X`: a public var/const/class name brought bare into this module's
+	// scope -> its session-global slot in the shared module-slot vector, so a bare read
+	// (or `is`/type test) compiles to the same GET_MODULE as `M.X` (design §11). Names
+	// live in the *importer's* scope but the slot belongs to M.
+	FlatHashMap<uint32_t, int> m_imported_names;
+
+	// The subset of `m_imported_names` whose names denote a class, so `x is X`, an `as X`
+	// annotation, and construction detection can treat a bare imported class name like a
+	// local one. Maps the bare (possibly renamed) name -> M's session-global class slot.
+	FlatHashMap<uint32_t, int> m_imported_classes;
 
 	// Names declared as generic methods by this module's top-level `function`s
 	// (non-`local`). Populated in pass 1 so a call to a function defined later —
@@ -601,10 +634,16 @@ void Lowerer::expr_to(Ast *node, int dest)
 	}
 	case NodeKind::IsExpression:
 	{
-		// `x is T`: load T's class object (a builtin loads a constant; a user class
-		// loads its module binding) and test membership.
+		// `x is T`: load T's class object (a builtin loads a constant; a user or imported
+		// class loads its module binding) and test membership. `T` is either a bare name
+		// or a qualified `M.T` on an import alias — expr_to loads the class object for
+		// both (design §11).
 		auto *e = node->as<IsExpression>();
-		if (!e->type->is<Variable>())
+		bool ok = e->type->is<Variable>();
+		if (auto *fa = e->type->as<FieldAccess>())
+			if (auto *mv = fa->object->as<Variable>())
+				ok = m_import_aliases.find(mv->name.id) != m_import_aliases.end();
+		if (!ok)
 			error(e->type.get(), "[Type error] expected a class name after 'is'");
 		int save = fs->free_reg;
 		int b = expr_any(e->expr.get());
@@ -980,7 +1019,19 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 			construct(nullptr, -1, bc, c, dest);
 			return;
 		}
+		// A class imported bare via `for` can be named and type-tested, but constructing
+		// it here would apply its field defaults in the wrong (importer's) scope — those
+		// initializers belong to the defining module (design §11, note below). Deferred.
+		if (m_imported_classes.find(v->name.id) != m_imported_classes.end())
+			error(c, cross_module_ctor_msg(std::string(symbol_name(v->name))));
 	}
+	// Qualified construction `M.C(args)`: same restriction as bare imported construction.
+	if (auto *fa = c->callee->as<FieldAccess>())
+		if (auto *mv = fa->object->as<Variable>())
+			if (auto ai = m_import_aliases.find(mv->name.id); ai != m_import_aliases.end())
+				if (ai->second->classes.contains(fa->name.id))
+					error(c, cross_module_ctor_msg(std::string(symbol_name(mv->name)) + "." +
+					                               std::string(symbol_name(fa->name))));
 
 	bool has_splat = false;
 	for (auto &a : c->args)
@@ -1981,8 +2032,30 @@ TypeRef Lowerer::type_ref(Ast *type_node)
 			t.value = static_cast<uint32_t>(module_lookup(v->name));
 			return t;
 		}
+		// A class brought in bare by `import M for C`: its class object lives in M's slot
+		// in the shared vector, so ModuleSlot resolves it identically (design §11).
+		if (auto it = m_imported_classes.find(v->name.id); it != m_imported_classes.end())
+		{
+			t.kind = TypeRef::ModuleSlot;
+			t.value = static_cast<uint32_t>(it->second);
+			return t;
+		}
 		error(type_node, "[Type error] unknown type '" + std::string(symbol_name(v->name)) + "'");
 	}
+	// Qualified `M.C` (design §11): resolve C to its session-global slot in M's namespace.
+	if (auto *fa = type_node->as<FieldAccess>())
+		if (auto *mv = fa->object->as<Variable>())
+			if (auto ai = m_import_aliases.find(mv->name.id); ai != m_import_aliases.end())
+			{
+				LoadedModule *m = ai->second;
+				if (!m->classes.contains(fa->name.id))
+					error(type_node, "[Type error] module '" + std::string(symbol_name(mv->name)) +
+					                     "' has no public class '" +
+					                     std::string(symbol_name(fa->name)) + "'");
+				t.kind = TypeRef::ModuleSlot;
+				t.value = static_cast<uint32_t>(m->ns.name_to_slot.find(fa->name.id)->second);
+				return t;
+			}
 	error(type_node, "[Type error] unsupported type annotation");
 }
 
@@ -2282,18 +2355,65 @@ void Lowerer::compile_import(ImportStatement *s)
 {
 	// `import M` (design §11): resolve + compile M (once, cached), then make its public
 	// functions callable bare — they live in the shared dispatch table, so nothing needs
-	// to be emitted here. Qualified access to M's types/vars (`M.x`) arrives in a later
-	// stage. M's top-level code is run before this module's, by the loader.
+	// to be emitted here. `M.x` reaches M's public vars/consts/classes via the bound
+	// name; `for X` pulls selected names in bare. M's top-level runs before this
+	// module's, by the loader.
 	if (!m_env || !m_env->loader)
 		error(s, "[Compile error] 'import' requires a module loader (unavailable here)");
-	LoadedModule *m = m_env->loader->load(s->module, m_env->dir); // may throw SyntaxError
-	if (!m)
-		error(s, "[Import error] module '" + std::string(symbol_name(s->module)) + "' not found");
-	m_env->imports.push_back(m);
+	for (const auto &clause : s->clauses)
+	{
+		LoadedModule *m = m_env->loader->load(clause.module, m_env->dir); // may throw SyntaxError
+		if (!m)
+			error(s, "[Import error] module '" + std::string(symbol_name(clause.module)) +
+			             "' not found");
+		m_env->imports.push_back(m);
+		// Public functions/methods are flat-global once any importer loads M (design §11:
+		// there is no per-module function namespace), so they become callable bare here.
+		for (intptr_t i = 0; i < m->functions.size(); ++i)
+			m_module_generics.insert(m->functions[i]);
+		// Bind the module under its name (or the `as` alias) so `M.x` / `A.x` reaches
+		// M's public vars/consts/classes.
+		Symbol bound = clause.alias != NO_SYMBOL ? clause.alias : clause.module;
+		m_import_aliases.insert(bound.id, m);
+
+		if (clause.for_all)
+		{
+			// `for *`: bring every public var/const/class into scope bare. Functions are
+			// already flat-global, so they need no binding here.
+			for (auto id : m->ns.exported)
+				bind_imported_name(s, m, clause.module, Symbol(id), NO_SYMBOL);
+		}
+		else
+		{
+			for (const auto &nm : clause.names)
+				bind_imported_name(s, m, clause.module, nm.first, nm.second);
+		}
+	}
+}
+
+void Lowerer::bind_imported_name(Ast *s, LoadedModule *m, Symbol modname, Symbol name, Symbol rename)
+{
+	// `import M for name [as rename]` (design §11): make `name` (or `rename`) refer to
+	// M's public binding. A public function is already flat-global, so naming it is a
+	// no-op; a public var/const/class binds bare to M's session-global slot.
+	Symbol local = rename != NO_SYMBOL ? rename : name;
+	auto slot_it = m->ns.name_to_slot.find(name.id);
+	bool is_slot = slot_it != m->ns.name_to_slot.end() && m->ns.exported.contains(name.id);
+	bool is_func = false;
 	for (intptr_t i = 0; i < m->functions.size(); ++i)
-		m_module_generics.insert(m->functions[i]);
-	// Bind the module name so `M.x` reaches M's public vars/consts/classes.
-	m_import_aliases.insert(s->module.id, m);
+		if (m->functions[i] == name.id)
+			is_func = true;
+	if (!is_slot && !is_func)
+		error(s, "[Name error] module '" + std::string(symbol_name(modname)) +
+		             "' has no public member '" + std::string(symbol_name(name)) + "'");
+	if (is_slot)
+	{
+		m_imported_names.insert(local.id, slot_it->second);
+		if (m->classes.contains(name.id))
+			m_imported_classes.insert(local.id, slot_it->second);
+	}
+	// A bare function name resolves through the global generic table already; `for` only
+	// governs whether the *type/var* names are visible, so nothing else to do for it.
 }
 
 void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
@@ -2384,7 +2504,11 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 		{
 			module_define(cl->name); // the class object lives in a module binding
 			if (cl->modifier == DeclModifier::None) // public class: visible as M.Name
+			{
 				m_ns.exported.insert(cl->name.id);
+				if (m_env)
+					m_env->public_classes.push_back(cl->name.id); // exported to importers
+			}
 			m_module_classes.insert(cl->name.id, cl);
 			// A `method` is a generic method (design §6), so its name must resolve to
 			// a generic call even though it only registers at load.
