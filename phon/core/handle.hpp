@@ -17,6 +17,20 @@
 
 namespace phonometrica {
 
+struct Class;
+
+// The Class an application type `T` is registered under (set by add_class<T>). A plain
+// class carries *nothing* on itself — this template variable is the whole T→Class map,
+// so `Sound`/`File`/`Regex` stay ordinary C++ classes. Null until registered.
+template<class T>
+inline Class *g_registered_class = nullptr;
+
+template<class T>
+Class *class_of() noexcept
+{
+	return g_registered_class<T>;
+}
+
 template<typename T>
 class Handle
 {
@@ -81,20 +95,31 @@ public:
 	// Adopt a raw pointer that already carries the reference we should own.
 	static Handle adopt(T *p) noexcept { return Handle(p, Adopt{}); }
 
-	// Allocate and construct a new instance of a registered cell type (design §11.5:
-	// replaces `rt.create<T>`). `T` must be a registered class (`T::phon_class`, bound
-	// by add_class<T>); allocation is Isolate-independent (the FOREIGN cell path), so
-	// this works on any thread, including with no Isolate. Returns an owning Handle.
+	// Retaining handle to the payload of an existing cell (script → C++). For a
+	// cell-headed type the cell *is* the payload; for a plain (boxed) class the payload
+	// sits after the header. Null cell → empty handle.
+	static Handle from_cell(Cell *c) noexcept
+	{
+		if (!c)
+			return Handle();
+		if constexpr (is_cell_headed_v<T>)
+			return Handle(reinterpret_cast<T *>(c));
+		else
+			return Handle(box_value<T>(c));
+	}
+
+	// Allocate and construct a new instance of a registered application class (design
+	// §11.5: replaces `rt.create<T>`). `T` is a plain class registered by add_class<T>;
+	// it is boxed as `{ Cell header; T value }`, so the constructor writes the value
+	// *after* the header (no clobber). Allocation is Isolate-independent (the FOREIGN
+	// cell path), so this works on any thread, including with no Isolate.
 	template<class... Args>
 	static Handle make(Args &&...args)
 	{
-		Cell *c = cell_alloc(T::phon_class->id, static_cast<intptr_t>(sizeof(T)));
-		// cell_alloc stamped the header + refcount; the constructor writes over T's
-		// leading Cell member, so save and restore them around placement-construction.
-		uint32_t hdr = c->hdr, rc = c->rc_bits;
-		T *p = ::new (static_cast<void *>(c)) T(std::forward<Args>(args)...);
-		c->hdr = hdr;
-		c->rc_bits = rc;
+		static_assert(!is_cell_headed_v<T>,
+		              "cell-headed engine types are created by their own factory, not make()");
+		Cell *c = cell_alloc(class_of<T>()->id, box_total_size<T>());
+		T *p = ::new (static_cast<void *>(box_value<T>(c))) T(std::forward<Args>(args)...);
 		return Handle(p, Adopt{});
 	}
 
@@ -138,9 +163,13 @@ public:
 private:
 	static PHON_FORCE_INLINE Cell *cell_of(T *p) noexcept
 	{
-		// A cell-headed type has its Cell as the first member, so the object and
-		// its header share an address.
-		return reinterpret_cast<Cell *>(p);
+		// A cell-headed type has its Cell as the first member, so the object and its
+		// header share an address. A plain (boxed) class's payload sits after the header,
+		// so back up by the box offset to reach the cell.
+		if constexpr (is_cell_headed_v<T>)
+			return reinterpret_cast<Cell *>(p);
+		else
+			return reinterpret_cast<Cell *>(reinterpret_cast<char *>(p) - box_value_offset<T>());
 	}
 
 	T *m_ptr = nullptr;

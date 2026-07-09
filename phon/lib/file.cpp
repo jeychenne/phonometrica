@@ -62,8 +62,8 @@ File *checked(Isolate &iso, const Handle<File> &f)
 void register_file_lib()
 {
 	// Register the File reference class (once). Must precede the function registrations
-	// below, whose Handle<File> parameters dispatch on File::phon_class.
-	if (!File::phon_class)
+	// below, whose Handle<File> parameters dispatch on class_of<File>().
+	if (!class_of<File>())
 		add_class<File>("File", get_class(CID_OBJECT));
 
 	// open_file(path): read, UTF-8. open_file(path, mode): explicit mode. (`open` is a

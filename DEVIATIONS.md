@@ -1499,6 +1499,40 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     `read_notes`). The underlying behaviour — redefining-then-unloading a builtin does not restore
     it — is pre-existing and noted for a later journal pass; it only bites on a name+sig collision
     with a builtin.
+
+### Embedding transparency — plain application classes, transparent `Handle<T>`
+
+26. **Application classes are now plain C++ classes; the engine boxes them.** Previously a
+    registered C++ type had to *embed* the engine (`struct File { Cell header; …; static Class
+    *phon_class; }`). Now `File`/`Sound`/`Annotation`/`Regex` are ordinary classes with **nothing
+    on them** — usable as standalone stack objects with natural constructors — and the engine
+    wraps them: `Handle<T>` points at `{ Cell header; T value }`, with the value at a computed
+    offset after the header (`box_value_offset`/`box_value`/`box_total_size` in `core/cell.hpp`,
+    same technique as NativeEnvCell). This matches Phonometrica's `Handle<T>` (smart pointer) →
+    `TObject<T>` (storage) model, keeping the pervasive `Handle<T>` name.
+27. **Cell-headed vs. boxed is a compile-time trait, not a per-type annotation.** `is_cell_headed_v
+    <T>` (core/cell.hpp) detects a standard-layout type whose first member is a `Cell header`
+    (the engine's own StringCell/ListCell/… — no boxing) vs. a plain class (boxed). We chose
+    member-detection over the originally-floated `: Cell` inheritance because deriving would make
+    the cell types non-standard-layout, which under `-Werror` breaks `offsetof` (`-Winvalid-
+    offsetof`, used for flexible-array sizing + the Upvalue/RefBox coupling assert) and turns the
+    ~113 first-member `reinterpret_cast<Cell*>` casts technically-UB — a large, risky churn for
+    zero behaviour change. Member-detection keeps standard-layout intact, so nothing else moved.
+28. **`T::phon_class` static replaced by a `class_of<T>()` template variable** (`core/handle.hpp`),
+    so the class→`Class*` map lives outside the class — an app class needs no static member.
+    `add_class<T>` sets it; `Handle<T>::make` and the `Handle<T>` ArgTraits read it. `Handle<T>::
+    make` no longer needs the header save/restore hack (the boxed value is constructed *after* the
+    header, so nothing clobbers it) and `static_assert`s `T` is not cell-headed.
+29. **Native parameters may be `T&` / `const T&` for a registered class**, not only `Handle<T>` —
+    the natural spelling. A third binder kind (`BindKind::ClassRef` in native_traits.hpp) holds a
+    `Handle<T>` (keeping the cell alive) and hands the callable a reference *into the shared
+    object* (identity, no copy, no write-back). Detection is by exclusion: a class type that is not
+    an engine wrapper (String/List/Table/Set/Array/Variant/Value), `Handle`, or `Isolate` is a
+    registered application class. Such a reference is **excluded from the write-back ref-mask**
+    (`is_writeback_ref_v`), so the call site does not promote it to a reference box — a registered
+    object is already a shared cell. Passing a registered class *by value* is a compile error (it
+    would copy a shared object). `File`, the test `EmbedPoint`, and the example `Counter` were all
+    converted to plain classes; `Counter&`/`const Counter&` are used in the example REPL.
 20. **Array: constructors, reductions, and elementwise math overloads.** `zeros`/`ones`
     (1-D and 2-D, non-negative size checked via a leading `Isolate &`), `sum`/`mean`/`min`/`max`
     reductions (over `contiguous()` for correctness on strided/sliced views), `nrow`/`ncol`

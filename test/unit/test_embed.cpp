@@ -39,12 +39,11 @@ std::string str_of(const Variant &v)
 // would show under ASan. `g_points_alive` tracks construction/destruction balance.
 int g_points_alive = 0;
 
+// A plain C++ class — no Cell, no static. The engine boxes it when exposed to scripts.
 struct EmbedPoint
 {
-	Cell header;
 	double x, y;
 	std::vector<double> trail; // gives ~EmbedPoint() something to free
-	static inline Class *phon_class = nullptr;
 
 	EmbedPoint(double x_, double y_) : x(x_), y(y_), trail{x_, y_} { ++g_points_alive; }
 	~EmbedPoint() { --g_points_alive; }
@@ -252,9 +251,9 @@ TEST_CASE("embed: register a C++ reference class, construct and dispatch on it")
 	{
 		Runtime rt;
 		// Registration is process-global; guard against a re-run rebinding the class.
-		if (!EmbedPoint::phon_class)
+		if (!class_of<EmbedPoint>())
 			rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
-		CHECK(rt.get_class("EmbedPoint") == EmbedPoint::phon_class);
+		CHECK(rt.get_class("EmbedPoint") == class_of<EmbedPoint>());
 
 		// A factory (not named "EmbedPoint", which would be read as construction of a builtin).
 		rt.add_function("make_point",
@@ -288,6 +287,33 @@ TEST_CASE("embed: register a C++ reference class, construct and dispatch on it")
 	}
 	// The Runtime released its module slots on teardown; both finalizers ran.
 	CHECK(g_points_alive == 0);
+}
+
+TEST_CASE("embed: a registered class passed by plain reference (const T& / T&)")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	rt.add_function("make_point", [](double x, double y) { return Handle<EmbedPoint>::make(x, y); });
+
+	// const T& — read-only access to the shared object, no copy.
+	rt.add_function("gx", [](const EmbedPoint &p) { return p.x; });
+	rt.add_function("gy", [](const EmbedPoint &p) { return p.y; });
+	// T& — mutate the shared object in place (identity semantics, not write-back).
+	rt.add_function("shift_x", [](EmbedPoint &p, double dx) { p.x += dx; });
+
+	rt.do_string("var p = make_point(3.0, 4.0)");
+	CHECK(rt.do_string("gx(p)").as_double() == 3.0);
+	CHECK(rt.do_string("gy(p)").as_double() == 4.0);
+
+	// Mutating through a T& is visible on the same object afterwards.
+	rt.do_string("shift_x(p, 10.0)");
+	CHECK(rt.do_string("gx(p)").as_double() == 13.0);
+
+	// An alias sees the mutation too (it is the *same* object, not a copy).
+	rt.do_string("var q = p");
+	rt.do_string("shift_x(q, 100.0)");
+	CHECK(rt.do_string("gx(p)").as_double() == 113.0);
 }
 
 TEST_CASE("embed: Variant::to<T> extracts typed C++ values")

@@ -25,12 +25,12 @@ struct Class;
 // Returns null on failure (the caller reports the error).
 std::FILE *os_open_file(const String &path, const char *mode);
 
+// A plain C++ class — no engine machinery on it. Usable as a standalone stack object,
+// and exposed to scripts by boxing (add_class<File> in lib/file.cpp; Handle<File>).
 struct File
 {
-	Cell header; // cell-headed: first member is the Cell (add_class<File> contract)
 	std::FILE *handle = nullptr;
 	bool writable = false;
-	static inline Class *phon_class = nullptr;
 
 	File(std::FILE *h, bool w) noexcept : handle(h), writable(w) {}
 	~File() { close(); }

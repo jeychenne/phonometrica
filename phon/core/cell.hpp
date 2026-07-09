@@ -30,6 +30,8 @@
 #include <phon/base/definitions.hpp>
 
 #include <atomic>
+#include <type_traits>
+#include <utility>
 
 namespace phonometrica {
 
@@ -124,6 +126,50 @@ struct Cell
 };
 
 static_assert(sizeof(Cell) == 8, "Cell must be exactly 8 bytes");
+
+// --- cell-headed vs. boxed classification (embedding, §11.5) ------------------
+//
+// A *cell-headed* type has a `Cell header` as its first member (standard-layout) — it
+// IS its own cell (StringCell, ListCell, …). A plain application class (Sound, File,
+// Regex) has no such member; when exposed to a script it is *boxed* — allocated as a
+// Cell header followed by the value. `Handle<T>` and the typed registration layer use
+// this trait to pick the right path, so an application class needs nothing on it.
+
+namespace detail {
+template<class T, class = void>
+struct cell_headed : std::false_type
+{
+};
+template<class T>
+struct cell_headed<T, std::void_t<decltype(std::declval<T &>().header)>>
+    : std::bool_constant<std::is_same_v<std::remove_cv_t<decltype(std::declval<T &>().header)>, Cell> &&
+                         std::is_standard_layout_v<T>>
+{
+};
+} // namespace detail
+
+template<class T>
+inline constexpr bool is_cell_headed_v = detail::cell_headed<T>::value;
+
+// Layout of a box for a plain value T: `{ Cell header; <pad>; T value; }` with `value`
+// at its natural alignment. offsetof cannot be used (the box is non-standard-layout when
+// T carries data), so the offset is computed — the same technique as NativeEnvCell.
+template<class T>
+constexpr intptr_t box_value_offset() noexcept
+{
+	intptr_t a = static_cast<intptr_t>(alignof(T));
+	return (static_cast<intptr_t>(sizeof(Cell)) + a - 1) / a * a;
+}
+template<class T>
+constexpr intptr_t box_total_size() noexcept
+{
+	return box_value_offset<T>() + static_cast<intptr_t>(sizeof(T));
+}
+template<class T>
+T *box_value(Cell *c) noexcept
+{
+	return reinterpret_cast<T *>(reinterpret_cast<char *>(c) + box_value_offset<T>());
+}
 
 // --- allocation seam (defined in memory/cell_memory.cpp) ---
 

@@ -38,11 +38,10 @@ namespace {
 
 // --- a host-defined C++ reference class exposed to scripts --------------------
 
+// A plain host C++ class — no engine machinery. The engine boxes it when exposed.
 struct Counter
 {
-	Cell header; // every registered cell type leads with the Cell header
 	int64_t value;
-	static inline Class *phon_class = nullptr; // bound by add_class<Counter>
 
 	explicit Counter(int64_t start) : value(start) {}
 };
@@ -69,8 +68,10 @@ void register_host_extensions(Runtime &rt)
 	// factory below; mutating through a Handle<Counter> mutates the shared object.
 	rt.add_class<Counter>("Counter", rt.get_class("Object"));
 	rt.add_function("make_counter", [](int64_t start) { return Handle<Counter>::make(start); });
-	rt.add_function("bump", [](Handle<Counter> c) { return ++c->value; });
-	rt.add_function("count", [](Handle<Counter> c) { return c->value; });
+	// A registered class is reached by a plain reference — mutating through `Counter &`
+	// changes the shared object (identity), just like in application C++ code.
+	rt.add_function("bump", [](Counter &c) { return ++c.value; });
+	rt.add_function("count", [](const Counter &c) { return c.value; });
 }
 
 // --- run modes ----------------------------------------------------------------

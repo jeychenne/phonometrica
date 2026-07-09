@@ -135,6 +135,37 @@ F *env_callable(NativeCell *self) noexcept
 	return reinterpret_cast<F *>(reinterpret_cast<char *>(env) + env->payload_off);
 }
 
+// A parameter is by-reference iff it is a non-const lvalue reference.
+template<class A>
+inline constexpr bool is_ref_param =
+    std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>;
+
+// A registered application class (Sound, File, Regex, …): any *class* type that is not
+// one of the engine's own value wrappers, Handle, or Isolate. Such a type is passed by
+// reference (`T&`/`const T&`) or by Handle<T>, reaching the shared object with identity
+// preserved — never a write-back ref and never copied.
+template<class T>
+struct is_handle_type : std::false_type
+{
+};
+template<class U>
+struct is_handle_type<Handle<U>> : std::true_type
+{
+};
+
+template<class T>
+inline constexpr bool is_registered_class_v =
+    std::is_class_v<T> && !is_handle_type<T>::value && !std::is_same_v<T, String> &&
+    !std::is_same_v<T, List> && !std::is_same_v<T, Table> && !std::is_same_v<T, Set> &&
+    !std::is_same_v<T, Array> && !std::is_same_v<T, Variant> && !std::is_same_v<T, Value> &&
+    !std::is_same_v<T, Isolate>;
+
+// A write-back (`ref`) parameter is a non-const lvalue reference of a *value* type —
+// a registered class reference is identity, not write-back, so it is excluded.
+template<class A>
+inline constexpr bool is_writeback_ref_v =
+    is_ref_param<A> && !is_registered_class_v<std::decay_t<A>>;
+
 // --- argument traits: C++ param type -> (dispatch class, unbox) ---------------
 //
 // unbox() runs *after* dispatch has confirmed the argument's class, so it may
@@ -209,13 +240,23 @@ struct ArgTraits<Value, void>
 	static Value unbox(Value v) { return v; }
 };
 
-// Handle<T> for a registered reference class (T exposes `static Class *phon_class`;
-// set by add_class<T>, M8 stage 2). Dispatches on that class; unbox retains.
+// Handle<T> for a registered application class (a plain C++ class registered by
+// add_class<T>, which set class_of<T>()). Dispatches on that class; unbox retains and
+// reaches the payload transparently (cell-headed or boxed) via Handle<T>::from_cell.
 template<class T>
 struct ArgTraits<Handle<T>, void>
 {
-	static Class *dispatch_class() { return T::phon_class; }
-	static Handle<T> unbox(Value v) { return Handle<T>(reinterpret_cast<T *>(v.as_cell())); }
+	static Class *dispatch_class() { return class_of<T>(); }
+	static Handle<T> unbox(Value v) { return Handle<T>::from_cell(v.as_cell()); }
+};
+
+// A registered application class passed by reference (`T&` / `const T&`): dispatches on
+// its class; the reference is materialized by the ClassRef binder (below), which keeps
+// the cell alive and hands the callable a reference into the shared object.
+template<class T>
+struct ArgTraits<T, std::enable_if_t<is_registered_class_v<T>>>
+{
+	static Class *dispatch_class() { return class_of<T>(); }
 };
 
 // --- return traits: C++ return type -> boxed Value (+1) -----------------------
@@ -318,11 +359,6 @@ struct RetTraits<Handle<T>, void>
 // back through the box after the call. The slot is null for the duration — an
 // accepted wart shared with `for ref` (references.md).
 
-// A parameter is by-reference iff it is a non-const lvalue reference.
-template<class A>
-inline constexpr bool is_ref_param =
-    std::is_lvalue_reference_v<A> && !std::is_const_v<std::remove_reference_t<A>>;
-
 template<class T, class = void>
 struct RefMarshal
 {
@@ -395,14 +431,34 @@ struct RefMarshal<Array, void> : WrapperRefMarshal<Array>
 
 // One stack-local binder per argument, constructed before the call and destroyed after
 // (so a ref binder writes back once the callable returns). Built as a chain of locals
-// by Thunk::bind — never copied or moved.
+// by Thunk::bind — never copied or moved. Three kinds:
+//   Value    — by value / const&: unbox a copy.
+//   WriteRef — `T&` of a value type: move out, mutate in place, write back (references.md).
+//   ClassRef — `T&`/`const T&` of a registered class: a reference into the shared object.
+enum class BindKind
+{
+	Value,
+	WriteRef,
+	ClassRef,
+};
 
-template<class A, bool IsRef = is_ref_param<A>>
+template<class A>
+constexpr BindKind bind_kind() noexcept
+{
+	if constexpr (is_registered_class_v<std::decay_t<A>>)
+		return BindKind::ClassRef;
+	else if constexpr (is_ref_param<A>)
+		return BindKind::WriteRef;
+	else
+		return BindKind::Value;
+}
+
+template<class A, BindKind K = bind_kind<A>()>
 struct Binder;
 
 // By-value (A is `T`, `const T&`, or `T&&`): unbox once; hand the callable a movable T.
 template<class A>
-struct Binder<A, false>
+struct Binder<A, BindKind::Value>
 {
 	using T = std::decay_t<A>;
 	T value;
@@ -415,7 +471,7 @@ struct Binder<A, false>
 // By-reference (`T&`): expose the moved-out referent for in-place mutation, write it
 // back on destruction.
 template<class A>
-struct Binder<A, true>
+struct Binder<A, BindKind::WriteRef>
 {
 	using T = std::decay_t<A>;
 	UpvalueCell *box;
@@ -435,12 +491,29 @@ struct Binder<A, true>
 	}
 };
 
+// A registered application class by reference: a Handle keeps the cell alive for the
+// call; get() yields a reference into the shared object (identity, no copy, no write-
+// back). Passing such a class by value is rejected (it would copy a shared object).
+template<class A>
+struct Binder<A, BindKind::ClassRef>
+{
+	using T = std::decay_t<A>;
+	static_assert(std::is_reference_v<A>,
+	              "pass a registered class by reference (T& / const T&) or by Handle<T>, "
+	              "not by value");
+	Handle<T> h;
+	Binder(Isolate &, Value v) : h(Handle<T>::from_cell(deref(v).as_cell())) {}
+	Binder(const Binder &) = delete;
+	Binder &operator=(const Binder &) = delete;
+	T &get() noexcept { return *h; }
+};
+
 template<class... A>
 constexpr uint64_t compute_ref_mask() noexcept
 {
 	uint64_t mask = 0;
 	std::size_t i = 0;
-	((mask |= (static_cast<uint64_t>(is_ref_param<A>) << i), ++i), ...);
+	((mask |= (static_cast<uint64_t>(is_writeback_ref_v<A>) << i), ++i), ...);
 	return mask;
 }
 
@@ -556,24 +629,21 @@ struct Registrar<F, R, HasIso, std::tuple<A...>>
 	}
 };
 
-// The finalizer for a registered C++ class: run T's destructor before the cell is
-// freed (frees any C++-owned members — vectors, buffers, handles).
+// The finalizer for a registered application class: run T's destructor (on the boxed
+// value, at its offset after the header) before the cell is freed — releasing any
+// C++-owned members (vectors, buffers, file handles).
 template<class T>
 void foreign_finalize(Cell *c)
 {
-	reinterpret_cast<T *>(c)->~T();
+	box_value<T>(c)->~T();
 }
 
-// The clone hook for a Value C++ class (CoW copy): reconstruct T from the source into
-// the caller-allocated `dst`, preserving dst's own cell header (the CloneHook ABI —
-// dst's header/refcount are already set).
+// The clone hook for a Value application class (CoW copy): copy-construct T from the
+// source's boxed value into the destination's box, leaving dst's own header intact.
 template<class T>
 void foreign_clone(Cell *dst, const Cell *src)
 {
-	uint32_t hdr = dst->hdr, rc = dst->rc_bits;
-	::new (static_cast<void *>(dst)) T(*reinterpret_cast<const T *>(src));
-	dst->hdr = hdr;
-	dst->rc_bits = rc;
+	::new (static_cast<void *>(box_value<T>(dst))) T(*box_value<T>(const_cast<Cell *>(src)));
 }
 
 // --- Variant typed conversions (design §11.4) ---------------------------------
@@ -617,17 +687,22 @@ void register_function(const char *name, F &&f)
 
 // Register the C++ type `T` as a phon class named `name`, deriving from `base` (design
 // §11.2). Records sizeof(T), wires ~T() as the finalizer (and, for a Value class, a CoW
-// clone hook), and binds `T::phon_class` so Handle<T> and typed dispatch interoperate.
-// `T` must be a cell-headed type (first member `Cell header`) with a
-// `static Class *phon_class` slot. Instances are created from C++ via Handle<T>::make.
+// clone hook) and records `class_of<T>()` so Handle<T> and typed dispatch interoperate.
+// `T` is an ordinary plain C++ class — it needs **nothing** on it (no `Cell` member, no
+// static): the engine boxes it as `{ Cell header; T value }`, so the same class is usable
+// as a standalone C++ object and as a script value. Instances come from Handle<T>::make.
 template<class T>
 Class *add_class(const char *name, Class *base, ClassKind kind = ClassKind::Reference)
 {
+	static_assert(!is_cell_headed_v<T>,
+	              "add_class<T> is for plain application classes; a cell-headed engine type "
+	              "registers through its own register_*_class");
 	bool is_reference = (kind == ClassKind::Reference);
-	Class *c = register_foreign_class(name, base, is_reference, static_cast<intptr_t>(sizeof(T)),
+	Class *c = register_foreign_class(name, base, is_reference,
+	                                  static_cast<intptr_t>(box_total_size<T>()),
 	                                  &detail::foreign_finalize<T>,
 	                                  is_reference ? nullptr : &detail::foreign_clone<T>);
-	T::phon_class = c;
+	g_registered_class<T> = c;
 	return c;
 }
 
