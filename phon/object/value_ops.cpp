@@ -8,6 +8,7 @@
 #include <phon/core/hash.hpp>
 #include <phon/core/reference.hpp>
 #include <phon/object/class.hpp>
+#include <phon/types/string.hpp> // String comparison for value_compare
 
 namespace phonometrica {
 
@@ -51,6 +52,26 @@ bool value_equals(Value a, Value b) noexcept
 	// -0.0 vs +0.0 differ in bits but compare equal.
 	if (a.is_double() && b.is_double())
 		return a.as_double() == b.as_double();
+	return false;
+}
+
+bool value_compare(Value a, Value b, int &out) noexcept
+{
+	a = deref(a);
+	b = deref(b);
+	if (a.is_number() && b.is_number())
+	{
+		double x = a.to_double(), y = b.to_double();
+		out = x < y ? -1 : (x > y ? 1 : 0);
+		return true;
+	}
+	if (a.is_cell() && b.is_cell() && a.as_cell()->class_id() == CID_STRING &&
+	    b.as_cell()->class_id() == CID_STRING)
+	{
+		int c = String::from_value(a).compare(String::from_value(b).view());
+		out = c < 0 ? -1 : (c > 0 ? 1 : 0);
+		return true;
+	}
 	return false;
 }
 

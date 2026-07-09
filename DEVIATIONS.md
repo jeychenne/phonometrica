@@ -1381,3 +1381,71 @@ API (§11.3), the primary surface for exposing C++ to scripts.
     form uses `condition_variable::wait_for` (a non-positive timeout polls); it is the
     event-loop-polling variant the design calls for. `is_channel(Value)` is now public (moved
     out of the file-local anonymous namespace).
+
+### Stage 4 (partial) — stdlib port: math + string (`lib/math.cpp`, `lib/string.cpp`)
+
+Leading the stdlib port with two modules to lock the pattern; the rest (list, array,
+system, file, regex, json) follow the same shape. `lib/lib.hpp` declares one
+`register_<module>_lib()` per unit; `init_runtime()` calls them in the `call_once` block.
+Everything routes through `register_function` (the typed API) — no hand-written natives.
+
+16. **Scalar math takes `double`, integer-preserving functions carry a second overload.**
+    `sin`/`cos`/`sqrt`/`log`/… take `double` (dispatch on Real), so an Integer or Float
+    argument coerces — replacing the old engine's `Number`-typed callbacks. `abs`/`round`/
+    `min`/`max` additionally register an `int64_t` overload (dispatch on Integer, more
+    specific), so integer inputs stay integers and floats fall to the double method. This is
+    the old engine's Integer/Number overload split expressed directly as two C++ registrations.
+17. **String mutators are `ref` (`String &`); queries are `const String &`.** The old engine's
+    REF-marked in-place functions (`trim`, `append`, `prepend`, `replace`, `remove`, `reverse`)
+    become `String &` first-parameter registrations — the stage-1b ref support carries them
+    with correct copy-on-write (an aliased string is not clobbered; verified in
+    `test_stdlib.phon`). Non-mutating functions (`find`, `count`, `contains`, `to_upper`,
+    `left`, `slice`, `char`, `split`, …) take `const String &`. `split` returns a `List`,
+    exercising a container return. Grapheme, 1-based positions throughout; `find` returns 0
+    when absent (old-engine semantics).
+18. **Math constants are bare-name globals (`PI`, `E`) via compile-time inlining.** A small
+    process-global name→Value table (`register_constant`/`find_constant` in `dispatch/generic.*`,
+    the existing global-name-registry TU) holds builtin value constants. The compiler's
+    Variable-read path checks it *last* — after locals, upvalues, module slots, imports,
+    classes, and generics — so any binding of the same name shadows it (a `var PI` is a normal
+    module/local var). A hit inlines as a `LOADK` (compile-time substitution, zero runtime
+    lookup), so constants must be registered before the referencing chunk compiles — which
+    init_runtime guarantees. Confined to the `NameKind::None` branch of the Variable case, so no
+    new `NameKind` and no other resolver switch is touched. `register_math_lib` registers `PI`
+    and `E`; cell-valued constants (none yet) would be retained by the table and released at
+    `generic_registry_shutdown`. Note: because module-level `var`s hoist chunk-wide, a `var PI`
+    anywhere in a chunk shadows the constant for the *whole* chunk (standard hoisting, not
+    constant-specific).
+
+### Stage 4 (cont.) — stdlib port: list + array (`lib/list.cpp`, `lib/array.cpp`)
+
+19. **List module fully ported.** Queries (`contains`, `find`, `find_back`, `first`, `last`,
+    `left`, `right`, `join`, `is_empty`) take `const List &`; mutators (`append`, `prepend`,
+    `insert`, `remove`/`remove_first`/`remove_last`/`remove_at`, `clear`, `pop`, `shift`,
+    `reverse`) take `List &` (ref/write-back). `pop`/`shift` return the removed element *and*
+    mutate — a ref parameter with a value return. Elements are untyped, so element parameters are
+    `Variant` (dispatch class Object), matching the old engine's `CLS(Object)` element signatures.
+    The set operations (`unite`/`intersect`/`subtract`) are order-preserving and deduplicated,
+    by value equality. `sample`/`shuffle` use a thread-local `mt19937_64` (never races). The
+    ordering functions are covered by item 19a.
+19a. **`value_compare` — a shared three-way ordering primitive.** `sort`, `is_sorted`,
+    `sorted_find`, `sorted_insert` need `<` over arbitrary values, which previously lived only
+    in the interpreter's `compare_ordered`. Lifted into `object/value_ops` as
+    `bool value_compare(Value, Value, int &out)` (numbers numerically, Strings lexicographically;
+    returns false for an unorderable pair so the caller chooses how to raise). The interpreter's
+    `compare_ordered` (backing `<`/`<=`) now *delegates* to it, so operator ordering and the
+    sorted list functions can never diverge. `value_ops.cpp` gained a `types/string.hpp` include
+    (a `.cpp`→types include, no header cycle). `sort` is `std::stable_sort` (deterministic); a
+    comparator that hits an unorderable pair raises through the native boundary (the partial
+    result vector is local and discarded, the source list untouched).
+20. **Array: constructors, reductions, and elementwise math overloads.** `zeros`/`ones`
+    (1-D and 2-D, non-negative size checked via a leading `Isolate &`), `sum`/`mean`/`min`/`max`
+    reductions (over `contiguous()` for correctness on strided/sliced views), `nrow`/`ncol`
+    shape, in-place `clear` (`Array &`, CoW-correct via `detach()`). The elementwise functions
+    (`sqrt`, `abs`, `sin`, `cos`, `exp`, `log`, `floor`, `ceil`) are registered as **overloads
+    of the scalar math generics** on an `Array` argument — so `sqrt(9.0)` takes the Real method
+    and `sqrt(@[…])` this one, the type-based dispatch replacing the old `math_array_func<f>`
+    template overloads. They allocate a fresh contiguous result (no in-place surprise); a
+    dedicated unary-apply kernel and the pooled/threaded threshold (§13) are a stage-5/6 tuning
+    item, not needed for correctness here.
+

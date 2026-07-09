@@ -603,7 +603,18 @@ void Lowerer::expr_to(Ast *node, int dest)
 			error(node, "[Name error] '" + std::string(symbol_name(v->name)) +
 			                "' is a generic function and cannot be used as a value yet (M8)");
 		case NameKind::None:
+		{
+			// A bare builtin constant (PI, E, …) inlines as a compile-time constant load.
+			// Checked last, so any local/module/import binding of the same name shadows it.
+			Value cv;
+			if (find_constant(v->name, cv))
+			{
+				emit_ABx(Opcode::LOADK, dest,
+				         static_cast<uint32_t>(P().add_constant(Variant(cv))), ln(node));
+				break;
+			}
 			error(node, "[Name error] undeclared name '" + std::string(symbol_name(v->name)) + "'");
+		}
 		}
 		break;
 	}

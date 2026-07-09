@@ -3,8 +3,10 @@
 
 #include <phon/dispatch/generic.hpp>
 
+#include <phon/core/cell.hpp>    // retain/release for cell-valued constants
 #include <phon/vm/function.hpp> // deref() reads through a first-class reference argument
 
+#include <unordered_map>
 #include <utility>
 
 namespace phonometrica {
@@ -383,6 +385,49 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 	return idx < 0 ? nullptr : &g->methods[idx];
 }
 
+// --- global value constants (bare-name builtin bindings like PI/E) ------------
+//
+// A small process-global name→Value table for builtin constants. Registered once at
+// init_runtime (before any script compiles), then read-only during compilation — the
+// compiler inlines a hit as a LOADK (compile-time substitution, no runtime lookup).
+// Mirrors the generic registry's init-before-use, single-static-owner discipline.
+
+namespace {
+std::unordered_map<uint32_t, Value> &constant_table()
+{
+	static std::unordered_map<uint32_t, Value> t;
+	return t;
+}
+} // namespace
+
+void register_constant(Symbol name, Value v)
+{
+	auto &t = constant_table();
+	auto it = t.find(name.id);
+	if (it != t.end())
+	{
+		if (v.owns_cell())
+			retain(v.cell_ptr());
+		if (it->second.owns_cell())
+			release(it->second.cell_ptr());
+		it->second = v;
+		return;
+	}
+	if (v.owns_cell())
+		retain(v.cell_ptr());
+	t.emplace(name.id, v);
+}
+
+bool find_constant(Symbol name, Value &out) noexcept
+{
+	auto &t = constant_table();
+	auto it = t.find(name.id);
+	if (it == t.end())
+		return false;
+	out = it->second;
+	return true;
+}
+
 void generic_registry_shutdown()
 {
 	GenericRegistry &r = registry();
@@ -390,6 +435,12 @@ void generic_registry_shutdown()
 		delete r.owned[i];
 	r.owned.clear();
 	r.by_name = FlatHashMap<uint32_t, GenericFunction *>();
+
+	auto &t = constant_table();
+	for (auto &kv : t)
+		if (kv.second.owns_cell())
+			release(kv.second.cell_ptr());
+	t.clear();
 }
 
 } // namespace phonometrica

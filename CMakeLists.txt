@@ -79,6 +79,10 @@ add_library(phon_engine STATIC
     phon/types/table.cpp
     phon/types/array.cpp
     phon/lib/array_kernels.cpp
+    phon/lib/array.cpp
+    phon/lib/list.cpp
+    phon/lib/math.cpp
+    phon/lib/string.cpp
     phon/concurrency/transfer.cpp
     phon/concurrency/channel.cpp
     phon/concurrency/spawn.cpp

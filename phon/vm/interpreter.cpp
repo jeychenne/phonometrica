@@ -319,21 +319,13 @@ bool values_equal(Value a, Value b)
 	return value_equals(a, b);
 }
 
-// -1 / 0 / 1; raises on incomparable operands.
+// -1 / 0 / 1; raises on incomparable operands. Ordering itself lives in value_compare
+// (object/value_ops) so `<`/`<=` and the sorted list functions agree.
 int compare_ordered(Isolate &iso, int line, Value a, Value b)
 {
-	if (a.is_number() && b.is_number())
-	{
-		double x = a.to_double(), y = b.to_double();
-		return x < y ? -1 : (x > y ? 1 : 0);
-	}
-	if (is_string(a) && is_string(b))
-	{
-		String sa = String::from_value(a);
-		String sb = String::from_value(b);
-		int c = sa.compare(sb.view());
-		return c < 0 ? -1 : (c > 0 ? 1 : 0);
-	}
+	int c;
+	if (value_compare(a, b, c))
+		return c;
 	iso.raise(String("[Type error] values are not ordered/comparable"), line);
 }
 

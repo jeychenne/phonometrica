@@ -13,6 +13,7 @@
 #include <phon/core/small_vector.hpp>
 #include <phon/core/vector.hpp>
 #include <phon/dispatch/generic.hpp>
+#include <phon/lib/lib.hpp>
 #include <phon/object/class.hpp>
 #include <phon/object/instance.hpp>
 #include <phon/runtime/bootstrap.hpp>
@@ -409,6 +410,10 @@ void init_runtime()
 		register_channel_class();
 		register_thread_class();
 		register_builtins();
+		register_math_lib();
+		register_string_lib();
+		register_list_lib();
+		register_array_lib();
 	});
 }
 

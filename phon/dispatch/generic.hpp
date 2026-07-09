@@ -93,6 +93,13 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool 
 // dispatches on its referent (ref-ness is uniform, not a dispatch dimension).
 Method *resolve(GenericFunction *g, const Value *args, int argc);
 
+// Global value constants: bare-name builtin bindings (e.g. `PI`, `E`) that the
+// compiler resolves to a compile-time constant load. Registered once at init_runtime,
+// then read-only during compilation. Shadowable by any local/module binding of the
+// same name. A cell-valued constant is retained by the table (released at shutdown).
+void register_constant(Symbol name, Value v);
+bool find_constant(Symbol name, Value &out) noexcept;
+
 // Free the generic registry (runs at process exit; exposed for teardown/tests).
 void generic_registry_shutdown();
 
