@@ -93,6 +93,16 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool 
 // dispatches on its referent (ref-ness is uniform, not a dispatch dimension).
 Method *resolve(GenericFunction *g, const Value *args, int argc);
 
+// The per-generic memo cache in `resolve` is shared mutable state, so it is used only
+// while dispatch is single-threaded. A spawned worker brackets its run with these
+// (concurrency §13): each worker increments on entry — so a worker always observes a
+// non-zero count and skips the memo — and decrements on exit. Only the main thread,
+// and only when no worker is live, ever touches the memo, making that access exclusive
+// by construction. `full_resolve` (read-only over the stable method set) is used by
+// everyone else.
+void dispatch_enter_thread() noexcept;
+void dispatch_exit_thread() noexcept;
+
 // Global value constants: bare-name builtin bindings (e.g. `PI`, `E`) that the
 // compiler resolves to a compile-time constant load. Registered once at init_runtime,
 // then read-only during compilation. Shadowable by any local/module binding of the

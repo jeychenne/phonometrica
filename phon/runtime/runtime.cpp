@@ -414,6 +414,8 @@ void init_runtime()
 		register_string_lib();
 		register_list_lib();
 		register_array_lib();
+		register_system_lib();
+		register_file_lib();
 	});
 }
 

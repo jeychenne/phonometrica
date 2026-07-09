@@ -28,7 +28,7 @@ const char *SCRIPTS[] = {
     "test_variadics",           "test_options",           "test_splat",
     "test_numeric",             "test_array",              "test_freeze",
     "test_channel",             "test_spawn",
-    "test_stdlib",
+    "test_stdlib",              "test_fileio",
 };
 
 std::string read_file(const std::string &path, bool &ok)

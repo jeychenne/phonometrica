@@ -5,6 +5,7 @@
 
 #include <phon/concurrency/transfer.hpp>
 #include <phon/core/cell.hpp>
+#include <phon/dispatch/generic.hpp> // dispatch_enter_thread/exit (memo concurrency guard)
 #include <phon/memory/cycle_collector.hpp>
 #include <phon/object/class.hpp>
 #include <phon/types/string.hpp>
@@ -78,6 +79,9 @@ void worker_main(Value callee, Value *args, int nargs, ThreadState *st)
 	Isolate iso;
 	set_current_isolate(&iso);
 	set_current_collector(&iso.collector());
+	// Mark dispatch as multi-threaded for this worker's lifetime, so the shared per-
+	// generic memo is bypassed while more than the main thread may dispatch (§13).
+	dispatch_enter_thread();
 	try
 	{
 		Value r = run_callable(iso, callee, args, nargs);
@@ -101,6 +105,7 @@ void worker_main(Value callee, Value *args, int nargs, ThreadState *st)
 		if (args[i].is_cell())
 			release(args[i].as_cell());
 	delete[] args;
+	dispatch_exit_thread();
 	set_current_collector(nullptr);
 	set_current_isolate(nullptr);
 	// iso destructs here: releases its own heap, joins any threads *it* spawned.

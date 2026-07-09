@@ -1,0 +1,33 @@
+# Example script for the phon host app:  phon_repl examples/demo.phon
+# It mixes stdlib functions with the host's C++ registrations (hypot, Counter).
+
+# --- stdlib: math + string + list -------------------------------------------------
+print("sqrt(2) =", sqrt(2.0))
+print("area of unit circle =", PI)
+
+var words = split("the quick brown fox", " ")
+print("words:", len(words))
+sort(words)
+print("sorted:", join(words, ", "))
+
+var xs = [5, 3, 8, 1, 9, 2]
+sort(xs)
+print("sorted numbers:", join(xs, " "))
+print("min, max, sum:", first(xs), last(xs), sum(@[5.0, 3.0, 8.0, 1.0, 9.0, 2.0]))
+
+# --- the numeric Array, with elementwise math dispatched on the argument type -----
+var v = @[1.0, 4.0, 9.0, 16.0]
+var roots = sqrt(v)
+print("sqrt of", join([1, 4, 9, 16], " "), "=", roots[1], roots[2], roots[3], roots[4])
+
+# --- host C++ registrations -------------------------------------------------------
+print("host says:", host_name())
+print("hypot(5, 12) =", hypot(5.0, 12.0))
+
+var c = make_counter(100)
+bump(c)
+bump(c)
+bump(c)
+print("counter after 3 bumps:", count(c))
+
+print("done.")

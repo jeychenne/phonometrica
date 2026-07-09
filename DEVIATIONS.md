@@ -1438,6 +1438,67 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     (a `.cpp`→types include, no header cycle). `sort` is `std::stable_sort` (deterministic); a
     comparator that hits an unorderable pair raises through the native boundary (the partial
     result vector is local and discarded, the source list untouched).
+
+### Stage 7 — example host app + a dispatch-memo concurrency fix
+
+21. **Example host app (`examples/repl.cpp`, target `phon_repl`) — the M8 acceptance
+    deliverable.** One program embedding the engine in three modes: an interactive REPL
+    (persistent session, results stringified, SyntaxError/RuntimeError rendered with line),
+    a script-file runner, and a `--workers` demo. The demo is the GUI stand-in: a script
+    spawns 3 worker threads that `send` results to a shared `Channel` and hands the channel
+    back to the host, which polls it with `channel_try_receive(0.05s)` like an event loop and
+    checks the summed result (270). It also registers host C++ extensions — `hypot`/`host_name`
+    functions and a reference class `Counter` with `make_counter`/`bump`/`count` — exercising
+    `add_function`, `add_class<T>`, `Handle<T>`, and `Variant::to<T>` together. Two CTest cases
+    (`example_workers`, `example_file`) run it under all three build configs; both return
+    nonzero on failure.
+22. **Dispatch memo is now bypassed while workers are live (a real concurrency fix the demo
+    exposed).** `resolve`'s per-generic memo cache (and its epoch fields) is shared mutable
+    state; multiple worker isolates first-dispatching a *cold* generic concurrently raced on it
+    (TSan-caught by the demo — existing tests never hit concurrent cold dispatch because the
+    main thread warmed the memos first). Fix: an atomic live-worker counter
+    (`dispatch_enter_thread`/`dispatch_exit_thread` in `dispatch/generic.*`, bracketing each
+    worker in `spawn.cpp`). A worker increments **before it dispatches**, so it always observes
+    a non-zero count and takes the memo-free `full_resolve` path — meaning the memo is touched
+    *only* by the main thread, and only when no worker is live, making that access exclusive by
+    construction (correct even under relaxed ordering; `full_resolve` is read-only over the
+    stable method set). Single-threaded dispatch is unchanged (counter 0 → same memo path). The
+    per-call-site inline cache is per-isolate and was already race-free. TSan-clean across the
+    unit suite and the worker demo.
+
+### Stage 4 (cont.) — stdlib port: system + file (`os/`, `lib/system.cpp`, `lib/file.cpp`)
+
+23. **A vendored, Unicode-correct path layer (`phon/os/file_system.*`).** Per the requirement
+    that paths behave like Phonometrica's on every platform, this is `phon/utils/file_system.*`
+    ported to the new `String`: on Windows the wide Win32 API (GetFullPathNameW, FindFirstFileW,
+    SHGetFolderPathW, CreateDirectoryW, DeleteFileW, _wrename, PathFileExistsW/PathIsDirectoryW)
+    driven from a UTF-16 conversion of the UTF-8 String (`to_wide` = `to_utf16` widened to
+    `wchar_t`, valid since Windows `wchar_t` is 16-bit); on POSIX the UTF-8 bytes go straight to
+    the C library (realpath/stat/opendir/mkdir/…). Platform macros `PHON_WINDOWS`/`PHON_POSIX`
+    are introduced here (the engine had none). `list_directory` returns a `List` (the new Array
+    is numeric-only, unlike the old `Array<String>`). Failures throw `FileSystemError`, re-raised
+    as a script `[System error]` in lib/system.cpp. **Only the POSIX path is exercised here
+    (Linux); the Windows branches are ported faithfully from the field-tested original but not
+    compiled/run in this environment.**
+24. **The `File` type (`phon/os/file.*`) opens Unicode paths via `os_open_file`** (`_wfopen`
+    with a UTF-16 path on Windows, `fopen` on POSIX — the old `utils::open_file`). `File` is a
+    cell-headed reference class registered through the embedding `add_class<File>` path, so its
+    finalizer (`~File`) closes the handle when the value dies (RAII file handles via the cell
+    lifecycle). Content is UTF-8 (a leading UTF-8 BOM is skipped on read); the multi-encoding
+    UTF-16/32 read machinery of the old File is **not** ported (deferred — UTF-8 is the dominant
+    case and the requirement was path correctness). `eof`/`at_end` *peeks* a byte rather than
+    trusting `feof` (which only latches after a read past end), so a file whose final newline was
+    just consumed reports end correctly. The opener is named `open_file`, **not** `open` — `open`
+    is a reserved class/function modifier keyword in the grammar.
+25. **Latent journal interaction surfaced (fixed at the fixture).** A user script defining a
+    function whose name+signature collide with a builtin (here `test_errors.phon`'s example
+    `function read_file(path as String)`, written before `read_file` became a builtin) *replaces*
+    the builtin method; when that one-shot chunk's Runtime is torn down, the registration journal
+    (design §11) retracts the method via `remove_method`, leaving the builtin generic empty for
+    the rest of the process. The immediate fix was renaming the test fixture (`read_file` →
+    `read_notes`). The underlying behaviour — redefining-then-unloading a builtin does not restore
+    it — is pre-existing and noted for a later journal pass; it only bites on a name+sig collision
+    with a builtin.
 20. **Array: constructors, reductions, and elementwise math overloads.** `zeros`/`ones`
     (1-D and 2-D, non-negative size checked via a leading `Isolate &`), `sum`/`mean`/`min`/`max`
     reductions (over `contiguous()` for correctness on strided/sliced views), `nrow`/`ncol`

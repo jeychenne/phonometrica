@@ -6,6 +6,7 @@
 #include <phon/core/cell.hpp>    // retain/release for cell-valued constants
 #include <phon/vm/function.hpp> // deref() reads through a first-class reference argument
 
+#include <atomic>
 #include <unordered_map>
 #include <utility>
 
@@ -345,19 +346,24 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool 
 	}
 }
 
+// Live spawned-worker count (concurrency §13). Non-zero => dispatch is potentially
+// multi-threaded, so the shared per-generic memo must not be touched (see resolve).
+std::atomic<int> g_worker_threads{0};
+
+void dispatch_enter_thread() noexcept
+{
+	g_worker_threads.fetch_add(1, std::memory_order_release);
+}
+void dispatch_exit_thread() noexcept
+{
+	g_worker_threads.fetch_sub(1, std::memory_order_release);
+}
+
 Method *resolve(GenericFunction *g, const Value *args, int argc)
 {
 	// A variadic overload has no upper arity bound; only the fixed minimum prunes.
 	if (argc < g->min_arity || (!g->has_vararg && argc > g->max_arity))
 		return nullptr;
-
-	// Invalidate the memo on a method-set or type-hierarchy change.
-	if (g->memo_generic_epoch != g->generic_epoch || g->memo_type_epoch != type_epoch())
-	{
-		g->memo.clear();
-		g->memo_generic_epoch = g->generic_epoch;
-		g->memo_type_epoch = type_epoch();
-	}
 
 	// Argument dispatch classes (a reference dispatches on its referent). Sized to
 	// argc so a variadic call with many arguments needs no fixed-capacity buffer.
@@ -366,9 +372,20 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 	for (int i = 0; i < argc; ++i)
 		arg_class.push_back(dispatch_class(args[i]));
 
-	// Fast memo for arity 1 and 2 (exact, collision-free keys).
-	if (argc == 1 || argc == 2)
+	// The memo (arity 1/2) is shared mutable state; use it only while single-threaded.
+	// A worker always sees its own increment, so it never enters here — leaving the
+	// memo the exclusive province of the main thread when no worker is live.
+	bool memo_ok =
+	    (argc == 1 || argc == 2) && g_worker_threads.load(std::memory_order_acquire) == 0;
+	if (memo_ok)
 	{
+		// Invalidate the memo on a method-set or type-hierarchy change.
+		if (g->memo_generic_epoch != g->generic_epoch || g->memo_type_epoch != type_epoch())
+		{
+			g->memo.clear();
+			g->memo_generic_epoch = g->generic_epoch;
+			g->memo_type_epoch = type_epoch();
+		}
 		uint64_t key = encode_arg(arg_class[0]);
 		if (argc == 2)
 			key = (key << 25) | encode_arg(arg_class[1]);
@@ -380,7 +397,8 @@ Method *resolve(GenericFunction *g, const Value *args, int argc)
 		return idx < 0 ? nullptr : &g->methods[idx];
 	}
 
-	// Arity 0 and 3..8: resolve fully (no memo).
+	// Arity 0 and 3..8, or any call while a worker is live: resolve fully (no memo).
+	// full_resolve only reads the stable method set, so concurrent callers are safe.
 	int32_t idx = full_resolve(g, arg_class.data(), argc);
 	return idx < 0 ? nullptr : &g->methods[idx];
 }

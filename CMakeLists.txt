@@ -80,9 +80,13 @@ add_library(phon_engine STATIC
     phon/types/array.cpp
     phon/lib/array_kernels.cpp
     phon/lib/array.cpp
+    phon/lib/file.cpp
     phon/lib/list.cpp
     phon/lib/math.cpp
     phon/lib/string.cpp
+    phon/lib/system.cpp
+    phon/os/file_system.cpp
+    phon/os/file.cpp
     phon/concurrency/transfer.cpp
     phon/concurrency/channel.cpp
     phon/concurrency/spawn.cpp
@@ -107,6 +111,13 @@ target_link_libraries(phon_engine PUBLIC phon_flags)
 
 find_package(Threads REQUIRED)
 target_link_libraries(phon_engine PUBLIC Threads::Threads)
+
+# ---------------------------------------------------------------------------
+# Example host application (architecture §15 — M8 acceptance deliverable)
+# ---------------------------------------------------------------------------
+
+add_executable(phon_repl examples/repl.cpp)
+target_link_libraries(phon_repl PRIVATE phon_engine phon_flags)
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -164,3 +175,9 @@ target_compile_definitions(phon_unit_tests PRIVATE
     PHON_SCRIPTS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/test/scripts")
 
 add_test(NAME unit COMMAND phon_unit_tests)
+
+# The example host app is an acceptance deliverable: both the worker-thread demo and a
+# script-file run must exit 0 (the demo checks its own result sum; file mode returns
+# nonzero on any script error). These also run under the ASan/TSan build configs.
+add_test(NAME example_workers COMMAND phon_repl --workers)
+add_test(NAME example_file COMMAND phon_repl ${CMAKE_CURRENT_SOURCE_DIR}/examples/demo.phon)

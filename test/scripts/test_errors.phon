@@ -70,7 +70,7 @@ end
 assert(trace == "fouter:inner", "unmatched inner ran finally then propagated")
 
 # Errors thrown across function calls unwind to the enclosing handler.
-function read_file(path as String) as String
+function read_notes(path as String) as String
     if path == "" then
         throw IOError("empty path")
     end
@@ -78,9 +78,9 @@ function read_file(path as String) as String
 end
 var msg = ""
 try
-    var ok = read_file("notes.txt")
+    var ok = read_notes("notes.txt")
     assert(ok == "contents of notes.txt", "call returned normally")
-    var bad = read_file("")
+    var bad = read_notes("")
 catch e as IOError
     msg = e.message
 end
