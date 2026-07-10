@@ -83,11 +83,14 @@ add_library(phon_engine STATIC
     phon/lib/file.cpp
     phon/lib/list.cpp
     phon/lib/math.cpp
+    phon/lib/regex.cpp
     phon/lib/string.cpp
     phon/lib/system.cpp
     phon/os/file_system.cpp
     phon/os/file.cpp
+    phon/regex/regex.cpp
     phon/concurrency/transfer.cpp
+    phon/concurrency/parallel.cpp
     phon/concurrency/channel.cpp
     phon/concurrency/spawn.cpp
     phon/concurrency/thread_pool.cpp
@@ -111,6 +114,12 @@ target_link_libraries(phon_engine PUBLIC phon_flags)
 
 find_package(Threads REQUIRED)
 target_link_libraries(phon_engine PUBLIC Threads::Threads)
+
+# PCRE2 (8-bit code units) backs the Regex engine, JIT enabled.
+find_library(PCRE2_LIBRARY NAMES pcre2-8 REQUIRED)
+find_path(PCRE2_INCLUDE_DIR NAMES pcre2.h REQUIRED)
+target_include_directories(phon_engine PUBLIC ${PCRE2_INCLUDE_DIR})
+target_link_libraries(phon_engine PUBLIC ${PCRE2_LIBRARY})
 
 # ---------------------------------------------------------------------------
 # Example host application (architecture §15 — M8 acceptance deliverable)

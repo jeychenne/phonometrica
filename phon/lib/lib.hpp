@@ -18,6 +18,7 @@ void register_list_lib();   // contains/find/join/…, in-place append/pop/rever
 void register_array_lib();  // zeros/ones, sum/mean/min/max, elementwise sqrt/sin/…
 void register_system_lib(); // paths/directories (Unicode-correct via phon/os/file_system)
 void register_file_lib();   // the File type + open/read/write/… (phon/os/file)
+void register_regex_lib();  // the Regex + Match types + regex/match/group/… (phon/regex)
 
 } // namespace phonometrica
 

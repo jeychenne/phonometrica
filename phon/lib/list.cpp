@@ -10,6 +10,7 @@
 // set operations) are deferred — they need a value-ordering primitive the engine does
 // not expose yet (see DEVIATIONS).
 
+#include <phon/concurrency/parallel.hpp> // vm_parallel_map
 #include <phon/lib/lib.hpp>
 #include <phon/object/value_ops.hpp> // value_equals / value_compare
 #include <phon/runtime/native_traits.hpp>
@@ -257,6 +258,13 @@ void register_list_lib()
 				out.append(e);
 		}
 		return out;
+	});
+
+	// parallel_map(list, fn): apply `fn` to each element on the runtime thread pool,
+	// returning a new list of results in order (concurrency §13). `fn` must be a
+	// top-level function or non-capturing lambda (a spawn-style target).
+	register_function("parallel_map", [](Isolate &iso, const List &xs, Value fn) {
+		return vm_parallel_map(iso, fn, xs, 0);
 	});
 }
 

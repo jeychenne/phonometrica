@@ -116,6 +116,20 @@ Value transfer_table(Isolate &iso, Value v, SeenMap &seen)
 	return outv;
 }
 
+// A registered foreign class (add_class<T>: a plain C++ class boxed as { Cell; T }).
+// Deep-copy the boxed value through the class's clone hook into a fresh box cell — an
+// independent copy the receiving thread owns outright. Only Value foreign classes reach
+// here (reference ones are rejected earlier), and an immutable value like Regex is safe
+// to copy per worker, which is exactly what makes regex work parallelizable.
+Value transfer_foreign(Cell *src, Class *k, SeenMap &seen)
+{
+	Cell *dst = cell_alloc(k->id, k->instance_size); // fresh, refcount 1
+	k->clone(dst, src);                              // copy-construct the boxed T
+	Value out = Value::make_cell(dst);
+	seen.insert(src, out);
+	return out; // carries cell_alloc's +1
+}
+
 Value transfer_instance(Isolate &iso, Value v, SeenMap &seen)
 {
 	Cell *src = v.as_cell();
@@ -182,6 +196,10 @@ Value do_transfer(Isolate &iso, Value v, SeenMap &seen)
 	// user value classes) deep-copy their fields.
 	if (k->is_ref())
 		reject(iso, k);
+	// A registered foreign value class (Regex, Match, …) copies through its clone hook;
+	// a script value class (Error, user value classes) deep-copies its fields.
+	if (k->flags & CLASS_FOREIGN)
+		return transfer_foreign(c, k, seen);
 	return transfer_instance(iso, v, seen);
 }
 

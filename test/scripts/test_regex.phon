@@ -1,0 +1,105 @@
+# Regular expressions (architecture §12): the immutable `Regex` value type and the
+# separate `Match` objects it produces. Patterns with backslashes use single-quoted raw
+# strings ('...'); double quotes process escapes. Group positions are 1-based graphemes.
+
+# --- literal match anywhere in the string ---------------------------------------
+var r = regex("ell")
+var m = match(r, "hello world")
+assert(m is Match, "match returns a Match")
+assert(group(m, 0) == "ell", "literal whole-match group")
+
+# --- no match returns null ------------------------------------------------------
+assert(match(regex("zzz"), "abc") == null, "no match is null")
+
+# --- alternation + capturing groups (raw string for \d) -------------------------
+var color = regex('(red|green|blue) (\d+)')
+var c = match(color, "value=green 42")
+assert(group(c, 0) == "green 42", "whole match")
+assert(group(c, 1) == "green", "first group")
+assert(group(c, 2) == "42", "second group")
+
+# --- group_count includes the implicit group 0 ---------------------------------
+var gp = match(regex("(a)(b)(c)"), "abc")
+assert(group_count(gp) == 4, "group_count counts group 0")
+
+# --- a non-participating group yields null --------------------------------------
+var alt = match(regex("(a)|(b)"), "a")
+assert(group_count(alt) == 3, "both branches counted structurally")
+assert(group(alt, 1) == "a", "participating group")
+assert(group(alt, 2) == null, "non-participating group is null")
+assert(group_start(alt, 2) == 0, "non-participating group has no start")
+
+# --- anchors --------------------------------------------------------------------
+var anchored = regex("^foo")
+assert(match(anchored, "foobar") != null, "anchored matches at start")
+assert(match(anchored, " foo") == null, "anchored skips non-start")
+
+# --- character class + quantifier -----------------------------------------------
+var ident = regex('[A-Za-z_][A-Za-z_0-9]*')
+assert(group(match(ident, "  hello42  "), 0) == "hello42", "identifier class")
+
+# --- group positions are 1-based grapheme indices -------------------------------
+var w = match(regex("world"), "hello world")
+assert(group_start(w, 0) == 7, "start position (grapheme)")
+assert(group_end(w, 0) == 12, "end position (one past, grapheme)")
+
+# --- UTF-8 haystack: positions count graphemes, not bytes -----------------------
+var u = match(regex("café"), "I love café")
+assert(group(u, 0) == "café", "utf8 whole match")
+var acc = match(regex("é"), "café")   # é is two bytes; it is grapheme 4
+assert(group_start(acc, 0) == 4, "grapheme position, not byte offset")
+
+# --- case-insensitive matching (Unicode-aware) via a flags string ---------------
+var ci = regex("^été", "caseless")
+assert(group(match(ci, "ÉTÉ, mon amour"), 0) == "ÉTÉ", "unicode caseless")
+assert(group(match(regex("foo", "caseless"), "FOOBAR"), 0) == "FOO", "ascii caseless")
+
+# --- match(r, s, from): search starting at a 1-based grapheme position -----------
+var a = regex("a")
+var later = match(a, "banana", 3)
+assert(group_start(later, 0) == 4, "search starts at the given position")
+assert(group(later, 0) == "a", "found the later occurrence")
+
+# --- an invalid group index raises ----------------------------------------------
+var caught = false
+try
+    group(m, 9)
+catch e as Error
+    caught = true
+end
+assert(caught, "out-of-range group index raises")
+
+# --- an invalid pattern raises at construction (no leaked compiled object) -------
+var bad = false
+try
+    regex("(unterminated")
+catch e as Error
+    bad = true
+end
+assert(bad, "an invalid pattern raises a clean error")
+
+# --- an immutable Regex is transferable to a spawned worker (parallelizable) ------
+# The whole point of the value-type design: with no mutable match state, a compiled
+# Regex can be sent to a worker, which matches into its own Match objects.
+function first_number(re, subject, out)
+    var found = match(re, subject)
+    if found == null then
+        send(out, "none")
+    else
+        send(out, group(found, 1))
+    end
+end
+
+var shared = regex('(\d+)')
+var chan = Channel()
+spawn first_number(shared, "order #42 shipped", chan)
+spawn first_number(shared, "quantity: 7", chan)
+var seen = 0
+for i = 1 to 2 do
+    var g = receive(chan)
+    assert(g == "42" or g == "7", "worker matched with the transferred Regex")
+    seen += 1
+end
+assert(seen == 2, "both workers reported")
+
+print("regex tests passed")

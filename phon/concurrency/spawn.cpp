@@ -3,6 +3,7 @@
 
 #include <phon/concurrency/spawn.hpp>
 
+#include <phon/concurrency/parallel.hpp> // freeze_reachable_constants
 #include <phon/concurrency/transfer.hpp>
 #include <phon/core/cell.hpp>
 #include <phon/dispatch/generic.hpp> // dispatch_enter_thread/exit (memo concurrency guard)
@@ -156,6 +157,12 @@ Cell *vm_spawn(Isolate &iso, Value callee, Value *args, int nargs, int line)
 	{
 		iso.raise(String("[Type error] spawn target is not callable"), line);
 	}
+
+	// Freeze every constant the worker could touch, so its shared refcounts use the atomic
+	// path: the worker (and any sibling worker, or the main thread) may LOADK-retain the
+	// same constant concurrently, and a non-frozen cell's refcount is a relaxed load+store
+	// that loses updates under contention (a use-after-free). Same guard parallel_map uses.
+	freeze_reachable_constants(callee);
 
 	// Transfer the arguments on THIS (the spawner's) thread. May raise on a non-sendable
 	// payload; clean up whatever was already transferred before propagating.

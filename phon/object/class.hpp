@@ -64,7 +64,8 @@ enum ClassFlags : uint16_t
 	CLASS_ACYCLIC = 1u << 2,
 	CLASS_BUILTIN = 1u << 3,
 	CLASS_SEALED = 1u << 4,
-	CLASS_META = 1u << 5, // a metaclass (its instances are class objects)
+	CLASS_META = 1u << 5,    // a metaclass (its instances are class objects)
+	CLASS_FOREIGN = 1u << 6, // a registered C++ class, boxed as { Cell; T } (add_class<T>)
 };
 
 struct Class

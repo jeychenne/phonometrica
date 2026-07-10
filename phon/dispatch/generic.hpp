@@ -103,6 +103,11 @@ Method *resolve(GenericFunction *g, const Value *args, int argc);
 void dispatch_enter_thread() noexcept;
 void dispatch_exit_thread() noexcept;
 
+// Enumerate every registered generic (in registration order). Used by the freeze walk
+// that makes script-method constants cross-thread-safe before parallel_map fans out
+// (concurrency §13). `fn` is called with each generic and the opaque `ctx`.
+void for_each_generic(void (*fn)(GenericFunction *g, void *ctx), void *ctx);
+
 // Global value constants: bare-name builtin bindings (e.g. `PI`, `E`) that the
 // compiler resolves to a compile-time constant load. Registered once at init_runtime,
 // then read-only during compilation. Shadowable by any local/module binding of the

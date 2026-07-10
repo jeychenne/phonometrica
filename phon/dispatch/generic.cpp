@@ -446,6 +446,13 @@ bool find_constant(Symbol name, Value &out) noexcept
 	return true;
 }
 
+void for_each_generic(void (*fn)(GenericFunction *g, void *ctx), void *ctx)
+{
+	Vector<GenericFunction *> &owned = registry().owned;
+	for (intptr_t i = 0; i < owned.size(); ++i)
+		fn(owned[i], ctx);
+}
+
 void generic_registry_shutdown()
 {
 	GenericRegistry &r = registry();

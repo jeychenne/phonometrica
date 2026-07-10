@@ -246,7 +246,7 @@ void register_typed_native(const char *name, NativeFn fn, Cell *env,
 Class *register_foreign_class(const char *name, Class *base, bool is_reference,
                               intptr_t instance_size, FinalizeHook finalize, CloneHook clone)
 {
-	uint16_t flags = CLASS_BUILTIN | (is_reference ? CLASS_REF : CLASS_VALUE);
+	uint16_t flags = CLASS_BUILTIN | CLASS_FOREIGN | (is_reference ? CLASS_REF : CLASS_VALUE);
 	Class *c = add_class(name, base, flags, instance_size);
 	c->finalize = finalize;
 	c->clone = clone;
@@ -416,6 +416,7 @@ void init_runtime()
 		register_array_lib();
 		register_system_lib();
 		register_file_lib();
+		register_regex_lib();
 	});
 }
 
