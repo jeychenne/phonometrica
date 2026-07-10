@@ -222,7 +222,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	// ── Row 2: manual / automatic radio buttons ──────────────────────────
 	auto *method_row = new QHBoxLayout;
 	m_manual_radio = new QRadioButton(tr("Parametric"));
-	m_auto_radio = new QRadioButton(tr("Semi-parametric (Weenink's method)"));
+	m_auto_radio = new QRadioButton(tr("Semi-parametric (automatic)"));
 	m_manual_radio->setChecked(true);
 	method_row->addWidget(new QLabel(tr("Parameter selection:")));
 	method_row->addWidget(m_manual_radio);
@@ -255,7 +255,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	manual_layout->addStretch();
 	m_method_stack->addWidget(manual_page);
 
-	// Page 1: automatic (Weenink)
+	// Page 1: automatic (optimal ceiling/order selection)
 	auto *auto_page = new QWidget;
 	auto *auto_layout = new QVBoxLayout(auto_page);
 	auto_layout->setContentsMargins(0, 0, 0, 0);
@@ -270,7 +270,7 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_auto_freq_high_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_high_edit);
 	freq_row->addWidget(new QLabel(tr("step:")));
-	m_auto_freq_step_edit = new QLineEdit("100");
+	m_auto_freq_step_edit = new QLineEdit("250");
 	m_auto_freq_step_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_step_edit);
 	freq_row->addStretch();
@@ -280,15 +280,67 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	lpc_row->addWidget(new QLabel(tr("LPC order from:")));
 	m_auto_lpc_low_spin = new QSpinBox;
 	m_auto_lpc_low_spin->setRange(4, 30);
-	m_auto_lpc_low_spin->setValue(10);
+	m_auto_lpc_low_spin->setValue(8);
 	lpc_row->addWidget(m_auto_lpc_low_spin);
 	lpc_row->addWidget(new QLabel(tr("to:")));
 	m_auto_lpc_high_spin = new QSpinBox;
 	m_auto_lpc_high_spin->setRange(4, 30);
-	m_auto_lpc_high_spin->setValue(10);
+	m_auto_lpc_high_spin->setValue(14);
 	lpc_row->addWidget(m_auto_lpc_high_spin);
 	lpc_row->addStretch();
 	auto_layout->addLayout(lpc_row);
+
+	// Selection method: the intrinsic ladder (default) or Weenink's W (kept for comparison / reproducibility).
+	auto *sel_row = new QHBoxLayout;
+	sel_row->addWidget(new QLabel(tr("Selection method:")));
+	m_auto_method_combo = new QComboBox;
+	m_auto_method_combo->addItem(tr("Optimal (recommended)"));
+	m_auto_method_combo->addItem(tr("Weenink (legacy, for comparison)"));
+	m_auto_method_combo->setCurrentIndex(0);
+	sel_row->addWidget(m_auto_method_combo);
+	sel_row->addStretch();
+	auto_layout->addLayout(sel_row);
+
+	// Cross-token consensus (Phase 2b): nudge each match's parameters toward its (speaker x vowel) cell centre.
+	auto *cons_row = new QHBoxLayout;
+	m_consensus_check = new QCheckBox(tr("Use cross-token consensus"));
+	cons_row->addWidget(m_consensus_check);
+	cons_row->addWidget(new QLabel(tr("Speaker property:")));
+	m_speaker_prop_edit = new QLineEdit;
+	m_speaker_prop_edit->setPlaceholderText(tr("(optional; blank = one file per speaker)"));
+	m_speaker_prop_edit->setFixedWidth(200);
+	cons_row->addWidget(m_speaker_prop_edit);
+	cons_row->addStretch();
+	auto_layout->addLayout(cons_row);
+
+	// Vowel/label grouping: a property, else fall back to a chosen match target (0 = reference target).
+	auto *label_row = new QHBoxLayout;
+	label_row->addWidget(new QLabel(tr("Label property:")));
+	m_label_prop_edit = new QLineEdit;
+	m_label_prop_edit->setPlaceholderText(tr("(optional; blank = use match target)"));
+	m_label_prop_edit->setFixedWidth(200);
+	label_row->addWidget(m_label_prop_edit);
+	label_row->addWidget(new QLabel(tr("else target #:")));
+	m_label_target_spin = new QSpinBox;
+	m_label_target_spin->setRange(0, 9);
+	m_label_target_spin->setValue(0);
+	m_label_target_spin->setToolTip(tr("Which match target supplies the label when no property is set (0 = reference target)."));
+	label_row->addWidget(m_label_target_spin);
+	label_row->addStretch();
+	auto_layout->addLayout(label_row);
+	// Consensus applies only to the Optimal (intrinsic) method.
+	auto sync_consensus = [this] {
+		bool intrinsic = (m_auto_method_combo->currentIndex() == 0);
+		m_consensus_check->setEnabled(intrinsic);
+		bool on = intrinsic && m_consensus_check->isChecked();
+		m_speaker_prop_edit->setEnabled(on);
+		m_label_prop_edit->setEnabled(on);
+		m_label_target_spin->setEnabled(on && m_label_prop_edit->text().isEmpty());
+	};
+	connect(m_auto_method_combo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [sync_consensus](int){ sync_consensus(); });
+	connect(m_consensus_check, &QCheckBox::toggled, this, [sync_consensus](bool){ sync_consensus(); });
+	connect(m_label_prop_edit, &QLineEdit::textChanged, this, [sync_consensus](const QString&){ sync_consensus(); });
+	sync_consensus();
 
 	m_method_stack->addWidget(auto_page);
 	outer->addWidget(m_method_stack);
@@ -1050,6 +1102,13 @@ void FormantQueryEditor::parseQuery()
 		m_query->set_freq_step(freq_step);
 		m_query->set_lpc_order_low(m_auto_lpc_low_spin->value());
 		m_query->set_lpc_order_high(m_auto_lpc_high_spin->value());
+		m_query->set_auto_method(m_auto_method_combo->currentIndex() == 1
+		                         ? FormantQuery::AutoMethod::Weenink
+		                         : FormantQuery::AutoMethod::Intrinsic);
+		m_query->set_consensus(m_consensus_check->isChecked());
+		m_query->set_speaker_property(m_speaker_prop_edit->text());
+		m_query->set_label_property(m_label_prop_edit->text());
+		m_query->set_label_target(m_label_target_spin->value());
 	}
 	else
 	{
@@ -1395,6 +1454,12 @@ void FormantQueryEditor::loadQuery()
 		m_auto_freq_step_edit->setText(QString::number(m_query->freq_step()));
 		m_auto_lpc_low_spin->setValue(m_query->lpc_order_low());
 		m_auto_lpc_high_spin->setValue(m_query->lpc_order_high());
+		m_auto_method_combo->setCurrentIndex(
+			m_query->auto_method() == FormantQuery::AutoMethod::Weenink ? 1 : 0);
+		m_consensus_check->setChecked(m_query->consensus());
+		m_speaker_prop_edit->setText(m_query->speaker_property());
+		m_label_prop_edit->setText(m_query->label_property());
+		m_label_target_spin->setValue(m_query->label_target());
 	}
 	else
 	{

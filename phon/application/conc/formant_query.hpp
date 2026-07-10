@@ -38,6 +38,15 @@ public:
 		NPoint      // measure at user-specified percentages
 	};
 
+	// Automatic (data-driven) LPC parameter selection strategy, used when automatic() is true.
+	//   Weenink   : legacy smoothness-only W criterion (kept for reproducibility / A-B comparison)
+	//   Intrinsic : Phase-1 intrinsic ladder (roughness + instability + coverage + density + bandwidth + ordering)
+	enum class AutoMethod
+	{
+		Weenink,
+		Intrinsic
+	};
+
 	// Per-level parameter override. Zero in any field means "inherit the global setting".
 	// `max_freq` applies in manual mode; `max_freq_low`/`max_freq_high` apply in automatic
 	// (Weenink) mode and override the search range bounds.
@@ -80,6 +89,22 @@ public:
 
 	bool automatic() const { return m_automatic; }
 	void set_automatic(bool a) { m_automatic = a; }
+
+	AutoMethod auto_method() const { return m_auto_method; }
+	void set_auto_method(AutoMethod m) { m_auto_method = m; }
+
+	// Consensus / cross-token shrinkage (Phase 2b). Requires automatic + Intrinsic. Groups matches into
+	// (speaker x vowel) cells and nudges each token's parameter choice toward its cell centre.
+	bool consensus() const { return m_consensus; }
+	void set_consensus(bool c) { m_consensus = c; }
+	const String &speaker_property() const { return m_speaker_property; }
+	void set_speaker_property(String p) { m_speaker_property = std::move(p); }
+	// Vowel/label side of the consensus cell: an annotation property if set, else the value of a chosen match target
+	// (0 = the reference target, the default; >=1 = that target index).
+	const String &label_property() const { return m_label_property; }
+	void set_label_property(String p) { m_label_property = std::move(p); }
+	int label_target() const { return m_label_target; }
+	void set_label_target(int t) { m_label_target = t; }
 
 	double max_frequency() const { return m_max_freq; }
 	void set_max_frequency(double f) { m_max_freq = f; }
@@ -187,7 +212,13 @@ protected:
 	void write() override;
 
 	// Run LPC/formant analysis on a single match and fill its measurement vector.
-	void measure_match(Match &match) const;
+	// Measure one match. In automatic mode, forced_ceiling > 0 skips selection and uses the given parameters
+	// (used by the consensus pass, which selects parameters corpus-wide before filling).
+	void measure_match(Match &match, double forced_ceiling = -1.0, int forced_order = -1) const;
+
+	// Two-pass corpus-level measurement: build a candidate cache per match, estimate pooled (speaker x vowel) cell
+	// centres, re-select each match toward its centre (EM), then fill. Preserves the output/concordance format.
+	void measure_matches_with_consensus(Array<AutoMatch> &matches);
 
 private:
 
@@ -208,6 +239,12 @@ private:
 
 	// Automatic mode (Weenink)
 	bool m_automatic = false;
+	AutoMethod m_auto_method = AutoMethod::Intrinsic; // selection strategy when m_automatic is true
+	bool m_consensus = false;            // cross-token consensus (Phase 2b); requires automatic + Intrinsic
+	String m_speaker_property;           // annotation property naming the speaker; empty => one file = one speaker
+	String m_label_property;             // annotation property naming the vowel/label; empty => use a match target
+	int m_label_target = 0;              // when m_label_property is empty: 0 = reference target, >=1 = that target
+	double m_lambda_s = 0.5;             // consensus pull strength (validated ~0.5)
 	double m_max_freq1 = 4000;     // search range lower bound
 	double m_max_freq2 = 6000;     // search range upper bound
 	double m_freq_step = 500;      // step

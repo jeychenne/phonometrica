@@ -20,12 +20,16 @@
  ***********************************************************************************************************************/
 
 #include <phon/runtime.hpp>
+#include <array>
+#include <map>
+#include <string>
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/property.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/weenink.hpp>
+#include <phon/analysis/formant_selection.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
@@ -153,6 +157,12 @@ void FormantQuery::clear()
 	m_max_freq = 5500;
 	m_lpc_order = 11;
 	m_automatic = false;
+	m_auto_method = AutoMethod::Intrinsic;
+	m_consensus = false;
+	m_speaker_property = String();
+	m_label_property = String();
+	m_label_target = 0;
+	m_lambda_s = 0.5;
 	m_max_freq1 = 4000;
 	m_max_freq2 = 6000;
 	m_freq_step = 500;
@@ -220,21 +230,29 @@ Handle<Concordance> FormantQuery::execute()
 	// Phase 2: formant measurement on each match
 	int count = (int)matches.size();
 
-	for (int i = 0; i < count; i++)
+	if (m_automatic && m_auto_method == AutoMethod::Intrinsic && m_consensus)
 	{
-		query_progress(i, count);
-		if (m_cancel_requested) break;
+		// Corpus-level two-pass selection (cells + EM) before filling.
+		measure_matches_with_consensus(matches);
+	}
+	else
+	{
+		for (int i = 0; i < count; i++)
+		{
+			query_progress(i, count);
+			if (m_cancel_requested) break;
 
-		try
-		{
-			measure_match(*matches[i+1]); // 1-based indexing
-		}
-		catch (std::exception &e)
-		{
-			// If measurement fails for a single match (e.g. sound file not bound),
-			// fill with NaN and continue rather than aborting the whole query.
-			auto &m = *matches[i+1];
-			m.measurements.assign(field_count(), std::nan(""));
+			try
+			{
+				measure_match(*matches[i+1]); // 1-based indexing
+			}
+			catch (std::exception &e)
+			{
+				// If measurement fails for a single match (e.g. sound file not bound),
+				// fill with NaN and continue rather than aborting the whole query.
+				auto &m = *matches[i+1];
+				m.measurements.assign(field_count(), std::nan(""));
+			}
 		}
 	}
 
@@ -281,7 +299,7 @@ Handle<Concordance> FormantQuery::execute()
 
 // Fill match.measurements with raw formant and bandwidth values only.
 // ERB and Bark are computed on the fly by Concordance::get_cell().
-void FormantQuery::measure_match(Match &match) const
+void FormantQuery::measure_match(Match &match, double forced_ceiling, int forced_order) const
 {
 	using namespace speech;
 
@@ -333,11 +351,30 @@ void FormantQuery::measure_match(Match &match) const
 
 	if (m_automatic)
 	{
-		auto params = find_lpc_parameters(sound.get(), channel(), m_nformant, m_win_size,
-		                                  t1, t2, local_max_freq1, local_max_freq2, m_freq_step,
-		                                  m_lpc_order1, m_lpc_order2);
-		max_freq = params.first;
-		lpc_order = (int)params.second;
+		if (forced_ceiling > 0)
+		{
+			// Parameters chosen upstream (e.g. by the consensus pass); skip per-match selection.
+			max_freq = forced_ceiling;
+			lpc_order = forced_order;
+		}
+		else
+		{
+			std::pair<double, double> params;
+			if (m_auto_method == AutoMethod::Weenink)
+			{
+				params = find_lpc_parameters(sound.get(), channel(), m_nformant, m_win_size,
+				                             t1, t2, local_max_freq1, local_max_freq2, m_freq_step,
+				                             m_lpc_order1, m_lpc_order2);
+			}
+			else
+			{
+				params = speech::select_analysis_intrinsic(sound.get(), channel(), m_nformant, m_win_size,
+				                                            t1, t2, local_max_freq1, local_max_freq2, m_freq_step,
+				                                            m_lpc_order1, m_lpc_order2);
+			}
+			max_freq = params.first;
+			lpc_order = (int)params.second;
+		}
 	}
 	else
 	{
@@ -432,6 +469,165 @@ void FormantQuery::measure_match(Match &match) const
 	}
 }
 
+// Two-pass corpus-level measurement with cross-token consensus (Phase 2b).
+//   Pass 0  build a scored candidate cache per match; provisionally pick the intrinsic argmin.
+//   EM      estimate a robust, partially-pooled centre per (speaker x vowel) cell, then re-pick each match as
+//           argmin(intrinsic badness + lambda_s * ERB distance to its cell centre); repeat.
+//   Fill    measure each match with its finally-selected <ceiling, order> (reuses measure_match's fill logic).
+// A light pull (lambda_s ~ 0.5) rescues tokens whose formants scattered off a good cell centre without welding to it;
+// it is neutral-to-harmless when there is nothing to pull. It cannot correct systematic errors (a whole cell biased
+// the same way) — those remain candidate-generation problems.
+void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
+{
+	using namespace speech;
+	int count = (int)matches.size();
+
+	struct Entry {
+		std::vector<AnalysisCandidate> cands;
+		int    sel = -1;              // index of currently selected candidate
+		std::string speaker, vowel;   // cell-key parts
+		bool   ok = false;
+	};
+	std::vector<Entry> entries(count);
+	IntrinsicWeights w; // shipping defaults (lambdas = 1)
+
+	// ---- Pass 0: build caches + provisional intrinsic selection + resolve cells ----
+	for (int i = 0; i < count; i++)
+	{
+		query_progress(i, count);
+		if (m_cancel_requested) return;
+		auto &match = *matches[i+1];
+		auto &e = entries[i];
+		try
+		{
+			auto annot = match.annotation();
+			auto sound = annot->sound();
+			if (!sound) continue;
+
+			auto *target = match.reference_target();
+			if (!target) target = match.get(1);
+			double t1 = target->start_time, t2 = target->end_time, tmid = 0.5 * (t1 + t2);
+
+			double c_lo = m_max_freq1, c_hi = m_max_freq2;
+			if (override_enabled())
+			{
+				auto value = annot->get_property_value(m_override_category);
+				if (!value.empty())
+				{
+					auto it = m_override_levels.find(value);
+					if (it != m_override_levels.end())
+					{
+						if (it->second.max_freq_low  > 0) c_lo = it->second.max_freq_low;
+						if (it->second.max_freq_high > 0) c_hi = it->second.max_freq_high;
+					}
+				}
+			}
+
+			e.cands = build_intrinsic_candidates(sound.get(), channel(), m_nformant, m_win_size,
+			                                     t1, t2, tmid, c_lo, c_hi, m_freq_step,
+			                                     m_lpc_order1, m_lpc_order2, w);
+			if (e.cands.empty()) continue;
+
+			double best = (std::numeric_limits<double>::max)();
+			for (int k = 0; k < (int)e.cands.size(); ++k)
+				if (e.cands[k].score.badness < best) { best = e.cands[k].score.badness; e.sel = k; }
+
+			if (!m_label_property.empty())
+			{
+				e.vowel = std::string(annot->get_property_value(m_label_property).data());
+			}
+			else
+			{
+				auto *lt = (m_label_target >= 1) ? match.get(m_label_target) : target;
+				e.vowel = lt ? std::string(lt->value.data()) : std::string();
+			}
+			e.speaker = m_speaker_property.empty()
+			          ? std::string(annot->path().data())
+			          : std::string(annot->get_property_value(m_speaker_property).data());
+			e.ok = (e.sel >= 0);
+		}
+		catch (...) { e.ok = false; }
+	}
+
+	// ---- EM: pooled cell centres, re-selection ----
+	const int em_iters = 3;
+	const double kappa = 2.0, kappa2 = 2.0; // shrinkage toward vowel- and speaker-level pools (helps sparse cells)
+	auto key = [](const Entry &e) { return e.speaker + "\x1f" + e.vowel; };
+	auto median = [](std::vector<double> v) -> double {
+		if (v.empty()) return std::nan("");
+		auto m = v.begin() + v.size() / 2;
+		std::nth_element(v.begin(), m, v.end());
+		double x = *m;
+		if (v.size() % 2 == 0) x = 0.5 * (x + *std::max_element(v.begin(), m));
+		return x;
+	};
+
+	for (int it = 0; it < em_iters; ++it)
+	{
+		std::map<std::string, std::array<std::vector<double>, 3>> cellv, vowv, spkv;
+		for (int i = 0; i < count; ++i)
+		{
+			auto &e = entries[i];
+			if (!e.ok) continue;
+			const auto &c = e.cands[e.sel];
+			for (int k = 0; k < 3; ++k)
+			{
+				double f = c.formants[k];
+				if (std::isnan(f)) continue;
+				cellv[key(e)][k].push_back(f);
+				vowv[e.vowel][k].push_back(f);
+				spkv[e.speaker][k].push_back(f);
+			}
+		}
+
+		for (int i = 0; i < count; ++i)
+		{
+			auto &e = entries[i];
+			if (!e.ok) continue;
+			double mu[3];
+			for (int k = 0; k < 3; ++k)
+			{
+				auto &cv = cellv[key(e)][k];
+				double mc = median(cv), mv = median(vowv[e.vowel][k]), ms = median(spkv[e.speaker][k]);
+				double n = (double)cv.size(), num = 0, den = 0;
+				if (!std::isnan(mc)) { num += n * mc;      den += n; }
+				if (!std::isnan(mv)) { num += kappa * mv;   den += kappa; }
+				if (!std::isnan(ms)) { num += kappa2 * ms;  den += kappa2; }
+				mu[k] = den > 0 ? num / den : std::nan("");
+			}
+
+			double best = (std::numeric_limits<double>::max)();
+			int bi = e.sel;
+			for (int c = 0; c < (int)e.cands.size(); ++c)
+			{
+				double b = e.cands[c].score.badness;
+				for (int k = 0; k < 3; ++k)
+				{
+					double f = e.cands[c].formants[k];
+					if (!std::isnan(f) && !std::isnan(mu[k]))
+						b += m_lambda_s * std::abs(hertz_to_erb(f) - hertz_to_erb(mu[k]));
+				}
+				if (b < best) { best = b; bi = c; }
+			}
+			e.sel = bi;
+		}
+	}
+
+	// ---- Final fill: measure each match with its selected parameters ----
+	for (int i = 0; i < count; i++)
+	{
+		auto &match = *matches[i+1];
+		auto &e = entries[i];
+		if (!e.ok) { match.measurements.assign(field_count(), std::nan("")); continue; }
+		try
+		{
+			const auto &win = e.cands[e.sel];
+			measure_match(match, win.ceiling, win.lpc_order);
+		}
+		catch (...) { match.measurements.assign(field_count(), std::nan("")); }
+	}
+}
+
 Handle<Query> FormantQuery::copy() const
 {
 	auto c = make_handle<FormantQuery>(this->parent(), String());
@@ -456,6 +652,12 @@ Handle<Query> FormantQuery::copy() const
 	c->m_max_freq = m_max_freq;
 	c->m_lpc_order = m_lpc_order;
 	c->m_automatic = m_automatic;
+	c->m_auto_method = m_auto_method;
+	c->m_consensus = m_consensus;
+	c->m_speaker_property = m_speaker_property;
+	c->m_label_property = m_label_property;
+	c->m_label_target = m_label_target;
+	c->m_lambda_s = m_lambda_s;
 	c->m_max_freq1 = m_max_freq1;
 	c->m_max_freq2 = m_max_freq2;
 	c->m_freq_step = m_freq_step;
@@ -558,6 +760,31 @@ void FormantQuery::load()
 				else if (child.name() == str("Automatic"))
 				{
 					m_automatic = child.text().as_bool(false);
+				}
+				else if (child.name() == str("AutoMethod"))
+				{
+					auto val = str(child.text().get());
+					m_auto_method = (val == "weenink") ? AutoMethod::Weenink : AutoMethod::Intrinsic;
+				}
+				else if (child.name() == str("Consensus"))
+				{
+					m_consensus = child.text().as_bool(false);
+				}
+				else if (child.name() == str("SpeakerProperty"))
+				{
+					m_speaker_property = child.text().get();
+				}
+				else if (child.name() == str("LabelProperty"))
+				{
+					m_label_property = child.text().get();
+				}
+				else if (child.name() == str("LabelTarget"))
+				{
+					m_label_target = child.text().as_int(0);
+				}
+				else if (child.name() == str("LambdaS"))
+				{
+					m_lambda_s = child.text().as_double(0.5);
 				}
 				else if (child.name() == str("MaxFrequency"))
 				{
@@ -737,6 +964,12 @@ void FormantQuery::write()
 
 	if (m_automatic)
 	{
+		add_data_node(fs_node, "AutoMethod", m_auto_method == AutoMethod::Weenink ? "weenink" : "intrinsic");
+		add_data_node(fs_node, "Consensus", m_consensus ? "true" : "false");
+		if (!m_speaker_property.empty()) add_data_node(fs_node, "SpeakerProperty", m_speaker_property);
+		if (!m_label_property.empty()) add_data_node(fs_node, "LabelProperty", m_label_property);
+		add_data_node(fs_node, "LabelTarget", String::format("%d", m_label_target));
+		add_data_node(fs_node, "LambdaS", String::format("%.3f", m_lambda_s));
 		add_data_node(fs_node, "MaxFreqLow", String::format("%.1f", m_max_freq1));
 		add_data_node(fs_node, "MaxFreqHigh", String::format("%.1f", m_max_freq2));
 		add_data_node(fs_node, "FreqStep", String::format("%.1f", m_freq_step));

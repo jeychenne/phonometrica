@@ -23,6 +23,7 @@ option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
 option(WITH_APPLICATION   "Build the application layer"         ON)
 option(WITH_GUI           "Build the user interface"            ON)
 option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
+option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool" OFF)
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
@@ -573,4 +574,18 @@ if(BUILD_UNIT_TEST)
     if(WITH_APPLICATION)
         target_link_libraries(test_phon PRIVATE phon-app)
     endif()
+endif()
+
+####################
+##  CALIBRATION   ##
+####################
+
+# Headless tool that runs the real Phase-1 formant selector against a manifest of gold-measured tokens
+# (see tools/calibrate_formants.cpp). Requires the application layer; no GUI.
+if(BUILD_CALIBRATION)
+    if(NOT WITH_APPLICATION)
+        message(FATAL_ERROR "BUILD_CALIBRATION requires WITH_APPLICATION=ON")
+    endif()
+    add_executable(calibrate_formants tools/calibrate_formants.cpp)
+    target_link_libraries(calibrate_formants PRIVATE phon-app phon-runtime pcre2-8)
 endif()

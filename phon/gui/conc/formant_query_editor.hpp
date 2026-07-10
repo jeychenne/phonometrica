@@ -144,6 +144,11 @@ private:
 	QLineEdit *m_auto_freq_step_edit = nullptr;
 	QSpinBox *m_auto_lpc_low_spin = nullptr;
 	QSpinBox *m_auto_lpc_high_spin = nullptr;
+	QComboBox *m_auto_method_combo = nullptr;
+	QCheckBox *m_consensus_check = nullptr;
+	QLineEdit *m_speaker_prop_edit = nullptr;
+	QLineEdit *m_label_prop_edit = nullptr;
+	QSpinBox  *m_label_target_spin = nullptr;
 
 	// Measurement location
 	QRadioButton *m_midpoint_radio = nullptr;
