@@ -23,3 +23,25 @@ local function clamp(v as Float) as Float
     if v < 0.0 then return 0.0 end
     return v
 end
+
+# --- classes with field defaults that reference this module's own scope --------------
+# These exist to test cross-module *construction*: the initializers below name a
+# module-private const (LABEL) and a module function (base_scale) that are NOT visible
+# at an importer's call site. Constructing these from another module must still resolve
+# them here — which is what the per-class defaults thunk guarantees (design §11).
+const LABEL = "geo"
+
+function base_scale() as Float
+    return 2.0
+end
+
+class Widget
+    field name as String = LABEL          # module-private const
+    field scale as Float = base_scale()   # module function
+    field count as Integer = 1
+end
+
+# A subclass to exercise base→derived default chaining across the construction boundary.
+class LabeledWidget is Widget
+    field tag as String = LABEL & "-tag"
+end

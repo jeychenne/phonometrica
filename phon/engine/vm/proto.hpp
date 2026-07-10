@@ -83,6 +83,11 @@ struct ClassDef
 	bool is_ref = false;
 	bool is_open = false;
 	SmallVector<FieldDef, 4> fields;
+	// Child-proto index of the field-defaults thunk `@defaults(this)` (-1 if the class
+	// needs none). Compiled in the *defining* module so its initializer expressions
+	// resolve names in that module's scope — this is what makes constructing the class
+	// from another module correct (design §11). Applied at construction via GETDEFAULTS.
+	int32_t defaults_proto = -1;
 };
 
 struct Proto final

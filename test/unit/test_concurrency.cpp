@@ -651,6 +651,41 @@ TEST_CASE("concurrency: spawn stress — many workers aggregate via a channel")
 	CHECK(r.as_int() == 32004000); // sum 1..8000
 }
 
+// Regression: `spawn` must freeze the constants reachable from the callee before fanning
+// out. Many workers running the SAME function each LOADK-retain its shared String
+// constant cells; a non-frozen cell's refcount is a thread-confined relaxed load/store,
+// so concurrent retain/release across workers loses updates and frees a live constant —
+// a heap-use-after-free. TSan misses it (the accesses are "atomic" relaxed, no race);
+// ASan catches it reliably. With the freeze in vm_spawn these constants take the atomic
+// SHARED_BUFFER refcount path, so this is clean; remove the freeze and ASan flags it
+// within a couple of runs. The result is deterministic (each worker returns its loop
+// count) so the assertion also guards the value, not just memory safety.
+TEST_CASE("concurrency: spawn freezes shared constants (relaxed-refcount UAF guard)")
+{
+	Runtime rt;
+	const char *src =
+	    "function churn(n, out)\n"
+	    "    var count = 0\n"
+	    "    for i = 1 to n do\n"
+	    "        var s = \"alpha-shared-constant\"\n"
+	    "        var t = \"beta-gamma-delta-shared\"\n"
+	    "        var u = \"another-shared-literal-value\"\n"
+	    "        count += 1\n"
+	    "    end\n"
+	    "    send(out, count)\n"
+	    "end\n"
+	    "var out = Channel()\n"
+	    "var workers = 16\n"
+	    "for w = 0 to workers - 1 do\n"
+	    "    spawn churn(50000, out)\n"
+	    "end\n"
+	    "var total = 0\n"
+	    "for i = 1 to workers do total += receive(out) end\n"
+	    "total\n";
+	Variant r = rt.do_string(src);
+	CHECK(r.as_int() == 16 * 50000); // every worker's 50000-iteration count, aggregated
+}
+
 // --- Stage 6: pooled elementwise kernels ---------------------------------------
 
 // Above PHON_PARALLEL_THRESHOLD the kernels fan out across the thread pool. Verify they

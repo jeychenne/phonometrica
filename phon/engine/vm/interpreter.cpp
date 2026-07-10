@@ -442,6 +442,36 @@ void setup_callee_frame(Isolate &iso, Proto *cp, Value *new_base, int npos, int 
 	}
 }
 
+// Apply a fresh instance's field-default initializers, base→derived, by running each
+// ancestor class's `@defaults` thunk on it (design §5.6/§11). Each thunk mutates the
+// instance in place (ref class) or returns a detached copy (value class), so the running
+// value is threaded through the chain and written back into R[A]. A class with no own
+// defaults has a null thunk and is skipped, so the chain covers exactly the classes that
+// declare initializers — including bases defined in other modules.
+void apply_default_chain(Isolate &iso, Value *base, int a)
+{
+	if (!base[a].is_cell())
+		return;
+	Class *c = get_class(base[a].as_cell()->class_id());
+	// Collect the ancestor classes carrying a thunk, then apply them base→derived.
+	SmallVector<Cell *, 8> thunks; // derived→base as gathered
+	for (Class *k = c; k; k = k->base)
+		if (k->defaults)
+			thunks.push_back(k->defaults);
+	Value cur = base[a]; // borrowed; `owned` tracks whether it carries a +1 to manage
+	bool owned = false;
+	for (intptr_t i = thunks.size() - 1; i >= 0; --i) // reverse → base→derived
+	{
+		Value r = vm_call(iso, Value::make_cell(thunks[i]), &cur, 1); // returns +1
+		if (owned)
+			release_value(cur);
+		cur = r;
+		owned = true;
+	}
+	if (owned)
+		reg_move(base, a, cur); // release the original instance, install the finalized one
+}
+
 // The interpreter loop. Executes from the current top frame until the frame stack
 // unwinds to the depth it had on entry, then returns that frame's result (+1).
 // execute() drives the module root; vm_call() drives a nested re-entrant call.
@@ -1447,7 +1477,29 @@ Value run(Isolate &iso)
 			std::string name(symbol_name(cd.name));
 			Class *c = add_user_class(name.c_str(), base_cls, cd.is_ref, cd.is_open,
 			                          fields.data(), static_cast<int32_t>(fields.size()));
+			// The field-defaults thunk (like the accessors, a nothing-capturing top-level
+			// proto): compiled in this module, invoked at every construction site via
+			// GETDEFAULTS so the initializers resolve in this module's scope.
+			if (cd.defaults_proto >= 0)
+			{
+				Cell *d = reinterpret_cast<Cell *>(
+				    make_closure(proto->children[cd.defaults_proto].get()));
+				iso.keep_alive(d);
+				c->defaults = d;
+			}
 			reg_copy(base, a, class_object(c));
+			break;
+		}
+
+		case Opcode::INITDEFAULTS:
+		{
+			// Apply the field-default initializers for the fresh instance in R[A], walking
+			// its class hierarchy base→derived and running each class's `@defaults` thunk
+			// (compiled in that class's own module, so cross-module construction resolves
+			// each initializer in the right scope). Each thunk returns the possibly-detached
+			// instance (value classes copy-on-write), so the result is threaded back into
+			// R[A]. Reuses vm_call, exactly like a routed field setter.
+			apply_default_chain(iso, base, a);
 			break;
 		}
 

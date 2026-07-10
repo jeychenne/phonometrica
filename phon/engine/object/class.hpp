@@ -88,6 +88,10 @@ struct Class
 	TraceHook trace = nullptr;
 	GcFreeHook gc_free = nullptr;
 	Cell *class_object = nullptr; // cached class-object cell (lazy)
+	// The `@defaults(this)` closure that applies this class's field-default initializers
+	// (chaining to the base's first) — compiled in the class's defining module, so it is
+	// correct to run from any module's construction site. Null when the class needs none.
+	Cell *defaults = nullptr;
 
 	// User-class instance layout (design §5.6): a heap array of `field_count`
 	// descriptors (owned; base fields first, then own), null for builtins.

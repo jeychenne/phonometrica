@@ -105,6 +105,7 @@ using Instruction = uint32_t;
 	/* user classes: registration, instances, fields */                         \
 	_(DEFCLASS)    /* A Bx   : register class-def Bx; R[A] = its class obj   */ \
 	_(NEW)         /* A B    : R[A] = fresh instance of class object R[B]    */ \
+	_(INITDEFAULTS)/* A      : apply R[A]'s class field-default chain (in place)*/ \
 	_(GETFIELD)    /* A B C  : R[A] = R[B].field R[C]   (routes get accessor) */ \
 	_(SETFIELD)    /* A B C  : R[A].field R[B] = R[C]   (routes set accessor) */ \
 	_(GETFIELDRAW) /* A B C  : R[A] = R[B].field R[C]   (raw slot, no getter) */ \

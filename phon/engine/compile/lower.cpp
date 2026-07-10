@@ -372,16 +372,6 @@ private:
 	// public binding. `modname` is M's display name, for diagnostics.
 	void bind_imported_name(Ast *s, LoadedModule *m, Symbol modname, Symbol name, Symbol rename);
 
-	// Directing message for the one deferred module feature: constructing a class defined
-	// in another module. Its field-default initializers belong to the defining module's
-	// scope, so applying them at the importer's call site (as construction does today)
-	// would resolve names wrongly. A factory function is the idiom in the meantime.
-	static std::string cross_module_ctor_msg(const std::string &name)
-	{
-		return "[Compile error] cannot construct '" + name +
-		       "' across a module boundary; expose a factory function from its module "
-		       "(functions are flat-global after import) and call that instead";
-	}
 	void compile_return(ReturnStatement *s);
 	void compile_try(TryStatement *s);
 	void compile_throw(ThrowStatement *s);
@@ -398,14 +388,18 @@ private:
 	static Symbol this_symbol(); // the reserved `this` local name (a keyword, never a user id)
 	void compile_cast(CastExpression *c, int dest);
 	int compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls);
-	// Apply field defaults for the whole layout (base→derived) to the instance in
-	// `thisreg`, at construction — so inherited defaults apply regardless of which
-	// (possibly inherited) `init` runs.
-	void emit_full_defaults(ClassDeclaration *cls, int thisreg);
+	// Compile the `@defaults(this)` thunk that applies this class's OWN field-default
+	// initializers to the instance (raw, in place) and returns it. Compiled as a child
+	// proto in the defining module so those initializers resolve here; base defaults are
+	// chained at runtime (INITDEFAULTS walks the class hierarchy). Returns the child-proto
+	// index, or -1 when the class declares no field default (no thunk needed).
+	int compile_defaults_thunk(ClassDeclaration *cls);
 	int compile_accessor(FieldDeclaration *fd, bool is_setter); // -> module child-proto index
 	void compile_class(ClassDeclaration *c);
-	void construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
-	               int dest);
+	// Lower `ClassName(args)` construction. `class_slot` is the module slot holding the
+	// class object (any module's — local or imported), or ignored when `builtin` names a
+	// constructible builtin (the Error subtree). Needs no ClassDeclaration.
+	void construct(int class_slot, Class *builtin, CallExpression *call, int dest);
 	// `this.field` reaches the raw slot (bypassing accessor routing and the runtime
 	// privacy check) when it names the field whose own accessor is being compiled
 	// (recursion safety) or a private field of the class hierarchy (which has no
@@ -1032,27 +1026,34 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 		auto it = m_module_classes.find(v->name.id);
 		if (it != m_module_classes.end())
 		{
-			construct(it->second, module_lookup(v->name), nullptr, c, dest);
+			construct(module_lookup(v->name), nullptr, c, dest);
 			return;
 		}
 		if (Class *bc = class_by_name(v->name); bc && is_a(bc, error_class()))
 		{
-			construct(nullptr, -1, bc, c, dest);
+			construct(-1, bc, c, dest);
 			return;
 		}
-		// A class imported bare via `for` can be named and type-tested, but constructing
-		// it here would apply its field defaults in the wrong (importer's) scope — those
-		// initializers belong to the defining module (design §11, note below). Deferred.
-		if (m_imported_classes.find(v->name.id) != m_imported_classes.end())
-			error(c, cross_module_ctor_msg(std::string(symbol_name(v->name))));
+		// A class imported bare via `for`: construct it against its own module's slot. We
+		// have no ClassDeclaration for it (it lives in another module), but construction
+		// no longer needs one — field defaults run through the class's own `@defaults`
+		// thunk, compiled in the defining module (design §11).
+		if (auto imp = m_imported_classes.find(v->name.id); imp != m_imported_classes.end())
+		{
+			construct(imp->second, nullptr, c, dest);
+			return;
+		}
 	}
-	// Qualified construction `M.C(args)`: same restriction as bare imported construction.
+	// Qualified construction `M.C(args)`: same, against C's slot in M's namespace.
 	if (auto *fa = c->callee->as<FieldAccess>())
 		if (auto *mv = fa->object->as<Variable>())
 			if (auto ai = m_import_aliases.find(mv->name.id); ai != m_import_aliases.end())
 				if (ai->second->classes.contains(fa->name.id))
-					error(c, cross_module_ctor_msg(std::string(symbol_name(mv->name)) + "." +
-					                               std::string(symbol_name(fa->name))));
+				{
+					int slot = ai->second->ns.name_to_slot.find(fa->name.id)->second;
+					construct(slot, nullptr, c, dest);
+					return;
+				}
 
 	bool has_splat = false;
 	for (auto &a : c->args)
@@ -2148,33 +2149,57 @@ void Lowerer::compile_cast(CastExpression *c, int dest)
 		emit_ABC(Opcode::MOVE, dest, base, 0, ln(c));
 }
 
-void Lowerer::emit_full_defaults(ClassDeclaration *cls, int thisreg)
+int Lowerer::compile_defaults_thunk(ClassDeclaration *cls)
 {
-	// Base defaults first (so a subclass's own initializers can, in principle,
-	// override), then this class's own — applied to the fresh, unique instance in
-	// `thisreg`, which is uniquely owned so SETFIELD mutates it in place.
-	if (cls->parent)
-		if (auto *pv = cls->parent->as<Variable>())
+	// Only classes that declare at least one field default need a thunk; inherited
+	// defaults are reached by the runtime chain walk (INITDEFAULTS), not by recursing
+	// here — so each class's thunk carries only its own initializers.
+	bool has_own = false;
+	for (auto &f : cls->fields)
+		if (f->as<FieldDeclaration>()->default_value)
 		{
-			auto it = m_module_classes.find(pv->name.id);
-			if (it != m_module_classes.end())
-				emit_full_defaults(it->second, thisreg);
+			has_own = true;
+			break;
 		}
+	if (!has_own)
+		return -1;
+
+	auto child = std::make_unique<Proto>();
+	child->name = cls->name; // for diagnostics/backtraces
+	child->num_params = 1;   // `this`
+
+	FuncState cfs(*child, fs, false);
+	FuncState *saved = fs;
+	fs = &cfs;
+	cfs.finally_base = static_cast<int>(m_finally_stack.size());
+
+	declare_local(this_symbol(), true, cls); // reg 0 = this
+
 	for (auto &f : cls->fields)
 	{
 		auto *fd = f->as<FieldDeclaration>();
 		if (!fd->default_value)
-			continue; // no initializer -> stays null (design: default is null)
+			continue; // no initializer -> the field stays null (design: default is null)
 		int save = fs->free_reg;
 		int sreg = reg_alloc(fd);
 		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fd->name)), ln(fd));
 		int vreg = reg_alloc(fd);
 		expr_to(fd->default_value.get(), vreg);
-		// Raw: field defaults set the slot directly, bypassing any setter and the
-		// privacy check (construction runs outside the class).
-		emit_ABC(Opcode::SETFIELDRAW, thisreg, sreg, vreg, ln(fd));
+		// Raw: a default sets the slot directly, bypassing any setter and the privacy
+		// check (defaults are the class's own, applied before user code runs). A value
+		// class whose instance is shared (the caller still holds it) copy-on-writes here;
+		// SETFIELDRAW leaves the detached copy in reg 0, which the RET below returns.
+		emit_ABC(Opcode::SETFIELDRAW, 0, sreg, vreg, ln(fd));
 		reg_free_to(save);
 	}
+
+	emit_ABC(Opcode::RET, 0, 1, 0, ln(cls)); // return `this` (the possibly-detached instance)
+	child->num_regs = cfs.max_reg > child->num_params ? cfs.max_reg : child->num_params;
+
+	fs = saved;
+	int idx = static_cast<int>(fs->proto.children.size());
+	fs->proto.children.push_back(std::move(child));
+	return idx;
 }
 
 int Lowerer::compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls)
@@ -2303,6 +2328,10 @@ void Lowerer::compile_class(ClassDeclaration *c)
 			def.setter_proto = compile_accessor(fd, /*is_setter*/ true);
 		cd.fields.push_back(def);
 	}
+	// The field-defaults thunk, compiled here in the defining module (child proto of the
+	// module main), so its initializers resolve in this scope — the key to constructing
+	// the class from another module (design §11).
+	cd.defaults_proto = compile_defaults_thunk(c);
 	int cdidx = static_cast<int>(fs->proto.class_defs.size());
 	fs->proto.class_defs.push_back(std::move(cd));
 
@@ -2456,8 +2485,7 @@ void Lowerer::bind_imported_name(Ast *s, LoadedModule *m, Symbol modname, Symbol
 	// governs whether the *type/var* names are visible, so nothing else to do for it.
 }
 
-void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, CallExpression *call,
-                        int dest)
+void Lowerer::construct(int class_slot, Class *builtin, CallExpression *call, int dest)
 {
 	if (!call->options.empty())
 		error(call, "[Compile error] named constructor options arrive later in M5");
@@ -2466,9 +2494,10 @@ void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, C
 			error(a.get(), "[Compile error] ref/splat arguments arrive later in M5");
 
 	// NEW a fresh instance directly into the init call's `this` slot, apply the full
-	// (base→derived) field defaults, then dispatch init(this, args...). init returns
-	// the (in-place mutated) instance. The class object comes from the class's module
-	// binding (user class) or a constant (builtin Error subtree).
+	// (base→derived) field defaults via INITDEFAULTS, then dispatch init(this, args...).
+	// init returns the (in-place mutated) instance. The class object comes from the
+	// class's module binding (user class) or a constant (builtin Error subtree). No
+	// ClassDeclaration is needed, so this serves imported classes too (design §11).
 	int save = fs->free_reg;
 	int base = reg_alloc(call); // holds :init, then the result
 	emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(intern("init"))), ln(call));
@@ -2478,8 +2507,12 @@ void Lowerer::construct(ClassDeclaration *cls, int class_slot, Class *builtin, C
 	else
 		emit_ABx(Opcode::GETMODULE, thisreg, static_cast<uint32_t>(class_slot), ln(call));
 	emit_ABC(Opcode::NEW, thisreg, thisreg, 0, ln(call)); // this = fresh instance (rc 1)
-	if (cls)
-		emit_full_defaults(cls, thisreg);
+	// Apply the field-default chain (base→derived) through each class's thunk. A builtin
+	// Error subtree carries no defaults, so this is only emitted for user classes — and it
+	// needs no ClassDeclaration, which is what lets an imported class (cls == null) be
+	// constructed here.
+	if (!builtin)
+		emit_ABC(Opcode::INITDEFAULTS, thisreg, 0, 0, ln(call));
 	int nargs = static_cast<int>(call->args.size());
 	for (auto &a : call->args)
 	{

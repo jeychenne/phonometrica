@@ -244,24 +244,69 @@ TEST_CASE("modules: a qualified class annotation `as M.C` resolves")
 	CHECK(rt.do_string(code).value().as_double() == 4.0);
 }
 
-TEST_CASE("modules: constructing an imported class bare is a directed compile error")
+TEST_CASE("modules: an imported class can be constructed bare (via `for`)")
 {
 	Runtime rt;
 	rt.add_import_path(String(MODDIR.c_str()));
-	bool threw = false;
-	try { rt.do_string("import geometry for Point\nPoint()"); }
-	catch (const SyntaxError &) { threw = true; }
-	CHECK(threw);
+	// Point has no field defaults; constructing it and running its (inherited) init path
+	// works across the module boundary now that construction needs no local ClassDecl.
+	const char *code =
+	    "import geometry for Point\n"
+	    "var p = Point()\n"
+	    "p.x = 3.0\n"
+	    "p.y = 4.0\n"
+	    "p.x + p.y";
+	CHECK(rt.do_string(code).value().as_double() == 7.0);
 }
 
-TEST_CASE("modules: constructing an imported class qualified is a compile error")
+TEST_CASE("modules: an imported class can be constructed qualified (`M.C()`)")
 {
 	Runtime rt;
 	rt.add_import_path(String(MODDIR.c_str()));
-	bool threw = false;
-	try { rt.do_string("import geometry\ngeometry.Point()"); }
-	catch (const SyntaxError &) { threw = true; }
-	CHECK(threw);
+	CHECK(rt.do_string("import geometry\nvar p = geometry.Point()\np.x = 5.0\np.x").value().as_double() ==
+	      5.0);
+}
+
+TEST_CASE("modules: an imported class's field defaults resolve in its own module")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	// Widget's defaults name a module-private const (LABEL) and a module function
+	// (base_scale) invisible to this importer — so a correct build resolves them in
+	// geometry, not here. A regression would either miscompile or resolve to null.
+	const char *code =
+	    "import geometry for Widget\n"
+	    "var w = Widget()\n"
+	    "w.name & \"/\" & w.scale & \"/\" & w.count";
+	CHECK(rt.do_string(code).to<String>() == String("geo/2/1"));
+}
+
+TEST_CASE("modules: inherited field defaults chain base→derived across a module boundary")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	// LabeledWidget is Widget: constructing it from here must apply Widget's defaults
+	// (base) then LabeledWidget's own — every initializer resolved in geometry's scope.
+	const char *code =
+	    "import geometry for LabeledWidget\n"
+	    "var w = LabeledWidget()\n"
+	    "w.name & \"/\" & w.count & \"/\" & w.tag";
+	CHECK(rt.do_string(code).to<String>() == String("geo/1/geo-tag"));
+}
+
+TEST_CASE("modules: defaults of a base in ANOTHER module resolve in that base's module")
+{
+	Runtime rt;
+	rt.add_import_path(String(MODDIR.c_str()));
+	// BigWidget (module shapes) is Widget (module geometry). Constructing it here must run
+	// Widget's thunk (its `name` default names geometry's private LABEL) AND BigWidget's
+	// thunk (its `kind` default names shapes' private KIND) — each in its home module. This
+	// is the case a construction-site-inlined default could never get right.
+	const char *code =
+	    "import shapes for BigWidget\n"
+	    "var b = BigWidget()\n"
+	    "b.name & \"/\" & b.count & \"/\" & b.kind & \"/\" & b.size";
+	CHECK(rt.do_string(code).to<String>() == String("geo/1/big/100"));
 }
 
 TEST_CASE("modules: `for *` brings an imported class into scope for `is`")

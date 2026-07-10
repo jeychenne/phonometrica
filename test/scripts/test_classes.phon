@@ -36,6 +36,14 @@ assert(b.label == "empty", "default label")
 assert(b.n == 0, "default n")
 assert(not (b is Point), "b is not a Point")
 
+# A default-carrying value class is uniquely owned after construction: aliasing then
+# mutating must detach (defaults are applied through a thunk that returns the instance —
+# this pins that the returned instance is not left aliased).
+var b2 = b
+b.n = 5
+assert(b.n == 5, "b mutated")
+assert(b2.n == 0, "b2 (alias) unchanged after b's mutation")
+
 # cast is a checked identity downcast for now.
 var p2 = cast p as Point
 assert(p2 is Point, "cast p as Point")

@@ -1231,7 +1231,7 @@ reached qualified (`M.x`) or brought bare via `for`.
    tracks the second-to-last token and treats a `*` immediately after `for` as the wildcard
    selector, not a trailing operator, so the newline still terminates the statement.
 
-### Stage 5 — imported classes in `is`/annotations; construction still deferred
+### Stage 5 — imported classes in `is`/annotations and construction
 
 10. **`x is M.C` / `x is C` and `as M.C` / `as C` now resolve.** The `is` guard accepts a
     qualified `M.C` (import alias + exported class) as well as a bare name; `type_ref`
@@ -1239,16 +1239,28 @@ reached qualified (`M.x`) or brought bare via `for`.
     `TypeRef::ModuleSlot`, since the imported class object lives in the shared slot vector
     that imported modules populate before `main` runs. `LoadedModule` records its public
     class names (`classes`) to drive these checks.
-11. **Cross-module *construction* remains deferred — by design, with a directed error.**
-    Constructing a class defined in another module (`M.C(...)` or a bare `C()` brought in
-    via `for`) is rejected at compile time with a message pointing at the workaround. The
-    obstacle is real, not incidental: field-default initializers are applied at the
-    *construction site* today (`emit_full_defaults`), and those initializer expressions
-    belong to the *defining* module's scope — evaluating them at the importer would resolve
-    names against the wrong namespace. Doing it correctly means relocating default
-    application into a per-class thunk compiled in the defining module (a class-system
-    change, not a module-binding one). Until then the idiom is a factory function, which is
-    flat-global after import: `function make_point(x, y) as Point … end` then `make_point(…)`.
+11. **Cross-module *construction* now works** (`M.C(...)` and bare `C()` via `for`) — the
+    field-default obstacle is fixed by relocating default application off the construction
+    site into a **per-class defaults thunk compiled in the class's defining module**, so
+    every initializer resolves in the scope it was written in. Concretely: `compile_class`
+    emits a `@defaults(this)` child proto (own-field `SETFIELDRAW`s + `RET this`) for any
+    class that declares a field default and records its index in `ClassDef.defaults_proto`;
+    `DEFCLASS` makes a nothing-capturing closure from it (like the accessor closures) and
+    stores it on `Class::defaults`. Construction lowers to `NEW; INITDEFAULTS this; init(…)`
+    where the new `INITDEFAULTS` opcode walks the instance's class chain **base→derived** in
+    C++ and `vm_call`s each ancestor's thunk (`apply_default_chain`), threading the returned
+    (possibly copy-on-write-detached, for value classes) instance back — the exact contract a
+    routed field setter already uses. Because the chain walk uses the runtime `Class::base`
+    pointer and each thunk is home-compiled, this also fixes the latent case the old inline
+    `emit_full_defaults` never handled: defaults of a base defined in *another* module. The
+    construction lowering no longer needs a `ClassDeclaration` (so an imported class, for
+    which the importer has none, constructs fine); `construct()` lost its `cls` parameter and
+    `emit_full_defaults`/`cross_module_ctor_msg` were removed. Value semantics are preserved
+    (a default-carrying value class is uniquely owned after construction; aliasing then
+    mutating still detaches). Tests: `test_modules.cpp` (bare/qualified construction,
+    defaults naming the defining module's private const/function, base→derived chaining
+    within a module and **across** modules via `modules/shapes.phon` subclassing
+    `geometry.Widget`); `test_classes.phon` (local default-carrying value-class aliasing).
 
 ## M8 — Embedding + stdlib + performance (architecture §11, §12)
 
@@ -1598,4 +1610,16 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     refcount elision on borrowed locals — were **not** done: high-risk/invasive for the switch-based
     loop wrapped in the raise-handling `try`, with the two landed fixes (the O(n²) bug + the IC-generic
     cache) capturing the outsized wins. Left as a future item.
+34. **`spawn` relaxed-refcount UAF — confirmed fixed and now guarded.** `vm_spawn` freezes the
+    constants reachable from the callee (`freeze_reachable_constants`, spawn.cpp) before fanning out,
+    exactly as `parallel_map` does: many workers running the same function each LOADK-retain its shared
+    `String`/`Array`/cell constants, and a non-frozen cell's refcount is a thread-confined *relaxed*
+    load/store — so concurrent retain/release across workers loses updates and frees a live constant
+    (heap-use-after-free). The freeze routes those constants onto the atomic `SHARED_BUFFER` refcount
+    path. The call was already present but had **no regression test** and had been mis-recorded as
+    unfixed; this pass verified it by A/B under ASan (freeze removed → UAF within 1–2 runs, 5/5 & 6/6;
+    freeze present → 8/8 clean) and added a deterministic guard, `test_concurrency.cpp`
+    "concurrency: spawn freezes shared constants (relaxed-refcount UAF guard)" (16 workers × 50 000-iter
+    churn of three shared string constants; each returns its loop count → total 800 000). ASan catches
+    the regression; TSan does not (the racing accesses are relaxed-*atomic*, so no reported race).
 
