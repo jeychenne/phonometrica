@@ -100,12 +100,12 @@ recorded here with rationale, for the project owner's review.
 §0 sketches an `include/phon/` (public headers) + `src/` (implementation) split.
 Instead the engine follows Phonometrica's own convention: everything under a
 top-level `phon/` directory with `.hpp`/`.cpp` together, included via
-`#include <phon/base/…>` etc. (the repo root is the include path). This makes the
-eventual drop-in replacement of Phonometrica's `phon/runtime/` mechanical and
+`#include <phon/engine/base/…>` etc. (the repo root is the include path). This makes the
+eventual drop-in replacement of Phonometrica's `phon/engine/runtime/` mechanical and
 keeps include style identical across the two codebases. The architecture's layer
 names (`base`, `core`, `object`, `dispatch`, `memory`, `types`, `runtime`) are
 preserved as `phon/<layer>/`. A public-facade split (`phon/string.hpp` →
-`<phon/types/string.hpp>`, as Phonometrica does) can be added at the embedding
+`<phon/engine/types/string.hpp>`, as Phonometrica does) can be added at the embedding
 milestone (M8).
 
 ## M2 — Type system + dispatch
@@ -152,8 +152,8 @@ milestone (M8).
 
 ### Step 1 — Scanner
 
-1. **Front end lives in `phon/compile/`.** Architecture §0 lists the pipeline under
-   `compile/`; the tree places it at `phon/compile/` per the `phon/<layer>/`
+1. **Front end lives in `phon/engine/compile/`.** Architecture §0 lists the pipeline under
+   `compile/`; the tree places it at `phon/engine/compile/` per the `phon/<layer>/`
    convention already adopted (see "Source layout and includes"). Files:
    `token.*`, `source.*`, `diagnostic.hpp`, `scanner.*`.
 
@@ -382,9 +382,9 @@ default/variadic parameters, `spawn`, and `import`.
     Float per design §4. Integer `+ - *` overflow raises `[Math error] integer
     overflow` (design §4) via `__builtin_*_overflow`.
 
-12. **Files placed under `phon/vm/` and `phon/compile/`.** New: `phon/vm/`
+12. **Files placed under `phon/engine/vm/` and `phon/engine/compile/`.** New: `phon/engine/vm/`
     (`opcode`, `proto`, `function`, `isolate`, `interpreter`) and
-    `phon/compile/{lower,disassembler}`, plus the `phon/runtime/runtime.*` façade
+    `phon/engine/compile/{lower,disassembler}`, plus the `phon/engine/runtime/runtime.*` façade
     (`Runtime`, `do_string`, `init_runtime`, builtins) standing in for the full
     `Runtime` (M8). The per-thread heap/arena allocation path (architecture §8.1) is
     still the M1 FOREIGN `sys_alloc` path; the Isolate-arena switch is orthogonal
@@ -794,7 +794,7 @@ element is written through a still-shared container.
 The backup Bacon–Rajan synchronous collector (Bacon & Rajan 2001; Jones/Hosking/Moss,
 _The GC Handbook_ p. 66 ff.), ported from Phonometrica's Recycler and adapted to the
 new Cell header. Reference counting reclaims everything except cycles of otherwise-dead
-objects; this reclaims those. Files: `phon/memory/cycle_collector.{hpp,cpp}`.
+objects; this reclaims those. Files: `phon/engine/core/cycle_collector.{hpp,cpp}`.
 
 1. **The GC color lives in the Cell header, narrowing the refcount to 26 bits.**
    §3.2 sketched `rc_bits` as a 29-bit refcount + BUFFERED/FROZEN/SHARED_BUFFER and
@@ -959,7 +959,7 @@ The `Number → Real → {Integer, Float}` class hierarchy and the numeric `Arra
    **column-major**, so slicing is a **zero-copy view** sharing the buffer. Element type is
    `double` only. Both cells are `CLASS_ACYCLIC` (a view holds only doubles + one buffer
    pointer that can never point back) → born GREEN → the cycle collector never touches
-   them. `phon/types/array.*`, registered in `bootstrap.cpp`.
+   them. `phon/engine/types/array.*`, registered in `bootstrap.cpp`.
 
 3. **Copy-on-write checks BOTH view and buffer refcounts.** `Array::detach()` mutates in
    place only when the view is unique, its buffer is unique, and it is contiguous;
@@ -994,7 +994,7 @@ The `Number → Real → {Integer, Float}` class hierarchy and the numeric `Arra
 8. **Elementwise arithmetic** extends the existing `ADD/SUB/MUL/DIV/POW` opcodes with an
    `is_array` arm (after the int/number arms, before list): array⊕array (shape-checked),
    array⊕scalar and scalar⊕array (broadcast). Kernels are free functions over contiguous
-   `double` spans in the single file `phon/lib/array_kernels.*` (architecture invariant);
+   `double` spans in the single file `phon/engine/lib/array_kernels.*` (architecture invariant);
    strided operands are gathered contiguous first via `Array::contiguous()`. `div`/`mod`
    and unary `-` on an Array raise (they were never numbers) — floored/negation variants
    are follow-ups.
@@ -1468,7 +1468,7 @@ Everything routes through `register_function` (the typed API) — no hand-writte
 
 ### Stage 4 (cont.) — stdlib port: system + file (`os/`, `lib/system.cpp`, `lib/file.cpp`)
 
-23. **A vendored, Unicode-correct path layer (`phon/os/file_system.*`).** Per the requirement
+23. **A vendored, Unicode-correct path layer (`phon/engine/base/file_system.*`).** Per the requirement
     that paths behave like Phonometrica's on every platform, this is `phon/utils/file_system.*`
     ported to the new `String`: on Windows the wide Win32 API (GetFullPathNameW, FindFirstFileW,
     SHGetFolderPathW, CreateDirectoryW, DeleteFileW, _wrename, PathFileExistsW/PathIsDirectoryW)
@@ -1480,7 +1480,7 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     as a script `[System error]` in lib/system.cpp. **Only the POSIX path is exercised here
     (Linux); the Windows branches are ported faithfully from the field-tested original but not
     compiled/run in this environment.**
-24. **The `File` type (`phon/os/file.*`) opens Unicode paths via `os_open_file`** (`_wfopen`
+24. **The `File` type (`phon/engine/types/file.*`) opens Unicode paths via `os_open_file`** (`_wfopen`
     with a UTF-16 path on Windows, `fopen` on POSIX — the old `utils::open_file`). `File` is a
     cell-headed reference class registered through the embedding `add_class<File>` path, so its
     finalizer (`~File`) closes the handle when the value dies (RAII file handles via the cell

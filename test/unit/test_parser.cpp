@@ -8,10 +8,10 @@
 // NOTE: the parsed module (an AutoAst) owns the whole tree, so every test binds
 // it to a local (`auto m = parse(...)`) and only then navigates via raw pointers.
 
-#include <phon/compile/parser.hpp>
-#include <phon/compile/source.hpp>
-#include <phon/compile/diagnostic.hpp>
-#include <phon/types/atom.hpp>
+#include <phon/engine/compile/parser.hpp>
+#include <phon/engine/compile/source.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
+#include <phon/engine/types/atom.hpp>
 
 #include "test_framework.hpp"
 

@@ -1,9 +1,9 @@
 // Phonometrica engine — Table tests (CoW, ordering, String keys, fuzz).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/types/table.hpp>
-#include <phon/types/list.hpp>
-#include <phon/types/string.hpp>
+#include <phon/engine/types/table.hpp>
+#include <phon/engine/types/list.hpp>
+#include <phon/engine/types/string.hpp>
 #include "test_framework.hpp"
 
 #include <random>

@@ -6,7 +6,7 @@
 // encodes a codepoint sequence with break (÷) / no-break (×) markers between
 // codepoints; we verify our cluster boundaries match exactly.
 
-#include <phon/base/unicode.hpp>
+#include <phon/engine/base/unicode.hpp>
 #include "test_framework.hpp"
 
 #include <cstdint>

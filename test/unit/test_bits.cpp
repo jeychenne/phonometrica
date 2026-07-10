@@ -1,7 +1,7 @@
 // Phonometrica engine — bit/alignment utility tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/base/bits.hpp>
+#include <phon/engine/base/bits.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

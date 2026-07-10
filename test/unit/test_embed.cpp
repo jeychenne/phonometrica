@@ -6,14 +6,16 @@
 // capturing lambda (env cell), void return, the Isolate& pass-through, multi-arg, and
 // type-based overload dispatch between two C++ registrations of one name.
 
-#include <phon/core/cell.hpp>
-#include <phon/core/handle.hpp>
-#include <phon/core/variant.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/types/array.hpp>
-#include <phon/types/list.hpp>
-#include <phon/types/string.hpp>
-#include <phon/vm/isolate.hpp>
+// Embed through the public forwarding surface (phon/*.hpp), not engine internals.
+#include <phon/runtime.hpp>
+#include <phon/string.hpp>
+#include <phon/array.hpp>
+#include <phon/list.hpp>
+#include <phon/error.hpp>
+// Handle/Variant/Cell have no public forwarder yet — reach into the engine directly.
+#include <phon/engine/core/cell.hpp>
+#include <phon/engine/core/handle.hpp>
+#include <phon/engine/core/variant.hpp>
 
 #include "test_framework.hpp"
 

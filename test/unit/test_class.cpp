@@ -1,8 +1,8 @@
 // Phonometrica engine — class system tests (intervals, renumbering, metaclasses).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/object/class.hpp>
-#include <phon/types/string.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/types/string.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

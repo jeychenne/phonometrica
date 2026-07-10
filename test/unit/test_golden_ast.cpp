@@ -10,10 +10,10 @@
 // with PHON_UPDATE_GOLDEN=1 in the environment; it overwrites the .ast files
 // instead of comparing, and reports which ones changed.
 
-#include <phon/compile/ast_printer.hpp>
-#include <phon/compile/parser.hpp>
-#include <phon/compile/source.hpp>
-#include <phon/compile/diagnostic.hpp>
+#include <phon/engine/compile/ast_printer.hpp>
+#include <phon/engine/compile/parser.hpp>
+#include <phon/engine/compile/source.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
 
 #include "test_framework.hpp"
 

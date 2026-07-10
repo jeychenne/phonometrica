@@ -7,9 +7,9 @@
 
 #include "test_framework.hpp"
 
-#include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/types/string.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
+#include <phon/engine/runtime/runtime.hpp>
+#include <phon/engine/types/string.hpp>
 
 #include <string>
 

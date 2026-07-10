@@ -6,21 +6,21 @@
 
 #include "test_framework.hpp"
 
-#include <phon/concurrency/channel.hpp>
-#include <phon/concurrency/thread_pool.hpp>
-#include <phon/concurrency/transfer.hpp>
-#include <phon/lib/array_kernels.hpp>
-#include <phon/core/cell.hpp>
-#include <phon/core/variant.hpp>
-#include <phon/memory/cycle_collector.hpp>
-#include <phon/object/class.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/types/array.hpp>
-#include <phon/types/list.hpp>
-#include <phon/types/set.hpp>
-#include <phon/types/string.hpp>
-#include <phon/types/table.hpp>
-#include <phon/vm/isolate.hpp>
+#include <phon/engine/concurrency/channel.hpp>
+#include <phon/engine/concurrency/thread_pool.hpp>
+#include <phon/engine/concurrency/transfer.hpp>
+#include <phon/engine/lib/array_kernels.hpp>
+#include <phon/engine/core/cell.hpp>
+#include <phon/engine/core/variant.hpp>
+#include <phon/engine/core/cycle_collector.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/runtime/runtime.hpp>
+#include <phon/engine/types/array.hpp>
+#include <phon/engine/types/list.hpp>
+#include <phon/engine/types/set.hpp>
+#include <phon/engine/types/string.hpp>
+#include <phon/engine/types/table.hpp>
+#include <phon/engine/vm/isolate.hpp>
 
 #include <atomic>
 #include <chrono>

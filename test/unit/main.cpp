@@ -3,7 +3,7 @@
 
 #include "test_framework.hpp"
 
-#include <phon/runtime/bootstrap.hpp>
+#include <phon/engine/runtime/bootstrap.hpp>
 
 #include <cstdio>
 #include <exception>

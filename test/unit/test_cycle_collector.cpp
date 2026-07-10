@@ -9,11 +9,11 @@
 
 #include "test_framework.hpp"
 
-#include <phon/core/cell.hpp>
-#include <phon/core/value.hpp>
-#include <phon/memory/cycle_collector.hpp>
-#include <phon/object/class.hpp>
-#include <phon/runtime/bootstrap.hpp>
+#include <phon/engine/core/cell.hpp>
+#include <phon/engine/core/value.hpp>
+#include <phon/engine/core/cycle_collector.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/runtime/bootstrap.hpp>
 
 using namespace phonometrica;
 

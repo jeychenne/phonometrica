@@ -1,10 +1,10 @@
 // Phonometrica engine — user-class instances: layout, fields, inheritance, CoW.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/object/class.hpp>
-#include <phon/object/instance.hpp>
-#include <phon/types/atom.hpp>
-#include <phon/types/string.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/object/instance.hpp>
+#include <phon/engine/types/atom.hpp>
+#include <phon/engine/types/string.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;

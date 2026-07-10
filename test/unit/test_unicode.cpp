@@ -3,7 +3,7 @@
 //
 // This file is UTF-8 encoded; narrow string literals below carry UTF-8 bytes.
 
-#include <phon/base/unicode.hpp>
+#include <phon/engine/base/unicode.hpp>
 #include "test_framework.hpp"
 
 #include <cstdint>

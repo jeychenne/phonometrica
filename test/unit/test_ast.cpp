@@ -5,8 +5,8 @@
 // checks the node/visitor plumbing: construction, ownership, the RTTI-free
 // is<T>()/as<T>() tests, and that visit() dispatches to the right hook.
 
-#include <phon/compile/ast.hpp>
-#include <phon/types/atom.hpp>
+#include <phon/engine/compile/ast.hpp>
+#include <phon/engine/types/atom.hpp>
 
 #include "test_framework.hpp"
 

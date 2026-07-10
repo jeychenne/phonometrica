@@ -1,12 +1,12 @@
 // Phonometrica engine — multiple-dispatch tests.
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/dispatch/generic.hpp>
-#include <phon/object/class.hpp>
-#include <phon/types/atom.hpp>
-#include <phon/types/list.hpp>
-#include <phon/types/string.hpp>
-#include <phon/vm/function.hpp> // UpvalueCell: build a reference box for a dispatch arg
+#include <phon/engine/object/generic.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/types/atom.hpp>
+#include <phon/engine/types/list.hpp>
+#include <phon/engine/types/string.hpp>
+#include <phon/engine/vm/function.hpp> // UpvalueCell: build a reference box for a dispatch arg
 #include "test_framework.hpp"
 
 using namespace phonometrica;

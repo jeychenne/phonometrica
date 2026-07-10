@@ -6,9 +6,9 @@
 // of Phonometrica's test/engine/run_all.phon suite to the new grammar (the old
 // scripts used `let`/`assert`/bare `print`, all changed in the new language).
 
-#include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/types/string.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
+#include <phon/engine/runtime/runtime.hpp>
+#include <phon/engine/types/string.hpp>
 
 #include "test_framework.hpp"
 

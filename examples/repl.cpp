@@ -15,16 +15,17 @@
 //   phon_repl <file.phon>  run a script file
 //   phon_repl --workers    run the worker-thread demo
 
-#include <phon/compile/diagnostic.hpp> // SyntaxError
-#include <phon/concurrency/channel.hpp>
-#include <phon/core/cell.hpp>
-#include <phon/core/handle.hpp>
-#include <phon/core/variant.hpp>
-#include <phon/object/class.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/types/string.hpp>
-#include <phon/vm/interpreter.hpp> // stringify
-#include <phon/vm/isolate.hpp>     // RuntimeError
+// Embed through the public forwarding surface (phon/*.hpp) where one exists.
+#include <phon/runtime.hpp>
+#include <phon/string.hpp>
+#include <phon/error.hpp> // SyntaxError + RuntimeError
+// No public forwarder for these yet — reach into the engine directly.
+#include <phon/engine/concurrency/channel.hpp>
+#include <phon/engine/core/cell.hpp>
+#include <phon/engine/core/handle.hpp>
+#include <phon/engine/core/variant.hpp>
+#include <phon/engine/object/class.hpp>
+#include <phon/engine/vm/interpreter.hpp> // stringify
 
 #include <cmath>
 #include <fstream>

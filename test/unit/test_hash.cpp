@@ -1,7 +1,7 @@
 // Phonometrica engine — hash primitive tests (SipHash-1-3 + fmix64).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/core/hash.hpp>
+#include <phon/engine/core/hash.hpp>
 #include "test_framework.hpp"
 
 #include <cstdint>

@@ -6,8 +6,8 @@
 // regressions: any change in emitted opcodes/registers surfaces as a reviewable
 // diff. Regenerate with PHON_UPDATE_GOLDEN=1 (as with the AST goldens).
 
-#include <phon/compile/diagnostic.hpp>
-#include <phon/runtime/runtime.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
+#include <phon/engine/runtime/runtime.hpp>
 
 #include "test_framework.hpp"
 

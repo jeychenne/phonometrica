@@ -3,9 +3,9 @@
 //
 // This file is UTF-8 encoded.
 
-#include <phon/compile/scanner.hpp>
-#include <phon/compile/source.hpp>
-#include <phon/compile/diagnostic.hpp>
+#include <phon/engine/compile/scanner.hpp>
+#include <phon/engine/compile/source.hpp>
+#include <phon/engine/compile/diagnostic.hpp>
 
 #include "test_framework.hpp"
 

@@ -1,8 +1,8 @@
 // Phonometrica engine — Array tests (view/buffer, column-major, CoW).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
-#include <phon/types/array.hpp>
-#include <phon/object/class.hpp>
+#include <phon/engine/types/array.hpp>
+#include <phon/engine/object/class.hpp>
 #include "test_framework.hpp"
 
 using namespace phonometrica;
