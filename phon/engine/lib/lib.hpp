@@ -19,6 +19,7 @@ void register_array_lib();  // zeros/ones, sum/mean/min/max, elementwise sqrt/si
 void register_system_lib(); // paths/directories (Unicode-correct via phon/os/file_system)
 void register_file_lib();   // the File type + open/read/write/… (phon/os/file)
 void register_regex_lib();  // the Regex + Match types + regex/match/group/… (phon/regex)
+void register_json_lib();   // to_json / from_json (List/Table <-> JSON text)
 
 } // namespace phonometrica
 

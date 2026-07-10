@@ -1,0 +1,11 @@
+# Recursive fib(32): call/return overhead, integer arithmetic, generic-call dispatch
+# on `+`/`-`/`<`. ~7M calls.
+function fib(n)
+    if n < 2 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+
+var result = fib(32)
+assert(result == 2178309, "fib(32)")

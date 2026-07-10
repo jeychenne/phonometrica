@@ -40,6 +40,10 @@ struct ICEntry
 	void *callable; // resolved Callable cell (ClosureCell* / NativeCell*)
 	uint32_t type_epoch;
 	uint32_t generic_epoch;
+	// The resolved GenericFunction for this call site. A site's callee symbol is a
+	// compile-time constant and generics are never deleted, so once populated this is
+	// stable — it lets CALLG skip the by-name registry lookup on every call.
+	GenericFunction *generic = nullptr;
 };
 
 inline constexpr uint64_t kICEmpty = ~uint64_t(0);

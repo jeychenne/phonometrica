@@ -1,0 +1,25 @@
+# Multiple-dispatch microbench: one generic with three type-specialized methods, called
+# at a monomorphic site (always Integer -> inline-cache hit) and a polymorphic site
+# (Integer/Float/String rotating -> IC miss + re-resolve). Isolates CALLG + the inline
+# cache and the resolver.
+function kind(x as Integer) return 1 end
+function kind(x as Float) return 2 end
+function kind(x as String) return 3 end
+
+var n = 5000000
+
+# Monomorphic: same class every call.
+var mono = 0
+for i = 1 to n do
+    mono += kind(i)
+end
+assert(mono == n, "mono dispatch")
+
+# Polymorphic: rotate the argument class so the call site sees three shapes.
+var poly = 0
+var f = 1.5
+var s = "x"
+for i = 1 to n do
+    poly += kind(i) + kind(f) + kind(s)
+end
+assert(poly == n * 6, "poly dispatch")

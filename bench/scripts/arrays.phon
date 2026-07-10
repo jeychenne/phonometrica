@@ -1,0 +1,12 @@
+# Numeric Array elementwise kernels + reductions (design §9): allocate a 1e6-element
+# Array once and run the vectorized sqrt/sin/abs kernels and sum/mean reductions in a
+# loop. Exercises the array-kernel fast paths, not the interpreter loop.
+var n = 1000000
+var v = ones(n)
+var total = 0.0
+for pass = 1 to 40 do
+    var a = sqrt(v)
+    var b = sin(a)
+    total += sum(b) + mean(a)
+end
+assert(total > 0.0, "array kernels")

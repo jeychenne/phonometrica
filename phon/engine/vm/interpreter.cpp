@@ -1036,11 +1036,20 @@ Value run(Isolate &iso)
 			int slot = ic_base_cur + static_cast<int>(op_ax(extra));
 			Symbol sym = base[a].as_symbol();
 			Value *argv = &base[a + 1];
-			GenericFunction *g = find_generic(sym);
-			if (!g)
-				iso.raise(String("[Name error] no function named '") +
-				              String(symbol_name(sym)).view() + "'",
-				          cur_line());
+			ICEntry &ic = iso.ics[slot];
+			// The callee symbol is invariant for this site, so the resolved generic is
+			// cached in the IC after the first call — skipping find_generic's registry
+			// lookup on every subsequent call (the CALLG hot path).
+			GenericFunction *g = ic.generic;
+			if (PHON_UNLIKELY(!g))
+			{
+				g = find_generic(sym);
+				if (!g)
+					iso.raise(String("[Name error] no function named '") +
+					              String(symbol_name(sym)).view() + "'",
+					          cur_line());
+				ic.generic = g;
+			}
 			void *callable = nullptr;
 			// The inline cache keys on argument classes read directly; a reference
 			// argument dispatches on its referent, so those calls take the full-resolve
@@ -1048,7 +1057,6 @@ Value run(Isolate &iso)
 			bool has_ref = argv[0].is_reference() || (nargs == 2 && argv[1].is_reference());
 			if ((nargs == 1 || nargs == 2) && !has_ref)
 			{
-				ICEntry &ic = iso.ics[slot];
 				uint64_t c0 = class_of(argv[0]);
 				uint64_t key = (c0 << 1);
 				if (nargs == 2)

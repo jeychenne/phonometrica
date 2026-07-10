@@ -417,6 +417,7 @@ void init_runtime()
 		register_system_lib();
 		register_file_lib();
 		register_regex_lib();
+		register_json_lib();
 	});
 }
 

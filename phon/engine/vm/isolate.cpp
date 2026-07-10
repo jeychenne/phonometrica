@@ -182,7 +182,7 @@ int Isolate::ic_base(Proto *p)
 		return it->second;
 	int base = static_cast<int>(ics.size());
 	for (int i = 0; i < p->num_ic; ++i)
-		ics.push_back(ICEntry{kICEmpty, nullptr, 0, 0});
+		ics.push_back(ICEntry{kICEmpty, nullptr, 0, 0, nullptr});
 	m_ic_base.insert(k, base);
 	return base;
 }

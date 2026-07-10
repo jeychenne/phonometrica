@@ -84,6 +84,7 @@ add_library(phon_engine STATIC
     phon/engine/lib/array_kernels.cpp
     phon/engine/lib/array.cpp
     phon/engine/lib/file.cpp
+    phon/engine/lib/json.cpp
     phon/engine/lib/list.cpp
     phon/engine/lib/math.cpp
     phon/engine/lib/regex.cpp
@@ -127,6 +128,15 @@ target_link_libraries(phon_engine PUBLIC ${PCRE2_LIBRARY})
 
 add_executable(phon_repl examples/repl.cpp)
 target_link_libraries(phon_repl PRIVATE phon_engine phon_flags)
+
+# ---------------------------------------------------------------------------
+# Benchmarks (architecture §14)
+# ---------------------------------------------------------------------------
+
+add_executable(phon_bench bench/bench.cpp)
+target_link_libraries(phon_bench PRIVATE phon_engine phon_flags)
+target_compile_definitions(phon_bench PRIVATE
+    PHON_BENCH_DIR="${CMAKE_CURRENT_SOURCE_DIR}/bench/scripts")
 
 # ---------------------------------------------------------------------------
 # Tests

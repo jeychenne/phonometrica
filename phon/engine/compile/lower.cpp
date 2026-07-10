@@ -344,6 +344,16 @@ private:
 	// so a mutated value class propagates to its binding; `wbidx` is the slot/index.
 	int load_index_object(IndexExpression *ix, int &wb, int &wbidx);
 	void emit_index_writeback(int o, int wb, int wbidx, uint32_t line);
+	// Drop a module/upvalue binding's own reference to the aggregate it holds, so the
+	// following in-place mutation (SETINDEX/SETIDXN/SETSLICE/SETFIELD) sees a unique
+	// owner and mutates without a copy-on-write clone — turning repeated element writes
+	// to a module/upvalue-held container from O(n) each (full clone) into O(1). The
+	// binding is restored by the matching emit_index_writeback. This is emitted *after*
+	// the index and value subexpressions are evaluated (they may read the binding) and
+	// is reentrancy-safe because a builtin indexed/field store never calls back into
+	// script. Value semantics are preserved: a genuine second owner keeps the refcount
+	// above 1, so the clone still fires when another binding aliases the container.
+	void emit_index_unshare(int wb, int wbidx, Ast *node);
 	// Emit a slice's start/stop/step into the three consecutive registers base,
 	// base+1, base+2 (an absent part becomes null → the runtime default).
 	void emit_slice_parts(SliceExpression *sl, int base);
@@ -1387,6 +1397,7 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			reg_alloc(target);
 			emit_slice_parts(ix->indices[0]->as<SliceExpression>(), c);
 			int val = expr_any(value);
+			emit_index_unshare(wb, wbidx, target);
 			emit_ABC(Opcode::SETSLICE, o, c, val, ln(target));
 			emit_index_writeback(o, wb, wbidx, ln(target));
 			reg_free_to(save);
@@ -1403,6 +1414,7 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			for (int k = 0; k < rank; ++k)
 				expr_to(ix->indices[k].get(), ibase + k);
 			int val = expr_any(value);
+			emit_index_unshare(wb, wbidx, target);
 			emit_ABC(Opcode::SETIDXN, o, ibase, val, ln(target));
 			emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(rank)), ln(target));
 			emit_index_writeback(o, wb, wbidx, ln(target));
@@ -1411,6 +1423,7 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		}
 		int i = expr_any(ix->indices[0].get());
 		int val = expr_any(value);
+		emit_index_unshare(wb, wbidx, target);
 		emit_ABC(Opcode::SETINDEX, o, i, val, ln(target));
 		emit_index_writeback(o, wb, wbidx, ln(target));
 		reg_free_to(save);
@@ -1507,6 +1520,21 @@ void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
 		emit_ABC(Opcode::SETUPVAL, o, wbidx, 0, line);
 	else if (wb == 3)
 		emit_ABC(Opcode::SETREF, wbidx, o, 0, line); // *ref = o (the mutated object)
+}
+
+void Lowerer::emit_index_unshare(int wb, int wbidx, Ast *node)
+{
+	// Only module (1) and upvalue (2) bindings keep a live slot reference alongside the
+	// loaded temp; a local's register IS the storage and a `ref` writes through its box.
+	if (wb != 1 && wb != 2)
+		return;
+	int tmp = reg_alloc(node);
+	emit_ABC(Opcode::LOADNULL, tmp, 0, 0, ln(node)); // null the slot: releases its ref,
+	if (wb == 1)                                      // leaving the loaded temp unique
+		emit_ABx(Opcode::SETMODULE, tmp, static_cast<uint32_t>(wbidx), ln(node));
+	else
+		emit_ABC(Opcode::SETUPVAL, tmp, wbidx, 0, ln(node));
+	// tmp is reclaimed by the caller's enclosing reg_free_to(save).
 }
 
 void Lowerer::emit_option_prologue(AstList &params)
@@ -1645,6 +1673,7 @@ void Lowerer::compile_assignment(Assignment *a)
 		int t = reg_alloc(a);
 		emit_ABC(Opcode::GETINDEX, t, o, i, ln(a));
 		emit_combine(t, t, a->value.get());
+		emit_index_unshare(wb, wbidx, a->target.get());
 		emit_ABC(Opcode::SETINDEX, o, i, t, ln(a));
 		emit_index_writeback(o, wb, wbidx, ln(a));
 		reg_free_to(save);

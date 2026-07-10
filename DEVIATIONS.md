@@ -1544,3 +1544,58 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     dedicated unary-apply kernel and the pooled/threaded threshold (§13) are a stage-5/6 tuning
     item, not needed for correctness here.
 
+### Stage 4 (cont.) — stdlib port: json (`lib/json.cpp`)
+
+30. **`to_json` / `from_json` as two flat-global functions** (not the old engine's `json.stringify`
+    /`json.parse` module — the new stdlib is flat, like the builtins). `to_json(value[, indent])`
+    serializes; a positive `indent` pretty-prints (that many spaces per level), else compact.
+    `from_json(str)` is a self-contained recursive-descent parser (`struct Parser`) over the UTF-8
+    bytes: object → `Table` (string keys), array → `List`, number → `Integer` when it has no
+    fraction/exponent and fits the 48-bit NaN-boxed range (else `Float`), with full string-escape
+    handling including `\uXXXX` and surrogate-pair decoding. Serialization dispatches on the
+    argument as `const Variant &` (so the single generic method matches any value via `Object`);
+    string escaping mirrors the old engine's `Variant::to_json`, and a non-finite Float or an
+    unserializable type (function/user object/Set/Array) raises `[JSON error]`. This replaces the
+    old engine's `dump_json` (= `to_json()`) and the `load_json` **hack** (which just `do_string`'d
+    the text as source); `from_json` is a real parser, so it rejects malformed input with a
+    positioned error instead of running it. Acceptance: `test/scripts/test_json.phon` (scalars,
+    escaping, containers, round-trips, pretty output, error paths). Stdlib port now complete.
+
+## M8 — Performance pass (architecture §14) + benchmark harness
+
+31. **Fixed an O(n²) copy-on-write blow-up on in-place stores to a module/upvalue-held container.**
+    `t[k] = v` where `t` is a module- or upvalue-scoped `List`/`Table`/`Array` compiled to
+    `GETMODULE`(retaining copy) → `SETINDEX` → `SETMODULE`. During `SETINDEX` the slot still held a
+    second reference, so the CoW `detach()` saw refcount ≥ 2 and **cloned the entire container on
+    every write** — a loop of n inserts to a module table was O(n²) (n = 20 000 already cost ~35 s;
+    it hit the 2-minute test cap at 40 000). A *local* `var t` was unaffected (its register *is* the
+    storage, refcount 1). Fix (`emit_index_unshare` in `compile/lower.cpp`): after evaluating the
+    index and value subexpressions, the compiler nulls the binding's slot (a `LOADNULL` + `SETMODULE`
+    /`SETUPVAL` pair) so the loaded temp is the unique owner and the store mutates in place. Applied
+    to the four builtin in-place stores that never re-enter script — `SETINDEX`, `SETIDXN`,
+    `SETSLICE`, and compound `t[i] op= x` — but **not** `SETFIELD` (a user `set` accessor could run
+    and would then observe the transiently-nulled binding). **Reentrancy-safe** because the
+    subexpressions are evaluated *before* the null-out and a builtin indexed store calls no script.
+    **Value semantics preserved**: a genuine second owner (`a = t; t[k] = v`) keeps refcount ≥ 2, so
+    the clone still fires and the alias is unaffected — pinned by `test/scripts/test_cow_binding.phon`
+    (aliasing on table/list/slice, upvalue mutation, reentrant reads, compound assignment). One
+    minor semantic edge: if the store itself *raises* (e.g. an out-of-range Array index), the binding
+    is left null rather than at its prior value — acceptable (an erroring indexed store aborts the
+    statement regardless). The golden disassembly corpus (`arrays.dis`, `slices.dis`) was regenerated
+    to show the inserted null-out; reads (`GETVIEW`/`GETSLICE`) correctly get none. **maps benchmark:
+    O(n²) → O(n)** (>2 min → 157 ms at n = 400 000, Release).
+32. **CALLG caches the resolved `GenericFunction` in its inline-cache slot.** A call site's callee
+    symbol is a compile-time constant and generics are never deleted, so the by-name registry lookup
+    (`find_generic`, a hash probe) that ran on *every* generic call is now done once and cached in a
+    new `ICEntry::generic` field (`vm/isolate.hpp`), read on the hot path and only recomputed when the
+    slot is cold. Shaves the lookup from ~5M calls/run on the `fib`/`dispatch` benchmarks; the arg-key
+    monomorphic method cache and its epoch guards are unchanged.
+33. **Benchmark harness (`bench/`, target `phon_bench`).** The §14 microbench set was missing; added
+    `bench/scripts/{fib,loops,strings,maps,dispatch,arrays}.phon` and a C++ runner (`bench/bench.cpp`)
+    that times each on a fresh `Runtime` and reports best + median over N runs (`--runs`, default 5).
+    Recorded baselines in `bench/BASELINE.md` (Release, `-O3 -DNDEBUG`). Not wired into CTest (timing,
+    not correctness). The heavier interpreter rewrites floated for the pass — computed-goto dispatch,
+    refcount elision on borrowed locals — were **not** done: high-risk/invasive for the switch-based
+    loop wrapped in the raise-handling `try`, with the two landed fixes (the O(n²) bug + the IC-generic
+    cache) capturing the outsized wins. Left as a future item.
+

@@ -1,0 +1,61 @@
+# Copy-on-write correctness for in-place stores to a module/upvalue-held container.
+# The compiler drops the binding's own reference just before SETINDEX/SETIDXN/SETSLICE
+# so a uniquely-owned container mutates in place (O(1)) instead of cloning on every
+# write (O(n)). These assertions pin the *semantics*: value semantics must survive the
+# optimization — a genuine second owner still forces the clone, and expressions that
+# read the same binding mid-statement still see it.
+
+# --- aliasing: a mutation must NOT leak to an independent binding (value semantics) ----
+var t = {"x": 1}
+var a = t                 # `a` and `t` now both own the same Table
+t["x"] = 99               # must clone: `a` keeps the old value
+assert(a["x"] == 1, "table alias unaffected by module-binding mutation")
+assert(t["x"] == 99, "table module-binding mutation applied")
+
+var xs = [1, 2, 3]
+var ys = xs               # shared ownership
+xs[1] = 100               # must clone
+assert(ys[1] == 1, "list alias unaffected")
+assert(xs[1] == 100, "list mutation applied")
+
+# A slice assignment is likewise value-preserving under aliasing.
+var zs = [1, 2, 3, 4]
+var ws = zs
+zs[2:3] = [20, 30]
+assert(ws[2] == 2 and ws[3] == 3, "list-slice alias unaffected")
+assert(zs[2] == 20 and zs[3] == 30, "list-slice mutation applied")
+
+# --- no alias: the optimized in-place path gives the expected result -------------------
+var counts = {}
+for i = 1 to 1000 do
+    counts["k-" & i] = i
+end
+assert(len(counts) == 1000, "module-table bulk insert count")
+assert(counts["k-500"] == 500, "module-table bulk insert value")
+
+# --- upvalue-held container: same drop-the-binding-reference path ----------------------
+function make_counter()
+    var box = {"n": 0}
+    var bump = function() box["n"] = box["n"] + 1 end
+    bump()
+    bump()
+    bump()
+    return box["n"]
+end
+assert(make_counter() == 3, "upvalue table mutation accumulates")
+
+# --- reentrancy: index and value subexpressions read the binding mid-statement ---------
+var g = {"a": 10}
+function the_key() return "a" end
+function the_val() return g["a"] + 5 end
+g[the_key()] = the_val()  # both callbacks read `g` before it is stored back
+assert(g["a"] == 15, "reentrant read during module-table store")
+
+# Compound assignment on a module-held container reads the element, then stores.
+var acc = [0, 0, 0]
+for i = 1 to 100 do
+    acc[1] += i
+end
+assert(acc[1] == 5050, "compound assignment into module list")
+
+print("test_cow_binding: all assertions passed")

@@ -1,0 +1,8 @@
+# String-builder loop: CONCAT (`&`) with implicit stringification of an Integer, a fresh
+# short string per iteration (avoids O(n^2) growth). Exercises string allocation, the
+# stringify path, and CONCAT.
+var last = ""
+for i = 1 to 2000000 do
+    last = "item-" & i & "!"
+end
+assert(last == "item-2000000!", "strings builder")
