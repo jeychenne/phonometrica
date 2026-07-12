@@ -38,15 +38,20 @@ bool decode_mode(const String &mode, std::string &c_mode, bool &writable, bool &
 	return true;
 }
 
+// Open a file. When `detect` is set (a read starting at byte 0), the byte-order mark is
+// sniffed to pick the encoding; a non-null `forced` then overrides it (for BOM-less
+// UTF-16/32 files) while keeping the cursor past any BOM that was present.
 Handle<File> do_open(Isolate &iso, const String &path, const char *c_mode, bool writable,
-                     bool skip_bom)
+                     bool detect, const Encoding *forced = nullptr)
 {
 	std::FILE *h = os_open_file(path, c_mode);
 	if (!h)
 		iso.raise(String("[System error] cannot open file '") + path.view() + "'", 0);
 	Handle<File> f = Handle<File>::make(h, writable);
-	if (skip_bom)
-		f->skip_bom();
+	if (detect)
+		f->detect_encoding();
+	if (forced)
+		f->encoding = *forced;
 	return f;
 }
 
@@ -66,19 +71,34 @@ void register_file_lib()
 	if (!class_of<File>())
 		add_class<File>("File", get_class(CID_OBJECT));
 
-	// open_file(path): read, UTF-8. open_file(path, mode): explicit mode. (`open` is a
-	// reserved class/function modifier keyword, so the file opener is `open_file`.)
+	// open_file(path): read, encoding auto-detected from the BOM (UTF-8 default).
+	// open_file(path, mode): explicit mode, same auto-detection on read.
+	// open_file(path, mode, encoding): force an encoding (for BOM-less UTF-16/32 files).
+	// (`open` is a reserved class/function modifier keyword, so the opener is `open_file`.)
 	register_function("open_file", [](Isolate &iso, const String &path) {
-		return do_open(iso, path, "rb", false, /*skip_bom=*/true);
+		return do_open(iso, path, "rb", false, /*detect=*/true);
 	});
 	register_function("open_file", [](Isolate &iso, const String &path, const String &mode) {
 		std::string c_mode;
 		bool writable, at_start;
 		if (!decode_mode(mode, c_mode, writable, at_start))
 			iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
-		// Only skip a BOM when the cursor genuinely starts at byte 0 in a readable file.
-		bool skip_bom = at_start && (mode.data()[0] == 'r');
-		return do_open(iso, path, c_mode.c_str(), writable, skip_bom);
+		// Auto-detect the encoding only when the cursor genuinely starts at byte 0 of a
+		// readable file.
+		bool detect = at_start && (mode.data()[0] == 'r');
+		return do_open(iso, path, c_mode.c_str(), writable, detect);
+	});
+	register_function("open_file",
+	                  [](Isolate &iso, const String &path, const String &mode, const String &enc) {
+		std::string c_mode;
+		bool writable, at_start;
+		if (!decode_mode(mode, c_mode, writable, at_start))
+			iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
+		Encoding forced;
+		if (!encoding_from_name(enc, forced))
+			iso.raise(String("[Argument error] unknown file encoding '") + enc.view() + "'", 0);
+		bool detect = at_start && (mode.data()[0] == 'r');
+		return do_open(iso, path, c_mode.c_str(), writable, detect, &forced);
 	});
 
 	// --- reading ---
@@ -88,10 +108,14 @@ void register_file_lib()
 	register_function("read_lines",
 	                  [](Isolate &iso, Handle<File> f) { return checked(iso, f)->read_lines(); });
 	register_function("eof", [](Handle<File> f) { return f->at_end(); });
+	// encoding(file): the file's text encoding, as detected/forced on open.
+	register_function("encoding",
+	                  [](Handle<File> f) { return String(encoding_name(f->encoding)); });
 
-	// read_file(path): open, read all, close — a convenience for the common case.
+	// read_file(path): open, read all, close — a convenience for the common case. The
+	// encoding is auto-detected from the BOM, so a UTF-16/32 file reads back as UTF-8.
 	register_function("read_file", [](Isolate &iso, const String &path) {
-		return do_open(iso, path, "rb", false, true)->read_all();
+		return do_open(iso, path, "rb", false, /*detect=*/true)->read_all();
 	});
 
 	// --- writing ---

@@ -88,8 +88,13 @@ void register_typed_native(const char *name, NativeFn fn, Cell *env,
 // `T::phon_class`. The class is globally nameable (like a builtin) so scripts can use it
 // in `is`/type annotations and dispatch, but is *not* script-constructible — instances
 // come from C++ (Handle<T>::make) or a registered factory function.
+// `trace` (may be null) lets the cycle collector see engine cells held inside the boxed
+// C++ value; `acyclic` marks the class a GC leaf (cells born GREEN, never buffered) — set
+// when the type holds no traceable cells, so a foreign object that captures no script
+// references costs nothing at the collector.
 Class *register_foreign_class(const char *name, Class *base, bool is_reference,
-                              intptr_t instance_size, FinalizeHook finalize, CloneHook clone);
+                              intptr_t instance_size, FinalizeHook finalize, CloneHook clone,
+                              TraceHook trace, GcFreeHook gc_free, bool acyclic);
 
 namespace detail {
 
@@ -646,6 +651,44 @@ void foreign_clone(Cell *dst, const Cell *src)
 	::new (static_cast<void *>(box_value<T>(dst))) T(*box_value<T>(const_cast<Cell *>(src)));
 }
 
+// A registered C++ type opts into cycle collection by defining
+//   void gc_trace(void (*visit)(Cell *)) const;
+// which calls `visit` once per engine cell it owns (a `Handle`/`Variant`/`Value` member).
+// Detected here; when present the class is traceable (and not a GC leaf), so a garbage
+// cycle routed through the object is reclaimed instead of leaking.
+template<class T, class = void>
+inline constexpr bool has_gc_trace_v = false;
+template<class T>
+inline constexpr bool has_gc_trace_v<
+    T, std::void_t<decltype(std::declval<const T &>().gc_trace(std::declval<void (*)(Cell *)>()))>> =
+    true;
+
+// The trace hook: forward the collector's visitor to the boxed value's gc_trace.
+template<class T>
+void foreign_trace(Cell *c, void (*visit)(Cell *))
+{
+	box_value<T>(c)->gc_trace(visit);
+}
+
+// When a garbage cycle is reclaimed the object's destructor is bypassed (the collector has
+// already balanced its cell edges via gc_trace), so a traceable type that ALSO owns non-cell
+// resources — or needs a side effect on death — provides
+//   void gc_free();
+// which the collector calls on the cyclic-free path. It must free those non-cell resources
+// but must NOT release the cells enumerated by gc_trace (the collector owns those). It is the
+// exact counterpart of the engine's own gc_free hooks (List/Table). Optional: without it a
+// cycle-collected foreign object only has its inline storage reclaimed.
+template<class T, class = void>
+inline constexpr bool has_gc_free_v = false;
+template<class T>
+inline constexpr bool has_gc_free_v<T, std::void_t<decltype(std::declval<T &>().gc_free())>> = true;
+
+template<class T>
+void foreign_gc_free(Cell *c)
+{
+	box_value<T>(c)->gc_free();
+}
+
 // --- Variant typed conversions (design §11.4) ---------------------------------
 //
 // Definitions of the helpers Variant::to<T>()/make() forward to (declared in
@@ -698,10 +741,21 @@ Class *add_class(const char *name, Class *base, ClassKind kind = ClassKind::Refe
 	              "add_class<T> is for plain application classes; a cell-headed engine type "
 	              "registers through its own register_*_class");
 	bool is_reference = (kind == ClassKind::Reference);
+	// A type that defines gc_trace participates in cycle collection; otherwise it is a GC
+	// leaf (holds no engine cells) and is marked acyclic so it never enters the collector.
+	// `if constexpr` so foreign_trace<T> is only instantiated for a type that has gc_trace.
+	constexpr bool traceable = detail::has_gc_trace_v<T>;
+	TraceHook trace = nullptr;
+	if constexpr (traceable)
+		trace = &detail::foreign_trace<T>;
+	GcFreeHook gc_free = nullptr;
+	if constexpr (detail::has_gc_free_v<T>)
+		gc_free = &detail::foreign_gc_free<T>;
 	Class *c = register_foreign_class(name, base, is_reference,
 	                                  static_cast<intptr_t>(box_total_size<T>()),
 	                                  &detail::foreign_finalize<T>,
-	                                  is_reference ? nullptr : &detail::foreign_clone<T>);
+	                                  is_reference ? nullptr : &detail::foreign_clone<T>, trace,
+	                                  gc_free, /*acyclic=*/!traceable);
 	g_registered_class<T> = c;
 	return c;
 }

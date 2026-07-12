@@ -51,6 +51,31 @@ struct EmbedPoint
 	~EmbedPoint() { --g_points_alive; }
 };
 
+// A registered C++ class that *holds a script value* (a Variant) and therefore can be part
+// of a reference cycle. Defining `gc_trace` opts it into the cycle collector: the collector
+// visits the captured cell, so a garbage cycle routed through the object is reclaimed
+// instead of leaking. `g_nodes_alive` proves the finalizer actually runs.
+int g_nodes_alive = 0;
+
+struct GcNode
+{
+	Variant child; // may hold a List/another node -> can close a cycle
+
+	GcNode() { ++g_nodes_alive; }
+	~GcNode() { --g_nodes_alive; }
+
+	void gc_trace(void (*visit)(Cell *)) const
+	{
+		Value v = child.value();
+		if (v.owns_cell())
+			visit(v.cell_ptr());
+	}
+
+	// Cyclic-free path: the destructor is bypassed there, so mirror its bookkeeping — but
+	// do NOT touch `child` (the collector already balanced that edge via gc_trace).
+	void gc_free() { --g_nodes_alive; }
+};
+
 } // namespace
 
 TEST_CASE("embed: scalar box/unbox round-trips through a script call")
@@ -365,4 +390,45 @@ TEST_CASE("embed: Array view from C++ (size/dim/data)")
 	const double *d = a.data();
 	CHECK(d[0] == 1.0);
 	CHECK(d[2] == 3.0);
+}
+
+TEST_CASE("embed: a foreign class with gc_trace lets the collector reclaim a cycle")
+{
+	g_nodes_alive = 0;
+	{
+		Runtime rt;
+		// Registration is process-global; guard against a re-run rebinding the class.
+		if (!class_of<GcNode>())
+			rt.add_class<GcNode>("GcNode", rt.get_class("Object"));
+		rt.add_function("make_node", [] { return Handle<GcNode>::make(); });
+		rt.add_function("set_child", [](Handle<GcNode> n, Variant v) { n->child = v; });
+
+		// Close a cycle: the node holds the list, the list holds the node.
+		rt.do_string("var n = make_node()\n"
+		             "var lst = [n]\n"
+		             "set_child(n, lst)");
+		CHECK(g_nodes_alive == 1);
+
+		// Drop both external references; the node and list now reference only each other.
+		rt.do_string("n = null\nlst = null");
+		// The cycle is unreachable. Reclaiming it requires the collector to see the node's
+		// captured cell through gc_trace — without the trace hook this leaks.
+		rt.do_string("collect_garbage()");
+		CHECK(g_nodes_alive == 0);
+	}
+	CHECK(g_nodes_alive == 0);
+}
+
+TEST_CASE("embed: a foreign class without gc_trace is a GC leaf (acyclic)")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	// EmbedPoint declares no gc_trace, so its class is marked acyclic (born GREEN): it can
+	// never be buffered as a cycle candidate. The traceable GcNode must NOT be acyclic.
+	CHECK((class_of<EmbedPoint>()->flags & CLASS_ACYCLIC) != 0);
+	if (!class_of<GcNode>())
+		rt.add_class<GcNode>("GcNode", rt.get_class("Object"));
+	CHECK((class_of<GcNode>()->flags & CLASS_ACYCLIC) == 0);
+	CHECK(class_of<GcNode>()->trace != nullptr);
 }

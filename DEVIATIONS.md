@@ -1357,14 +1357,25 @@ API (§11.3), the primary surface for exposing C++ to scripts.
     (the FOREIGN cell path is still the only allocator — the M4 arena path was never needed),
     so `make` works on any thread with or without an Isolate, matching §11.5's foreign-allocation
     contract. The finalizer runs via the existing `cell_dispose` seam.
-11. **No cycle-collector trace hook for foreign classes (a bounded leak, like the native env).**
-    A registered C++ type that captures script cells (a `Handle`/`Variant` member) is a GC leaf:
-    a cycle routed through it leaks rather than being reclaimed. A per-class trace hook could be
-    added later (an embedder-supplied enumerator); deferred as most app classes wrap C++ data,
-    not script objects. **Value-class registration is implemented but lightly exercised** — the
-    tests cover reference classes (the primary case); the CoW clone path for a foreign value
-    class only fires if something invokes the clone hook, which no script opcode does for a
-    foreign type today.
+11. **Cycle-collector trace hook for foreign classes — now implemented (was a bounded leak).**
+    A registered C++ type that captures script cells (a `Handle`/`Variant`/`Value` member) opts
+    into cycle collection by defining `void gc_trace(void (*visit)(Cell *)) const`, calling `visit`
+    once per cell it owns. `add_class<T>` detects it (a `has_gc_trace_v<T>` trait, selected with
+    `if constexpr` so `foreign_trace<T>` is only instantiated for types that have it) and wires
+    `Class::trace`; such a class stays potentially-cyclic. A type WITHOUT `gc_trace` holds no
+    traceable cells and is marked `CLASS_ACYCLIC` — its cells are born GREEN and never buffered, so
+    a leaf foreign object costs the collector nothing. Because the cyclic-free path bypasses the
+    destructor (the collector balances the cell edges itself), a type that also owns non-cell
+    resources or needs a death side effect provides the optional `void gc_free()` (detected the
+    same way) — the exact counterpart of the engine's own `List`/`Table` gc_free hooks: free the
+    non-cell resources, do NOT release the cells `gc_trace` enumerates. `register_foreign_class`
+    gained `TraceHook`/`GcFreeHook`/`acyclic` parameters. Tests in `test_embed.cpp`: a
+    `Variant`-holding node in a node↔list cycle is reclaimed after `collect_garbage` (verified both
+    by a construction/destruction counter driven from `gc_free`, and under ASan, which would report
+    the whole cycle as leaked if `trace` were absent); a trace-less class is confirmed acyclic.
+    **Value-class registration is implemented but lightly exercised** — the tests cover reference
+    classes (the primary case); the CoW clone path for a foreign value class only fires if
+    something invokes the clone hook, which no script opcode does for a foreign type today.
 
 ### Stage 3 — values from C++ (`Variant::to<T>()` / `make()`, channel receive)
 
@@ -1496,9 +1507,8 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     with a UTF-16 path on Windows, `fopen` on POSIX — the old `utils::open_file`). `File` is a
     cell-headed reference class registered through the embedding `add_class<File>` path, so its
     finalizer (`~File`) closes the handle when the value dies (RAII file handles via the cell
-    lifecycle). Content is UTF-8 (a leading UTF-8 BOM is skipped on read); the multi-encoding
-    UTF-16/32 read machinery of the old File is **not** ported (deferred — UTF-8 is the dominant
-    case and the requirement was path correctness). `eof`/`at_end` *peeks* a byte rather than
+    lifecycle). **Multi-encoding reads are now ported** (see item 26 below); `eof`/`at_end`
+    *peeks* a byte rather than
     trusting `feof` (which only latches after a read past end), so a file whose final newline was
     just consumed reports end correctly. The opener is named `open_file`, **not** `open` — `open`
     is a reserved class/function modifier keyword in the grammar.
@@ -1511,6 +1521,19 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     `read_notes`). The underlying behaviour — redefining-then-unloading a builtin does not restore
     it — is pre-existing and noted for a later journal pass; it only bites on a name+sig collision
     with a builtin.
+25a. **Multi-encoding reads ported (`File`).** Reading now transcodes UTF-16/UTF-32 (little- and
+    big-endian) to UTF-8, matching the old engine. On open for a read at byte 0, `detect_encoding`
+    sniffs the BOM (checking the 4-byte UTF-32 marks before the 2-byte UTF-16 ones, since a
+    UTF-32LE BOM starts with the UTF-16LE BOM) and positions the cursor past it; absent a BOM the
+    encoding defaults to UTF-8 and the bytes are put back. `read`/`read_line`/`read_lines` keep the
+    fast UTF-8 byte path and, for UTF-16/32, decode a codepoint at a time (`next_codepoint`, using
+    the engine's `unicode::utf16_decode` for surrogate pairs and `std::endian`/manual byte-swap for
+    byte order); line reads still strip a trailing `\r`. A BOM-less UTF-16/32 file is handled by a
+    new three-arg `open_file(path, mode, encoding)` (names via `encoding_from_name`); `encoding(f)`
+    reports the detected/forced encoding. **Writing stays UTF-8, no BOM** — the old engine never
+    supported UTF-16/32 output either. Tested host-endianness-independently in
+    `test/unit/test_file_encoding.cpp` (byte-exact fixtures incl. an astral codepoint = a UTF-16
+    surrogate pair; BOM auto-detect; forced encoding; encoded line reads).
 
 ### Embedding transparency — plain application classes, transparent `Handle<T>`
 

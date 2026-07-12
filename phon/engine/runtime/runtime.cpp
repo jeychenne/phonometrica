@@ -244,12 +244,17 @@ void register_typed_native(const char *name, NativeFn fn, Cell *env,
 // CLASS_BUILTIN so the compiler's name resolver finds it (usable in `is`/annotations and
 // dispatch), which also makes it non-script-constructible — instances come from C++.
 Class *register_foreign_class(const char *name, Class *base, bool is_reference,
-                              intptr_t instance_size, FinalizeHook finalize, CloneHook clone)
+                              intptr_t instance_size, FinalizeHook finalize, CloneHook clone,
+                              TraceHook trace, GcFreeHook gc_free, bool acyclic)
 {
 	uint16_t flags = CLASS_BUILTIN | CLASS_FOREIGN | (is_reference ? CLASS_REF : CLASS_VALUE);
+	if (acyclic)
+		flags |= CLASS_ACYCLIC; // no traceable cells: born GREEN, never a cycle candidate
 	Class *c = add_class(name, base, flags, instance_size);
-	c->finalize = finalize;
+	c->finalize = finalize; // ordinary refcount-0 free path (runs ~T)
 	c->clone = clone;
+	c->trace = trace;     // lets the collector see cells held inside the boxed value
+	c->gc_free = gc_free; // cyclic-free path: non-cell cleanup with ~T bypassed (optional)
 	return c;
 }
 
