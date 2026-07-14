@@ -239,13 +239,13 @@ inline void compute_loo_from_loglik(Model &model, const std::vector<double> &log
 	model.p_loo  = p_loo_val;
 	model.se_loo = 2.0 * std::sqrt(static_cast<double>(n) * var_elpd);
 
-	// Store per-observation values (1-indexed Array).
+	// Store per-observation values.
 	model.elpd_loo_i.resize(n);
 	model.pareto_k.resize(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
-		model.elpd_loo_i[i + 1] = elpd_loo[i];
-		model.pareto_k[i + 1] = pk[i];
+		model.elpd_loo_i[i] = elpd_loo[i];
+		model.pareto_k[i] = pk[i];
 	}
 }
 

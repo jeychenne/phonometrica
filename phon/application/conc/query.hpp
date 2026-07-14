@@ -154,7 +154,7 @@ protected:
 	                               intptr_t layer_index,
 	                               Array<int> &seen, Constraint::Relation op, bool is_ref) const;
 
-	std::unique_ptr<Match::Target>
+	std::unique_ptr<QueryMatch::Target>
     find_target(const Event &event, const Constraint &constraint, intptr_t layer_index, intptr_t &pos,
 	            bool is_ref) const;
 

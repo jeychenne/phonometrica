@@ -75,12 +75,14 @@ inline String to_string(const Array<double> &array)
 {
 	String s("@[");
 	if (array.ndim() > 1) s.append('\n');
-	for (intptr_t i = 1; i <= array.nrow(); i++)
+	for (intptr_t i = 0; i < array.nrow(); i++)
 	{
 		if (array.ndim() > 1) s.append('\t');
-		for (intptr_t j = 1; j <= array.ncol(); j++)
+		for (intptr_t j = 0; j < array.ncol(); j++)
 		{
-			s.append(String::format("%f, ", array(i,j)));
+			// A 1-dimension array cannot be indexed with (i, j).
+			double value = (array.ndim() == 1) ? array[i] : array(i, j);
+			s.append(String::format("%f, ", value));
 		}
 		if (array.ndim() > 1) s.append('\n');
 	}

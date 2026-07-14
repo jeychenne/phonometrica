@@ -15,7 +15,9 @@
  *                                                                                                                     *
  * Created: 06/06/2019                                                                                                 *
  *                                                                                                                     *
- * Purpose: Array builtin functions.                                                                                   *
+ * Purpose: Array builtin functions. This is a script/native bridge: incoming indices are 1-based (possibly negative)  *
+ * and are converted through index_from_script()/dim_index_from_script(). Reads go through const references so that    *
+ * they never trigger a copy of a shared buffer; writes go through the non-const API, which performs copy-on-write.    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -23,12 +25,13 @@
 #define PHONOMETRICA_FUNC_ARRAY_HPP
 
 #include <phon/runtime.hpp>
+#include <phon/runtime/index_conversion.hpp>
 
 namespace phonometrica {
 
 static Variant array_get_field(Runtime &rt, std::span<Variant> args)
 {
-	auto &array = cast<Array<double>>(args[0]);
+	const auto &array = cast<Array<double>>(args[0]);
 	auto &key = cast<String>(args[1]);
 	if (key == rt.length_string) {
 		return array.size();
@@ -80,13 +83,13 @@ static Variant array_get_item1(Runtime &rt, std::span<Variant> args)
 		throw error("[Reference error] Array elements cannot be passed by reference");
 	}
 
-	auto &array = cast<Array<double>>(args[0]);
+	const auto &array = cast<Array<double>>(args[0]);
 	intptr_t i = cast<intptr_t>(args[1]);
 	if (array.ndim() != 1) {
 		throw error("[Index error] Only one index provided in array with % dimensions", array.ndim());
 	}
 
-	return array.at(i);
+	return array.at(index_from_script(i, array.size()));
 }
 
 static Variant array_get_item2(Runtime &rt, std::span<Variant> args)
@@ -95,14 +98,14 @@ static Variant array_get_item2(Runtime &rt, std::span<Variant> args)
 		throw error("[Reference error] Array elements cannot be passed by reference");
 	}
 
-	auto &array = cast<Array<double>>(args[0]);
+	const auto &array = cast<Array<double>>(args[0]);
 	intptr_t i = cast<intptr_t>(args[1]);
 	intptr_t j = cast<intptr_t>(args[2]);
 	if (array.ndim() != 2) {
 		throw error("[Index error] 2 indexes provided in array with % dimension(s)", array.ndim());
 	}
 
-	return array.at(i,j);
+	return array.at(dim_index_from_script(i, array.nrow()), dim_index_from_script(j, array.ncol()));
 }
 
 static Variant array_set_item1(Runtime &, std::span<Variant> args)
@@ -113,7 +116,7 @@ static Variant array_set_item1(Runtime &, std::span<Variant> args)
 	if (array.ndim() != 1) {
 		throw error("[Index error] Only one index provided in array with % dimensions", array.ndim());
 	}
-	array.at(i) = value;
+	array.at(index_from_script(i, array.size())) = value;
 
 	return Variant();
 }
@@ -131,7 +134,7 @@ static Variant array_set_item2(Runtime &rt, std::span<Variant> args)
 	if (array.ndim() != 2) {
 		throw error("[Index error] 2 indexes provided in array with % dimension(s)", array.ndim());
 	}
-	array.at(i,j) = value;
+	array.at(dim_index_from_script(i, array.nrow()), dim_index_from_script(j, array.ncol())) = value;
 
 	return Variant();
 }
@@ -139,8 +142,8 @@ static Variant array_set_item2(Runtime &rt, std::span<Variant> args)
 static Variant array_min(Runtime &, std::span<Variant> args)
 {
 	auto minimum = (std::numeric_limits<double>::max)();
-	auto &array = cast<Array<double>>(args[0]);
-	for (intptr_t i = 1; i <= array.size(); i++)
+	const auto &array = cast<Array<double>>(args[0]);
+	for (intptr_t i = 0; i < array.size(); i++)
 	{
 		auto value = array[i];
 		if (value < minimum) minimum = value;
@@ -152,8 +155,8 @@ static Variant array_min(Runtime &, std::span<Variant> args)
 static Variant array_max(Runtime &, std::span<Variant> args)
 {
 	auto maximum = (std::numeric_limits<double>::min)();
-	auto &array = cast<Array<double>>(args[0]);
-	for (intptr_t i = 1; i <= array.size(); i++)
+	const auto &array = cast<Array<double>>(args[0]);
+	for (intptr_t i = 0; i < array.size(); i++)
 	{
 		auto value = array[i];
 		if (value > maximum) maximum = value;
@@ -165,9 +168,9 @@ static Variant array_max(Runtime &, std::span<Variant> args)
 static Variant array_clear(Runtime &, std::span<Variant> args)
 {
 	auto &array = cast<Array<double>>(args[0]);
-	for (intptr_t i = 1; i <= array.size(); i++) {
-		array[i] = 0.0;
-	}
+	// data() performs the copy-on-write before we overwrite the elements in place.
+	auto data = array.data();
+	std::fill(data, data + array.size(), 0.0);
 
 	return Variant();
 }

@@ -214,7 +214,7 @@ protected:
 	// Run LPC/formant analysis on a single match and fill its measurement vector.
 	// Measure one match. In automatic mode, forced_ceiling > 0 skips selection and uses the given parameters
 	// (used by the consensus pass, which selects parameters corpus-wide before filling).
-	void measure_match(Match &match, double forced_ceiling = -1.0, int forced_order = -1) const;
+	void measure_match(QueryMatch &match, double forced_ceiling = -1.0, int forced_order = -1) const;
 
 	// Two-pass corpus-level measurement: build a candidate cache per match, estimate pooled (speaker x vowel) cell
 	// centres, re-select each match toward its centre (EM), then fill. Preserves the output/concordance format.

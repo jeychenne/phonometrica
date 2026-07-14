@@ -314,8 +314,7 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h, double window
 		// Apply window and fill FFT input buffer.
 		for (intptr_t j = 0; j < nframe; j++)
 		{
-			// m_cached_window is a 1-based Array; j+1 maps to raw position j.
-			input[j] = src[j] * m_cached_window[j + 1];
+			input[j] = src[j] * m_cached_window[j];
 		}
 		for (intptr_t j = nframe; j < nfft; j++) {
 			input[j] = 0;
@@ -341,9 +340,9 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h, double window
 		// Map amplitude bins to raster pixels with linear interpolation,
 		// tracking min/max dB inline to avoid a separate scan pass.
 		double ceiling_bin = m_max_freq * half_nfft / nyquist_frequency;
-		for (intptr_t y = 1; y <= h; y++)
+		for (intptr_t y = 0; y < h; y++)
 		{
-			double freq = double(y * ceiling_bin) / (h - 1.0);
+			double freq = double((y + 1) * ceiling_bin) / (h - 1.0);
 			int bin = int(freq);
 			double amp;
 
@@ -359,7 +358,7 @@ Matrix<double> SpectrogramWidget::computeSpectrogram(int w, int h, double window
 				amp = a1 + (a2 - a1) * (freq - bin);
 			}
 
-			raster(x, y - 1) = amp;
+			raster(x, y) = amp;
 
 			if (amp > out_max_dB) out_max_dB = amp;
 			if (amp < out_min_dB) out_min_dB = amp;
@@ -640,7 +639,7 @@ void SpectrogramWidget::rebuildFormantCache()
 
 				for (int j = 0; j < m_nformant; j++)
 				{
-					double f = result(j + 1, 1); // 1-based Array: row = formant, col 1 = frequency
+					double f = result(j, 0); // row = formant, col 0 = frequency
 					if (std::isfinite(f) && f > 50 && f < m_formant_max_freq - 50)
 						point_freqs[j] = f;
 				}

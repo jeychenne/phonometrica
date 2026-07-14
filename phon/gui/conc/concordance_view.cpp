@@ -448,15 +448,15 @@ void ConcordanceView::setupUi()
 		auto &saved = m_conc->filter_rules();
 		// Apply logic BEFORE adding rules so any re-evaluation uses the right one.
 		m_proxy->setLogic(string_to_filter_logic(m_conc->filter_logic().data()));
-		for (intptr_t r = 1; r <= saved.size(); r++)
+		for (intptr_t r = 0; r < saved.size(); r++)
 		{
 			auto &rd = saved[r];
 			FilterRule rule;
 			intptr_t col = m_conc->find_column(rd.column);
-			rule.column = (col > 0) ? static_cast<int>(col - 1) : 0;
+			rule.column = (col >= 0) ? static_cast<int>(col) : 0;
 			rule.op = string_to_filter_op(rd.op.data());
 			if (rule.op == FilterOp::InSet) {
-				for (intptr_t k = 1; k <= rd.set_values.size(); k++)
+				for (intptr_t k = 0; k < rd.set_values.size(); k++)
 					rule.set_values << QString::fromUtf8(rd.set_values[k].data(), (int)rd.set_values[k].size());
 			} else {
 				rule.value = QString::fromUtf8(rd.value.data(), (int)rd.value.size());
@@ -621,7 +621,7 @@ void ConcordanceView::setupUi()
 		selectWholeColumn(section);
 
 		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
-		intptr_t col_1based = section + 1;
+		intptr_t col = section;
 		QMenu menu(this);
 
 		// ── Sort ───────────────────────────────────────
@@ -648,12 +648,12 @@ void ConcordanceView::setupUi()
 		});
 
 		// ── Delete (aux columns only) ──────────────────
-		intptr_t aux_idx = m_conc->resolve_aux_column(col_1based);
-		if (aux_idx > 0)
+		intptr_t aux_idx = m_conc->resolve_aux_column(col);
+		if (aux_idx >= 0)
 		{
 			// Walk back to the first display column of this aux group to get the base header name.
-			intptr_t first_col = col_1based;
-			while (first_col > 1 && m_conc->resolve_aux_column(first_col - 1) == aux_idx) {
+			intptr_t first_col = col;
+			while (first_col > 0 && m_conc->resolve_aux_column(first_col - 1) == aux_idx) {
 				first_col--;
 			}
 			auto base_name_str = m_conc->get_default_header(first_col);
@@ -683,8 +683,8 @@ void ConcordanceView::setupUi()
 		bool all_numeric = true;
 		bool found_any = false;
 
-		for (intptr_t i = 1; i <= sample_limit; i++) {
-			auto cell = m_conc->get_cell(i, col_1based);
+		for (intptr_t i = 0; i < sample_limit; i++) {
+			auto cell = m_conc->get_cell(i, col);
 			if (cell.empty() || cell == "nan") continue;
 			found_any = true;
 			bool ok;
@@ -705,7 +705,7 @@ void ConcordanceView::setupUi()
 			menu.addAction(tr("Recode values..."), this, [this, section]() {
 				onRecodeColumn(section);
 			});
-			menu.addAction(tr("Apply coding protocol..."), this, [this, col_1based]() {
+			menu.addAction(tr("Apply coding protocol..."), this, [this, col]() {
 				auto qpath = getOpenFileName(this, tr("Apply coding protocol"),
 					tr("Coding protocols (*.json);;All files (*)"));
 				if (qpath.isEmpty()) return;
@@ -728,7 +728,7 @@ void ConcordanceView::setupUi()
 				// match_all) throw; per-row parse failures are collected in result.failed_rows.
 				ProtocolApplyResult result;
 				try {
-					result = m_conc->apply_protocol(col_1based, *protocol, /*translate=*/true);
+					result = m_conc->apply_protocol(col, *protocol, /*translate=*/true);
 				}
 				catch (std::exception &e) {
 					QMessageBox::critical(this, tr("Apply coding protocol"),
@@ -760,17 +760,17 @@ void ConcordanceView::setupUi()
 						msgs.join(QStringLiteral("\n\n")));
 				}
 			});
-			menu.addAction(tr("Build coding protocol..."), this, [this, col_1based]() {
+			menu.addAction(tr("Build coding protocol..."), this, [this, col]() {
 				// Seed the dialog with the first 10 values of the clicked column so the user
 				// has concrete sample input to iterate the protocol against.
 				Array<String> samples;
 				intptr_t n_rows = m_conc->row_count();
 				intptr_t n = std::min<intptr_t>(n_rows, 10);
-				for (intptr_t i = 1; i <= n; i++) {
-					samples.append(m_conc->get_cell(i, col_1based));
+				for (intptr_t i = 0; i < n; i++) {
+					samples.append(m_conc->get_cell(i, col));
 				}
 
-				ProtocolBuilderDialog dlg(Project::get()->runtime(), m_conc, col_1based, this);
+				ProtocolBuilderDialog dlg(Project::get()->runtime(), m_conc, col, this);
 				dlg.setSampleText(samples);
 				if (dlg.exec() == QDialog::Accepted) {
 					// Apply was clicked and succeeded inside the dialog; refresh the view.
@@ -811,7 +811,7 @@ void ConcordanceView::setupUi()
 		for (auto &r : m_proxy->rules()) {
 			FilterRuleData rd;
 			if (r.column >= 0 && r.column < m_model->columnCount()) {
-				auto h = m_conc->get_header(r.column + 1);
+				auto h = m_conc->get_header(r.column);
 				rd.column = h;
 			}
 			rd.op = filter_op_to_string(r.op);
@@ -971,9 +971,9 @@ void ConcordanceView::onBookmark()
 	if (row < 0) return;
 
 	int src = mapToSourceRow(row);
-	auto &match = m_conc->get_match(src + 1);
-	int target = m_target_spin->value();
-	auto context = m_conc->get_context(src + 1);
+	auto &match = m_conc->get_match(src);
+	int target = m_target_spin->value() - 1;
+	auto context = m_conc->get_context(src);
 
 	// Default title is the match value; the user can edit it in the dialog.
 	String match_value = match.get_value(target);
@@ -1046,20 +1046,20 @@ void ConcordanceView::onDeleteRows()
 	record(std::move(cmd));
 }
 
-QVector<QString> ConcordanceView::promptTargetTexts(Match &match, int target_count,
+QVector<QString> ConcordanceView::promptTargetTexts(QueryMatch &match, int target_count,
                                                      const QString &title, bool edit_annotation)
 {
 	auto &annot = *match.annotation();
 
 	// Collect current text for each target.
-	QVector<QString> current(target_count + 1); // 1-based
-	for (int i = 1; i <= target_count; i++)
+	QVector<QString> current(target_count);
+	for (int i = 0; i < target_count; i++)
 	{
 		auto *t = match.get(i);
 		if (edit_annotation)
 		{
 			intptr_t event_idx = annot.get_event_index(t->layer, t->start_time);
-			if (event_idx > 0)
+			if (event_idx >= 0)
 			{
 				const auto &ev = annot.get_event(t->layer, event_idx);
 				current[i] = QString::fromUtf8(ev.text.data(), (int) ev.text.size());
@@ -1076,9 +1076,9 @@ QVector<QString> ConcordanceView::promptTargetTexts(Match &match, int target_cou
 	{
 		bool ok;
 		auto result = QInputDialog::getText(this, title,
-			tr("Text:"), QLineEdit::Normal, current[1], &ok);
+			tr("Text:"), QLineEdit::Normal, current[0], &ok);
 		if (!ok) return {};
-		return { QString(), result }; // index 0 unused, result at index 1
+		return { result };
 	}
 
 	// Multiple targets: one QLineEdit per target in a form dialog.
@@ -1086,13 +1086,13 @@ QVector<QString> ConcordanceView::promptTargetTexts(Match &match, int target_cou
 	dlg.setWindowTitle(title);
 
 	auto *form = new QFormLayout;
-	QVector<QLineEdit *> edits(target_count + 1, nullptr);
+	QVector<QLineEdit *> edits(target_count, nullptr);
 
-	for (int i = 1; i <= target_count; i++)
+	for (int i = 0; i < target_count; i++)
 	{
 		auto *t = match.get(i);
 		auto layer_lbl = annot.get_layer_label(t->layer);
-		auto label = QString("Target %1 (%2)").arg(i)
+		auto label = QString("Target %1 (%2)").arg(i + 1)
 		             .arg(QString::fromUtf8(layer_lbl.data(), (int) layer_lbl.size()));
 
 		auto *edit = new QLineEdit(current[i], &dlg);
@@ -1112,8 +1112,8 @@ QVector<QString> ConcordanceView::promptTargetTexts(Match &match, int target_cou
 	if (dlg.exec() != QDialog::Accepted)
 		return {};
 
-	QVector<QString> result(target_count + 1);
-	for (int i = 1; i <= target_count; i++)
+	QVector<QString> result(target_count);
+	for (int i = 0; i < target_count; i++)
 		result[i] = edits[i]->text();
 	return result;
 }
@@ -1130,7 +1130,7 @@ void ConcordanceView::onEditEvent()
 
 	int proxy_row = rows.first();
 	int src = mapToSourceRow(proxy_row);
-	auto &match = m_conc->get_match(src + 1);
+	auto &match = m_conc->get_match(src);
 	int target_count = m_conc->target_count();
 
 	auto new_texts = promptTargetTexts(match, target_count,
@@ -1141,11 +1141,11 @@ void ConcordanceView::onEditEvent()
 	auto &annot = *match.annotation();
 	bool any_changed = false;
 
-	for (int i = 1; i <= target_count; i++)
+	for (int i = 0; i < target_count; i++)
 	{
 		auto *t = match.get(i);
 		intptr_t event_idx = annot.get_event_index(t->layer, t->start_time);
-		if (event_idx == 0) continue;
+		if (event_idx < 0) continue;
 
 		const auto &event = annot.get_event(t->layer, event_idx);
 		auto old_qs = QString::fromUtf8(event.text.data(), (int) event.text.size());
@@ -1162,7 +1162,7 @@ void ConcordanceView::onEditEvent()
 	annot.set_graph_modified(true);
 
 	// Re-sync all targets from the updated annotation.
-	for (int i = 1; i <= target_count; i++)
+	for (int i = 0; i < target_count; i++)
 	{
 		bool modified;
 		match.update(i, modified);
@@ -1191,7 +1191,7 @@ void ConcordanceView::onEditMatchText()
 
 	int proxy_row = rows.first();
 	int src = mapToSourceRow(proxy_row);
-	auto &match = m_conc->get_match(src + 1);
+	auto &match = m_conc->get_match(src);
 	int target_count = m_conc->target_count();
 
 	auto new_texts = promptTargetTexts(match, target_count,
@@ -1201,7 +1201,7 @@ void ConcordanceView::onEditMatchText()
 
 	bool any_changed = false;
 
-	for (int i = 1; i <= target_count; i++)
+	for (int i = 0; i < target_count; i++)
 	{
 		auto *t = match.get(i);
 		auto old_qs = QString::fromUtf8(t->value.data(), (int) t->value.size());
@@ -1436,13 +1436,13 @@ void ConcordanceView::onMerge()
 	auto rows = m_conc->row_count();
 
 	std::map<String, intptr_t> a_headers;
-	for (intptr_t j = 1; j <= a_cols; j++) {
+	for (intptr_t j = 0; j < a_cols; j++) {
 		a_headers[m_conc->get_header(j)] = j;
 	}
 
 	Array<std::pair<String, intptr_t>> columns_to_add;
 
-	for (intptr_t j = 1; j <= b_cols; j++)
+	for (intptr_t j = 0; j < b_cols; j++)
 	{
 		// Skip derived measurement columns (ERB, Bark, semitones) in source concordance.
 		// These will be recomputed from the raw stored values via the aux toggle mechanism.
@@ -1461,7 +1461,7 @@ void ConcordanceView::onMerge()
 		{
 			// Same name: check if values differ.
 			bool same = true;
-			for (intptr_t i = 1; i <= rows; i++)
+			for (intptr_t i = 0; i < rows; i++)
 			{
 				if (m_conc->get_cell(i, it->second) != other->get_cell(i, j)) {
 					same = false;
@@ -1663,14 +1663,14 @@ void ConcordanceView::onToggleAuxFormantBark(bool checked)
 
 void ConcordanceView::onRecodeColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	intptr_t nrows = m_conc->row_count();
 	auto col_hdr = m_conc->get_header(col);
 	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
 
 	// Collect unique levels.
 	QSet<QString> seen;
-	for (intptr_t i = 1; i <= nrows; i++) {
+	for (intptr_t i = 0; i < nrows; i++) {
 		auto cell = m_conc->get_cell(i, col);
 		seen.insert(QString::fromUtf8(cell.data(), (int) cell.size()));
 	}
@@ -1688,16 +1688,16 @@ void ConcordanceView::onRecodeColumn(int section)
 	try
 	{
 		std::vector<String> new_values(nrows);
-		for (intptr_t i = 1; i <= nrows; i++)
+		for (intptr_t i = 0; i < nrows; i++)
 		{
 			auto cell = m_conc->get_cell(i, col);
 			auto original = QString::fromUtf8(cell.data(), (int) cell.size());
 			auto it = mapping.find(original);
 			if (it != mapping.end()) {
-				new_values[i - 1] = String(it.value().toUtf8().constData());
+				new_values[i] = String(it.value().toUtf8().constData());
 			}
 			else {
-				new_values[i - 1] = cell;
+				new_values[i] = cell;
 			}
 		}
 
@@ -1719,7 +1719,7 @@ void ConcordanceView::onRecodeColumn(int section)
 
 void ConcordanceView::onTransformColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	intptr_t nrows = m_conc->row_count();
 	auto col_hdr = m_conc->get_header(col);
 	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
@@ -1727,7 +1727,7 @@ void ConcordanceView::onTransformColumn(int section)
 	// Collect sample values for the preview (first 8 rows).
 	QVector<double> samples;
 	intptr_t sample_count = std::min(nrows, (intptr_t)8);
-	for (intptr_t i = 1; i <= sample_count; i++)
+	for (intptr_t i = 0; i < sample_count; i++)
 	{
 		auto cell = m_conc->get_cell(i, col);
 		if (cell.empty() || cell == "nan") {
@@ -1754,7 +1754,7 @@ void ConcordanceView::onTransformColumn(int section)
 		std::vector<double> result(nrows);
 		int nan_count = 0;
 
-		for (intptr_t i = 1; i <= nrows; i++)
+		for (intptr_t i = 0; i < nrows; i++)
 		{
 			auto cell = m_conc->get_cell(i, col);
 			double val;
@@ -1768,8 +1768,8 @@ void ConcordanceView::onTransformColumn(int section)
 				if (!ok) val = std::numeric_limits<double>::quiet_NaN();
 			}
 
-			result[i - 1] = engine.evaluate(val);
-			if (std::isnan(result[i - 1]) && !std::isnan(val))
+			result[i] = engine.evaluate(val);
+			if (std::isnan(result[i]) && !std::isnan(val))
 				nan_count++;
 		}
 
@@ -1798,7 +1798,7 @@ void ConcordanceView::onTransformColumn(int section)
 
 void ConcordanceView::onConvertToText(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	intptr_t nrows = m_conc->row_count();
 	auto col_hdr = m_conc->get_header(col);
 	auto col_name = QString::fromUtf8(col_hdr.data(), (int) col_hdr.size());
@@ -1806,7 +1806,7 @@ void ConcordanceView::onConvertToText(int section)
 	// Collect sample values for the preview (first 8 rows, as strings).
 	QStringList samples;
 	intptr_t sample_count = std::min(nrows, (intptr_t)8);
-	for (intptr_t i = 1; i <= sample_count; i++)
+	for (intptr_t i = 0; i < sample_count; i++)
 	{
 		auto cell = m_conc->get_cell(i, col);
 		samples.append(QString::fromUtf8(cell.data(), (int) cell.size()));
@@ -1824,12 +1824,12 @@ void ConcordanceView::onConvertToText(int section)
 	{
 		std::vector<String> result(nrows);
 
-		for (intptr_t i = 1; i <= nrows; i++)
+		for (intptr_t i = 0; i < nrows; i++)
 		{
 			auto cell = m_conc->get_cell(i, col);
 			auto cell_q = QString::fromUtf8(cell.data(), (int) cell.size());
 			auto text = ConvertToTextDialog::applyTemplate(tmpl, cell_q);
-			result[i - 1] = String(text.toUtf8().constData());
+			result[i] = String(text.toUtf8().constData());
 		}
 
 		m_conc->add_text_column(String(new_col_name.toUtf8().constData()), result);
@@ -1877,7 +1877,7 @@ void ConcordanceView::updateColumnVisibility()
 	{
 		hide_description = true;
 		intptr_t nrows = m_conc->row_count();
-		for (intptr_t r = 1; r <= nrows; r++)
+		for (intptr_t r = 0; r < nrows; r++)
 		{
 			if (!m_conc->get_match(r).annotation()->description().empty()) {
 				hide_description = false;
@@ -1886,7 +1886,7 @@ void ConcordanceView::updateColumnVisibility()
 		}
 	}
 
-	intptr_t desc_col = m_conc->column_count(); // 1-based index of description column
+	intptr_t desc_col = m_conc->column_count() - 1; // index of description column
 
 	// First, show all columns to clear stale hidden states from before
 	// a model reset (column indices may have shifted after adding/removing ERB/Bark).
@@ -1896,7 +1896,7 @@ void ConcordanceView::updateColumnVisibility()
 	// Then apply the hide rules.
 	for (int j = 0; j < ncol; j++)
 	{
-		intptr_t col = j + 1; // 1-based for Concordance
+		intptr_t col = j;
 
 		if (m_conc->is_file_info_column(col))
 		{
@@ -1927,7 +1927,7 @@ void ConcordanceView::onDoubleClick(const QModelIndex &index)
 
 	// Map the proxy column to source for the editable check.
 	auto source_idx = m_proxy->mapToSource(index);
-	intptr_t col = source_idx.column() + 1;
+	intptr_t col = source_idx.column();
 
 	// If the cell is editable (measurement or aux base column), let the default
 	// editor handle it. The model's flags() returns Qt::ItemIsEditable for these.
@@ -1945,7 +1945,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	m_table->selectRow(index.row());
 	int src = mapToSourceRow(index.row());
-	auto &match = m_conc->get_match(src + 1);
+	auto &match = m_conc->get_match(src);
 
 	QMenu menu(this);
 
@@ -1965,7 +1965,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	if (praat::available() && match.annotation()->is_textgrid())
 	{
-		int target = m_target_spin->value();
+		int target = m_target_spin->value() - 1;
 		auto layer = match.get_layer(target);
 		auto start = match.get_start_time(target);
 		auto end = match.get_end_time(target);
@@ -1986,7 +1986,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	// Edit cell — any editable cell (measurement or aux base column)
 	auto source_idx = m_proxy->mapToSource(index);
-	intptr_t col = source_idx.column() + 1;
+	intptr_t col = source_idx.column();
 	if (m_conc->is_editable_cell(col))
 	{
 		menu.addAction(QIcon(":/icons/pencil-line.svg"), tr("Edit cell"), this, [this, index]() {
@@ -2047,11 +2047,11 @@ void ConcordanceView::playMatch(int row)
 {
 	stopPlayer();
 
-	auto &match = m_conc->get_match(row + 1);
+	auto &match = m_conc->get_match(row);
 	auto &annot = match.annotation();
 	if (!annot->has_sound()) return;
 
-	int target = m_target_spin->value();
+	int target = m_target_spin->value() - 1;
 	double start = match.get_start_time(target);
 	double end = match.get_end_time(target);
 
@@ -2071,8 +2071,8 @@ void ConcordanceView::playMatch(int row)
 
 void ConcordanceView::viewMatch(int row)
 {
-	auto &match = m_conc->get_match(row + 1);
-	int target = m_target_spin->value();
+	auto &match = m_conc->get_match(row);
+	int target = m_target_spin->value() - 1;
 	auto layer = match.get_layer(target);
 	auto start = match.get_start_time(target);
 	auto end = match.get_end_time(target);
@@ -2107,7 +2107,7 @@ int ConcordanceView::mapToSourceRow(int proxyRow) const
 void ConcordanceView::setupFilterBar()
 {
 	QStringList headers;
-	for (intptr_t j = 1; j <= m_conc->column_count(); j++) {
+	for (intptr_t j = 0; j < m_conc->column_count(); j++) {
 		auto h = m_conc->get_header(j);
 		headers << QString::fromUtf8(h.data(), (int) h.size());
 	}
@@ -2115,8 +2115,8 @@ void ConcordanceView::setupFilterBar()
 	m_filter_bar->setColumns(headers,
 		// isNumeric callback: try to parse the first non-empty cell.
 		[this](int col) -> bool {
-			intptr_t c = col + 1;
-			for (intptr_t i = 1; i <= m_conc->row_count() && i <= 20; i++) {
+			intptr_t c = col;
+			for (intptr_t i = 0; i < m_conc->row_count() && i < 20; i++) {
 				auto cell = m_conc->get_cell(i, c);
 				if (cell.empty()) continue;
 				bool ok;
@@ -2128,9 +2128,9 @@ void ConcordanceView::setupFilterBar()
 		// getLevels callback: collect unique values (sample first 5000 rows for speed).
 		[this](int col) -> QStringList {
 			QSet<QString> seen;
-			intptr_t c = col + 1;
+			intptr_t c = col;
 			intptr_t limit = std::min(m_conc->row_count(), (intptr_t)5000);
-			for (intptr_t i = 1; i <= limit; i++) {
+			for (intptr_t i = 0; i < limit; i++) {
 				auto cell = m_conc->get_cell(i, c);
 				auto qs = QString::fromUtf8(cell.data(), (int) cell.size());
 				seen.insert(qs);
@@ -2200,7 +2200,7 @@ void ConcordanceView::onAddMetricColumn()
 
 	intptr_t sample_limit = std::min(nrows, (intptr_t)20);
 
-	for (intptr_t j = 1; j <= ncols; j++)
+	for (intptr_t j = 0; j < ncols; j++)
 	{
 		auto h = m_conc->get_header(j);
 		auto qh = QString::fromUtf8(h.data(), (int) h.size());
@@ -2209,7 +2209,7 @@ void ConcordanceView::onAddMetricColumn()
 		bool all_numeric = true;
 		bool found_any = false;
 
-		for (intptr_t i = 1; i <= sample_limit; i++) {
+		for (intptr_t i = 0; i < sample_limit; i++) {
 			auto cell = m_conc->get_cell(i, j);
 			if (cell.empty() || cell == "nan") continue;
 			found_any = true;
@@ -2252,29 +2252,29 @@ void ConcordanceView::onAddMetricColumn()
 		std::vector<std::string> groups;
 		if (!group_cols.isEmpty()) {
 			groups.resize(nrows);
-			for (intptr_t i = 1; i <= nrows; i++) {
+			for (intptr_t i = 0; i < nrows; i++) {
 				std::string key;
 				for (int gc : group_cols) {
 					auto cell = m_conc->get_cell(i, gc);
 					if (!key.empty()) key += '|';
 					key.append(cell.data(), cell.size());
 				}
-				groups[i - 1] = std::move(key);
+				groups[i] = std::move(key);
 			}
 		}
 
 		// Helper: extract a numeric column by parsing cells.
-		auto extract_column = [&](int col_1based) -> std::vector<double> {
+		auto extract_column = [&](int col) -> std::vector<double> {
 			std::vector<double> vals(nrows);
-			for (intptr_t i = 1; i <= nrows; i++) {
-				auto cell = m_conc->get_cell(i, col_1based);
+			for (intptr_t i = 0; i < nrows; i++) {
+				auto cell = m_conc->get_cell(i, col);
 				if (cell.empty() || cell == "nan") {
-					vals[i - 1] = std::nan("");
+					vals[i] = std::nan("");
 				}
 				else {
 					bool ok;
 					double v = cell.to_float(&ok);
-					vals[i - 1] = ok ? v : std::nan("");
+					vals[i] = ok ? v : std::nan("");
 				}
 			}
 			return vals;
@@ -2405,7 +2405,7 @@ void ConcordanceView::onAddBooleanColumn()
 				tr("The column name cannot be empty."));
 			continue;
 		}
-		if (m_conc->find_column(String(col_name.toUtf8().constData())) != 0) {
+		if (m_conc->find_column(String(col_name.toUtf8().constData())) >= 0) {
 			QMessageBox::warning(this, tr("Duplicate name"),
 				tr("A column named \"%1\" already exists. Please choose another name.").arg(col_name));
 			default_name = col_name;
@@ -2460,7 +2460,7 @@ void ConcordanceView::onNormalizeVowels()
 
 	intptr_t sample_limit = std::min(nrows, (intptr_t)20);
 
-	for (intptr_t j = 1; j <= ncols; j++)
+	for (intptr_t j = 0; j < ncols; j++)
 	{
 		auto h = m_conc->get_header(j);
 		auto qh = QString::fromUtf8(h.data(), (int) h.size());
@@ -2468,7 +2468,7 @@ void ConcordanceView::onNormalizeVowels()
 		bool all_numeric = true;
 		bool found_any = false;
 
-		for (intptr_t i = 1; i <= sample_limit; i++) {
+		for (intptr_t i = 0; i < sample_limit; i++) {
 			auto cell = m_conc->get_cell(i, j);
 			if (cell.empty() || cell == "nan") continue;
 			found_any = true;
@@ -2490,7 +2490,7 @@ void ConcordanceView::onNormalizeVowels()
 			// Collect unique levels for this text column.
 			QSet<QString> seen;
 			QStringList levels;
-			for (intptr_t i = 1; i <= nrows; i++) {
+			for (intptr_t i = 0; i < nrows; i++) {
 				auto cell = m_conc->get_cell(i, j);
 				auto qs = QString::fromUtf8(cell.data(), (int) cell.size());
 				if (!qs.isEmpty() && !seen.contains(qs)) {
@@ -2523,29 +2523,29 @@ void ConcordanceView::onNormalizeVowels()
 		auto formant_cols = dlg.selectedFormantColumns();
 		int spk_col = dlg.speakerColumn();
 
-		// Helper: extract a numeric column by parsing cells (1-based column index).
-		auto extract_numeric = [&](int col_1based) -> std::vector<double> {
+		// Helper: extract a numeric column by parsing cells.
+		auto extract_numeric = [&](int col) -> std::vector<double> {
 			std::vector<double> vals(nrows);
-			for (intptr_t i = 1; i <= nrows; i++) {
-				auto cell = m_conc->get_cell(i, col_1based);
+			for (intptr_t i = 0; i < nrows; i++) {
+				auto cell = m_conc->get_cell(i, col);
 				if (cell.empty() || cell == "nan") {
-					vals[i - 1] = std::nan("");
+					vals[i] = std::nan("");
 				}
 				else {
 					bool ok;
 					double v = cell.to_float(&ok);
-					vals[i - 1] = ok ? v : std::nan("");
+					vals[i] = ok ? v : std::nan("");
 				}
 			}
 			return vals;
 		};
 
-		// Helper: extract a text column (1-based column index).
-		auto extract_text = [&](int col_1based) -> std::vector<std::string> {
+		// Helper: extract a text column.
+		auto extract_text = [&](int col) -> std::vector<std::string> {
 			std::vector<std::string> vals(nrows);
-			for (intptr_t i = 1; i <= nrows; i++) {
-				auto cell = m_conc->get_cell(i, col_1based);
-				vals[i - 1].assign(cell.data(), cell.size());
+			for (intptr_t i = 0; i < nrows; i++) {
+				auto cell = m_conc->get_cell(i, col);
+				vals[i].assign(cell.data(), cell.size());
 			}
 			return vals;
 		};
@@ -2718,7 +2718,7 @@ bool ConcordanceView::eventFilter(QObject *watched, QEvent *event)
 			bool editable = false;
 			if (proxy_idx.isValid()) {
 				auto src_idx = m_proxy->mapToSource(proxy_idx);
-				intptr_t col = src_idx.column() + 1;
+				intptr_t col = src_idx.column();
 				editable = m_conc->is_editable_cell(col);
 			}
 

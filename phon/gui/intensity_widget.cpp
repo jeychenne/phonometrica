@@ -153,7 +153,7 @@ std::vector<double> IntensityWidget::computeIntensity()
 	// Convert from phonometrica::Array to std::vector.
 	std::vector<double> vec(result.size());
 	for (intptr_t i = 0; i < result.size(); i++) {
-		vec[i] = result[i + 1]; // Array is 1-based
+		vec[i] = result[i];
 	}
 
 	return vec;

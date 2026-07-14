@@ -39,12 +39,12 @@ public:
 	LayerVisibilityDialog(QWidget *parent, const Handle<Annotation> &annot,
 	                      const std::vector<bool> &current_visibility);
 
-	// Returns one bool per layer (1-based: index 0 is unused).
+	// Returns one bool per layer, indexed by 0-based layer index.
 	std::vector<bool> visibility() const;
 
 private:
 
-	std::vector<QCheckBox *> m_checks; // index 0 = layer 1
+	std::vector<QCheckBox *> m_checks; // index i = layer i
 };
 
 } // namespace phonometrica

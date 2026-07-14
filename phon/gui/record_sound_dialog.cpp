@@ -242,7 +242,7 @@ void RecordSoundDialog::populateFormats()
 	const auto names = Sound::supported_sound_format_names();
 
 	auto has_keyword = [&](const char *needle) {
-		for (intptr_t i = 1; i <= names.size(); i++) {
+		for (intptr_t i = 0; i < names.size(); i++) {
 			if (names[i].contains(needle)) return true;
 		}
 		return false;

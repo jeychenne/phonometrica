@@ -165,7 +165,7 @@ public:
 private:
 
 	DatasetView *m_view;
-	int m_dest_col; // 1-based destination position
+	int m_dest_col; // 0-based destination position
 	Dataset::SavedColumn m_saved;
 	bool m_has_saved = false;
 };
@@ -191,8 +191,8 @@ public:
 private:
 
 	DatasetView *m_view;
-	int m_src;  // 1-based original position
-	int m_dest; // 1-based destination in post-removal array
+	int m_src;  // 0-based original position
+	int m_dest; // 0-based destination in post-removal array
 };
 
 

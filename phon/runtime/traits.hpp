@@ -33,6 +33,7 @@ class Object;
 class String;
 class File;
 class Regex;
+struct ScriptRegex;
 class Variant;
 class Iterator;
 class ListIterator;
@@ -59,6 +60,7 @@ template<typename T> struct maybe_cyclic : std::true_type
 NON_CYCLIC(String);
 NON_CYCLIC(File);
 NON_CYCLIC(Regex);
+NON_CYCLIC(ScriptRegex);
 NON_CYCLIC(Iterator);
 NON_CYCLIC(ListIterator);
 NON_CYCLIC(TableIterator);
@@ -110,6 +112,14 @@ template<typename T, typename U> struct is_collectable<std::unordered_map<T, U>>
 //----------------------------------------------------------------------------------------------------------------------
 
 template<typename T> struct is_clonable : std::is_copy_constructible<T>
+{
+
+};
+
+// The script-level Regex keeps reference semantics (see values_references.rst): the new C++ Regex
+// class is copyable (copying recompiles the pattern), but the boxed script object must not be
+// cloned on assignment, otherwise two script variables would stop sharing their match state.
+template<> struct is_clonable<ScriptRegex> : std::false_type
 {
 
 };

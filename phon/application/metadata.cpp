@@ -106,9 +106,9 @@ Date Version::parse_date(const String &str)
 {
     // Your dates are stored as "YYYY-MM-DD" in XML
     auto parts = str.split("-");
-    return std::chrono::year{int(parts[1].to_int())} /
-           std::chrono::month{(unsigned)parts[2].to_int()} /
-           std::chrono::day{(unsigned)parts[3].to_int()};
+    return std::chrono::year{int(parts[0].to_int())} /
+           std::chrono::month{(unsigned)parts[1].to_int()} /
+           std::chrono::day{(unsigned)parts[2].to_int()};
 }
 
 //----------------------------------------------------------------------------------------------------------------------

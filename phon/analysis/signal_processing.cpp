@@ -397,29 +397,29 @@ Array<std::complex<double>> specgram(const Array<double> &data, int nfft, intptr
 
 	auto len = data.size();
 	auto win = create_window(window_size, nfft, window_type);
-	intptr_t j = 1;
+	intptr_t j = 0;
 
 	for (intptr_t k = 0; k + window_size < len; k += noverlap)
 	{
 		auto sample = data.begin() + k;
 		auto buffer = input.begin();
 
-		for (intptr_t n = 1; n <= window_size; n++) {
+		for (intptr_t n = 0; n < window_size; n++) {
 			*buffer++ = *sample++ * win[n];
 		}
-		for (intptr_t n = window_size + 1; n <= nfft; n++) {
+		for (intptr_t n = window_size; n < nfft; n++) {
 			*buffer++ = 0.0;
 		}
 		pocketfft::r2c(shape, stride_in, stride_out, {0}, true,
 		               input.data(), output.data(), 1.0);
 		auto z = output.begin();
 
-		for (intptr_t i = 1; i <= nrow; i++) {
+		for (intptr_t i = 0; i < nrow; i++) {
 			result(i,j) = *z++;
 		}
 		j++;
 	}
-	assert(j-1 == result.ncol());
+	assert(j == result.ncol());
 
 	return result;
 }
@@ -507,11 +507,11 @@ Array<std::complex<double>> &FFT::process(const Array<double> &data)
 	auto sample = data.begin();
 	auto buffer = input.begin();
 
-	for (intptr_t n = 1; n <= len; n++) {
+	for (intptr_t n = 0; n < len; n++) {
 		*buffer++ = *sample++;
 	}
 	// Pad with zeros if the data is shorter than nfft.
-	for (intptr_t n = len + 1; n <= nfft; n++) {
+	for (intptr_t n = len; n < nfft; n++) {
 		*buffer++ = 0.0;
 	}
 

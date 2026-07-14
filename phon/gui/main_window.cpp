@@ -204,10 +204,10 @@ QMenu *MainWindow::createFileMenu()
 	m_open_recent_action = menu->addAction(tr("Open most recent project"), QKeySequence(tr("Ctrl+Shift+O")), this, [this]() {
 		try
 		{
-			auto &lst = Settings::get_list("recent_projects");
+			const auto &lst = Settings::get_list("recent_projects");
 			if (lst.empty()) return;
 			if (!clearForProjectSwitch()) return;
-			auto path = cast<String>(lst[1]);
+			auto path = cast<String>(lst.first());
 			Project::get()->open(path);
 			m_file_manager->refresh();
 			updateRecentProjects(path);
@@ -733,9 +733,9 @@ void MainWindow::rebuildRecentMenu()
 
 	try
 	{
-		auto &lst = Settings::get_list("recent_projects");
+		const auto &lst = Settings::get_list("recent_projects");
 
-		for (intptr_t i = 1; i <= lst.size() && i <= MAX_RECENT; i++)
+		for (intptr_t i = 0; i < lst.size() && i < MAX_RECENT; i++)
 		{
 			auto path = cast<String>(lst[i]);
 			auto qpath = QString::fromUtf8(path.data(), (int) path.size());
@@ -837,11 +837,11 @@ void MainWindow::onNewAnnotation()
 	if (index < 0)
 		return;
 
-	auto &sound = sounds[index + 1]; // 1-based Array
+	auto &sound = sounds[index];
 
 	auto annot = make_handle<Annotation>();
 	annot->set_sound(sound);
-	annot->create_layer(1, "default", false);
+	annot->create_layer(0, "default", false);
 
 	auto *view = createAnnotationView(annot);
 	if (view)
@@ -1884,7 +1884,7 @@ void MainWindow::onFindSilences()
 	auto annot = make_handle<Annotation>();
 	annot->set_sound(sound);
 	auto layer_label_str = String(layer_name.toUtf8().constData());
-	annot->create_empty_layer(1, layer_label_str, false);
+	annot->create_empty_layer(0, layer_label_str, false);
 
 	const auto silence_str = String(silence_text.toUtf8().constData());
 	const auto speech_str  = String(speech_text.toUtf8().constData());
@@ -1892,11 +1892,11 @@ void MainWindow::onFindSilences()
 
 	auto add_silence = [&](double start, double end) {
 		if (end > start)
-			annot->add_interval(1, start, end, silence_str);
+			annot->add_interval(0, start, end, silence_str);
 	};
 	auto add_speech = [&](double start, double end) {
 		if (end > start)
-			annot->add_interval(1, start, end, speech_str);
+			annot->add_interval(0, start, end, speech_str);
 	};
 
 	if (regions.empty())
@@ -2005,12 +2005,12 @@ void MainWindow::onTranscribe()
 
 		auto annot = make_handle<Annotation>();
 		annot->set_sound(sound);
-		annot->create_empty_layer(1, opts.layer_label, false);
+		annot->create_empty_layer(0, opts.layer_label, false);
 
-		for (intptr_t i = 1; i <= layer.count(); i++)
+		for (intptr_t i = 0; i < layer.count(); i++)
 		{
 			const auto &ev = layer.events[i];
-			annot->add_interval(1, ev.start, ev.end, ev.text);
+			annot->add_interval(0, ev.start, ev.end, ev.text);
 		}
 
 		auto *view = createAnnotationView(annot);
@@ -2222,7 +2222,7 @@ Handle<DataTable> MainWindow::selectDataTable()
 	if (index < 0)
 		return {};
 
-	return tables[index + 1]; // 1-based Array
+	return tables[index];
 }
 
 void MainWindow::onAnalyzeData()
@@ -3513,10 +3513,10 @@ void MainWindow::postInitialize()
 	{
 		try
 		{
-			auto &lst = Settings::get_list("recent_projects");
+			const auto &lst = Settings::get_list("recent_projects");
 			if (!lst.empty())
 			{
-				auto path = cast<String>(lst[1]);
+				auto path = cast<String>(lst.first());
 				Project::get()->open(path);
 				m_file_manager->refresh();
 				updateRecentProjects(path);
@@ -3829,8 +3829,7 @@ void MainWindow::onUninstallPlugin()
 	if (!ok || chosen.isEmpty())
 		return;
 
-	// Array is 1-based.
-	for (intptr_t i = 1; i <= m_plugins.size(); i++)
+	for (intptr_t i = 0; i < m_plugins.size(); i++)
 	{
 		auto &p = m_plugins[i];
 		auto label = p->label();

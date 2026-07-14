@@ -101,7 +101,7 @@ Array<String> FormantQuery::build_headers() const
 		// Time series: one group per measurement point with percentage suffix
 		if (m_series)
 		{
-			for (intptr_t p = 1; p <= m_points.size(); p++)
+			for (intptr_t p = 0; p < m_points.size(); p++)
 			{
 				auto pct = (int)m_points[p];
 				char suffix[16];
@@ -215,8 +215,8 @@ Handle<Concordance> FormantQuery::execute()
 					"but the following level(s) have no override and will fall "
 					"back to the default parameters: ",
 					m_override_category.data());
-				for (intptr_t i = 1; i <= uncovered.size(); i++) {
-					if (i > 1) msg.append(", ");
+				for (intptr_t i = 0; i < uncovered.size(); i++) {
+					if (i > 0) msg.append(", ");
 					msg.append(uncovered[i]);
 				}
 				emit_msg(msg);
@@ -244,13 +244,13 @@ Handle<Concordance> FormantQuery::execute()
 
 			try
 			{
-				measure_match(*matches[i+1]); // 1-based indexing
+				measure_match(*matches[i]);
 			}
 			catch (std::exception &e)
 			{
 				// If measurement fails for a single match (e.g. sound file not bound),
 				// fill with NaN and continue rather than aborting the whole query.
-				auto &m = *matches[i+1];
+				auto &m = *matches[i];
 				m.measurements.assign(field_count(), std::nan(""));
 			}
 		}
@@ -299,7 +299,7 @@ Handle<Concordance> FormantQuery::execute()
 
 // Fill match.measurements with raw formant and bandwidth values only.
 // ERB and Bark are computed on the fly by Concordance::get_cell().
-void FormantQuery::measure_match(Match &match, double forced_ceiling, int forced_order) const
+void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int forced_order) const
 {
 	using namespace speech;
 
@@ -398,12 +398,12 @@ void FormantQuery::measure_match(Match &match, double forced_ceiling, int forced
 	// Layout per point: F1..Fn, [B1..Bn]. No ERB/Bark — they are computed on the fly.
 	auto fill_point = [&](const Array<double> &data)
 	{
-		for (int i = 1; i <= nf; i++) {
-			match.measurements[idx++] = data(i, 1);
+		for (int i = 0; i < nf; i++) {
+			match.measurements[idx++] = data(i, 0);
 		}
 		if (m_bandwidth) {
-			for (int i = 1; i <= nf; i++) {
-				match.measurements[idx++] = data(i, 2);
+			for (int i = 0; i < nf; i++) {
+				match.measurements[idx++] = data(i, 1);
 			}
 		}
 	};
@@ -432,7 +432,7 @@ void FormantQuery::measure_match(Match &match, double forced_ceiling, int forced
 		// Time series: output each point's data
 		if (m_series)
 		{
-			for (intptr_t k = 1; k <= npoints; k++) {
+			for (intptr_t k = 0; k < npoints; k++) {
 				fill_point(point_data[k]);
 			}
 		}
@@ -442,16 +442,16 @@ void FormantQuery::measure_match(Match &match, double forced_ceiling, int forced
 		{
 			// Build an averaged nformant×2 matrix
 			Array<double> avg(nf, 2, 0.0);
-			for (intptr_t k = 1; k <= npoints; k++)
+			for (intptr_t k = 0; k < npoints; k++)
 			{
-				for (int i = 1; i <= nf; i++) {
-					for (int j = 1; j <= 2; j++) {
+				for (int i = 0; i < nf; i++) {
+					for (int j = 0; j < 2; j++) {
 						avg(i, j) += point_data[k](i, j);
 					}
 				}
 			}
-			for (int i = 1; i <= nf; i++) {
-				for (int j = 1; j <= 2; j++) {
+			for (int i = 0; i < nf; i++) {
+				for (int j = 0; j < 2; j++) {
 					avg(i, j) /= npoints;
 				}
 			}
@@ -496,7 +496,7 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	{
 		query_progress(i, count);
 		if (m_cancel_requested) return;
-		auto &match = *matches[i+1];
+		auto &match = *matches[i];
 		auto &e = entries[i];
 		try
 		{
@@ -616,7 +616,7 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	// ---- Final fill: measure each match with its selected parameters ----
 	for (int i = 0; i < count; i++)
 	{
-		auto &match = *matches[i+1];
+		auto &match = *matches[i];
 		auto &e = entries[i];
 		if (!e.ok) { match.measurements.assign(field_count(), std::nan("")); continue; }
 		try
@@ -946,9 +946,9 @@ void FormantQuery::write()
 	if (m_method == Method::NPoint && !m_points.empty())
 	{
 		String pts;
-		for (intptr_t i = 1; i <= m_points.size(); i++)
+		for (intptr_t i = 0; i < m_points.size(); i++)
 		{
-			if (i > 1) pts.append(' ');
+			if (i > 0) pts.append(' ');
 			pts.append(String::format("%.1f", m_points[i]));
 		}
 		add_data_node(fs_node, "Points", pts);

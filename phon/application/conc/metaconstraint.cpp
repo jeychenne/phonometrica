@@ -44,9 +44,9 @@ bool DescMetaConstraint::filter(const Document *file) const
 		case Operator::NotContains:
 			return !file->description().contains(value);
 		case Operator::Match:
-			return regex->match(value);
+			return regex->match(value).has_match();
 		case Operator::NotMatch:
-			return !regex->match(value);
+			return !regex->match(value).has_match();
 		default:
 			return false;
 	}

@@ -42,18 +42,18 @@ class OutlierDialog final : public QDialog
 public:
 
 	/// @param numericColumns   Display names of numeric columns (for the column combo).
-	/// @param numericIndices   Corresponding 1-based column indices in the dataset.
+	/// @param numericIndices   Corresponding 0-based column indices in the dataset.
 	/// @param textColumns      Display names of text/factor columns (for group-by combo).
-	/// @param textIndices      Corresponding 1-based column indices in the dataset.
+	/// @param textIndices      Corresponding 0-based column indices in the dataset.
 	OutlierDialog(const QStringList &numericColumns, const QVector<int> &numericIndices,
 	              const QStringList &textColumns, const QVector<int> &textIndices,
 	              QWidget *parent = nullptr);
 
 	// Results (valid after accept).
-	int selectedColumn() const;                  // 1-based dataset column (univariate)
-	QVector<int> selectedColumns() const;        // 1-based dataset columns (multivariate)
+	int selectedColumn() const;                  // 0-based dataset column (univariate)
+	QVector<int> selectedColumns() const;        // 0-based dataset columns (multivariate)
 	stats::ColumnMetric selectedMetric() const;
-	QVector<int> groupByColumns() const;         // 1-based dataset columns (empty = no grouping)
+	QVector<int> groupByColumns() const;         // 0-based dataset columns (empty = no grouping)
 	QString columnName() const;                  // name for the new column
 	bool addFilter() const;                      // whether to auto-add a filter rule
 	double filterThreshold() const;              // threshold value

@@ -1219,23 +1219,27 @@ String &String::replace(Substring before, Substring after, intptr_t ntimes)
 	return *this;
 }
 
-String &String::replace(Regex &pattern, String after, intptr_t ntimes)
+String &String::replace(const Regex &pattern, String after, intptr_t ntimes)
 {
-	if (pattern.match(*this))
+	auto m = pattern.match(*this);
+
+	if (m.has_match())
 	{
-		auto start = pattern.capture_start_iter(0);
-		auto end = pattern.capture_end_iter(0);
+		// The match's subject shares this string's buffer, so its capture iterators point into our
+		// own data as long as we don't mutate it before the final replace() below.
+		auto start = m.capture_start_iter(0);
+		auto end = m.capture_end_iter(0);
 
 		// Replace whole match (same as Perl's $&)
-		after.replace("%%", pattern.capture(0), ntimes);
+		after.replace("%%", m.capture(0), ntimes);
 
 		// At most 9 captures can be replaced
-		auto count = std::min<intptr_t>(pattern.count(), 9);
+		auto count = std::min<intptr_t>(m.count(), 9);
 
 		for (intptr_t i = 1; i <= count; ++i)
 		{
 			String num = String::format("%%%td", i);
-			after.replace(num, pattern.capture(i), ntimes);
+			after.replace(num, m.capture(i), ntimes);
 		}
 
 		replace(start, end, after);
@@ -1343,11 +1347,11 @@ String String::join(const Array<String> &strings, Substring separator)
 	result.reserve(size);
 	auto count = strings.size();
 
-	for (intptr_t i = 1; i <= count; i++)
+	for (intptr_t i = 0; i < count; i++)
 	{
 		result.append(strings[i]);
 
-		if (i < count) {
+		if (i < count - 1) {
 			result.append({separator.data(), separator.size()});
 		}
 	}

@@ -35,7 +35,7 @@
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/utils/file_system.hpp>
-#include <phon/runtime/regex.hpp>
+#include <phon/regex.hpp>
 
 namespace phonometrica {
 
@@ -44,8 +44,7 @@ AnnotationView::AnnotationView(const Handle<Annotation> &annot, QWidget *parent)
 {
 	m_annot->open();
 	// Initialize layer visibility: all layers visible by default.
-	m_layer_visibility.assign(m_annot->size() + 1, true);
-	m_layer_visibility[0] = false; // index 0 is unused
+	m_layer_visibility.assign(m_annot->size(), true);
 	// Now that the AnnotationView vtable is fully constructed, the virtual
 	// hooks addAnnotationLayers() and addAnnotationToolbar() will resolve
 	// to our overrides.
@@ -190,7 +189,7 @@ void AnnotationView::addAnnotationLayers(QLayout *layout)
 	m_layer_layout = vbox;
 
 	intptr_t count = m_annot->size();
-	for (intptr_t i = 1; i <= count; i++)
+	for (intptr_t i = 0; i < count; i++)
 	{
 		auto *widget = createLayerWidget(i);
 		vbox->addWidget(widget);
@@ -240,7 +239,7 @@ void AnnotationView::onAnchorRequested(double time)
 		}
 	}
 
-	if (layer > 0)
+	if (layer >= 0)
 	{
 		for (auto *w : m_layers)
 		{
@@ -311,10 +310,10 @@ void AnnotationView::onFocusEvent(intptr_t target_layer, double time, bool forwa
 {
 	// Find the next visible layer in the given direction.
 	intptr_t idx = target_layer;
-	intptr_t limit = forward ? m_annot->size() : 1;
+	intptr_t limit = forward ? m_annot->size() - 1 : 0;
 	int step = forward ? 1 : -1;
 
-	while (idx >= 1 && idx <= m_annot->size())
+	while (idx >= 0 && idx < m_annot->size())
 	{
 		// Find the widget for this layer.
 		for (auto *w : m_layers)
@@ -355,7 +354,7 @@ bool AnnotationView::addLayer(intptr_t index, const String &name, bool has_insta
 	}
 
 	auto *widget = createLayerWidget(index);
-	int insert_pos = layerLayoutOffset() + (int)(index - 1);
+	int insert_pos = layerLayoutOffset() + (int)index;
 	m_layer_layout->insertWidget(insert_pos, widget);
 
 	// Grow the visibility vector to accommodate the new layer.
@@ -404,7 +403,7 @@ void AnnotationView::onCreateLayer()
 	if (dlg.exec() == QDialog::Accepted)
 	{
 		String name = dlg.layerName();
-		intptr_t index = dlg.layerIndex();
+		intptr_t index = dlg.layerIndex() - 1;
 		bool has_instants = dlg.hasInstants();
 
 		auto cmd = std::make_unique<AddLayerCommand>(this, index, name, has_instants);
@@ -438,14 +437,15 @@ void AnnotationView::onDuplicateLayer()
 
 	bool ok;
 	int new_size = (int)m_annot->size() + 1;
-	int new_index = QInputDialog::getInt(this, tr("Duplicate layer..."), tr("Position:"),
+	int new_pos = QInputDialog::getInt(this, tr("Duplicate layer..."), tr("Position:"),
 		new_size, 1, new_size, 1, &ok);
 
 	if (ok)
 	{
+		intptr_t new_index = new_pos - 1;
 		m_annot->duplicate_layer(index, new_index);
 		auto *widget = createLayerWidget(new_index);
-		int insert_pos = layerLayoutOffset() + new_index - 1;
+		int insert_pos = layerLayoutOffset() + (int)new_index;
 		m_layer_layout->insertWidget(insert_pos, widget);
 
 		// Grow visibility.
@@ -760,8 +760,8 @@ void AnnotationView::onEventSelected(double start, double end)
 		{
 			double mid = (start + end) / 2;
 			intptr_t ev_idx = m_annot->get_event_at_time(w->layerIndex(), mid);
-			if (ev_idx > 0)
-				setAnnotationStatus(tr("Layer %1 / Event %2").arg(w->layerIndex()).arg(ev_idx));
+			if (ev_idx >= 0)
+				setAnnotationStatus(tr("Layer %1 / Event %2").arg(w->layerIndex() + 1).arg(ev_idx + 1));
 			break;
 		}
 	}
@@ -823,10 +823,10 @@ void AnnotationView::populateSearchBarLayers()
 {
 	QStringList names;
 	intptr_t count = m_annot->size();
-	for (intptr_t i = 1; i <= count; i++)
+	for (intptr_t i = 0; i < count; i++)
 	{
 		auto lbl = m_annot->get_layer_label(i);
-		QString display = QString::number(i);
+		QString display = QString::number(i + 1);
 		if (!lbl.empty())
 			display += QStringLiteral(": ") + QString::fromUtf8(lbl.data(), (int)lbl.size());
 		names.append(display);
@@ -836,20 +836,20 @@ void AnnotationView::populateSearchBarLayers()
 
 void AnnotationView::seedSearchCursor()
 {
-	m_search_layer = 0;
-	m_search_event = 0;
+	m_search_layer = -1;
+	m_search_event = -1;
 
 	// If an event is currently selected on the focused layer, start
 	// searching from that position so the next Find advances past it.
 	int layer = focusedLayerIndex();
-	if (layer < 1) return;
+	if (layer < 0) return;
 
 	auto *model = timeModel();
 	if (!model->hasSelection()) return;
 
 	double mid = (model->selectionStart() + model->selectionEnd()) / 2;
 	intptr_t ev = m_annot->get_event_at_time(layer, mid);
-	if (ev > 0)
+	if (ev >= 0)
 	{
 		m_search_layer = layer;
 		m_search_event = ev;
@@ -895,14 +895,15 @@ void AnnotationView::onAnnotFind()
 
 	intptr_t nlayers = m_annot->size();
 
-	// Build the list of layers to search.
-	intptr_t first_layer = (target_layer > 0) ? target_layer : 1;
-	intptr_t last_layer = (target_layer > 0) ? target_layer : nlayers;
+	// Build the list of layers to search. selectedLayer() returns 0 for
+	// "(All layers)" or the 1-based position in the combo box.
+	intptr_t first_layer = (target_layer > 0) ? target_layer - 1 : 0;
+	intptr_t last_layer = (target_layer > 0) ? target_layer - 1 : nlayers - 1;
 
 	// Starting position for continuation. On the first call (or after reset)
-	// m_search_layer == 0, so we start from the beginning.
-	intptr_t start_l = (m_search_layer > 0) ? m_search_layer : first_layer;
-	intptr_t start_e = m_search_event; // 0 means "start from event 1"
+	// m_search_layer == -1, so we start from the beginning.
+	intptr_t start_l = (m_search_layer >= 0) ? m_search_layer : first_layer;
+	intptr_t start_e = m_search_event; // -1 means "start from event 0"
 
 	// We wrap around once: go from (start_l, start_e) to (start_l, start_e - 1).
 	bool wrapped = false;
@@ -914,9 +915,9 @@ void AnnotationView::onAnnotFind()
 		{
 			auto &layer = m_annot->layers()[l];
 			intptr_t nevents = layer.count();
-			intptr_t e_begin = (l == start_l && !wrapped) ? (start_e + 1) : 1;
+			intptr_t e_begin = (l == start_l && !wrapped) ? (start_e + 1) : 0;
 
-			for (intptr_t e = e_begin; e <= nevents; e++)
+			for (intptr_t e = e_begin; e < nevents; e++)
 			{
 				// If we've wrapped and returned to the start position, stop.
 				if (wrapped && l == start_l && e > start_e)
@@ -926,7 +927,7 @@ void AnnotationView::onAnnotFind()
 
 				bool match;
 				if (use_regex)
-					match = re->match(ev.text);
+					match = re->match(ev.text).has_match();
 				else
 					match = case_sensitive ? ev.text.contains(needle) : ev.text.icontains(needle);
 
@@ -969,8 +970,8 @@ void AnnotationView::onAnnotFind()
 
 not_found:
 	QMessageBox::information(this, tr("Find"), tr("Text not found."));
-	m_search_layer = 0;
-	m_search_event = 0;
+	m_search_layer = -1;
+	m_search_event = -1;
 }
 
 void AnnotationView::onAnnotReplace()
@@ -985,10 +986,10 @@ void AnnotationView::onAnnotReplace()
 	bool case_sensitive = m_searchbar->isCaseSensitive();
 
 	// If we have a current match, replace it first.
-	if (m_search_layer > 0 && m_search_event > 0)
+	if (m_search_layer >= 0 && m_search_event >= 0)
 	{
 		auto &layer = m_annot->layers()[m_search_layer];
-		if (m_search_event <= layer.count())
+		if (m_search_event < layer.count())
 		{
 			auto &ev = layer.events[m_search_event];
 			String new_text(ev.text);
@@ -1065,8 +1066,8 @@ void AnnotationView::onAnnotReplaceAll()
 	}
 
 	intptr_t nlayers = m_annot->size();
-	intptr_t first_layer = (target_layer > 0) ? target_layer : 1;
-	intptr_t last_layer = (target_layer > 0) ? target_layer : nlayers;
+	intptr_t first_layer = (target_layer > 0) ? target_layer - 1 : 0;
+	intptr_t last_layer = (target_layer > 0) ? target_layer - 1 : nlayers - 1;
 
 	int count = 0;
 
@@ -1075,7 +1076,7 @@ void AnnotationView::onAnnotReplaceAll()
 		auto &layer = m_annot->layers()[l];
 		intptr_t nevents = layer.count();
 
-		for (intptr_t e = 1; e <= nevents; e++)
+		for (intptr_t e = 0; e < nevents; e++)
 		{
 			auto &ev = layer.events[e];
 			String new_text(ev.text);
@@ -1130,8 +1131,8 @@ void AnnotationView::onAnnotReplaceAll()
 			tr("%1 replacement(s) made.").arg(count));
 	}
 
-	m_search_layer = 0;
-	m_search_event = 0;
+	m_search_layer = -1;
+	m_search_event = -1;
 }
 
 // ─────────────────────────────────────────────────
@@ -1172,20 +1173,20 @@ void AnnotationView::doMoveAnchor(intptr_t layer_index, double from, double to)
 {
 	auto &layer = m_annot->mutable_layer(layer_index);
 
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		auto &ev = layer.events[i];
 		if (ev.start == from && from != 0)
 		{
 			ev.start = to;
-			if (i > 1)
+			if (i > 0)
 				layer.events[i - 1].end = to;
 			break;
 		}
 		else if (ev.end == from)
 		{
 			ev.end = to;
-			if (i < layer.count())
+			if (i < layer.count() - 1)
 				layer.events[i + 1].start = to;
 			break;
 		}
@@ -1196,9 +1197,9 @@ void AnnotationView::doMoveAnchor(intptr_t layer_index, double from, double to)
 	onLayerModified();
 }
 
-void AnnotationView::doSetEventText(intptr_t layer_index, intptr_t event_1based, const String &text)
+void AnnotationView::doSetEventText(intptr_t layer_index, intptr_t event_index, const String &text)
 {
-	m_annot->set_event_text(layer_index, event_1based, text);
+	m_annot->set_event_text(layer_index, event_index, text);
 	refreshLayer(layer_index);
 	onLayerModified();
 }
@@ -1207,7 +1208,7 @@ void AnnotationView::doSetEventText(intptr_t layer_index, double time, const Str
 {
 	// Find the event at the given time and set its text.
 	auto &layer = m_annot->mutable_layer(layer_index);
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		if (layer.events[i].start == time)
 		{
@@ -1226,12 +1227,12 @@ void AnnotationView::doRestoreTextsAroundAnchor(intptr_t layer_index, double tim
 	// After add_anchor split an interval at `time`, restore the original texts
 	// to both halves.
 	auto &layer = m_annot->mutable_layer(layer_index);
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		if (layer.events[i].end == time)
 		{
 			layer.events[i].text = left_text;
-			if (i < layer.count() && layer.events[i + 1].start == time)
+			if (i < layer.count() - 1 && layer.events[i + 1].start == time)
 				layer.events[i + 1].text = right_text;
 			break;
 		}
@@ -1271,10 +1272,10 @@ void AnnotationView::onAnchorMoveDone(intptr_t layer_index, double from, double 
 	record(std::move(cmd));
 }
 
-void AnnotationView::onEventTextEdited(intptr_t layer_index, intptr_t event_1based,
+void AnnotationView::onEventTextEdited(intptr_t layer_index, intptr_t event_index,
                                         String old_text, String new_text)
 {
-	auto cmd = std::make_unique<EditEventTextCommand>(this, layer_index, event_1based,
+	auto cmd = std::make_unique<EditEventTextCommand>(this, layer_index, event_index,
 		std::move(old_text), std::move(new_text));
 	record(std::move(cmd));
 }
@@ -1301,7 +1302,7 @@ void AnnotationView::onCreateBookmark()
 	// Locate the focused layer — the bookmark is anchored to it. This mirrors
 	// the pattern used in onEventSelected: walk m_layers and pick the one
 	// whose isFocused() returns true.
-	intptr_t focus_layer = 0;
+	intptr_t focus_layer = -1;
 	for (auto *w : m_layers)
 	{
 		if (w && w->isFocused())
@@ -1310,7 +1311,7 @@ void AnnotationView::onCreateBookmark()
 			break;
 		}
 	}
-	if (focus_layer <= 0)
+	if (focus_layer < 0)
 	{
 		QMessageBox::information(this, tr("Bookmark"),
 			tr("Click on an annotation layer to give it focus, then try again."));
@@ -1325,7 +1326,7 @@ void AnnotationView::onCreateBookmark()
 	double mid = (t1 + t2) / 2;
 	intptr_t ev_idx = m_annot->get_event_at_time(focus_layer, mid);
 	String event_text;
-	if (ev_idx > 0)
+	if (ev_idx >= 0)
 	{
 		event_text = m_annot->get_event(focus_layer, ev_idx).text;
 	}
@@ -1345,7 +1346,7 @@ void AnnotationView::onCreateBookmark()
 	QString file_name = QString::fromUtf8(base.data(), (int) base.size());
 	QString preview = tr("File: %1  •  Layer %2  •  %3 s – %4 s")
 		.arg(file_name)
-		.arg(focus_layer)
+		.arg(focus_layer + 1)
 		.arg(t1, 0, 'f', 3)
 		.arg(t2, 0, 'f', 3);
 
@@ -1358,7 +1359,7 @@ void AnnotationView::onCreateBookmark()
 	String title(t_utf8.constData(), t_utf8.size());
 	String notes(n_utf8.constData(), n_utf8.size());
 
-	// Construct the TimeStamp directly: Match::to_bookmark is only available
+	// Construct the TimeStamp directly: QueryMatch::to_bookmark is only available
 	// when there is a concordance match, which is not the case here. The
 	// context pair is empty; TimeStamp::tooltip() handles that cleanly.
 	auto bm = make_handle<TimeStamp>(nullptr, title, m_annot, (size_t) focus_layer,

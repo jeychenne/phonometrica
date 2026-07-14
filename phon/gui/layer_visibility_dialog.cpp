@@ -38,12 +38,12 @@ LayerVisibilityDialog::LayerVisibilityDialog(QWidget *parent, const Handle<Annot
 
 	// One checkbox per layer.
 	intptr_t count = annot->size();
-	for (intptr_t i = 1; i <= count; i++)
+	for (intptr_t i = 0; i < count; i++)
 	{
 		auto label = annot->get_layer_label(i);
 		bool has_instants = annot->layer_has_instants(i);
 		auto type = has_instants ? tr("instants") : tr("intervals");
-		auto text = QStringLiteral("%1. %2 (%3)").arg(i).arg(label).arg(type);
+		auto text = QStringLiteral("%1. %2 (%3)").arg(i + 1).arg(label).arg(type);
 
 		auto *cb = new QCheckBox(text, this);
 		// If we have visibility info for this layer, use it; otherwise default to visible.
@@ -80,9 +80,7 @@ LayerVisibilityDialog::LayerVisibilityDialog(QWidget *parent, const Handle<Annot
 
 std::vector<bool> LayerVisibilityDialog::visibility() const
 {
-	// Index 0 is unused (layers are 1-based).
 	std::vector<bool> result;
-	result.push_back(false); // placeholder for index 0
 
 	for (auto *cb : m_checks)
 		result.push_back(cb->isChecked());

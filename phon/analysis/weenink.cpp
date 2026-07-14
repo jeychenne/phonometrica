@@ -216,8 +216,8 @@ find_lpc_parameters(Sound *sound, int channel, int nformant, double win_size, do
 
 				for (intptr_t j = 0; j < nformant; j++)
 				{
-					F(i,j) = formants(j+1, 1);
-					B(i,j) = formants(j+1, 2);
+					F(i,j) = formants(j, 0);
+					B(i,j) = formants(j, 1);
 				}
 
 				i++;

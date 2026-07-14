@@ -305,7 +305,7 @@ public:
 	String &replace(intptr_t i, intptr_t count, Substring after);
 	String &replace(const_iterator from, const_iterator to, Substring after);
 	String &replace(Substring before, Substring after, intptr_t ntimes = -1);
-	String &replace(Regex &pattern, String after, intptr_t ntimes = -1);
+	String &replace(const Regex &pattern, String after, intptr_t ntimes = -1);
 
 	String &replace(char before, char after);
 

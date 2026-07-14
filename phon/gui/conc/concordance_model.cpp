@@ -44,9 +44,8 @@ QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 {
 	if (!index.isValid()) return {};
 
-	// Concordance uses 1-based indexing.
-	intptr_t row = index.row() + 1;
-	intptr_t col = index.column() + 1;
+	intptr_t row = index.row();
+	intptr_t col = index.column();
 
 	switch (role)
 	{
@@ -85,8 +84,8 @@ bool ConcordanceModel::setData(const QModelIndex &index, const QVariant &value, 
 {
 	if (!index.isValid() || role != Qt::EditRole) return false;
 
-	intptr_t row = index.row() + 1;
-	intptr_t col = index.column() + 1;
+	intptr_t row = index.row();
+	intptr_t col = index.column();
 
 	if (!m_conc->is_editable_cell(col)) return false;
 
@@ -126,14 +125,12 @@ bool ConcordanceModel::applyCellEdit(int row, int col, const QString &text)
 	// corrupt the undo stack).
 	if (row < 0 || row >= rowCount() || col < 0 || col >= columnCount()) return false;
 
-	intptr_t r1 = row + 1;
-	intptr_t c1 = col + 1;
-	if (!m_conc->is_editable_cell(c1)) return false;
+	if (!m_conc->is_editable_cell(col)) return false;
 
 	try
 	{
 		auto s = String(text.toUtf8().constData());
-		m_conc->set_cell(r1, c1, s);
+		m_conc->set_cell(row, col, s);
 		Document::file_modified();
 
 		emit dataChanged(index(row, 0), index(row, columnCount() - 1));
@@ -151,13 +148,13 @@ QVariant ConcordanceModel::headerData(int section, Qt::Orientation orientation, 
 	{
 		if (role == Qt::DisplayRole)
 		{
-			auto text = m_conc->get_header(section + 1);
+			auto text = m_conc->get_header(section);
 			return QString::fromUtf8(text.data(), (int) text.size());
 		}
 		if (role == Qt::EditRole)
 		{
 			// Return the default (non-aliased) header for editing
-			auto text = m_conc->get_default_header(section + 1);
+			auto text = m_conc->get_default_header(section);
 			return QString::fromUtf8(text.data(), (int) text.size());
 		}
 	}
@@ -174,7 +171,7 @@ bool ConcordanceModel::setHeaderData(int section, Qt::Orientation orientation, c
 {
 	if (orientation != Qt::Horizontal || role != Qt::EditRole) return false;
 
-	auto default_hdr = m_conc->get_default_header(section + 1);
+	auto default_hdr = m_conc->get_default_header(section);
 	auto new_name = String(value.toString().toUtf8().constData());
 
 	if (new_name.empty() || new_name == default_hdr) {
@@ -198,7 +195,7 @@ Qt::ItemFlags ConcordanceModel::flags(const QModelIndex &index) const
 	auto base = QAbstractTableModel::flags(index);
 	if (!index.isValid()) return base;
 
-	intptr_t col = index.column() + 1;
+	intptr_t col = index.column();
 
 	if (m_conc->is_editable_cell(col)) {
 		return base | Qt::ItemIsEditable;
@@ -210,7 +207,7 @@ Qt::ItemFlags ConcordanceModel::flags(const QModelIndex &index) const
 Concordance::RemovedRow ConcordanceModel::removeMatch(int row)
 {
 	beginRemoveRows(QModelIndex(), row, row);
-	auto data = m_conc->remove_match(row + 1);
+	auto data = m_conc->remove_match(row);
 	endRemoveRows();
 	return data;
 }
@@ -218,7 +215,7 @@ Concordance::RemovedRow ConcordanceModel::removeMatch(int row)
 void ConcordanceModel::restoreMatch(int row, Concordance::RemovedRow data)
 {
 	beginInsertRows(QModelIndex(), row, row);
-	m_conc->restore_match(row + 1, std::move(data));
+	m_conc->restore_match(row, std::move(data));
 	endInsertRows();
 }
 

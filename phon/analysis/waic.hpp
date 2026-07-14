@@ -235,7 +235,7 @@ inline void compute_waic_from_loglik(Model &model, const std::vector<double> &lo
 	// Store per-observation elpd for proper SE(ΔWAIC) in model comparison.
 	model.elpd_i.resize(n);
 	for (intptr_t i = 0; i < n; i++)
-		model.elpd_i[i + 1] = lppd_i[i] - pwaic_i[i];
+		model.elpd_i[i] = lppd_i[i] - pwaic_i[i];
 }
 
 

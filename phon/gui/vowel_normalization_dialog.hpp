@@ -41,9 +41,9 @@ class VowelNormalizationDialog final : public QDialog
 public:
 
 	/// @param numericColumns   Display names of numeric columns.
-	/// @param numericIndices   Corresponding 1-based column indices.
+	/// @param numericIndices   Corresponding 0-based column indices.
 	/// @param textColumns      Display names of text/factor columns.
-	/// @param textIndices      Corresponding 1-based column indices.
+	/// @param textIndices      Corresponding 0-based column indices.
 	/// @param vowelLevels      For each text column index in textIndices, the unique levels (for W&F point-vowel mapping).
 	VowelNormalizationDialog(const QStringList &numericColumns, const QVector<int> &numericIndices,
 	                         const QStringList &textColumns, const QVector<int> &textIndices,
@@ -52,9 +52,9 @@ public:
 
 	// Results (valid after accept).
 	VowelNormMethod selectedMethod() const;
-	QVector<int> selectedFormantColumns() const;   // 1-based dataset column indices
-	int speakerColumn() const;                     // 1-based dataset column index
-	int vowelColumn() const;                       // 1-based dataset column index (W&F only)
+	QVector<int> selectedFormantColumns() const;   // 0-based dataset column indices
+	int speakerColumn() const;                     // 0-based dataset column index
+	int vowelColumn() const;                       // 0-based dataset column index (W&F only)
 	QString labelI() const;
 	QString labelA() const;
 	QString labelU() const;

@@ -48,7 +48,7 @@ IntensityQueryEditor::IntensityQueryEditor(Handle<IntensityQuery> query, QWidget
 	setMinimumSize(900, 600);
 	setupUi();
 	if (!m_query->empty()) loadQuery();
-	if (!m_constraints.empty()) m_constraints[1]->focusSearch();
+	if (!m_constraints.empty()) m_constraints.first()->focusSearch();
 }
 
 void IntensityQueryEditor::setupUi()
@@ -486,7 +486,7 @@ void IntensityQueryEditor::onAddConstraint()
 	m_remove_btn->setEnabled(true);
 	m_ref_constraint->setRange(1, idx);
 
-	m_constraints[1]->setRelationPlaceholder(true);
+	m_constraints.first()->setRelationPlaceholder(true);
 
 	connect(cw, &ConstraintWidget::searchRequested, this, &IntensityQueryEditor::onExecute);
 	connect(cw, &ConstraintWidget::modified, this, [this]() {
@@ -505,7 +505,7 @@ void IntensityQueryEditor::onRemoveConstraint()
 	m_ref_constraint->setRange(1, (int)m_constraints.size());
 
 	if (m_constraints.size() == 1) {
-		m_constraints[1]->setRelationPlaceholder(false);
+		m_constraints.first()->setRelationPlaceholder(false);
 	}
 }
 
@@ -533,7 +533,7 @@ void IntensityQueryEditor::loadQuery()
 
 	intptr_t count = m_query->constraint_count();
 	for (intptr_t i = 2; i <= count; i++) onAddConstraint();
-	for (intptr_t i = 1; i <= count; i++) m_constraints[i]->loadConstraint(m_query->get_constraint(i));
+	for (intptr_t i = 0; i < count; i++) m_constraints[i]->loadConstraint(m_query->get_constraint(i));
 
 	// Reference constraint (always restore)
 	m_ref_constraint->setValue(m_query->reference_constraint());
@@ -553,8 +553,8 @@ void IntensityQueryEditor::loadQuery()
 	if (m_query->method() == IntensityQuery::Method::NPoint) {
 		m_npoint_radio->setChecked(true);
 		QString pts;
-		for (intptr_t i = 1; i <= m_query->measurement_points().size(); i++) {
-			if (i > 1) pts += ' ';
+		for (intptr_t i = 0; i < m_query->measurement_points().size(); i++) {
+			if (i > 0) pts += ' ';
 			pts += QString::number(m_query->measurement_points()[i]);
 		}
 		m_npoint_edit->setText(pts);

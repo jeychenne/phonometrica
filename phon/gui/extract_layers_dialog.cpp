@@ -51,14 +51,14 @@ ExtractLayersDialog::ExtractLayersDialog(QWidget *parent, Annotation &source) :
 	// Layer multi-select.
 	m_layers_list = new QListWidget(this);
 	m_layers_list->setSelectionMode(QAbstractItemView::NoSelection);
-	for (intptr_t i = 1; i <= source.layer_count(); ++i)
+	for (intptr_t i = 0; i < source.layer_count(); ++i)
 	{
 		auto label = source.get_layer_label(i);
 		auto kind  = source.layer_has_instants(i) ? tr("instants") : tr("intervals");
 		QString lbl_qs = QString::fromUtf8(label.data(), (int) label.size());
 		if (lbl_qs.isEmpty()) lbl_qs = tr("(unnamed)");
 
-		QString text = tr("%1. %2  —  %3").arg(i).arg(lbl_qs).arg(kind);
+		QString text = tr("%1. %2  —  %3").arg(i + 1).arg(lbl_qs).arg(kind);
 		auto *item = new QListWidgetItem(text, m_layers_list);
 		item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 		item->setCheckState(Qt::Checked);  // default: all on

@@ -162,7 +162,7 @@ protected:
 
 	void write() override;
 
-	void measure_match(Match &match) const;
+	void measure_match(QueryMatch &match) const;
 
 private:
 

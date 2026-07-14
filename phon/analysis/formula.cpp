@@ -40,7 +40,7 @@ namespace phonometrica::stats {
 bool FixedTerm::operator==(const FixedTerm &other) const
 {
 	if (variables.size() != other.variables.size()) return false;
-	for (intptr_t i = 1; i <= variables.size(); i++)
+	for (intptr_t i = 0; i < variables.size(); i++)
 	{
 		if (variables[i] != other.variables[i]) return false;
 	}
@@ -108,9 +108,9 @@ String quote_name(const String &name)
 String FixedTerm::to_string() const
 {
 	String result;
-	for (intptr_t i = 1; i <= variables.size(); i++)
+	for (intptr_t i = 0; i < variables.size(); i++)
 	{
-		if (i > 1) result.append(":");
+		if (i > 0) result.append(":");
 		result.append(quote_name(variables[i]));
 	}
 	return result;
@@ -133,20 +133,20 @@ static void append_term_array(String &result,
 {
 	const intptr_t n = terms.size();
 	Array<bool> consumed;
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 		consumed.append(false);
 
 	auto find_singleton = [&](const String &v) -> intptr_t {
-		for (intptr_t k = 1; k <= n; k++) {
+		for (intptr_t k = 0; k < n; k++) {
 			if (consumed[k]) continue;
 			const auto &t = terms[k];
-			if (t.variables.size() == 1 && t.variables[1] == v)
+			if (t.variables.size() == 1 && t.variables[0] == v)
 				return k;
 		}
 		return -1;
 	};
 
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		if (consumed[i]) continue;
 		const auto &term = terms[i];
@@ -155,20 +155,20 @@ static void append_term_array(String &result,
 		// whose other singleton {b} is also present.
 		if (term.variables.size() == 1)
 		{
-			const String &a = term.variables[1];
+			const String &a = term.variables[0];
 			intptr_t collapse_pair_idx = -1;
 			intptr_t collapse_singleton_idx = -1;
 			String b_var;
 
-			for (intptr_t k = 1; k <= n; k++)
+			for (intptr_t k = 0; k < n; k++)
 			{
 				if (k == i || consumed[k]) continue;
 				const auto &t = terms[k];
 				if (t.variables.size() != 2) continue;
-				if (t.variables[1] == a) {
-					b_var = t.variables[2];
-				} else if (t.variables[2] == a) {
+				if (t.variables[0] == a) {
 					b_var = t.variables[1];
+				} else if (t.variables[1] == a) {
+					b_var = t.variables[0];
 				} else {
 					continue;
 				}
@@ -196,8 +196,8 @@ static void append_term_array(String &result,
 		// Pattern B: interaction {a, b}; look for both singletons.
 		else if (term.variables.size() == 2)
 		{
-			const String &a = term.variables[1];
-			const String &b = term.variables[2];
+			const String &a = term.variables[0];
+			const String &b = term.variables[1];
 			intptr_t sa = find_singleton(a);
 			intptr_t sb = find_singleton(b);
 			if (sa != -1 && sb != -1)
@@ -332,14 +332,14 @@ String Formula::to_string() const
 	// helper, so `a*b` round-trips identically in both contexts.
 	append_term_array(result, fixed, need_plus);
 
-	for (intptr_t i = 1; i <= smooth.size(); i++)
+	for (intptr_t i = 0; i < smooth.size(); i++)
 	{
 		if (need_plus) result.append(" + ");
 		result.append(smooth[i].to_string());
 		need_plus = true;
 	}
 
-	for (intptr_t i = 1; i <= random.size(); i++)
+	for (intptr_t i = 0; i < random.size(); i++)
 	{
 		if (need_plus) result.append(" + ");
 		result.append(random[i].to_string());
@@ -364,7 +364,7 @@ Array<String> Formula::all_variables() const
 	// Helper to add if not already present.
 	auto add_unique = [&](const String &v)
 	{
-		for (intptr_t i = 1; i <= vars.size(); i++)
+		for (intptr_t i = 0; i < vars.size(); i++)
 		{
 			if (vars[i] == v) return;
 		}
@@ -373,15 +373,15 @@ Array<String> Formula::all_variables() const
 
 	add_unique(response);
 
-	for (intptr_t i = 1; i <= fixed.size(); i++)
+	for (intptr_t i = 0; i < fixed.size(); i++)
 	{
 		auto &ft = fixed[i];
-		for (intptr_t j = 1; j <= ft.variables.size(); j++) {
+		for (intptr_t j = 0; j < ft.variables.size(); j++) {
 			add_unique(ft.variables[j]);
 		}
 	}
 
-	for (intptr_t i = 1; i <= smooth.size(); i++)
+	for (intptr_t i = 0; i < smooth.size(); i++)
 	{
 		add_unique(smooth[i].variable);
 		if (!smooth[i].by.empty()) {
@@ -389,7 +389,7 @@ Array<String> Formula::all_variables() const
 		}
 	}
 
-	for (intptr_t i = 1; i <= random.size(); i++)
+	for (intptr_t i = 0; i < random.size(); i++)
 	{
 		auto &rt = random[i];
 		if (rt.is_synthetic_group)
@@ -414,9 +414,9 @@ Array<String> Formula::all_variables() const
 		{
 			add_unique(rt.group);
 		}
-		for (intptr_t j = 1; j <= rt.slopes.size(); j++) {
+		for (intptr_t j = 0; j < rt.slopes.size(); j++) {
 			auto &st = rt.slopes[j];
-			for (intptr_t v = 1; v <= st.variables.size(); v++) {
+			for (intptr_t v = 0; v < st.variables.size(); v++) {
 				add_unique(st.variables[v]);
 			}
 		}
@@ -674,7 +674,7 @@ private:
 	// Check if a fixed term already exists in the formula.
 	static bool has_term(const Formula &f, const FixedTerm &term)
 	{
-		for (intptr_t i = 1; i <= f.fixed.size(); i++)
+		for (intptr_t i = 0; i < f.fixed.size(); i++)
 		{
 			if (f.fixed[i] == term) return true;
 		}
@@ -777,7 +777,7 @@ private:
 
 		if (vars.size() == 1)
 		{
-			result.append(FixedTerm(vars[1]));
+			result.append(FixedTerm(vars[0]));
 		}
 		else if (has_star)
 		{
@@ -792,7 +792,7 @@ private:
 				for (intptr_t bit = 0; bit < n; bit++)
 				{
 					if (mask & (1 << bit)) {
-						t.variables.append(vars[bit + 1]); // 1-based
+						t.variables.append(vars[bit]);
 					}
 				}
 				result.append(std::move(t));
@@ -802,7 +802,7 @@ private:
 		{
 			// Pure colon interaction: "a:b:c" — just the interaction, no main effects
 			FixedTerm t;
-			for (intptr_t i = 1; i <= vars.size(); i++) {
+			for (intptr_t i = 0; i < vars.size(); i++) {
 				t.variables.append(vars[i]);
 			}
 			result.append(std::move(t));
@@ -836,7 +836,7 @@ private:
 		}
 
 		auto terms = expand_term_chain(first);
-		for (intptr_t i = 1; i <= terms.size(); i++) {
+		for (intptr_t i = 0; i < terms.size(); i++) {
 			add_term(f, std::move(terms[i]));
 		}
 	}
@@ -910,7 +910,7 @@ private:
 		advance();
 
 		// Check for duplicate smooth on the same variable+by+basis combination.
-		for (intptr_t i = 1; i <= f.smooth.size(); i++)
+		for (intptr_t i = 0; i < f.smooth.size(); i++)
 		{
 			if (f.smooth[i].variable == st.variable && f.smooth[i].by == st.by
 			    && f.smooth[i].basis == st.basis)
@@ -982,7 +982,7 @@ private:
 		// Helper to dedupe: append a slope only if not already present.
 		auto add_slope_unique = [&rt](FixedTerm &&t)
 		{
-			for (intptr_t i = 1; i <= rt.slopes.size(); i++) {
+			for (intptr_t i = 0; i < rt.slopes.size(); i++) {
 				if (rt.slopes[i] == t) return;
 			}
 			rt.slopes.append(std::move(t));
@@ -1004,7 +1004,7 @@ private:
 				advance();
 
 				auto terms = expand_term_chain(first);
-				for (intptr_t i = 1; i <= terms.size(); i++) {
+				for (intptr_t i = 0; i < terms.size(); i++) {
 					add_slope_unique(std::move(terms[i]));
 				}
 			}

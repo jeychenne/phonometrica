@@ -181,7 +181,7 @@ protected:
 	void write() override;
 
 	// Run pitch tracking on a single match and fill its measurement vector.
-	void measure_match(Match &match) const;
+	void measure_match(QueryMatch &match) const;
 
 private:
 

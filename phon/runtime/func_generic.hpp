@@ -23,7 +23,7 @@
 #define PHONOMETRICA_FUNC_GENERIC_HPP
 
 #include <phon/file.hpp>
-#include <phon/regex.hpp>
+#include <phon/runtime/script_regex.hpp>
 #include <phon/runtime.hpp>
 #include <phon/runtime/set.hpp>
 
@@ -53,8 +53,8 @@ static Variant get_length(Runtime &, std::span<Variant> args)
 	else if (check_type<Set>(v)) {
 		return cast<Set>(v).size();
 	}
-	else if (check_type<Regex>(v)) {
-		return cast<Regex>(v).count();
+	else if (check_type<ScriptRegex>(v)) {
+		return cast<ScriptRegex>(v).last.count();
 	}
 	else if (check_type<File>(v)) {
 		return cast<File>(v).size();

@@ -56,7 +56,7 @@ QueryEditor::QueryEditor(Handle<Query> query, QWidget *parent) :
 
 	// Default cursor to the search field, not the query name.
 	if (!m_constraints.empty())
-		m_constraints[1]->focusSearch();
+		m_constraints.first()->focusSearch();
 }
 
 void QueryEditor::setupUi()
@@ -543,7 +543,7 @@ void QueryEditor::onAddConstraint()
 	m_ref_constraint->setEnabled(true);
 
 	// Show alignment spacer on the first constraint now that there are siblings.
-	m_constraints[1]->setRelationPlaceholder(true);
+	m_constraints.first()->setRelationPlaceholder(true);
 
 	connect(cw, &ConstraintWidget::searchRequested, this, &QueryEditor::onExecute);
 	connect(cw, &ConstraintWidget::modified, this, [this]() {
@@ -566,7 +566,7 @@ void QueryEditor::onRemoveConstraint()
 
 	// Hide alignment spacer when back to a single constraint.
 	if (m_constraints.size() == 1) {
-		m_constraints[1]->setRelationPlaceholder(false);
+		m_constraints.first()->setRelationPlaceholder(false);
 	}
 }
 
@@ -637,7 +637,7 @@ void QueryEditor::loadQuery()
 	for (intptr_t i = 2; i <= count; i++) {
 		onAddConstraint();
 	}
-	for (intptr_t i = 1; i <= count; i++) {
+	for (intptr_t i = 0; i < count; i++) {
 		m_constraints[i]->loadConstraint(m_query->get_constraint(i));
 	}
 

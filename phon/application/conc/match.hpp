@@ -15,7 +15,7 @@
  *                                                                                                                     *
  * Created: 01/02/2021                                                                                                 *
  *                                                                                                                     *
- * Purpose: a Match represents a line of concordance. Each match has one or more targets: For simple queries with      *
+ * Purpose: a QueryMatch represents a line of concordance. Each match has one or more targets: For simple queries with *
  * a single constraint, there is a single target; for complex queries with two or more constraints, the match contains *
  * a linked list of targets.                                                                                           *
  *                                                                                                                     *
@@ -31,7 +31,7 @@
 
 namespace phonometrica {
 
-class Match final
+class QueryMatch final
 {
 public:
 
@@ -63,11 +63,11 @@ public:
 		bool operator<(const Target &other) const;
 	};
 
-	Match() = default;
+	QueryMatch() = default;
 
-	Match(const Match &other);
+	QueryMatch(const QueryMatch &other);
 
-	Match(const Handle<Annotation> &annot, std::unique_ptr<Target> t);
+	QueryMatch(const Handle<Annotation> &annot, std::unique_ptr<Target> t);
 
 	double get_start_time(intptr_t i) const;
 
@@ -97,9 +97,9 @@ public:
 
 	void append(std::unique_ptr<Target> next);
 
-	bool operator==(const Match &other) const;
-	bool operator!=(const Match &other) const;
-	bool operator<(const Match &other) const;
+	bool operator==(const QueryMatch &other) const;
+	bool operator!=(const QueryMatch &other) const;
+	bool operator<(const QueryMatch &other) const;
 
 	bool update(intptr_t target, bool &modified);
 
@@ -120,7 +120,7 @@ protected:
 	std::unique_ptr<Target> m_target;
 };
 
-using AutoMatch = std::unique_ptr<Match>;
+using AutoMatch = std::unique_ptr<QueryMatch>;
 
 
 struct MatchLess

@@ -65,8 +65,8 @@ public:
 	{
 		String header;
 		AuxColumnType type = AuxColumnType::Text;
-		Array<double> num_data;    // 1-based; used for Numeric and measurement types
-		Array<String> text_data;   // 1-based; used for Text type
+		Array<double> num_data;    // used for Numeric and measurement types
+		Array<String> text_data;   // used for Text type
 		double semitone_ref = 100; // semitone reference Hz (PitchHz only)
 	};
 
@@ -121,7 +121,7 @@ public:
 
 	bool is_layer(intptr_t col) const;
 
-	Match &get_match(intptr_t i);
+	QueryMatch &get_match(intptr_t i);
 
 	bool is_file_info_column(intptr_t col) const;
 
@@ -131,19 +131,19 @@ public:
 
 	bool is_duration_column(intptr_t col) const;
 
-	/// True if column `col` (1-based) is a measurement-time column (derived, non-editable).
+	/// True if column `col` (0-based) is a measurement-time column (derived, non-editable).
 	/// Applies to both Wide (per-point or midpoint) and Long (absolute Time) layouts.
 	bool is_measurement_time_column(intptr_t col) const;
 
-	/// True if column `col` (1-based) is a stored formant or bandwidth value that can be edited.
+	/// True if column `col` (0-based) is a stored formant or bandwidth value that can be edited.
 	bool is_editable_measurement(intptr_t col) const;
 
-	/// True if column `col` (1-based) is the base (non-derived) display column of an auxiliary
+	/// True if column `col` (0-based) is the base (non-derived) display column of an auxiliary
 	/// column added via merge() or apply_protocol(). Derived ERB/Bark/ST display columns are
 	/// computed from the base value and remain read-only.
 	bool is_editable_aux(intptr_t col) const;
 
-	/// True if column `col` (1-based) is editable — either a measurement cell or an aux base cell.
+	/// True if column `col` (0-based) is editable — either a measurement cell or an aux base cell.
 	/// This is the unified predicate the GUI uses to decide whether a cell opens an editor.
 	bool is_editable_cell(intptr_t col) const;
 
@@ -336,12 +336,12 @@ public:
 
 	void modify();
 
-	/// Remove the match at 1-based `row` along with its parallel context-cache
+	/// Remove the match at 0-based `row` along with its parallel context-cache
 	/// entry and aux-column cells. Returns a RemovedRow that captures every part
 	/// needed by restore_match() to put the row back exactly as it was.
 	RemovedRow remove_match(intptr_t row);
 
-	/// Reinsert a row previously captured by remove_match() at 1-based `row`,
+	/// Reinsert a row previously captured by remove_match() at 0-based `row`,
 	/// restoring the match, the context cache entry (if any), and the aux-column
 	/// cells in each auxiliary column.
 	void restore_match(intptr_t row, RemovedRow data);
@@ -364,7 +364,7 @@ public:
 	/// The values vector must have exactly row_count() elements.
 	void add_text_column(const String &header, const std::vector<String> &values);
 
-	/// Apply a coding protocol to the text of column `source_col` (1-based), appending one new
+	/// Apply a coding protocol to the text of column `source_col` (0-based), appending one new
 	/// text aux column per protocol field. Cells are read via get_cell() so any text column is
 	/// accepted (targets, aux columns, file info, context, metadata); measurement (numeric)
 	/// columns are rejected. When `translate` is true (default), raw captures are replaced by
@@ -389,20 +389,20 @@ public:
 	intptr_t aux_stored_count() const { return m_aux_columns.size(); }
 	intptr_t aux_display_column_count() const;
 
-	/// Returns the number of display columns produced by aux column c (1-based).
+	/// Returns the number of display columns produced by aux column c (0-based).
 	int aux_col_display_width(intptr_t c) const;
 
-	/// Given a 1-based display column index, return the 1-based stored aux column index
-	/// if it falls in the aux region, or 0 if it does not.
+	/// Given a 0-based display column index, return the 0-based stored aux column index
+	/// if it falls in the aux region, or -1 if it does not.
 	intptr_t resolve_aux_column(intptr_t display_col) const;
 
-	/// Remove the stored aux column at 1-based index c.
+	/// Remove the stored aux column at 0-based index c.
 	void remove_aux_column(intptr_t c);
 
 	/// Extract an aux column, removing it from the concordance and returning it for undo storage.
 	AuxColumn extract_aux_column(intptr_t c);
 
-	/// Restore a previously extracted aux column at position c (1-based).
+	/// Restore a previously extracted aux column at position c (0-based).
 	void restore_aux_column(intptr_t c, AuxColumn col);
 
 	/// True if any aux column of the given measurement type exists.
@@ -436,7 +436,7 @@ public:
 
 	std::pair<String, String> get_context(intptr_t i) const;
 
-	/// Compute the default (non-aliased) header for column j (1-based).
+	/// Compute the default (non-aliased) header for column j (0-based).
 	String get_default_header(intptr_t j) const;
 
 	/// Returns a unique concordance number (1, 2, 3...) for default naming.
@@ -467,11 +467,11 @@ protected:
 
 	void find_event_context();
 
-	std::pair<String, String> get_kwic_context(const Match &match, const String &sep) const;
+	std::pair<String, String> get_kwic_context(const QueryMatch &match, const String &sep) const;
 
-	std::pair<String, String> get_labels_context(const Match &match) const;
+	std::pair<String, String> get_labels_context(const QueryMatch &match) const;
 
-	std::pair<String, String> get_event_context(const Match &match) const;
+	std::pair<String, String> get_event_context(const QueryMatch &match) const;
 
 	int match_region_size() const;
 
@@ -480,8 +480,8 @@ protected:
 	// Number of extra columns in the current layout.
 	intptr_t effective_extra_count() const;
 
-	// In long mode, map display row i (1-based) to match index and point index.
-	intptr_t match_for_row(intptr_t i) const;  // 1-based match index
+	// In long mode, map display row i (0-based) to match index and point index.
+	intptr_t match_for_row(intptr_t i) const;  // 0-based match index
 	intptr_t point_for_row(intptr_t i) const;  // 0-based point index
 
 	/// Resolve a display column within a measurement group to a double value.
@@ -495,16 +495,16 @@ protected:
 	String format_measurement(double val, int within_group) const;
 
 	/// Return the stored measurement index for an editable column, or -1 if not editable.
-	/// `extra_j` is 1-based index within extra columns; `row` is 1-based display row.
+	/// `extra_j` is 0-based index within extra columns; `row` is 0-based display row.
 	intptr_t stored_index_for_column(intptr_t extra_j, intptr_t row) const;
 
 	/// Detect formant metadata from old-format headers and migrate measurement vectors.
 	void normalize_after_load();
 
-	/// Return the display header for the k-th display sub-column (1-based) of aux column c (1-based).
+	/// Return the display header for the k-th display sub-column (0-based) of aux column c (0-based).
 	String aux_display_header(intptr_t c, intptr_t k) const;
 
-	/// Return the display value for the k-th display sub-column (1-based) of aux column c, at row mi (1-based).
+	/// Return the display value for the k-th display sub-column (0-based) of aux column c, at row mi (0-based).
 	String aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const;
 
 	Array<AutoMatch> m_matches;
@@ -590,7 +590,7 @@ protected:
 
 	// ── Auxiliary columns from horizontal merge ──────────────────────────
 
-	Array<AuxColumn> m_aux_columns;     // 1-based typed aux columns
+	Array<AuxColumn> m_aux_columns;     // typed aux columns
 
 	bool m_aux_pitch_st = false;        // show semitone columns for merged F0
 	bool m_aux_pitch_erb = false;       // show ERB-rate columns for merged F0

@@ -357,25 +357,25 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k)
 	sb.penalty_rank = k - 2;
 	sb.null_dim = 2;  // penalty null space: constant + linear
 
-	// Copy knots to 1-based Array.
+	// Copy knots to Array.
 	sb.knots = Array<double>(k, 0.0);
 	for (intptr_t i = 0; i < k; i++) {
-		sb.knots[i + 1] = knots_vec[i];
+		sb.knots[i] = knots_vec[i];
 	}
 
-	// Copy B (n × k_eff) into 1-based 2D Array.
+	// Copy B (n × k_eff) into 2D Array.
 	sb.B = Array<double>(n, sb.k_eff, 0.0);
 	for (intptr_t j = 0; j < sb.k_eff; j++) {
 		for (intptr_t i = 0; i < n; i++) {
-			sb.B(i + 1, j + 1) = absorbed.B(i, j);
+			sb.B(i, j) = absorbed.B(i, j);
 		}
 	}
 
-	// Copy S (k_eff × k_eff) into 1-based 2D Array.
+	// Copy S (k_eff × k_eff) into 2D Array.
 	sb.S = Array<double>(sb.k_eff, sb.k_eff, 0.0);
 	for (intptr_t j = 0; j < sb.k_eff; j++) {
 		for (intptr_t i = 0; i < sb.k_eff; i++) {
-			sb.S(i + 1, j + 1) = absorbed.S(i, j);
+			sb.S(i, j) = absorbed.S(i, j);
 		}
 	}
 
@@ -383,7 +383,7 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k)
 	sb.F_deriv2 = Array<double>(k, k, 0.0);
 	for (intptr_t j = 0; j < k; j++) {
 		for (intptr_t i = 0; i < k; i++) {
-			sb.F_deriv2(i + 1, j + 1) = cm.F(i, j);
+			sb.F_deriv2(i, j) = cm.F(i, j);
 		}
 	}
 
@@ -391,7 +391,7 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k)
 	sb.Z_absorb = Array<double>(k, sb.k_eff, 0.0);
 	for (intptr_t j = 0; j < sb.k_eff; j++) {
 		for (intptr_t i = 0; i < k; i++) {
-			sb.Z_absorb(i + 1, j + 1) = absorbed.Z(i, j);
+			sb.Z_absorb(i, j) = absorbed.Z(i, j);
 		}
 	}
 
@@ -417,10 +417,10 @@ Array<double> SmoothBasis::predict(const std::vector<double> &x_new) const
 
 	intptr_t n_new = (intptr_t)x_new.size();
 
-	// Recover knots as 0-based vector.
+	// Recover knots as std::vector.
 	std::vector<double> knots_vec(k);
 	for (intptr_t i = 0; i < k; i++) {
-		knots_vec[i] = knots[i + 1];
+		knots_vec[i] = knots[i];
 	}
 
 	// Recover F as Eigen matrix.
@@ -433,11 +433,11 @@ Array<double> SmoothBasis::predict(const std::vector<double> &x_new) const
 	Map<Matrix<double>> Z_map(const_cast<double *>(Z_absorb.data()), k, k_eff);
 	Matrix<double> B_new = B_raw * Z_map;
 
-	// Pack into 1-based 2D Array.
+	// Pack into 2D Array.
 	Array<double> result(n_new, k_eff, 0.0);
 	for (intptr_t j = 0; j < k_eff; j++) {
 		for (intptr_t i = 0; i < n_new; i++) {
-			result(i + 1, j + 1) = B_new(i, j);
+			result(i, j) = B_new(i, j);
 		}
 	}
 
@@ -491,14 +491,14 @@ SmoothBasis build_re_basis(const Array<String> &levels,
 		sb.B = Array<double>(nobs, sb.k_eff, 0.0);
 		for (intptr_t j = 0; j < sb.k_eff; j++) {
 			for (intptr_t i = 0; i < nobs; i++) {
-				sb.B(i + 1, j + 1) = absorbed.B(i, j);
+				sb.B(i, j) = absorbed.B(i, j);
 			}
 		}
 
 		sb.S = Array<double>(sb.k_eff, sb.k_eff, 0.0);
 		for (intptr_t j = 0; j < sb.k_eff; j++) {
 			for (intptr_t i = 0; i < sb.k_eff; i++) {
-				sb.S(i + 1, j + 1) = absorbed.S(i, j);
+				sb.S(i, j) = absorbed.S(i, j);
 			}
 		}
 	}
@@ -513,11 +513,11 @@ SmoothBasis build_re_basis(const Array<String> &levels,
 
 		sb.B = Array<double>(nobs, J, 0.0);
 		for (intptr_t i = 0; i < nobs; i++) {
-			sb.B(i + 1, indices[i] + 1) = 1.0;
+			sb.B(i, indices[i]) = 1.0;
 		}
 
 		sb.S = Array<double>(J, J, 0.0);
-		for (intptr_t j = 1; j <= J; j++) {
+		for (intptr_t j = 0; j < J; j++) {
 			sb.S(j, j) = 1.0;
 		}
 	}

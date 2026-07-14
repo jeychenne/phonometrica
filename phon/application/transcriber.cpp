@@ -164,7 +164,7 @@ Array<float> Transcriber::prepare_samples(Sound &sound)
 	{
 		auto view = sound.channel_view(1);
 		for (intptr_t i = 0; i < nframes; i++)
-			mono[i + 1] = double(view[i]);
+			mono[i] = double(view[i]);
 	}
 	else
 	{
@@ -173,7 +173,7 @@ Array<float> Transcriber::prepare_samples(Sound &sound)
 		{
 			auto view = sound.channel_view(c);
 			for (intptr_t i = 0; i < nframes; i++)
-				mono[i + 1] += double(view[i]) * scale;
+				mono[i] += double(view[i]) * scale;
 		}
 	}
 
@@ -191,7 +191,7 @@ Array<float> Transcriber::prepare_samples(Sound &sound)
 
 	// Convert to float for whisper; clip defensively.
 	Array<float> out(resampled.size(), 0.0f);
-	for (intptr_t i = 1; i <= resampled.size(); i++)
+	for (intptr_t i = 0; i < resampled.size(); i++)
 	{
 		double v = resampled[i];
 		if (v > 1.0) v = 1.0;
@@ -207,8 +207,7 @@ Layer Transcriber::transcribe(Sound &sound, const Options &opts, ProgressCallbac
 
 	auto samples = prepare_samples(sound);
 
-	// Flatten to a raw float* that whisper can read. Array<T> is 1-based but data()
-	// still points at element [1], so we pass data() and the physical count.
+	// Flatten to a raw float* that whisper can read.
 	const int n_samples = int(samples.size());
 	const float *sample_ptr = samples.data();
 

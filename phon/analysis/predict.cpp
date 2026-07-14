@@ -61,7 +61,7 @@ namespace {
 // validated inside predict_at_training / predict_at, not here.
 static String validate_scope(const Model &model, const PredictOptions &opts)
 {
-	for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+	for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
 		if (!sm.by.empty()) {
@@ -92,16 +92,16 @@ static String validate_scope(const Model &model, const PredictOptions &opts)
 
 // ─── DataTable column lookup ─────────────────────────────────────────
 
-// Find the 1-based column index for a variable name in a DataTable.
-// Returns 0 if not found. Mirrors find_column() in fitting.cpp.
+// Find the 0-based column index for a variable name in a DataTable.
+// Returns -1 if not found. Mirrors find_column() in fitting.cpp.
 static intptr_t find_column(const DataTable &data, const String &name)
 {
 	intptr_t nc = data.column_count();
-	for (intptr_t j = 1; j <= nc; j++)
+	for (intptr_t j = 0; j < nc; j++)
 	{
 		if (data.get_header(j) == name) return j;
 	}
-	return 0;
+	return -1;
 }
 
 
@@ -112,7 +112,7 @@ static intptr_t find_column(const DataTable &data, const String &name)
 // expanded at fit time and therefore must have an entry).
 static const Model::VariableInfo *find_variable_info(const Model &model, const String &name)
 {
-	for (intptr_t i = 1; i <= model.variable_info.size(); i++)
+	for (intptr_t i = 0; i < model.variable_info.size(); i++)
 	{
 		if (model.variable_info[i].name == name) {
 			return &model.variable_info[i];
@@ -131,7 +131,7 @@ build_coef_index(const Model &model, intptr_t parametric_end)
 	std::map<std::string, intptr_t> idx;
 	for (intptr_t j = 0; j < parametric_end; j++)
 	{
-		auto &n = model.coef_names[j + 1];     // Array is 1-based
+		auto &n = model.coef_names[j];
 		idx[std::string(n.data(), n.size())] = j;
 	}
 	return idx;
@@ -144,7 +144,7 @@ build_coef_index(const Model &model, intptr_t parametric_end)
 static intptr_t parametric_end_of(const Model &model)
 {
 	intptr_t end = model.beta.size();
-	for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+	for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
 		if (sm.col_start < end) end = sm.col_start;
@@ -222,17 +222,17 @@ expand_row_variable(const DataTable &data, intptr_t row, intptr_t col,
 		return out;
 	}
 
-	// Reference level is at position 1 in vi.levels (extract_levels guarantees).
-	// Dummies are columns named "<var>[<lev>]" for lev in vi.levels[2..].
-	intptr_t found_index = 0;       // 1-based; 0 means "not in levels"
-	for (intptr_t k = 1; k <= vi.levels.size(); k++)
+	// Reference level is at position 0 in vi.levels (extract_levels guarantees).
+	// Dummies are columns named "<var>[<lev>]" for lev in vi.levels[1..].
+	intptr_t found_index = -1;      // 0-based; -1 means "not in levels"
+	for (intptr_t k = 0; k < vi.levels.size(); k++)
 	{
 		if (cell == vi.levels[k]) {
 			found_index = k;
 			break;
 		}
 	}
-	if (found_index == 0)
+	if (found_index < 0)
 	{
 		out.ok = false;
 		out.error = String::format(
@@ -242,7 +242,7 @@ expand_row_variable(const DataTable &data, intptr_t row, intptr_t col,
 		return out;
 	}
 
-	for (intptr_t k = 2; k <= vi.levels.size(); k++)
+	for (intptr_t k = 1; k < vi.levels.size(); k++)
 	{
 		String name = vi.name;
 		name.append("[");
@@ -326,24 +326,24 @@ static bool build_param_row(const DataTable &newdata, intptr_t row,
 		return &cache[key];
 	};
 
-	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
+	for (intptr_t i = 0; i < formula.fixed.size(); i++)
 	{
 		auto &ft = formula.fixed[i];
 
 		if (ft.variables.size() == 1)
 		{
-			auto *exp = get_expansion(ft.variables[1]);
+			auto *exp = get_expansion(ft.variables[0]);
 			if (!exp->ok) { row_error = exp->error; return false; }
 
 			if (exp->numeric)
 			{
-				if (!put(ft.variables[1], exp->numeric_value)) return false;
+				if (!put(ft.variables[0], exp->numeric_value)) return false;
 			}
 			else
 			{
-				for (intptr_t k = 1; k <= exp->dummy_names.size(); k++)
+				for (intptr_t k = 0; k < exp->dummy_names.size(); k++)
 				{
-					if (!put(exp->dummy_names[k], exp->dummy_values[(size_t)(k - 1)]))
+					if (!put(exp->dummy_names[k], exp->dummy_values[(size_t) k]))
 						return false;
 				}
 			}
@@ -356,7 +356,7 @@ static bool build_param_row(const DataTable &newdata, intptr_t row,
 			// must match build_interaction()'s naming and ordering exactly.
 			struct Component { Array<String> names; std::vector<double> vals; };
 			std::vector<Component> comps;
-			for (intptr_t j = 1; j <= ft.variables.size(); j++)
+			for (intptr_t j = 0; j < ft.variables.size(); j++)
 			{
 				auto *exp = get_expansion(ft.variables[j]);
 				if (!exp->ok) { row_error = exp->error; return false; }
@@ -368,10 +368,10 @@ static bool build_param_row(const DataTable &newdata, intptr_t row,
 				}
 				else
 				{
-					for (intptr_t k = 1; k <= exp->dummy_names.size(); k++)
+					for (intptr_t k = 0; k < exp->dummy_names.size(); k++)
 					{
 						c.names.append(exp->dummy_names[k]);
-						c.vals.push_back(exp->dummy_values[(size_t)(k - 1)]);
+						c.vals.push_back(exp->dummy_values[(size_t) k]);
 					}
 				}
 				comps.push_back(std::move(c));
@@ -383,24 +383,24 @@ static bool build_param_row(const DataTable &newdata, intptr_t row,
 			{
 				Array<String> new_names;
 				std::vector<double> new_vals;
-				for (intptr_t li = 1; li <= result_names.size(); li++)
+				for (intptr_t li = 0; li < result_names.size(); li++)
 				{
-					for (intptr_t ri = 1; ri <= comps[c].names.size(); ri++)
+					for (intptr_t ri = 0; ri < comps[c].names.size(); ri++)
 					{
 						String name = result_names[li];
 						name.append(":");
 						name.append(comps[c].names[ri]);
 						new_names.append(std::move(name));
-						new_vals.push_back(result_vals[(size_t)(li - 1)]
-						                   * comps[c].vals[(size_t)(ri - 1)]);
+						new_vals.push_back(result_vals[(size_t) li]
+						                   * comps[c].vals[(size_t) ri]);
 					}
 				}
 				result_names = std::move(new_names);
 				result_vals = std::move(new_vals);
 			}
-			for (intptr_t k = 1; k <= result_names.size(); k++)
+			for (intptr_t k = 0; k < result_names.size(); k++)
 			{
-				if (!put(result_names[k], result_vals[(size_t)(k - 1)])) return false;
+				if (!put(result_names[k], result_vals[(size_t) k])) return false;
 			}
 		}
 	}
@@ -419,7 +419,7 @@ static bool build_smooth_row(const DataTable &newdata, intptr_t row,
                              std::vector<double> &x_row,
                              String &row_error)
 {
-	for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+	for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
 		auto &bd = sm.basis_data;
@@ -471,7 +471,7 @@ static bool build_smooth_row(const DataTable &newdata, intptr_t row,
 		intptr_t k_eff = sm.col_count;
 		for (intptr_t j = 0; j < k_eff; j++)
 		{
-			x_row[(size_t)(sm.col_start + j)] = B_row(1, j + 1);
+			x_row[(size_t)(sm.col_start + j)] = B_row(0, j);
 		}
 	}
 	return true;
@@ -564,7 +564,7 @@ static Eigen::Map<const Eigen::VectorXd> beta_view(const Model &model)
 
 // Convert a stored vcov Array (p×p) into an Eigen matrix view.
 // Phonometrica's Array<double> 2D storage is column-major (verified via
-// d2_to_base0 in array.hpp: index = (col-1)*nrow + (row-1)). Eigen's default
+// to_flat in array.hpp: index = col*nrow + row). Eigen's default
 // is also column-major, so a plain Map suffices — no strides, no copies.
 // vcov is required to be square; caller has verified !vcov.empty().
 static Eigen::Map<const Eigen::MatrixXd>
@@ -583,8 +583,8 @@ vcov_view(const Model &model, intptr_t p)
 // 0), so the formula above handles intercepts uniformly with slopes.
 struct REGroupSpec
 {
-	intptr_t group_idx = 0;          // 1-based index into model.random_effects
-	intptr_t newdata_col = 0;        // 1-based column index of the grouping factor in newdata (0 if N/A)
+	intptr_t group_idx = 0;          // 0-based index into model.random_effects
+	intptr_t newdata_col = -1;       // 0-based column index of the grouping factor in newdata (-1 if N/A)
 	std::map<String, intptr_t> level_idx;   // level name → 0-based row in conditional_modes
 	std::vector<intptr_t> term_x_col;       // 0-based X column for each random term
 	intptr_t nterms = 0;
@@ -612,21 +612,21 @@ static bool resolve_re_groups(const Model &model, const PredictOptions &opts,
 		return true;
 	}
 
-	std::vector<intptr_t> wanted;  // 1-based group indices
+	std::vector<intptr_t> wanted;  // 0-based group indices
 	if (opts.re_form == "all") {
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			wanted.push_back(g);
 		}
 	} else {
-		intptr_t found = 0;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		intptr_t found = -1;
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			if (model.random_effects[g].group_name == opts.re_form) {
 				found = g; break;
 			}
 		}
-		if (found == 0) {
+		if (found < 0) {
 			std::string valid = "\"none\", \"all\"";
-			for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+			for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 				valid += ", \"";
 				valid += std::string(model.random_effects[g].group_name.data(),
 				                     (size_t) model.random_effects[g].group_name.size());
@@ -665,8 +665,8 @@ static bool resolve_re_groups(const Model &model, const PredictOptions &opts,
 		}
 
 		// level name → 0-based row
-		for (intptr_t l = 1; l <= re.level_names.size(); l++) {
-			spec.level_idx[re.level_names[l]] = l - 1;
+		for (intptr_t l = 0; l < re.level_names.size(); l++) {
+			spec.level_idx[re.level_names[l]] = l;
 		}
 
 		// Each random term must match a fixed-effect coefficient name (the
@@ -674,7 +674,7 @@ static bool resolve_re_groups(const Model &model, const PredictOptions &opts,
 		// machinery, so the name strings agree exactly when the random term
 		// has a fixed-effect counterpart).
 		spec.term_x_col.reserve((size_t) re.term_names.size());
-		for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+		for (intptr_t t = 0; t < re.term_names.size(); t++) {
 			std::string tname(re.term_names[t].data(), (size_t) re.term_names[t].size());
 			auto it_c = coef_idx.find(tname);
 			if (it_c == coef_idx.end()) {
@@ -825,7 +825,7 @@ PredictResult predict_at_training(const Model &model, const PredictOptions &opts
 			double zu = 0.0;
 			for (intptr_t t = 0; t < spec.nterms; t++) {
 				intptr_t xc = spec.term_x_col[(size_t) t];
-				zu += xi[xc] * re.conditional_modes[L * spec.nterms + t + 1]; // 1-based
+				zu += xi[xc] * re.conditional_modes[L * spec.nterms + t];
 			}
 			eta_row += zu;
 		}
@@ -876,12 +876,12 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 		return out;
 	}
 
-	// Map predictor names → newdata column indices (1-based; 0 = missing).
+	// Map predictor names → newdata column indices (0-based; -1 = missing).
 	// We allow newdata to omit columns that are not in the formula; we
 	// only require columns for variables that appear as predictors.
 	std::map<String, intptr_t> col_idx;
 	intptr_t nc = newdata.column_count();
-	for (intptr_t j = 1; j <= nc; j++)
+	for (intptr_t j = 0; j < nc; j++)
 	{
 		col_idx[newdata.get_header(j)] = j;
 	}
@@ -891,14 +891,14 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 	// a structural mismatch rather than a data gap.
 	auto require_col = [&](const String &name) -> intptr_t {
 		auto it = col_idx.find(name);
-		return (it == col_idx.end()) ? 0 : it->second;
+		return (it == col_idx.end()) ? -1 : it->second;
 	};
-	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
+	for (intptr_t i = 0; i < formula.fixed.size(); i++)
 	{
 		auto &ft = formula.fixed[i];
-		for (intptr_t j = 1; j <= ft.variables.size(); j++)
+		for (intptr_t j = 0; j < ft.variables.size(); j++)
 		{
-			if (require_col(ft.variables[j]) == 0) {
+			if (require_col(ft.variables[j]) < 0) {
 				out.error = String::format(
 					"predict(): newdata is missing required column '%s'",
 					std::string(ft.variables[j].data(), ft.variables[j].size()).c_str());
@@ -906,9 +906,9 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 			}
 		}
 	}
-	for (intptr_t i = 1; i <= formula.smooth.size(); i++)
+	for (intptr_t i = 0; i < formula.smooth.size(); i++)
 	{
-		if (require_col(formula.smooth[i].variable) == 0) {
+		if (require_col(formula.smooth[i].variable) < 0) {
 			out.error = String::format(
 				"predict(): newdata is missing required column '%s' (smooth)",
 				std::string(formula.smooth[i].variable.data(),
@@ -943,7 +943,7 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 
 	std::vector<double> x_row;
 
-	for (intptr_t row = 1; row <= n_new; row++)
+	for (intptr_t row = 0; row < n_new; row++)
 	{
 		x_row.assign((size_t) p, 0.0);
 		String row_error;
@@ -965,8 +965,8 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 			// fit time. The current behaviour is to NaN it out per the
 			// "allow_new_levels=false default" policy. A future release will
 			// expose allow_new_levels=true to set u=0 for the unseen level.
-			eta[(size_t)(row - 1)] = std::nan("");
-			se[(size_t)(row - 1)] = std::nan("");
+			eta[(size_t) row] = std::nan("");
+			se[(size_t) row] = std::nan("");
 			continue;
 		}
 
@@ -997,18 +997,18 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 			for (intptr_t t = 0; t < spec.nterms; t++) {
 				intptr_t xc = spec.term_x_col[(size_t) t];
 				zu += x_row[(size_t) xc]
-				      * re.conditional_modes[L * spec.nterms + t + 1]; // 1-based
+				      * re.conditional_modes[L * spec.nterms + t];
 			}
 			eta_row += zu;
 		}
 		if (!re_ok) {
-			eta[(size_t)(row - 1)] = std::nan("");
-			se[(size_t)(row - 1)] = std::nan("");
+			eta[(size_t) row] = std::nan("");
+			se[(size_t) row] = std::nan("");
 			continue;
 		}
 
-		eta[(size_t)(row - 1)] = eta_row;
-		se[(size_t)(row - 1)] = (q > 0) ? std::sqrt(q) : 0.0;
+		eta[(size_t) row] = eta_row;
+		se[(size_t) row] = (q > 0) ? std::sqrt(q) : 0.0;
 	}
 
 	assemble_ci(model, opts, eta, se, out);

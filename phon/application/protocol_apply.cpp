@@ -64,9 +64,9 @@ static String build_composite_pattern(const Protocol &protocol)
 	}
 
 	String pattern("^");
-	for (intptr_t i = 1; i <= fields.size(); i++)
+	for (intptr_t i = 0; i < fields.size(); i++)
 	{
-		if (i > 1 && has_sep)
+		if (i > 0 && has_sep)
 		{
 			pattern.append("(?:");
 			pattern.append(escaped_sep);
@@ -96,7 +96,7 @@ static String translate_field_value(const SearchField &field, const String &raw,
 		return raw;
 	}
 	const int flags = case_sensitive ? Regex::None : Regex::Caseless;
-	for (intptr_t i = 1; i <= field.values.size(); i++)
+	for (intptr_t i = 0; i < field.values.size(); i++)
 	{
 		const auto &v = field.values[i];
 		String p("^(?:");
@@ -123,13 +123,13 @@ ProtocolApplyResult apply_protocol(const Array<String> &source,
 	const int composite_flags = protocol.case_sensitive() ? Regex::None : Regex::Caseless;
 
 	// Field-name headers, one per output column.
-	for (intptr_t j = 1; j <= n_fields; j++) {
+	for (intptr_t j = 0; j < n_fields; j++) {
 		result.headers.append(fields[j].name);
 	}
 
 	// Pre-allocate one output column per field with capacity for n_rows entries. Array<String>(n)
 	// is capacity-only (size 0); values are appended inside the main loop below.
-	for (intptr_t j = 1; j <= n_fields; j++) {
+	for (intptr_t j = 0; j < n_fields; j++) {
 		result.columns.append(Array<String>(n_rows));
 	}
 
@@ -143,19 +143,21 @@ ProtocolApplyResult apply_protocol(const Array<String> &source,
 	// before any row is processed.
 	Regex composite(build_composite_pattern(protocol), composite_flags);
 
-	for (intptr_t i = 1; i <= n_rows; i++)
+	for (intptr_t i = 0; i < n_rows; i++)
 	{
 		const String &text = source[i];
 
-		if (composite.match(text))
+		auto m = composite.match(text);
+		if (m)
 		{
 			// A row is counted as "untranslated" if any of its fields fell through to the raw
 			// value despite having SearchValues defined. We append to untranslated_rows at most
 			// once per row (after the per-field loop).
 			bool row_had_untranslated = false;
-			for (intptr_t j = 1; j <= n_fields; j++)
+			for (intptr_t j = 0; j < n_fields; j++)
 			{
-				String raw = composite.capture(j);
+				// Capture groups are numbered from 1 (group 0 is the whole match).
+				String raw = m.capture(j + 1);
 				String cell;
 				if (translate) {
 					bool found = false;
@@ -173,7 +175,7 @@ ProtocolApplyResult apply_protocol(const Array<String> &source,
 		}
 		else
 		{
-			for (intptr_t j = 1; j <= n_fields; j++) {
+			for (intptr_t j = 0; j < n_fields; j++) {
 				result.columns[j].append(String());
 			}
 			result.failed_rows.append(i);

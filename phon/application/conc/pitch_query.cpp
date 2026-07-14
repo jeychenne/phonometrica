@@ -79,7 +79,7 @@ Array<String> PitchQuery::build_headers() const
 		// Time series: one group per measurement point with percentage suffix
 		if (m_series)
 		{
-			for (intptr_t p = 1; p <= m_points.size(); p++)
+			for (intptr_t p = 0; p < m_points.size(); p++)
 			{
 				auto pct = (int)m_points[p];
 				char suffix[16];
@@ -171,8 +171,8 @@ Handle<Concordance> PitchQuery::execute()
 					"but the following level(s) have no override and will fall "
 					"back to the default parameters: ",
 					m_override_category.data());
-				for (intptr_t i = 1; i <= uncovered.size(); i++) {
-					if (i > 1) msg.append(", ");
+				for (intptr_t i = 0; i < uncovered.size(); i++) {
+					if (i > 0) msg.append(", ");
 					msg.append(uncovered[i]);
 				}
 				emit_msg(msg);
@@ -193,13 +193,13 @@ Handle<Concordance> PitchQuery::execute()
 
 		try
 		{
-			measure_match(*matches[i+1]); // 1-based indexing
+			measure_match(*matches[i]);
 		}
 		catch (std::exception &e)
 		{
 			// If measurement fails for a single match (e.g. sound file not bound),
 			// fill with NaN and continue rather than aborting the whole query.
-			auto &m = *matches[i+1];
+			auto &m = *matches[i];
 			m.measurements.assign(field_count(), std::nan(""));
 		}
 	}
@@ -243,7 +243,7 @@ Handle<Concordance> PitchQuery::execute()
 	return conc;
 }
 
-void PitchQuery::measure_match(Match &match) const
+void PitchQuery::measure_match(QueryMatch &match) const
 {
 	auto annot = match.annotation();
 	auto sound = annot->sound();
@@ -312,7 +312,7 @@ void PitchQuery::measure_match(Match &match) const
 		// Time series: output each point's data
 		if (m_series)
 		{
-			for (intptr_t k = 1; k <= npoints; k++) {
+			for (intptr_t k = 0; k < npoints; k++) {
 				match.measurements[idx++] = point_data[k];
 			}
 		}
@@ -322,7 +322,7 @@ void PitchQuery::measure_match(Match &match) const
 		{
 			double sum = 0;
 			int n = 0;
-			for (intptr_t k = 1; k <= npoints; k++)
+			for (intptr_t k = 0; k < npoints; k++)
 			{
 				double v = point_data[k];
 				if (std::isfinite(v)) {
@@ -643,9 +643,9 @@ void PitchQuery::write()
 	if (m_method == Method::NPoint && !m_points.empty())
 	{
 		String pts;
-		for (intptr_t i = 1; i <= m_points.size(); i++)
+		for (intptr_t i = 0; i < m_points.size(); i++)
 		{
-			if (i > 1) pts.append(' ');
+			if (i > 0) pts.append(' ');
 			pts.append(String::format("%.1f", m_points[i]));
 		}
 		add_data_node(ps_node, "Points", pts);

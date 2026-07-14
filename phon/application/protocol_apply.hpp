@@ -35,15 +35,15 @@ struct ProtocolApplyResult final
 	// One header per protocol field, in field order. Size == protocol.field_count().
 	Array<String> headers;
 
-	// One output column per protocol field. columns[j] (1-based) holds the values of the j-th field,
+	// One output column per protocol field. columns[j] (0-based) holds the values of the j-th field,
 	// with one entry per input row (so columns[j].size() == source.size() for every j).
 	Array<Array<String>> columns;
 
-	// 1-based indices of input rows that did not match the protocol. Those rows contain an empty
+	// 0-based indices of input rows that did not match the protocol. Those rows contain an empty
 	// string in every output column.
 	Array<intptr_t> failed_rows;
 
-	// 1-based indices of input rows that matched the composite regex but contained at least one
+	// 0-based indices of input rows that matched the composite regex but contained at least one
 	// field value that did not match any of the field's enumerated SearchValue patterns. Those
 	// fields fall back to the raw capture (no data lost), but the user may want to know in order
 	// to tighten the protocol. Only populated when `translate` is true; only counts rows where

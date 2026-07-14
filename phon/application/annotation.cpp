@@ -24,6 +24,7 @@
 #include <phon/application/constants.hpp>
 #include <phon/runtime/runtime.hpp>
 #include <phon/runtime/object.hpp>
+#include <phon/runtime/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -203,7 +204,8 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			return annot.layers()[layer_index].count();
+			auto i = index_from_script(layer_index, annot.layer_count());
+			return annot.layers()[i].count();
 		}
 		catch (...)
 		{
@@ -225,7 +227,9 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			return annot.get_event(layer, event).start;
+			auto i = index_from_script(layer, annot.layer_count());
+			auto j = index_from_script(event, annot.layers()[i].count());
+			return annot.get_event(i, j).start;
 		}
 		catch (...)
 		{
@@ -241,7 +245,9 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			return annot.get_event(layer, event).end;
+			auto i = index_from_script(layer, annot.layer_count());
+			auto j = index_from_script(event, annot.layers()[i].count());
+			return annot.get_event(i, j).end;
 		}
 		catch (...)
 		{
@@ -257,7 +263,9 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			return annot.get_event(layer, event).text;
+			auto i = index_from_script(layer, annot.layer_count());
+			auto j = index_from_script(event, annot.layers()[i].count());
+			return annot.get_event(i, j).text;
 		}
 		catch (...)
 		{
@@ -273,7 +281,8 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			return annot.get_event_at_time(layer, time);
+			auto i = index_from_script(layer, annot.layer_count());
+			return index_to_script(annot.get_event_at_time(i, time));
 		}
 		catch (...)
 		{
@@ -290,7 +299,9 @@ void Annotation::initialize(Runtime &rt)
 
 		try
 		{
-			annot.set_event_text(layer, event, text);
+			auto i = index_from_script(layer, annot.layer_count());
+			auto j = index_from_script(event, annot.layers()[i].count());
+			annot.set_event_text(i, j, text);
 			return Variant();
 		}
 		catch (...)
@@ -304,7 +315,7 @@ void Annotation::initialize(Runtime &rt)
 		auto layer = cast<intptr_t>(args[1]);
 		annot.open();
 		try {
-			return annot.get_layer_label(layer);
+			return annot.get_layer_label(index_from_script(layer, annot.layer_count()));
 		}
 		catch (...)
 		{
@@ -318,7 +329,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &value = cast<String>(args[2]);
 		annot.open();
 		try {
-			annot.set_layer_label(layer, value);
+			annot.set_layer_label(index_from_script(layer, annot.layer_count()), value);
 			return Variant();
 		}
 		catch (...)
@@ -335,7 +346,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &text = cast<String>(args[4]);
 
 		annot.open();
-		annot.add_interval(layer, start, end, text);
+		annot.add_interval(index_from_script(layer, annot.layer_count()), start, end, text);
 		return Variant();
 	};
 
@@ -346,7 +357,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &text = cast<String>(args[3]);
 
 		annot.open();
-		annot.add_instant(layer, time, text);
+		annot.add_instant(index_from_script(layer, annot.layer_count()), time, text);
 		return Variant();
 	};
 
@@ -357,7 +368,7 @@ void Annotation::initialize(Runtime &rt)
 		auto end = cast<double>(args[3]);
 
 		annot.open();
-		annot.remove_interval(layer, start, end);
+		annot.remove_interval(index_from_script(layer, annot.layer_count()), start, end);
 		return Variant();
 	};
 
@@ -366,7 +377,7 @@ void Annotation::initialize(Runtime &rt)
 		auto i = cast<intptr_t>(args[1]);
 
 		annot.open();
-		annot.remove_events(i);
+		annot.remove_events(index_from_script(i, annot.layer_count()));
 		return Variant();
 	};
 
@@ -378,7 +389,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &name = cast<String>(args[2]);
 		auto has_instants = cast<bool>(args[3]);
 		annot.open();
-		annot.create_layer(index, name, has_instants);
+		annot.create_layer(index_from_script(index, annot.layer_count(), true), name, has_instants);
 		return Variant();
 	};
 
@@ -386,7 +397,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &annot = cast<Annotation>(args[0]);
 		auto index = cast<intptr_t>(args[1]);
 		annot.open();
-		annot.remove_layer(index);
+		annot.remove_layer(index_from_script(index, annot.layer_count()));
 		return Variant();
 	};
 
@@ -394,7 +405,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &annot = cast<Annotation>(args[0]);
 		auto index = cast<intptr_t>(args[1]);
 		annot.open();
-		annot.clear_layer(index);
+		annot.clear_layer(index_from_script(index, annot.layer_count()));
 		return Variant();
 	};
 
@@ -403,7 +414,8 @@ void Annotation::initialize(Runtime &rt)
 		auto index = cast<intptr_t>(args[1]);
 		auto new_index = cast<intptr_t>(args[2]);
 		annot.open();
-		annot.duplicate_layer(index, new_index);
+		annot.duplicate_layer(index_from_script(index, annot.layer_count()),
+		                      index_from_script(new_index, annot.layer_count(), true));
 		return Variant();
 	};
 
@@ -411,7 +423,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &annot = cast<Annotation>(args[0]);
 		auto index = cast<intptr_t>(args[1]);
 		annot.open();
-		return annot.layer_has_instants(index);
+		return annot.layer_has_instants(index_from_script(index, annot.layer_count()));
 	};
 
 	// ── Annotation I/O ──────────────────────────────────────────
@@ -471,10 +483,11 @@ void Annotation::initialize(Runtime &rt)
 		auto &items = cast<List>(args[1]).items();
 		auto &path  = cast<String>(args[2]);
 
+		annot.open();
 		std::vector<intptr_t> indices;
 		indices.reserve(items.size());
 		for (auto &it : items) {
-			indices.push_back(cast<intptr_t>(it));
+			indices.push_back(index_from_script(cast<intptr_t>(it), annot.layer_count()));
 		}
 		return extract_layers(annot, std::span<const intptr_t>(indices.data(), indices.size()), path);
 	};
@@ -646,7 +659,7 @@ String Annotation::left_context(intptr_t layer, intptr_t event, intptr_t offset,
 		auto it = events[event].text.begin() + offset;
 		context.append(events[event].text.rmid(it, length));
 
-		while (context.grapheme_count() != length && --event > 0)
+		while (context.grapheme_count() != length && --event >= 0)
 		{
 			auto &label = events[event].text;
 			auto prefix = label.right(length - context.grapheme_count() - separator.size());
@@ -659,7 +672,7 @@ String Annotation::left_context(intptr_t layer, intptr_t event, intptr_t offset,
 	catch (std::exception &e)
 	{
 		throw error("Could not extract left context in annotation % in event % on layer %: %",
-					path(), event, layer, e.what());
+					path(), event + 1, layer + 1, e.what());
 	}
 }
 
@@ -672,7 +685,7 @@ String Annotation::right_context(intptr_t layer, intptr_t event, intptr_t offset
 		auto it = events[event].text.begin() + offset;
 		context.append(events[event].text.mid(it, length));
 
-		while (context.grapheme_count() != length && ++event <= events.size())
+		while (context.grapheme_count() != length && ++event < events.size())
 		{
 			auto &label = events[event].text;
 			auto suffix = label.left(length - context.grapheme_count() - separator.size());
@@ -685,7 +698,7 @@ String Annotation::right_context(intptr_t layer, intptr_t event, intptr_t offset
 	catch (std::exception &e)
 	{
 		throw error("Could not extract right context in annotation % in event % on layer %: %",
-					path(), event, layer, e.what());
+					path(), event + 1, layer + 1, e.what());
 	}
 }
 
@@ -833,7 +846,7 @@ void Annotation::create_layer(intptr_t index, const String &name, bool has_insta
 		layer.add_interval(0, m_sound->duration(), String());
 	}
 
-	if (index > m_layers.size()) {
+	if (index >= m_layers.size()) {
 		m_layers.append(std::move(layer));
 	}
 	else {
@@ -846,7 +859,7 @@ void Annotation::create_empty_layer(intptr_t index, const String &name, bool has
 {
 	Layer layer(name, has_instants);
 
-	if (index > m_layers.size()) {
+	if (index >= m_layers.size()) {
 		m_layers.append(std::move(layer));
 	}
 	else {
@@ -877,7 +890,7 @@ void Annotation::duplicate_layer(intptr_t index, intptr_t new_index)
 {
 	auto copy = m_layers[index].duplicate(m_layers[index].label);
 
-	if (new_index > m_layers.size()) {
+	if (new_index >= m_layers.size()) {
 		m_layers.append(std::move(copy));
 	}
 	else {
@@ -964,7 +977,7 @@ void Annotation::remove_interval(intptr_t index, double start, double end)
 {
 	double mid = start + (end - start) / 2;
 	auto idx = m_layers[index].find_index(mid);
-	if (idx > 0) {
+	if (idx >= 0) {
 		m_layers[index].remove_event(idx);
 	}
 	m_modified = true;

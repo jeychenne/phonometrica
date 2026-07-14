@@ -263,7 +263,7 @@ build_intrinsic_candidates(Sound *sound, int channel, int nformant, double win_s
 				Array<double> fr;
 				try { fr = sound->get_formants(channel, t, nformant, nyquist, win_size, order); }
 				catch (...) { edge = true; break; } // window ran off the file edge for this point
-				for (intptr_t j = 0; j < nformant; ++j) { F(i, j) = fr(j + 1, 1); B(i, j) = fr(j + 1, 2); }
+				for (intptr_t j = 0; j < nformant; ++j) { F(i, j) = fr(j, 0); B(i, j) = fr(j, 1); }
 				++i;
 			}
 			if (edge) continue;
@@ -277,7 +277,7 @@ build_intrinsic_candidates(Sound *sound, int channel, int nformant, double win_s
 			c.score = sc;
 			try {
 				auto fm = sound->get_formants(channel, t_measure, nformant, nyquist, win_size, order);
-				for (int k = 0; k < kmax; ++k) c.formants[k] = fm(k + 1, 1);
+				for (int k = 0; k < kmax; ++k) c.formants[k] = fm(k, 0);
 			} catch (...) { /* leave NaN; consensus simply skips this formant for this candidate */ }
 			out.push_back(c);
 		}
@@ -318,8 +318,8 @@ select_analysis_intrinsic(Sound *sound, int channel, int nformant, double win_si
 				auto formants = sound->get_formants(channel, t, nformant, nyquist, win_size, order);
 				for (intptr_t j = 0; j < nformant; ++j)
 				{
-					F(i, j) = formants(j + 1, 1);
-					B(i, j) = formants(j + 1, 2);
+					F(i, j) = formants(j, 0);
+					B(i, j) = formants(j, 1);
 				}
 				++i;
 			}

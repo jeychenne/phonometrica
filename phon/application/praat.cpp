@@ -54,7 +54,7 @@ static Regex pattern_time("number\\s+=\\s+(\\d+\\.?\\d*)");
 static Regex pattern_mark("mark\\s+=\\s+\"(.*)\"", Regex::Multiline);
 
 static
-bool search(File &infile, Regex &pattern, String &result)
+bool search(File &infile, const Regex &pattern, String &result)
 {
 	String line;
 
@@ -63,9 +63,10 @@ bool search(File &infile, Regex &pattern, String &result)
 		line.append(infile.read_line());
 		line.rtrim();
 
-		if (pattern.match(line))
+		auto m = pattern.match(line);
+		if (m)
 		{
-			result = pattern.capture(1);
+			result = m.capture(1);
 			return true;
 		}
 	}
@@ -88,11 +89,11 @@ double validate(const String &value)
 
 bool parse_tier_header(File &infile, const String &line, TierHeader &header)
 {
-	bool has_intervals = pattern_interval_tier.match(line);
+	bool has_intervals = pattern_interval_tier.match(line).has_match();
 	bool has_points = false;
 
 	if (!has_intervals) {
-		has_points = pattern_point_tier.match(line);
+		has_points = pattern_point_tier.match(line).has_match();
 	}
 
 	if (has_intervals || has_points)
@@ -104,11 +105,13 @@ bool parse_tier_header(File &infile, const String &line, TierHeader &header)
 		header.xmin = validate(tmp);
 		search(infile, pattern_xmax, tmp);
 		header.xmax = validate(tmp);
-		search(infile, pattern_size, tmp);
 
-		bool ok;
-		int item_count = int(pattern_size.capture(1).to_int(&ok));
-		if (ok) header.size = item_count;
+		if (search(infile, pattern_size, tmp))
+		{
+			bool ok;
+			int item_count = int(tmp.to_int(&ok));
+			if (ok) header.size = item_count;
+		}
 
 		return true;
 	}

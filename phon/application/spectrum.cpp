@@ -97,7 +97,6 @@ void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double pree
 		throw error("Spectrum: analysis window is too short");
 	}
 
-	// get_channel returns a 1-based Array<double>.
 	auto segment = sound->get_channel(m_channel, first_sample, last_sample);
 	intptr_t N = segment.size(); // number of samples in the segment
 
@@ -109,7 +108,7 @@ void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double pree
 	// ── Apply window function ──────────────────────
 	auto window = speech::create_window(N, N, m_window_type);
 
-	for (intptr_t i = 1; i <= N; i++) {
+	for (intptr_t i = 0; i < N; i++) {
 		segment[i] *= window[i];
 	}
 
@@ -142,10 +141,10 @@ void Spectrum::compute(const Handle<Sound> &sound, int zero_padding, double pree
 	intptr_t n_bins = m_nfft / 2 + 1;
 	m_freq_resolution = static_cast<double>(m_sample_rate) / m_nfft;
 
-	// Prepare zero-padded input buffer (0-based, for pocketfft).
+	// Prepare zero-padded input buffer for pocketfft.
 	std::vector<double> input(m_nfft, 0.0);
 	for (intptr_t i = 0; i < N; i++) {
-		input[i] = segment[i + 1]; // copy from 1-based Array
+		input[i] = segment[i];
 	}
 
 	std::vector<std::complex<double>> output(n_bins, std::complex<double>(0, 0));
@@ -284,7 +283,7 @@ void Spectrum::compute_lpc(const Handle<Sound> &sound,
 	auto win = speech::create_window(nframe, nframe, speech::WindowType::Gaussian);
 	Array<double> buffer(nframe, 0.0);
 
-	for (intptr_t j = 1; j <= nframe; j++) {
+	for (intptr_t j = 0; j < nframe; j++) {
 		buffer[j] = signal[j] * win[j];
 	}
 
@@ -447,7 +446,7 @@ void Spectrum::load()
 
 	auto lines = file.read_lines();
 
-	for (intptr_t i = 1; i <= lines.size(); i++)
+	for (intptr_t i = 0; i < lines.size(); i++)
 	{
 		auto line = lines[i];
 		line.trim();
@@ -483,11 +482,11 @@ void Spectrum::load()
 
 		if (in_header)
 		{
-			auto eq = line.find('=');
-			if (eq < 0) continue;
+			auto eq = line.find('=', line.begin());
+			if (eq == line.end()) continue;
 
-			auto key = line.left(eq);
-			auto val = line.right(line.size() - eq - 1);
+			auto key = String(line.mid(line.begin(), eq));
+			auto val = String(line.mid(eq + 1, line.end()));
 			key.trim();
 			val.trim();
 

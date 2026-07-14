@@ -44,10 +44,10 @@ namespace phonometrica::stats {
 // Check whether every FixedTerm in `small` exists in `large`.
 static bool fixed_terms_subset(const Array<FixedTerm> &small, const Array<FixedTerm> &large)
 {
-	for (intptr_t i = 1; i <= small.size(); i++)
+	for (intptr_t i = 0; i < small.size(); i++)
 	{
 		bool found = false;
-		for (intptr_t j = 1; j <= large.size(); j++)
+		for (intptr_t j = 0; j < large.size(); j++)
 		{
 			if (small[i] == large[j]) { found = true; break; }
 		}
@@ -61,10 +61,10 @@ static bool fixed_terms_subset(const Array<FixedTerm> &small, const Array<FixedT
 // smooth in the larger model nests a lower-k smooth of the same covariate.
 static bool smooth_terms_subset(const Array<SmoothTerm> &small, const Array<SmoothTerm> &large)
 {
-	for (intptr_t i = 1; i <= small.size(); i++)
+	for (intptr_t i = 0; i < small.size(); i++)
 	{
 		bool found = false;
-		for (intptr_t j = 1; j <= large.size(); j++)
+		for (intptr_t j = 0; j < large.size(); j++)
 		{
 			if (small[i].variable == large[j].variable &&
 			    small[i].by == large[j].by &&
@@ -86,12 +86,12 @@ static bool smooth_terms_subset(const Array<SmoothTerm> &small, const Array<Smoo
 // term's slopes are a subset of the large term's slopes.
 static bool random_terms_subset(const Array<RandomTerm> &small, const Array<RandomTerm> &large)
 {
-	for (intptr_t si = 1; si <= small.size(); si++)
+	for (intptr_t si = 0; si < small.size(); si++)
 	{
 		const auto &st = small[si];
 		bool found = false;
 
-		for (intptr_t li = 1; li <= large.size(); li++)
+		for (intptr_t li = 0; li < large.size(); li++)
 		{
 			const auto &lt = large[li];
 			if (st.group != lt.group) continue;
@@ -101,10 +101,10 @@ static bool random_terms_subset(const Array<RandomTerm> &small, const Array<Rand
 
 			// Every slope in small must appear in large.
 			bool slopes_ok = true;
-			for (intptr_t k = 1; k <= st.slopes.size(); k++)
+			for (intptr_t k = 0; k < st.slopes.size(); k++)
 			{
 				bool slope_found = false;
-				for (intptr_t m = 1; m <= lt.slopes.size(); m++)
+				for (intptr_t m = 0; m < lt.slopes.size(); m++)
 				{
 					if (st.slopes[k] == lt.slopes[m]) { slope_found = true; break; }
 				}
@@ -488,12 +488,12 @@ BayesianCompareResult bayesian_compare(const std::vector<const Model *> &models,
 				{
 					// SE(ΔWAIC) = 2 * sqrt(n * Var_i(elpd_a_i - elpd_b_i))
 					double mean_diff = 0;
-					for (intptr_t k = 1; k <= n; k++)
+					for (intptr_t k = 0; k < n; k++)
 						mean_diff += (ma->elpd_i[k] - mb->elpd_i[k]);
 					mean_diff /= n;
 
 					double var_diff = 0;
-					for (intptr_t k = 1; k <= n; k++)
+					for (intptr_t k = 0; k < n; k++)
 					{
 						double d = (ma->elpd_i[k] - mb->elpd_i[k]) - mean_diff;
 						var_diff += d * d;
@@ -534,12 +534,12 @@ BayesianCompareResult bayesian_compare(const std::vector<const Model *> &models,
 				if (ma->elpd_loo_i.size() == n && mb->elpd_loo_i.size() == n)
 				{
 					double mean_diff = 0;
-					for (intptr_t k = 1; k <= n; k++)
+					for (intptr_t k = 0; k < n; k++)
 						mean_diff += (ma->elpd_loo_i[k] - mb->elpd_loo_i[k]);
 					mean_diff /= n;
 
 					double var_diff = 0;
-					for (intptr_t k = 1; k <= n; k++)
+					for (intptr_t k = 0; k < n; k++)
 					{
 						double d = (ma->elpd_loo_i[k] - mb->elpd_loo_i[k]) - mean_diff;
 						var_diff += d * d;

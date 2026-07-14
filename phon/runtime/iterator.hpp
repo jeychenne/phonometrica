@@ -126,7 +126,7 @@ public:
 
 private:
 
-	Regex *re;
+	ScriptRegex *re;
 	intptr_t pos = 1;
 };
 

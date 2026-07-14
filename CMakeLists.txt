@@ -27,6 +27,23 @@ option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool"
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
+# --- New scripting engine (coexistence during the migration) --------------------------------------
+# The new engine lives in a sibling repository and is built alongside the old one so that both
+# engines coexist in the code base until the old engine is stripped. The two engines define
+# identically named types in namespace phonometrica (String, Handle, Variant, Runtime, ...), so the
+# application binary links ONLY the old engine; the new engine and its unit tests are exposed as
+# extra targets (phon_engine, phon_unit_tests, phon_repl) to keep it building and passing against
+# the same toolchain. Build them explicitly, e.g.: cmake --build build --target phon_unit_tests
+option(PHON_WITH_NEW_ENGINE "Make the new scripting engine's targets available" ON)
+set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to the new engine repository")
+if(PHON_WITH_NEW_ENGINE)
+    if(EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
+        add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
+    else()
+        message(STATUS "New engine not found at ${PHON_ENGINE_DIR}; skipping (set PHON_ENGINE_DIR)")
+    endif()
+endif()
+
 
 ###########################
 ##  VERSION INFORMATION  ##
@@ -135,6 +152,7 @@ endif()
 include_directories(${CMAKE_SOURCE_DIR})
 
 file(GLOB_RECURSE RUNTIME_SOURCES
+        phon/base/*.cpp
         phon/runtime/*.cpp
         phon/utils/*.cpp
 )

@@ -43,7 +43,7 @@ public:
 	// layer list is available.
 	ExtractLayersDialog(QWidget *parent, Annotation &source);
 
-	// 1-based layer indices selected by the user, in display order. Empty if
+	// 0-based layer indices selected by the user, in display order. Empty if
 	// nothing is selected.
 	std::vector<intptr_t> selectedLayers() const;
 

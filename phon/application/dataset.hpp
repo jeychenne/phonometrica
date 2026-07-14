@@ -78,17 +78,17 @@ public:
     // Get the unique values in a text column (for factor levels).
     Array<String> get_levels(intptr_t j) const;
 
-	// Remove row i (1-based). Shifts subsequent rows up.
+	// Remove row i (0-based). Shifts subsequent rows up.
 	void remove_row(intptr_t i);
 
-	// Remove column j (1-based). Shifts subsequent columns left.
+	// Remove column j (0-based). Shifts subsequent columns left.
 	void remove_column(intptr_t j);
 
-	// Duplicate column src (1-based) and insert the copy at position dest (1-based).
-	// dest may be column_count()+1 to append at the end.
+	// Duplicate column src (0-based) and insert the copy at position dest (0-based).
+	// dest may be column_count() to append at the end.
 	void duplicate_column(intptr_t src, intptr_t dest);
 
-	// Move column src (1-based) to position dest (1-based).
+	// Move column src (0-based) to position dest (0-based).
 	// dest is interpreted as the target position in the final layout.
 	void move_column(intptr_t src, intptr_t dest);
 
@@ -102,7 +102,7 @@ public:
 	/// The result is a new in-memory Dataset added to the project.
 	Handle<Dataset> subset(const std::vector<int> &rows_0based, const String &label) const;
 
-	/// Set the header (column name) for column j (1-based).
+	/// Set the header (column name) for column j (0-based).
 	void set_header(intptr_t j, const String &name);
 
 	/// Append a new numeric column with the given header and values.
@@ -194,7 +194,7 @@ public:
 		bool flag = false;
 	};
 
-	/// A saved row: one CellValue per column (1-based indexing).
+	/// A saved row: one CellValue per column.
 	struct SavedRow
 	{
 		Array<CellValue> cells;
@@ -207,16 +207,16 @@ public:
 		AutoColumn data;
 	};
 
-	/// Remove row i (1-based) and return its data for undo.
+	/// Remove row i (0-based) and return its data for undo.
 	SavedRow extract_row(intptr_t i);
 
-	/// Insert a previously extracted row at position i (1-based).
+	/// Insert a previously extracted row at position i (0-based).
 	void insert_row(intptr_t i, const SavedRow &row);
 
-	/// Remove column j (1-based) and return it for undo.
+	/// Remove column j (0-based) and return it for undo.
 	SavedColumn extract_column(intptr_t j);
 
-	/// Insert a previously extracted column at position j (1-based).
+	/// Insert a previously extracted column at position j (0-based).
 	void insert_column(intptr_t j, SavedColumn col);
 
 	// Separator used when reading this CSV file (stored in the project).
@@ -245,10 +245,10 @@ private:
 	TColumn<String>* cast_string(Column *col) { return static_cast<TColumn<String>*>(col); }
 	const TColumn<String>* cast_string(Column *col) const { return static_cast<TColumn<String>*>(col); }
 
-	/// Build a tab-separated string key for row i (1-based), used for set membership.
+	/// Build a tab-separated string key for row i (0-based), used for set membership.
 	String row_key(intptr_t i) const;
 
-	/// Append row i (1-based) from source into this dataset.
+	/// Append row i (0-based) from source into this dataset.
 	/// Assumes compatible column structure.
 	void append_row_from(const Dataset &source, intptr_t i);
 

@@ -85,7 +85,7 @@ Array<String> SpectralMomentsQuery::build_headers() const
 	{
 		if (m_series)
 		{
-			for (intptr_t p = 1; p <= m_points.size(); p++)
+			for (intptr_t p = 0; p < m_points.size(); p++)
 			{
 				char suffix[32];
 				snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_points[p]);
@@ -143,11 +143,11 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 
 		try
 		{
-			measure_match(*matches[i+1]);
+			measure_match(*matches[i]);
 		}
 		catch (std::exception &)
 		{
-			auto &m = *matches[i+1];
+			auto &m = *matches[i];
 			m.measurements.assign(field_count(), std::nan(""));
 		}
 	}
@@ -184,7 +184,7 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 	return conc;
 }
 
-void SpectralMomentsQuery::measure_match(Match &match) const
+void SpectralMomentsQuery::measure_match(QueryMatch &match) const
 {
 	auto annot = match.annotation();
 	auto sound = annot->sound();
@@ -248,7 +248,7 @@ void SpectralMomentsQuery::measure_match(Match &match) const
 
 		if (m_series)
 		{
-			for (intptr_t k = 1; k <= npoints; k++) {
+			for (intptr_t k = 0; k < npoints; k++) {
 				store_moments(point_data[k]);
 			}
 		}
@@ -260,7 +260,7 @@ void SpectralMomentsQuery::measure_match(Match &match) const
 			double sum_cog = 0, sum_spr = 0, sum_skw = 0, sum_krt = 0;
 			int n_cog = 0, n_spr = 0, n_skw = 0, n_krt = 0;
 
-			for (intptr_t k = 1; k <= npoints; k++)
+			for (intptr_t k = 0; k < npoints; k++)
 			{
 				auto &sm = point_data[k];
 				if (std::isfinite(sm.cog))      { sum_cog += sm.cog;      n_cog++; }
@@ -538,9 +538,9 @@ void SpectralMomentsQuery::write()
 	if (m_method == Method::NPoint && !m_points.empty())
 	{
 		String pts;
-		for (intptr_t i = 1; i <= m_points.size(); i++)
+		for (intptr_t i = 0; i < m_points.size(); i++)
 		{
-			if (i > 1) pts.append(' ');
+			if (i > 0) pts.append(' ');
 			pts.append(String::format("%.1f", m_points[i]));
 		}
 		add_data_node(sm_node, "Points", pts);

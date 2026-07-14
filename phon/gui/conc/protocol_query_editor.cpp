@@ -126,7 +126,7 @@ QWidget *ProtocolQueryEditor::createSearchPanel()
 	int cols_per_row = m_protocol->fields_per_row();
 	int col = 0, row = 0;
 
-	for (intptr_t i = 1; i <= fields.size(); i++)
+	for (intptr_t i = 0; i < fields.size(); i++)
 	{
 		auto *fw = new FieldWidget(fields[i], group);
 		grid->addWidget(fw, row, col);
@@ -495,13 +495,13 @@ void ProtocolQueryEditor::onExecute()
 
 		if (split && m_concordance && m_concordance->row_count() > 0)
 		{
-			intptr_t target_col = 0;
+			intptr_t target_col = -1;
 			const intptr_t n_cols = m_concordance->column_count();
-			for (intptr_t j = 1; j <= n_cols; j++) {
+			for (intptr_t j = 0; j < n_cols; j++) {
 				if (m_concordance->is_target(j)) { target_col = j; break; }
 			}
 
-			if (target_col > 0)
+			if (target_col >= 0)
 			{
 				ProtocolApplyResult result;
 				bool applied = false;

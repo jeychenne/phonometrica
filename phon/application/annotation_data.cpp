@@ -39,29 +39,29 @@ intptr_t Layer::find_index(double time) const
 	auto it = lower(time);
 
 	if (it == events.end()) {
-		return 0;
+		return -1;
 	}
 
 	if (has_instants)
 	{
 		if (it->start == time) {
-			return intptr_t(it - events.begin()) + 1;
+			return intptr_t(it - events.begin());
 		}
-		return 0;
+		return -1;
 	}
 
 	// Interval: check that the event actually contains the time.
 	if (it->start <= time && time <= it->end) {
-		return intptr_t(it - events.begin()) + 1;
+		return intptr_t(it - events.begin());
 	}
 
-	return 0;
+	return -1;
 }
 
 const Event *Layer::find_event(double time) const
 {
 	auto index = find_index(time);
-	return (index > 0) ? &events[index] : nullptr;
+	return (index >= 0) ? &events[index] : nullptr;
 }
 
 const Event *Layer::find_event_starting_at(double time) const
@@ -133,10 +133,10 @@ intptr_t Layer::get_event_index(double time) const
 		[](const Event &e, double t) { return e.start < t; });
 
 	if (it != events.end() && it->start == time) {
-		return intptr_t(it - events.begin()) + 1;
+		return intptr_t(it - events.begin());
 	}
 
-	return 0;
+	return -1;
 }
 
 std::span<const Event> Layer::get_slice(double start_time, double end_time) const
@@ -201,7 +201,7 @@ void Layer::add_anchor(double time)
 		// Split the interval containing the time.
 		auto index = find_index(time);
 
-		if (index == 0) {
+		if (index < 0) {
 			throw error("No interval to split at time %", time);
 		}
 
@@ -216,8 +216,8 @@ void Layer::add_anchor(double time)
 
 		Event new_event { time, old_end, String() };
 
-		// Insert after the current event (1-based index, so index+1 maps to iterator at index).
-		auto it = events.begin() + index; // 0-based position after old_event
+		// Insert after the current event.
+		auto it = events.begin() + index + 1;
 		events.insert(it, std::move(new_event));
 	}
 }
@@ -348,16 +348,16 @@ void write_textgrid(const String &path, const Array<Layer> &layers)
     // Determine global time range from all layers.
     double start_time = 0, end_time = 0;
 
-    for (intptr_t i = 1; i <= layers.size(); ++i)
+    for (intptr_t i = 0; i < layers.size(); ++i)
     {
         auto &layer = layers[i];
         if (!layer.empty())
         {
-            if (i == 1 || layer.events[1].start < start_time) {
-                start_time = layer.events[1].start;
+            if (i == 0 || layer.events.first().start < start_time) {
+                start_time = layer.events.first().start;
             }
-            if (i == 1 || layer.events[layer.count()].end > end_time) {
-                end_time = layer.events[layer.count()].end;
+            if (i == 0 || layer.events.last().end > end_time) {
+                end_time = layer.events.last().end;
             }
         }
     }
@@ -366,12 +366,12 @@ void write_textgrid(const String &path, const Array<Layer> &layers)
     outfile.format("xmin = %.16f\nxmax = %.16f\n", start_time, end_time);
     outfile.format("tiers? <exists>\nsize = %lu\nitem []:\n", layers.size());
 
-    for (intptr_t i = 1; i <= layers.size(); ++i)
+    for (intptr_t i = 0; i < layers.size(); ++i)
     {
         auto &layer = layers[i];
         String kind = layer.has_instants ? "TextTier" : "IntervalTier";
 
-        outfile.format("    item [%lu]:\n", i);
+        outfile.format("    item [%lu]:\n", i + 1);
         outfile.format("        class = \"%s\"\n", kind.data());
         outfile.format("        name = \"%s\"\n", layer.label.data());
 
@@ -380,20 +380,20 @@ void write_textgrid(const String &path, const Array<Layer> &layers)
         }
         else {
             outfile.format("        xmin = %.16f\n        xmax = %.16f\n",
-                           layer.events[1].start, layer.events[layer.count()].end);
+                           layer.events.first().start, layer.events.last().end);
         }
 
         if (layer.has_instants)
         {
             outfile.format("        points: size = %lu\n", layer.count());
 
-            for (intptr_t j = 1; j <= layer.count(); j++)
+            for (intptr_t j = 0; j < layer.count(); j++)
             {
                 auto &e = layer.events[j];
                 auto text = e.text;
                 text.replace("\"", "\"\"");
 
-                outfile.format("        points [%lu]:\n", j);
+                outfile.format("        points [%lu]:\n", j + 1);
                 outfile.format("            number = %.16f\n", e.start);
                 outfile.format("            mark = \"%s\"\n", text.data());
             }
@@ -402,13 +402,13 @@ void write_textgrid(const String &path, const Array<Layer> &layers)
         {
             outfile.format("        intervals: size = %lu\n", layer.count());
 
-            for (intptr_t j = 1; j <= layer.count(); ++j)
+            for (intptr_t j = 0; j < layer.count(); ++j)
             {
                 auto &e = layer.events[j];
                 auto text = e.text;
                 text.replace("\"", "\"\"");
 
-                outfile.format("        intervals [%lu]:\n", j);
+                outfile.format("        intervals [%lu]:\n", j + 1);
                 outfile.format("            xmin = %.16f\n", e.start);
                 outfile.format("            xmax = %.16f\n", e.end);
                 outfile.format("            text = \"%s\"\n", text.data());
@@ -424,18 +424,18 @@ void layers_to_xml(xml_node graph_node, const Array<Layer> &layers)
 
     auto layers_node = graph_node.append_child("Layers");
 
-    for (intptr_t i = 1; i <= layers.size(); ++i)
+    for (intptr_t i = 0; i < layers.size(); ++i)
     {
         auto &layer = layers[i];
         auto layer_node = layers_node.append_child("Layer");
         auto a = layer_node.append_attribute("index");
-        a.set_value(i);
+        a.set_value(i + 1);
         a = layer_node.append_attribute("label");
         a.set_value(layer.label.data());
         a = layer_node.append_attribute("instants");
         a.set_value(layer.has_instants);
 
-        for (intptr_t j = 1; j <= layer.count(); ++j)
+        for (intptr_t j = 0; j < layer.count(); ++j)
         {
             auto &e = layer.events[j];
             auto event_node = layer_node.append_child("Event");

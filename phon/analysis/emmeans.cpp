@@ -101,7 +101,7 @@ static std::vector<CoefComponent> parse_coef_name(const String &name)
 // Find a VariableInfo by name. Returns nullptr if not found.
 static const Model::VariableInfo *find_var_info(const Model &model, const std::string &name)
 {
-	for (intptr_t i = 1; i <= model.variable_info.size(); i++)
+	for (intptr_t i = 0; i < model.variable_info.size(); i++)
 	{
 		auto &vi = model.variable_info[i];
 		if (std::string(vi.name.data(), vi.name.size()) == name) {
@@ -122,7 +122,7 @@ static std::vector<double> get_column_means(const Model &model, intptr_t p)
 	{
 		std::vector<double> means(p);
 		for (intptr_t j = 0; j < p; j++) {
-			means[j] = model.col_means[j + 1];
+			means[j] = model.col_means[j];
 		}
 		return means;
 	}
@@ -139,8 +139,8 @@ static std::vector<double> get_column_means(const Model &model, intptr_t p)
 	for (intptr_t j = 0; j < p; j++)
 	{
 		double sum = 0.0;
-		for (intptr_t i = 1; i <= n; i++) {
-			sum += model.X(i, j + 1);
+		for (intptr_t i = 0; i < n; i++) {
+			sum += model.X(i, j);
 		}
 		means[j] = sum / n;
 	}
@@ -164,7 +164,7 @@ static std::vector<ParsedCoef> preparse_coefs(const Model &model, intptr_t p)
 
 	for (intptr_t j = 0; j < p; j++)
 	{
-		auto &name = model.coef_names[j + 1];
+		auto &name = model.coef_names[j];
 		std::string s(name.data(), name.size());
 
 		if (s == "Intercept") {
@@ -221,8 +221,8 @@ static Eigen::MatrixXd build_emm_L_matrix(
 
 	for (intptr_t lv = 0; lv < K; lv++)
 	{
-		std::string target_level(target_info->levels[lv + 1].data(),
-		                         target_info->levels[lv + 1].size());
+		std::string target_level(target_info->levels[lv].data(),
+		                         target_info->levels[lv].size());
 
 		for (intptr_t j = 0; j < p; j++)
 		{
@@ -365,7 +365,7 @@ static EMMResult compute_emm_from_L(
 	result.cov_link = Array<double>(K, K, 0.0);
 	for (intptr_t i = 0; i < K; i++) {
 		for (intptr_t j = 0; j < K; j++) {
-			result.cov_link(i + 1, j + 1) = V_eta(i, j);
+			result.cov_link(i, j) = V_eta(i, j);
 		}
 	}
 
@@ -385,17 +385,17 @@ static EMMResult compute_emm_from_L(
 
 	for (intptr_t i = 0; i < K; i++)
 	{
-		result.emmean_link[i + 1] = emm_link[i];
-		result.se_link[i + 1]     = se_link[i];
-		result.lower_link[i + 1]  = emm_link[i] - crit * se_link[i];
-		result.upper_link[i + 1]  = emm_link[i] + crit * se_link[i];
+		result.emmean_link[i] = emm_link[i];
+		result.se_link[i]     = se_link[i];
+		result.lower_link[i]  = emm_link[i] - crit * se_link[i];
+		result.upper_link[i]  = emm_link[i] + crit * se_link[i];
 
 		if (is_identity)
 		{
-			result.emmean[i + 1]    = emm_link[i];
-			result.se[i + 1]        = se_link[i];
-			result.lower_ci[i + 1]  = result.lower_link[i + 1];
-			result.upper_ci[i + 1]  = result.upper_link[i + 1];
+			result.emmean[i]    = emm_link[i];
+			result.se[i]        = se_link[i];
+			result.lower_ci[i]  = result.lower_link[i];
+			result.upper_ci[i]  = result.upper_link[i];
 		}
 		else
 		{
@@ -407,14 +407,14 @@ static EMMResult compute_emm_from_L(
 			double mu = mu_vec[0];
 			double dmu = fam.mu_eta(mu_vec)[0]; // dμ/dη evaluated at μ
 
-			result.emmean[i + 1] = mu;
-			result.se[i + 1]     = std::abs(dmu) * se_link[i];
+			result.emmean[i] = mu;
+			result.se[i]     = std::abs(dmu) * se_link[i];
 
 			// Back-transform CI endpoints.
-			eta_vec[0] = result.lower_link[i + 1];
-			result.lower_ci[i + 1] = fam.linkinv(eta_vec)[0];
-			eta_vec[0] = result.upper_link[i + 1];
-			result.upper_ci[i + 1] = fam.linkinv(eta_vec)[0];
+			eta_vec[0] = result.lower_link[i];
+			result.lower_ci[i] = fam.linkinv(eta_vec)[0];
+			eta_vec[0] = result.upper_link[i];
+			result.upper_ci[i] = fam.linkinv(eta_vec)[0];
 		}
 	}
 
@@ -530,8 +530,8 @@ ByEMMResult emmeans_by(const Model &model, const String &factor, const String &b
 
 	for (intptr_t b = 0; b < B; b++)
 	{
-		std::string by_level(by_info->levels[b + 1].data(),
-		                     by_info->levels[b + 1].size());
+		std::string by_level(by_info->levels[b].data(),
+		                     by_info->levels[b].size());
 
 		// Build L-matrix with by-factor fixed to this level.
 		auto L = build_emm_L_matrix(model, factor_key, target_info, K, p,
@@ -541,8 +541,8 @@ ByEMMResult emmeans_by(const Model &model, const String &factor, const String &b
 		auto emm = compute_emm_from_L(model, factor, target_info, L, K, p, conf_level);
 		auto con = pairwise_contrasts(emm, model, adjustment);
 
-		result.emms[b + 1] = std::move(emm);
-		result.contrasts[b + 1] = std::move(con);
+		result.emms[b] = std::move(emm);
+		result.contrasts[b] = std::move(con);
 	}
 
 	return result;
@@ -597,17 +597,15 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 	{
 		for (intptr_t j = i + 1; j < K; j++)
 		{
-			idx++;
-
 			// Label: "level_i - level_j"
 			String lbl;
-			lbl.append(emm.levels[i + 1]);
+			lbl.append(emm.levels[i]);
 			lbl.append(" - ");
-			lbl.append(emm.levels[j + 1]);
+			lbl.append(emm.levels[j]);
 			result.label[idx] = std::move(lbl);
 
 			// Contrast estimate.
-			double delta = emm.emmean_link[i + 1] - emm.emmean_link[j + 1];
+			double delta = emm.emmean_link[i] - emm.emmean_link[j];
 			result.estimate[idx] = delta;
 
 			// SE: sqrt(V(i,i) + V(j,j) - 2 V(i,j))
@@ -640,6 +638,8 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 				}
 				result.p_value[idx] = p_raw;
 			}
+
+			idx++;
 		}
 	}
 
@@ -652,7 +652,7 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 	{
 		if (adj == "bonferroni")
 		{
-			for (intptr_t i = 1; i <= npairs; i++) {
+			for (intptr_t i = 0; i < npairs; i++) {
 				result.p_value[i] = std::min(result.p_value[i] * npairs, 1.0);
 			}
 		}
@@ -666,7 +666,7 @@ ContrastResult pairwise_contrasts(const EMMResult &emm, const Model &model,
 
 			// Build an index array sorted by raw p-value.
 			std::vector<intptr_t> order(npairs);
-			std::iota(order.begin(), order.end(), 1); // 1-based indices
+			std::iota(order.begin(), order.end(), 0);
 			std::sort(order.begin(), order.end(), [&](intptr_t a, intptr_t b) {
 				return result.p_value[a] < result.p_value[b];
 			});
@@ -761,8 +761,8 @@ EMMResult emtrends(const Model &model, const String &factor, const String &var,
 
 	for (intptr_t lv = 0; lv < K; lv++)
 	{
-		std::string target_level(target_info->levels[lv + 1].data(),
-		                         target_info->levels[lv + 1].size());
+		std::string target_level(target_info->levels[lv].data(),
+		                         target_info->levels[lv].size());
 
 		for (intptr_t j = 0; j < p; j++)
 		{
@@ -891,22 +891,22 @@ EMMResult emtrends(const Model &model, const String &factor, const String &var,
 	result.cov_link = Array<double>(K, K, 0.0);
 	for (intptr_t i = 0; i < K; i++) {
 		for (intptr_t j = 0; j < K; j++) {
-			result.cov_link(i + 1, j + 1) = V_eta(i, j);
+			result.cov_link(i, j) = V_eta(i, j);
 		}
 	}
 
 	for (intptr_t i = 0; i < K; i++)
 	{
-		result.emmean_link[i + 1] = trends[i];
-		result.se_link[i + 1]     = se[i];
-		result.lower_link[i + 1]  = trends[i] - crit * se[i];
-		result.upper_link[i + 1]  = trends[i] + crit * se[i];
+		result.emmean_link[i] = trends[i];
+		result.se_link[i]     = se[i];
+		result.lower_link[i]  = trends[i] - crit * se[i];
+		result.upper_link[i]  = trends[i] + crit * se[i];
 
 		// No back-transformation for trends.
-		result.emmean[i + 1]    = trends[i];
-		result.se[i + 1]        = se[i];
-		result.lower_ci[i + 1]  = result.lower_link[i + 1];
-		result.upper_ci[i + 1]  = result.upper_link[i + 1];
+		result.emmean[i]    = trends[i];
+		result.se[i]        = se[i];
+		result.lower_ci[i]  = result.lower_link[i];
+		result.upper_ci[i]  = result.upper_link[i];
 	}
 
 	return result;

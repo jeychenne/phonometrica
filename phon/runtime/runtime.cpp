@@ -25,7 +25,7 @@
 #include <ctime>
 #include <iomanip>
 #include <phon/runtime/runtime.hpp>
-#include <phon/regex.hpp>
+#include <phon/runtime/script_regex.hpp>
 #include <phon/file.hpp>
 #include <phon/utils/helpers.hpp>
 #include <phon/utils/file_system.hpp>
@@ -178,7 +178,7 @@ void Runtime::create_builtins()
 	auto int_class = create_type<intptr_t>("Integer", num_class.get(), Class::Index::Integer);
 	auto float_class = create_type<double>("Float", num_class.get(), Class::Index::Float);
 	auto string_class = create_type<String>("String", raw_object_class, Class::Index::String);
-	auto regex_class = create_type<Regex>("Regex", raw_object_class, Class::Index::Regex);
+	auto regex_class = create_type<ScriptRegex>("Regex", raw_object_class, Class::Index::Regex);
 	auto list_class = create_type<List>("List", raw_object_class, Class::Index::List);
 	auto array_class = create_type<Array<double>>("Array", raw_object_class, Class::Index::Array);
 	auto table_class = create_type<Table>("Table", raw_object_class, Class::Index::Table);
@@ -214,7 +214,7 @@ void Runtime::create_builtins()
 	GLOB(intptr_t, int_class);
 	GLOB(double, float_class);
 	GLOB(String, string_class);
-	GLOB(Regex, regex_class);
+	GLOB(ScriptRegex, regex_class);
 	GLOB(List, list_class);
 	GLOB(Array<double>, array_class);
 	GLOB(Table, table_class);
@@ -962,10 +962,10 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				int narg = nrow * ncol;
 				if (nrow == 1)
 				{
-					Array<double> array(ncol, 0.0);
-					for (int i = 1; i <= ncol; i++)
+					Array<double> array(intptr_t(ncol), 0.0);
+					for (int i = 0; i < ncol; i++)
 					{
-						array(i) = peek(-ncol + i - 1).to_float();
+						array(i) = peek(-ncol + i).to_float();
 					}
 					pop(narg);
 					push(make_handle<Array<double>>(std::move(array)));
@@ -974,9 +974,9 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				{
 					int k = narg;
 					Array<double> array(nrow, ncol, 0.0);
-					for (int i = 1; i <= nrow; i++)
+					for (int i = 0; i < nrow; i++)
 					{
-						for (int j = 1; j <= ncol; j++)
+						for (int j = 0; j < ncol; j++)
 						{
 							array(i,j) = peek(-k).to_float();
 							k--;
@@ -1083,7 +1083,7 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				else if (check_type<File>(v)) {
 					push(make_handle<FileIterator>(std::move(v), ref_val));
 				}
-				else if (check_type<Regex>(v)) {
+				else if (check_type<ScriptRegex>(v)) {
 					push(make_handle<RegexIterator>(std::move(v), ref_val));
 				}
 				else if (check_type<String>(v)) {
@@ -1100,7 +1100,7 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 				int narg = *ip++;
 				List lst(narg);
 				for (int i = narg; i > 0; i--) {
-					lst[narg+1-i] = std::move(peek(-i));
+					lst[narg-i] = std::move(peek(-i));
 				}
 				pop(narg);
 				push(make_handle<List>(this, std::move(lst)));
@@ -1507,14 +1507,10 @@ Variant Runtime::interpret(Handle <Closure> &closure)
 					RUNTIME_ERROR("Cannot destructure a List of size % into % variables", lst.size(), n);
 				}
 				ensure_capacity(n);
-				// Push elements in reverse so that lst[1] (the first element) ends up
-				// on top of the stack; the subsequent DefineLocal opcodes consume the
-				// stack top first, which makes them bind in source order. List uses
-				// 1-based indexing (Array<T>::operator[] in phon/runtime/array.hpp), so
-				// we walk from n down to 1, not from n-1 down to 0 — the latter
-				// dereferences m_data[size_t(-1)] in release builds and silently feeds
-				// a corrupted Variant into the destination local.
-				for (intptr_t i = intptr_t(n); i >= 1; --i) {
+				// Push elements in reverse so that the first element ends up on top of
+				// the stack; the subsequent DefineLocal opcodes consume the stack top
+				// first, which makes them bind in source order.
+				for (intptr_t i = intptr_t(n) - 1; i >= 0; --i) {
 					push(lst[i]);
 				}
 				break;

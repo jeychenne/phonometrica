@@ -78,7 +78,7 @@ TranscribeDialog::TranscribeDialog(QWidget *parent) :
 	// --- Sound selection ---
 	m_sound_combo = new QComboBox(this);
 	m_sounds = Project::get()->get_sounds();
-	for (intptr_t i = 1; i <= m_sounds.size(); i++)
+	for (intptr_t i = 0; i < m_sounds.size(); i++)
 	{
 		auto lbl = m_sounds[i]->browser_label();
 		m_sound_combo->addItem(QString::fromUtf8(lbl.data(), (int) lbl.size()));
@@ -182,7 +182,7 @@ Handle<Sound> TranscribeDialog::sound() const
 	int idx = m_sound_combo->currentIndex();
 	if (idx < 0 || m_sounds.empty())
 		return Handle<Sound>();
-	return m_sounds[idx + 1]; // 1-based Array
+	return m_sounds[idx];
 }
 
 Transcriber::Options TranscribeDialog::options() const

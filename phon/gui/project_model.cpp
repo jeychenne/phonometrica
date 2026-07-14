@@ -62,8 +62,7 @@ QModelIndex ProjectModel::index(int row, int column, const QModelIndex &parent) 
 	if (!dir || row < 0 || row >= (int) dir->size())
 		return {};
 
-	// Directory::get() is 1-based.
-	auto *child = dir->get(row + 1).get();
+	auto *child = dir->get(row).get();
 	return createIndex(row, 0, child);
 }
 
@@ -297,7 +296,7 @@ bool ProjectModel::dropMimeData(const QMimeData *data, Qt::DropAction action,
 			if (adjustedDst >= (int) targetDir->size())
 				targetDir->append(std::move(handle));
 			else
-				targetDir->insert(adjustedDst + 1, std::move(handle));
+				targetDir->insert(adjustedDst, std::move(handle));
 		}
 		else
 		{
@@ -309,7 +308,7 @@ bool ProjectModel::dropMimeData(const QMimeData *data, Qt::DropAction action,
 			if (dstRow >= (int) targetDir->size())
 				targetDir->append(std::move(handle));
 			else
-				targetDir->insert(dstRow + 1, std::move(handle));
+				targetDir->insert(dstRow, std::move(handle));
 		}
 
 		changed = true;
@@ -444,10 +443,10 @@ int ProjectModel::rowOfElement(Element *elem) const
 	if (!parentDir)
 		return -1;
 
-	for (intptr_t i = 1; i <= parentDir->size(); i++)
+	for (intptr_t i = 0; i < parentDir->size(); i++)
 	{
 		if (parentDir->get(i).get() == elem)
-			return (int)(i - 1); // convert 1-based to 0-based
+			return (int) i;
 	}
 
 	return -1;

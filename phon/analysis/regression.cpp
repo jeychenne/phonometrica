@@ -131,7 +131,7 @@ static void store_vcov(Model &model, const Eigen::MatrixXd &cov)
 	model.vcov = Array<double>(p, p, 0.0);
 	for (intptr_t i = 0; i < p; i++) {
 		for (intptr_t j = 0; j < p; j++) {
-			model.vcov(i + 1, j + 1) = cov(i, j);
+			model.vcov(i, j) = cov(i, j);
 		}
 	}
 }
@@ -175,10 +175,10 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 	model.fitted = Array<double>(n, 0.0);
 	model.residuals = Array<double>(n, 0.0);
 
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		double val = 0.0;
-		for (intptr_t j = 1; j <= m; j++) {
+		for (intptr_t j = 0; j < m; j++) {
 			val += X(i, j) * model.beta[j];
 		}
 		if (!offset.empty()) val += offset[i];
@@ -190,7 +190,7 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 	model.df_residual = df;
 	long double sse = 0.0;
 
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		auto e = y[i] - model.fitted[i];
 		model.residuals[i] = e;
@@ -207,9 +207,9 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 
 	boost::math::students_t_distribution<double> dist(df);
 
-	for (intptr_t i = 1; i <= m; i++)
+	for (intptr_t i = 0; i < m; i++)
 	{
-		model.se[i] = sqrt(rv * var(i - 1, i - 1));
+		model.se[i] = sqrt(rv * var(i, i));
 		model.stat[i] = model.beta[i] / model.se[i];
 		model.p[i] = 2 * (1 - cdf(dist, std::abs(model.stat[i])));
 	}
@@ -222,7 +222,7 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 	long double ssr = 0.0;
 	long double sst = 0.0;
 
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		ssr += model.residuals[i] * model.residuals[i];
 		sst += (y[i] - ybar) * (y[i] - ybar);
@@ -542,19 +542,19 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 	// ── Standard errors, Wald statistics, p-values ──
 	model.se = Array<double>(m, 0.0);
 	for (intptr_t i = 0; i < m; i++) {
-		model.se[i + 1] = sqrt(cov(i, i));
+		model.se[i] = sqrt(cov(i, i));
 	}
 
 	model.stat = Array<double>(m, 0.0);
-	for (intptr_t i = 1; i <= m; i++) {
+	for (intptr_t i = 0; i < m; i++) {
 		model.stat[i] = model.beta[i] / model.se[i];
 	}
 
 	boost::math::chi_squared dist(1);
 	model.p = Array<double>(m, 0.0);
-	for (intptr_t i = 1; i <= m; i++)
+	for (intptr_t i = 0; i < m; i++)
 	{
-		auto wald = (model.beta[i] * model.beta[i]) / cov(i - 1, i - 1);
+		auto wald = (model.beta[i] * model.beta[i]) / cov(i, i);
 		model.p[i] = 1 - boost::math::cdf(dist, wald);
 	}
 
@@ -644,7 +644,7 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const
 	{
 		auto pois = glm(y, X, Family::poisson(), false, 50, offset);
 		for (intptr_t j = 0; j < p; j++) {
-			beta[j] = pois.beta[j + 1];
+			beta[j] = pois.beta[j];
 		}
 	}
 
@@ -747,7 +747,7 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const
 
 	model.beta = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
-		model.beta[j + 1] = beta[j];
+		model.beta[j] = beta[j];
 	}
 
 	// Fitted values
@@ -780,9 +780,9 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const
 		model.p = Array<double>(p, 0.0);
 
 		boost::math::chi_squared dist(1);
-		for (intptr_t i = 1; i <= p; i++)
+		for (intptr_t i = 0; i < p; i++)
 		{
-			model.se[i] = std::sqrt(std::max(cov(i - 1, i - 1), 0.0));
+			model.se[i] = std::sqrt(std::max(cov(i, i), 0.0));
 			model.stat[i] = (model.se[i] > 0) ? model.beta[i] / model.se[i] : 0.0;
 			double wald = model.stat[i] * model.stat[i];
 			model.p[i] = 1.0 - boost::math::cdf(dist, wald);
@@ -861,7 +861,7 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	{
 		auto logit_fit = glm(y, X, Family::binomial(), false, 50, offset);
 		for (intptr_t j = 0; j < p; j++) {
-			beta[j] = logit_fit.beta[j + 1];
+			beta[j] = logit_fit.beta[j];
 		}
 	}
 
@@ -967,7 +967,7 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 
 	model.beta = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
-		model.beta[j + 1] = beta[j];
+		model.beta[j] = beta[j];
 	}
 
 	// Fitted values
@@ -1044,9 +1044,9 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 		model.p = Array<double>(p, 0.0);
 
 		boost::math::chi_squared dist(1);
-		for (intptr_t i = 1; i <= p; i++)
+		for (intptr_t i = 0; i < p; i++)
 		{
-			model.se[i] = std::sqrt(std::max(cov(i - 1, i - 1), 0.0));
+			model.se[i] = std::sqrt(std::max(cov(i, i), 0.0));
 			model.stat[i] = (model.se[i] > 0) ? model.beta[i] / model.se[i] : 0.0;
 			double wald = model.stat[i] * model.stat[i];
 			model.p[i] = 1.0 - boost::math::cdf(dist, wald);
@@ -1330,18 +1330,18 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.beta[j + 1] = beta_vec[j];
-		model.se[j + 1] = std::sqrt(std::max(Vb(j, j), 0.0));
+		model.beta[j] = beta_vec[j];
+		model.se[j] = std::sqrt(std::max(Vb(j, j), 0.0));
 	}
 
 	// t-statistics and p-values for parametric terms only.
 	boost::math::students_t tdist(std::max(1.0, (double)n - edf_total));
 	for (intptr_t j = 0; j < n_parametric; j++)
 	{
-		if (model.se[j + 1] > 0)
+		if (model.se[j] > 0)
 		{
-			model.stat[j + 1] = model.beta[j + 1] / model.se[j + 1];
-			model.p[j + 1] = 2.0 * boost::math::cdf(boost::math::complement(tdist, std::abs(model.stat[j + 1])));
+			model.stat[j] = model.beta[j] / model.se[j];
+			model.p[j] = 2.0 * boost::math::cdf(boost::math::complement(tdist, std::abs(model.stat[j])));
 		}
 	}
 
@@ -1398,7 +1398,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	// inner loop converged to.
 	model.smooth_log_lambda = Array<double>((intptr_t) log_lambda.size(), 0.0);
 	for (intptr_t j = 0; j < (intptr_t) log_lambda.size(); j++) {
-		model.smooth_log_lambda[j + 1] = log_lambda[j];
+		model.smooth_log_lambda[j] = log_lambda[j];
 	}
 
 	// Fitted values and residuals
@@ -1411,8 +1411,8 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 			yhat += Xm(i, j) * beta_vec[j];
 		}
 		if (!offset.empty()) yhat += offset.data()[i];
-		model.fitted[i + 1] = yhat;
-		model.residuals[i + 1] = ym[i] - yhat;
+		model.fitted[i] = yhat;
+		model.residuals[i] = ym[i] - yhat;
 	}
 
 	// Fit statistics
@@ -1722,19 +1722,19 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.beta[j + 1] = beta[j];
-		model.se[j + 1] = std::sqrt(std::max(Vb(j, j), 0.0));
+		model.beta[j] = beta[j];
+		model.se[j] = std::sqrt(std::max(Vb(j, j), 0.0));
 	}
 
 	// z-statistics and p-values for parametric terms
 	boost::math::chi_squared chisq_dist(1);
 	for (intptr_t j = 0; j < n_parametric; j++)
 	{
-		if (model.se[j + 1] > 0)
+		if (model.se[j] > 0)
 		{
-			model.stat[j + 1] = model.beta[j + 1] / model.se[j + 1];
-			double wald = model.stat[j + 1] * model.stat[j + 1];
-			model.p[j + 1] = 1.0 - boost::math::cdf(chisq_dist, wald);
+			model.stat[j] = model.beta[j] / model.se[j];
+			double wald = model.stat[j] * model.stat[j];
+			model.p[j] = 1.0 - boost::math::cdf(chisq_dist, wald);
 		}
 	}
 
@@ -1743,8 +1743,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	model.residuals = Array<double>(n, 0.0);
 	for (intptr_t i = 0; i < n; i++)
 	{
-		model.fitted[i + 1] = mu[i];
-		model.residuals[i + 1] = ym[i] - mu[i];
+		model.fitted[i] = mu[i];
+		model.residuals[i] = ym[i] - mu[i];
 	}
 
 	model.nobs = n;
@@ -1767,7 +1767,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		model.smooth_log_lambda = Array<double>(K_glm, 0.0);
 		double log_lam = std::log10(std::max(lambda, 1e-300));
 		for (intptr_t j = 0; j < K_glm; j++) {
-			model.smooth_log_lambda[j + 1] = log_lam;
+			model.smooth_log_lambda[j] = log_lam;
 		}
 	}
 

@@ -47,7 +47,7 @@ Handle<Annotation>
 duplicate_annotation(Annotation &src, const String &out_path);
 
 
-// Extract the layers at the given 1-based indices, in input order, into a new
+// Extract the layers at the given 0-based indices, in input order, into a new
 // annotation. Indices must be distinct, within range, and the span must be
 // non-empty. The sound binding is preserved (duration unchanged). Properties
 // and description are inherited from the source.

@@ -29,7 +29,7 @@ Array<double> apply(const Array<double> &X, const std::function<double(double)> 
 	{
 		Array<double> Y(X.size(), 0.0);
 
-		for (intptr_t i = 1; i <= X.size(); i++) {
+		for (intptr_t i = 0; i < X.size(); i++) {
 			Y[i] = formula(X[i]);
 		}
 
@@ -39,7 +39,7 @@ Array<double> apply(const Array<double> &X, const std::function<double(double)> 
 	{
 		Array<double> Y(X.nrow(), X.ncol());
 
-		for (intptr_t i = 1; i <= X.size(); i++) {
+		for (intptr_t i = 0; i < X.size(); i++) {
 			Y[i] = formula(X[i]);
 		}
 
@@ -75,7 +75,7 @@ Array<double> mul(const Array<double> &X, double n)
 {
 	Array<double> Y(X.nrow(), X.ncol());
 
-	for (intptr_t i = 1; i <= X.size(); i++) {
+	for (intptr_t i = 0; i < X.size(); i++) {
 		Y[i] = X[i] * n;
 	}
 
@@ -86,7 +86,7 @@ Array<double> div(const Array<double> &X, double n)
 {
 	Array<double> Y(X.nrow(), X.ncol());
 
-	for (intptr_t i = 1; i <= X.size(); i++) {
+	for (intptr_t i = 0; i < X.size(); i++) {
 		Y[i] = X[i] / n;
 	}
 
@@ -97,7 +97,7 @@ Array<double> add(const Array<double> &X, double n)
 {
 	Array<double> Y(X.nrow(), X.ncol());
 
-	for (intptr_t i = 1; i <= X.size(); i++) {
+	for (intptr_t i = 0; i < X.size(); i++) {
 		Y[i] = X[i] + n;
 	}
 
@@ -108,7 +108,7 @@ Array<double> sub(const Array<double> &X, double n)
 {
 	Array<double> Y(X.nrow(), X.ncol());
 
-	for (intptr_t i = 1; i <= X.size(); i++) {
+	for (intptr_t i = 0; i < X.size(); i++) {
 		Y[i] = X[i] - n;
 	}
 

@@ -44,12 +44,12 @@ Array<Array<String>> parse_csv(const String &path, std::string_view splitter, bo
 	{
 		intptr_t size = csv.first().size();
 
-		for (intptr_t i = 2; i <= csv.size(); i++)
+		for (intptr_t i = 1; i < csv.size(); i++)
 		{
 			if (csv[i].size() != size)
 			{
 				throw error("Inconsistent number of columns in CSV file on line % (expected %, got %)",
-						i, size, csv[i].size());
+						i + 1, size, csv[i].size());
 			}
 		}
 	}
@@ -78,17 +78,17 @@ Array<double> read_matrix(const String &path, std::string_view splitter, bool ha
 	auto ncol = csv.first().size();
 	Array<double> M(nrow, ncol);
 
-	for (intptr_t i = 1; i <= nrow; i++)
+	for (intptr_t i = 0; i < nrow; i++)
 	{
 		auto &row = csv[i];
 
-		for (intptr_t j = 1; j <= ncol; j++)
+		for (intptr_t j = 0; j < ncol; j++)
 		{
 			try {
 				M(i,j) = row[j].to_float();
 			}
 			catch (std::exception &) {
-				throw error("Invalid numeric value at row %, column %", i, j);
+				throw error("Invalid numeric value at row %, column %", i + 1, j + 1);
 			}
 		}
 	}
@@ -108,13 +108,13 @@ String matrix_to_csv(const Array<double> &matrix, std::string_view sep)
 	assert(matrix.ndim() == 2);
 	String result(matrix.size() * 2); // guesstimate capacity.
 
-	for (intptr_t i = 1; i <= matrix.nrow(); i++)
+	for (intptr_t i = 0; i < matrix.nrow(); i++)
 	{
-		for (intptr_t j = 1; j <= matrix.ncol(); j++)
+		for (intptr_t j = 0; j < matrix.ncol(); j++)
 		{
 			result.append(String::convert(matrix(i,j)));
 
-			if (j < matrix.ncol())
+			if (j < matrix.ncol() - 1)
 			{
 				result.append(sep);
 			}

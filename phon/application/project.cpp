@@ -1120,7 +1120,7 @@ void Project::add_folder(String path, const Handle<Directory> &parent, bool impo
 	auto content = filesystem::list_directory(path);
 	auto count = content.size();
 
-	for (intptr_t counter = 1; counter <= count; ++counter)
+	for (intptr_t counter = 0; counter < count; ++counter)
 	{
 		auto &name = content[counter];
 		auto file = filesystem::join(path, name);
@@ -1143,7 +1143,7 @@ std::set<Property> Project::get_shared_properties(const DocList &files)
 	auto properties = files.front()->properties();
 	auto count = files.size();
 
-	for (intptr_t i = 2; i <= count; ++i)
+	for (intptr_t i = 1; i < count; ++i)
 	{
 		std::set<Property> temp_result;
 		auto &file_properties = files[i]->properties();
@@ -1295,7 +1295,7 @@ DocList Project::get_corpus_files() const
 
 void Project::remove_empty_script()
 {
-	for (intptr_t i = m_scripts->size(); i > 0; i--)
+	for (intptr_t i = m_scripts->size() - 1; i >= 0; i--)
 	{
 		auto &node = m_scripts->get(i);
 
@@ -1569,7 +1569,7 @@ void Project::updated()
 
 void Project::remove(const Handle<Directory> &folder)
 {
-    for (intptr_t i = folder->size(); i > 0; i--)
+    for (intptr_t i = folder->size() - 1; i >= 0; i--)
     {
     	auto &node = folder->get(i);
         if (node->is<Document>())
@@ -1641,27 +1641,29 @@ void Project::import_metadata(const String &path, const String &separator)
 		}
 
 		// Scan each column
-		for (intptr_t j = 2; j <= header.size(); j++)
+		for (intptr_t j = 1; j < header.size(); j++)
 		{
 			// Try to match each file
 			for (auto &item : m_files)
 			{
 				auto base = filesystem::base_name(item.first);
+				Match m;
+				if (re) m = re->match(base);
 
-				if ((re && re->match(base)) || (base == filename))
+				if (m || (base == filename))
 				{
 					auto category = header[j].trim();
 					auto value = row[j].trim();
 
 					if (re)
 					{
-						auto count = re->count();
-						value.replace("%%", re->capture(0));
+						auto count = m.count();
+						value.replace("%%", m.capture(0));
 
 						for (int i = 1; i <=9; i++)
 						{
 							if (count >= i)
-								value.replace(placeholders[i-1], re->capture(i));
+								value.replace(placeholders[i-1], m.capture(i));
 							else
 								break;
 						}

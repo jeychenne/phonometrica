@@ -65,7 +65,7 @@ Array<String> IntensityQuery::build_headers() const
 	{
 		if (m_series)
 		{
-			for (intptr_t p = 1; p <= m_points.size(); p++)
+			for (intptr_t p = 0; p < m_points.size(); p++)
 			{
 				char suffix[32];
 				snprintf(suffix, sizeof(suffix), "Intensity(dB)(%d%%)", (int)m_points[p]);
@@ -110,11 +110,11 @@ Handle<Concordance> IntensityQuery::execute()
 
 		try
 		{
-			measure_match(*matches[i+1]);
+			measure_match(*matches[i]);
 		}
 		catch (std::exception &e)
 		{
-			auto &m = *matches[i+1];
+			auto &m = *matches[i];
 			m.measurements.assign(field_count(), std::nan(""));
 		}
 	}
@@ -151,7 +151,7 @@ Handle<Concordance> IntensityQuery::execute()
 	return conc;
 }
 
-void IntensityQuery::measure_match(Match &match) const
+void IntensityQuery::measure_match(QueryMatch &match) const
 {
 	auto annot = match.annotation();
 	auto sound = annot->sound();
@@ -201,7 +201,7 @@ void IntensityQuery::measure_match(Match &match) const
 
 		if (m_series)
 		{
-			for (intptr_t k = 1; k <= npoints; k++) {
+			for (intptr_t k = 0; k < npoints; k++) {
 				match.measurements[idx++] = point_data[k];
 			}
 		}
@@ -210,7 +210,7 @@ void IntensityQuery::measure_match(Match &match) const
 		{
 			double sum = 0;
 			int n = 0;
-			for (intptr_t k = 1; k <= npoints; k++)
+			for (intptr_t k = 0; k < npoints; k++)
 			{
 				double v = point_data[k];
 				if (std::isfinite(v)) {
@@ -395,9 +395,9 @@ void IntensityQuery::write()
 	if (m_method == Method::NPoint && !m_points.empty())
 	{
 		String pts;
-		for (intptr_t i = 1; i <= m_points.size(); i++)
+		for (intptr_t i = 0; i < m_points.size(); i++)
 		{
-			if (i > 1) pts.append(' ');
+			if (i > 0) pts.append(' ');
 			pts.append(String::format("%.1f", m_points[i]));
 		}
 		add_data_node(is_node, "Points", pts);

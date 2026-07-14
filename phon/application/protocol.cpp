@@ -217,7 +217,7 @@ void Protocol::parse_variant(Variant result)
 					throw error("Inconsistent number of choice and display items in value % in field %", g, f);
 				}
 
-				for (intptr_t i = 1; i <= choice_items.size(); i++)
+				for (intptr_t i = 0; i < choice_items.size(); i++)
 				{
 					String m = choice_items[i];
 					String t = display_items[i];

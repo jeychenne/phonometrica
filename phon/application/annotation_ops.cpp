@@ -188,7 +188,7 @@ String disambiguate_label(const Array<Layer> &existing, const String &label)
 
 
 // Validate that `indices` is a non-empty, in-range, duplicate-free set of
-// 1-based layer indices into an annotation with `layer_count` layers.
+// 0-based layer indices into an annotation with `layer_count` layers.
 void validate_layer_indices(std::span<const intptr_t> indices, intptr_t layer_count)
 {
 	if (indices.empty())
@@ -196,7 +196,7 @@ void validate_layer_indices(std::span<const intptr_t> indices, intptr_t layer_co
 
 	for (intptr_t idx : indices)
 	{
-		if (idx < 1 || idx > layer_count) {
+		if (idx < 0 || idx >= layer_count) {
 			throw error("[Index error] Layer index % out of range (annotation has % layer(s))",
 			            idx, layer_count);
 		}
@@ -555,11 +555,11 @@ concatenate_annotations(std::span<const Handle<Annotation>> sources,
 			throw error("[Concatenation error] Layer count mismatch: source #1 has % layers, "
 			            "source #% has % layers", nlayers, intptr_t(i + 1), s.layer_count());
 		}
-		for (intptr_t k = 1; k <= nlayers; ++k) {
+		for (intptr_t k = 0; k < nlayers; ++k) {
 			if (s.layer_has_instants(k) != first.layer_has_instants(k)) {
 				throw error("[Concatenation error] Layer % kind mismatch between source #1 "
 				            "and source #%: one is an instant layer, the other is an interval layer",
-				            k, intptr_t(i + 1));
+				            k + 1, intptr_t(i + 1));
 			}
 		}
 	}
@@ -567,7 +567,7 @@ concatenate_annotations(std::span<const Handle<Annotation>> sources,
 	auto result = make_handle<Annotation>();
 
 	// Build each output layer by concatenating events with cumulative offsets.
-	for (intptr_t k = 1; k <= nlayers; ++k)
+	for (intptr_t k = 0; k < nlayers; ++k)
 	{
 		const auto &model = first.layers()[k];
 		Layer out_layer(model.label, model.has_instants);

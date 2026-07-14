@@ -39,7 +39,7 @@ public:
 
 	LayerWidget(TimeModel *model, const Handle<Annotation> &annot, intptr_t layer_index, QWidget *parent = nullptr);
 
-	// 1-based layer index within the annotation.
+	// 0-based layer index within the annotation.
 	intptr_t layerIndex() const { return m_layer_index; }
 
 	bool hasInstants() const;
@@ -229,7 +229,7 @@ private:
 
 	TimeModel *m_model;
 	Handle<Annotation> m_annot;
-	intptr_t m_layer_index; // 1-based
+	intptr_t m_layer_index; // 0-based
 
 	double m_duration; // Sound file duration.
 

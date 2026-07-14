@@ -24,25 +24,25 @@
 
 namespace phonometrica {
 
-Match::Target::Target(double start_time, double end_time, String value, intptr_t layer, intptr_t offset, bool is_ref) :
+QueryMatch::Target::Target(double start_time, double end_time, String value, intptr_t layer, intptr_t offset, bool is_ref) :
 		start_time(start_time), end_time(end_time), value(std::move(value)),
 		layer((int)layer), offset((int)offset), is_reference(is_ref)
 {
 
 }
 
-bool Match::Target::operator==(const Match::Target &other) const
+bool QueryMatch::Target::operator==(const QueryMatch::Target &other) const
 {
 	return (this->start_time == other.start_time && this->end_time == other.end_time
 	        && this->offset == other.offset && this->value == other.value);
 }
 
-bool Match::Target::operator!=(const Match::Target &other) const
+bool QueryMatch::Target::operator!=(const QueryMatch::Target &other) const
 {
 	return !(*this == other);
 }
 
-bool Match::Target::operator<(const Match::Target &other) const
+bool QueryMatch::Target::operator<(const QueryMatch::Target &other) const
 {
 	if (this->layer < other.layer) {
 		return true;
@@ -61,13 +61,13 @@ bool Match::Target::operator<(const Match::Target &other) const
 	return this->offset < other.offset;
 }
 
-Match::Match(const Handle<Annotation> &annot, std::unique_ptr<Target> t) :
+QueryMatch::QueryMatch(const Handle<Annotation> &annot, std::unique_ptr<Target> t) :
 	m_annot(annot), m_target(std::move(t))
 {
 
 }
 
-Match::Match(const Match &other) : m_annot(other.annotation()), measurements(other.measurements)
+QueryMatch::QueryMatch(const QueryMatch &other) : m_annot(other.annotation()), measurements(other.measurements)
 {
 	auto target = other.m_target.get();
 	m_target = std::make_unique<Target>(target->start_time, target->end_time, target->value,
@@ -84,7 +84,7 @@ Match::Match(const Match &other) : m_annot(other.annotation()), measurements(oth
 	}
 }
 
-Match::Target *Match::get(intptr_t i) const
+QueryMatch::Target *QueryMatch::get(intptr_t i) const
 {
 	intptr_t n = 0;
 	auto t = m_target.get();
@@ -98,27 +98,27 @@ Match::Target *Match::get(intptr_t i) const
 	return t;
 }
 
-intptr_t Match::get_layer(intptr_t i) const
+intptr_t QueryMatch::get_layer(intptr_t i) const
 {
 	return get(i)->layer;
 }
 
-intptr_t Match::get_offset(intptr_t i) const
+intptr_t QueryMatch::get_offset(intptr_t i) const
 {
 	return get(i)->offset;
 }
 
-String Match::get_value(intptr_t i) const
+String QueryMatch::get_value(intptr_t i) const
 {
 	return get(i)->value;
 }
 
-const Handle<Annotation> &Match::annotation() const
+const Handle<Annotation> &QueryMatch::annotation() const
 {
 	return m_annot;
 }
 
-Match::Target &Match::last_target()
+QueryMatch::Target &QueryMatch::last_target()
 {
 	auto t = m_target.get();
 
@@ -130,7 +130,7 @@ Match::Target &Match::last_target()
 	return *t;
 }
 
-Match::Target *Match::reference_target() const
+QueryMatch::Target *QueryMatch::reference_target() const
 {
 	auto t = m_target.get();
 
@@ -145,7 +145,7 @@ Match::Target *Match::reference_target() const
 	return nullptr;
 }
 
-int Match::to_xml(xml_node root) const
+int QueryMatch::to_xml(xml_node root) const
 {
 	auto node = root.append_child("Match");
 	add_data_node(node, "Annotation", m_annot->path().data());
@@ -156,18 +156,19 @@ int Match::to_xml(xml_node root) const
 	while (target)
 	{
 		auto index = m_annot->get_event_index(target->layer, target->start_time);
-		if (index == 0) {
+		if (index < 0) {
 			// The target's stored start_time no longer matches any event's
 			// start on this layer — the annotation was likely edited since
-			// this match was created. Fall back to index 1 (a valid index,
-			// since annotation layers are never empty) so the file stays
-			// loadable. The caller reports the aggregate stale count.
-			index = 1;
+			// this match was created. Fall back to the first event (a valid
+			// index, since annotation layers are never empty) so the file
+			// stays loadable. The caller reports the aggregate stale count.
+			index = 0;
 			stale++;
 		}
+		// Layer and event indices are serialized 1-based in the XML format.
 		auto subnode = targets_node.append_child("Target");
-		subnode.append_attribute("layer").set_value(target->layer);
-		subnode.append_attribute("event").set_value(index);
+		subnode.append_attribute("layer").set_value(target->layer + 1);
+		subnode.append_attribute("event").set_value(index + 1);
 		subnode.append_attribute("offset").set_value(target->offset);
 		subnode.append_attribute("ref").set_value(target->is_reference ? "true" : "false");
 		subnode.append_child(node_pcdata).set_value(target->value.data());
@@ -194,28 +195,28 @@ int Match::to_xml(xml_node root) const
 	return stale;
 }
 
-bool Match::valid()
+bool QueryMatch::valid()
 {
 	return m_annot && m_target != nullptr;
 }
 
-void Match::append(std::unique_ptr<Target> next)
+void QueryMatch::append(std::unique_ptr<Target> next)
 {
 	auto &t = last_target();
 	t.next = std::move(next);
 }
 
-double Match::get_start_time(intptr_t i) const
+double QueryMatch::get_start_time(intptr_t i) const
 {
 	return get(i)->start_time;
 }
 
-double Match::get_end_time(intptr_t i) const
+double QueryMatch::get_end_time(intptr_t i) const
 {
 	return get(i)->end_time;
 }
 
-bool Match::operator==(const Match &other) const
+bool QueryMatch::operator==(const QueryMatch &other) const
 {
 	if (m_annot->path() != other.annotation()->path()) {
 		return false;
@@ -240,12 +241,12 @@ bool Match::operator==(const Match &other) const
 	return true;
 }
 
-bool Match::operator!=(const Match &other) const
+bool QueryMatch::operator!=(const QueryMatch &other) const
 {
 	return !(*this == other);
 }
 
-bool Match::operator<(const Match &other) const
+bool QueryMatch::operator<(const QueryMatch &other) const
 {
 	if (this->annotation()->path() < other.annotation()->path()) {
 		return true;
@@ -275,7 +276,7 @@ bool Match::operator<(const Match &other) const
 	return false;
 }
 
-bool Match::update(intptr_t target_index, bool &modified)
+bool QueryMatch::update(intptr_t target_index, bool &modified)
 {
 	auto target = this->get(target_index);
 
@@ -300,7 +301,7 @@ bool Match::update(intptr_t target_index, bool &modified)
 	return true;
 }
 
-Handle<Bookmark> Match::to_bookmark(intptr_t target_index, const String &title, const String &notes, std::pair<String, String> context) const
+Handle<Bookmark> QueryMatch::to_bookmark(intptr_t target_index, const String &title, const String &notes, std::pair<String, String> context) const
 {
 	auto target = get(target_index);
 	auto b = make_handle<TimeStamp>(nullptr, title, m_annot, target->layer, target->start_time,

@@ -22,7 +22,8 @@
 #include <cmath>
 #include <phon/file.hpp>
 #include <phon/runtime/runtime.hpp>
-#include <phon/runtime/regex.hpp>
+#include <phon/regex.hpp>
+#include <phon/runtime/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/analysis/mixed_model.hpp>
@@ -99,7 +100,7 @@ void DataTable::metadata_to_xml(xml_node meta_node)
 	auto logic_attr = filter_node.append_attribute("logic");
 	logic_attr.set_value((m_filter_logic == "or") ? "or" : "and");
 
-	for (intptr_t i = 1; i <= m_filter_rules.size(); i++)
+	for (intptr_t i = 0; i < m_filter_rules.size(); i++)
 	{
 		auto &rule = m_filter_rules[i];
 		auto rule_node = filter_node.append_child("Rule");
@@ -108,7 +109,7 @@ void DataTable::metadata_to_xml(xml_node meta_node)
 
 		if (rule.op == "in")
 		{
-			for (intptr_t k = 1; k <= rule.set_values.size(); k++) {
+			for (intptr_t k = 0; k < rule.set_values.size(); k++) {
 				add_data_node(rule_node, "Value", rule.set_values[k]);
 			}
 		}
@@ -183,11 +184,11 @@ void DataTable::metadata_from_xml(xml_node meta_node)
 	if (m_filter_rules.size() > 1)
 	{
 		Array<FilterRuleData> deduped;
-		for (intptr_t i = 1; i <= m_filter_rules.size(); i++)
+		for (intptr_t i = 0; i < m_filter_rules.size(); i++)
 		{
 			auto &candidate = m_filter_rules[i];
 			bool seen = false;
-			for (intptr_t j = 1; j <= deduped.size(); j++)
+			for (intptr_t j = 0; j < deduped.size(); j++)
 			{
 				auto &existing = deduped[j];
 				if (existing.column == candidate.column &&
@@ -231,19 +232,19 @@ void DataTable::to_csv(const String &path, const String &sep)
 	auto nrow = this->row_count();
 	auto ncol = this->column_count();
 
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
 		file.write(get_header(j));
-		if (j == ncol) file.write('\n');
+		if (j == ncol - 1) file.write('\n');
 		else file.write(sep);
 	}
 
-	for (intptr_t i = 1; i <= nrow; i++)
+	for (intptr_t i = 0; i < nrow; i++)
 	{
-		for (intptr_t j = 1; j <= ncol; j++)
+		for (intptr_t j = 0; j < ncol; j++)
 		{
 			file.write(get_cell(i, j));
-			if (j == ncol) file.write('\n');
+			if (j == ncol - 1) file.write('\n');
 			else file.write(sep);
 		}
 	}
@@ -258,13 +259,13 @@ intptr_t DataTable::find_column(const String &name) const
 {
 	auto ncol = column_count();
 
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
 		if (get_header(j) == name)
 			return j;
 	}
 
-	return 0;
+	return -1;
 }
 
 
@@ -308,7 +309,7 @@ static Variant make_headers_list(Runtime &rt, DataTable &table)
 	auto ncol = table.column_count();
 	Array<Variant> result;
 
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result.append(table.get_header(j));
 	}
 
@@ -322,8 +323,7 @@ static Variant make_headers_list(Runtime &rt, DataTable &table)
 
 // First-column width helper for printf-style summary tables.
 //
-// Returns max(min_w, longest_name + pad).  Names is a 1-indexed
-// Array<String> per Phonometrica convention.  All summary tables
+// Returns max(min_w, longest_name + pad).  All summary tables
 // (fixed effects, hyperparameters, smooth terms, random effects, …)
 // use this so a long term name like
 // "cor(Intercept,man.dist:subsystem[vowels]|language)" no longer
@@ -331,7 +331,7 @@ static Variant make_headers_list(Runtime &rt, DataTable &table)
 static int summary_column_width(const Array<String> &names, int min_w, int pad = 2)
 {
 	int w = min_w;
-	for (intptr_t i = 1; i <= names.size(); i++) {
+	for (intptr_t i = 0; i < names.size(); i++) {
 		int len = (int)names[i].size() + pad;
 		if (len > w) w = len;
 	}
@@ -392,7 +392,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 	if (!m.response_levels.empty())
 	{
 		rt.printf("Response levels: %s = 0, %s = 1\n",
-		          m.response_levels[1].data(), m.response_levels[2].data());
+		          m.response_levels[0].data(), m.response_levels[1].data());
 	}
 
 	rt.printf("\n");
@@ -423,11 +423,11 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		std::string row_full = lbl_fmt + " %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %8s%s\n";
 		std::string row_brief = lbl_fmt + " %12.4f %12.4f %12.4f %12.4f %8s%s\n";
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
-			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			const char *name = (i < m.coef_names.size()) ? m.coef_names[i].data() : "?";
 
-			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+			double pd_val = (i < m.pd.size()) ? m.pd[i] : 0.0;
 			char pdbuf[16];
 			snprintf(pdbuf, sizeof(pdbuf), "%.4f", pd_val);
 
@@ -464,7 +464,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		{
 			bool has_hyper_sd = !m.hyper_posterior_sd.empty()
 			                 && m.hyper_posterior_sd.size() == m.hyper_names.size()
-			                 && !std::isnan(m.hyper_posterior_sd[1]);
+			                 && !std::isnan(m.hyper_posterior_sd[0]);
 
 			int hyper_w = summary_column_width(m.hyper_names, 30);
 			std::string hyper_fmt = "%-" + std::to_string(hyper_w) + "s";
@@ -476,7 +476,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 				          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
 
 				std::string hyper_row = hyper_fmt + " %12.4f %12.4f %12.4f %12.4f\n";
-				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+				for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 				{
 					rt.printf(hyper_row.c_str(),
 					          m.hyper_names[i].data(),
@@ -490,7 +490,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 				rt.printf((hyper_fmt + " %12s\n").c_str(), "", "Post.Mean");
 
 				std::string hyper_row = hyper_fmt + " %12.4f\n";
-				for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+				for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 				{
 					rt.printf(hyper_row.c_str(),
 					          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
@@ -513,9 +513,9 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 		std::string row_fmt = lbl_fmt + " %12.4f %12.4f %12.3f %12s%s\n";
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
-			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			const char *name = (i < m.coef_names.size()) ? m.coef_names[i].data() : "?";
 			char pbuf[16];
 			if (m.p[i] < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
 			else snprintf(pbuf, sizeof(pbuf), "%.4f", m.p[i]);
@@ -560,7 +560,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		};
 
 		Array<String> labels;
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
 			labels.append(build_label(m.smooth_terms[i]));
 		}
 
@@ -573,7 +573,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 
 		std::string row_fmt = lbl_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
 
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 		{
 			auto &sm = m.smooth_terms[i];
 
@@ -599,7 +599,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		// Show a "Corr" column when any group has q > 1 (random slopes).
 		// For q = 1 all the way through we keep the legacy header.
 		bool show_corr = false;
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < m.random_effects.size(); g++) {
 			if (m.random_effects[g].term_names.size() > 1) {
 				show_corr = true;
 				break;
@@ -607,12 +607,12 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		}
 
 		// cov_chol is the packed lower-triangular raw Cholesky factor L (NOT
-		// log-diagonal) stored 1-indexed, row by row. Element (r, c) with
-		// 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c + 1].
+		// log-diagonal) stored row by row. Element (r, c) with
+		// 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c].
 		// Covariance  Σ(s, t) = Σ_{k ≤ min(s,t)} L(s,k) · L(t,k).
 		auto chol_at = [](const Array<double> &cc, intptr_t r0, intptr_t c0) -> double {
-			intptr_t idx = r0 * (r0 + 1) / 2 + c0 + 1;
-			return (idx <= cc.size()) ? cc[idx] : 0.0;
+			intptr_t idx = r0 * (r0 + 1) / 2 + c0;
+			return (idx < cc.size()) ? cc[idx] : 0.0;
 		};
 		auto cov_st = [&](const Array<double> &cc, intptr_t s0, intptr_t t0) -> double {
 			if (s0 > t0) std::swap(s0, t0);
@@ -632,12 +632,12 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		constexpr int re_pad = 2;
 		constexpr int re_indent = 2;
 		int name_w = re_min_w;
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			auto &re = m.random_effects[g];
 			int gw = (int)re.group_name.size() + re_pad;
 			if (gw > name_w) name_w = gw;
-			for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+			for (intptr_t t = 0; t < re.term_names.size(); t++) {
 				int tw = re_indent + (int)re.term_names[t].size() + re_pad;
 				if (tw > name_w) name_w = tw;
 			}
@@ -658,16 +658,16 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		std::string grp_row  = grp_fmt + " %12.4f %12.4f %8ld\n";
 		std::string term_row = "  " + term_fmt + " %12.4f %12.4f %8s";
 
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			auto &re = m.random_effects[g];
 			intptr_t q = re.term_names.size();
-			for (intptr_t t = 1; t <= q; t++)
+			for (intptr_t t = 0; t < q; t++)
 			{
-				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
 				double sd = std::sqrt(std::max(var, 0.0));
 
-				if (t == 1) {
+				if (t == 0) {
 					rt.printf(grp_row.c_str(),
 						re.group_name.data(), var, sd, (long)re.nlevels);
 				} else {
@@ -675,11 +675,11 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 					// previous term in the same group.
 					rt.printf(term_row.c_str(),
 						re.term_names[t].data(), var, sd, "");
-					for (intptr_t s = 1; s < t; s++) {
-						double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
+					for (intptr_t s = 0; s < t; s++) {
+						double var_s = (s < re.variance.size()) ? re.variance[s] : 0.0;
 						double denom = std::sqrt(std::max(var_s, 1e-30)
 						                       * std::max(var,   1e-30));
-						double corr  = cov_st(re.cov_chol, s - 1, t - 1) / denom;
+						double corr  = cov_st(re.cov_chol, s, t) / denom;
 						rt.printf(" %+7.4f", corr);
 					}
 					rt.printf("\n");
@@ -719,7 +719,7 @@ static void print_model_summary(Runtime &rt, const stats::Model &m)
 		if (!m.pareto_k.empty())
 		{
 			int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
-			for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+			for (intptr_t j = 0; j < m.pareto_k.size(); j++)
 			{
 				double k = m.pareto_k[j];
 				if (k < 0.5)      n_good++;
@@ -907,7 +907,7 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 		{
 			PreparedClause pc;
 			pc.col = table.find_column(c.column);
-			if (pc.col == 0) throw error("[Index error] Table has no column named \"%\"", c.column);
+			if (pc.col < 0) throw error("[Index error] Table has no column named \"%\"", c.column);
 			pc.op = parse_filter_op(c.op);
 			pc.value = std::move(c.value);
 			pc.num_value = 0.0;
@@ -933,7 +933,7 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 	std::vector<int> matching;
 	matching.reserve(nrow);
 
-	for (intptr_t i = 1; i <= nrow; i++)
+	for (intptr_t i = 0; i < nrow; i++)
 	{
 		bool row_pass = false;
 		for (auto &pg : prepared_groups) {
@@ -944,7 +944,7 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 			}
 			if (group_pass) { row_pass = true; break; }
 		}
-		if (row_pass) matching.push_back(static_cast<int>(i - 1));
+		if (row_pass) matching.push_back(static_cast<int>(i));
 	}
 
 	if (table.is<Dataset>()) {
@@ -1139,14 +1139,14 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "coef_names")
 		{
 			Array<Variant> items;
-			for (intptr_t i = 1; i <= model.coef_names.size(); i++)
+			for (intptr_t i = 0; i < model.coef_names.size(); i++)
 				items.append(model.coef_names[i]);
 			return make_handle<List>(&rt, std::move(items));
 		}
 		if (key == "hyper_names")
 		{
 			Array<Variant> items;
-			for (intptr_t i = 1; i <= model.hyper_names.size(); i++)
+			for (intptr_t i = 0; i < model.hyper_names.size(); i++)
 				items.append(model.hyper_names[i]);
 			return make_handle<List>(&rt, std::move(items));
 		}
@@ -1163,10 +1163,10 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "ranef_names")
 		{
 			Array<Variant> items;
-			for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+			for (intptr_t g = 0; g < model.random_effects.size(); g++)
 			{
 				auto &re = model.random_effects[g];
-				for (intptr_t t = 1; t <= re.term_names.size(); t++)
+				for (intptr_t t = 0; t < re.term_names.size(); t++)
 				{
 					std::string name = "sd("
 						+ std::string(re.term_names[t].data(), re.term_names[t].size())
@@ -1183,12 +1183,12 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "ranef_sd")
 		{
 			Array<double> sds;
-			for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+			for (intptr_t g = 0; g < model.random_effects.size(); g++)
 			{
 				auto &re = model.random_effects[g];
-				for (intptr_t t = 1; t <= re.term_names.size(); t++)
+				for (intptr_t t = 0; t < re.term_names.size(); t++)
 				{
-					double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+					double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
 					sds.append(std::sqrt(std::max(var, 0.0)));
 				}
 			}
@@ -1204,7 +1204,7 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "smooth_names")
 		{
 			Array<Variant> items;
-			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 			{
 				auto &sm = model.smooth_terms[i];
 				String label("s(");
@@ -1218,21 +1218,21 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "smooth_edf")
 		{
 			Array<double> edfs;
-			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				edfs.append(model.smooth_terms[i].edf);
 			return make_handle<Array<double>>(std::move(edfs));
 		}
 		if (key == "smooth_F")
 		{
 			Array<double> Fs;
-			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				Fs.append(model.smooth_terms[i].F_stat);
 			return make_handle<Array<double>>(std::move(Fs));
 		}
 		if (key == "smooth_p")
 		{
 			Array<double> ps;
-			for (intptr_t i = 1; i <= model.smooth_terms.size(); i++)
+			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				ps.append(model.smooth_terms[i].p_value);
 			return make_handle<Array<double>>(std::move(ps));
 		}
@@ -1243,7 +1243,7 @@ void DataTable::initialize(Runtime &rt)
 			// One entry per s() term, or one per by-level for by-factor
 			// smooths.  Empty for non-GAM models.
 			Array<double> lls;
-			for (intptr_t i = 1; i <= model.smooth_log_lambda.size(); i++)
+			for (intptr_t i = 0; i < model.smooth_log_lambda.size(); i++)
 				lls.append(model.smooth_log_lambda[i]);
 			return make_handle<Array<double>>(std::move(lls));
 		}
@@ -1584,7 +1584,7 @@ void DataTable::initialize(Runtime &rt)
 		// Reconstruct GroupingInfo from model.random_effects.
 		std::vector<stats::GroupingInfo> groups;
 		bool re_info_ok = true;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			auto &re = model.random_effects[g];
 			if (re.indices.empty() || re.Z_design.empty()) {
 				re_info_ok = false;
@@ -1710,7 +1710,7 @@ void DataTable::initialize(Runtime &rt)
 
 		std::vector<stats::GroupingInfo> groups;
 		bool re_info_ok = true;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			auto &re = model.random_effects[g];
 			if (re.indices.empty() || re.Z_design.empty()) {
 				re_info_ok = false;
@@ -1949,9 +1949,8 @@ void DataTable::initialize(Runtime &rt)
 		auto i = cast<intptr_t>(args[1]);
 		auto j = cast<intptr_t>(args[2]);
 		table.open();
-		if (i < 1 || i > table.row_count() || j < 1 || j > table.column_count()) {
-			throw error("Cell index (%, %) is out of range", i, j);
-		}
+		i = dim_index_from_script(i, table.row_count());
+		j = dim_index_from_script(j, table.column_count());
 		return table.get_cell(i, j);
 	};
 
@@ -1961,9 +1960,8 @@ void DataTable::initialize(Runtime &rt)
 		auto j = cast<intptr_t>(args[2]);
 		auto &value = cast<String>(args[3]);
 		table.open();
-		if (i < 1 || i > table.row_count() || j < 1 || j > table.column_count()) {
-			throw error("Cell index (%, %) is out of range", i, j);
-		}
+		i = dim_index_from_script(i, table.row_count());
+		j = dim_index_from_script(j, table.column_count());
 		table.set_cell(i, j, value);
 		return Variant();
 	};
@@ -1972,9 +1970,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &table = cast<DataTable>(args[0]);
 		auto j = cast<intptr_t>(args[1]);
 		table.open();
-		if (j < 1 || j > table.column_count()) {
-			throw error("Column index % is out of range", j);
-		}
+		j = dim_index_from_script(j, table.column_count());
 		return table.get_header(j);
 	};
 
@@ -1982,21 +1978,19 @@ void DataTable::initialize(Runtime &rt)
 		auto &ds = cast<Dataset>(args[0]);
 		auto j = cast<intptr_t>(args[1]);
 		ds.open();
-		if (j < 1 || j > ds.column_count()) {
-			throw error("Column index % is out of range", j);
-		}
+		j = dim_index_from_script(j, ds.column_count());
 		if (ds.is_numeric(j)) {
 			auto span = ds.numeric_column(j);
 			Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
 			for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++) {
-				result[i + 1] = span[i];
+				result[i] = span[i];
 			}
 			return make_handle<Array<double>>(std::move(result));
 		}
 		else {
 			// Text or boolean: return as List of strings.
 			Array<Variant> items;
-			for (intptr_t i = 1; i <= ds.row_count(); i++) {
+			for (intptr_t i = 0; i < ds.row_count(); i++) {
 				items.append(ds.get_cell(i, j));
 			}
 			return make_handle<List>(&rt, std::move(items));
@@ -2007,9 +2001,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &ds = cast<Dataset>(args[0]);
 		auto j = cast<intptr_t>(args[1]);
 		ds.open();
-		if (j < 1 || j > ds.column_count()) {
-			throw error("Column index % is out of range", j);
-		}
+		j = dim_index_from_script(j, ds.column_count());
 		auto ct = ds.column_type(j);
 		switch (ct) {
 			case Dataset::ColumnType::Numeric: return String("numeric");
@@ -2021,7 +2013,7 @@ void DataTable::initialize(Runtime &rt)
 
 	// ── get_column by name (DataTable, String) ──────────────────
 	//
-	// Resolves a column header to a 1-based index, then returns:
+	// Resolves a column header to a column index, then returns:
 	//   • Array<double>  if the column is (or auto-detects as) numeric
 	//   • List<String>   otherwise
 	//
@@ -2038,7 +2030,7 @@ void DataTable::initialize(Runtime &rt)
 		auto &name  = cast<String>(args[1]);
 		table.open();
 		auto j = table.find_column(name);
-		if (j == 0)
+		if (j < 0)
 			throw error("[Index error] Table has no column named \"%\"", name);
 
 		// ── Dataset: use typed column metadata ───────────────
@@ -2048,11 +2040,11 @@ void DataTable::initialize(Runtime &rt)
 				auto span = ds.numeric_column(j);
 				Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
 				for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++)
-					result[i + 1] = span[i];
+					result[i] = span[i];
 				return make_handle<Array<double>>(std::move(result));
 			} else {
 				Array<Variant> items;
-				for (intptr_t i = 1; i <= ds.row_count(); i++)
+				for (intptr_t i = 0; i < ds.row_count(); i++)
 					items.append(ds.get_cell(i, j));
 				return make_handle<List>(&rt, std::move(items));
 			}
@@ -2064,7 +2056,7 @@ void DataTable::initialize(Runtime &rt)
 		auto nrow = table.row_count();
 		Array<double> nums(nrow, 0.0);
 		bool all_numeric = true;
-		for (intptr_t i = 1; i <= nrow && all_numeric; i++) {
+		for (intptr_t i = 0; i < nrow && all_numeric; i++) {
 			auto cell = table.get_cell(i, j);
 			auto sv   = std::string_view(cell.data(), (size_t)cell.size());
 			if (DataTable::is_missing_value_token(sv)) {
@@ -2079,7 +2071,7 @@ void DataTable::initialize(Runtime &rt)
 		if (all_numeric)
 			return make_handle<Array<double>>(std::move(nums));
 		Array<Variant> items;
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 			items.append(table.get_cell(i, j));
 		return make_handle<List>(&rt, std::move(items));
 	};
@@ -2096,13 +2088,12 @@ void DataTable::initialize(Runtime &rt)
 		auto &conc = cast<Concordance>(args[0]);
 		auto j = cast<intptr_t>(args[1]);
 		conc.open();
-		if (j < 1 || j > conc.column_count())
-			throw error("Column index % is out of range", j);
+		j = dim_index_from_script(j, conc.column_count());
 
 		auto nrow = conc.row_count();
 		Array<double> nums(nrow, 0.0);
 		bool all_numeric = true;
-		for (intptr_t i = 1; i <= nrow && all_numeric; i++) {
+		for (intptr_t i = 0; i < nrow && all_numeric; i++) {
 			auto cell = conc.get_cell(i, j);
 			auto sv   = std::string_view(cell.data(), (size_t)cell.size());
 			if (DataTable::is_missing_value_token(sv)) {
@@ -2117,7 +2108,7 @@ void DataTable::initialize(Runtime &rt)
 		if (all_numeric)
 			return make_handle<Array<double>>(std::move(nums));
 		Array<Variant> items;
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 			items.append(conc.get_cell(i, j));
 		return make_handle<List>(&rt, std::move(items));
 	};
@@ -2143,10 +2134,10 @@ void DataTable::initialize(Runtime &rt)
 			throw error("add_column: list has % elements but table has % rows",
 			            list.size(), nrow);
 
-		// Copy 1-based List items into std::vector<String> for the application layer.
+		// Copy List items into std::vector<String> for the application layer.
 		std::vector<String> values;
 		values.reserve((size_t)nrow);
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 			values.push_back(list[i].to_string());
 
 		if (table.is<Dataset>())
@@ -2169,7 +2160,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto add_column_array = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &table = cast<DataTable>(args[0]); // no need to unshare because data tables are not clonable
-		auto &arr   = cast<Array<double>>(args[1]);
+		const auto &arr = cast<Array<double>>(args[1]);
 		auto &name  = cast<String>(args[2]);
 		table.open();
 		auto nrow = table.row_count();
@@ -2177,10 +2168,10 @@ void DataTable::initialize(Runtime &rt)
 			throw error("append: array has % elements but table has % rows",
 			            arr.size(), nrow);
 
-		// Copy 1-based Array<double> into std::vector<double> for the application layer.
+		// Copy Array<double> into std::vector<double> for the application layer.
 		std::vector<double> values;
 		values.reserve((size_t)nrow);
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 			values.push_back(arr[i]);
 
 		if (table.is<Dataset>())
@@ -2231,7 +2222,7 @@ void DataTable::initialize(Runtime &rt)
 
 		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
 		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+		for (intptr_t i = 0; i < emm.levels.size(); i++) {
 			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
 			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
 			          emm.lower_ci[i], emm.upper_ci[i]);
@@ -2248,7 +2239,7 @@ void DataTable::initialize(Runtime &rt)
 
 		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
 		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+		for (intptr_t i = 0; i < emm.levels.size(); i++) {
 			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
 			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
 			          emm.lower_ci[i], emm.upper_ci[i]);
@@ -2258,7 +2249,7 @@ void DataTable::initialize(Runtime &rt)
 		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
 		rt.printf("Pairwise contrasts (p-value adjustment: %s):\n\n", adjustment.data());
 		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
-		for (intptr_t i = 1; i <= contrasts.label.size(); i++) {
+		for (intptr_t i = 0; i < contrasts.label.size(); i++) {
 			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
 			          contrasts.label[i].data(), contrasts.estimate[i], contrasts.se[i],
 			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());
@@ -2275,7 +2266,7 @@ void DataTable::initialize(Runtime &rt)
 
 		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
 		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+		for (intptr_t i = 0; i < emm.levels.size(); i++) {
 			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
 			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
 			          emm.lower_ci[i], emm.upper_ci[i]);
@@ -2293,7 +2284,7 @@ void DataTable::initialize(Runtime &rt)
 
 		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
 		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 1; i <= emm.levels.size(); i++) {
+		for (intptr_t i = 0; i < emm.levels.size(); i++) {
 			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
 			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
 			          emm.lower_ci[i], emm.upper_ci[i]);
@@ -2303,7 +2294,7 @@ void DataTable::initialize(Runtime &rt)
 		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
 		rt.printf("Pairwise contrasts of trends (p-value adjustment: %s):\n\n", adjustment.data());
 		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
-		for (intptr_t i = 1; i <= contrasts.label.size(); i++) {
+		for (intptr_t i = 0; i < contrasts.label.size(); i++) {
 			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
 			          contrasts.label[i].data(), contrasts.estimate[i], contrasts.se[i],
 			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());

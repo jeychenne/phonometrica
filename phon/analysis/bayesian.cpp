@@ -65,7 +65,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	// fixed-effects prior to the smooth basis coefficients would double-penalize
 	// them. Build a mask of smooth-basis columns and skip the prior for those.
 	std::vector<bool> is_smooth_col(p, false);
-	for (intptr_t s = 1; s <= model.smooth_terms.size(); s++)
+	for (intptr_t s = 0; s < model.smooth_terms.size(); s++)
 	{
 		auto &sm = model.smooth_terms[s];
 		for (intptr_t c = 0; c < sm.col_count; c++)
@@ -88,7 +88,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		}
 		else
 		{
-			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
+			const auto &pr = priors.prior_for(model.coef_names[j]);
 			prior_mean[j] = pr.mean;
 			prior_precision[j] = 1.0 / (pr.sd * pr.sd);
 		}
@@ -120,7 +120,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	// Posterior mean.
 	Eigen::VectorXd beta_mle(p);
 	for (intptr_t j = 0; j < p; j++) {
-		beta_mle[j] = model.beta[j + 1];
+		beta_mle[j] = model.beta[j];
 	}
 
 	Eigen::VectorXd info_weighted = H_lik * beta_mle;
@@ -213,9 +213,9 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 					for (intptr_t j = 0; j < p; j++)
 					{
 						std::string cname_buf("(?)");
-						if (j + 1 <= model.coef_names.size()) {
-							cname_buf = std::string(model.coef_names[j + 1].data(),
-							                        model.coef_names[j + 1].size());
+						if (j < model.coef_names.size()) {
+							cname_buf = std::string(model.coef_names[j].data(),
+							                        model.coef_names[j].size());
 						}
 						std::fprintf(stderr,
 							"%-28s %14.6f %14.6f %14.6f\n",
@@ -248,19 +248,19 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		double var = Sigma_post(j, j);
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
-		model.posterior_mean[j + 1] = mean;
-		model.posterior_mode[j + 1] = beta_map[j];   // β̂_MAP (pre-SLA)
-		model.posterior_median[j + 1] = mean;  // Gaussian: median = mean (kept; skew-normal median deferred)
-		model.posterior_sd[j + 1] = sd;
-		model.ci_lower[j + 1] = mean - z_975 * sd;
-		model.ci_upper[j + 1] = mean + z_975 * sd;
+		model.posterior_mean[j] = mean;
+		model.posterior_mode[j] = beta_map[j];   // β̂_MAP (pre-SLA)
+		model.posterior_median[j] = mean;  // Gaussian: median = mean (kept; skew-normal median deferred)
+		model.posterior_sd[j] = sd;
+		model.ci_lower[j] = mean - z_975 * sd;
+		model.ci_upper[j] = mean + z_975 * sd;
 
 		// Probability of direction: P(sign(β) = sign(β̂_post))
 		// = Φ(|β̂_post| / σ_post)   for the Gaussian approximation.
 		if (sd > 0) {
-			model.pd[j + 1] = boost::math::cdf(normal, std::abs(mean) / sd);
+			model.pd[j] = boost::math::cdf(normal, std::abs(mean) / sd);
 		} else {
-			model.pd[j + 1] = 1.0;
+			model.pd[j] = 1.0;
 		}
 	}
 
@@ -268,13 +268,13 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 
 	for (intptr_t i = 0; i < p; i++) {
 		for (intptr_t j = 0; j < p; j++) {
-			model.vcov(i + 1, j + 1) = Sigma_post(i, j);
+			model.vcov(i, j) = Sigma_post(i, j);
 		}
 	}
 
 	// Also update beta to the posterior mean (used by EMMs, predict, etc.)
 	for (intptr_t j = 0; j < p; j++) {
-		model.beta[j + 1] = beta_post[j];
+		model.beta[j] = beta_post[j];
 	}
 
 	// Recompute se/stat from posterior (these are now posterior SD / posterior z-score).
@@ -283,10 +283,10 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	// frequentist standard errors and Wald statistics.
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.se[j + 1] = model.posterior_sd[j + 1];
-		model.stat[j + 1] = (model.se[j + 1] > 0) ? model.beta[j + 1] / model.se[j + 1] : 0.0;
+		model.se[j] = model.posterior_sd[j];
+		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
 		// p-values are not meaningful in Bayesian context; set to NaN.
-		model.p[j + 1] = std::numeric_limits<double>::quiet_NaN();
+		model.p[j] = std::numeric_limits<double>::quiet_NaN();
 	}
 
 	// ── 5. Hyperparameter posteriors (variance components) ──────────
@@ -303,7 +303,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 
 	{
 		intptr_t n_re = 0;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			n_re += model.random_effects[g].term_names.size();
 		}
 		intptr_t n_hyper = n_re + (model.is_gaussian() ? 1 : 0);
@@ -316,11 +316,11 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 			model.hyper_ci_lower = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 			model.hyper_ci_upper = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 
-			intptr_t idx = 1;
-			for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+			intptr_t idx = 0;
+			for (intptr_t g = 0; g < model.random_effects.size(); g++)
 			{
 				auto &re = model.random_effects[g];
-				for (intptr_t t = 1; t <= re.term_names.size(); t++)
+				for (intptr_t t = 0; t < re.term_names.size(); t++)
 				{
 					// Name: "sd(term|group)"
 					std::string name = "sd(" + std::string(re.term_names[t].data(), re.term_names[t].size())
@@ -376,7 +376,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 		for (intptr_t j = 0; j < p; j++)
 		{
 			if (is_smooth_col[j]) continue;
-			const auto &pr = priors.prior_for(model.coef_names[j + 1]);
+			const auto &pr = priors.prior_for(model.coef_names[j]);
 			double z = (beta_map[j] - pr.mean) / pr.sd;
 			log_prior += -0.5 * log_2pi - std::log(pr.sd) - 0.5 * z * z;
 		}

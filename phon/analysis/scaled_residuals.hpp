@@ -83,7 +83,7 @@ namespace phonometrica::stats {
 struct ScaledResidualResult
 {
 	// Scaled residuals in (0, 1).  Should be U(0,1) if model is correct.
-	// 1-based Array (n observations).
+	// Array of n observations.
 	Array<double> residuals;
 
 	// One-sample Kolmogorov-Smirnov test against U(0,1).

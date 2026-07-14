@@ -168,7 +168,7 @@ SpectralMoments compute_spectral_moments_at(const Handle<Sound> &sound,
 
 	// ── Apply window function ──────────────────────────────────────────
 	auto window = speech::create_window(N, N, window_type);
-	for (intptr_t i = 1; i <= N; i++) {
+	for (intptr_t i = 0; i < N; i++) {
 		segment[i] *= window[i];
 	}
 
@@ -179,7 +179,7 @@ SpectralMoments compute_spectral_moments_at(const Handle<Sound> &sound,
 
 	std::vector<double> input(nfft, 0.0);
 	for (intptr_t i = 0; i < N; i++) {
-		input[i] = segment[i + 1]; // 1-based Array → 0-based vector
+		input[i] = segment[i];
 	}
 
 	std::vector<std::complex<double>> output(n_bins, std::complex<double>(0, 0));

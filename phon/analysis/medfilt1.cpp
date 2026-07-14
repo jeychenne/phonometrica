@@ -161,9 +161,9 @@ Array<double> medfilt1(const Array<double> &signal, int n)
 	intptr_t start = -n, end = 0, pos = -(n - mid) + 1;
 	while (pos < len)
 	{
-		if (start >= 0) median.remove(signal(start+1));
-		if (end < len) median.add(signal(end + 1));
-		if (pos >= 0) filter(pos+1) = median();
+		if (start >= 0) median.remove(signal(start));
+		if (end < len) median.add(signal(end));
+		if (pos >= 0) filter(pos) = median();
 		start++, end++, pos++;
 	}
 

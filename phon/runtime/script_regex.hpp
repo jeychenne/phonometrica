@@ -13,101 +13,35 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 01/06/2020                                                                                                 *
+ * Created: 13/07/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: see header.                                                                                                *
+ * Purpose: the scripting language's Regex object. The language keeps its historical stateful API (match(re, s) then   *
+ * group(re, i)), but the C++ Regex class is now immutable and reentrant, so the last match is stored here — in the    *
+ * boxed script object owned by the old engine's bridge — and never in the Regex itself. This wrapper is retired with  *
+ * the old engine: the new engine exposes Match objects to scripts directly.                                           *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <phon/runtime/list.hpp>
+#ifndef PHONOMETRICA_SCRIPT_REGEX_HPP
+#define PHONOMETRICA_SCRIPT_REGEX_HPP
+
+#include <phon/regex.hpp>
 
 namespace phonometrica {
 
-List::List(const List &other) : _items(other._items)
+struct ScriptRegex final
 {
-	// When we clone a list, we need to make sure that aliases are resolved, otherwise both lists may get mutated if
-	// we mutate a reference in one of them.
-	for (auto &item : _items) {
-		item.unalias();
-	}
-}
+	explicit ScriptRegex(const String &pattern) : re(pattern) { }
 
-void List::traverse(const GCCallback &callback)
-{
-	// GC marking must observe the actual stored elements: go through raw_data() so that a shared
-	// buffer is never detached (marking is not a semantic mutation of the list's value).
-	auto items = _items.raw_data();
+	ScriptRegex(const String &pattern, const String &flags) : re(pattern, flags) { }
 
-	for (intptr_t i = 0; i < _items.size(); i++) {
-		items[i].traverse(callback);
-	}
-}
+	// The compiled pattern (immutable, no per-match state).
+	Regex re;
 
-String List::to_string() const
-{
-	if (this->seen)
-	{
-		return "[...]";
-	}
-
-	bool flag = this->seen;
-	String s("[");
-	for (intptr_t i = 0; i < _items.size(); i++)
-	{
-		s.append(_items[i].to_string(true));
-		if (i < _items.size() - 1) {
-			s.append(", ");
-		}
-	}
-	s.append(']');
-	this->seen = flag;
-
-	return s;
-}
-
-bool List::operator==(const List &other) const
-{
-	return this->items() == other.items();
-}
-
-String List::to_json(int spacing) const
-{
-	if (this->seen) {
-		throw error("[JSON error] Cannot convert recursive list to JSON");
-	}
-
-	bool flag = this->seen;
-	String s("[\n");
-	for (intptr_t i = 0; i < _items.size(); i++)
-	{
-		for (int c = 0; c < spacing; c++) {
-			s.append('\t');
-		}
-		s.append(_items[i].to_json(spacing+1));
-		if (i < _items.size() - 1) {
-			s.append(',');
-		}
-		s.append('\n');
-	}
-	for (int c = 0; c < spacing-1; c++) {
-		s.append('\t');
-	}
-	s.append(']');
-	this->seen = flag;
-
-	return s;
-}
-
-List &List::operator=(List other)
-{
-	swap(other);
-	return *this;
-}
-
-void List::swap(List &other) noexcept
-{
-	_items.swap(other._items);
-	std::swap(this->seen, other.seen);
-}
+	// The result of the most recent match(re, ...) call from a script.
+	Match last;
+};
 
 } // namespace phonometrica
+
+#endif // PHONOMETRICA_SCRIPT_REGEX_HPP

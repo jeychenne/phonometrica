@@ -202,7 +202,7 @@ void YAxisWidget::paintEvent(QPaintEvent *)
 			continue;
 
 		// Draw the layer label, centered vertically, right-aligned.
-		auto label = QString::number(lw->layerIndex());
+		auto label = QString::number(lw->layerIndex() + 1);
 		int tw = fm.horizontalAdvance(label);
 		int x = w - tw - LABEL_PADDING;
 		int y_mid = y_offset + (lw_height - fm.height()) / 2;

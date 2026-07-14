@@ -19,7 +19,8 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#include <phon/regex.hpp>
+#include <phon/runtime/script_regex.hpp>
+#include <phon/runtime/index_conversion.hpp>
 #include <phon/file.hpp>
 #include <phon/runtime/variant.hpp>
 #include <phon/runtime/iterator.hpp>
@@ -34,14 +35,15 @@ Variant Iterator::get_value()
 
 //---------------------------------------------------------------------------------------------------------------------
 
-ListIterator::ListIterator(Variant v, bool ref_val) : Iterator(std::move(v), ref_val), pos(1)
+ListIterator::ListIterator(Variant v, bool ref_val) : Iterator(std::move(v), ref_val), pos(0)
 {
 	lst = &raw_cast<List>(object.resolve()).items();
 }
 
 Variant ListIterator::get_key()
 {
-	return pos;
+	// Scripts see 1-based positions; the cursor itself is a 0-based native index.
+	return index_to_script(pos);
 }
 
 Variant ListIterator::get_value()
@@ -54,7 +56,7 @@ Variant ListIterator::get_value()
 
 bool ListIterator::at_end() const
 {
-	return pos > lst->size();
+	return pos >= lst->size();
 }
 
 
@@ -115,7 +117,7 @@ bool StringIterator::at_end() const
 
 RegexIterator::RegexIterator(Variant v, bool ref_val) : Iterator(std::move(v), ref_val)
 {
-	re = &raw_cast<Regex>(object.resolve());
+	re = &raw_cast<ScriptRegex>(object.resolve());
 }
 
 Variant RegexIterator::get_key()
@@ -128,12 +130,12 @@ Variant RegexIterator::get_value()
 	if (ref_val) {
 		throw error("[Reference error] Cannot take a reference to a group in a regular expression.\nHint: take the second loop variable by value, not by reference");
 	}
-	return re->capture(pos++);
+	return re->last.capture(pos++);
 }
 
 bool RegexIterator::at_end() const
 {
-	return pos > re->count();
+	return pos > re->last.count();
 }
 
 

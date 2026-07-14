@@ -84,8 +84,8 @@ struct Layer
 
 	bool empty() const { return events.empty(); }
 
-	// Find the index (1-based) of the event containing the given time.
-	// Returns 0 if not found.
+	// Find the index (0-based) of the event containing the given time.
+	// Returns -1 if not found.
 	intptr_t find_index(double time) const;
 
 	// Find the event containing the given time, or null span if not found.
@@ -107,8 +107,8 @@ struct Layer
 	// Returns nullptr if no such event exists.
 	const Event *find_next_event(double time) const;
 
-	// Get the 1-based index of the event whose left boundary is exactly at the given time.
-	// Returns 0 if not found.
+	// Get the 0-based index of the event whose left boundary is exactly at the given time.
+	// Returns -1 if not found.
 	intptr_t get_event_index(double time) const;
 
 	// Get a span of events within the given time range [start_time, end_time].
@@ -133,10 +133,10 @@ struct Layer
 	// Returns false if no anchor exists at the given time.
 	bool remove_anchor(double time);
 
-	// Remove the event at the given 1-based index.
+	// Remove the event at the given 0-based index.
 	void remove_event(intptr_t index);
 
-	// Set the text of the event at the given 1-based index.
+	// Set the text of the event at the given 0-based index.
 	void set_event_text(intptr_t index, const String &text);
 
 	// Clear all event texts without removing the events themselves.

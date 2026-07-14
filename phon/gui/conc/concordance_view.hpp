@@ -164,7 +164,7 @@ private:
 	void setupUi();
 	// Shared dialog for single- and multi-target editing.
 	// Returns one QString per target (1-based); empty list means cancelled.
-	QVector<QString> promptTargetTexts(Match &match, int target_count,
+	QVector<QString> promptTargetTexts(QueryMatch &match, int target_count,
 	                                   const QString &title, bool edit_annotation);
 	void updateCountLabel();
 	void updateColumnVisibility();

@@ -51,7 +51,7 @@ using Hashmap = std::unordered_map<Key, T, Hash, KeyEqual>;
 #include <functional>
 #include <iterator>
 #include <type_traits>
-#include <phon/runtime/array.hpp>
+#include <phon/base/array.hpp>
 
 
 namespace phonometrica {

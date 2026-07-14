@@ -136,7 +136,7 @@ struct Model
 
 	// ---- Column means of the fixed-effects design matrix ----
 	// Stored at fit time for use by EMMs when the design matrix X is not available
-	// (e.g. after loading a saved analysis). Length = nfixed (1D Array, 1-indexed).
+	// (e.g. after loading a saved analysis). Length = nfixed (1D Array).
 	Array<double> col_means;
 
 	// ---- Variable metadata (for post-hoc analysis, e.g. estimated marginal means) ----
@@ -159,19 +159,18 @@ struct Model
 	Array<double> offset;      // offset vector (added to η before linkinv); empty if no offset
 
 	// ---- Source-table row indices ----
-	// 1-based indices into the original DataTable for the complete cases used
+	// 0-based indices into the original DataTable for the complete cases used
 	// in fitting. Length == nobs. Together with fitted / residuals / y this
 	// lets downstream code align per-observation quantities back to specific
 	// rows in the concordance or dataset the model was fitted on. Empty for
 	// models loaded from .phon-analysis files saved before this field was
 	// introduced.
 	//
-	// Note: stored as std::vector (0-based container indexing) rather than
-	// Array (1-based) because Array<intptr_t>(size, value) is ambiguous
-	// against the two-size_type Array(nrow, ncol) matrix constructor — both
-	// arguments being intptr_t makes overload resolution fail. The *values*
-	// in the vector are still 1-based (they are DataTable row numbers), only
-	// the container indexing changes.
+	// Note: stored as std::vector rather than Array because
+	// Array<intptr_t>(size, value) is ambiguous against the two-size_type
+	// Array(nrow, ncol) matrix constructor — both arguments being intptr_t
+	// makes overload resolution fail. The *values* in the vector are
+	// 0-based (they are DataTable row indices).
 	std::vector<intptr_t> source_rows;
 
 	// ---- Overall fit ----
@@ -194,7 +193,7 @@ struct Model
 	double se_waic = std::numeric_limits<double>::quiet_NaN();  // standard error of WAIC
 
 	// Per-observation expected log pointwise predictive density:
-	//   elpd_i[j] = lppd_j - pwaic_j  (1-indexed, length = nobs).
+	//   elpd_i[j] = lppd_j - pwaic_j  (length = nobs).
 	// Populated at fit time for Bayesian models. Used to compute the proper
 	// SE of ΔWAIC when comparing models (Vehtari, Gelman & Gabry 2017).
 	Array<double> elpd_i;
@@ -369,8 +368,8 @@ struct Model
 	bool has_source_rows() const { return !source_rows.empty(); }
 
 	// Scatter a per-observation vector (length nobs) back to source-table
-	// coordinates. Returns an Array of length n_source_rows (1-indexed) where
-	// entries at positions source_rows[i] hold per_obs[i], and all other
+	// coordinates. Returns an Array of length n_source_rows where entries
+	// at positions source_rows[i] hold per_obs[i], and all other
 	// entries are NaN. Returns an empty Array if source_rows is not populated
 	// (e.g. the model was loaded from a pre-this-version .phon-analysis file)
 	// or if the caller passes a mismatched length.
@@ -381,13 +380,12 @@ struct Model
 			return Array<double>();
 
 		Array<double> out(n_source_rows, std::nan(""));
-		// source_rows is std::vector (0-based) but holds 1-based DataTable row
-		// indices; per_obs is Array<double> (1-based).
+		// source_rows holds 0-based DataTable row indices.
 		for (intptr_t i = 0; i < nobs; i++)
 		{
 			intptr_t r = source_rows[i];
-			if (r >= 1 && r <= n_source_rows)
-				out[r] = per_obs[i + 1];
+			if (r >= 0 && r < n_source_rows)
+				out[r] = per_obs[i];
 		}
 		return out;
 	}
@@ -421,7 +419,7 @@ struct Model
 		if (is_negbin()) k += 1;   // overdispersion θ
 		if (is_beta()) k += 1;     // precision φ
 		if (is_student()) k += 2;  // scale σ and degrees of freedom ν
-		for (intptr_t i = 1; i <= random_effects.size(); i++)
+		for (intptr_t i = 0; i < random_effects.size(); i++)
 		{
 			auto &g = random_effects[i];
 			// Number of unique variance/covariance parameters = q*(q+1)/2
@@ -460,8 +458,8 @@ struct Model
 		Eigen::Map<Vector<double>> ym(y.data(), nobs);
 		for (intptr_t i = 0; i < nobs; i++)
 		{
-			fitted[i + 1] = mu[i];
-			residuals[i + 1] = ym[i] - mu[i];
+			fitted[i] = mu[i];
+			residuals[i] = ym[i] - mu[i];
 		}
 	}
 	// Compute Nakagawa & Schielzeth (2013) pseudo-R² for mixed models.
@@ -486,7 +484,7 @@ struct Model
 
 		// σ²_r: random-effects variance contribution.
 		double var_r = 0;
-		for (intptr_t gi = 1; gi <= random_effects.size(); gi++)
+		for (intptr_t gi = 0; gi < random_effects.size(); gi++)
 		{
 			auto &re = random_effects[gi];
 			intptr_t q = re.term_names.size();
@@ -501,7 +499,7 @@ struct Model
 					for (intptr_t c = 0; c <= r; c++)
 					{
 						intptr_t idx = r * (r + 1) / 2 + c;
-						L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx + 1] : 0.0;
+						L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx] : 0.0;
 					}
 				Eigen::MatrixXd Sigma = L * L.transpose();
 
@@ -517,7 +515,7 @@ struct Model
 			{
 				// Fallback: sum of diagonal variances.
 				// Exact for random intercepts, approximate for random slopes.
-				for (intptr_t t = 1; t <= re.variance.size(); t++)
+				for (intptr_t t = 0; t < re.variance.size(); t++)
 					var_r += re.variance[t];
 			}
 		}

@@ -156,9 +156,9 @@ void Sound::load()
         {
             count = (intptr_t) h.readf(ptr, BUFFER_SIZE);
             auto p = ptr;
-            for (intptr_t i = 1; i <= count; ++i)
+            for (intptr_t i = 0; i < count; ++i)
             {
-                for (intptr_t j = 1; j <= m_nchannel; j++) {
+                for (intptr_t j = 0; j < m_nchannel; j++) {
                     m_data(ioffset+i, j) = *p++;
                 }
             }
@@ -295,7 +295,7 @@ String Sound::libsndfile_version()
 	sf_command(nullptr, SFC_GET_LIB_VERSION, buffer, sizeof(buffer)) ;
 	sf_version = buffer;
 
-	return sf_version.split("-")[2];
+	return sf_version.split("-")[1];
 }
 
 SndfileHandle Sound::handle() const
@@ -337,18 +337,18 @@ Sound::get_formants(int channel, const Array<double> &times, int nformant, doubl
 	for (auto t : times)
 	{
 		auto tmp = get_formants(channel, t, nformant, nyquist_frequency, window_size, lpc_order);
-		for (intptr_t i = 1; i <= nformant; i++)
+		for (intptr_t i = 0; i < nformant; i++)
 		{
-			for (intptr_t j = 1; j <= 2; j++)
+			for (intptr_t j = 0; j < 2; j++)
 			{
 				result(i, j) += tmp(i, j);
 			}
 		}
 	}
 
-	for (intptr_t i = 1; i <= nformant; i++)
+	for (intptr_t i = 0; i < nformant; i++)
 	{
-		for (intptr_t j = 1; j <= 2; j++)
+		for (intptr_t j = 0; j < 2; j++)
 		{
 			result(i, j) /= times.size();
 		}
@@ -402,7 +402,7 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 
 	// Apply window.
 	auto it = output.begin();
-	for (int j = 1; j <= nframe; j++)
+	for (int j = 0; j < nframe; j++)
 	{
 		buffer[j] = *it++ * win[j];
 	}
@@ -413,10 +413,10 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 
 	if (!ok)
 	{
-		for (int i = 1; i <= nformant; i++)
+		for (int i = 0; i < nformant; i++)
 		{
+			result(i, 0) = std::nan("");
 			result(i, 1) = std::nan("");
-			result(i, 2) = std::nan("");
 		}
 
 		return result;
@@ -430,15 +430,16 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 		auto freq = freqs[k];
 		if (freq > 50 && freq < highest_freq)
 		{
-			result(++count, 1) = freq;
-			result(count, 2) = bw[k];
+			result(count, 0) = freq;
+			result(count, 1) = bw[k];
+			count++;
 		}
 		if (count == nformant) break;
 	}
-	for (int k = count+1; k <= nformant; k++)
+	for (int k = count; k < nformant; k++)
 	{
+		result(k, 0) = std::nan("");
 		result(k, 1) = std::nan("");
-		result(k, 2) = std::nan("");
 	}
 
 	return result;
@@ -1171,11 +1172,12 @@ Array<double> Sound::average_channels(intptr_t first_frame, intptr_t last_frame)
     auto len = last_frame - first_frame + 1;
     Array<double> result(len, 0.0);
 
-    for (intptr_t i = 1; i <= len; i++)
+    for (intptr_t i = 0; i < len; i++)
     {
         double value = 0.0;
-        for (intptr_t j = 1; j <= m_nchannel; j++) {
-            value += m_data(first_frame + i - 1, j);
+        for (intptr_t j = 0; j < m_nchannel; j++) {
+            // first_frame is a 1-based frame number; the data matrix is 0-based.
+            value += m_data(first_frame - 1 + i, j);
         }
         result[i] = value / m_nchannel;
     }
@@ -1190,13 +1192,14 @@ double Sound::get_sample(int channel, intptr_t index) const
     if (channel == 0)
     {
         double value = 0.0;
-        for (intptr_t j = 1; j <= m_nchannel; ++j) {
-            value += m_data(index, j);
+        for (intptr_t j = 0; j < m_nchannel; ++j) {
+            // index is a 1-based frame number; the data matrix is 0-based.
+            value += m_data(index - 1, j);
         }
         return value / m_nchannel;
     }
 
-    return static_cast<double>(m_data(index, channel));
+    return static_cast<double>(m_data(index - 1, channel - 1));
 }
 
 speech::PitchTracker Sound::get_pitch_tracker(const String &name)

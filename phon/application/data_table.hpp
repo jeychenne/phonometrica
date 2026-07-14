@@ -64,8 +64,8 @@ public:
 
 	virtual void to_csv(const String &path, const String &sep);
 
-	/// Find the 1-based column index whose header matches `name` (case-sensitive).
-	/// Returns 0 if not found.
+	/// Find the 0-based column index whose header matches `name` (case-sensitive).
+	/// Returns -1 if not found.
 	intptr_t find_column(const String &name) const;
 
 	// ── Numeric cell serialization helpers ───────────────────────────

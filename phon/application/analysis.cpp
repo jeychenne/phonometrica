@@ -145,7 +145,7 @@ Array<String> Analysis::column_names() const
 	if (!m_source) return {};
 	Array<String> names;
 	intptr_t nc = m_source->column_count();
-	for (intptr_t j = 1; j <= nc; j++) {
+	for (intptr_t j = 0; j < nc; j++) {
 		names.append(m_source->get_header(j));
 	}
 	return names;
@@ -212,7 +212,7 @@ void Analysis::append_columns_to_source(const AppendColumnsRequest &request)
 			            col.header, nr, col.values.size());
 		}
 		intptr_t nc = m_source->column_count();
-		for (intptr_t j = 1; j <= nc; j++) {
+		for (intptr_t j = 0; j < nc; j++) {
 			if (m_source->get_header(j) == col.header) {
 				throw error("Source already has a column named '%'", col.header);
 			}
@@ -229,11 +229,11 @@ void Analysis::append_columns_to_source(const AppendColumnsRequest &request)
 
 	for (auto &col : request.columns)
 	{
-		// Array<double> is 1-indexed; add_numeric_column takes std::vector<double>
-		// (0-indexed). Copy element-wise; NaN entries flow through unchanged.
+		// Copy the Array<double> into the std::vector<double> expected by
+		// add_numeric_column; NaN entries flow through unchanged.
 		std::vector<double> vals;
 		vals.reserve(nr);
-		for (intptr_t i = 1; i <= nr; i++)
+		for (intptr_t i = 0; i < nr; i++)
 			vals.push_back(col.values[i]);
 
 		if (ds) {
@@ -305,9 +305,9 @@ String doubles_to_string(const Array<double> &arr)
 {
 	std::ostringstream oss;
 	oss << std::setprecision(17);
-	for (intptr_t i = 1; i <= arr.size(); i++)
+	for (intptr_t i = 0; i < arr.size(); i++)
 	{
-		if (i > 1) oss << ' ';
+		if (i > 0) oss << ' ';
 		double v = arr[i];
 		if (std::isnan(v))
 			oss << "nan";
@@ -334,9 +334,9 @@ String format_scalar(double v)
 String strings_to_csv(const Array<String> &arr)
 {
 	String result;
-	for (intptr_t i = 1; i <= arr.size(); i++)
+	for (intptr_t i = 0; i < arr.size(); i++)
 	{
-		if (i > 1) result.append(",");
+		if (i > 0) result.append(",");
 		result.append(arr[i]);
 	}
 	return result;
@@ -626,7 +626,7 @@ void Analysis::write()
 		{
 			auto re_node = mn.append_child("RandomEffects");
 
-			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			for (intptr_t g = 0; g < m.random_effects.size(); g++)
 			{
 				auto &re = m.random_effects[g];
 				auto gn = re_node.append_child("Group");
@@ -655,7 +655,7 @@ void Analysis::write()
 		{
 			auto sm_node = mn.append_child("SmoothTerms");
 
-			for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+			for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 			{
 				auto &sm = m.smooth_terms[i];
 				auto sn = sm_node.append_child("Smooth");
@@ -710,7 +710,7 @@ void Analysis::write()
 		{
 			auto vi_node = mn.append_child("VariableInfo");
 
-			for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+			for (intptr_t i = 0; i < m.variable_info.size(); i++)
 			{
 				auto &vi = m.variable_info[i];
 				auto vn = vi_node.append_child("Var");
@@ -1015,8 +1015,8 @@ void Analysis::load()
 								if (sm.k > 0 && flat_fderiv2.size() == sm.k * sm.k)
 								{
 									bd.F_deriv2 = Array<double>(sm.k, sm.k, 0.0);
-									for (intptr_t kk = 1; kk <= flat_fderiv2.size(); kk++)
-										bd.F_deriv2.data()[kk - 1] = flat_fderiv2[kk];
+									for (intptr_t kk = 0; kk < flat_fderiv2.size(); kk++)
+										bd.F_deriv2.data()[kk] = flat_fderiv2[kk];
 								}
 
 								// Z_absorb: k × k_eff
@@ -1024,8 +1024,8 @@ void Analysis::load()
 								    && flat_zabsorb.size() == sm.k * bd_k_eff)
 								{
 									bd.Z_absorb = Array<double>(sm.k, bd_k_eff, 0.0);
-									for (intptr_t kk = 1; kk <= flat_zabsorb.size(); kk++)
-										bd.Z_absorb.data()[kk - 1] = flat_zabsorb[kk];
+									for (intptr_t kk = 0; kk < flat_zabsorb.size(); kk++)
+										bd.Z_absorb.data()[kk] = flat_zabsorb[kk];
 								}
 
 								// Levels: re-basis only.
@@ -1042,8 +1042,8 @@ void Analysis::load()
 						if (m.nfixed > 0 && flat.size() == m.nfixed * m.nfixed)
 						{
 							m.vcov = Array<double>(m.nfixed, m.nfixed, 0.0);
-							for (intptr_t k = 1; k <= flat.size(); k++) {
-								m.vcov.data()[k - 1] = flat[k];
+							for (intptr_t k = 0; k < flat.size(); k++) {
+								m.vcov.data()[k] = flat[k];
 							}
 						}
 					}
@@ -1053,7 +1053,7 @@ void Analysis::load()
 						if (m.nfixed > 0 && flat.size() == m.nfixed)
 						{
 							m.col_means = Array<double>(m.nfixed, 0.0);
-							for (intptr_t k = 1; k <= flat.size(); k++) {
+							for (intptr_t k = 0; k < flat.size(); k++) {
 								m.col_means[k] = flat[k];
 							}
 						}
@@ -1173,7 +1173,7 @@ void Analysis::load()
 
 			// Skip the model if every group already has its design info.
 			bool any_missing = false;
-			for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+			for (intptr_t g = 0; g < m.random_effects.size(); g++) {
 				const auto &re = m.random_effects[g];
 				if (re.indices.empty() || re.Z_design.empty()) {
 					any_missing = true;
@@ -1190,13 +1190,13 @@ void Analysis::load()
 				// build_re_design_info expects.
 				const std::vector<intptr_t> &rows = m.source_rows;
 
-				for (intptr_t rt_idx = 1; rt_idx <= formula.random.size(); rt_idx++)
+				for (intptr_t rt_idx = 0; rt_idx < formula.random.size(); rt_idx++)
 				{
 					const auto &rt = formula.random[rt_idx];
 
 					// Match this random term to an RE group by name; rebuild
 					// only the groups whose design info is missing.
-					for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+					for (intptr_t g = 0; g < m.random_effects.size(); g++)
 					{
 						auto &re = m.random_effects[g];
 						if (re.group_name != rt.group) continue;

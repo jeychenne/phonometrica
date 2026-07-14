@@ -42,9 +42,8 @@ QVariant DatasetModel::data(const QModelIndex &index, int role) const
 {
 	if (!index.isValid()) return {};
 
-	// Dataset uses 1-based indexing.
-	intptr_t row = index.row() + 1;
-	intptr_t col = index.column() + 1;
+	intptr_t row = index.row();
+	intptr_t col = index.column();
 
 	switch (role)
 	{
@@ -69,8 +68,8 @@ bool DatasetModel::setData(const QModelIndex &index, const QVariant &value, int 
 {
 	if (!index.isValid() || role != Qt::EditRole) return false;
 
-	intptr_t row = index.row() + 1;
-	intptr_t col = index.column() + 1;
+	intptr_t row = index.row();
+	intptr_t col = index.column();
 
 	try
 	{
@@ -92,7 +91,7 @@ QVariant DatasetModel::headerData(int section, Qt::Orientation orientation, int 
 {
 	if (orientation == Qt::Horizontal && (role == Qt::DisplayRole || role == Qt::EditRole))
 	{
-		auto text = m_ds->get_header(section + 1);
+		auto text = m_ds->get_header(section);
 		return QString::fromUtf8(text.data(), (int) text.size());
 	}
 
@@ -111,7 +110,7 @@ bool DatasetModel::setHeaderData(int section, Qt::Orientation orientation, const
 	auto new_name = value.toString().trimmed();
 	if (new_name.isEmpty()) return false;
 
-	m_ds->set_header(section + 1, String(new_name.toUtf8().constData()));
+	m_ds->set_header(section, String(new_name.toUtf8().constData()));
 	m_ds->set_content_modified(true);
 	Document::file_modified();
 	emit headerDataChanged(Qt::Horizontal, section, section);
@@ -129,21 +128,21 @@ Qt::ItemFlags DatasetModel::flags(const QModelIndex &index) const
 void DatasetModel::removeRow(int row)
 {
 	beginRemoveRows(QModelIndex(), row, row);
-	m_ds->remove_row(row + 1); // 1-based
+	m_ds->remove_row(row);
 	endRemoveRows();
 }
 
 void DatasetModel::removeColumn(int col)
 {
 	beginRemoveColumns(QModelIndex(), col, col);
-	m_ds->remove_column(col + 1); // 1-based
+	m_ds->remove_column(col);
 	endRemoveColumns();
 }
 
 Dataset::SavedRow DatasetModel::extractRow(int row)
 {
 	beginRemoveRows(QModelIndex(), row, row);
-	auto saved = m_ds->extract_row(row + 1); // 1-based
+	auto saved = m_ds->extract_row(row);
 	endRemoveRows();
 	return saved;
 }
@@ -151,14 +150,14 @@ Dataset::SavedRow DatasetModel::extractRow(int row)
 void DatasetModel::insertRow(int row, const Dataset::SavedRow &data)
 {
 	beginInsertRows(QModelIndex(), row, row);
-	m_ds->insert_row(row + 1, data); // 1-based
+	m_ds->insert_row(row, data);
 	endInsertRows();
 }
 
 Dataset::SavedColumn DatasetModel::extractColumn(int col)
 {
 	beginRemoveColumns(QModelIndex(), col, col);
-	auto saved = m_ds->extract_column(col + 1); // 1-based
+	auto saved = m_ds->extract_column(col);
 	endRemoveColumns();
 	return saved;
 }
@@ -166,7 +165,7 @@ Dataset::SavedColumn DatasetModel::extractColumn(int col)
 void DatasetModel::insertColumn(int col, Dataset::SavedColumn data)
 {
 	beginInsertColumns(QModelIndex(), col, col);
-	m_ds->insert_column(col + 1, std::move(data)); // 1-based
+	m_ds->insert_column(col, std::move(data));
 	endInsertColumns();
 }
 

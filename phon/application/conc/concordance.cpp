@@ -127,7 +127,7 @@ Concordance::Concordance(const Concordance &other) :
 	m_matches.reserve(other.m_matches.size());
 
 	for (auto &m : other.m_matches) {
-		m_matches.append(std::make_unique<Match>(*m));
+		m_matches.append(std::make_unique<QueryMatch>(*m));
 	}
 
 	m_context = other.m_context;
@@ -349,7 +349,7 @@ void Concordance::rebuild_extra_headers()
 		{
 			if (m_has_series)
 			{
-				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				for (intptr_t p = 0; p < m_measurement_points.size(); p++)
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
@@ -423,7 +423,7 @@ void Concordance::rebuild_extra_headers()
 		{
 			if (m_has_series)
 			{
-				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				for (intptr_t p = 0; p < m_measurement_points.size(); p++)
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
@@ -465,7 +465,7 @@ void Concordance::rebuild_extra_headers()
 		{
 			if (m_has_series)
 			{
-				for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+				for (intptr_t p = 0; p < m_measurement_points.size(); p++)
 				{
 					char suffix[16];
 					std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
@@ -533,7 +533,7 @@ void Concordance::rebuild_extra_headers()
 		// NPoint wide headers
 		if (m_has_series)
 		{
-			for (intptr_t p = 1; p <= m_measurement_points.size(); p++)
+			for (intptr_t p = 0; p < m_measurement_points.size(); p++)
 			{
 				char suffix[16];
 				std::snprintf(suffix, sizeof(suffix), "(%d%%)", (int)m_measurement_points[p]);
@@ -582,40 +582,40 @@ void Concordance::clear_header_alias(const String &default_header)
 String Concordance::get_default_header(intptr_t j) const
 {
 	// The logic of this function is the same as that of get_cell(). See comments there.
-	if (j == 1) {
+	if (j == 0) {
 		return "File";
 	}
-	else if (j == 2) {
+	else if (j == 1) {
 		return "Layer";
 	}
-	else if (j == 3) {
+	else if (j == 2) {
 		return "Start time";
 	}
-	else if (j == 4) {
+	else if (j == 3) {
 		return "End time";
 	}
-	else if (j == 5 && has_context()) {
+	else if (j == 4 && has_context()) {
 		return "Left context";
 	}
 
 	j -= FILE_INFO_COLUMN_COUNT;
 	if (has_context()) j--;
 
-	// We are now ready to consume the match: j starts at 1.
-	if (j <= m_target_count)
+	// We are now ready to consume the match: j starts at 0.
+	if (j < m_target_count)
 	{
 		if (m_target_count == 1) {
 			return "Target";
 		}
 		else {
-			return String::format("Target %d", (int) j);
+			return String::format("Target %d", (int) (j + 1));
 		}
 	}
 
 	j -= m_target_count;
 	if (has_context())
 	{
-		if (j == 1) {
+		if (j == 0) {
 			return "Right context";
 		}
 		j--;
@@ -624,13 +624,13 @@ String Concordance::get_default_header(intptr_t j) const
 	// Duration columns
 	if (m_has_duration)
 	{
-		if (j <= m_target_count)
+		if (j < m_target_count)
 		{
 			auto unit = m_duration_in_ms ? "ms" : "s";
 			if (m_target_count == 1) {
 				return String::format("Duration (%s)", unit);
 			}
-			return String::format("Duration %d (%s)", (int) j, unit);
+			return String::format("Duration %d (%s)", (int) (j + 1), unit);
 		}
 		j -= m_target_count;
 	}
@@ -639,38 +639,38 @@ String Concordance::get_default_header(intptr_t j) const
 	auto eff = effective_extra_count();
 	if (eff > 0)
 	{
-		if (j <= eff)
+		if (j < eff)
 		{
 			if (m_layout == Layout::Long && has_measurement_data())
 			{
-				if (j == 1) return "Step";
-				if (j == 2) return "Time (normalized)";
+				if (j == 0) return "Step";
+				if (j == 1) return "Time (normalized)";
 				intptr_t base_end = 2 + m_base_headers.size();
-				if (j <= base_end) return m_base_headers[j - 2]; // 1-based
+				if (j < base_end) return m_base_headers[j - 2];
 
 				// Trailing per-match columns. The block order matches the rebuild path:
 				//   1. auto-params block (Max freq + LPC order) OR Max freq alone
 				//   2. pitch-range block (Min pitch + Max pitch)
-				intptr_t tail_idx = j - base_end; // 1-based within tail
+				intptr_t tail_idx = j - base_end; // 0-based within tail
 				intptr_t cursor = 0;
 				if (m_has_auto_params) {
-					if (tail_idx == cursor + 1) return "Max freq";
-					if (tail_idx == cursor + 2) return "LPC order";
+					if (tail_idx == cursor) return "Max freq";
+					if (tail_idx == cursor + 1) return "LPC order";
 					cursor += 2;
 				}
 				else if (m_has_per_match_max_freq) {
-					if (tail_idx == cursor + 1) return "Max freq";
+					if (tail_idx == cursor) return "Max freq";
 					cursor += 1;
 				}
 				if (m_has_per_match_pitch_range) {
-					if (tail_idx == cursor + 1) return "Min pitch";
-					if (tail_idx == cursor + 2) return "Max pitch";
+					if (tail_idx == cursor) return "Min pitch";
+					if (tail_idx == cursor + 1) return "Max pitch";
 				}
 				return String();
 			}
 			else
 			{
-				return m_extra_headers[j]; // 1-based
+				return m_extra_headers[j];
 			}
 		}
 		j -= eff;
@@ -679,20 +679,17 @@ String Concordance::get_default_header(intptr_t j) const
 	// Auxiliary columns from merge
 	if (!m_aux_columns.empty())
 	{
-		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 		{
 			int dw = aux_col_display_width(c);
-			if (j <= dw) {
+			if (j < dw) {
 				return aux_display_header(c, j);
 			}
 			j -= dw;
 		}
 	}
 
-	// We are now ready to consume the properties. Switch to base 0 because
-	// we'll use an iterator.
-	j--;
-
+	// We are now ready to consume the properties.
 	if (j < Property::category_count())
 	{
 		auto it = Property::get_categories().begin();
@@ -912,39 +909,40 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	intptr_t mi = (m_layout == Layout::Long && has_measurement_data()) ? match_for_row(i) : i;
 
 	// First handle information columns: these are fixed.
-	if (j == 1) {
+	if (j == 0) {
 		return m_matches[mi]->annotation()->browser_label();
+	}
+	else if (j == 1) {
+		auto *ref = m_matches[mi]->reference_target();
+		// Layer numbers are displayed 1-based.
+		return String::convert((ref ? ref->layer : m_matches[mi]->get_layer(1)) + 1);
 	}
 	else if (j == 2) {
 		auto *ref = m_matches[mi]->reference_target();
-		return String::convert(ref ? ref->layer : m_matches[mi]->get_layer(1));
+        return String::format("%.4f", ref ? ref->start_time : m_matches[mi]->get_start_time(1));
 	}
 	else if (j == 3) {
 		auto *ref = m_matches[mi]->reference_target();
-        return String::format("%.4f", ref ? ref->start_time : m_matches[mi]->get_start_time(1));
-	}
-	else if (j == 4) {
-		auto *ref = m_matches[mi]->reference_target();
         return String::format("%.4f", ref ? ref->end_time : m_matches[mi]->get_end_time(1));
 	}
-	else if (j == 5 && has_context()) {
+	else if (j == 4 && has_context()) {
 		return get_left_context(mi);
 	}
 
-	// At this point, j == 5 if we have no context or 6 if we have one because we consumed the left context.
+	// At this point, j == 4 if we have no context or 5 if we have one because we consumed the left context.
 	j -= FILE_INFO_COLUMN_COUNT;
 	if (has_context()) j--;
 
-	// We are now ready to consume the match: j starts at 1.
-	if (j <= m_target_count) {
-		return m_matches[mi]->get_value(j);
+	// We are now ready to consume the match: j starts at 0.
+	if (j < m_target_count) {
+		return m_matches[mi]->get_value(j + 1);
 	}
 
 	// We now consume the right context if we have one
 	j -= m_target_count;
 	if (has_context())
 	{
-		if (j == 1) {
+		if (j == 0) {
 			return get_right_context(mi);
 		}
 		j--;
@@ -953,9 +951,9 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	// Duration columns
 	if (m_has_duration)
 	{
-		if (j <= m_target_count)
+		if (j < m_target_count)
 		{
-			auto *target = m_matches[mi]->get((intptr_t)j);
+			auto *target = m_matches[mi]->get(j + 1);
 			if (target) {
 				double dur = target->end_time - target->start_time;
 				if (m_duration_in_ms) dur *= 1000.0;
@@ -970,7 +968,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	auto eff = effective_extra_count();
 	if (eff > 0)
 	{
-		if (j <= eff)
+		if (j < eff)
 		{
 			auto &meas = m_matches[mi]->measurements;
 
@@ -982,9 +980,9 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 
 				// Trailing per-match columns: live past the base_headers group, identical on every row of a match.
 				intptr_t base_end = 2 + m_base_headers.size();
-				if (j > base_end)
+				if (j >= base_end)
 				{
-					intptr_t tail_idx = j - base_end - 1; // 0-based within tail
+					intptr_t tail_idx = j - base_end; // 0-based within tail
 					int series_points = m_has_series ? (int)m_measurement_points.size() : 0;
 					int ngroups = series_points + (m_has_average ? 1 : 0);
 					int sfpp_local = stored_fields_per_point();
@@ -998,24 +996,24 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 					return "nan";
 				}
 
-				if (j == 1) {
+				if (j == 0) {
 					return String::convert(intptr_t(pi + 1));
 				}
-				if (j == 2) {
+				if (j == 1) {
 					// Time (normalized): fraction within the event [0,1]
-					return String::format("%.4f", m_measurement_points[pi + 1] / 100.0);
+					return String::format("%.4f", m_measurement_points[pi] / 100.0);
 				}
-				if (m_has_time && j == 3) {
+				if (m_has_time && j == 2) {
 					// Time (absolute seconds): t1 + pct * (t2 - t1)
 					auto *ref = m_matches[mi]->reference_target();
 					if (!ref) ref = m_matches[mi]->get(1);
 					if (!ref) return String();
-					double pct = m_measurement_points[pi + 1];
+					double pct = m_measurement_points[pi];
 					double t = ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
 					return String::format("%.4f", t);
 				}
-				// j >= 3 (or >= 4 when has_time): measurement within the point
-				int within = (int)(j - 3 - (m_has_time ? 1 : 0)); // 0-based
+				// j >= 2 (or >= 3 when has_time): measurement within the point
+				int within = (int)(j - 2 - (m_has_time ? 1 : 0)); // 0-based
 				int stored_base = (int)(pi * stored_fields_per_point());
 
 				double val = resolve_group_value(meas, stored_base, within);
@@ -1024,7 +1022,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 			else
 			{
 				// Wide mode (or midpoint): walk the extras structure.
-				int d0 = (int)(j - 1); // 0-based within extra columns
+				int d0 = (int)j; // 0-based within extra columns
 				int dfpp = display_fields_per_point();
 				int sfpp = stored_fields_per_point();
 
@@ -1086,7 +1084,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 							auto *ref = m_matches[mi]->reference_target();
 							if (!ref) ref = m_matches[mi]->get(1);
 							if (!ref) return String();
-							double pct = m_measurement_points[gi + 1]; // 1-based
+							double pct = m_measurement_points[gi];
 							double t = ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
 							return String::format("%.4f", t);
 						}
@@ -1106,7 +1104,7 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				}
 
 				// Fallback for non-formant extra columns (shouldn't happen with current architecture)
-				intptr_t idx = j - 1; // 0-based
+				intptr_t idx = j; // 0-based
 				if (idx < (intptr_t)meas.size())
 				{
 					double val = meas[idx];
@@ -1122,20 +1120,17 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	// Auxiliary columns from merge
 	if (!m_aux_columns.empty())
 	{
-		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 		{
 			int dw = aux_col_display_width(c);
-			if (j <= dw) {
+			if (j < dw) {
 				return aux_display_value(c, mi, j);
 			}
 			j -= dw;
 		}
 	}
 
-	// We are now ready to consume the properties. Switch to base 0 because
-	// we'll use an iterator.
-	j--;
-
+	// We are now ready to consume the properties.
 	if (j < Property::category_count())
 	{
 		auto it = Property::get_categories().begin();
@@ -1161,17 +1156,17 @@ intptr_t Concordance::stored_index_for_column(intptr_t extra_j, intptr_t row) co
 
 	if (m_layout == Layout::Long && has_measurement_data())
 	{
-		// Long mode: extra_j 1=Step, 2=Time(norm), [3=Time(abs) if has_time], then measurement slots
+		// Long mode: extra_j 0=Step, 1=Time(norm), [2=Time(abs) if has_time], then measurement slots
 		int reserved = 2 + (m_has_time ? 1 : 0);
-		if (extra_j <= reserved) return -1;
-		int within = (int)(extra_j - reserved - 1); // 0-based
+		if (extra_j < reserved) return -1;
+		int within = (int)(extra_j - reserved); // 0-based
 		if (within >= sfpp) return -1; // derived or out of range
 		intptr_t pi = point_for_row(row); // 0-based
 		return pi * sfpp + within;
 	}
 
 	// Wide mode (or midpoint)
-	int d0 = (int)(extra_j - 1); // 0-based
+	int d0 = (int)extra_j; // 0-based
 
 	// Auto params at the end: not editable
 	int auto_count = (m_has_auto_params ? 2 : 0)
@@ -1221,7 +1216,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 	if (is_editable_aux(j))
 	{
 		intptr_t c = resolve_aux_column(j);
-		assert(c > 0);
+		assert(c >= 0);
 		auto &col = m_aux_columns[c];
 
 		// Map display row to match index (aux storage is per-match, even in Long layout).
@@ -1229,7 +1224,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 		if (col.type == AuxColumnType::Text)
 		{
-			if (mi > col.text_data.size()) {
+			if (mi >= col.text_data.size()) {
 				throw error("Row % out of bounds for aux text column", i);
 			}
 			col.text_data[mi] = value;
@@ -1239,7 +1234,7 @@ void Concordance::set_cell(intptr_t i, intptr_t j, const String &value)
 
 		// All other aux types are numeric. Empty string or a missing-value
 		// token ("nan", "NaN", "NA", "undefined") => NaN.
-		if (mi > col.num_data.size()) {
+		if (mi >= col.num_data.size()) {
 			throw error("Row % out of bounds for aux numeric column", i);
 		}
 		auto trimmed = value;
@@ -1309,12 +1304,12 @@ bool Concordance::is_editable_measurement(intptr_t col) const
 	{
 		// Long mode: Step, Time(norm), [Time(abs) if has_time], then measurement slots
 		int reserved = 2 + (m_has_time ? 1 : 0);
-		if (extra_j <= reserved) return false;
-		int within = (int)(extra_j - reserved - 1);
+		if (extra_j < reserved) return false;
+		int within = (int)(extra_j - reserved);
 		return within < sfpp;
 	}
 
-	int d0 = (int)(extra_j - 1);
+	int d0 = (int)extra_j;
 	int auto_count = (m_has_auto_params ? 2 : 0)
 	               + (m_has_per_match_max_freq ? 1 : 0)
 	               + (m_has_per_match_pitch_range ? 2 : 0);
@@ -1352,21 +1347,21 @@ bool Concordance::is_editable_aux(intptr_t col) const
 	if (m_aux_columns.empty()) return false;
 
 	intptr_t c = resolve_aux_column(col);
-	if (c == 0) return false;
+	if (c < 0) return false;
 
-	// Compute the 1-based display position k within the aux column group.
-	// Only the base column (k == 1) stores raw data; derived ERB/Bark/ST columns
+	// Compute the 0-based display position k within the aux column group.
+	// Only the base column (k == 0) stores raw data; derived ERB/Bark/ST columns
 	// are computed on-the-fly and must remain read-only.
 	intptr_t aux_start = FILE_INFO_COLUMN_COUNT + context_column_count()
 	                   + m_target_count + duration_column_count()
 	                   + effective_extra_count();
-	intptr_t j = col - aux_start; // 1-based position within the aux region
+	intptr_t j = col - aux_start; // 0-based position within the aux region
 
-	for (intptr_t cc = 1; cc <= m_aux_columns.size(); cc++)
+	for (intptr_t cc = 0; cc < m_aux_columns.size(); cc++)
 	{
 		int dw = aux_col_display_width(cc);
-		if (j <= dw) {
-			return j == 1; // base column only
+		if (j < dw) {
+			return j == 0; // base column only
 		}
 		j -= dw;
 	}
@@ -1380,17 +1375,17 @@ bool Concordance::is_editable_cell(intptr_t col) const
 
 bool Concordance::is_left_context(intptr_t col) const
 {
-	return has_context() && col == FILE_INFO_COLUMN_COUNT + 1;
+	return has_context() && col == FILE_INFO_COLUMN_COUNT;
 }
 
 bool Concordance::is_right_context(intptr_t col) const
 {
-	return has_context() && col == FILE_INFO_COLUMN_COUNT + 2 + m_target_count;
+	return has_context() && col == FILE_INFO_COLUMN_COUNT + 1 + m_target_count;
 }
 
 bool Concordance::is_time(intptr_t col) const
 {
-	return col == 3 || col == 4;
+	return col == 2 || col == 3;
 }
 
 intptr_t Concordance::row_count() const
@@ -1816,7 +1811,7 @@ void Concordance::normalize_after_load()
 	int nf = 0;
 	bool has_bw = false, has_erb = false, has_bark = false, has_auto = false;
 
-	for (intptr_t i = 1; i <= headers.size(); i++)
+	for (intptr_t i = 0; i < headers.size(); i++)
 	{
 		const String &h = headers[i];
 		if (h.empty()) continue;
@@ -1987,8 +1982,8 @@ void Concordance::parse_matches_from_xml(xml_node root)
 		update_progress(count++);
 
 		Handle<Annotation> annot;
-		std::unique_ptr<Match::Target> first_target;
-		Match::Target *last_target = nullptr;
+		std::unique_ptr<QueryMatch::Target> first_target;
+		QueryMatch::Target *last_target = nullptr;
 		String path;
 		std::vector<double> measurements;
 
@@ -2012,18 +2007,19 @@ void Concordance::parse_matches_from_xml(xml_node root)
 					if (!attr) {
 						throw error("Missing 'layer' attribute in concordance target");
 					}
-					int layer = attr.as_int();
+					// Layer and event indices are serialized 1-based in the XML format.
+					int layer = attr.as_int() - 1;
 					attr = target_node.attribute("event");
-					if (layer < 1 || layer > annot->size()) {
-						throw error("Invalid layer index (%) in match", layer);
+					if (layer < 0 || layer >= annot->size()) {
+						throw error("Invalid layer index (%) in match", layer + 1);
 					}
 					if (!attr) {
 						throw error("Missing 'event' attribute in concordance target");
 					}
-					int index = attr.as_int();
+					int index = attr.as_int() - 1;
 					auto &events = annot->get_layer_events(layer);
-					if (index < 1 || index > events.size()) {
-						throw error("Invalid event index (%) in layer with % events", index, events.size());
+					if (index < 0 || index >= events.size()) {
+						throw error("Invalid event index (%) in layer with % events", index + 1, events.size());
 					}
 					auto event = events[index];
 					attr = target_node.attribute("offset");
@@ -2040,12 +2036,12 @@ void Concordance::parse_matches_from_xml(xml_node root)
 
 					if (last_target)
 					{
-                        last_target->next = std::make_unique<Match::Target>(event.start, event.end, value, layer, offset, is_ref);
+                        last_target->next = std::make_unique<QueryMatch::Target>(event.start, event.end, value, layer, offset, is_ref);
 						last_target = last_target->next.get();
 					}
 					else
 					{
-                        first_target = std::make_unique<Match::Target>(event.start, event.end, value, layer, offset, is_ref);
+                        first_target = std::make_unique<QueryMatch::Target>(event.start, event.end, value, layer, offset, is_ref);
 						last_target = first_target.get();
 					}
 				}
@@ -2066,7 +2062,7 @@ void Concordance::parse_matches_from_xml(xml_node root)
 		}
 
 		assert(first_target);
-		auto match = std::make_unique<Match>(annot, std::move(first_target));
+		auto match = std::make_unique<QueryMatch>(annot, std::move(first_target));
 		match->measurements = std::move(measurements);
 		m_matches.append(std::move(match));
 	}
@@ -2234,9 +2230,9 @@ void Concordance::write()
 
 		// Measurement points (percentages)
 		String pts;
-		for (intptr_t i = 1; i <= m_measurement_points.size(); i++)
+		for (intptr_t i = 0; i < m_measurement_points.size(); i++)
 		{
-			if (i > 1) pts.append(' ');
+			if (i > 0) pts.append(' ');
 			pts.append(String::format("%.1f", m_measurement_points[i]));
 		}
 		add_data_node(minfo, "Points", pts);
@@ -2270,7 +2266,7 @@ void Concordance::write()
 		if (m_aux_formant_erb) aux_node.append_attribute("formant_erb").set_value(true);
 		if (m_aux_formant_bark) aux_node.append_attribute("formant_bark").set_value(true);
 
-		for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+		for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 		{
 			auto &col = m_aux_columns[c];
 			auto col_node = aux_node.append_child("Column");
@@ -2293,7 +2289,7 @@ void Concordance::write()
 			}
 
 			auto nrows = (col.type == AuxColumnType::Text) ? col.text_data.size() : col.num_data.size();
-			for (intptr_t r = 1; r <= nrows; r++)
+			for (intptr_t r = 0; r < nrows; r++)
 			{
 				if (col.type == AuxColumnType::Text) {
 					add_data_node(col_node, "Cell", col.text_data[r]);
@@ -2370,7 +2366,7 @@ void Concordance::find_kwic_context()
 
 bool Concordance::is_file_info_column(intptr_t col) const
 {
-	return col <= FILE_INFO_COLUMN_COUNT;
+	return col < FILE_INFO_COLUMN_COUNT;
 }
 
 bool Concordance::is_measurement_time_column(intptr_t col) const
@@ -2379,10 +2375,10 @@ bool Concordance::is_measurement_time_column(intptr_t col) const
 	auto eff = effective_extra_count();
 	if (eff == 0) return false;
 	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count();
-	if (col <= lower || col > lower + eff) return false;
+	if (col < lower || col >= lower + eff) return false;
 
-	// Work in 0-based extras space (d0 = col - lower - 1).
-	int d0 = (int)(col - lower - 1);
+	// Work in 0-based extras space (d0 = col - lower).
+	int d0 = (int)(col - lower);
 
 	if (m_layout == Layout::Long && has_measurement_data())
 	{
@@ -2424,7 +2420,7 @@ bool Concordance::is_measurement_time_column(intptr_t col) const
 bool Concordance::is_metadata_column(intptr_t col) const
 {
 	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count() + aux_display_column_count();
-	return col > bound;
+	return col >= bound;
 }
 
 bool Concordance::is_measurement_column(intptr_t col) const
@@ -2432,7 +2428,7 @@ bool Concordance::is_measurement_column(intptr_t col) const
 	auto eff = effective_extra_count();
 	if (eff == 0) return false;
 	intptr_t lower = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count();
-	if (col <= lower || col > lower + eff) return false;
+	if (col < lower || col >= lower + eff) return false;
 	// Time columns are not measurement columns (they're derived, non-editable metadata).
 	return !is_measurement_time_column(col);
 }
@@ -2441,7 +2437,7 @@ bool Concordance::is_duration_column(intptr_t col) const
 {
 	if (!m_has_duration) return false;
 	intptr_t lower = FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count;
-	return col > lower && col <= lower + m_target_count;
+	return col >= lower && col < lower + m_target_count;
 }
 
 void Concordance::find_labels_context()
@@ -2475,10 +2471,10 @@ bool Concordance::is_target(intptr_t col) const
 	intptr_t lower = FILE_INFO_COLUMN_COUNT + int(has_context()); // add 1 column for the left context
 	intptr_t upper = lower + m_target_count;
 
-	return col > lower && col <= upper;
+	return col >= lower && col < upper;
 }
 
-Match &Concordance::get_match(intptr_t i)
+QueryMatch &Concordance::get_match(intptr_t i)
 {
 	// In long mode, i is a display row — map to the actual match.
 	if (m_layout == Layout::Long && has_measurement_data()) {
@@ -2526,7 +2522,7 @@ Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 
 	// Context cache is sized in lock-step with m_matches whenever the
 	// concordance has KWIC or labels context. Drop the parallel entry.
-	if (row >= 1 && row <= m_context.size())
+	if (row >= 0 && row < m_context.size())
 	{
 		rr.had_context = true;
 		rr.context = m_context[row];
@@ -2539,13 +2535,13 @@ Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 	// the aux value that originally belonged to row N+1.
 	rr.aux_text.reserve(m_aux_columns.size());
 	rr.aux_num.reserve(m_aux_columns.size());
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		auto &col = m_aux_columns[c];
 		if (col.type == AuxColumnType::Text)
 		{
 			String saved;
-			if (row >= 1 && row <= col.text_data.size())
+			if (row >= 0 && row < col.text_data.size())
 			{
 				saved = col.text_data[row];
 				col.text_data.remove_at(row);
@@ -2556,7 +2552,7 @@ Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 		else
 		{
 			double saved = std::nan("");
-			if (row >= 1 && row <= col.num_data.size())
+			if (row >= 0 && row < col.num_data.size())
 			{
 				saved = col.num_data[row];
 				col.num_data.remove_at(row);
@@ -2580,7 +2576,7 @@ void Concordance::restore_match(intptr_t row, RemovedRow data)
 	// truth: it is true iff there was an entry to remove at remove time.
 	if (data.had_context)
 	{
-		if (row > m_context.size())
+		if (row >= m_context.size())
 			m_context.append(std::move(data.context));
 		else
 			m_context.insert(row, std::move(data.context));
@@ -2591,22 +2587,22 @@ void Concordance::restore_match(intptr_t row, RemovedRow data)
 	// column was added or removed in the interim) we restore as much as we can.
 	auto n_cols = std::min<intptr_t>(m_aux_columns.size(),
 	                                 (intptr_t) data.aux_text.size());
-	for (intptr_t c = 1; c <= n_cols; c++)
+	for (intptr_t c = 0; c < n_cols; c++)
 	{
 		auto &col = m_aux_columns[c];
 		if (col.type == AuxColumnType::Text)
 		{
-			if (row > col.text_data.size())
-				col.text_data.append(std::move(data.aux_text[c - 1]));
+			if (row >= col.text_data.size())
+				col.text_data.append(std::move(data.aux_text[c]));
 			else
-				col.text_data.insert(row, std::move(data.aux_text[c - 1]));
+				col.text_data.insert(row, std::move(data.aux_text[c]));
 		}
 		else
 		{
-			if (row > col.num_data.size())
-				col.num_data.append(data.aux_num[c - 1]);
+			if (row >= col.num_data.size())
+				col.num_data.append(data.aux_num[c]);
 			else
-				col.num_data.insert(row, data.aux_num[c - 1]);
+				col.num_data.insert(row, data.aux_num[c]);
 		}
 	}
 
@@ -2620,11 +2616,11 @@ void Concordance::check_columns_compatible(const Concordance &other) const
 	if (n != other.column_count()) {
 		throw error("Cannot combine concordances: they have different numbers of columns (% vs %)", n, other.column_count());
 	}
-	for (intptr_t j = 1; j <= n; j++) {
+	for (intptr_t j = 0; j < n; j++) {
 		auto h1 = get_default_header(j);
 		auto h2 = other.get_default_header(j);
 		if (h1 != h2) {
-			throw error("Cannot combine concordances: column % has different names (\"%\" vs \"%\")", j, h1, h2);
+			throw error("Cannot combine concordances: column % has different names (\"%\" vs \"%\")", j + 1, h1, h2);
 		}
 	}
 }
@@ -2671,19 +2667,19 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 
 	// Track the origin of each surviving match so we can pull aux-column values
 	// from the correct source concordance. source: 0 = *this*, 1 = other.
-	// src_row is a 1-based index into the corresponding source's m_matches.
+	// src_row is a 0-based index into the corresponding source's m_matches.
 	struct Origin { int source; intptr_t src_row; };
 
 	std::map<AutoMatch, Origin, MatchLess> buffer;
 
-	for (intptr_t i = 1; i <= m_matches.size(); i++) {
-		buffer.try_emplace(std::make_unique<Match>(*m_matches[i]), Origin{0, i});
+	for (intptr_t i = 0; i < m_matches.size(); i++) {
+		buffer.try_emplace(std::make_unique<QueryMatch>(*m_matches[i]), Origin{0, i});
 	}
-	for (intptr_t i = 1; i <= other.m_matches.size(); i++) {
+	for (intptr_t i = 0; i < other.m_matches.size(); i++) {
 		// If an equal match is already present (from *this*), try_emplace is a
 		// no-op and the existing origin is preserved, so aux values for
 		// duplicates come from *this* consistently.
-		buffer.try_emplace(std::make_unique<Match>(*other.m_matches[i]), Origin{1, i});
+		buffer.try_emplace(std::make_unique<QueryMatch>(*other.m_matches[i]), Origin{1, i});
 	}
 
 	Array<AutoMatch> result;
@@ -2693,7 +2689,7 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 	for (auto &entry : buffer)
 	{
 		auto m = const_cast<AutoMatch&>(entry.first).release();
-		result.append(std::unique_ptr<Match>(m));
+		result.append(std::unique_ptr<QueryMatch>(m));
 		origins.push_back(entry.second);
 	}
 
@@ -2714,7 +2710,7 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 	// Rebuild aux columns, pulling each cell from its originating source.
 	// check_columns_compatible() guarantees both sides have the same aux count
 	// and headers (because column_count() includes aux_display_column_count()).
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		auto &src_a = m_aux_columns[c];
 		auto &src_b = other.m_aux_columns[c];
@@ -2729,8 +2725,8 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 			for (intptr_t i = 0; i < n; i++) {
 				auto &src = (origins[i].source == 0) ? src_a : src_b;
 				intptr_t r = origins[i].src_row;
-				if (r >= 1 && r <= src.text_data.size())
-					dst.text_data[i + 1] = src.text_data[r];
+				if (r >= 0 && r < src.text_data.size())
+					dst.text_data[i] = src.text_data[r];
 			}
 		}
 		else {
@@ -2738,8 +2734,8 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 			for (intptr_t i = 0; i < n; i++) {
 				auto &src = (origins[i].source == 0) ? src_a : src_b;
 				intptr_t r = origins[i].src_row;
-				if (r >= 1 && r <= src.num_data.size())
-					dst.num_data[i + 1] = src.num_data[r];
+				if (r >= 0 && r < src.num_data.size())
+					dst.num_data[i] = src.num_data[r];
 			}
 		}
 		conc->m_aux_columns.append(std::move(dst));
@@ -2763,16 +2759,16 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
-	std::vector<intptr_t> src_rows;   // 1-based row indices in *this*
+	std::vector<intptr_t> src_rows;   // 0-based row indices in *this*
 
-	for (intptr_t i = 1; i <= m_matches.size(); i++)
+	for (intptr_t i = 0; i < m_matches.size(); i++)
 	{
 		auto &match = m_matches[i];
 		// Matches are guaranteed to be sorted.
 		auto it = std::lower_bound(other.m_matches.begin(), other.m_matches.end(), match, MatchLess());
 
 		if (it != other.m_matches.end() && **it == *match) {
-			result.append(std::make_unique<Match>(*match));
+			result.append(std::make_unique<QueryMatch>(*match));
 			src_rows.push_back(i);
 		}
 	}
@@ -2787,7 +2783,7 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 	}
 
 	// Subset aux columns by src_rows (same pattern as Concordance::subset).
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		auto &src = m_aux_columns[c];
 		AuxColumn dst;
@@ -2800,16 +2796,16 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 			dst.text_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
 				intptr_t r = src_rows[i];
-				if (r >= 1 && r <= src.text_data.size())
-					dst.text_data[i + 1] = src.text_data[r];
+				if (r >= 0 && r < src.text_data.size())
+					dst.text_data[i] = src.text_data[r];
 			}
 		}
 		else {
 			dst.num_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
 				intptr_t r = src_rows[i];
-				if (r >= 1 && r <= src.num_data.size())
-					dst.num_data[i + 1] = src.num_data[r];
+				if (r >= 0 && r < src.num_data.size())
+					dst.num_data[i] = src.num_data[r];
 			}
 		}
 		conc->m_aux_columns.append(std::move(dst));
@@ -2831,16 +2827,16 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	check_columns_compatible(other);
 
 	Array<AutoMatch> result;
-	std::vector<intptr_t> src_rows;   // 1-based row indices in *this*
+	std::vector<intptr_t> src_rows;   // 0-based row indices in *this*
 
-	for (intptr_t i = 1; i <= m_matches.size(); i++)
+	for (intptr_t i = 0; i < m_matches.size(); i++)
 	{
 		auto &match = m_matches[i];
 		// Matches are guaranteed to be sorted.
 		auto it = std::lower_bound(other.m_matches.begin(), other.m_matches.end(), match, MatchLess());
 
 		if (it == other.m_matches.end() || **it != *match) {
-			result.append(std::make_unique<Match>(*match));
+			result.append(std::make_unique<QueryMatch>(*match));
 			src_rows.push_back(i);
 		}
 	}
@@ -2855,7 +2851,7 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 	}
 
 	// Subset aux columns by src_rows (same pattern as Concordance::subset).
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		auto &src = m_aux_columns[c];
 		AuxColumn dst;
@@ -2868,16 +2864,16 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 			dst.text_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
 				intptr_t r = src_rows[i];
-				if (r >= 1 && r <= src.text_data.size())
-					dst.text_data[i + 1] = src.text_data[r];
+				if (r >= 0 && r < src.text_data.size())
+					dst.text_data[i] = src.text_data[r];
 			}
 		}
 		else {
 			dst.num_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
 				intptr_t r = src_rows[i];
-				if (r >= 1 && r <= src.num_data.size())
-					dst.num_data[i + 1] = src.num_data[r];
+				if (r >= 0 && r < src.num_data.size())
+					dst.num_data[i] = src.num_data[r];
 			}
 		}
 		conc->m_aux_columns.append(std::move(dst));
@@ -2900,9 +2896,8 @@ Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, con
 	result.reserve((intptr_t)rows_0based.size());
 
 	for (int row : rows_0based) {
-		intptr_t idx = row + 1; // convert to 1-based
-		if (idx >= 1 && idx <= m_matches.size()) {
-			result.append(std::make_unique<Match>(*m_matches[idx]));
+		if (row >= 0 && row < m_matches.size()) {
+			result.append(std::make_unique<QueryMatch>(*m_matches[row]));
 		}
 	}
 
@@ -2916,7 +2911,7 @@ Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, con
 	}
 
 	// Subset aux columns.
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		auto &src = m_aux_columns[c];
 		AuxColumn dst;
@@ -2929,17 +2924,17 @@ Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, con
 		if (src.type == AuxColumnType::Text) {
 			dst.text_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
-				intptr_t src_idx = rows_0based[i] + 1;
-				if (src_idx >= 1 && src_idx <= src.text_data.size())
-					dst.text_data[i + 1] = src.text_data[src_idx];
+				intptr_t src_idx = rows_0based[i];
+				if (src_idx >= 0 && src_idx < src.text_data.size())
+					dst.text_data[i] = src.text_data[src_idx];
 			}
 		}
 		else {
 			dst.num_data.resize(n);
 			for (intptr_t i = 0; i < n; i++) {
-				intptr_t src_idx = rows_0based[i] + 1;
-				if (src_idx >= 1 && src_idx <= src.num_data.size())
-					dst.num_data[i + 1] = src.num_data[src_idx];
+				intptr_t src_idx = rows_0based[i];
+				if (src_idx >= 0 && src_idx < src.num_data.size())
+					dst.num_data[i] = src.num_data[src_idx];
 			}
 		}
 
@@ -2970,7 +2965,7 @@ void Concordance::add_numeric_column(const String &header, const std::vector<dou
 	col.type = AuxColumnType::Numeric;
 	col.num_data.resize((intptr_t)values.size());
 	for (intptr_t i = 0; i < (intptr_t)values.size(); i++) {
-		col.num_data[i + 1] = values[i];
+		col.num_data[i] = values[i];
 	}
 
 	m_aux_columns.append(std::move(col));
@@ -2989,7 +2984,7 @@ void Concordance::add_text_column(const String &header, const std::vector<String
 	col.type = AuxColumnType::Text;
 	col.text_data.resize((intptr_t)values.size());
 	for (intptr_t i = 0; i < (intptr_t)values.size(); i++) {
-		col.text_data[i + 1] = values[i];
+		col.text_data[i] = values[i];
 	}
 
 	m_aux_columns.append(std::move(col));
@@ -2999,8 +2994,8 @@ void Concordance::add_text_column(const String &header, const std::vector<String
 ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Protocol &protocol, bool translate)
 {
 	const intptr_t n_cols = column_count();
-	if (source_col < 1 || source_col > n_cols) {
-		throw error("Cannot apply protocol: column index % is out of range (1..%)", source_col, n_cols);
+	if (source_col < 0 || source_col >= n_cols) {
+		throw error("Cannot apply protocol: column index % is out of range (0..%)", source_col, n_cols - 1);
 	}
 	if (is_measurement_column(source_col)) {
 		throw error("Cannot apply protocol to a measurement column (column %)", source_col);
@@ -3011,7 +3006,7 @@ ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Proto
 	// Read displayed text of the source column. get_cell() handles every column type uniformly,
 	// so targets, aux text columns, file-info, context, and metadata all work.
 	Array<String> source(n_rows);
-	for (intptr_t i = 1; i <= n_rows; i++) {
+	for (intptr_t i = 0; i < n_rows; i++) {
 		source.append(get_cell(i, source_col));
 	}
 
@@ -3021,11 +3016,11 @@ ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Proto
 
 	// Append each output column as a text aux column. add_text_column calls modify() for each,
 	// which is fine — the concordance is dirtied regardless of how many columns we add.
-	for (intptr_t j = 1; j <= result.headers.size(); j++)
+	for (intptr_t j = 0; j < result.headers.size(); j++)
 	{
 		std::vector<String> col_values;
 		col_values.reserve((size_t)result.columns[j].size());
-		for (intptr_t i = 1; i <= result.columns[j].size(); i++) {
+		for (intptr_t i = 0; i < result.columns[j].size(); i++) {
 			col_values.push_back(result.columns[j][i]);
 		}
 		add_text_column(result.headers[j], col_values);
@@ -3038,7 +3033,7 @@ bool Concordance::matches_equal(const Concordance &other) const
 {
 	if (m_matches.size() != other.m_matches.size()) return false;
 
-	for (intptr_t i = 1; i <= m_matches.size(); i++)
+	for (intptr_t i = 0; i < m_matches.size(); i++)
 	{
 		if (*m_matches[i] != *other.m_matches[i]) return false;
 	}
@@ -3060,7 +3055,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 	auto nrows = m_matches.size();
 	auto *other_conc = dynamic_cast<const Concordance *>(&other);
 
-	for (intptr_t idx = 1; idx <= columns_to_add.size(); idx++)
+	for (intptr_t idx = 0; idx < columns_to_add.size(); idx++)
 	{
 		auto &[hdr, b_col] = columns_to_add[idx];
 
@@ -3075,7 +3070,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 				col.semitone_ref = other_conc->semitone_reference();
 			}
 			col.num_data.resize(nrows);
-			for (intptr_t i = 1; i <= nrows; i++) {
+			for (intptr_t i = 0; i < nrows; i++) {
 				col.num_data[i] = other_conc->get_raw_measurement_value(i, b_col);
 			}
 		}
@@ -3085,7 +3080,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 			bool all_numeric = true;
 			Array<double> nums;
 			nums.resize(nrows);
-			for (intptr_t i = 1; i <= nrows; i++)
+			for (intptr_t i = 0; i < nrows; i++)
 			{
 				auto cell = other.get_cell(i, b_col);
 				if (cell == "nan" || cell.empty()) {
@@ -3106,7 +3101,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 			{
 				col.type = AuxColumnType::Text;
 				col.text_data.resize(nrows);
-				for (intptr_t i = 1; i <= nrows; i++) {
+				for (intptr_t i = 0; i < nrows; i++) {
 					col.text_data[i] = other.get_cell(i, b_col);
 				}
 			}
@@ -3126,7 +3121,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 intptr_t Concordance::aux_display_column_count() const
 {
 	intptr_t total = 0;
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++) {
 		total += aux_col_display_width(c);
 	}
 	return total;
@@ -3148,7 +3143,7 @@ int Concordance::aux_col_display_width(intptr_t c) const
 
 intptr_t Concordance::resolve_aux_column(intptr_t display_col) const
 {
-	if (m_aux_columns.empty()) return 0;
+	if (m_aux_columns.empty()) return -1;
 
 	// The aux region starts right after measurement/extra columns.
 	intptr_t aux_start = FILE_INFO_COLUMN_COUNT + context_column_count()
@@ -3156,30 +3151,30 @@ intptr_t Concordance::resolve_aux_column(intptr_t display_col) const
 	                   + effective_extra_count();
 	intptr_t aux_end = aux_start + aux_display_column_count();
 
-	if (display_col <= aux_start || display_col > aux_end) return 0;
+	if (display_col < aux_start || display_col >= aux_end) return -1;
 
 	// Walk through stored aux columns to find which one owns this display column.
-	intptr_t j = display_col - aux_start; // 1-based position within aux region
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++)
+	intptr_t j = display_col - aux_start; // 0-based position within aux region
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++)
 	{
 		int dw = aux_col_display_width(c);
-		if (j <= dw) return c;
+		if (j < dw) return c;
 		j -= dw;
 	}
 
-	return 0; // shouldn't happen
+	return -1; // shouldn't happen
 }
 
 void Concordance::remove_aux_column(intptr_t c)
 {
-	assert(c >= 1 && c <= m_aux_columns.size());
+	assert(c >= 0 && c < m_aux_columns.size());
 	m_aux_columns.remove_at(c);
 	modify();
 }
 
 Concordance::AuxColumn Concordance::extract_aux_column(intptr_t c)
 {
-	assert(c >= 1 && c <= m_aux_columns.size());
+	assert(c >= 0 && c < m_aux_columns.size());
 	auto col = std::move(m_aux_columns[c]);
 	m_aux_columns.remove_at(c);
 	modify();
@@ -3188,7 +3183,7 @@ Concordance::AuxColumn Concordance::extract_aux_column(intptr_t c)
 
 void Concordance::restore_aux_column(intptr_t c, AuxColumn col)
 {
-	if (c > m_aux_columns.size())
+	if (c >= m_aux_columns.size())
 		m_aux_columns.append(std::move(col));
 	else
 		m_aux_columns.insert(c, std::move(col));
@@ -3198,10 +3193,10 @@ void Concordance::restore_aux_column(intptr_t c, AuxColumn col)
 String Concordance::aux_display_header(intptr_t c, intptr_t k) const
 {
 	auto &col = m_aux_columns[c];
-	if (k == 1) return col.header;
+	if (k == 0) return col.header;
 
 	// Derived headers
-	int derived = (int)(k - 2); // 0-based within derived columns
+	int derived = (int)(k - 1); // 0-based within derived columns
 
 	switch (col.type) {
 	case AuxColumnType::PitchHz:
@@ -3225,14 +3220,14 @@ String Concordance::aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const
 	auto &col = m_aux_columns[c];
 
 	if (col.type == AuxColumnType::Text) {
-		return (mi <= col.text_data.size()) ? col.text_data[mi] : String();
+		return (mi < col.text_data.size()) ? col.text_data[mi] : String();
 	}
 
 	// All other types use num_data
-	if (mi > col.num_data.size()) return String();
+	if (mi >= col.num_data.size()) return String();
 	double val = col.num_data[mi];
 
-	if (k == 1) {
+	if (k == 0) {
 		// Base value
 		if (std::isnan(val)) return "nan";
 		if (col.type == AuxColumnType::IntensityDb)
@@ -3254,7 +3249,7 @@ String Concordance::aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const
 	// Derived value
 	if (!std::isfinite(val) || val <= 0) return "nan";
 
-	int derived = (int)(k - 2);
+	int derived = (int)(k - 1);
 
 	if (col.type == AuxColumnType::PitchHz) {
 		if (m_aux_pitch_st && derived == 0) {
@@ -3275,7 +3270,7 @@ String Concordance::aux_display_value(intptr_t c, intptr_t mi, intptr_t k) const
 
 bool Concordance::has_aux_pitch() const
 {
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++) {
 		if (m_aux_columns[c].type == AuxColumnType::PitchHz) return true;
 	}
 	return false;
@@ -3283,7 +3278,7 @@ bool Concordance::has_aux_pitch() const
 
 bool Concordance::has_aux_formant() const
 {
-	for (intptr_t c = 1; c <= m_aux_columns.size(); c++) {
+	for (intptr_t c = 0; c < m_aux_columns.size(); c++) {
 		auto t = m_aux_columns[c].type;
 		if (t == AuxColumnType::FormantHz || t == AuxColumnType::BandwidthHz) return true;
 	}
@@ -3301,7 +3296,7 @@ bool Concordance::is_stored_measurement(intptr_t col) const
 {
 	if (!is_measurement_column(col)) return false;
 	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
-	return stored_index_for_column(extra_j, 1) >= 0;
+	return stored_index_for_column(extra_j, 0) >= 0;
 }
 
 Concordance::AuxColumnType Concordance::get_measurement_type(intptr_t col) const
@@ -3314,7 +3309,7 @@ Concordance::AuxColumnType Concordance::get_measurement_type(intptr_t col) const
 	// Formant: determine if formant Hz or bandwidth Hz — account for per-point Time
 	// columns and non-uniform point/avg groups.
 	intptr_t extra_j = col - (FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count());
-	int d0 = (int)(extra_j - 1); // 0-based within extra columns
+	int d0 = (int)extra_j; // 0-based within extra columns
 	int dfpp = display_fields_per_point();
 	int sfpp = stored_fields_per_point();
 	if (dfpp == 0) return AuxColumnType::Numeric;
@@ -3373,7 +3368,7 @@ bool Concordance::update_match(intptr_t i, intptr_t target)
 
 bool Concordance::is_layer(intptr_t col) const
 {
-	return col == 2;
+	return col == 1;
 }
 
 void Concordance::update_context(intptr_t i)
@@ -3398,7 +3393,7 @@ void Concordance::update_context(intptr_t i)
 	}
 }
 
-std::pair<String, String> Concordance::get_kwic_context(const Match &match, const String &sep) const
+std::pair<String, String> Concordance::get_kwic_context(const QueryMatch &match, const String &sep) const
 {
 	auto target = match.reference_target();
 	auto annot = match.annotation().get();
@@ -3407,7 +3402,7 @@ std::pair<String, String> Concordance::get_kwic_context(const Match &match, cons
 	if (target)
 	{
         auto i = annot->get_event_index(target->layer, target->start_time);
-		assert(i != 0);
+		assert(i >= 0);
 		auto offset = target->offset;
 		ctx.first = annot->left_context(target->layer, i, offset, m_context_length, sep);
 		offset += target->value.size();
@@ -3417,7 +3412,7 @@ std::pair<String, String> Concordance::get_kwic_context(const Match &match, cons
 	return ctx;
 }
 
-std::pair<String, String> Concordance::get_labels_context(const Match &match) const
+std::pair<String, String> Concordance::get_labels_context(const QueryMatch &match) const
 {
 	auto target = match.reference_target();
 	std::pair<String, String> ctx;
@@ -3427,15 +3422,15 @@ std::pair<String, String> Concordance::get_labels_context(const Match &match) co
 		auto &annot = *match.annotation();
 		auto &events = annot.get_layer_events(target->layer);
         auto i = annot.get_event_index(target->layer, target->start_time);
-		assert(i != 0);
-        ctx.first = (i == 1) ? String() : events[i-1].text;
-        ctx.second = (i == events.size()) ? String() : events[i+1].text;
+		assert(i >= 0);
+        ctx.first = (i == 0) ? String() : events[i-1].text;
+        ctx.second = (i == events.size() - 1) ? String() : events[i+1].text;
 	}
 
 	return ctx;
 }
 
-std::pair<String, String> Concordance::get_event_context(const Match &match) const
+std::pair<String, String> Concordance::get_event_context(const QueryMatch &match) const
 {
 	auto target = match.reference_target();
 	auto annot = match.annotation().get();
@@ -3444,7 +3439,7 @@ std::pair<String, String> Concordance::get_event_context(const Match &match) con
 	if (target)
 	{
 		auto i = annot->get_event_index(target->layer, target->start_time);
-		assert(i != 0);
+		assert(i >= 0);
 		auto &label = annot->get_layer_events(target->layer)[i].text;
 
 		// Split the matched event's own label at the match: left = text before the match,
@@ -3493,16 +3488,16 @@ intptr_t Concordance::effective_extra_count() const
 
 intptr_t Concordance::match_for_row(intptr_t i) const
 {
-	// i is 1-based display row. Each match expands to npoints rows.
+	// i is a 0-based display row. Each match expands to npoints rows.
 	intptr_t npoints = m_measurement_points.size();
-	return ((i - 1) / npoints) + 1; // 1-based match index
+	return i / npoints; // 0-based match index
 }
 
 intptr_t Concordance::point_for_row(intptr_t i) const
 {
-	// i is 1-based display row. Returns 0-based point index within the match.
+	// i is a 0-based display row. Returns 0-based point index within the match.
 	intptr_t npoints = m_measurement_points.size();
-	return (i - 1) % npoints;
+	return i % npoints;
 }
 
 } // namespace phonometrica

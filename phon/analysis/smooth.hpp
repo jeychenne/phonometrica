@@ -73,7 +73,7 @@ struct SmoothBasis
 
 	Array<double> B;       // n × k_eff basis matrix (identifiability constraint absorbed)
 	Array<double> S;       // k_eff × k_eff penalty matrix (absorbed)
-	Array<double> knots;   // k knot positions (1-based Array)
+	Array<double> knots;   // k knot positions
 
 	// Internal: k × k matrix F mapping knot values to second derivatives at knots.
 	// F[0,:] = F[k-1,:] = 0 (natural boundary conditions).
@@ -86,7 +86,7 @@ struct SmoothBasis
 	Array<double> Z_absorb;
 
 	// Levels seen at fit time. Populated only for type == "re": carries the
-	// sorted unique levels of the grouping factor (1-based Array, in the
+	// sorted unique levels of the grouping factor (in the
 	// same order used to build the indicator columns of B). Needed at
 	// predict time to map new-data category strings back to the column
 	// indices that correspond to known levels — and to detect unseen levels
@@ -150,7 +150,7 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k = 10);
 // No identifiability constraint is applied: the penalty shrinks random effects
 // toward zero, and the fixed effects capture the population-level structure.
 //
-// \param levels        sorted unique levels (1-based Array of Strings)
+// \param levels        sorted unique levels (Array of Strings)
 // \param indices       per-observation level index (0-based, length n)
 // \param nobs          number of observations
 // \param slope_values  numeric covariate values for random slopes (empty for intercepts)

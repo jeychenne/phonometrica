@@ -153,8 +153,8 @@ Handle<Concordance> VoiceQualityQuery::execute()
 					"but the following level(s) have no override and will fall "
 					"back to the default parameters: ",
 					m_override_category.data());
-				for (intptr_t i = 1; i <= uncovered.size(); i++) {
-					if (i > 1) msg.append(", ");
+				for (intptr_t i = 0; i < uncovered.size(); i++) {
+					if (i > 0) msg.append(", ");
 					msg.append(uncovered[i]);
 				}
 				emit_msg(msg);
@@ -172,11 +172,11 @@ Handle<Concordance> VoiceQualityQuery::execute()
 
 		try
 		{
-			measure_match(*matches[i+1]);
+			measure_match(*matches[i]);
 		}
 		catch (std::exception &)
 		{
-			auto &m = *matches[i+1];
+			auto &m = *matches[i];
 			m.measurements.assign(field_count(), std::nan(""));
 		}
 	}
@@ -215,7 +215,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 	return conc;
 }
 
-void VoiceQualityQuery::measure_match(Match &match) const
+void VoiceQualityQuery::measure_match(QueryMatch &match) const
 {
 	int total = field_count();
 	match.measurements.assign(total, std::nan(""));

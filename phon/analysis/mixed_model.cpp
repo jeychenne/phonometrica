@@ -439,10 +439,10 @@ static void diag_dump_fixed_prior_state(
 		             (!(np.sd > 0) || !std::isfinite(np.sd)) ? "   [INVALID SD]" : "");
 	}
 
-	std::fprintf(stderr, "  coef_names (p=%ld, 1-indexed):\n", (long) p);
+	std::fprintf(stderr, "  coef_names (p=%ld):\n", (long) p);
 	for (intptr_t j = 0; j < p; j++)
 	{
-		const auto &coef = coef_names[j + 1];
+		const auto &coef = coef_names[j];
 		std::fprintf(stderr, "    [%ld] \"%.*s\"  (size=%ld)\n",
 		             (long) j, (int) coef.size(), coef.data(),
 		             (long) coef.size());
@@ -452,7 +452,7 @@ static void diag_dump_fixed_prior_state(
 	bool any_invalid = false;
 	for (intptr_t j = 0; j < p; j++)
 	{
-		const auto &coef = coef_names[j + 1];
+		const auto &coef = coef_names[j];
 		auto it = priors.coefficient_priors.find(coef);
 		bool hit = (it != priors.coefficient_priors.end());
 		const NormalPrior &pr = hit ? it->second : priors.fixed_effects;
@@ -497,7 +497,7 @@ static void add_fixed_prior_to_henderson(Eigen::MatrixXd &H, Eigen::VectorXd &rh
 #endif
 	for (intptr_t j = 0; j < p; j++)
 	{
-		const auto &pr = priors.prior_for(coef_names[j + 1]);
+		const auto &pr = priors.prior_for(coef_names[j]);
 		double lambda = 1.0 / (pr.sd * pr.sd);
 		H(j, j) += lambda;
 		rhs[j] += lambda * pr.mean;
@@ -520,7 +520,7 @@ static double fixed_prior_nll(const Eigen::VectorXd &beta,
 	double nll = 0;
 	for (intptr_t j = 0; j < p; j++)
 	{
-		const auto &pr = priors.prior_for(coef_names[j + 1]);
+		const auto &pr = priors.prior_for(coef_names[j]);
 		double z = (beta[j] - pr.mean) / pr.sd;
 		nll += 0.5 * std::log(2.0 * M_PI) + std::log(pr.sd) + 0.5 * z * z;
 	}
@@ -1667,7 +1667,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 		{
 			for (intptr_t j = 0; j < p; j++)
 			{
-				const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+				const auto &pr = priors->prior_for((*coef_names)[j]);
 				double lambda = 1.0 / (pr.sd * pr.sd);
 				H.coeffRef(j, j) += lambda;
 				rhs[j] += lambda * pr.mean;
@@ -3549,7 +3549,7 @@ static GridPointResult eval_gaussian_grid_point(
 	{
 		for (intptr_t j = 0; j < p; j++)
 		{
-			const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+			const auto &pr = priors->prior_for((*coef_names)[j]);
 			C(j, j) += 1.0 / (pr.sd * pr.sd);
 		}
 	}
@@ -3875,7 +3875,7 @@ static GridPointResult eval_pirls_grid_point(
 	{
 		for (intptr_t j = 0; j < p; j++)
 		{
-			const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+			const auto &pr = priors->prior_for((*coef_names)[j]);
 			C(j, j) += 1.0 / (pr.sd * pr.sd);
 		}
 	}
@@ -4193,7 +4193,7 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 {
 	std::vector<double> zu(n, 0.0);
 
-	for (intptr_t gi = 1; gi <= model.random_effects.size(); gi++)
+	for (intptr_t gi = 0; gi < model.random_effects.size(); gi++)
 	{
 		auto &re = model.random_effects[gi];
 		intptr_t q = re.nterms;
@@ -4207,7 +4207,7 @@ static std::vector<double> compute_re_offset(const Model &model, intptr_t n)
 			for (intptr_t t = 0; t < q; t++)
 			{
 				double z_val = re.Z_design[i * q + t];
-				double u_val = re.conditional_modes[j * q + t + 1]; // 1-based Array
+				double u_val = re.conditional_modes[j * q + t];
 				zu[i] += z_val * u_val;
 			}
 		}
@@ -5620,9 +5620,9 @@ static void inla_grid_integrate_gaussian(
 		{
 			const char *cname = "?";
 			std::string cname_buf;
-			if (coef_names && (intptr_t)(j + 1) <= coef_names->size()) {
-				cname_buf = std::string((*coef_names)[j + 1].data(),
-				                          (*coef_names)[j + 1].size());
+			if (coef_names && j < coef_names->size()) {
+				cname_buf = std::string((*coef_names)[j].data(),
+				                          (*coef_names)[j].size());
 				cname = cname_buf.c_str();
 			}
 			std::fprintf(stderr, "  β[%ld]=%s:  mode=%+.4f  mean=%+.4f\n",
@@ -5641,8 +5641,8 @@ static void inla_grid_integrate_gaussian(
 		std::fprintf(stderr,
 			"\nper-grid-point correlation matrix of Σ_β(θ_k)  (coef_names: ");
 		if (coef_names) {
-			for (intptr_t j = 1; j <= p; j++)
-				std::fprintf(stderr, "%s%s", j > 1 ? ", " : "",
+			for (intptr_t j = 0; j < p; j++)
+				std::fprintf(stderr, "%s%s", j > 0 ? ", " : "",
 				             std::string((*coef_names)[j].data(),
 				                         (*coef_names)[j].size()).c_str());
 		} else {
@@ -5735,7 +5735,7 @@ static void inla_grid_integrate_gaussian(
 	// Save the mode: β̂(θ*) — already in model.beta before we overwrite it.
 	model.posterior_mode = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
-		model.posterior_mode[j + 1] = model.beta[j + 1];
+		model.posterior_mode[j] = model.beta[j];
 	}
 
 	model.posterior_mean = Array<double>(p, 0.0);
@@ -5751,13 +5751,13 @@ static void inla_grid_integrate_gaussian(
 		double var = mix_var(j, j);
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
-		model.posterior_mean[j + 1] = mean;
-		model.posterior_sd[j + 1] = sd;
+		model.posterior_mean[j] = mean;
+		model.posterior_sd[j] = sd;
 
 		// Quantile-based CI and median from the mixture CDF.
-		model.ci_lower[j + 1] = mix_quantile(j, 0.025);
-		model.ci_upper[j + 1] = mix_quantile(j, 0.975);
-		model.posterior_median[j + 1] = mix_quantile(j, 0.5);
+		model.ci_lower[j] = mix_quantile(j, 0.025);
+		model.ci_upper[j] = mix_quantile(j, 0.975);
+		model.posterior_median[j] = mix_quantile(j, 0.5);
 
 		// pd from the mixture CDF, with per-component Edgeworth correction
 		// for within-component posterior skewness (Tierney-Kadane).
@@ -5798,22 +5798,22 @@ static void inla_grid_integrate_gaussian(
 			               * phi_z * (z * z - 1.0);
 		}
 		double pd_signed = (mean >= 0) ? pd_correction : -pd_correction;
-		model.pd[j + 1] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
+		model.pd[j] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
 	}
 
 	// Update beta/se/stat for compatibility with display code.
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.beta[j + 1] = mix_mean[j];
-		model.se[j + 1] = model.posterior_sd[j + 1];
-		model.stat[j + 1] = (model.se[j + 1] > 0) ? model.beta[j + 1] / model.se[j + 1] : 0.0;
-		model.p[j + 1] = std::numeric_limits<double>::quiet_NaN();
+		model.beta[j] = mix_mean[j];
+		model.se[j] = model.posterior_sd[j];
+		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
+		model.p[j] = std::numeric_limits<double>::quiet_NaN();
 	}
 
 	// Update vcov to the mixture posterior covariance.
 	for (intptr_t i = 0; i < p; i++) {
 		for (intptr_t j = 0; j < p; j++) {
-			model.vcov(i + 1, j + 1) = mix_var(i, j);
+			model.vcov(i, j) = mix_var(i, j);
 		}
 	}
 
@@ -5841,17 +5841,17 @@ static void inla_grid_integrate_gaussian(
 	{
 		// For each grid point, extract the SDs from θ_k.
 		// Build hyper names from the model's random_effects (already populated).
-		intptr_t idx = 1;
+		intptr_t idx = 0;
 		intptr_t chol_pos_base = 0;
 
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			intptr_t qg = lay.q[g];
-			auto &re = model.random_effects[g + 1]; // 1-based Array
+			auto &re = model.random_effects[g];
 			for (intptr_t t = 0; t < qg; t++)
 			{
 				// Name: "sd(term|group)"
-				std::string name = "sd(" + std::string(re.term_names[t + 1].data(), re.term_names[t + 1].size())
+				std::string name = "sd(" + std::string(re.term_names[t].data(), re.term_names[t].size())
 				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
 
 				// Marginal posterior of log σ_{g,t}.
@@ -5918,9 +5918,9 @@ static void inla_grid_integrate_gaussian(
 						double sd_z  = (var_z > 0) ? std::sqrt(var_z) : 0.0;
 
 						std::string cname = "cor("
-						    + std::string(re.term_names[j + 1].data(), re.term_names[j + 1].size())
+						    + std::string(re.term_names[j].data(), re.term_names[j].size())
 						    + ","
-						    + std::string(re.term_names[i + 1].data(), re.term_names[i + 1].size())
+						    + std::string(re.term_names[i].data(), re.term_names[i].size())
 						    + "|"
 						    + std::string(re.group_name.data(), re.group_name.size())
 						    + ")";
@@ -6269,9 +6269,9 @@ static void inla_grid_integrate_pirls(
 		{
 			const char *cname = "?";
 			std::string cname_buf;
-			if (coef_names && (intptr_t)(j + 1) <= coef_names->size()) {
-				cname_buf = std::string((*coef_names)[j + 1].data(),
-				                          (*coef_names)[j + 1].size());
+			if (coef_names && j < coef_names->size()) {
+				cname_buf = std::string((*coef_names)[j].data(),
+				                          (*coef_names)[j].size());
 				cname = cname_buf.c_str();
 			}
 			std::fprintf(stderr, "  β[%ld]=%s:  mode=%+.4f  mean=%+.4f\n",
@@ -6290,8 +6290,8 @@ static void inla_grid_integrate_pirls(
 		std::fprintf(stderr,
 			"\nper-grid-point correlation matrix of Σ_β(θ_k)  (coef_names: ");
 		if (coef_names) {
-			for (intptr_t j = 1; j <= p; j++)
-				std::fprintf(stderr, "%s%s", j > 1 ? ", " : "",
+			for (intptr_t j = 0; j < p; j++)
+				std::fprintf(stderr, "%s%s", j > 0 ? ", " : "",
 				             std::string((*coef_names)[j].data(),
 				                         (*coef_names)[j].size()).c_str());
 		} else {
@@ -6379,7 +6379,7 @@ static void inla_grid_integrate_pirls(
 	// Save the mode: β̂(θ*) — already in model.beta before we overwrite it.
 	model.posterior_mode = Array<double>(p, 0.0);
 	for (intptr_t j = 0; j < p; j++) {
-		model.posterior_mode[j + 1] = model.beta[j + 1];
+		model.posterior_mode[j] = model.beta[j];
 	}
 
 	model.posterior_mean = Array<double>(p, 0.0);
@@ -6395,12 +6395,12 @@ static void inla_grid_integrate_pirls(
 		double var = mix_var(j, j);
 		double sd = (var > 0) ? std::sqrt(var) : 0.0;
 
-		model.posterior_mean[j + 1] = mean;
-		model.posterior_sd[j + 1] = sd;
+		model.posterior_mean[j] = mean;
+		model.posterior_sd[j] = sd;
 
-		model.ci_lower[j + 1] = mix_quantile(j, 0.025);
-		model.ci_upper[j + 1] = mix_quantile(j, 0.975);
-		model.posterior_median[j + 1] = mix_quantile(j, 0.5);
+		model.ci_lower[j] = mix_quantile(j, 0.025);
+		model.ci_upper[j] = mix_quantile(j, 0.975);
+		model.posterior_median[j] = mix_quantile(j, 0.5);
 
 		// pd from the mixture CDF, with per-component Edgeworth correction
 		// for within-component posterior skewness (Tierney-Kadane).
@@ -6426,22 +6426,22 @@ static void inla_grid_integrate_pirls(
 			               * phi_z * (z * z - 1.0);
 		}
 		double pd_signed = (mean >= 0) ? pd_correction : -pd_correction;
-		model.pd[j + 1] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
+		model.pd[j] = std::clamp(pd_gauss + pd_signed, 0.0, 1.0);
 	}
 
 	// Update beta/se/stat for compatibility with display code.
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.beta[j + 1] = mix_mean[j];
-		model.se[j + 1] = model.posterior_sd[j + 1];
-		model.stat[j + 1] = (model.se[j + 1] > 0) ? model.beta[j + 1] / model.se[j + 1] : 0.0;
-		model.p[j + 1] = std::numeric_limits<double>::quiet_NaN();
+		model.beta[j] = mix_mean[j];
+		model.se[j] = model.posterior_sd[j];
+		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
+		model.p[j] = std::numeric_limits<double>::quiet_NaN();
 	}
 
 	// Update vcov to the mixture posterior covariance.
 	for (intptr_t i = 0; i < p; i++) {
 		for (intptr_t j = 0; j < p; j++) {
-			model.vcov(i + 1, j + 1) = mix_var(i, j);
+			model.vcov(i, j) = mix_var(i, j);
 		}
 	}
 
@@ -6471,7 +6471,7 @@ static void inla_grid_integrate_pirls(
 	model.hyper_ci_upper = Array<double>(n_hyper, 0.0);
 
 	{
-		intptr_t idx = 1;
+		intptr_t idx = 0;
 		intptr_t chol_pos_base = 0;
 
 		// ── Random-effect SDs ──────────────────────────────────────
@@ -6481,10 +6481,10 @@ static void inla_grid_integrate_pirls(
 		for (intptr_t g = 0; g < lay.G; g++)
 		{
 			intptr_t qg = lay.q[g];
-			auto &re = model.random_effects[g + 1]; // 1-based Array
+			auto &re = model.random_effects[g];
 			for (intptr_t t = 0; t < qg; t++)
 			{
-				std::string name = "sd(" + std::string(re.term_names[t + 1].data(), re.term_names[t + 1].size())
+				std::string name = "sd(" + std::string(re.term_names[t].data(), re.term_names[t].size())
 				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
 
 				double mean_log_sd = 0, mean_log_sd2 = 0;
@@ -6543,9 +6543,9 @@ static void inla_grid_integrate_pirls(
 						double sd_z  = (var_z > 0) ? std::sqrt(var_z) : 0.0;
 
 						std::string cname = "cor("
-						    + std::string(re.term_names[j + 1].data(), re.term_names[j + 1].size())
+						    + std::string(re.term_names[j].data(), re.term_names[j].size())
 						    + ","
-						    + std::string(re.term_names[i + 1].data(), re.term_names[i + 1].size())
+						    + std::string(re.term_names[i].data(), re.term_names[i].size())
 						    + "|"
 						    + std::string(re.group_name.data(), re.group_name.size())
 						    + ")";
@@ -6813,7 +6813,7 @@ static void no_re_bayesian_laplace(
 	{
 		for (intptr_t i = 0; i < p; i++)
 			for (intptr_t j = 0; j < p; j++)
-				model.vcov(i + 1, j + 1) = vcov_beta(i, j);
+				model.vcov(i, j) = vcov_beta(i, j);
 	}
 
 	// ── 4. β posterior summaries ────────────────────────────────
@@ -6832,13 +6832,13 @@ static void no_re_bayesian_laplace(
 	{
 		double mean = beta_hat[j];                                        // joint MAP
 		double sd   = std::sqrt(std::max(vcov_beta(j, j), 0.0));
-		model.posterior_mean[j + 1]   = mean;
-		model.posterior_mode[j + 1]   = mean;                              // Gaussian: mode = mean
-		model.posterior_median[j + 1] = mean;                              // Gaussian: median = mean
-		model.posterior_sd[j + 1]     = sd;
-		model.ci_lower[j + 1]         = mean - z_975 * sd;
-		model.ci_upper[j + 1]         = mean + z_975 * sd;
-		model.pd[j + 1]               = (sd > 0)
+		model.posterior_mean[j]   = mean;
+		model.posterior_mode[j]   = mean;                              // Gaussian: mode = mean
+		model.posterior_median[j] = mean;                              // Gaussian: median = mean
+		model.posterior_sd[j]     = sd;
+		model.ci_lower[j]         = mean - z_975 * sd;
+		model.ci_upper[j]         = mean + z_975 * sd;
+		model.pd[j]               = (sd > 0)
 		                                  ? boost::math::cdf(normal, std::abs(mean) / sd)
 		                                  : 1.0;
 	}
@@ -6846,11 +6846,11 @@ static void no_re_bayesian_laplace(
 	// Update se / stat / p for compatibility with older display code.
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.se[j + 1]   = model.posterior_sd[j + 1];
-		model.stat[j + 1] = (model.se[j + 1] > 0)
-		                      ? model.beta[j + 1] / model.se[j + 1]
+		model.se[j]   = model.posterior_sd[j];
+		model.stat[j] = (model.se[j] > 0)
+		                      ? model.beta[j] / model.se[j]
 		                      : 0.0;
-		model.p[j + 1]    = std::numeric_limits<double>::quiet_NaN();
+		model.p[j]    = std::numeric_limits<double>::quiet_NaN();
 	}
 
 	// ── 5. Dispersion posterior summaries (lognormal approximation) ──
@@ -6872,14 +6872,14 @@ static void no_re_bayesian_laplace(
 	{
 		double log_th  = saved_theta[0];
 		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
-		write_lognormal_hyper(model, 1, String("theta(NB)"),
+		write_lognormal_hyper(model, 0, String("theta(NB)"),
 		                       log_th, log_sd, z_975, 1e-10);
 	}
 	else if (fam.name == "beta")
 	{
 		double log_phi = saved_theta[0];
 		double log_sd  = std::sqrt(std::max(Sigma(p, p), 0.0));
-		write_lognormal_hyper(model, 1, String("phi(beta)"),
+		write_lognormal_hyper(model, 0, String("phi(beta)"),
 		                       log_phi, log_sd, z_975, 1e-10);
 	}
 	else if (fam.name == "student")
@@ -6888,14 +6888,14 @@ static void no_re_bayesian_laplace(
 		{
 			double log_sigma = saved_theta[0];
 			double log_sd    = std::sqrt(std::max(Sigma(p, p), 0.0));
-			write_lognormal_hyper(model, 1, String("sigma(student)"),
+			write_lognormal_hyper(model, 0, String("sigma(student)"),
 			                       log_sigma, log_sd, z_975, 1e-10);
 		}
 		// ν ∈ [2, 200] (the same clamp solve_pirls / LaplaceJointObjective use).
 		{
 			double log_nu = saved_theta[1];
 			double log_sd = std::sqrt(std::max(Sigma(p + 1, p + 1), 0.0));
-			write_lognormal_hyper(model, 2, String("nu(student)"),
+			write_lognormal_hyper(model, 1, String("nu(student)"),
 			                       log_nu, log_sd, z_975, NU_MIN, NU_MAX);
 		}
 	}
@@ -7085,7 +7085,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	Eigen::VectorXd phi = Eigen::VectorXd::Zero(outer_dim);
 
 	for (intptr_t i = 0; i < p; i++) {
-		phi[i] = fe.beta[i + 1];
+		phi[i] = fe.beta[i];
 	}
 
 	if (is_gaussian)
@@ -7093,7 +7093,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// OLS residuals → per-factor ANOVA variance decomposition.
 		Eigen::VectorXd resid(n);
 		for (intptr_t i = 0; i < n; i++) {
-			resid[i] = fe.residuals[i + 1];
+			resid[i] = fe.residuals[i];
 		}
 		double total_var = resid.squaredNorm() / std::max(n - p, (intptr_t)1);
 
@@ -7120,7 +7120,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// linear predictor scale.
 		Eigen::VectorXd mu_fe(n);
 		for (intptr_t i = 0; i < n; i++) {
-			mu_fe[i] = fe.fitted[i + 1];
+			mu_fe[i] = fe.fitted[i];
 		}
 		Eigen::VectorXd V = fam.variance(mu_fe);
 
@@ -7444,7 +7444,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			// Use Poisson β as starting fixed effects
 			for (intptr_t i = 0; i < p; i++) {
-				beta_init[i] = pois_model.beta[i + 1];
+				beta_init[i] = pois_model.beta[i];
 			}
 
 			// Use Poisson covariance as starting outer theta — convert
@@ -7454,16 +7454,16 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 			{
 				intptr_t qg = lay.q[g];
 				intptr_t np = n_chol_params(qg);
-				auto &re = pois_model.random_effects[g + 1]; // 1-based Array
+				auto &re = pois_model.random_effects[g];
 
-				// Reconstruct physical L from re.cov_chol (1-based, packed
+				// Reconstruct physical L from re.cov_chol (packed
 				// row-by-row lower triangle, stored as the actual Cholesky
 				// factor of D — parameterization-independent).
 				Eigen::MatrixXd L_phys = Eigen::MatrixXd::Zero(qg, qg);
 				for (intptr_t r = 0; r < qg; r++) {
 					for (intptr_t c = 0; c <= r; c++) {
 						intptr_t pack_idx = r * (r + 1) / 2 + c;
-						L_phys(r, c) = re.cov_chol[pack_idx + 1];
+						L_phys(r, c) = re.cov_chol[pack_idx];
 					}
 				}
 				pack_chol_to_theta(L_phys, theta.data() + chol_pos, qg);
@@ -7538,7 +7538,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			Eigen::VectorXd ols_resid(n);
 			for (intptr_t i = 0; i < n; i++) {
-				ols_resid[i] = fe.residuals[i + 1];
+				ols_resid[i] = fe.residuals[i];
 			}
 			// MAD = median(|r − median(r)|), × 1.4826 for Gaussian consistency.
 			std::vector<double> abs_dev(n);
@@ -7968,7 +7968,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		{
 			for (intptr_t j = 0; j < p; j++)
 			{
-				const auto &pr = priors->prior_for((*coef_names)[j + 1]);
+				const auto &pr = priors->prior_for((*coef_names)[j]);
 				C(j, j) += 1.0 / (pr.sd * pr.sd);
 			}
 		}
@@ -8305,10 +8305,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 	boost::math::normal_distribution<double> normal;
 
-	for (intptr_t i = 1; i <= p; i++)
+	for (intptr_t i = 0; i < p; i++)
 	{
-		model.beta[i] = beta_hat[i - 1];
-		double var_i = vcov(i - 1, i - 1);
+		model.beta[i] = beta_hat[i];
+		double var_i = vcov(i, i);
 		model.se[i] = (var_i > 0) ? std::sqrt(var_i) : 0.0;
 		model.stat[i] = (model.se[i] > 0) ? model.beta[i] / model.se[i] : 0.0;
 		model.p[i] = 2.0 * (1.0 - boost::math::cdf(normal, std::abs(model.stat[i])));
@@ -8319,7 +8319,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		model.vcov = Array<double>(p, p, 0.0);
 		for (intptr_t i = 0; i < p; i++) {
 			for (intptr_t j = 0; j < p; j++) {
-				model.vcov(i + 1, j + 1) = vcov(i, j);
+				model.vcov(i, j) = vcov(i, j);
 			}
 		}
 	}
@@ -8328,8 +8328,8 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	model.residuals = Array<double>(n, 0.0);
 	for (intptr_t i = 0; i < n; i++)
 	{
-		model.fitted[i + 1] = final_inner.mu[i];
-		model.residuals[i + 1] = ym[i] - final_inner.mu[i];
+		model.fitted[i] = final_inner.mu[i];
+		model.residuals[i] = ym[i] - final_inner.mu[i];
 	}
 
 	if (is_gaussian)
@@ -8822,7 +8822,7 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 	}
 
 	// Z_design / indices are NOT serialized. Required to assemble Zu.
-	for (intptr_t g = 1; g <= G; g++)
+	for (intptr_t g = 0; g < G; g++)
 	{
 		auto &re = model.random_effects[g];
 		if (re.indices.empty() || re.Z_design.empty()) {
@@ -8845,7 +8845,7 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 
 	for (intptr_t g = 0; g < G; g++)
 	{
-		auto &re = model.random_effects[g + 1];   // 1-based Array
+		auto &re = model.random_effects[g];
 		lay.offset[g] = lay.J_total;
 		lay.J[g] = re.nlevels;
 		lay.q[g] = re.nterms;
@@ -8880,7 +8880,7 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 
 	for (intptr_t g = 0; g < G; g++)
 	{
-		auto &re = model.random_effects[g + 1];
+		auto &re = model.random_effects[g];
 		intptr_t qg = lay.q[g];
 		Eigen::MatrixXd Sigma_g(qg, qg);
 
@@ -8913,13 +8913,13 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 		else
 		{
 			// Reconstruct Σ_g from packed cov_chol: Σ = L L'.
-			// cov_chol is 1-indexed, packed row-by-row.
+			// cov_chol is packed row-by-row.
 			const Array<double> &cc = re.cov_chol;
 			Eigen::MatrixXd L = Eigen::MatrixXd::Zero(qg, qg);
 			for (intptr_t r = 0; r < qg; r++) {
 				for (intptr_t c = 0; c <= r; c++) {
-					intptr_t idx = r * (r + 1) / 2 + c + 1;
-					if (idx <= cc.size()) L(r, c) = cc[idx];
+					intptr_t idx = r * (r + 1) / 2 + c;
+					if (idx < cc.size()) L(r, c) = cc[idx];
 				}
 			}
 			Sigma_g = L * L.transpose();
@@ -9013,7 +9013,7 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 		intptr_t off_u = 0;
 		for (intptr_t g = 0; g < G; g++)
 		{
-			auto &re = model.random_effects[g + 1];
+			auto &re = model.random_effects[g];
 			intptr_t qg = lay.q[g];
 			intptr_t Jg = lay.J[g];
 			const Array<double> &cm = re.conditional_modes;

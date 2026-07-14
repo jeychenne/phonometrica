@@ -104,7 +104,7 @@ struct ByEMMResult
 	String by_factor;            // conditioning factor, e.g. "Condition"
 	Array<String> by_levels;     // levels of the by-factor in order
 
-	// One EMMResult and one ContrastResult per by-level (1-indexed).
+	// One EMMResult and one ContrastResult per by-level.
 	Array<EMMResult> emms;
 	Array<ContrastResult> contrasts;
 };

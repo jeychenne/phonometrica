@@ -72,7 +72,7 @@ public:
 	void doAddAnchor(intptr_t layer_index, double time);
 	void doRemoveAnchor(intptr_t layer_index, double time);
 	void doMoveAnchor(intptr_t layer_index, double from, double to);
-	void doSetEventText(intptr_t layer_index, intptr_t event_1based, const String &text);
+	void doSetEventText(intptr_t layer_index, intptr_t event_index, const String &text);
 	void doSetEventText(intptr_t layer_index, double time, const String &text);
 	void doRestoreTextsAroundAnchor(intptr_t layer_index, double time,
 	                                const String &left_text, const String &right_text);
@@ -141,7 +141,7 @@ private slots:
 	void onAnchorRemovalDone(intptr_t layer_index, double time,
 	                         bool is_instant, String left_text, String right_text);
 	void onAnchorMoveDone(intptr_t layer_index, double from, double to);
-	void onEventTextEdited(intptr_t layer_index, intptr_t event_1based,
+	void onEventTextEdited(intptr_t layer_index, intptr_t event_index,
 	                       String old_text, String new_text);
 
 private:
@@ -158,10 +158,10 @@ private:
 
 	Handle<Annotation> m_annot;
 
-	// Layer widgets in display order (1-based indexing matches annotation layers).
+	// Layer widgets in display order (0-based indexing matches annotation layers).
 	std::vector<LayerWidget *> m_layers;
 
-	// Layer visibility (1-based: index 0 is unused). True = visible.
+	// Layer visibility, indexed by 0-based layer index. True = visible.
 	std::vector<bool> m_layer_visibility;
 
 	// Layout that contains the layer widgets (stored so we can insert/remove dynamically).
@@ -177,9 +177,9 @@ private:
 	SearchBar *m_searchbar = nullptr;
 
 	// Search cursor: layer and event index for "find next" continuation.
-	// Both are 1-based. 0 means "start from the beginning".
-	intptr_t m_search_layer = 0;
-	intptr_t m_search_event = 0;
+	// Both are 0-based. -1 means "start from the beginning".
+	intptr_t m_search_layer = -1;
+	intptr_t m_search_event = -1;
 };
 
 } // namespace phonometrica

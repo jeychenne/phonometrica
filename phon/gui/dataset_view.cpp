@@ -155,16 +155,16 @@ void DatasetView::setupUi()
 		auto &saved = m_ds->filter_rules();
 		// Apply logic BEFORE adding rules so any re-evaluation uses the right one.
 		m_proxy->setLogic(string_to_filter_logic(m_ds->filter_logic().data()));
-		for (intptr_t r = 1; r <= saved.size(); r++)
+		for (intptr_t r = 0; r < saved.size(); r++)
 		{
 			auto &rd = saved[r];
 			FilterRule rule;
 			// Resolve column name to 0-based index.
 			intptr_t col = m_ds->find_column(rd.column);
-			rule.column = (col > 0) ? static_cast<int>(col - 1) : 0;
+			rule.column = (col >= 0) ? static_cast<int>(col) : 0;
 			rule.op = string_to_filter_op(rd.op.data());
 			if (rule.op == FilterOp::InSet) {
-				for (intptr_t k = 1; k <= rd.set_values.size(); k++)
+				for (intptr_t k = 0; k < rd.set_values.size(); k++)
 					rule.set_values << QString::fromUtf8(rd.set_values[k].data(), (int)rd.set_values[k].size());
 			} else {
 				rule.value = QString::fromUtf8(rd.value.data(), (int)rd.value.size());
@@ -237,7 +237,6 @@ void DatasetView::setupUi()
 		if (section < 0) return;
 
 		auto col_name = m_proxy->headerData(section, Qt::Horizontal).toString();
-		intptr_t col_1based = section + 1;
 		QMenu menu(this);
 
 		// ── Sort ───────────────────────────────────────
@@ -292,7 +291,7 @@ void DatasetView::setupUi()
 		});
 
 		// ── Recode (text columns only) ─────────────────
-		if (m_ds->is_text(col_1based))
+		if (m_ds->is_text(section))
 		{
 			menu.addSeparator();
 			menu.addAction(tr("Recode values..."), this, [this, section]() {
@@ -301,7 +300,7 @@ void DatasetView::setupUi()
 		}
 
 		// ── Transform (numeric columns only) ───────────
-		if (m_ds->is_numeric(col_1based))
+		if (m_ds->is_numeric(section))
 		{
 			menu.addSeparator();
 			menu.addAction(tr("Transform..."), this, [this, section]() {
@@ -327,7 +326,7 @@ void DatasetView::setupUi()
 		for (auto &r : m_proxy->rules()) {
 			FilterRuleData rd;
 			if (r.column >= 0 && r.column < m_model->columnCount()) {
-				auto h = m_ds->get_header(r.column + 1);
+				auto h = m_ds->get_header(r.column);
 				rd.column = h;
 			}
 			rd.op = filter_op_to_string(r.op);
@@ -696,13 +695,13 @@ void DatasetView::onMerge()
 		auto rows = other_conc->row_count();
 
 		std::map<String, intptr_t> a_headers;
-		for (intptr_t j = 1; j <= a_cols; j++) {
+		for (intptr_t j = 0; j < a_cols; j++) {
 			a_headers[other_conc->get_header(j)] = j;
 		}
 
 		Array<std::pair<String, intptr_t>> columns_to_add;
 
-		for (intptr_t j = 1; j <= b_cols; j++)
+		for (intptr_t j = 0; j < b_cols; j++)
 		{
 			auto header = m_ds->get_header(j);
 			auto it = a_headers.find(header);
@@ -714,7 +713,7 @@ void DatasetView::onMerge()
 			else
 			{
 				bool same = true;
-				for (intptr_t i = 1; i <= rows; i++)
+				for (intptr_t i = 0; i < rows; i++)
 				{
 					if (other_conc->get_cell(i, it->second) != m_ds->get_cell(i, j)) {
 						same = false;
@@ -772,14 +771,14 @@ void DatasetView::onMerge()
 	auto rows = m_ds->row_count();
 
 	std::map<String, intptr_t> a_headers;
-	for (intptr_t j = 1; j <= a_cols; j++) {
+	for (intptr_t j = 0; j < a_cols; j++) {
 		a_headers[m_ds->get_header(j)] = j;
 	}
 
 	Array<std::pair<String, intptr_t>> columns_to_add;
 	Array<std::pair<intptr_t, intptr_t>> columns_to_overwrite;
 
-	for (intptr_t j = 1; j <= b_cols; j++)
+	for (intptr_t j = 0; j < b_cols; j++)
 	{
 		auto header = other->get_header(j);
 		auto it = a_headers.find(header);
@@ -791,7 +790,7 @@ void DatasetView::onMerge()
 		else
 		{
 			bool same = true;
-			for (intptr_t i = 1; i <= rows; i++)
+			for (intptr_t i = 0; i < rows; i++)
 			{
 				if (m_ds->get_cell(i, it->second) != other->get_cell(i, j)) {
 					same = false;
@@ -844,7 +843,7 @@ void DatasetView::onMerge()
 void DatasetView::setupFilterBar()
 {
 	QStringList headers;
-	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+	for (intptr_t j = 0; j < m_ds->column_count(); j++) {
 		auto h = m_ds->get_header(j);
 		headers << QString::fromUtf8(h.data(), (int) h.size());
 	}
@@ -852,13 +851,13 @@ void DatasetView::setupFilterBar()
 	m_filter_bar->setColumns(headers,
 		// isNumeric callback
 		[this](int col) -> bool {
-			return m_ds->is_numeric(col + 1); // 0-based → 1-based
+			return m_ds->is_numeric(col);
 		},
 		// getLevels callback
 		[this](int col) -> QStringList {
 			QStringList levels;
-			auto arr = m_ds->get_levels(col + 1);
-			for (intptr_t i = 1; i <= arr.size(); i++) {
+			auto arr = m_ds->get_levels(col);
+			for (intptr_t i = 0; i < arr.size(); i++) {
 				levels << QString::fromUtf8(arr[i].data(), (int) arr[i].size());
 			}
 			return levels;
@@ -914,7 +913,7 @@ void DatasetView::onAddMetricColumn()
 	QStringList num_names, text_names;
 	QVector<int> num_indices, text_indices;
 
-	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+	for (intptr_t j = 0; j < m_ds->column_count(); j++) {
 		auto h = m_ds->get_header(j);
 		auto qh = QString::fromUtf8(h.data(), (int) h.size());
 		if (m_ds->is_numeric(j)) {
@@ -1081,7 +1080,7 @@ void DatasetView::onAddBooleanColumn()
 				tr("The column name cannot be empty."));
 			continue;
 		}
-		if (m_ds->find_column(String(col_name.toUtf8().constData())) != 0) {
+		if (m_ds->find_column(String(col_name.toUtf8().constData())) >= 0) {
 			QMessageBox::warning(this, tr("Duplicate name"),
 				tr("A column named \"%1\" already exists. Please choose another name.").arg(col_name));
 			default_name = col_name;
@@ -1126,7 +1125,7 @@ void DatasetView::onNormalizeVowels()
 	QVector<int> num_indices, text_indices;
 	QVector<QStringList> vowel_levels;
 
-	for (intptr_t j = 1; j <= m_ds->column_count(); j++) {
+	for (intptr_t j = 0; j < m_ds->column_count(); j++) {
 		auto h = m_ds->get_header(j);
 		auto qh = QString::fromUtf8(h.data(), (int) h.size());
 		if (m_ds->is_numeric(j)) {
@@ -1138,7 +1137,7 @@ void DatasetView::onNormalizeVowels()
 			text_indices << (int) j;
 			auto levels = m_ds->get_levels(j);
 			QStringList ql;
-			for (intptr_t k = 1; k <= levels.size(); k++)
+			for (intptr_t k = 0; k < levels.size(); k++)
 				ql << QString::fromUtf8(levels[k].data(), (int) levels[k].size());
 			vowel_levels << ql;
 		}
@@ -1241,14 +1240,14 @@ void DatasetView::onRenameColumn(int section)
 
 void DatasetView::onRecodeColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	auto col_name_str = m_ds->get_header(col);
 	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
 
 	// Collect unique levels.
 	auto levels_arr = m_ds->get_levels(col);
 	QStringList levels;
-	for (intptr_t i = 1; i <= levels_arr.size(); i++) {
+	for (intptr_t i = 0; i < levels_arr.size(); i++) {
 		levels << QString::fromUtf8(levels_arr[i].data(), (int) levels_arr[i].size());
 	}
 
@@ -1295,7 +1294,7 @@ void DatasetView::onRecodeColumn(int section)
 
 void DatasetView::onTransformColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	auto col_name_str = m_ds->get_header(col);
 	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
 
@@ -1352,14 +1351,14 @@ void DatasetView::onTransformColumn(int section)
 
 void DatasetView::onConvertToText(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	auto col_name_str = m_ds->get_header(col);
 	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
 
 	// Collect sample values for the preview (first 8 rows, formatted as strings).
 	QStringList samples;
 	intptr_t sample_count = std::min(m_ds->row_count(), (intptr_t)8);
-	for (intptr_t i = 1; i <= sample_count; i++)
+	for (intptr_t i = 0; i < sample_count; i++)
 	{
 		auto cell = m_ds->get_cell(i, col);
 		samples.append(QString::fromUtf8(cell.data(), (int) cell.size()));
@@ -1377,12 +1376,12 @@ void DatasetView::onConvertToText(int section)
 	{
 		std::vector<String> result(m_ds->row_count());
 
-		for (intptr_t i = 1; i <= m_ds->row_count(); i++)
+		for (intptr_t i = 0; i < m_ds->row_count(); i++)
 		{
 			auto cell = m_ds->get_cell(i, col);
 			auto cell_q = QString::fromUtf8(cell.data(), (int) cell.size());
 			auto text = ConvertToTextDialog::applyTemplate(tmpl, cell_q);
-			result[i - 1] = String(text.toUtf8().constData());
+			result[i] = String(text.toUtf8().constData());
 		}
 
 		m_ds->add_text_column(String(new_col_name.toUtf8().constData()), result);
@@ -1405,12 +1404,12 @@ void DatasetView::onConvertToText(int section)
 static QStringList buildPositionList(const Handle<Dataset> &ds, int exclude = -1)
 {
 	QStringList items;
-	for (intptr_t j = 1; j <= ds->column_count(); j++)
+	for (intptr_t j = 0; j < ds->column_count(); j++)
 	{
 		if ((int) j == exclude) continue;
 		auto h = ds->get_header(j);
 		auto qh = QString::fromUtf8(h.data(), (int) h.size());
-		items << QStringLiteral("%1 \u2014 Before \"%2\"").arg(j).arg(qh);
+		items << QStringLiteral("%1 \u2014 Before \"%2\"").arg(j + 1).arg(qh);
 	}
 	int end_pos = (int) ds->column_count() + 1;
 	items << QStringLiteral("%1 \u2014 At the end").arg(end_pos);
@@ -1419,13 +1418,13 @@ static QStringList buildPositionList(const Handle<Dataset> &ds, int exclude = -1
 
 void DatasetView::onDuplicateColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	auto col_name_str = m_ds->get_header(col);
 	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
 
 	auto items = buildPositionList(m_ds);
 	// Default: right after the source column.
-	int default_idx = (int) col; // 0-based index in the list → position col+1
+	int default_idx = (int) col + 1; // 0-based index in the list
 
 	bool ok;
 	auto choice = QInputDialog::getItem(this,
@@ -1434,13 +1433,13 @@ void DatasetView::onDuplicateColumn(int section)
 		items, default_idx, false, &ok);
 	if (!ok) return;
 
-	// Parse the position number from the chosen item.
-	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt();
+	// Parse the position number from the chosen item (displayed 1-based).
+	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt() - 1;
 
 	try
 	{
 		m_ds->duplicate_column(col, dest);
-		m_proxy->adjustAfterColumnInsert(dest - 1); // dest is 1-based
+		m_proxy->adjustAfterColumnInsert(dest);
 		m_model->refreshAll();
 		m_table->resizeColumnsToContents();
 		setupFilterBar();
@@ -1459,7 +1458,7 @@ void DatasetView::onDuplicateColumn(int section)
 
 void DatasetView::onMoveColumn(int section)
 {
-	intptr_t col = section + 1; // 1-based
+	intptr_t col = section;
 	auto col_name_str = m_ds->get_header(col);
 	auto col_name = QString::fromUtf8(col_name_str.data(), (int) col_name_str.size());
 
@@ -1469,7 +1468,7 @@ void DatasetView::onMoveColumn(int section)
 	// the source column is removed, so that "Before «X»" means what the user expects.
 	QStringList items;
 	int slot = 1;
-	for (intptr_t j = 1; j <= m_ds->column_count(); j++)
+	for (intptr_t j = 0; j < m_ds->column_count(); j++)
 	{
 		if (j == col) continue; // skip the column being moved
 		auto h = m_ds->get_header(j);
@@ -1486,9 +1485,9 @@ void DatasetView::onMoveColumn(int section)
 		items, 0, false, &ok);
 	if (!ok) return;
 
-	// Parse the slot number — this is the 1-based insert position in the
-	// array after removal of the source column.
-	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt();
+	// Parse the slot number (displayed 1-based) — this is the 0-based insert
+	// position in the array after removal of the source column.
+	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt() - 1;
 
 	try
 	{

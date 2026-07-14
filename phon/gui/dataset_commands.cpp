@@ -141,10 +141,9 @@ bool DuplicateDatasetColumnCommand::execute()
 	if (m_has_saved)
 	{
 		auto *model = m_view->dsModel();
-		int col_0 = m_dest_col - 1; // 0-based
-		model->insertColumn(col_0, std::move(m_saved));
+		model->insertColumn(m_dest_col, std::move(m_saved));
 		m_has_saved = false;
-		m_view->adjustFiltersAfterColumnInsert(col_0);
+		m_view->adjustFiltersAfterColumnInsert(m_dest_col);
 		m_view->refreshAfterChange();
 	}
 	// On first call (via record()), the column was already duplicated.
@@ -154,10 +153,9 @@ bool DuplicateDatasetColumnCommand::execute()
 void DuplicateDatasetColumnCommand::undo()
 {
 	auto *model = m_view->dsModel();
-	int col_0 = m_dest_col - 1; // 0-based
-	m_saved = model->extractColumn(col_0);
+	m_saved = model->extractColumn(m_dest_col);
 	m_has_saved = true;
-	m_view->adjustFiltersAfterColumnRemove(col_0);
+	m_view->adjustFiltersAfterColumnRemove(m_dest_col);
 	m_view->refreshAfterChange();
 }
 
@@ -172,7 +170,7 @@ bool MoveDatasetColumnCommand::execute()
 	auto ds = m_view->dsModel()->dataset();
 	ds->move_column(m_src, m_dest);
 	ds->set_content_modified(true);
-	m_view->adjustFiltersAfterColumnMove(m_src - 1, m_dest - 1);
+	m_view->adjustFiltersAfterColumnMove(m_src, m_dest);
 	m_view->dsModel()->refreshAll();
 	m_view->refreshAfterChange();
 	return true;
@@ -183,7 +181,7 @@ void MoveDatasetColumnCommand::undo()
 	auto ds = m_view->dsModel()->dataset();
 	ds->move_column(m_dest, m_src);
 	ds->set_content_modified(true);
-	m_view->adjustFiltersAfterColumnMove(m_dest - 1, m_src - 1);
+	m_view->adjustFiltersAfterColumnMove(m_dest, m_src);
 	m_view->dsModel()->refreshAll();
 	m_view->refreshAfterChange();
 }

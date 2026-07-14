@@ -1486,7 +1486,7 @@ void AnalysisView::populateColumns()
 	if (!m_analysis->has_source()) return;
 
 	auto names = m_analysis->column_names();
-	for (intptr_t i = 1; i <= names.size(); i++) {
+	for (intptr_t i = 0; i < names.size(); i++) {
 		auto qname = QString::fromUtf8(names[i].data(), (int)names[i].size());
 		m_column_list->addItem(qname);
 		m_eda_x_combo->addItem(qname);
@@ -2170,7 +2170,7 @@ void AnalysisView::onCompareModels()
 				if (m.pareto_k.empty()) continue;
 
 				int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
-				for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+				for (intptr_t j = 0; j < m.pareto_k.size(); j++)
 				{
 					double k = m.pareto_k[j];
 					if (k < 0.5)      n_good++;
@@ -2395,7 +2395,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	{
 		auto vars = parsed->all_variables();
 		auto name_s = String(name.toUtf8().constData());
-		for (intptr_t i = 1; i <= vars.size(); i++) {
+		for (intptr_t i = 0; i < vars.size(); i++) {
 			if (vars[i] == name_s) { in_formula = true; break; }
 		}
 	}
@@ -2418,7 +2418,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 
 	if (parsed && !parsed->fixed.empty())
 	{
-		for (intptr_t i = 1; i <= parsed->fixed.size(); i++)
+		for (intptr_t i = 0; i < parsed->fixed.size(); i++)
 		{
 			auto term_s = parsed->fixed[i].to_string();
 			auto term_q = QString::fromUtf8(term_s.data(), (int)term_s.size());
@@ -2455,7 +2455,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		{
 			intptr_t nc = dt->column_count();
 			bool has_categorical = false;
-			for (intptr_t j = 1; j <= nc; j++)
+			for (intptr_t j = 0; j < nc; j++)
 			{
 				auto col_name = dt->get_header(j);
 				// Skip the numeric column itself and skip numeric columns.
@@ -2490,7 +2490,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		bool any_eligible = false;
 		if (parsed && !parsed->random.empty())
 		{
-			for (intptr_t i = 1; i <= parsed->random.size(); i++)
+			for (intptr_t i = 0; i < parsed->random.size(); i++)
 			{
 				auto &rt = parsed->random[i];
 				// Skip synthetic groups (already nested) — extending the
@@ -2528,7 +2528,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 			auto name_s = String(name.toUtf8().constData());
 			intptr_t nc = dt->column_count();
 			bool has_numeric = false;
-			for (intptr_t j = 1; j <= nc; j++)
+			for (intptr_t j = 0; j < nc; j++)
 			{
 				auto col_name = dt->get_header(j);
 				if (col_name == name_s) continue;
@@ -2554,7 +2554,7 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 	{
 		auto name_s = String(name.toUtf8().constData());
 
-		for (intptr_t i = 1; i <= parsed->random.size(); i++)
+		for (intptr_t i = 0; i < parsed->random.size(); i++)
 		{
 			auto &rt = parsed->random[i];
 			auto group_q = QString::fromUtf8(rt.group.data(), (int)rt.group.size());
@@ -2564,9 +2564,9 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 			// a:b does not satisfy "a is already a slope".
 			auto *corr_action = corr_slope_menu->addAction(group_q);
 			bool already_slope = false;
-			for (intptr_t s = 1; s <= rt.slopes.size(); s++) {
+			for (intptr_t s = 0; s < rt.slopes.size(); s++) {
 				const auto &st = rt.slopes[s];
-				if (st.variables.size() == 1 && st.variables[1] == name_s) {
+				if (st.variables.size() == 1 && st.variables[0] == name_s) {
 					already_slope = true;
 					break;
 				}
@@ -2609,9 +2609,9 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		// Collect unique levels from the source data.
 		auto *dt = m_analysis->data();
 		intptr_t nc = dt->column_count();
-		intptr_t col = 0;
+		intptr_t col = -1;
 		auto name_s = String(name.toUtf8().constData());
-		for (intptr_t j = 1; j <= nc; j++) {
+		for (intptr_t j = 0; j < nc; j++) {
 			if (dt->get_header(j) == name_s) { col = j; break; }
 		}
 
@@ -2624,12 +2624,12 @@ void AnalysisView::onColumnContextMenu(const QPoint &pos)
 		default_action->setData(QStringLiteral("__default__"));
 		ref_menu->addSeparator();
 
-		if (col > 0)
+		if (col >= 0)
 		{
 			// Collect sorted unique levels.
 			std::map<std::string, bool> seen;
 			intptr_t nr = dt->row_count();
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto cell = dt->get_cell(r, col);
 				if (!cell.empty()) {
@@ -2956,23 +2956,23 @@ void AnalysisView::addInteraction(const QString &name, const QString &other, boo
 		// Remove existing main effects of both variables (if present),
 		// since * will re-introduce them.
 		auto &fixed = parsed->fixed;
-		for (intptr_t i = fixed.size(); i >= 1; i--)
+		for (intptr_t i = fixed.size() - 1; i >= 0; i--)
 		{
 			if (fixed[i].variables.size() == 1 &&
-			    (fixed[i].variables[1] == name_s || fixed[i].variables[1] == other_s))
+			    (fixed[i].variables[0] == name_s || fixed[i].variables[0] == other_s))
 			{
 				fixed.remove_at(i);
 			}
 		}
 
 		// Also remove any existing a:b interaction (will be re-added by *).
-		for (intptr_t i = fixed.size(); i >= 1; i--)
+		for (intptr_t i = fixed.size() - 1; i >= 0; i--)
 		{
 			if (fixed[i].variables.size() == 2)
 			{
 				auto &v = fixed[i].variables;
-				if ((v[1] == name_s && v[2] == other_s) ||
-				    (v[1] == other_s && v[2] == name_s))
+				if ((v[0] == name_s && v[1] == other_s) ||
+				    (v[0] == other_s && v[1] == name_s))
 				{
 					fixed.remove_at(i);
 				}
@@ -3037,7 +3037,7 @@ void AnalysisView::addRandomSlope(const QString &variable, const QString &group,
 	auto group_s = String(group.toUtf8().constData());
 
 	// Find the existing RandomTerm with matching group.
-	for (intptr_t i = 1; i <= parsed->random.size(); i++)
+	for (intptr_t i = 0; i < parsed->random.size(); i++)
 	{
 		if (parsed->random[i].group != group_s) continue;
 
@@ -3088,11 +3088,11 @@ void AnalysisView::removeFromFormula(const QString &name)
 
 	// Remove from fixed effects: remove any term that contains this variable,
 	// plus remove any interaction terms that reference it.
-	for (intptr_t i = parsed->fixed.size(); i >= 1; i--)
+	for (intptr_t i = parsed->fixed.size() - 1; i >= 0; i--)
 	{
 		auto &ft = parsed->fixed[i];
 		bool contains = false;
-		for (intptr_t j = 1; j <= ft.variables.size(); j++) {
+		for (intptr_t j = 0; j < ft.variables.size(); j++) {
 			if (ft.variables[j] == name_s) { contains = true; break; }
 		}
 		if (contains) {
@@ -3102,7 +3102,7 @@ void AnalysisView::removeFromFormula(const QString &name)
 
 	// Remove from random effects: remove the variable as a slope.
 	// If it's the grouping factor, remove the entire term.
-	for (intptr_t i = parsed->random.size(); i >= 1; i--)
+	for (intptr_t i = parsed->random.size() - 1; i >= 0; i--)
 	{
 		auto &rt = parsed->random[i];
 
@@ -3114,10 +3114,10 @@ void AnalysisView::removeFromFormula(const QString &name)
 		// Remove as slope: drop any slope that mentions this variable, whether
 		// as a main effect or as a component of an interaction. Mirrors the
 		// fixed-side removal logic above.
-		for (intptr_t s = rt.slopes.size(); s >= 1; s--) {
+		for (intptr_t s = rt.slopes.size() - 1; s >= 0; s--) {
 			const auto &st = rt.slopes[s];
 			bool contains_s = false;
-			for (intptr_t v = 1; v <= st.variables.size(); v++) {
+			for (intptr_t v = 0; v < st.variables.size(); v++) {
 				if (st.variables[v] == name_s) { contains_s = true; break; }
 			}
 			if (contains_s) {
@@ -3133,7 +3133,7 @@ void AnalysisView::removeFromFormula(const QString &name)
 	}
 
 	// Remove smooth terms referencing this variable (as main covariate or by-variable).
-	for (intptr_t i = parsed->smooth.size(); i >= 1; i--)
+	for (intptr_t i = parsed->smooth.size() - 1; i >= 0; i--)
 	{
 		if (parsed->smooth[i].variable == name_s) {
 			parsed->smooth.remove_at(i);
@@ -3332,19 +3332,19 @@ void AnalysisView::plotResidualsVsFitted(const stats::Model &m)
 
 	std::vector<double> x(n), y(n);
 	for (intptr_t i = 0; i < n; i++) {
-		x[i] = m.fitted[i + 1];
-		y[i] = m.residuals[i + 1];
+		x[i] = m.fitted[i];
+		y[i] = m.residuals[i];
 	}
 
 	// Click-to-source: each plotted point is the i-th fitted observation,
-	// whose source row is m.source_rows[i] (1-based DataTable row → 0-based
-	// for the Qt model). Empty source_rows means the feature is silently
+	// whose source row is m.source_rows[i] (0-based DataTable row, same base
+	// as the Qt model). Empty source_rows means the feature is silently
 	// disabled (older saved analyses).
 	std::vector<intptr_t> rows;
 	if (m.has_source_rows()) {
 		rows.reserve(n);
 		for (intptr_t i = 0; i < n; i++)
-			rows.push_back(m.source_rows[(size_t) i] - 1);
+			rows.push_back(m.source_rows[(size_t) i]);
 	}
 
 	m_plot->setData(std::move(x), std::move(y),
@@ -3367,7 +3367,7 @@ void AnalysisView::plotQQ(const stats::Model &m)
 	std::vector<double> resid(n);
 	double sum = 0;
 	for (intptr_t i = 0; i < n; i++) {
-		resid[i] = m.residuals[i + 1];
+		resid[i] = m.residuals[i];
 		sum += resid[i];
 	}
 	double mean = sum / n;
@@ -3403,7 +3403,7 @@ void AnalysisView::plotQQ(const stats::Model &m)
 	if (m.has_source_rows()) {
 		rows.reserve(n);
 		for (intptr_t i = 0; i < n; i++)
-			rows.push_back(m.source_rows[(size_t) idx[i]] - 1);
+			rows.push_back(m.source_rows[(size_t) idx[i]]);
 	}
 
 	m_plot->setData(std::move(theoretical), std::move(sample),
@@ -3464,8 +3464,8 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 	// even when fitted values cluster.
 	std::vector<double> fitted(n), y(n);
 	for (intptr_t i = 0; i < n; i++) {
-		fitted[i] = m.fitted[i + 1];
-		y[i] = sr->residuals[i + 1];
+		fitted[i] = m.fitted[i];
+		y[i] = sr->residuals[i];
 	}
 
 	// Compute ranks (average rank for ties).
@@ -3492,13 +3492,13 @@ void AnalysisView::plotScaledResidualsVsFitted(const stats::Model &m)
 	}
 
 	// Click-to-source: plot point i corresponds to the i-th fitted
-	// observation, whose source row is m.source_rows[i] (1-based). Empty
+	// observation, whose source row is m.source_rows[i] (0-based). Empty
 	// vector means click-to-source is silently disabled.
 	std::vector<intptr_t> rows;
 	if (m.has_source_rows()) {
 		rows.reserve(n);
 		for (intptr_t k = 0; k < n; k++)
-			rows.push_back(m.source_rows[(size_t) k] - 1);
+			rows.push_back(m.source_rows[(size_t) k]);
 	}
 
 	m_plot->setData(std::move(x), std::move(y),
@@ -3527,12 +3527,12 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 	std::vector<intptr_t> idx(n);
 	std::iota(idx.begin(), idx.end(), 0);
 	std::sort(idx.begin(), idx.end(), [&](intptr_t a, intptr_t b) {
-		return sr->residuals[a + 1] < sr->residuals[b + 1];
+		return sr->residuals[a] < sr->residuals[b];
 	});
 
 	std::vector<double> sorted(n);
 	for (intptr_t i = 0; i < n; i++)
-		sorted[i] = sr->residuals[idx[i] + 1];
+		sorted[i] = sr->residuals[idx[i]];
 
 	// Theoretical quantiles: (i + 0.5) / n
 	std::vector<double> theoretical(n);
@@ -3544,7 +3544,7 @@ void AnalysisView::plotScaledResidualQQ(const stats::Model &m)
 	if (m.has_source_rows()) {
 		rows.reserve(n);
 		for (intptr_t i = 0; i < n; i++)
-			rows.push_back(m.source_rows[(size_t) idx[i]] - 1);
+			rows.push_back(m.source_rows[(size_t) idx[i]]);
 	}
 
 	m_plot->setData(std::move(theoretical), std::move(sorted),
@@ -3586,8 +3586,8 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 	current_names.reserve((int)ncoef);
 	for (intptr_t j = 0; j < ncoef; j++)
 	{
-		QString name = (j + 1 <= m.coef_names.size())
-			? QString::fromUtf8(m.coef_names[j + 1].data(), (int)m.coef_names[j + 1].size())
+		QString name = (j < m.coef_names.size())
+			? QString::fromUtf8(m.coef_names[j].data(), (int)m.coef_names[j].size())
 			: QStringLiteral("coef %1").arg(j + 1);
 		current_names << name;
 	}
@@ -3626,8 +3626,8 @@ void AnalysisView::plotPosteriorDensities(const stats::Model &m)
 		const QString &name = current_names[(int)j];
 		if (!checked_set.contains(name)) continue;
 
-		double mu_j = m.posterior_mean[j + 1];
-		double sd_j = m.posterior_sd[j + 1];
+		double mu_j = m.posterior_mean[j];
+		double sd_j = m.posterior_sd[j];
 		if (sd_j <= 0) continue;
 
 		// Determine evaluation range: ±4 SD from posterior mean.
@@ -4573,16 +4573,16 @@ bool AnalysisView::isColumnNumeric(const String &col_name) const
 	if (!m_analysis->has_source()) return false;
 	auto *dt = m_analysis->data();
 	intptr_t nc = dt->column_count();
-	intptr_t col = 0;
-	for (intptr_t j = 1; j <= nc; j++) {
+	intptr_t col = -1;
+	for (intptr_t j = 0; j < nc; j++) {
 		if (dt->get_header(j) == col_name) { col = j; break; }
 	}
-	if (col < 1) return false;
+	if (col < 0) return false;
 
 	// Check the first few non-empty values.
 	intptr_t nr = dt->row_count();
 	int checked = 0;
-	for (intptr_t r = 1; r <= nr && checked < 20; r++)
+	for (intptr_t r = 0; r < nr && checked < 20; r++)
 	{
 		auto val = dt->get_cell(r, col);
 		if (val.empty() || val == "nan" || val == "NaN" || val == "NA") continue;
@@ -4646,7 +4646,7 @@ Array<String> AnalysisView::buildVirtualEdaCells(const QString &name)
 	// downstream to_float / empty-cell checks treat excluded rows as missing,
 	// matching the convention at fitting.cpp:145.
 	Array<String> cells(nr, String());
-	for (intptr_t r = 1; r <= nr; r++)
+	for (intptr_t r = 0; r < nr; r++)
 	{
 		double v = aligned[r];
 		if (std::isnan(v))
@@ -4760,13 +4760,13 @@ void AnalysisView::updateEdaPlot()
 	// ── Resolve X column ───────────────────────────────────────────
 	auto x_name_q = m_eda_x_combo->currentText();
 	auto x_name = String(x_name_q.toUtf8().constData());
-	intptr_t x_col = 0;
-	for (intptr_t j = 1; j <= nc; j++) {
+	intptr_t x_col = -1;
+	for (intptr_t j = 0; j < nc; j++) {
 		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
 	Array<String> x_virtual_cells;
 	bool x_virtual = false;
-	if (x_col < 1) {
+	if (x_col < 0) {
 		if (isVirtualEdaColumn(x_name_q)) {
 			x_virtual_cells = buildVirtualEdaCells(x_name_q);
 			x_virtual = !x_virtual_cells.empty();
@@ -4781,16 +4781,16 @@ void AnalysisView::updateEdaPlot()
 	bool has_y = (m_eda_y_combo->currentIndex() > 0);
 	QString y_name_q;
 	String y_name;
-	intptr_t y_col = 0;
+	intptr_t y_col = -1;
 	Array<String> y_virtual_cells;
 	bool y_virtual = false;
 	if (has_y) {
 		y_name_q = m_eda_y_combo->currentText();
 		y_name = String(y_name_q.toUtf8().constData());
-		for (intptr_t j = 1; j <= nc; j++) {
+		for (intptr_t j = 0; j < nc; j++) {
 			if (dt->get_header(j) == y_name) { y_col = j; break; }
 		}
-		if (y_col < 1) {
+		if (y_col < 0) {
 			if (isVirtualEdaColumn(y_name_q)) {
 				y_virtual_cells = buildVirtualEdaCells(y_name_q);
 				y_virtual = !y_virtual_cells.empty();
@@ -4800,7 +4800,7 @@ void AnalysisView::updateEdaPlot()
 	}
 	auto yc = [&](intptr_t r) -> String {
 		return y_virtual ? y_virtual_cells[r]
-		                 : (y_col >= 1 ? dt->get_cell(r, y_col) : String());
+		                 : (y_col >= 0 ? dt->get_cell(r, y_col) : String());
 	};
 
 	// ── Plot-type + Kind dispatch ───────────────────────────────────
@@ -4914,18 +4914,18 @@ void AnalysisView::updateEdaPlot()
 
 	// ── Resolve Group / Facet ───────────────────────────────────────
 	auto resolveCombo = [&](QComboBox *combo) -> intptr_t {
-		if (combo->currentIndex() <= 0) return 0;
+		if (combo->currentIndex() <= 0) return -1;
 		auto qname = combo->currentText();
 		String name(qname.toUtf8().constData());
-		for (intptr_t j = 1; j <= nc; j++) {
+		for (intptr_t j = 0; j < nc; j++) {
 			if (dt->get_header(j) == name) return j;
 		}
-		return 0;
+		return -1;
 	};
 	intptr_t g_col = resolveCombo(m_eda_group_combo);
 	intptr_t f_col = resolveCombo(m_eda_facet_combo);
-	QString group_name_q = (g_col > 0) ? m_eda_group_combo->currentText() : QString();
-	QString facet_name_q = (f_col > 0) ? m_eda_facet_combo->currentText() : QString();
+	QString group_name_q = (g_col >= 0) ? m_eda_group_combo->currentText() : QString();
+	QString facet_name_q = (f_col >= 0) ? m_eda_facet_combo->currentText() : QString();
 
 	// ── Visibility (uniform across all supported modes) ─────────────
 	// Heatmap saturates the visual plane with two categorical axes — Group
@@ -4954,16 +4954,16 @@ void AnalysisView::updateEdaPlot()
 	m_eda_regline_check->setVisible(kind == KScatter && !is_formant_chart);
 	m_eda_pool_label->setVisible(kind == KScatter);
 	m_eda_pool_combo->setVisible(kind == KScatter);
-	m_eda_style_label->setVisible(kind == KScatter && g_col > 0);
-	m_eda_style_combo->setVisible(kind == KScatter && g_col > 0);
+	m_eda_style_label->setVisible(kind == KScatter && g_col >= 0);
+	m_eda_style_combo->setVisible(kind == KScatter && g_col >= 0);
 	m_eda_label_label->setVisible(kind == KScatter);
 	m_eda_label_combo->setVisible(kind == KScatter);
 	// For FormantChart we want Mean and Ellipse exposed even with no Group
 	// — a global formant centroid + CI is meaningful, and applyEdaPlotType
 	// Defaults turned them on so the user must be able to see/toggle them.
-	m_eda_mean_check->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
-	m_eda_ellipse_check->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
-	m_eda_ellipse_spin->setVisible(kind == KScatter && (g_col > 0 || is_formant_chart));
+	m_eda_mean_check->setVisible(kind == KScatter && (g_col >= 0 || is_formant_chart));
+	m_eda_ellipse_check->setVisible(kind == KScatter && (g_col >= 0 || is_formant_chart));
+	m_eda_ellipse_spin->setVisible(kind == KScatter && (g_col >= 0 || is_formant_chart));
 	// Formant checkbox is hidden when the plot type is explicitly
 	// FormantChart — the formant flag is implied by that selection,
 	// so a redundant checkbox would just confuse users.
@@ -5066,7 +5066,7 @@ void AnalysisView::updateEdaPlot()
 	auto partitionByFacet = [&]() -> std::vector<std::pair<QString, std::vector<intptr_t>>> {
 		std::vector<std::pair<QString, std::vector<intptr_t>>> facets;
 		std::map<QString, size_t> idx;
-		for (intptr_t r = 1; r <= nr; r++) {
+		for (intptr_t r = 0; r < nr; r++) {
 			auto vf = dt->get_cell(r, f_col);
 			if (vf.empty()) continue;
 			auto qf = QString::fromUtf8(vf.data(), (int)vf.size());
@@ -5088,7 +5088,7 @@ void AnalysisView::updateEdaPlot()
 	// (overlaid histograms / dodged bars / dodged boxes / grouped scatter
 	// / dodged proportion curves).
 	// ====================================================================
-	if (f_col > 0) {
+	if (f_col >= 0) {
 		auto facets = partitionByFacet();
 		if (facets.empty()) { m_eda_plot->clear(); return; }
 
@@ -5189,7 +5189,7 @@ void AnalysisView::updateEdaPlot()
 			// the non-faceted path.
 			double v0 = std::nan(""), v1 = std::nan("");
 			int n_unique = 0;
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto vy = yc(r);
 				if (vy.empty()) continue;
@@ -5223,7 +5223,7 @@ void AnalysisView::updateEdaPlot()
 				g_idx[lvl] = i; g_levels.push_back(lvl);
 				return i;
 			};
-			if (g_col == 0) ensure_g(QString());
+			if (g_col < 0) ensure_g(QString());
 
 			// First pass: discover all X / Group levels for shared axes.
 			for (auto &fp : facets) {
@@ -5232,9 +5232,9 @@ void AnalysisView::updateEdaPlot()
 					if (vx.empty() || vy.empty()) continue;
 					bool ok; double d = vy.to_float(&ok);
 					if (!ok || !std::isfinite(d)) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					ensure_x(QString::fromUtf8(vx.data(), (int)vx.size()));
-					if (g_col > 0) {
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						ensure_g(QString::fromUtf8(vg.data(), (int)vg.size()));
 					}
@@ -5276,11 +5276,11 @@ void AnalysisView::updateEdaPlot()
 					if (vx.empty() || vy.empty()) continue;
 					bool ok; double d = vy.to_float(&ok);
 					if (!ok || !std::isfinite(d)) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
 					int ci = x_idx[qx];
 					int gi = 0;
-					if (g_col > 0) {
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
 						gi = g_idx[qg];
@@ -5291,7 +5291,7 @@ void AnalysisView::updateEdaPlot()
 				cell.eff_curves.reserve(ng);
 				for (int gi = 0; gi < ng; gi++) {
 					PlotWidget::EffectsCurve curve;
-					curve.label = (g_col > 0) ? g_levels[gi] : QString();
+					curve.label = (g_col >= 0) ? g_levels[gi] : QString();
 					for (int ci = 0; ci < nx; ci++) {
 						auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
 						curve.x.push_back((double)ci + dodge(gi));
@@ -5323,12 +5323,12 @@ void AnalysisView::updateEdaPlot()
 
 			QString ylab = tr("Proportion (%1 = %2)").arg(y_name_q).arg(success);
 			QString title = ylab + QStringLiteral(" by ") + x_name_q;
-			if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+			if (g_col >= 0) title += QStringLiteral(" | ") + group_name_q;
 			title += QStringLiteral(" | facet: ") + facet_name_q;
 
 			QString caption = tr("Error bars are Wilson 95%% intervals");
 			m_eda_plot->setFacetEffectsShared(x_levels,
-			                                   /*curve_labels=*/(g_col > 0 ? g_levels
+			                                   /*curve_labels=*/(g_col >= 0 ? g_levels
 			                                                                : std::vector<QString>{}),
 			                                   caption);
 			m_eda_plot->setFacetedData(std::move(cells),
@@ -5373,11 +5373,11 @@ void AnalysisView::updateEdaPlot()
 				for (intptr_t r : fp.second) {
 					auto v = xc(r);
 					if (v.empty()) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					bool ok; double d = v.to_float(&ok);
 					if (!ok || !std::isfinite(d)) continue;
 					all_vals.push_back(d);
-					if (g_col > 0) {
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						all_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
 					}
@@ -5386,7 +5386,7 @@ void AnalysisView::updateEdaPlot()
 			if (all_vals.empty()) { m_eda_plot->clear(); return; }
 
 			std::vector<PlotWidget::HistBin> ref_bins;
-			if (g_col > 0) {
+			if (g_col >= 0) {
 				ref_bins = PlotWidget::computeGroupedBins(all_vals, all_groups,
 				                                          hist_group_labels, nbins);
 			} else {
@@ -5417,7 +5417,7 @@ void AnalysisView::updateEdaPlot()
 					cell.bins[i].lo = rlo + i * rbw;
 					cell.bins[i].hi = rlo + (i + 1) * rbw;
 					cell.bins[i].count = 0;
-					if (g_col > 0) cell.bins[i].group_counts.assign(ng, 0);
+					if (g_col >= 0) cell.bins[i].group_counts.assign(ng, 0);
 				}
 				// Density inputs: when density is requested, collect raw
 				// values (ungrouped) or per-group raw values (grouped) in
@@ -5426,14 +5426,14 @@ void AnalysisView::updateEdaPlot()
 				std::vector<double> dens_vals;
 				std::vector<std::vector<double>> dens_vals_by_group;
 				if (want_density) {
-					if (g_col == 0) dens_vals.reserve(fp.second.size());
+					if (g_col < 0) dens_vals.reserve(fp.second.size());
 					else dens_vals_by_group.assign(ng, std::vector<double>{});
 				}
 
 				for (intptr_t r : fp.second) {
 					auto v = xc(r);
 					if (v.empty()) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					bool ok; double d = v.to_float(&ok);
 					if (!ok || !std::isfinite(d)) continue;
 					int bi = (int)((d - rlo) / rbw);
@@ -5441,7 +5441,7 @@ void AnalysisView::updateEdaPlot()
 					if (bi >= rnb) bi = rnb - 1;
 					cell.bins[bi].count++;
 					int g_for_density = -1;
-					if (g_col > 0) {
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
 						auto it = g_idx.find(qg);
@@ -5451,7 +5451,7 @@ void AnalysisView::updateEdaPlot()
 						}
 					}
 					if (want_density) {
-						if (g_col == 0) dens_vals.push_back(d);
+						if (g_col < 0) dens_vals.push_back(d);
 						else if (g_for_density >= 0)
 							dens_vals_by_group[g_for_density].push_back(d);
 					}
@@ -5462,7 +5462,7 @@ void AnalysisView::updateEdaPlot()
 				// the bars in the SAME cell — densities don't get
 				// renormalized across panels.
 				if (want_density) {
-					if (g_col == 0) {
+					if (g_col < 0) {
 						if (dens_vals.size() >= 2) {
 							int local_n = (int)dens_vals.size();
 							auto c = buildDensityCurve(std::move(dens_vals), nbins,
@@ -5497,13 +5497,13 @@ void AnalysisView::updateEdaPlot()
 				for (intptr_t r : fp.second) {
 					auto v = xc(r);
 					if (v.empty()) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					auto qs = QString::fromUtf8(v.data(), (int)v.size());
 					if (cats_idx.find(qs) == cats_idx.end()) {
 						cats_idx[qs] = (int)cats_order.size();
 						cats_order.push_back(qs);
 					}
-					if (g_col > 0) {
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
 						if (groups_idx.find(qg) == groups_idx.end()) {
@@ -5514,7 +5514,7 @@ void AnalysisView::updateEdaPlot()
 				}
 			}
 			if (cats_order.empty()) { m_eda_plot->clear(); return; }
-			if (g_col > 0) bar_group_labels = groups_order;
+			if (g_col >= 0) bar_group_labels = groups_order;
 
 			int nc_ = (int)cats_order.size();
 			int ng = std::max(1, (int)groups_order.size());
@@ -5522,7 +5522,7 @@ void AnalysisView::updateEdaPlot()
 				PlotWidget::FacetCell cell;
 				cell.label = fp.first;
 				cell.bar_labels = cats_order;
-				if (g_col == 0) {
+				if (g_col < 0) {
 					cell.bar_counts.assign(nc_, 0);
 					for (intptr_t r : fp.second) {
 						auto v = xc(r);
@@ -5558,13 +5558,13 @@ void AnalysisView::updateEdaPlot()
 					auto vx = xc(r);
 					auto vy = yc(r);
 					if (vx.empty() || vy.empty()) continue;
-					if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+					if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 					bool ok; double dy = vy.to_float(&ok);
 					if (!ok || !std::isfinite(dy)) continue;
 					groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
 					vals.push_back(dy);
-					rows.push_back((intptr_t)(r - 1));
-					if (g_col > 0) {
+					rows.push_back(r);
+					if (g_col >= 0) {
 						auto vg = dt->get_cell(r, g_col);
 						style_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
 					}
@@ -5580,7 +5580,7 @@ void AnalysisView::updateEdaPlot()
 				double pad = (yhi_pool - ylo_pool) * 0.06;
 				y_range = {ylo_pool - pad, yhi_pool + pad};
 			}
-			if (g_col > 0) {
+			if (g_col >= 0) {
 				std::map<QString, int> seen;
 				for (auto &cell : cells) {
 					for (auto &b : cell.boxes) {
@@ -5595,20 +5595,20 @@ void AnalysisView::updateEdaPlot()
 		}
 		else if (kind == KScatter)
 		{
-			inner_mode = g_col > 0 ? PlotWidget::FacetInnerMode::GroupedScatter
+			inner_mode = g_col >= 0 ? PlotWidget::FacetInnerMode::GroupedScatter
 			                       : PlotWidget::FacetInnerMode::Scatter;
 
-			intptr_t l_col = 0;
+			intptr_t l_col = -1;
 			if (m_eda_label_combo->currentIndex() > 0) {
 				String label_name(m_eda_label_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == label_name) { l_col = j; break; }
 				}
 			}
 
 			// Discover pooled color labels first so colors stay consistent
 			// across facets (same group always gets the same palette slot).
-			if (g_col > 0) {
+			if (g_col >= 0) {
 				std::map<QString, int> seen;
 				for (auto &fp : facets) {
 					for (intptr_t r : fp.second) {
@@ -5631,20 +5631,20 @@ void AnalysisView::updateEdaPlot()
 			for (auto &fp : facets) {
 				PlotWidget::FacetCell cell;
 				cell.label = fp.first;
-				if (g_col == 0) {
+				if (g_col < 0) {
 					for (intptr_t r : fp.second) {
 						auto vx = xc(r);
 						auto vy = yc(r);
 						if (vx.empty() || vy.empty()) continue;
-						if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+						if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
 						bool okx, oky;
 						double dx = vx.to_float(&okx);
 						double dy = vy.to_float(&oky);
 						if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
 						cell.x.push_back(dx);
 						cell.y.push_back(dy);
-						cell.source_rows.push_back((intptr_t)(r - 1));
-						if (l_col > 0) {
+						cell.source_rows.push_back(r);
+						if (l_col >= 0) {
 							auto vl = dt->get_cell(r, l_col);
 							cell.point_labels.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
 						}
@@ -5660,7 +5660,7 @@ void AnalysisView::updateEdaPlot()
 						auto vy = yc(r);
 						auto vg = dt->get_cell(r, g_col);
 						if (vx.empty() || vy.empty() || vg.empty()) continue;
-						if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+						if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
 						bool okx, oky;
 						double dx = vx.to_float(&okx);
 						double dy = vy.to_float(&oky);
@@ -5668,8 +5668,8 @@ void AnalysisView::updateEdaPlot()
 						xv.push_back(dx);
 						yv.push_back(dy);
 						gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
-						rows.push_back((intptr_t)(r - 1));
-						if (l_col > 0) {
+						rows.push_back(r);
+						if (l_col >= 0) {
 							auto vl = dt->get_cell(r, l_col);
 							lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
 						}
@@ -5700,7 +5700,7 @@ void AnalysisView::updateEdaPlot()
 			global_title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
 		else
 			global_title = x_name_q;
-		if (g_col > 0) global_title += QStringLiteral(" by ") + group_name_q;
+		if (g_col >= 0) global_title += QStringLiteral(" by ") + group_name_q;
 		global_title += QStringLiteral(" | facet: ") + facet_name_q;
 
 		// Fold user customization range into the facet shared range before
@@ -5768,15 +5768,15 @@ void AnalysisView::updateEdaPlot()
 		std::vector<double> vals;
 		std::vector<QString> groups;
 		vals.reserve(nr);
-		if (g_col > 0) groups.reserve(nr);
-		for (intptr_t r = 1; r <= nr; r++) {
+		if (g_col >= 0) groups.reserve(nr);
+		for (intptr_t r = 0; r < nr; r++) {
 			auto v = xc(r);
 			if (v.empty()) continue;
-			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 			bool ok; double d = v.to_float(&ok);
 			if (!ok || !std::isfinite(d)) continue;
 			vals.push_back(d);
-			if (g_col > 0) {
+			if (g_col >= 0) {
 				auto vg = dt->get_cell(r, g_col);
 				groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
 			}
@@ -5784,9 +5784,9 @@ void AnalysisView::updateEdaPlot()
 		if (vals.empty()) { m_eda_plot->clear(); return; }
 
 		QString title = x_name_q;
-		if (g_col > 0) title += QStringLiteral(" by ") + group_name_q;
+		if (g_col >= 0) title += QStringLiteral(" by ") + group_name_q;
 
-		if (g_col > 0) {
+		if (g_col >= 0) {
 			bool want_density = m_eda_density_check->isChecked();
 			// Build per-group density curves before moving vals/groups
 			// into the plot — each curve uses its group's count for
@@ -5836,9 +5836,9 @@ void AnalysisView::updateEdaPlot()
 	{
 		std::vector<QString> cats_order;
 		std::map<QString, int> cats_idx;
-		if (g_col == 0) {
+		if (g_col < 0) {
 			std::vector<int> counts;
-			for (intptr_t r = 1; r <= nr; r++) {
+			for (intptr_t r = 0; r < nr; r++) {
 				auto v = xc(r);
 				if (v.empty()) continue;
 				auto qs = QString::fromUtf8(v.data(), (int)v.size());
@@ -5857,7 +5857,7 @@ void AnalysisView::updateEdaPlot()
 			std::vector<QString> groups_order;
 			std::map<QString, int> groups_idx;
 			std::vector<std::pair<int, int>> rows;
-			for (intptr_t r = 1; r <= nr; r++) {
+			for (intptr_t r = 0; r < nr; r++) {
 				auto v = xc(r);
 				auto vg = dt->get_cell(r, g_col);
 				if (v.empty() || vg.empty()) continue;
@@ -5893,25 +5893,25 @@ void AnalysisView::updateEdaPlot()
 		groups.reserve(nr);
 		vals.reserve(nr);
 		rows.reserve(nr);
-		if (g_col > 0) style_groups.reserve(nr);
-		for (intptr_t r = 1; r <= nr; r++) {
+		if (g_col >= 0) style_groups.reserve(nr);
+		for (intptr_t r = 0; r < nr; r++) {
 			auto vx = xc(r);
 			auto vy = yc(r);
 			if (vx.empty() || vy.empty()) continue;
-			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 			bool ok; double dy = vy.to_float(&ok);
 			if (!ok || !std::isfinite(dy)) continue;
 			groups.push_back(QString::fromUtf8(vx.data(), (int)vx.size()));
 			vals.push_back(dy);
-			rows.push_back((intptr_t)(r - 1));
-			if (g_col > 0) {
+			rows.push_back(r);
+			if (g_col >= 0) {
 				auto vg = dt->get_cell(r, g_col);
 				style_groups.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
 			}
 		}
 		if (vals.empty()) { m_eda_plot->clear(); return; }
 		QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
-		if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+		if (g_col >= 0) title += QStringLiteral(" | ") + group_name_q;
 		m_eda_plot->setBoxPlotData(std::move(groups), std::move(vals),
 		                            x_name_q, y_name_q, title,
 		                            std::move(rows), std::move(style_groups));
@@ -5945,7 +5945,7 @@ void AnalysisView::updateEdaPlot()
 			return i;
 		};
 
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			auto vx = xc(r);
 			auto vy = yc(r);
@@ -5983,7 +5983,7 @@ void AnalysisView::updateEdaPlot()
 		// two, abort with a hint (the column isn't binary).
 		double v0 = std::nan(""), v1 = std::nan("");
 		int n_unique = 0;
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			auto vy = yc(r);
 			if (vy.empty()) continue;
@@ -6029,20 +6029,20 @@ void AnalysisView::updateEdaPlot()
 			return i;
 		};
 		// Always have at least one group row, even when ungrouped.
-		if (g_col == 0) ensure_g(QString());
+		if (g_col < 0) ensure_g(QString());
 
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			auto vx = xc(r);
 			auto vy = yc(r);
 			if (vx.empty() || vy.empty()) continue;
 			bool ok; double d = vy.to_float(&ok);
 			if (!ok || !std::isfinite(d)) continue;
-			if (g_col > 0 && dt->get_cell(r, g_col).empty()) continue;
+			if (g_col >= 0 && dt->get_cell(r, g_col).empty()) continue;
 			auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
 			int ci = ensure_x(qx);
 			int gi = 0;
-			if (g_col > 0) {
+			if (g_col >= 0) {
 				auto vg = dt->get_cell(r, g_col);
 				auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
 				gi = ensure_g(qg);
@@ -6084,7 +6084,7 @@ void AnalysisView::updateEdaPlot()
 		for (int gi = 0; gi < ng; gi++)
 		{
 			PlotWidget::EffectsCurve curve;
-			curve.label = (g_col > 0) ? g_levels[gi] : QString();
+			curve.label = (g_col >= 0) ? g_levels[gi] : QString();
 			for (int ci = 0; ci < (int)x_levels.size(); ci++) {
 				auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
 				curve.x.push_back((double)ci + dodge(gi));
@@ -6101,7 +6101,7 @@ void AnalysisView::updateEdaPlot()
 		    .arg(y_name_q)
 		    .arg(success);
 		QString title = ylab + QStringLiteral(" by ") + x_name_q;
-		if (g_col > 0) title += QStringLiteral(" | ") + group_name_q;
+		if (g_col >= 0) title += QStringLiteral(" | ") + group_name_q;
 
 		std::vector<QString> level_labels = x_levels;
 		QString caption = tr("Error bars are Wilson 95%% intervals");
@@ -6110,7 +6110,7 @@ void AnalysisView::updateEdaPlot()
 		                                caption,
 		                                std::move(level_labels),
 		                                /*show_ci=*/true,
-		                                /*show_legend=*/g_col > 0);
+		                                /*show_legend=*/g_col >= 0);
 	}
 	else if (kind == KScatter)
 	{
@@ -6120,29 +6120,29 @@ void AnalysisView::updateEdaPlot()
 		bool has_label = (m_eda_label_combo->currentIndex() > 0);
 		bool has_style = (m_eda_style_combo->currentIndex() > 0);
 
-		if (g_col > 0)
+		if (g_col >= 0)
 		{
 			// ── Grouped scatter (original code) ──
-			intptr_t l_col = 0;
+			intptr_t l_col = -1;
 			if (has_label) {
 				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == label_name) { l_col = j; break; }
 				}
 			}
 
-			intptr_t p_col = 0;
+			intptr_t p_col = -1;
 			if (has_pool) {
 				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == pool_name) { p_col = j; break; }
 				}
 			}
 
-			intptr_t s_col = 0;
+			intptr_t s_col = -1;
 			if (has_style) {
 				auto style_name = String(m_eda_style_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == style_name) { s_col = j; break; }
 				}
 			}
@@ -6156,30 +6156,30 @@ void AnalysisView::updateEdaPlot()
 			yv.reserve(nr);
 			gv.reserve(nr);
 			rows.reserve(nr);
-			if (l_col > 0) lv.reserve(nr);
-			if (s_col > 0) sv.reserve(nr);
-			for (intptr_t r = 1; r <= nr; r++)
+			if (l_col >= 0) lv.reserve(nr);
+			if (s_col >= 0) sv.reserve(nr);
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto vx = xc(r);
 				auto vy = yc(r);
 				auto vg = dt->get_cell(r, g_col);
 				if (vx.empty() || vy.empty() || vg.empty()) continue;
-				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
-				if (p_col > 0 && dt->get_cell(r, p_col).empty()) continue;
-				if (s_col > 0 && dt->get_cell(r, s_col).empty()) continue;
+				if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
+				if (p_col >= 0 && dt->get_cell(r, p_col).empty()) continue;
+				if (s_col >= 0 && dt->get_cell(r, s_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
 				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
-					rows.push_back((intptr_t)(r - 1));
+					rows.push_back(r);
 					gv.push_back(QString::fromUtf8(vg.data(), (int)vg.size()));
-					if (l_col > 0) {
+					if (l_col >= 0) {
 						auto vl = dt->get_cell(r, l_col);
 						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
 					}
-					if (s_col > 0) {
+					if (s_col >= 0) {
 						auto vs = dt->get_cell(r, s_col);
 						sv.push_back(QString::fromUtf8(vs.data(), (int)vs.size()));
 					}
@@ -6188,7 +6188,7 @@ void AnalysisView::updateEdaPlot()
 			if (xv.empty()) { m_eda_plot->clear(); return; }
 
 			// ── Pooling ──
-			if (p_col > 0)
+			if (p_col >= 0)
 			{
 				struct PoolCell {
 					double sx = 0, sy = 0;
@@ -6201,15 +6201,15 @@ void AnalysisView::updateEdaPlot()
 				std::map<CellKey, PoolCell> cells_pool;
 				std::vector<CellKey> cell_order;
 
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
 					auto vg = dt->get_cell(r, g_col);
 					auto vp = dt->get_cell(r, p_col);
 					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
-					if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
-					if (s_col > 0 && dt->get_cell(r, s_col).empty()) continue;
+					if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
+					if (s_col >= 0 && dt->get_cell(r, s_col).empty()) continue;
 					bool okx, oky;
 					double dx = vx.to_float(&okx);
 					double dy = vy.to_float(&oky);
@@ -6218,7 +6218,7 @@ void AnalysisView::updateEdaPlot()
 					QString pool_str = QString::fromUtf8(vp.data(), (int)vp.size());
 					QString group_str = QString::fromUtf8(vg.data(), (int)vg.size());
 					QString style_str;
-					if (s_col > 0) {
+					if (s_col >= 0) {
 						auto vs = dt->get_cell(r, s_col);
 						style_str = QString::fromUtf8(vs.data(), (int)vs.size());
 					}
@@ -6231,7 +6231,7 @@ void AnalysisView::updateEdaPlot()
 					c.n++;
 					c.group = group_str;
 					c.style = style_str;
-					if (l_col > 0) {
+					if (l_col >= 0) {
 						auto vl = dt->get_cell(r, l_col);
 						c.label_freq[QString::fromUtf8(vl.data(), (int)vl.size())]++;
 					}
@@ -6245,9 +6245,9 @@ void AnalysisView::updateEdaPlot()
 					xv.push_back(c.sx / c.n);
 					yv.push_back(c.sy / c.n);
 					gv.push_back(c.group);
-					if (s_col > 0)
+					if (s_col >= 0)
 						sv.push_back(c.style);
-					if (l_col > 0) {
+					if (l_col >= 0) {
 						QString best;
 						int best_n = 0;
 						for (auto &kv : c.label_freq) {
@@ -6267,11 +6267,11 @@ void AnalysisView::updateEdaPlot()
 
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q
 				+ QStringLiteral(" | ") + group_name_q;
-			if (has_style && s_col > 0)
+			if (has_style && s_col >= 0)
 				title += QStringLiteral(" \u00D7 ") + m_eda_style_combo->currentText();
 			if (has_label && l_col != g_col)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
-			if (p_col > 0)
+			if (p_col >= 0)
 				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText()
 				       + QStringLiteral("]");
 
@@ -6286,18 +6286,18 @@ void AnalysisView::updateEdaPlot()
 		else
 		{
 			// ── Plain scatter (no Group) ──
-			intptr_t l_col = 0;
+			intptr_t l_col = -1;
 			if (has_label) {
 				auto label_name = String(m_eda_label_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == label_name) { l_col = j; break; }
 				}
 			}
 
-			intptr_t p_col = 0;
+			intptr_t p_col = -1;
 			if (has_pool) {
 				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == pool_name) { p_col = j; break; }
 				}
 			}
@@ -6308,22 +6308,22 @@ void AnalysisView::updateEdaPlot()
 			xv.reserve(nr);
 			yv.reserve(nr);
 			rows.reserve(nr);
-			if (l_col > 0) lv.reserve(nr);
-			for (intptr_t r = 1; r <= nr; r++)
+			if (l_col >= 0) lv.reserve(nr);
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto vx = xc(r);
 				auto vy = yc(r);
 				if (vx.empty() || vy.empty()) continue;
-				if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
-				if (p_col > 0 && dt->get_cell(r, p_col).empty()) continue;
+				if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
+				if (p_col >= 0 && dt->get_cell(r, p_col).empty()) continue;
 				bool okx, oky;
 				double dx = vx.to_float(&okx);
 				double dy = vy.to_float(&oky);
 				if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) {
 					xv.push_back(dx);
 					yv.push_back(dy);
-					rows.push_back((intptr_t)(r - 1));
-					if (l_col > 0) {
+					rows.push_back(r);
+					if (l_col >= 0) {
 						auto vl = dt->get_cell(r, l_col);
 						lv.push_back(QString::fromUtf8(vl.data(), (int)vl.size()));
 					}
@@ -6338,7 +6338,7 @@ void AnalysisView::updateEdaPlot()
 			// top of this branch, minus the Group/Style keying. Source rows
 			// are left empty for pooled points: each one represents N rows,
 			// so click-through to a single source row isn't meaningful.
-			if (p_col > 0)
+			if (p_col >= 0)
 			{
 				struct PoolCell {
 					double sx = 0, sy = 0;
@@ -6348,13 +6348,13 @@ void AnalysisView::updateEdaPlot()
 				std::map<QString, PoolCell> cells_pool;
 				std::vector<QString> cell_order;
 
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
 					auto vp = dt->get_cell(r, p_col);
 					if (vx.empty() || vy.empty() || vp.empty()) continue;
-					if (l_col > 0 && dt->get_cell(r, l_col).empty()) continue;
+					if (l_col >= 0 && dt->get_cell(r, l_col).empty()) continue;
 					bool okx, oky;
 					double dx = vx.to_float(&okx);
 					double dy = vy.to_float(&oky);
@@ -6366,7 +6366,7 @@ void AnalysisView::updateEdaPlot()
 					c.sx += dx;
 					c.sy += dy;
 					c.n++;
-					if (l_col > 0) {
+					if (l_col >= 0) {
 						auto vl = dt->get_cell(r, l_col);
 						c.label_freq[QString::fromUtf8(vl.data(), (int)vl.size())]++;
 					}
@@ -6379,7 +6379,7 @@ void AnalysisView::updateEdaPlot()
 					if (c.n == 0) continue;
 					xv.push_back(c.sx / c.n);
 					yv.push_back(c.sy / c.n);
-					if (l_col > 0) {
+					if (l_col >= 0) {
 						// Use the most frequent label among the rows in
 						// this pool cell. Ties broken by first-seen.
 						QString best;
@@ -6420,9 +6420,9 @@ void AnalysisView::updateEdaPlot()
 			}
 
 			QString title = y_name_q + QStringLiteral(" ~ ") + x_name_q;
-			if (has_label && l_col > 0)
+			if (has_label && l_col >= 0)
 				title += QStringLiteral(" / ") + m_eda_label_combo->currentText();
-			if (p_col > 0)
+			if (p_col >= 0)
 				title += QStringLiteral(" [pooled by ") + m_eda_pool_combo->currentText()
 				       + QStringLiteral("]");
 
@@ -6516,13 +6516,13 @@ void AnalysisView::updateEdaSummary()
 	auto x_name = String(x_name_q.toUtf8().constData());
 
 	intptr_t nc = dt->column_count();
-	intptr_t x_col = 0;
-	for (intptr_t j = 1; j <= nc; j++) {
+	intptr_t x_col = -1;
+	for (intptr_t j = 0; j < nc; j++) {
 		if (dt->get_header(j) == x_name) { x_col = j; break; }
 	}
 	Array<String> x_virtual_cells;
 	bool x_virtual = false;
-	if (x_col < 1)
+	if (x_col < 0)
 	{
 		if (isVirtualEdaColumn(x_name_q))
 		{
@@ -6548,7 +6548,7 @@ void AnalysisView::updateEdaSummary()
 			std::vector<double> vals;
 			vals.reserve(nr);
 			intptr_t missing = 0;
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto v = xc(r);
 				if (v.empty()) { missing++; continue; }
@@ -6598,7 +6598,7 @@ void AnalysisView::updateEdaSummary()
 
 			std::vector<QString> order;
 			std::map<QString, int> counts;
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto v = xc(r);
 				if (v.empty()) continue;
@@ -6629,13 +6629,13 @@ void AnalysisView::updateEdaSummary()
 	auto y_name_q = m_eda_y_combo->currentText();
 	auto y_name = String(y_name_q.toUtf8().constData());
 
-	intptr_t y_col = 0;
-	for (intptr_t j = 1; j <= nc; j++) {
+	intptr_t y_col = -1;
+	for (intptr_t j = 0; j < nc; j++) {
 		if (dt->get_header(j) == y_name) { y_col = j; break; }
 	}
 	Array<String> y_virtual_cells;
 	bool y_virtual = false;
-	if (y_col < 1)
+	if (y_col < 0)
 	{
 		if (isVirtualEdaColumn(y_name_q))
 		{
@@ -6661,17 +6661,17 @@ void AnalysisView::updateEdaSummary()
 			auto group_name_q = m_eda_group_combo->currentText();
 			auto group_name = String(group_name_q.toUtf8().constData());
 
-			intptr_t g_col = 0;
-			for (intptr_t j = 1; j <= nc; j++) {
+			intptr_t g_col = -1;
+			for (intptr_t j = 0; j < nc; j++) {
 				if (dt->get_header(j) == group_name) { g_col = j; break; }
 			}
-			if (g_col < 1) return;
+			if (g_col < 0) return;
 
 			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
-			intptr_t p_col = 0;
+			intptr_t p_col = -1;
 			if (has_pool) {
 				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == pool_name) { p_col = j; break; }
 				}
 			}
@@ -6681,7 +6681,7 @@ void AnalysisView::updateEdaSummary()
 			std::map<QString, GroupStats> grouped;
 			intptr_t included = 0;
 
-			if (p_col > 0)
+			if (p_col >= 0)
 			{
 				// Pool first: collapse to one mean per (pool, group) cell,
 				// then feed the cell means into the per-group stats.
@@ -6689,7 +6689,7 @@ void AnalysisView::updateEdaSummary()
 				std::map<std::pair<QString, QString>, PoolCell> cells;
 				std::vector<std::pair<QString, QString>> cell_order;
 
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
@@ -6722,7 +6722,7 @@ void AnalysisView::updateEdaSummary()
 			else
 			{
 				// No pooling: raw data points.
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
@@ -6805,10 +6805,10 @@ void AnalysisView::updateEdaSummary()
 			// cell because of an NA in X, Y, or the pool column.
 
 			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
-			intptr_t p_col = 0;
+			intptr_t p_col = -1;
 			if (has_pool) {
 				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == pool_name) { p_col = j; break; }
 				}
 			}
@@ -6818,12 +6818,12 @@ void AnalysisView::updateEdaSummary()
 			yv.reserve(nr);
 			intptr_t missing = 0;
 
-			if (p_col > 0)
+			if (p_col >= 0)
 			{
 				struct PoolCell { double sx = 0, sy = 0; int n = 0; };
 				std::map<QString, PoolCell> cells;
 				std::vector<QString> cell_order;
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
@@ -6847,7 +6847,7 @@ void AnalysisView::updateEdaSummary()
 			}
 			else
 			{
-				for (intptr_t r = 1; r <= nr; r++)
+				for (intptr_t r = 0; r < nr; r++)
 				{
 					auto vx = xc(r);
 					auto vy = yc(r);
@@ -6921,22 +6921,22 @@ void AnalysisView::updateEdaSummary()
 		if (proportion_mode)
 		{
 			// Resolve Group column.
-			intptr_t g_col = 0;
+			intptr_t g_col = -1;
 			QString group_name_q;
 			if (has_group) {
 				group_name_q = m_eda_group_combo->currentText();
 				auto group_name = String(group_name_q.toUtf8().constData());
-				for (intptr_t j = 1; j <= nc; j++) {
+				for (intptr_t j = 0; j < nc; j++) {
 					if (dt->get_header(j) == group_name) { g_col = j; break; }
 				}
-				if (g_col < 1) has_group = false;
+				if (g_col < 0) has_group = false;
 			}
 
 			// Determine the "success" value: larger of the two unique Y
 			// values across the column. Bail if there aren't exactly two.
 			double v0 = std::nan(""), v1 = std::nan("");
 			int n_unique = 0;
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto vy = yc(r);
 				if (vy.empty()) continue;
@@ -6974,7 +6974,7 @@ void AnalysisView::updateEdaSummary()
 				return i;
 			};
 			if (!has_group) ensure_g(QString());
-			for (intptr_t r = 1; r <= nr; r++)
+			for (intptr_t r = 0; r < nr; r++)
 			{
 				auto vx = xc(r);
 				auto vy = yc(r);
@@ -7057,7 +7057,7 @@ void AnalysisView::updateEdaSummary()
 		std::map<QString, std::vector<double>> grouped;
 		intptr_t included = 0;
 
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			auto vx = xc(r);
 			auto vy = yc(r);
@@ -7147,7 +7147,7 @@ void AnalysisView::updateEdaSummary()
 		};
 
 		intptr_t included = 0;
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			auto vx = xc(r);
 			auto vy = yc(r);
@@ -7305,17 +7305,17 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		tex += QStringLiteral(" & Post.~Mean & Post.~SD & CI$_{2.5}$ & CI$_{97.5}$ & pd \\\\\n");
 		tex += QStringLiteral("\\hline\n");
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
 			QString name = QString::fromUtf8(m.coef_names[i].data(), (int)m.coef_names[i].size());
 			name.replace('_', QStringLiteral("\\_"));
 			name.replace('&', QStringLiteral("\\&"));
 
-			double post_mean = (i <= m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
-			double post_sd = (i <= m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
-			double ci_lo = (i <= m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
-			double ci_hi = (i <= m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
-			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+			double post_mean = (i < m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
+			double post_sd = (i < m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
+			double ci_lo = (i < m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
+			double ci_hi = (i < m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
+			double pd_val = (i < m.pd.size()) ? m.pd[i] : 0.0;
 
 			tex += QStringLiteral("%1 & %2 & %3 & %4 & %5 & %6 \\\\\n")
 				.arg(name)
@@ -7336,7 +7336,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 			.arg(QString::fromUtf8(stat_label));
 		tex += QStringLiteral("\\hline\n");
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
 			QString name = QString::fromUtf8(m.coef_names[i].data(), (int)m.coef_names[i].size());
 			name.replace('_', QStringLiteral("\\_"));
@@ -7367,7 +7367,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		// group has random slopes (q > 1). For q = 1 throughout we keep
 		// the legacy 4-column tabular.
 		bool show_corr = false;
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < m.random_effects.size(); g++) {
 			if (m.random_effects[g].term_names.size() > 1) {
 				show_corr = true;
 				break;
@@ -7375,11 +7375,11 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		}
 
 		// cov_chol is the packed lower-triangular raw Cholesky factor L
-		// (NOT log-diagonal), stored 1-indexed, row by row. Element (r, c)
-		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c + 1].
+		// (NOT log-diagonal), packed row by row. Element (r, c)
+		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c].
 		auto chol_at = [](const Array<double> &cc, intptr_t r0, intptr_t c0) -> double {
-			intptr_t idx = r0 * (r0 + 1) / 2 + c0 + 1;
-			return (idx <= cc.size()) ? cc[idx] : 0.0;
+			intptr_t idx = r0 * (r0 + 1) / 2 + c0;
+			return (idx < cc.size()) ? cc[idx] : 0.0;
 		};
 		auto cov_st = [&](const Array<double> &cc, intptr_t s0, intptr_t t0) -> double {
 			if (s0 > t0) std::swap(s0, t0);
@@ -7404,18 +7404,18 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		}
 		tex += QStringLiteral("\\hline\n");
 
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			auto &re = m.random_effects[g];
 			QString gname = QString::fromUtf8(re.group_name.data(), (int)re.group_name.size());
 			gname.replace('_', QStringLiteral("\\_"));
 
-			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			for (intptr_t t = 0; t < re.term_names.size(); t++)
 			{
-				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
 				double sd = std::sqrt(std::max(var, 0.0));
 
-				if (t == 1) {
+				if (t == 0) {
 					if (show_corr) {
 						tex += QStringLiteral("%1 & %2 & %3 & %4 & \\\\\n")
 							.arg(gname)
@@ -7438,12 +7438,12 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 						// For q ≥ 3, multiple corrs go in a single Corr cell,
 						// comma-separated. For q = 2, just one value.
 						QString corrs;
-						for (intptr_t s = 1; s < t; s++) {
-							double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
+						for (intptr_t s = 0; s < t; s++) {
+							double var_s = (s < re.variance.size()) ? re.variance[s] : 0.0;
 							double denom = std::sqrt(std::max(var_s, 1e-30)
 							                       * std::max(var,   1e-30));
-							double corr = cov_st(re.cov_chol, s - 1, t - 1) / denom;
-							if (s > 1) corrs += QStringLiteral(", ");
+							double corr = cov_st(re.cov_chol, s, t) / denom;
+							if (s > 0) corrs += QStringLiteral(", ");
 							corrs += QString::number(corr, 'f', 4);
 						}
 						tex += QStringLiteral("\\quad %1 & %2 & %3 & & %4 \\\\\n")
@@ -7479,7 +7479,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		// Conditional modes (BLUPs) in LaTeX
 		if (m_blup_check->isChecked())
 		{
-			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			for (intptr_t g = 0; g < m.random_effects.size(); g++)
 			{
 				auto &re = m.random_effects[g];
 				intptr_t q = re.term_names.size();
@@ -7501,7 +7501,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 
 				// Header row
 				tex += QStringLiteral("Level");
-				for (intptr_t t = 1; t <= q; t++) {
+				for (intptr_t t = 0; t < q; t++) {
 					QString tname = QString::fromUtf8(re.term_names[t].data(), (int)re.term_names[t].size());
 					tname.replace('_', QStringLiteral("\\_"));
 					tex += QStringLiteral(" & %1").arg(tname);
@@ -7512,8 +7512,8 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 				for (intptr_t j = 0; j < J; j++)
 				{
 					QString level_label;
-					if (j + 1 <= re.level_names.size())
-						level_label = QString::fromUtf8(re.level_names[j + 1].data(), (int)re.level_names[j + 1].size());
+					if (j < re.level_names.size())
+						level_label = QString::fromUtf8(re.level_names[j].data(), (int)re.level_names[j].size());
 					else
 						level_label = QString::number(j + 1);
 					level_label.replace('_', QStringLiteral("\\_"));
@@ -7522,8 +7522,8 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 
 					for (intptr_t t = 0; t < q; t++)
 					{
-						intptr_t idx = j * q + t + 1;
-						double val = (idx <= re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
+						intptr_t idx = j * q + t;
+						double val = (idx < re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
 						tex += QString::asprintf(" & %.4f", val);
 					}
 					tex += QStringLiteral(" \\\\\n");
@@ -7546,7 +7546,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		tex += QStringLiteral(" & edf & $F$ & $p$ \\\\\n");
 		tex += QStringLiteral("\\hline\n");
 
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 		{
 			auto &sm = m.smooth_terms[i];
 			QString var_q = QString::fromUtf8(sm.variable.data(), (int)sm.variable.size());
@@ -7693,7 +7693,7 @@ void AnalysisView::onExportDiagSVG()
 // Phase 2 MVP: numeric focal → line + CI ribbon (100-point grid across
 // the observed range); categorical focal → markers + error bars (one
 // per level). All other categorical predictors held at their reference
-// level (vi.levels[1]); other numerics held at their observed mean.
+// level (vi.levels[0]); other numerics held at their observed mean.
 // Mixed-effects, Bayesian, by-factor smooths, and re-smooths are
 // refused with a message in the plot area.
 
@@ -7703,7 +7703,7 @@ namespace {
 // the mean of parseable values together with the observed range
 // (min/max) used to lay out the focal grid. Empty / "nan" / "NaN" /
 // "NA" cells are skipped. Categorical columns are not summarised here:
-// they are held at their reference level (vi.levels[1]), which the
+// they are held at their reference level (vi.levels[0]), which the
 // model already knows about and which matches ggpredict's default.
 struct SourceStats
 {
@@ -7727,10 +7727,10 @@ static SourceStats compute_source_stats(const DataTable &dt,
 
 	auto find_col = [&](const String &name) -> intptr_t {
 		intptr_t nc = dt.column_count();
-		for (intptr_t j = 1; j <= nc; j++) {
+		for (intptr_t j = 0; j < nc; j++) {
 			if (dt.get_header(j) == name) return j;
 		}
-		return 0;
+		return -1;
 	};
 
 	intptr_t nr = dt.row_count();
@@ -7738,14 +7738,14 @@ static SourceStats compute_source_stats(const DataTable &dt,
 	for (auto &name : numeric_cols)
 	{
 		intptr_t col = find_col(name);
-		if (col == 0) continue;
+		if (col < 0) continue;
 		std::string key(name.data(), name.size());
 
 		double sum = 0;
 		intptr_t cnt = 0;
 		double lo = 1e300, hi = -1e300;
 
-		for (intptr_t r = 1; r <= nr; r++)
+		for (intptr_t r = 0; r < nr; r++)
 		{
 			double v;
 			if (!parse_cell_double(dt.get_cell(r, col), v)) continue;
@@ -7792,7 +7792,7 @@ void AnalysisView::populateEffectsFocalCombo()
 	auto &m = m_analysis->model(m_current_model);
 
 	// Focal: fixed-effects predictors (categorical with ≥ 2 levels, or numeric).
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	for (intptr_t i = 0; i < m.variable_info.size(); i++)
 	{
 		auto &vi = m.variable_info[i];
 		if (!vi.numeric && vi.levels.size() < 2) continue;
@@ -7804,7 +7804,7 @@ void AnalysisView::populateEffectsFocalCombo()
 	// only the fixed-effects loop into variable_info), but they are valid
 	// focal predictors — the smooth basis is replayed by predict().
 	// Skip names already added.
-	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 	{
 		auto &sm = m.smooth_terms[i];
 		auto qname = QString::fromUtf8(sm.variable.data(), (int) sm.variable.size());
@@ -7817,7 +7817,7 @@ void AnalysisView::populateEffectsFocalCombo()
 	// formula contains an interaction with the focal). For purely additive
 	// models this produces parallel curves — informative as a visual sanity
 	// check that there's no interaction.
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	for (intptr_t i = 0; i < m.variable_info.size(); i++)
 	{
 		auto &vi = m.variable_info[i];
 		if (vi.numeric || vi.levels.size() < 2) continue;
@@ -7829,7 +7829,7 @@ void AnalysisView::populateEffectsFocalCombo()
 	// mixed-effects models; for fixed-effects-only models the combo stays at
 	// "(None)". Switching to a group repopulates the levels checklist via
 	// onEffectsRandomChanged().
-	for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+	for (intptr_t g = 0; g < m.random_effects.size(); g++)
 	{
 		auto &re = m.random_effects[g];
 		auto qname = QString::fromUtf8(re.group_name.data(), (int) re.group_name.size());
@@ -7879,17 +7879,17 @@ void AnalysisView::onEffectsRandomChanged()
 			auto &m = m_analysis->model(m_current_model);
 			QString gname = m_effects_re_combo->currentText();
 
-			intptr_t found = 0;
-			for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+			intptr_t found = -1;
+			for (intptr_t g = 0; g < m.random_effects.size(); g++) {
 				auto &re = m.random_effects[g];
 				QString rg_q = QString::fromUtf8(re.group_name.data(),
 				                                (int) re.group_name.size());
 				if (rg_q == gname) { found = g; break; }
 			}
-			if (found > 0) {
+			if (found >= 0) {
 				auto &re = m.random_effects[found];
 				QStringList lvls;
-				for (intptr_t l = 1; l <= re.level_names.size(); l++) {
+				for (intptr_t l = 0; l < re.level_names.size(); l++) {
 					lvls << QString::fromUtf8(re.level_names[l].data(),
 					                          (int) re.level_names[l].size());
 				}
@@ -7953,7 +7953,7 @@ void AnalysisView::updateEffectsPlot()
 	// and Bayesian models are now both supported (population-level prediction
 	// with u=0; posterior mean and credible interval for Bayesian); the
 	// caption below adapts to the model type.
-	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
 		auto &sm = m.smooth_terms[i];
 		if (!sm.by.empty()) {
 			show_message(tr(
@@ -7995,7 +7995,7 @@ void AnalysisView::updateEffectsPlot()
 	Array<String> focal_levels;
 
 	bool found = false;
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+	for (intptr_t i = 0; i < m.variable_info.size(); i++) {
 		if (m.variable_info[i].name == focal_name) {
 			focal_is_numeric = m.variable_info[i].numeric;
 			focal_levels = m.variable_info[i].levels;
@@ -8012,14 +8012,14 @@ void AnalysisView::updateEffectsPlot()
 
 	// Collect numeric predictor names (we'll need their means / observed
 	// ranges from the source data). Categoricals don't need a source-data
-	// pass — they are held at vi.levels[1] (treatment-contrast reference),
+	// pass — they are held at vi.levels[0] (treatment-contrast reference),
 	// which is already on the model.
 	std::vector<String> all_numeric;
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+	for (intptr_t i = 0; i < m.variable_info.size(); i++) {
 		auto &vi = m.variable_info[i];
 		if (vi.numeric) all_numeric.push_back(vi.name);
 	}
-	for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
 		auto &sm = m.smooth_terms[i];
 		bool already = false;
 		for (auto &n : all_numeric) if (n == sm.variable) { already = true; break; }
@@ -8042,7 +8042,7 @@ void AnalysisView::updateEffectsPlot()
 		if (candidate == focal_name) {
 			has_by = false;  // ignore — same variable on both axes
 		} else {
-			for (intptr_t i = 1; i <= m.variable_info.size(); i++) {
+			for (intptr_t i = 0; i < m.variable_info.size(); i++) {
 				auto &vi = m.variable_info[i];
 				if (vi.name == candidate && !vi.numeric && vi.levels.size() >= 2) {
 					by_name = vi.name;
@@ -8137,7 +8137,7 @@ void AnalysisView::updateEffectsPlot()
 		for (intptr_t i = 0; i < n_grid; i++) focal_x[(size_t) i] = (double) i;
 		for (intptr_t b = 0; b < n_by; b++)
 			for (intptr_t i = 0; i < n_grid; i++)
-				col_vals[(size_t)(b * n_grid + i)] = focal_levels[i + 1];
+				col_vals[(size_t)(b * n_grid + i)] = focal_levels[i];
 		grid->add_text_column(focal_name, col_vals);
 	}
 
@@ -8146,7 +8146,7 @@ void AnalysisView::updateEffectsPlot()
 	{
 		std::vector<String> col_vals((size_t) n_rows);
 		for (intptr_t b = 0; b < n_by; b++) {
-			String level = by_levels[b + 1];
+			String level = by_levels[b];
 			for (intptr_t i = 0; i < n_grid; i++)
 				col_vals[(size_t)(b * n_grid + i)] = level;
 		}
@@ -8159,7 +8159,7 @@ void AnalysisView::updateEffectsPlot()
 	{
 		std::vector<String> col_vals((size_t) n_rows);
 		for (intptr_t b = 0; b < n_by; b++) {
-			String level = re_selected_levels[b + 1];
+			String level = re_selected_levels[b];
 			for (intptr_t i = 0; i < n_grid; i++)
 				col_vals[(size_t)(b * n_grid + i)] = level;
 		}
@@ -8182,10 +8182,10 @@ void AnalysisView::updateEffectsPlot()
 		grid->add_numeric_column(name, vals);
 	}
 
-	// Other categorical predictors at their reference level (vi.levels[1]).
+	// Other categorical predictors at their reference level (vi.levels[0]).
 	// Skip the focal and by-variable; for everything else, fill the same
 	// reference value across all n_rows.
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	for (intptr_t i = 0; i < m.variable_info.size(); i++)
 	{
 		auto &vi = m.variable_info[i];
 		if (vi.numeric) continue;
@@ -8197,7 +8197,7 @@ void AnalysisView::updateEffectsPlot()
 				.arg(QString::fromUtf8(vi.name.data(), (int) vi.name.size())));
 			return;
 		}
-		std::vector<String> vals((size_t) n_rows, vi.levels[1]);
+		std::vector<String> vals((size_t) n_rows, vi.levels[0]);
 		grid->add_text_column(vi.name, vals);
 	}
 	grid->mark_loaded();
@@ -8230,11 +8230,11 @@ void AnalysisView::updateEffectsPlot()
 	{
 		PlotWidget::EffectsCurve cv;
 		if (has_by) {
-			cv.label = QString::fromUtf8(by_levels[b + 1].data(),
-			                             (int) by_levels[b + 1].size());
+			cv.label = QString::fromUtf8(by_levels[b].data(),
+			                             (int) by_levels[b].size());
 		} else if (re_active) {
-			cv.label = QString::fromUtf8(re_selected_levels[b + 1].data(),
-			                             (int) re_selected_levels[b + 1].size());
+			cv.label = QString::fromUtf8(re_selected_levels[b].data(),
+			                             (int) re_selected_levels[b].size());
 		}
 
 		cv.x.resize((size_t) n_grid);
@@ -8307,7 +8307,7 @@ void AnalysisView::updateEffectsPlot()
 	std::vector<QString> level_labels;
 	if (!focal_is_numeric) {
 		level_labels.reserve((size_t) n_grid);
-		for (intptr_t i = 1; i <= focal_levels.size(); i++) {
+		for (intptr_t i = 0; i < focal_levels.size(); i++) {
 			level_labels.push_back(QString::fromUtf8(
 				focal_levels[i].data(), (int) focal_levels[i].size()));
 		}
@@ -8405,7 +8405,7 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 	//   - Otherwise: sum of diagonal variances (exact for random
 	//     intercepts, approximate for random slopes).
 	double var_r = 0;
-	for (intptr_t gi = 1; gi <= m.random_effects.size(); gi++)
+	for (intptr_t gi = 0; gi < m.random_effects.size(); gi++)
 	{
 		auto &re = m.random_effects[gi];
 		intptr_t q = re.term_names.size();
@@ -8420,7 +8420,7 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 				for (intptr_t c = 0; c <= r; c++)
 				{
 					intptr_t idx = r * (r + 1) / 2 + c;
-					L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx + 1] : 0.0;
+					L(r, c) = (idx < re.cov_chol.size()) ? re.cov_chol[idx] : 0.0;
 				}
 			}
 			Eigen::MatrixXd Sigma = L * L.transpose();
@@ -8437,7 +8437,7 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 		{
 			// Fallback: sum of diagonal variance components.
 			// Exact for random intercepts, approximate for slopes.
-			for (intptr_t t = 1; t <= re.variance.size(); t++)
+			for (intptr_t t = 0; t < re.variance.size(); t++)
 				var_r += re.variance[t];
 		}
 	}
@@ -8560,7 +8560,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 	// Compute first-column width from the longest coefficient name.
 	int name_width = 12; // minimum
-	for (intptr_t i = 1; i <= m.coef_names.size(); i++)
+	for (intptr_t i = 0; i < m.coef_names.size(); i++)
 	{
 		int len = (int)m.coef_names[i].size();
 		if (len > name_width) name_width = len;
@@ -8580,11 +8580,11 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		std::string row_fmt = name_fmt + " %12.4f %12.4f %12.4f %12.4f %12.4f %12.4f %10s%s\n";
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
-			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			const char *name = (i < m.coef_names.size()) ? m.coef_names[i].data() : "?";
 
-			double pd_val = (i <= m.pd.size()) ? m.pd[i] : 0.0;
+			double pd_val = (i < m.pd.size()) ? m.pd[i] : 0.0;
 
 			const char *stars = "";
 			if (pd_val >= 0.999) stars = " ***";
@@ -8598,12 +8598,12 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 			else
 				snprintf(pd_buf, sizeof(pd_buf), "%.4f", pd_val);
 
-			double post_mean = (i <= m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
-			double post_mode = (i <= m.posterior_mode.size()) ? m.posterior_mode[i] : m.beta[i];
-			double post_median = (i <= m.posterior_median.size()) ? m.posterior_median[i] : m.beta[i];
-			double post_sd = (i <= m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
-			double ci_lo = (i <= m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
-			double ci_hi = (i <= m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
+			double post_mean = (i < m.posterior_mean.size()) ? m.posterior_mean[i] : m.beta[i];
+			double post_mode = (i < m.posterior_mode.size()) ? m.posterior_mode[i] : m.beta[i];
+			double post_median = (i < m.posterior_median.size()) ? m.posterior_median[i] : m.beta[i];
+			double post_sd = (i < m.posterior_sd.size()) ? m.posterior_sd[i] : m.se[i];
+			double ci_lo = (i < m.ci_lower.size()) ? m.ci_lower[i] : 0.0;
+			double ci_hi = (i < m.ci_upper.size()) ? m.ci_upper[i] : 0.0;
 
 			text += QString::asprintf(row_fmt.c_str(),
 			                           name, post_mean, post_mode, post_median,
@@ -8622,9 +8622,9 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		std::string row_fmt = name_fmt + " %12.4f %12.4f %12.3f %12s%s\n";
 
-		for (intptr_t i = 1; i <= m.nfixed; i++)
+		for (intptr_t i = 0; i < m.nfixed; i++)
 		{
-			const char *name = (i <= m.coef_names.size()) ? m.coef_names[i].data() : "?";
+			const char *name = (i < m.coef_names.size()) ? m.coef_names[i].data() : "?";
 			char pbuf[16];
 			if (m.p[i] < 0.001)
 				snprintf(pbuf, sizeof(pbuf), "< 0.001");
@@ -8653,7 +8653,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		// "cor(Intercept,man.dist:subsystem[vowels]|language)") so that
 		// value columns don't get pushed out of alignment.
 		int hyper_w = 36; // minimum
-		for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+		for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 		{
 			int len = (int)m.hyper_names[i].size() + 2;
 			if (len > hyper_w) hyper_w = len;
@@ -8666,13 +8666,13 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		std::string hyper_row = hyper_fmt + " %12.4f %12.4f %12.4f %12.4f\n";
 
-		for (intptr_t i = 1; i <= m.hyper_names.size(); i++)
+		for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 		{
 			const char *name = m.hyper_names[i].data();
-			double mean = (i <= m.hyper_posterior_mean.size()) ? m.hyper_posterior_mean[i] : 0.0;
-			double sd = (i <= m.hyper_posterior_sd.size()) ? m.hyper_posterior_sd[i] : 0.0;
-			double lo = (i <= m.hyper_ci_lower.size()) ? m.hyper_ci_lower[i] : 0.0;
-			double hi = (i <= m.hyper_ci_upper.size()) ? m.hyper_ci_upper[i] : 0.0;
+			double mean = (i < m.hyper_posterior_mean.size()) ? m.hyper_posterior_mean[i] : 0.0;
+			double sd = (i < m.hyper_posterior_sd.size()) ? m.hyper_posterior_sd[i] : 0.0;
+			double lo = (i < m.hyper_ci_lower.size()) ? m.hyper_ci_lower[i] : 0.0;
+			double hi = (i < m.hyper_ci_upper.size()) ? m.hyper_ci_upper[i] : 0.0;
 
 			text += QString::asprintf(hyper_row.c_str(),
 			                           name, mean, sd, lo, hi);
@@ -8703,7 +8703,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		Array<String> labels;
 		int sm_w = 20;
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++) {
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
 			labels.append(build_label(m.smooth_terms[i]));
 			int len = (int)labels[i].size() + 2;
 			if (len > sm_w) sm_w = len;
@@ -8716,7 +8716,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		std::string sm_row = sm_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
 
-		for (intptr_t i = 1; i <= m.smooth_terms.size(); i++)
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 		{
 			auto &sm = m.smooth_terms[i];
 
@@ -8747,7 +8747,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		// Show a "Corr" column when any group has q > 1 (random slopes).
 		// Pure intercept-only models keep the legacy 4-column header.
 		bool show_corr = false;
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < m.random_effects.size(); g++) {
 			if (m.random_effects[g].term_names.size() > 1) {
 				show_corr = true;
 				break;
@@ -8755,13 +8755,13 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		}
 
 		// cov_chol is the packed lower-triangular raw Cholesky factor L
-		// (NOT log-diagonal), stored 1-indexed, row by row. Element (r, c)
-		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c + 1].
+		// (NOT log-diagonal), packed row by row. Element (r, c)
+		// with 0-indexed r ≥ c lives at cov_chol[r*(r+1)/2 + c].
 		// Covariance Σ(s, t) = Σ_{k ≤ min(s,t)} L(s,k) · L(t,k).
 		// Same helpers as the scripting summarize() in data_table.cpp.
 		auto chol_at = [](const Array<double> &cc, intptr_t r0, intptr_t c0) -> double {
-			intptr_t idx = r0 * (r0 + 1) / 2 + c0 + 1;
-			return (idx <= cc.size()) ? cc[idx] : 0.0;
+			intptr_t idx = r0 * (r0 + 1) / 2 + c0;
+			return (idx < cc.size()) ? cc[idx] : 0.0;
 		};
 		auto cov_st = [&](const Array<double> &cc, intptr_t s0, intptr_t t0) -> double {
 			if (s0 > t0) std::swap(s0, t0);
@@ -8781,12 +8781,12 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		constexpr int re_pad = 2;
 		constexpr int re_indent = 2;
 		int re_w = re_min_w;
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			auto &re = m.random_effects[g];
 			int gw = (int)re.group_name.size() + re_pad;
 			if (gw > re_w) re_w = gw;
-			for (intptr_t t = 1; t <= re.term_names.size(); t++) {
+			for (intptr_t t = 0; t < re.term_names.size(); t++) {
 				int tw = re_indent + (int)re.term_names[t].size() + re_pad;
 				if (tw > re_w) re_w = tw;
 			}
@@ -8807,17 +8807,17 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		std::string re_grp_row  = re_grp_fmt + " %12.4f %12.4f %8ld\n";
 		std::string re_term_row = "  " + re_term_fmt + " %12.4f %12.4f %8s";
 
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			auto &re = m.random_effects[g];
 			const char *gname = re.group_name.data();
 
-			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			for (intptr_t t = 0; t < re.term_names.size(); t++)
 			{
-				double var = (t <= re.variance.size()) ? re.variance[t] : 0.0;
+				double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
 				double sd = std::sqrt(std::max(var, 0.0));
 
-				if (t == 1) {
+				if (t == 0) {
 					// First row: group name, level count, no corr.
 					text += QString::asprintf(re_grp_row.c_str(),
 					                           gname, var, sd, (long)re.nlevels);
@@ -8827,11 +8827,11 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 					const char *tname = re.term_names[t].data();
 					text += QString::asprintf(re_term_row.c_str(),
 					                           tname, var, sd, "");
-					for (intptr_t s = 1; s < t; s++) {
-						double var_s = (s <= re.variance.size()) ? re.variance[s] : 0.0;
+					for (intptr_t s = 0; s < t; s++) {
+						double var_s = (s < re.variance.size()) ? re.variance[s] : 0.0;
 						double denom = std::sqrt(std::max(var_s, 1e-30)
 						                       * std::max(var,   1e-30));
-						double corr = cov_st(re.cov_chol, s - 1, t - 1) / denom;
+						double corr = cov_st(re.cov_chol, s, t) / denom;
 						text += QString::asprintf(" %+7.4f", corr);
 					}
 					text += QStringLiteral("\n");
@@ -8867,7 +8867,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		// Conditional modes (BLUPs)
 		if (m_blup_check->isChecked())
 		{
-			for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+			for (intptr_t g = 0; g < m.random_effects.size(); g++)
 			{
 				auto &re = m.random_effects[g];
 				intptr_t q = re.term_names.size();
@@ -8882,7 +8882,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 				// label.  Level labels are e.g. subject IDs or language names
 				// that can easily run past the legacy 20-char field.
 				int lvl_w = 20;
-				for (intptr_t j = 1; j <= re.level_names.size(); j++) {
+				for (intptr_t j = 0; j < re.level_names.size(); j++) {
 					int len = (int)re.level_names[j].size() + 2;
 					if (len > lvl_w) lvl_w = len;
 				}
@@ -8890,7 +8890,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 				// Header: Level, then each term name
 				text += QString::asprintf(lvl_fmt.c_str(), "Level");
-				for (intptr_t t = 1; t <= q; t++) {
+				for (intptr_t t = 0; t < q; t++) {
 					text += QString::asprintf(" %12s", re.term_names[t].data());
 				}
 				text += QStringLiteral("\n");
@@ -8900,8 +8900,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 				{
 					// Level name: use level_names if available, otherwise index
 					QString level_label;
-					if (j + 1 <= re.level_names.size())
-						level_label = QString::fromUtf8(re.level_names[j + 1].data(), (int)re.level_names[j + 1].size());
+					if (j < re.level_names.size())
+						level_label = QString::fromUtf8(re.level_names[j].data(), (int)re.level_names[j].size());
 					else
 						level_label = QString::number(j + 1);
 
@@ -8910,8 +8910,8 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 					for (intptr_t t = 0; t < q; t++)
 					{
 						// conditional_modes: nlevels × nterms, row-major (j * q + t)
-						intptr_t idx = j * q + t + 1;
-						double val = (idx <= re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
+						intptr_t idx = j * q + t;
+						double val = (idx < re.conditional_modes.size()) ? re.conditional_modes[idx] : 0.0;
 						text += QString::asprintf(" %12.4f", val);
 					}
 					text += QStringLiteral("\n");
@@ -8944,7 +8944,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 		if (!m.pareto_k.empty())
 		{
 			int n_good = 0, n_ok = 0, n_bad = 0, n_verybad = 0;
-			for (intptr_t j = 1; j <= m.pareto_k.size(); j++)
+			for (intptr_t j = 0; j < m.pareto_k.size(); j++)
 			{
 				double k = m.pareto_k[j];
 				if (k < 0.5)      n_good++;
@@ -9071,7 +9071,7 @@ void AnalysisView::populatePostHocFactors()
 		return;
 	}
 
-	for (intptr_t i = 1; i <= m.variable_info.size(); i++)
+	for (intptr_t i = 0; i < m.variable_info.size(); i++)
 	{
 		auto &vi = m.variable_info[i];
 		auto qname = QString::fromUtf8(vi.name.data(), (int)vi.name.size());
@@ -9222,32 +9222,32 @@ void AnalysisView::updatePostHoc()
 				}
 
 				m_posthoc_emm_table->setItem(row, by_offset + 0,
-					new QTableWidgetItem(QString::fromUtf8(emm.levels[i + 1].data(),
-					                                       (int)emm.levels[i + 1].size())));
+					new QTableWidgetItem(QString::fromUtf8(emm.levels[i].data(),
+					                                       (int)emm.levels[i].size())));
 
-				auto *emm_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean[i + 1]));
+				auto *emm_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean[i]));
 				emm_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_emm_table->setItem(row, by_offset + 1, emm_item);
 
-				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se[i + 1]));
+				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se[i]));
 				se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_emm_table->setItem(row, by_offset + 2, se_item);
 
-				auto *lo_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.lower_ci[i + 1]));
+				auto *lo_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.lower_ci[i]));
 				lo_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_emm_table->setItem(row, by_offset + 3, lo_item);
 
-				auto *hi_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.upper_ci[i + 1]));
+				auto *hi_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.upper_ci[i]));
 				hi_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_emm_table->setItem(row, by_offset + 4, hi_item);
 
 				if (show_link_cols)
 				{
-					auto *emm_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean_link[i + 1]));
+					auto *emm_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.emmean_link[i]));
 					emm_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 					m_posthoc_emm_table->setItem(row, by_offset + 5, emm_link_item);
 
-					auto *se_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se_link[i + 1]));
+					auto *se_link_item = new QTableWidgetItem(QString::asprintf("%.4f", emm.se_link[i]));
 					se_link_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 					m_posthoc_emm_table->setItem(row, by_offset + 6, se_link_item);
 				}
@@ -9257,7 +9257,7 @@ void AnalysisView::updatePostHoc()
 			for (intptr_t i = 0; i < npairs; i++)
 			{
 				int row = con_row0 + (int)i;
-				double pval = contrasts.p_value[i + 1];
+				double pval = contrasts.p_value[i];
 				bool is_bayesian_contrast = contrasts.is_bayesian;
 
 				// Highlight: for frequentist, p < 0.05; for Bayesian, pd >= 0.975 ("*" threshold).
@@ -9268,18 +9268,18 @@ void AnalysisView::updatePostHoc()
 				}
 
 				m_posthoc_contrast_table->setItem(row, by_offset + 0,
-					new QTableWidgetItem(QString::fromUtf8(contrasts.label[i + 1].data(),
-					                                       (int)contrasts.label[i + 1].size())));
+					new QTableWidgetItem(QString::fromUtf8(contrasts.label[i].data(),
+					                                       (int)contrasts.label[i].size())));
 
-				auto *est_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.estimate[i + 1]));
+				auto *est_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.estimate[i]));
 				est_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 1, est_item);
 
-				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.se[i + 1]));
+				auto *se_item = new QTableWidgetItem(QString::asprintf("%.4f", contrasts.se[i]));
 				se_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 2, se_item);
 
-				auto *stat_item = new QTableWidgetItem(QString::asprintf("%.3f", contrasts.stat[i + 1]));
+				auto *stat_item = new QTableWidgetItem(QString::asprintf("%.3f", contrasts.stat[i]));
 				stat_item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
 				m_posthoc_contrast_table->setItem(row, by_offset + 3, stat_item);
 
@@ -9314,13 +9314,13 @@ void AnalysisView::updatePostHoc()
 
 			int total_emm_rows = 0;
 			int total_con_rows = 0;
-			for (intptr_t b = 1; b <= B; b++) {
+			for (intptr_t b = 0; b < B; b++) {
 				total_emm_rows += (int)by_result.emms[b].levels.size();
 				total_con_rows += (int)by_result.contrasts[b].label.size();
 			}
 
 			if (B > 0) {
-				stat_header = (std::isfinite(by_result.contrasts[1].df) && by_result.contrasts[1].df > 0)
+				stat_header = (std::isfinite(by_result.contrasts[0].df) && by_result.contrasts[0].df > 0)
 				              ? tr("t value") : tr("z value");
 				con_headers[stat_header_col] = stat_header;
 			}
@@ -9335,7 +9335,7 @@ void AnalysisView::updatePostHoc()
 
 			int emm_row = 0;
 			int con_row = 0;
-			for (intptr_t b = 1; b <= B; b++)
+			for (intptr_t b = 0; b < B; b++)
 			{
 				auto &emm = by_result.emms[b];
 				auto &con = by_result.contrasts[b];
@@ -9741,7 +9741,7 @@ void AnalysisView::onAddToData()
 	// Gather existing source headers for collision checking.
 	QStringList existing;
 	auto names = m_analysis->column_names();
-	for (intptr_t i = 1; i <= names.size(); i++)
+	for (intptr_t i = 0; i < names.size(); i++)
 		existing << QString::fromUtf8(names[i].data(), (int)names[i].size());
 
 	QString model_label = modelDisplayLabel(m_current_model);

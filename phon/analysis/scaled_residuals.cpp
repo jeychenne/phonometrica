@@ -363,7 +363,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	bool use_unconditional = false;
 	if (m.has_random_effects() && !m.beta.empty() && !m.fitted.empty())
 	{
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			const auto &re = m.random_effects[g];
 			if (re.indices.empty() || re.Z_design.empty() || re.cov_chol.empty()
@@ -412,7 +412,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 			for (intptr_t i = 0; i < n; i++)
 			{
 				eta_fixed[i] = Xb[i];
-				if (!m.offset.empty()) eta_fixed[i] += m.offset[i + 1];
+				if (!m.offset.empty()) eta_fixed[i] += m.offset[i];
 			}
 		}
 		else
@@ -426,9 +426,9 @@ static ScaledResidualResult compute_simulation(const Model &m)
 			// loaded from disk.
 			for (intptr_t i = 0; i < n; i++)
 			{
-				double eta_full_i = link_fn(m.fitted[i + 1], m.family);
+				double eta_full_i = link_fn(m.fitted[i], m.family);
 				double Zu_BLUP_i = 0.0;
-				for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+				for (intptr_t g = 0; g < m.random_effects.size(); g++)
 				{
 					const auto &re = m.random_effects[g];
 					intptr_t j = re.indices[i];  // 0-based level index
@@ -444,7 +444,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 		}
 
 		// Unpack Cholesky factors from each RE group's cov_chol (packed lower triangle).
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			const auto &re = m.random_effects[g];
 			GroupChol gc;
@@ -542,7 +542,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 			else
 			{
 				// Conditional fallback: use fitted values (Xβ̂ + Zb̂) directly.
-				mu_i = m.fitted[i + 1];
+				mu_i = m.fitted[i];
 			}
 
 			sim_y[i * NSIM + s] = simulate_one(mu_i, m.family, disp0, disp1, rng);
@@ -563,7 +563,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 
 	for (intptr_t i = 0; i < n; i++)
 	{
-		double y_obs = m.y[i + 1];
+		double y_obs = m.y[i];
 		int count_below = 0;
 		int count_equal = 0;
 
@@ -591,7 +591,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 			pit = double(count_below) / double(NSIM);
 		}
 		pit = std::clamp(pit, 1e-10, 1.0 - 1e-10);
-		result.residuals[i + 1] = pit;
+		result.residuals[i] = pit;
 
 		// Outlier: scaled residual in the extreme tails.
 		if (pit < outlier_lo || pit > outlier_hi)
@@ -628,7 +628,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 	// so we match their convention for consistency.
 
 	std::vector<double> y_obs_vec(n), fitted_marginal(n);
-	for (intptr_t i = 0; i < n; i++) y_obs_vec[i] = m.y[i + 1];
+	for (intptr_t i = 0; i < n; i++) y_obs_vec[i] = m.y[i];
 
 	if (use_unconditional)
 	{
@@ -650,7 +650,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 		Eigen::VectorXd Xb = Xm * bm;
 		for (intptr_t i = 0; i < n; i++) {
 			double eta_i = Xb[i];
-			if (!m.offset.empty()) eta_i += m.offset[i + 1];
+			if (!m.offset.empty()) eta_i += m.offset[i];
 			fitted_marginal[i] = linkinv_fn(eta_i, m.family);
 		}
 	}
@@ -660,7 +660,7 @@ static ScaledResidualResult compute_simulation(const Model &m)
 		// already, so it IS the marginal fit (no BLUPs to subtract because
 		// there are no random effects).
 		for (intptr_t i = 0; i < n; i++)
-			fitted_marginal[i] = m.fitted[i + 1];
+			fitted_marginal[i] = m.fitted[i];
 	}
 
 	auto [disp_ratio, disp_p] = dharma_dispersion_test(

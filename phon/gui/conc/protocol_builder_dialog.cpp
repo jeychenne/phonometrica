@@ -286,7 +286,7 @@ void ProtocolBuilderDialog::setSampleText(const Array<String> &samples)
 {
 	QStringList lines;
 	lines.reserve((int) samples.size());
-	for (intptr_t i = 1; i <= samples.size(); i++) {
+	for (intptr_t i = 0; i < samples.size(); i++) {
 		lines << QString::fromUtf8(samples[i].data(), (int) samples[i].size());
 	}
 	m_sample_edit->setPlainText(lines.join(QStringLiteral("\n")));
@@ -348,7 +348,7 @@ void ProtocolBuilderDialog::loadFieldIntoEditor(const FieldData &field)
 	m_field_match_all_edit->setText(QString::fromUtf8(field.match_all.data(), (int) field.match_all.size()));
 
 	m_value_table->setRowCount(0);
-	for (intptr_t i = 1; i <= field.values.size(); i++)
+	for (intptr_t i = 0; i < field.values.size(); i++)
 	{
 		const auto &p = field.values[i];
 		int r = m_value_table->rowCount();
@@ -555,33 +555,33 @@ void ProtocolBuilderDialog::doPreview()
 
 	QStringList headers;
 	headers << tr("Input");
-	for (intptr_t j = 1; j <= result.headers.size(); j++) {
+	for (intptr_t j = 0; j < result.headers.size(); j++) {
 		const auto &h = result.headers[j];
 		headers << QString::fromUtf8(h.data(), (int) h.size());
 	}
 	headers << tr("Match");
 	m_preview_table->setHorizontalHeaderLabels(headers);
 
-	// Build a fast-lookup set of failed 1-based row indices, and a set of untranslated rows.
+	// Build a fast-lookup set of failed 0-based row indices, and a set of untranslated rows.
 	std::set<intptr_t> failed_set;
-	for (intptr_t i = 1; i <= result.failed_rows.size(); i++) {
+	for (intptr_t i = 0; i < result.failed_rows.size(); i++) {
 		failed_set.insert(result.failed_rows[i]);
 	}
 	std::set<intptr_t> untranslated_set;
-	for (intptr_t i = 1; i <= result.untranslated_rows.size(); i++) {
+	for (intptr_t i = 0; i < result.untranslated_rows.size(); i++) {
 		untranslated_set.insert(result.untranslated_rows[i]);
 	}
 
 	m_preview_table->setRowCount(n_rows);
-	for (intptr_t i = 1; i <= samples.size(); i++)
+	for (intptr_t i = 0; i < samples.size(); i++)
 	{
 		auto input_qs = QString::fromUtf8(samples[i].data(), (int) samples[i].size());
-		m_preview_table->setItem((int)(i - 1), 0, new QTableWidgetItem(input_qs));
+		m_preview_table->setItem((int) i, 0, new QTableWidgetItem(input_qs));
 
-		for (intptr_t j = 1; j <= result.headers.size(); j++) {
+		for (intptr_t j = 0; j < result.headers.size(); j++) {
 			const auto &cell = result.columns[j][i];
 			auto cell_qs = QString::fromUtf8(cell.data(), (int) cell.size());
-			m_preview_table->setItem((int)(i - 1), (int) j, new QTableWidgetItem(cell_qs));
+			m_preview_table->setItem((int) i, (int)(j + 1), new QTableWidgetItem(cell_qs));
 		}
 
 		// Three-state indicator: ✗ for outright regex failure, ⚠ for raw-value fall-through,
@@ -596,7 +596,7 @@ void ProtocolBuilderDialog::doPreview()
 		else                    { glyph = QString::fromUtf8("✓"); colour = QColor(0x00, 0x80, 0x00); }
 		auto *mark = new QTableWidgetItem(glyph);
 		mark->setForeground(colour);
-		m_preview_table->setItem((int)(i - 1), n_fields + 1, mark);
+		m_preview_table->setItem((int) i, n_fields + 1, mark);
 	}
 	m_preview_table->resizeColumnsToContents();
 
@@ -630,7 +630,7 @@ Array<std::pair<String, String>> ProtocolBuilderDialog::enumeratePluginProtocols
 	if (!mw) return result;
 
 	const auto &plugins = mw->plugins();
-	for (intptr_t i = 1; i <= plugins.size(); i++)
+	for (intptr_t i = 0; i < plugins.size(); i++)
 	{
 		auto &plugin = plugins[i];
 		auto dir = plugin->get_protocol_directory();
@@ -654,7 +654,7 @@ void ProtocolBuilderDialog::showLoadMenu()
 
 	if (!plugins.empty())
 	{
-		for (intptr_t i = 1; i <= plugins.size(); i++)
+		for (intptr_t i = 0; i < plugins.size(); i++)
 		{
 			const auto &pair = plugins[i];
 			auto qpath = QString::fromUtf8(pair.second.data(), (int) pair.second.size());
@@ -710,13 +710,13 @@ void ProtocolBuilderDialog::loadFromPath(const String &path)
 	m_loaded_row = -1;
 
 	const auto &fields = protocol->fields();
-	for (intptr_t i = 1; i <= fields.size(); i++)
+	for (intptr_t i = 0; i < fields.size(); i++)
 	{
 		const auto &sf = fields[i];
 		FieldData fd;
 		fd.name = sf.name;
 		fd.match_all = sf.match_all;
-		for (intptr_t j = 1; j <= sf.values.size(); j++) {
+		for (intptr_t j = 0; j < sf.values.size(); j++) {
 			const auto &sv = sf.values[j];
 			fd.values.append({sv.match, sv.text});
 		}
@@ -864,7 +864,7 @@ String ProtocolBuilderDialog::buildJson() const
 		out.append(escape_json_string(fd.match_all));
 		out.append(",\n");
 		out.append("      \"values\": [\n");
-		for (intptr_t j = 1; j <= fd.values.size(); j++)
+		for (intptr_t j = 0; j < fd.values.size(); j++)
 		{
 			const auto &p = fd.values[j];
 			out.append("        { \"match\": ");
@@ -872,7 +872,7 @@ String ProtocolBuilderDialog::buildJson() const
 			out.append(", \"text\": ");
 			out.append(escape_json_string(p.second));
 			out.append(" }");
-			if (j < fd.values.size()) out.append(",");
+			if (j + 1 < fd.values.size()) out.append(",");
 			out.append("\n");
 		}
 		out.append("      ]\n");

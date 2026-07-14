@@ -188,7 +188,7 @@ void StartView::refreshRecentProjects()
 	{
 		auto &lst = Settings::get_list("recent_projects");
 
-		for (intptr_t i = 1; i <= lst.size() && i <= 10; i++)
+		for (intptr_t i = 0; i < lst.size() && i < 10; i++)
 		{
 			auto path = cast<String>(lst[i]);
 			auto qpath = QString::fromUtf8(path.data(), (int) path.size());

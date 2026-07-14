@@ -320,7 +320,7 @@ PosteriorPredictiveResult compute_posterior_predictive_impl(const Model &m)
 
 	if (has_re)
 	{
-		for (intptr_t g = 1; g <= m.random_effects.size(); g++)
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
 			const auto &re = m.random_effects[g];
 			if (re.indices.empty() || re.Z_design.empty() || re.cov_chol.empty())
@@ -347,15 +347,15 @@ PosteriorPredictiveResult compute_posterior_predictive_impl(const Model &m)
 	Eigen::Map<const Eigen::MatrixXd> Xm(m.X.data(), n, p);
 
 	std::vector<double> y_obs(n);
-	for (intptr_t i = 0; i < n; i++) y_obs[(size_t)i] = m.y[i + 1];
+	for (intptr_t i = 0; i < n; i++) y_obs[(size_t)i] = m.y[i];
 
 	// Posterior point estimate of β / posterior_sd for the non-grid path.
 	Eigen::VectorXd beta_post(p), post_sd(p);
 	if (have_post_summary)
 	{
 		for (intptr_t j = 0; j < p; j++) {
-			beta_post[j] = m.posterior_mean[j + 1];
-			post_sd[j]   = m.posterior_sd[j + 1];
+			beta_post[j] = m.posterior_mean[j];
+			post_sd[j]   = m.posterior_sd[j];
 		}
 	}
 
@@ -421,7 +421,7 @@ PosteriorPredictiveResult compute_posterior_predictive_impl(const Model &m)
 		Eigen::VectorXd eta = Xm * beta_draw;
 		if (!m.offset.empty())
 			for (intptr_t i = 0; i < n; i++)
-				eta[i] += m.offset[i + 1];
+				eta[i] += m.offset[i];
 
 		// 3. Draw fresh random-effect contributions: u_g ~ N(0, L_g L_g').
 		if (has_re)

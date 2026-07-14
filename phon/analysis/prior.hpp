@@ -405,14 +405,14 @@ struct PriorSpec
 	}
 
 	// Compute the total log-prior for fixed-effect coefficients.
-	// coef_names and beta must have the same size (1-indexed Array).
+	// coef_names and beta must have the same size.
 	template <typename T>
 	T log_prior_fixed(const Array<String> &coef_names, const T *beta, intptr_t nfixed) const
 	{
 		T lp = T(0);
 		for (intptr_t j = 0; j < nfixed; j++)
 		{
-			const auto &pr = prior_for(coef_names[j + 1]);
+			const auto &pr = prior_for(coef_names[j]);
 			lp += pr.log_density(beta[j]);
 		}
 		return lp;

@@ -177,7 +177,7 @@ void Token::initialize()
     for (int i = 0; i <= last_token; ++i)
     {
         auto tok = static_cast<Lexeme>(i);
-        auto &name = token_names[i + 1];
+        auto &name = token_names[i];
         token_codes[name] = tok;
     }
 
@@ -186,7 +186,7 @@ void Token::initialize()
 
 String Token::get_name(Lexeme c)
 {
-    return token_names[static_cast<int>(c) + 1];
+    return token_names[static_cast<int>(c)];
 }
 
 String Token::get_name() const

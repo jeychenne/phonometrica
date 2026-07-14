@@ -93,7 +93,7 @@ String Table::to_json(int spacing) const
 	// Sort the keys so that we have a predictable order.
 	std::sort(keys.begin(), keys.end());
 
-	for (intptr_t i = 1; i <= keys.size(); i++)
+	for (intptr_t i = 0; i < keys.size(); i++)
 	{
 		for (int c = 0; c < spacing; c++) {
 			s.append('\t');
@@ -103,7 +103,7 @@ String Table::to_json(int spacing) const
 		s.append(": ");
 		auto it = _map.find(key);
 		s.append(it->second.to_json(spacing + 1));
-		if (i != keys.size()) {
+		if (i != keys.size() - 1) {
 			s.append(',');
 		}
 		s.append('\n');

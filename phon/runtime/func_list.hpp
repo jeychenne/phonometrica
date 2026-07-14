@@ -15,7 +15,10 @@
  *                                                                                                                     *
  * Created: 31/05/2020                                                                                                 *
  *                                                                                                                     *
- * Purpose: List builtin functions.                                                                                    *
+ * Purpose: List builtin functions. This is a script/native bridge: incoming indices are 1-based (possibly negative)   *
+ * and are converted to the 0-based native indexing through index_from_script(); outgoing positions go through         *
+ * index_to_script(). Read-only functions access the storage through a const reference so that they never trigger a    *
+ * copy of a shared buffer; mutating functions go through the non-const API, which performs copy-on-write.             *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -25,6 +28,7 @@
 #include <algorithm>
 #include <random>
 #include <phon/runtime.hpp>
+#include <phon/runtime/index_conversion.hpp>
 
 namespace phonometrica {
 
@@ -39,7 +43,7 @@ static Variant list_get_item(Runtime &rt, std::span<Variant> args)
 	if (!check_type<intptr_t>(args[1])) {
 		throw error("[Index error] List index must be an Integer, not a %", args[1].class_name());
 	}
-	auto i = cast<intptr_t>(args[1]);
+	auto i = index_from_script(cast<intptr_t>(args[1]), lst.size());
 	auto &value = lst.at(i);
 
 	return rt.needs_reference() ? value.make_alias() : value.resolve();
@@ -47,17 +51,17 @@ static Variant list_get_item(Runtime &rt, std::span<Variant> args)
 
 static Variant list_get_field(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	auto &key = cast<String>(args[1]);
 
 	if (key == rt.length_string) {
 		return lst.size();
 	}
 	else if (key == "first") {
-		return lst.at(1);
+		return lst.at(index_from_script(1, lst.size()));
 	}
 	else if (key == "last") {
-		return lst.at(-1);
+		return lst.at(index_from_script(-1, lst.size()));
 	}
 
 	throw error("[Index error] List type has no member named \"%\"", key);
@@ -66,7 +70,7 @@ static Variant list_get_field(Runtime &rt, std::span<Variant> args)
 static Variant list_set_item(Runtime &, std::span<Variant> args)
 {
 	auto &lst = cast<List>(args[0]).items();
-	intptr_t i = cast<intptr_t>(args[1]);
+	auto i = index_from_script(cast<intptr_t>(args[1]), lst.size());
 	lst.at(i) = std::move(args[2].resolve());
 
 	return Variant();
@@ -74,13 +78,13 @@ static Variant list_set_item(Runtime &, std::span<Variant> args)
 
 static Variant list_contains(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	return lst.contains(args[1]);
 }
 
 static Variant list_first(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	if (lst.empty()) {
 		throw error("[Index error] Cannot get first element in empty list");
 	}
@@ -89,33 +93,37 @@ static Variant list_first(Runtime &, std::span<Variant> args)
 
 static Variant list_find1(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
-	return lst.find(args[1].resolve());
+	const auto &lst = cast<List>(args[0]).items();
+	if (lst.empty()) return intptr_t(0); // not found
+	return index_to_script(lst.find(args[1].resolve()));
 }
 
 static Variant list_find2(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
-	intptr_t i = cast<intptr_t>(args[2]);
-	return lst.find(args[1].resolve(), i);
+	const auto &lst = cast<List>(args[0]).items();
+	if (lst.empty()) return intptr_t(0); // not found
+	auto from = index_from_script(cast<intptr_t>(args[2]), lst.size());
+	return index_to_script(lst.find(args[1].resolve(), from));
 }
 
 static Variant list_rfind_back1(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
-	return lst.rfind(args[1]);
+	const auto &lst = cast<List>(args[0]).items();
+	if (lst.empty()) return intptr_t(0); // not found
+	return index_to_script(lst.rfind(args[1]));
 }
 
 static Variant list_rfind_back2(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
-	intptr_t i = cast<intptr_t>(args[2]);
-	return lst.rfind(args[1], i);
+	const auto &lst = cast<List>(args[0]).items();
+	if (lst.empty()) return intptr_t(0); // not found
+	auto from = index_from_script(cast<intptr_t>(args[2]), lst.size());
+	return index_to_script(lst.rfind(args[1], from));
 }
 
 static Variant list_last(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	if (lst.empty()) {
 		throw error("[Index error] Cannot get last element in empty list");
 	}
@@ -124,12 +132,12 @@ static Variant list_last(Runtime &, std::span<Variant> args)
 
 static Variant list_left(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	intptr_t count = cast<intptr_t>(args[1]);
 	Array<Variant> result;
 
 	for (intptr_t i = 1; i <= count; i++) {
-		result.append(lst.at(i));
+		result.append(lst.at(index_from_script(i, lst.size())));
 	}
 
 	return make_handle<List>(&rt, std::move(result));
@@ -137,13 +145,13 @@ static Variant list_left(Runtime &rt, std::span<Variant> args)
 
 static Variant list_right(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	intptr_t count = cast<intptr_t>(args[1]);
 	Array<Variant> result;
 	intptr_t limit = lst.size() - count;
 
 	for (intptr_t i = lst.size(); i > limit; i--) {
-		result.append(lst.at(i));
+		result.append(lst.at(index_from_script(i, lst.size())));
 	}
 
 	return make_handle<List>(&rt, std::move(result));
@@ -151,14 +159,14 @@ static Variant list_right(Runtime &rt, std::span<Variant> args)
 
 static Variant list_join(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	auto &delim = cast<String>(args[1]);
 	String result;
 
-	for (intptr_t i = 1; i <= lst.size(); i++)
+	for (intptr_t i = 0; i < lst.size(); i++)
 	{
 		result.append(lst[i].to_string());
-		if (i != lst.size()) {
+		if (i != lst.size() - 1) {
 			result.append(delim);
 		}
 	}
@@ -182,18 +190,6 @@ static Variant list_append(Runtime &, std::span<Variant> args)
 	return Variant();
 }
 
-//static Variant list_append2(Runtime &, std::span<Variant> args)
-//{
-//	auto &lst1 = cast<List>(args[0]).items();
-//	auto &lst2 = cast<List>(args[0]).items();
-//
-//	for (auto &item : lst2) {
-//		lst1.append(item.resolve());
-//	}
-//
-//	return Variant();
-//}
-
 static Variant list_prepend(Runtime &, std::span<Variant> args)
 {
 	auto &lst = cast<List>(args[0].unshare()).items();
@@ -202,21 +198,9 @@ static Variant list_prepend(Runtime &, std::span<Variant> args)
 	return Variant();
 }
 
-//static Variant list_prepend2(Runtime &, std::span<Variant> args)
-//{
-//	auto &lst1 = cast<List>(args[0]).items();
-//	auto &lst2 = cast<List>(args[0]).items();
-//
-//	for (intptr_t i = lst2.size(); i > 0; i--) {
-//		lst1.prepend(lst2[i].resolve());
-//	}
-//
-//	return Variant();
-//}
-
 static Variant list_is_empty(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 
 	return lst.empty();
 }
@@ -245,7 +229,7 @@ static Variant list_sort(Runtime &, std::span<Variant> args)
 
 static Variant list_is_sorted(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0].unshare()).items();
+	const auto &lst = cast<List>(args[0]).items();
 	return std::is_sorted(lst.begin(), lst.end());
 }
 
@@ -284,7 +268,7 @@ static Variant list_remove_last(Runtime &, std::span<Variant> args)
 static Variant list_remove_at(Runtime &, std::span<Variant> args)
 {
 	auto &lst = cast<List>(args[0].unshare()).items();
-	intptr_t pos = cast<intptr_t>(args[1]);
+	auto pos = index_from_script(cast<intptr_t>(args[1]), lst.size());
 	lst.remove_at(pos);
 
 	return Variant();
@@ -302,7 +286,7 @@ static Variant list_shuffle(Runtime &, std::span<Variant> args)
 
 static Variant list_sample(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	intptr_t n = cast<intptr_t>(args[1]);
 	Array<Variant> result;
 	std::random_device rd;
@@ -315,7 +299,8 @@ static Variant list_sample(Runtime &rt, std::span<Variant> args)
 static Variant list_insert(Runtime &, std::span<Variant> args)
 {
 	auto &lst = cast<List>(args[0].unshare()).items();
-	intptr_t pos = cast<intptr_t>(args[1]);
+	// Inserting past the end appends, as before (allow_end).
+	auto pos = index_from_script(cast<intptr_t>(args[1]), lst.size(), true);
 	lst.insert(pos, args[2].resolve());
 
 	return Variant();
@@ -323,8 +308,8 @@ static Variant list_insert(Runtime &, std::span<Variant> args)
 
 static Variant list_intersect(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst1 = cast<List>(args[0]).items();
-	auto &lst2 = cast<List>(args[1]).items();
+	const auto &lst1 = cast<List>(args[0]).items();
+	const auto &lst2 = cast<List>(args[1]).items();
 	List::Storage result;
 	std::set_intersection(lst1.begin(), lst1.end(), lst2.begin(), lst2.end(), std::back_inserter(result));
 
@@ -333,8 +318,8 @@ static Variant list_intersect(Runtime &rt, std::span<Variant> args)
 
 static Variant list_unite(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst1 = cast<List>(args[0]).items();
-	auto &lst2 = cast<List>(args[1]).items();
+	const auto &lst1 = cast<List>(args[0]).items();
+	const auto &lst2 = cast<List>(args[1]).items();
 	List::Storage result;
 	std::set_union(lst1.begin(), lst1.end(), lst2.begin(), lst2.end(), std::back_inserter(result));
 
@@ -343,8 +328,8 @@ static Variant list_unite(Runtime &rt, std::span<Variant> args)
 
 static Variant list_subtract(Runtime &rt, std::span<Variant> args)
 {
-	auto &lst1 = cast<List>(args[0]).items();
-	auto &lst2 = cast<List>(args[1]).items();
+	const auto &lst1 = cast<List>(args[0]).items();
+	const auto &lst2 = cast<List>(args[1]).items();
 	List::Storage result;
 	std::set_difference(lst1.begin(), lst1.end(), lst2.begin(), lst2.end(), std::back_inserter(result));
 
@@ -353,12 +338,11 @@ static Variant list_subtract(Runtime &rt, std::span<Variant> args)
 
 static Variant list_sorted_find(Runtime &, std::span<Variant> args)
 {
-	auto &lst = cast<List>(args[0]).items();
+	const auto &lst = cast<List>(args[0]).items();
 	auto it = std::lower_bound(lst.begin(), lst.end(), args[1].resolve());
-	intptr_t pos = 0; // not found
-	if (it != lst.end()) pos = (it - lst.begin()) + 1;
+	if (it == lst.end()) return intptr_t(0); // not found
 
-	return pos;
+	return index_to_script(it - lst.begin());
 }
 
 static Variant list_sorted_insert(Runtime &, std::span<Variant> args)

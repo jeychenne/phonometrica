@@ -171,11 +171,11 @@ void Dataset::read_from_csv(std::string_view sep)
     ncol = m_labels.size();
     for (auto &col : m_columns) col->resize(nrow);
 
-    for (intptr_t i = 1; i <= nrow; i++)
+    for (intptr_t i = 0; i < nrow; i++)
     {
         auto &row = raw_data[i];
 
-        for (intptr_t j = 1; j <= ncol; j++)
+        for (intptr_t j = 0; j < ncol; j++)
         {
             auto col = m_columns[j].get();
 
@@ -203,7 +203,7 @@ void Dataset::read_from_csv(std::string_view sep)
     }
 
     // Second pass: auto-detect column types for columns that had no type suffix.
-    for (intptr_t j = 1; j <= ncol; j++)
+    for (intptr_t j = 0; j < ncol; j++)
     {
         auto col = m_columns[j].get();
         if (col->type() != ColumnType::Text) continue;
@@ -212,7 +212,7 @@ void Dataset::read_from_csv(std::string_view sep)
         bool all_numeric = true;
         bool all_boolean = true;
 
-        for (intptr_t i = 1; i <= nrow; i++)
+        for (intptr_t i = 0; i < nrow; i++)
         {
             auto &val = text_col->get(i);
             // Missing-value sentinels (empty, "nan", "NaN", "NA", "undefined") are
@@ -235,7 +235,7 @@ void Dataset::read_from_csv(std::string_view sep)
         if (all_numeric)
         {
             auto num_col = std::make_unique<TColumn<double>>(nrow);
-            for (intptr_t i = 1; i <= nrow; i++)
+            for (intptr_t i = 0; i < nrow; i++)
             {
                 auto &val = text_col->get(i);
                 num_col->set(i, parse_numeric_cell(val.view()));
@@ -245,7 +245,7 @@ void Dataset::read_from_csv(std::string_view sep)
         else if (all_boolean)
         {
             auto bool_col = std::make_unique<TColumn<bool>>(nrow);
-            for (intptr_t i = 1; i <= nrow; i++)
+            for (intptr_t i = 0; i < nrow; i++)
             {
                 auto &val = text_col->get(i);
                 bool_col->set(i, val == "true");
@@ -397,9 +397,9 @@ Array<String> Dataset::get_levels(intptr_t j) const
 
 void Dataset::remove_row(intptr_t i)
 {
-    assert(i >= 1 && i <= nrow);
+    assert(i >= 0 && i < nrow);
 
-    for (intptr_t j = 1; j <= ncol; j++)
+    for (intptr_t j = 0; j < ncol; j++)
     {
         auto col = m_columns[j].get();
 
@@ -422,7 +422,7 @@ void Dataset::remove_row(intptr_t i)
 
 void Dataset::remove_column(intptr_t j)
 {
-    assert(j >= 1 && j <= ncol);
+    assert(j >= 0 && j < ncol);
     m_labels.remove_at(j);
     m_columns.remove_at(j);
     ncol--;
@@ -430,28 +430,23 @@ void Dataset::remove_column(intptr_t j)
 
 void Dataset::duplicate_column(intptr_t src, intptr_t dest)
 {
-    assert(src >= 1 && src <= ncol);
-    assert(dest >= 1 && dest <= ncol + 1);
+    assert(src >= 0 && src < ncol);
+    assert(dest >= 0 && dest <= ncol);
 
     auto cloned = std::unique_ptr<Column>(m_columns[src]->clone());
     auto label = m_labels[src];
 
-    if (dest > ncol) {
-        m_labels.append(std::move(label));
-        m_columns.append(std::move(cloned));
-    }
-    else {
-        m_labels.insert(dest, std::move(label));
-        m_columns.insert(dest, std::move(cloned));
-    }
+    // Inserting at dest == ncol appends at the end.
+    m_labels.insert(dest, std::move(label));
+    m_columns.insert(dest, std::move(cloned));
     ncol++;
     m_content_modified = true;
 }
 
 void Dataset::move_column(intptr_t src, intptr_t dest)
 {
-    assert(src >= 1 && src <= ncol);
-    assert(dest >= 1 && dest <= ncol);
+    assert(src >= 0 && src < ncol);
+    assert(dest >= 0 && dest < ncol);
     if (src == dest) return;
 
     // Extract the column and label from the source position.
@@ -462,15 +457,9 @@ void Dataset::move_column(intptr_t src, intptr_t dest)
 
     // After removal the array has ncol-1 elements. Inserting at the
     // original dest position produces the correct final ordering because
-    // Array::insert appends when pos > size.
-    if (dest > ncol - 1) {
-        m_labels.append(std::move(label));
-        m_columns.append(std::move(col));
-    }
-    else {
-        m_labels.insert(dest, std::move(label));
-        m_columns.insert(dest, std::move(col));
-    }
+    // inserting at dest == ncol-1 appends at the end.
+    m_labels.insert(dest, std::move(label));
+    m_columns.insert(dest, std::move(col));
     m_content_modified = true;
 }
 
@@ -479,12 +468,12 @@ void Dataset::move_column(intptr_t src, intptr_t dest)
 
 Dataset::SavedRow Dataset::extract_row(intptr_t i)
 {
-	assert(i >= 1 && i <= nrow);
+	assert(i >= 0 && i < nrow);
 
 	SavedRow row;
 	row.cells.resize(ncol);
 
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
 		auto col = m_columns[j].get();
 		CellValue &cv = row.cells[j];
@@ -511,10 +500,10 @@ Dataset::SavedRow Dataset::extract_row(intptr_t i)
 
 void Dataset::insert_row(intptr_t i, const SavedRow &row)
 {
-	assert(i >= 1 && i <= nrow + 1);
+	assert(i >= 0 && i <= nrow);
 	assert(row.cells.size() == ncol);
 
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
 		auto col = m_columns[j].get();
 		auto &cv = row.cells[j];
@@ -538,7 +527,7 @@ void Dataset::insert_row(intptr_t i, const SavedRow &row)
 
 Dataset::SavedColumn Dataset::extract_column(intptr_t j)
 {
-	assert(j >= 1 && j <= ncol);
+	assert(j >= 0 && j < ncol);
 	SavedColumn sc;
 	sc.label = m_labels[j];
 	sc.data = std::move(m_columns[j]);
@@ -550,16 +539,11 @@ Dataset::SavedColumn Dataset::extract_column(intptr_t j)
 
 void Dataset::insert_column(intptr_t j, SavedColumn col)
 {
-	assert(j >= 1 && j <= ncol + 1);
+	assert(j >= 0 && j <= ncol);
 
-	if (j > ncol) {
-		m_labels.append(std::move(col.label));
-		m_columns.append(std::move(col.data));
-	}
-	else {
-		m_labels.insert(j, std::move(col.label));
-		m_columns.insert(j, std::move(col.data));
-	}
+	// Inserting at j == ncol appends at the end.
+	m_labels.insert(j, std::move(col.label));
+	m_columns.insert(j, std::move(col.data));
 	ncol++;
 }
 
@@ -569,8 +553,8 @@ void Dataset::insert_column(intptr_t j, SavedColumn col)
 String Dataset::row_key(intptr_t i) const
 {
 	String key;
-	for (intptr_t j = 1; j <= ncol; j++) {
-		if (j > 1) key.append('\t');
+	for (intptr_t j = 0; j < ncol; j++) {
+		if (j > 0) key.append('\t');
 		key.append(get_cell(i, j));
 	}
 	return key;
@@ -578,7 +562,7 @@ String Dataset::row_key(intptr_t i) const
 
 void Dataset::append_row_from(const Dataset &source, intptr_t i)
 {
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
 		auto *dst = m_columns[j].get();
 		auto *src = source.m_columns[j].get();
@@ -604,9 +588,9 @@ void Dataset::check_columns_compatible(const Dataset &other) const
 	if (ncol != other.ncol) {
 		throw error("Cannot combine datasets: they have different numbers of columns (% vs %)", ncol, other.ncol);
 	}
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		if (m_labels[j] != other.m_labels[j]) {
-			throw error("Cannot combine datasets: column % has different names (\"%\" vs \"%\")", j, m_labels[j], other.m_labels[j]);
+			throw error("Cannot combine datasets: column % has different names (\"%\" vs \"%\")", j + 1, m_labels[j], other.m_labels[j]);
 		}
 		if (m_columns[j]->type() != other.m_columns[j]->type()) {
 			throw error("Cannot combine datasets: column \"%\" has different types", m_labels[j]);
@@ -625,12 +609,12 @@ Handle<Dataset> Dataset::unite(const Dataset &other, const String &label) const
 
 	// Build a set of row keys from this dataset.
 	std::set<String> keys;
-	for (intptr_t i = 1; i <= nrow; i++) {
+	for (intptr_t i = 0; i < nrow; i++) {
 		keys.insert(row_key(i));
 	}
 
 	// Add rows from other that are not already present.
-	for (intptr_t i = 1; i <= other.nrow; i++) {
+	for (intptr_t i = 0; i < other.nrow; i++) {
 		auto key = other.row_key(i);
 		if (keys.find(key) == keys.end()) {
 			keys.insert(std::move(key));
@@ -650,7 +634,7 @@ Handle<Dataset> Dataset::intersect(const Dataset &other, const String &label) co
 
 	// Build a set of row keys from B.
 	std::set<String> other_keys;
-	for (intptr_t i = 1; i <= other.nrow; i++) {
+	for (intptr_t i = 0; i < other.nrow; i++) {
 		other_keys.insert(other.row_key(i));
 	}
 
@@ -662,16 +646,16 @@ Handle<Dataset> Dataset::intersect(const Dataset &other, const String &label) co
 	result->m_content_modified = true;
 	result->set_label(label, false);
 
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
 	}
 	// Columns were cloned with all rows — reset them to empty.
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns[j]->resize(0);
 	}
 
 	// Keep rows from A that also appear in B.
-	for (intptr_t i = 1; i <= nrow; i++) {
+	for (intptr_t i = 0; i < nrow; i++) {
 		if (other_keys.count(row_key(i))) {
 			result->append_row_from(*this, i);
 		}
@@ -689,7 +673,7 @@ Handle<Dataset> Dataset::complement(const Dataset &other, const String &label) c
 
 	// Build a set of row keys from B.
 	std::set<String> other_keys;
-	for (intptr_t i = 1; i <= other.nrow; i++) {
+	for (intptr_t i = 0; i < other.nrow; i++) {
 		other_keys.insert(other.row_key(i));
 	}
 
@@ -701,15 +685,15 @@ Handle<Dataset> Dataset::complement(const Dataset &other, const String &label) c
 	result->m_content_modified = true;
 	result->set_label(label, false);
 
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
 	}
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns[j]->resize(0);
 	}
 
 	// Keep rows from A that do NOT appear in B.
-	for (intptr_t i = 1; i <= nrow; i++) {
+	for (intptr_t i = 0; i < nrow; i++) {
 		if (!other_keys.count(row_key(i))) {
 			result->append_row_from(*this, i);
 		}
@@ -738,7 +722,7 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 	for (auto &[a_col, b_col] : columns_to_overwrite)
 	{
 		auto *col = result->m_columns[a_col].get();
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 		{
 			auto val = other.get_cell(i, b_col);
 			switch (col->type())
@@ -764,7 +748,7 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 	for (auto &[hdr, b_col] : columns_to_add)
 	{
 		auto new_col = std::make_unique<TColumn<String>>(nrow);
-		for (intptr_t i = 1; i <= nrow; i++) {
+		for (intptr_t i = 0; i < nrow; i++) {
 			new_col->set(i, other.get_cell(i, b_col));
 		}
 		result->m_labels.append(hdr);
@@ -788,17 +772,17 @@ Handle<Dataset> Dataset::subset(const std::vector<int> &rows_0based, const Strin
 	result->m_content_modified = true;
 	result->set_label(label, false);
 
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns.append(std::unique_ptr<Column>(m_columns[j]->clone()));
 	}
 	// Columns were cloned with all rows — reset them to empty.
-	for (intptr_t j = 1; j <= ncol; j++) {
+	for (intptr_t j = 0; j < ncol; j++) {
 		result->m_columns[j]->resize(0);
 	}
 
-	// Append selected rows (convert 0-based to 1-based).
+	// Append selected rows.
 	for (int row : rows_0based) {
-		result->append_row_from(*this, row + 1);
+		result->append_row_from(*this, row);
 	}
 
 	auto parent = Project::get()->data().get();
@@ -809,7 +793,7 @@ Handle<Dataset> Dataset::subset(const std::vector<int> &rows_0based, const Strin
 
 void Dataset::set_header(intptr_t j, const String &name)
 {
-	if (j < 1 || j > ncol) {
+	if (j < 0 || j >= ncol) {
 		throw error("Column index % is out of range", j);
 	}
 	m_labels[j] = name;
@@ -824,7 +808,7 @@ void Dataset::add_numeric_column(const String &header, const std::vector<double>
 
 	auto new_col = std::make_unique<TColumn<double>>(nrow);
 	for (intptr_t i = 0; i < nrow; i++) {
-		new_col->set(i + 1, values[i]);
+		new_col->set(i, values[i]);
 	}
 
 	m_labels.append(header);
@@ -841,7 +825,7 @@ void Dataset::add_text_column(const String &header, const std::vector<String> &v
 
 	auto new_col = std::make_unique<TColumn<String>>(nrow);
 	for (intptr_t i = 0; i < nrow; i++) {
-		new_col->set(i + 1, values[i]);
+		new_col->set(i, values[i]);
 	}
 
 	m_labels.append(header);

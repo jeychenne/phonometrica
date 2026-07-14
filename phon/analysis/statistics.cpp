@@ -58,10 +58,10 @@ Array<double> sum(const Array<double> &x, intptr_t dim)
 		case 1:
 		{
 			Array<double> result(nrow, 0.0);
-			for (intptr_t i = 1; i <= nrow; i++)
+			for (intptr_t i = 0; i < nrow; i++)
 			{
 				double total = 0;
-				for (intptr_t j = 1; j <= ncol; j++)
+				for (intptr_t j = 0; j < ncol; j++)
 				{
 					total += x(i,j);
 				}
@@ -72,10 +72,10 @@ Array<double> sum(const Array<double> &x, intptr_t dim)
 		case 2:
 		{
 			Array<double> result(ncol, 0.0);
-			for (intptr_t j = 1; j <= ncol; j++)
+			for (intptr_t j = 0; j < ncol; j++)
 			{
 				double total = 0;
-				for (intptr_t i = 1; i <= nrow; i++)
+				for (intptr_t i = 0; i < nrow; i++)
 				{
 					total += x(i,j);
 				}
@@ -99,7 +99,7 @@ Array<double> mean(const Array<double> &x, int dim)
 	auto sums = sum(x, dim);
 	auto size = dim == 1 ? x.ncol() : x.nrow();
 
-	for (intptr_t i = 1; i <= sums.size(); i++) {
+	for (intptr_t i = 0; i < sums.size(); i++) {
 		sums[i] /= size;
 	}
 
@@ -108,11 +108,11 @@ Array<double> mean(const Array<double> &x, int dim)
 
 double maximum(const Array<double> &x)
 {
-	double result = x(1,1);
+	double result = x(0,0);
 
-	for (intptr_t i = 1; i <= x.nrow(); i++)
+	for (intptr_t i = 0; i < x.nrow(); i++)
 	{
-		for (intptr_t j = 1; j <= x.ncol(); j++)
+		for (intptr_t j = 0; j < x.ncol(); j++)
 		{
 			auto value = x(i,j);
 			if ((std::isfinite(value) && value > result) || !std::isfinite(result)) {
@@ -126,11 +126,11 @@ double maximum(const Array<double> &x)
 
 double minimum(const Array<double> &x)
 {
-	double result = x(1,1);
+	double result = x(0,0);
 
-	for (intptr_t i = 1; i <= x.nrow(); i++)
+	for (intptr_t i = 0; i < x.nrow(); i++)
 	{
-		for (intptr_t j = 1; j <= x.ncol(); j++)
+		for (intptr_t j = 0; j < x.ncol(); j++)
 		{
 			auto value = x(i,j);
 			if ((std::isfinite(value) && value < result) || !std::isfinite(result)) {
@@ -170,10 +170,10 @@ Array<double> sample_variance(const Array<double> &x, int dim)
 		{
 			Array<double> result(nrow, 0.0);
 
-			for (intptr_t i = 1; i <= nrow; i++)
+			for (intptr_t i = 0; i < nrow; i++)
 			{
 				double total = 0;
-				for (intptr_t j = 1; j <= ncol; j++)
+				for (intptr_t j = 0; j < ncol; j++)
 				{
 					total += pow(x(i,j) - mu[i], 2);
 				}
@@ -185,10 +185,10 @@ Array<double> sample_variance(const Array<double> &x, int dim)
 		{
 			Array<double> result(ncol, 0.0);
 
-			for (intptr_t j = 1; j <= ncol; j++)
+			for (intptr_t j = 0; j < ncol; j++)
 			{
 				double total = 0;
-				for (intptr_t i = 1; i <= nrow; i++)
+				for (intptr_t i = 0; i < nrow; i++)
 				{
 					total += pow(x(i,j) - mu[j], 2);
 				}
@@ -211,7 +211,7 @@ double covariance(const Array<double> &x, const Array<double> &y)
 	double mu1 = mean(x);
 	double mu2 = mean(y);
 
-	for (intptr_t i = 1; i <= x.size(); i++)
+	for (intptr_t i = 0; i < x.size(); i++)
 	{
 		cov += (x[i] - mu1) * (y[i] - mu2);
 	}
@@ -255,9 +255,9 @@ std::tuple<double,double,double> chi2_test(const Array<double> &data)
 	auto ncol = data.ncol();
 	auto nrow = data.nrow();
 
-	for (intptr_t j = 1; j <= ncol; j++)
+	for (intptr_t j = 0; j < ncol; j++)
 	{
-		for (intptr_t i = 1; i <= nrow; i++)
+		for (intptr_t i = 0; i < nrow; i++)
 		{
 			auto observed = data(i, j);
 			auto expected = (row_sum[i] * col_sum[j]) / total;
@@ -395,37 +395,37 @@ double kappa_fleiss(const Array<double> &ratings, intptr_t n)
     double total = sum(ratings);
 
     // Proportion of scores assigned to each category
-    for (int j = 1; j <= ratings.ncol(); j++)
+    for (int j = 0; j < ratings.ncol(); j++)
     {
         double count = 0;
 
-        for (intptr_t i = 1; i <= ratings.nrow(); i++)
+        for (intptr_t i = 0; i < ratings.nrow(); i++)
         {
             count += ratings(i,j);
         }
 
-        proportions(1,j) = count/total;
+        proportions(0,j) = count/total;
     }
 
     // Calculate agreement for the ith observation.
-    for (int i = 1; i <= ratings.nrow(); i++)
+    for (int i = 0; i < ratings.nrow(); i++)
     {
         double score = 0;
 
-        for (intptr_t j = 1; j <= ratings.ncol(); j++)
+        for (intptr_t j = 0; j < ratings.ncol(); j++)
         {
             score += pow(ratings(i,j), 2);
         }
 
-        agreement(i, 1) = (score - n) / (n * (n-1));
+        agreement(i, 0) = (score - n) / (n * (n-1));
     }
 
     // Sum of squared proportions.
     double prop = 0;
 
-    for (intptr_t j = 1; j <= proportions.ncol(); j++)
+    for (intptr_t j = 0; j < proportions.ncol(); j++)
     {
-        prop += pow(proportions(1,j), 2);
+        prop += pow(proportions(0,j), 2);
     }
 
     double kappa = (mean(agreement) - prop) / (1 - prop);

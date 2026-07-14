@@ -177,7 +177,7 @@ void LayerWidget::createAnchor(double time, bool silent)
 		// already owns the anchor (e.g. clicking a ghost anchor on a peer layer
 		// causes onAnchorAdded → createAnchor(time, true) on the source layer).
 		auto &layer = m_annot->layers()[m_layer_index];
-		for (intptr_t i = 1; i <= layer.count(); i++)
+		for (intptr_t i = 0; i < layer.count(); i++)
 		{
 			if (layer.events[i].start == time || layer.events[i].end == time)
 				return;
@@ -233,7 +233,7 @@ bool LayerWidget::removeAnchor(double time, bool silent)
 		if (is_instant)
 		{
 			// Find the instant at target and save its text.
-			for (intptr_t i = 1; i <= layer.count(); i++)
+			for (intptr_t i = 0; i < layer.count(); i++)
 			{
 				if (layer.events[i].start == target)
 				{
@@ -245,12 +245,12 @@ bool LayerWidget::removeAnchor(double time, bool silent)
 		else
 		{
 			// Find the two adjacent intervals sharing the boundary at target.
-			for (intptr_t i = 1; i <= layer.count(); i++)
+			for (intptr_t i = 0; i < layer.count(); i++)
 			{
 				if (layer.events[i].end == target)
 				{
 					saved_left = layer.events[i].text;
-					if (i < layer.count())
+					if (i < layer.count() - 1)
 						saved_right = layer.events[i + 1].text;
 					break;
 				}
@@ -286,7 +286,7 @@ bool LayerWidget::moveAnchor(double from, double to)
 {
 	auto &layer = m_annot->mutable_layer(m_layer_index);
 
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		auto &ev = layer.events[i];
 		if (ev.start == from || ev.end == from)
@@ -294,13 +294,13 @@ bool LayerWidget::moveAnchor(double from, double to)
 			if (ev.start == from && from != 0)
 			{
 				ev.start = to;
-				if (i > 1)
+				if (i > 0)
 					layer.events[i - 1].end = to;
 			}
 			else if (ev.end == from && from != m_duration)
 			{
 				ev.end = to;
-				if (i < layer.count())
+				if (i < layer.count() - 1)
 					layer.events[i + 1].start = to;
 			}
 
@@ -318,7 +318,7 @@ void LayerWidget::setGhostAnchorTime(double time)
 {
 	// Don't show a ghost if a real anchor already exists at this time.
 	auto &layer = m_annot->layers()[m_layer_index];
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		if (layer.events[i].start == time || layer.events[i].end == time)
 		{
@@ -362,7 +362,7 @@ void LayerWidget::hideAnchor(double time)
 {
 	auto &layer = m_annot->layers()[m_layer_index];
 	m_hidden_anchor_time = -1;
-	for (intptr_t i = 1; i <= layer.count(); i++)
+	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		if (layer.events[i].start == time || layer.events[i].end == time)
 		{
@@ -659,8 +659,8 @@ void LayerWidget::commitEdit()
 		{
 			// Save old text for undo.
 			String old_text = ev->text;
-			intptr_t event_1based = m_annot->get_event_index(m_layer_index, ev->start);
-			if (event_1based == 0)
+			intptr_t event_index = m_annot->get_event_index(m_layer_index, ev->start);
+			if (event_index < 0)
 			{
 				m_editing_event = -1;
 				setFocus();
@@ -668,13 +668,12 @@ void LayerWidget::commitEdit()
 				return;
 			}
 
-			// event_index in cache is 0-based; annotation API is 1-based.
-			m_annot->set_event_text(m_layer_index, event_1based, new_text);
+			m_annot->set_event_text(m_layer_index, event_index, new_text);
 			m_event_cache.clear();
 			emit modified();
 
 			// Record for undo.
-			emit eventTextEdited(m_layer_index, event_1based,
+			emit eventTextEdited(m_layer_index, event_index,
 			                     std::move(old_text),
 			                     String(new_text.toUtf8().constData()));
 		}
@@ -1043,7 +1042,7 @@ void LayerWidget::paintEvent(QPaintEvent *)
 
 	// ── Draw separator between layers ────────────
 
-	if (m_layer_index < m_annot->size())
+	if (m_layer_index < m_annot->size() - 1)
 	{
 		QPen sepPen(SEPARATOR_COLOR, 1);
 		painter.setPen(sepPen);
@@ -1180,12 +1179,12 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 
 		if (m_event_start_selected)
 		{
-			for (intptr_t i = 1; i <= layer.count(); i++)
+			for (intptr_t i = 0; i < layer.count(); i++)
 			{
 				if (layer.events[i].start == from)
 				{
 					layer.events[i].start = m_dropped_anchor_time;
-					if (i > 1)
+					if (i > 0)
 						layer.events[i - 1].end = m_dropped_anchor_time;
 					ok = true;
 					break;
@@ -1194,12 +1193,12 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 		}
 		else
 		{
-			for (intptr_t i = 1; i <= layer.count(); i++)
+			for (intptr_t i = 0; i < layer.count(); i++)
 			{
 				if (layer.events[i].end == from)
 				{
 					layer.events[i].end = m_dropped_anchor_time;
-					if (i < layer.count())
+					if (i < layer.count() - 1)
 						layer.events[i + 1].start = m_dropped_anchor_time;
 					ok = true;
 					break;
@@ -1388,14 +1387,14 @@ void LayerWidget::keyPressEvent(QKeyEvent *e)
 		focusNextEvent();
 		break;
 	case Qt::Key_Up:
-		if (m_selected_event >= 0 && m_layer_index > 1)
+		if (m_selected_event >= 0 && m_layer_index > 0)
 		{
 			auto *ev = m_event_cache[m_selected_event];
 			emit focusEvent(m_layer_index - 1, ev->center(m_model->windowStart(), m_model->windowEnd()), false);
 		}
 		break;
 	case Qt::Key_Down:
-		if (m_selected_event >= 0 && m_layer_index < m_annot->size())
+		if (m_selected_event >= 0 && m_layer_index < m_annot->size() - 1)
 		{
 			auto *ev = m_event_cache[m_selected_event];
 			emit focusEvent(m_layer_index + 1, ev->center(m_model->windowStart(), m_model->windowEnd()), true);
@@ -1430,7 +1429,7 @@ void LayerWidget::keyPressEvent(QKeyEvent *e)
 			auto *ev = m_event_cache[m_selected_event];
 			if (!ev->text.empty())
 			{
-				m_annot->set_event_text(m_layer_index, m_selected_event + 1, String());
+				m_annot->set_event_text(m_layer_index, m_selected_event, String());
 				m_event_cache.clear();
 				emit modified();
 				update();

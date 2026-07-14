@@ -275,17 +275,17 @@ void Runtime::set_global_namespace()
 	integer_class->add_constructor(integer_new, {CLS(String)});
 
 	// Regex
-	auto regex_class = Class::get<Regex>();
+	auto regex_class = Class::get<ScriptRegex>();
 	regex_class->add_constructor(regex_new1, {CLS(String)});
 	regex_class->add_constructor(regex_new2, {CLS(String), CLS(String)});
-	regex_class->add_method(get_field_string, regex_get_field, {CLS(Regex), CLS(String)});
-	add_global("match", regex_match1, {CLS(Regex), CLS(String) });
-	add_global("match", regex_match2, {CLS(Regex), CLS(String), CLS(intptr_t) });
-	add_global("has_match", regex_has_match, {CLS(Regex) });
-	add_global("count", regex_count, {CLS(Regex) });
-	add_global("group", regex_group, {CLS(Regex), CLS(intptr_t) });
-	add_global("get_start", regex_get_start, {CLS(Regex), CLS(intptr_t)});
-	add_global("get_end", regex_get_end, {CLS(Regex), CLS(intptr_t)});
+	regex_class->add_method(get_field_string, regex_get_field, {CLS(ScriptRegex), CLS(String)});
+	add_global("match", regex_match1, {CLS(ScriptRegex), CLS(String) });
+	add_global("match", regex_match2, {CLS(ScriptRegex), CLS(String), CLS(intptr_t) });
+	add_global("has_match", regex_has_match, {CLS(ScriptRegex) });
+	add_global("count", regex_count, {CLS(ScriptRegex) });
+	add_global("group", regex_group, {CLS(ScriptRegex), CLS(intptr_t) });
+	add_global("get_start", regex_get_start, {CLS(ScriptRegex), CLS(intptr_t)});
+	add_global("get_end", regex_get_end, {CLS(ScriptRegex), CLS(intptr_t)});
 
 	// Set
 	add_global("contains", set_contains, {CLS(Set), CLS(Object) });

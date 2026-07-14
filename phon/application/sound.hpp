@@ -179,7 +179,7 @@ private:
 
 	void write() override;
 
-	Array<double> average_channels(intptr_t first_frame = 0, intptr_t last_frame = -1) const;
+	Array<double> average_channels(intptr_t first_frame = 1, intptr_t last_frame = -1) const;
 
 	static Array<String> the_supported_sound_formats, the_common_sound_formats;
 

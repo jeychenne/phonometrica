@@ -198,7 +198,7 @@ private:
 
 	AnnotationView *m_view;
 	intptr_t m_layer_index;
-	intptr_t m_event_index; // 1-based
+	intptr_t m_event_index; // 0-based
 	String m_old_text;
 	String m_new_text;
 };

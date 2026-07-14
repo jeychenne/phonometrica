@@ -1438,15 +1438,15 @@ void SoundView::onGetFormants()
 			if (!m_sound->is_mono())
 				body += tr("  Channel %1:\n").arg(ch);
 
-			for (int i = 1; i <= nformant; i++)
+			for (int i = 0; i < nformant; i++)
 			{
-				double freq = formants(i, 1);
-				double bw = formants(i, 2);
+				double freq = formants(i, 0);
+				double bw = formants(i, 1);
 				QString indent = m_sound->is_mono() ? "" :  "  ";
 				if (freq > 0)
-					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i + 1).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
 				else
-					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
+					body += tr("%1F%2 = undefined\n").arg(indent).arg(i + 1);
 			}
 		}
 
@@ -1498,15 +1498,15 @@ void SoundView::onGetMeanFormants()
 			if (!m_sound->is_mono())
 				body += tr("  Channel %1:\n").arg(ch);
 
-			for (int i = 1; i <= nformant; i++)
+			for (int i = 0; i < nformant; i++)
 			{
-				double freq = formants(i, 1);
-				double bw = formants(i, 2);
+				double freq = formants(i, 0);
+				double bw = formants(i, 1);
 				QString indent = m_sound->is_mono() ? "  " : "    ";
 				if (freq > 0)
-					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
+					body += tr("%1F%2 = %3 Hz  (bandwidth = %4 Hz)\n").arg(indent).arg(i + 1).arg(freq, 0, 'f', hzDecimals()).arg(bw, 0, 'f', hzDecimals());
 				else
-					body += tr("%1F%2 = undefined\n").arg(indent).arg(i);
+					body += tr("%1F%2 = undefined\n").arg(indent).arg(i + 1);
 			}
 		}
 

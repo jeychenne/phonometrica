@@ -55,7 +55,8 @@ String SourceCode::filename() const
 
 String SourceCode::get_line(intptr_t index) const
 {
-    return m_lines[index];
+    // Line numbers are 1-based throughout the compiler and in error messages.
+    return m_lines[index - 1];
 }
 
 intptr_t SourceCode::size() const
@@ -66,7 +67,7 @@ intptr_t SourceCode::size() const
 void SourceCode::report_error(const char *error_type, intptr_t line_no, const std::string &hint)
 {
     assert(line_no > 0);
-    String line = m_lines[line_no];
+    String line = m_lines[line_no - 1];
     line.rtrim();
     auto message = utils::format("[%] File \"%\" at line %\n\t%", error_type, this->filename(), line_no, line);
 

@@ -70,18 +70,18 @@ struct ExpandedVariable
 // Column lookup
 // =====================================================================
 
-// Find the 1-based column index for a variable name in the DataTable.
-// Returns 0 if not found.
+// Find the 0-based column index for a variable name in the DataTable.
+// Returns -1 if not found.
 static intptr_t find_column(const DataTable &data, const String &name)
 {
 	intptr_t nc = data.column_count();
-	for (intptr_t j = 1; j <= nc; j++)
+	for (intptr_t j = 0; j < nc; j++)
 	{
 		if (data.get_header(j) == name) {
 			return j;
 		}
 	}
-	return 0;
+	return -1;
 }
 
 
@@ -136,7 +136,7 @@ static std::vector<intptr_t> find_complete_rows(const DataTable &data,
 	std::vector<intptr_t> rows;
 	rows.reserve(nr);
 
-	for (intptr_t i = 1; i <= nr; i++)
+	for (intptr_t i = 0; i < nr; i++)
 	{
 		bool complete = true;
 		for (intptr_t col : col_indices)
@@ -262,8 +262,8 @@ static ExpandedVariable expand_variable(const DataTable &data, intptr_t col,
 			throw error("Categorical variable '%' has fewer than 2 levels", name);
 		}
 
-		intptr_t start_level = full_rank ? 1 : 2;
-		for (intptr_t k = start_level; k <= ev.levels.size(); k++)
+		intptr_t start_level = full_rank ? 0 : 1;
+		for (intptr_t k = start_level; k < ev.levels.size(); k++)
 		{
 			DesignColumn dc;
 			dc.name = name;
@@ -364,17 +364,17 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 		if (var_col_map.find(key) != var_col_map.end()) return;
 
 		intptr_t col = find_column(data, name);
-		if (col == 0) {
+		if (col < 0) {
 			throw error("Variable '%' not found in data", name);
 		}
 		var_col_map[key] = col;
 		var_exp_map[key] = expand_variable(data, col, rows, reference_levels);
 	};
 
-	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
+	for (intptr_t i = 0; i < formula.fixed.size(); i++)
 	{
 		auto &ft = formula.fixed[i];
-		for (intptr_t j = 1; j <= ft.variables.size(); j++) {
+		for (intptr_t j = 0; j < ft.variables.size(); j++) {
 			ensure_expanded(ft.variables[j]);
 		}
 	}
@@ -393,14 +393,14 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	}
 
 	// Fixed-effects terms
-	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
+	for (intptr_t i = 0; i < formula.fixed.size(); i++)
 	{
 		auto &ft = formula.fixed[i];
 
 		if (ft.variables.size() == 1)
 		{
 			// Main effect: directly use the expanded columns.
-			std::string key(ft.variables[1].data(), ft.variables[1].size());
+			std::string key(ft.variables[0].data(), ft.variables[0].size());
 			auto &ev = var_exp_map[key];
 			for (auto &dc : ev.columns) {
 				all_columns.push_back(dc);
@@ -410,7 +410,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 		{
 			// Interaction: cross-product of component columns.
 			std::vector<ExpandedVariable> components;
-			for (intptr_t j = 1; j <= ft.variables.size(); j++)
+			for (intptr_t j = 0; j < ft.variables.size(); j++)
 			{
 				std::string key(ft.variables[j].data(), ft.variables[j].size());
 				components.push_back(var_exp_map[key]);
@@ -425,7 +425,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	// ── Response variable ────────────────────────────────────────────
 
 	intptr_t resp_col = find_column(data, formula.response);
-	if (resp_col == 0) {
+	if (resp_col < 0) {
 		throw error("Response variable '%' not found in data", formula.response);
 	}
 
@@ -464,7 +464,7 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 	for (intptr_t j = 0; j < p; j++)
 	{
 		for (intptr_t i = 0; i < (intptr_t)n; i++) {
-			dm.X((intptr_t)(i + 1), (intptr_t)(j + 1)) = all_columns[j].values[i];
+			dm.X(i, j) = all_columns[j].values[i];
 		}
 	}
 
@@ -478,14 +478,14 @@ static DesignMatrix build_design_matrix(const DataTable &data, const Formula &fo
 		for (size_t i = 0; i < n; i++)
 		{
 			String cell = data.get_cell(rows[i], resp_col);
-			dm.y[(intptr_t)(i + 1)] = (cell == dm.response_levels[2]) ? 1.0 : 0.0;
+			dm.y[(intptr_t) i] = (cell == dm.response_levels[1]) ? 1.0 : 0.0;
 		}
 	}
 	else
 	{
 		auto resp_vals = extract_numeric(data, resp_col, rows);
 		for (intptr_t i = 0; i < (intptr_t)n; i++) {
-			dm.y[i + 1] = resp_vals[i];
+			dm.y[i] = resp_vals[i];
 		}
 	}
 
@@ -545,7 +545,7 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 			{
 				String comp(gdata + start, i - start);
 				intptr_t c = find_column(data, comp);
-				if (c == 0) {
+				if (c < 0) {
 					throw error("Grouping variable '%' not found in data", comp);
 				}
 				gcols.push_back(c);
@@ -604,7 +604,7 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 	else
 	{
 		intptr_t gcol = find_column(data, rt.group);
-		if (gcol == 0) {
+		if (gcol < 0) {
 			throw error("Grouping variable '%' not found in data", rt.group);
 		}
 
@@ -618,9 +618,9 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 
 		// Build a fast lookup: level string → 0-based index.
 		std::map<std::string, intptr_t> level_map;
-		for (intptr_t k = 1; k <= gi.levels.size(); k++) {
+		for (intptr_t k = 0; k < gi.levels.size(); k++) {
 			std::string key(gi.levels[k].data(), gi.levels[k].size());
-			level_map[key] = k - 1; // 0-based
+			level_map[key] = k;
 		}
 
 		gi.indices.reserve(rows.size());
@@ -647,16 +647,16 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 		z_columns.push_back(std::vector<double>(n, 1.0));
 	}
 
-	for (intptr_t s = 1; s <= rt.slopes.size(); s++)
+	for (intptr_t s = 0; s < rt.slopes.size(); s++)
 	{
 		const auto &st = rt.slopes[s];
 
 		if (st.variables.size() == 1)
 		{
 			// Main-effect slope.
-			intptr_t scol = find_column(data, st.variables[1]);
-			if (scol == 0) {
-				throw error("Slope variable '%' not found in data", st.variables[1]);
+			intptr_t scol = find_column(data, st.variables[0]);
+			if (scol < 0) {
+				throw error("Slope variable '%' not found in data", st.variables[0]);
 			}
 
 			auto ev = expand_variable(data, scol, rows, reference_levels, !rt.intercept);
@@ -677,10 +677,10 @@ static GroupingInfo build_grouping(const DataTable &data, const RandomTerm &rt,
 			std::vector<ExpandedVariable> components;
 			components.reserve(st.variables.size());
 
-			for (intptr_t v = 1; v <= st.variables.size(); v++)
+			for (intptr_t v = 0; v < st.variables.size(); v++)
 			{
 				intptr_t vcol = find_column(data, st.variables[v]);
-				if (vcol == 0) {
+				if (vcol < 0) {
 					throw error("Slope variable '%' not found in data", st.variables[v]);
 				}
 				components.push_back(expand_variable(data, vcol, rows, reference_levels, /*full_rank=*/false));
@@ -771,7 +771,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 	if (formula.has_random_effects())
 	{
-		for (intptr_t i = 1; i <= formula.random.size(); i++)
+		for (intptr_t i = 0; i < formula.random.size(); i++)
 		{
 			auto &rt = formula.random[i];
 			if (!rt.intercept && rt.slopes.empty()) {
@@ -786,19 +786,19 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 	// Response
 	intptr_t resp_col = find_column(data, formula.response);
-	if (resp_col == 0) {
+	if (resp_col < 0) {
 		throw error("Response variable '%' not found in data", formula.response);
 	}
 	all_col_indices.push_back(resp_col);
 
 	// Fixed effects variables
-	for (intptr_t i = 1; i <= formula.fixed.size(); i++)
+	for (intptr_t i = 0; i < formula.fixed.size(); i++)
 	{
 		auto &ft = formula.fixed[i];
-		for (intptr_t j = 1; j <= ft.variables.size(); j++)
+		for (intptr_t j = 0; j < ft.variables.size(); j++)
 		{
 			intptr_t col = find_column(data, ft.variables[j]);
-			if (col == 0) {
+			if (col < 0) {
 				throw error("Variable '%' not found in data", ft.variables[j]);
 			}
 			// Avoid duplicates
@@ -814,7 +814,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	}
 
 	// Random effects variables
-	for (intptr_t i = 1; i <= formula.random.size(); i++)
+	for (intptr_t i = 0; i < formula.random.size(); i++)
 	{
 		auto &rt = formula.random[i];
 
@@ -845,7 +845,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		for (auto &gname : group_components)
 		{
 			intptr_t gcol = find_column(data, gname);
-			if (gcol == 0) {
+			if (gcol < 0) {
 				throw error("Grouping variable '%' not found in data", gname);
 			}
 			bool found = false;
@@ -858,13 +858,13 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 			}
 		}
 
-		for (intptr_t j = 1; j <= rt.slopes.size(); j++)
+		for (intptr_t j = 0; j < rt.slopes.size(); j++)
 		{
 			auto &st = rt.slopes[j];
-			for (intptr_t v = 1; v <= st.variables.size(); v++)
+			for (intptr_t v = 0; v < st.variables.size(); v++)
 			{
 				intptr_t scol = find_column(data, st.variables[v]);
-				if (scol == 0) {
+				if (scol < 0) {
 					throw error("Variable '%' not found in data", st.variables[v]);
 				}
 				bool found2 = false;
@@ -880,10 +880,10 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	}
 
 	// Smooth term variables
-	for (intptr_t i = 1; i <= formula.smooth.size(); i++)
+	for (intptr_t i = 0; i < formula.smooth.size(); i++)
 	{
 		intptr_t scol = find_column(data, formula.smooth[i].variable);
-		if (scol == 0) {
+		if (scol < 0) {
 			throw error("Smooth variable '%' not found in data", formula.smooth[i].variable);
 		}
 		bool found = false;
@@ -899,7 +899,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		if (!formula.smooth[i].by.empty())
 		{
 			intptr_t bcol = find_column(data, formula.smooth[i].by);
-			if (bcol == 0) {
+			if (bcol < 0) {
 				throw error("By-variable '%' not found in data", formula.smooth[i].by);
 			}
 			found = false;
@@ -917,7 +917,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	if (formula.has_offset())
 	{
 		intptr_t off_col = find_column(data, formula.offset);
-		if (off_col == 0) {
+		if (off_col < 0) {
 			throw error("Offset variable '%' not found in data", formula.offset);
 		}
 		bool found = false;
@@ -949,12 +949,12 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	// Validate response range for beta regression.
 	if (family == "beta")
 	{
-		for (intptr_t i = 1; i <= dm.nobs; i++)
+		for (intptr_t i = 0; i < dm.nobs; i++)
 		{
 			double yi = dm.y[i];
 			if (yi <= 0.0 || yi >= 1.0) {
 				throw error("Beta regression requires response values strictly in (0, 1); "
-				            "found y = % at observation %", yi, i);
+				            "found y = % at observation %", yi, i + 1);
 			}
 		}
 	}
@@ -965,12 +965,12 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	if (formula.has_offset())
 	{
 		intptr_t off_col = find_column(data, formula.offset);
-		if (off_col == 0) {
+		if (off_col < 0) {
 			throw error("Offset variable '%' not found in data", formula.offset);
 		}
 		off = Array<double>(dm.nobs, 0.0);
 		for (intptr_t i = 0; i < dm.nobs; i++)
-			off[i + 1] = data.get_cell(rows[i], off_col).to_float();
+			off[i] = data.get_cell(rows[i], off_col).to_float();
 	}
 
 	// ── Build smooth bases and augment design matrix ──────────────
@@ -984,14 +984,14 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		SmoothBasis basis;       // the shared basis (same knots for all levels)
 		intptr_t col_start;      // 0-based starting column in augmented X
 		intptr_t col_count;      // number of columns (k_eff)
-		intptr_t smooth_index;   // 1-based index into formula.smooth
+		intptr_t smooth_index;   // 0-based index into formula.smooth
 		String level;            // empty for plain smooth, level name for by-factor
 	};
 	std::vector<SmoothSlice> smooth_slices;
 
 	if (formula.has_smooth_terms())
 	{
-		for (intptr_t si = 1; si <= formula.smooth.size(); si++)
+		for (intptr_t si = 0; si < formula.smooth.size(); si++)
 		{
 			auto &st = formula.smooth[si];
 			intptr_t scol = find_column(data, st.variable);
@@ -1014,8 +1014,8 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 				for (intptr_t row : rows)
 				{
 					auto val = data.get_cell(row, scol);
-					for (intptr_t lv = 1; lv <= levels.size(); lv++) {
-						if (val == levels[lv]) { indices.push_back(lv - 1); break; }
+					for (intptr_t lv = 0; lv < levels.size(); lv++) {
+						if (val == levels[lv]) { indices.push_back(lv); break; }
 					}
 				}
 
@@ -1078,16 +1078,16 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 						by_vals.push_back(data.get_cell(row, bcol));
 					}
 
-					for (intptr_t lv = 1; lv <= levels.size(); lv++)
+					for (intptr_t lv = 0; lv < levels.size(); lv++)
 					{
 						SmoothSlice slice;
 						// Create a zero-masked copy of the basis for this level.
 						slice.basis = basis; // copy (shares knots, F_deriv2, Z_absorb)
 						slice.basis.B = Array<double>(dm.nobs, basis.k_eff, 0.0);
-						for (intptr_t j = 1; j <= basis.k_eff; j++) {
+						for (intptr_t j = 0; j < basis.k_eff; j++) {
 							for (intptr_t i = 0; i < (intptr_t)rows.size(); i++) {
 								if (by_vals[i] == levels[lv]) {
-									slice.basis.B(i + 1, j) = basis.B(i + 1, j);
+									slice.basis.B(i, j) = basis.B(i, j);
 								}
 								// else: already 0
 							}
@@ -1144,9 +1144,9 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 			intptr_t nc = sb.B.ncol();
 			if (nr == 0 || nc == 0) continue;
 			double mean_BtB = 0.0;
-			for (intptr_t j = 1; j <= nc; j++) {
+			for (intptr_t j = 0; j < nc; j++) {
 				double col_sq = 0.0;
-				for (intptr_t i = 1; i <= nr; i++) {
+				for (intptr_t i = 0; i < nr; i++) {
 					double v = sb.B(i, j);
 					col_sq += v * v;
 				}
@@ -1155,15 +1155,15 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 			mean_BtB /= (double) nc;
 			double mean_S = 0.0;
 			intptr_t Sn = sb.S.nrow();
-			for (intptr_t j = 1; j <= Sn; j++) {
+			for (intptr_t j = 0; j < Sn; j++) {
 				mean_S += std::abs(sb.S(j, j));
 			}
 			if (Sn > 0) mean_S /= (double) Sn;
 			if (mean_BtB > 0.0 && mean_S > 0.0)
 			{
 				double scale = mean_BtB / mean_S;
-				for (intptr_t i = 1; i <= Sn; i++) {
-					for (intptr_t j = 1; j <= Sn; j++) {
+				for (intptr_t i = 0; i < Sn; i++) {
+					for (intptr_t j = 0; j < Sn; j++) {
 						sb.S(i, j) *= scale;
 					}
 				}
@@ -1180,8 +1180,8 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		Array<double> X_aug(dm.nobs, p_total, 0.0);
 
 		// Copy parametric columns.
-		for (intptr_t j = 1; j <= n_parametric; j++) {
-			for (intptr_t i = 1; i <= dm.nobs; i++) {
+		for (intptr_t j = 0; j < n_parametric; j++) {
+			for (intptr_t i = 0; i < dm.nobs; i++) {
 				X_aug(i, j) = dm.X(i, j);
 			}
 		}
@@ -1190,8 +1190,8 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		for (auto &sl : smooth_slices)
 		{
 			for (intptr_t j = 0; j < sl.col_count; j++) {
-				for (intptr_t i = 1; i <= dm.nobs; i++) {
-					X_aug(i, sl.col_start + j + 1) = sl.basis.B(i, j + 1);
+				for (intptr_t i = 0; i < dm.nobs; i++) {
+					X_aug(i, sl.col_start + j) = sl.basis.B(i, j);
 				}
 			}
 		}
@@ -1203,20 +1203,20 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		{
 			for (intptr_t r = 0; r < sl.col_count; r++) {
 				for (intptr_t c = 0; c < sl.col_count; c++) {
-					S_aug(sl.col_start + r + 1, sl.col_start + c + 1) = sl.basis.S(r + 1, c + 1);
+					S_aug(sl.col_start + r, sl.col_start + c) = sl.basis.S(r, c);
 				}
 			}
 		}
 
 		// Update coefficient names.
 		Array<String> aug_names;
-		for (intptr_t j = 1; j <= dm.coef_names.size(); j++) {
+		for (intptr_t j = 0; j < dm.coef_names.size(); j++) {
 			aug_names.append(dm.coef_names[j]);
 		}
 		for (auto &sl : smooth_slices)
 		{
 			auto &st = formula.smooth[sl.smooth_index];
-			for (intptr_t j = 1; j <= sl.col_count; j++)
+			for (intptr_t j = 0; j < sl.col_count; j++)
 			{
 				String name("s(");
 				name.append(st.variable);
@@ -1226,7 +1226,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 					name.append(sl.level);
 				}
 				name.append(".");
-				name.append(std::to_string(j));
+				name.append(std::to_string(j + 1));
 				aug_names.append(std::move(name));
 			}
 		}
@@ -1265,7 +1265,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		{
 			for (intptr_t r = 0; r < sl.col_count; r++) {
 				for (intptr_t c = 0; c < sl.col_count; c++) {
-					S_aug(sl.col_start + r + 1, sl.col_start + c + 1) = sl.basis.S(r + 1, c + 1);
+					S_aug(sl.col_start + r, sl.col_start + c) = sl.basis.S(r, c);
 				}
 			}
 		}
@@ -1334,7 +1334,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 				SmoothBasis &sb = smooth_slices[i].basis;
 				sb.B = Array<double>();   // training-only, drop for storage
 				sb.S = Array<double>();   // penalty, not needed at predict
-				model.smooth_terms[i + 1].basis_data = std::move(sb);
+				model.smooth_terms[i].basis_data = std::move(sb);
 			}
 		}
 	}
@@ -1342,7 +1342,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	{
 		// ── Mixed model path (unified Laplace engine) ────────────────
 		std::vector<GroupingInfo> groups;
-		for (intptr_t i = 1; i <= formula.random.size(); i++)
+		for (intptr_t i = 0; i < formula.random.size(); i++)
 		{
 			groups.push_back(build_grouping(data, formula.random[i], rows, reference_levels));
 		}
@@ -1426,10 +1426,10 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 		for (intptr_t j = 0; j < p; j++)
 		{
 			double sum = 0.0;
-			for (intptr_t i = 1; i <= n; i++) {
-				sum += model.X(i, j + 1);
+			for (intptr_t i = 0; i < n; i++) {
+				sum += model.X(i, j);
 			}
-			model.col_means[j + 1] = sum / n;
+			model.col_means[j] = sum / n;
 		}
 	}
 
@@ -1443,7 +1443,7 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	// fitting, so downstream code can align per-observation quantities
 	// (fitted values, residuals, scaled residuals, posterior predictions)
 	// back to specific rows in the source DataTable. `rows` is already a
-	// std::vector<intptr_t> with 1-based DataTable row indices, so the field
+	// std::vector<intptr_t> with 0-based DataTable row indices, so the field
 	// is populated by a single copy.
 	model.source_rows = rows;
 
@@ -1475,7 +1475,7 @@ static void scale_default_priors(PriorSpec &priors,
 {
 	// Find response column.
 	intptr_t resp_col = find_column(data, formula.response);
-	if (resp_col == 0) return;  // response not found; fit() will error later
+	if (resp_col < 0) return;  // response not found; fit() will error later
 
 	intptr_t n = data.row_count();
 	if (n < 2) return;
@@ -1484,7 +1484,7 @@ static void scale_default_priors(PriorSpec &priors,
 	double sum = 0, sum2 = 0;
 	intptr_t count = 0;
 
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		double v = 0;
 		if (!try_parse_double(data.get_cell(i, resp_col), &v))
@@ -1606,7 +1606,7 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 	model.ci_upper = Array<double>(p, 0.0);
 	model.pd = Array<double>(p, 0.0);
 
-	for (intptr_t j = 1; j <= p; j++)
+	for (intptr_t j = 0; j < p; j++)
 	{
 		double mean = model.beta[j];
 		double var = model.vcov(j, j);
@@ -1627,7 +1627,7 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 	}
 
 	// Update se/stat for compatibility with existing display code.
-	for (intptr_t j = 1; j <= p; j++)
+	for (intptr_t j = 0; j < p; j++)
 	{
 		model.se[j] = model.posterior_sd[j];
 		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
@@ -1638,7 +1638,7 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 	if (model.has_random_effects())
 	{
 		intptr_t n_hyper = 0;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++) {
+		for (intptr_t g = 0; g < model.random_effects.size(); g++) {
 			n_hyper += model.random_effects[g].term_names.size();
 		}
 		if (model.is_gaussian()) {
@@ -1651,11 +1651,11 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 		model.hyper_ci_lower = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 		model.hyper_ci_upper = Array<double>(n_hyper, std::numeric_limits<double>::quiet_NaN());
 
-		intptr_t idx = 1;
-		for (intptr_t g = 1; g <= model.random_effects.size(); g++)
+		intptr_t idx = 0;
+		for (intptr_t g = 0; g < model.random_effects.size(); g++)
 		{
 			auto &re = model.random_effects[g];
-			for (intptr_t t = 1; t <= re.term_names.size(); t++)
+			for (intptr_t t = 0; t < re.term_names.size(); t++)
 			{
 				std::string name = "sd(" + std::string(re.term_names[t].data(), re.term_names[t].size())
 				                 + "|" + std::string(re.group_name.data(), re.group_name.size()) + ")";
@@ -1791,7 +1791,7 @@ static void check_prior_scale_mismatch(Model &model,
 	{
 		if (formula.has_random_effects())
 		{
-			for (intptr_t k = 1; k <= model.hyper_names.size(); k++)
+			for (intptr_t k = 0; k < model.hyper_names.size(); k++)
 			{
 				if (model.hyper_names[k] == String("sd(residual)"))
 				{
@@ -1809,13 +1809,13 @@ static void check_prior_scale_mismatch(Model &model,
 
 	// Compute sd(y) on the raw scale (identity link, so link scale = raw).
 	intptr_t resp_col = find_column(data, formula.response);
-	if (resp_col == 0) return;
+	if (resp_col < 0) return;
 	intptr_t n = data.row_count();
 	if (n < 2) return;
 
 	double sum = 0, sum2 = 0;
 	intptr_t count = 0;
-	for (intptr_t i = 1; i <= n; i++)
+	for (intptr_t i = 0; i < n; i++)
 	{
 		double v = 0;
 		if (!try_parse_double(data.get_cell(i, resp_col), &v)) continue;

@@ -15,27 +15,28 @@
  *                                                                                                                     *
  * Created: 04/06/2020                                                                                                 *
  *                                                                                                                     *
- * Purpose: Regex builtin functions.                                                                                   *
+ * Purpose: Regex builtin functions. The script API is stateful (match, then read groups), so the last match is        *
+ * stored in the boxed ScriptRegex next to the compiled pattern; the C++ Regex class itself is stateless.              *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #ifndef PHONOMETRICA_FUNC_REGEX_HPP
 #define PHONOMETRICA_FUNC_REGEX_HPP
 
-#include <phon/regex.hpp>
+#include <phon/runtime/script_regex.hpp>
 #include <phon/runtime.hpp>
 
 namespace phonometrica {
 
 static Variant regex_get_field(Runtime &rt, std::span<Variant> args)
 {
-	auto &re = cast<Regex>(args[0]);
+	auto &re = cast<ScriptRegex>(args[0]);
 	auto &key = cast<String>(args[1]);
 	if (key == rt.length_string) {
-		return re.count();
+		return re.last.count();
 	}
 	else if (key == "pattern") {
-		return re.pattern();
+		return re.re.pattern();
 	}
 
 	throw error("[Index error] Regex type has no member named \"%\"", key);
@@ -44,7 +45,7 @@ static Variant regex_get_field(Runtime &rt, std::span<Variant> args)
 static Variant regex_new1(Runtime &, std::span<Variant> args)
 {
 	auto &pattern = cast<String>(args[0]);
-	return make_handle<Regex>(pattern);
+	return make_handle<ScriptRegex>(pattern);
 }
 
 static Variant regex_new2(Runtime &, std::span<Variant> args)
@@ -53,70 +54,79 @@ static Variant regex_new2(Runtime &, std::span<Variant> args)
 	auto &flags = cast<String>(args[1]);
 
 
-	return make_handle<Regex>(pattern, flags);
+	return make_handle<ScriptRegex>(pattern, flags);
 }
 
 static Variant regex_match1(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
+	auto &regex = cast<ScriptRegex>(args[0]);
 	auto &subject = cast<String>(args[1]);
+	regex.last = regex.re.match(subject);
 
-
-	return regex.match(subject);
+	return regex.last.has_match();
 }
 
 static Variant regex_match2(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
+	auto &regex = cast<ScriptRegex>(args[0]);
 	auto &subject = cast<String>(args[1]);
 	intptr_t pos = cast<intptr_t>(args[2]);
 
-	return regex.match(subject, pos);
+	// The starting position is a 1-based character index, converted by the String itself (strings
+	// are 1-based at the native level too); an empty subject never matches.
+	if (subject.empty()) {
+		regex.last = Match();
+	}
+	else {
+		regex.last = regex.re.match(subject, subject.index_to_iter(pos));
+	}
+
+	return regex.last.has_match();
 }
 
 static Variant regex_has_match(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
-	return regex.has_match();
+	auto &regex = cast<ScriptRegex>(args[0]);
+	return regex.last.has_match();
 }
 
 static Variant regex_count(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
-	return regex.count();
+	auto &regex = cast<ScriptRegex>(args[0]);
+	return regex.last.count();
 }
 
 static Variant regex_group(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
+	auto &regex = cast<ScriptRegex>(args[0]);
 	intptr_t i = cast<intptr_t>(args[1]);
-	if (!regex.has_match() || i < 0 || i > regex.count()) {
+	if (!regex.last.has_match() || i < 0 || i > regex.last.count()) {
 		throw error("[Index error] Invalid group index in regular expression: %", i);
 	}
 
-	return regex.capture(i);
+	return regex.last.capture(i);
 }
 
 static Variant regex_get_start(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
+	auto &regex = cast<ScriptRegex>(args[0]);
 	intptr_t i = cast<intptr_t>(args[1]);
-	if (!regex.has_match() || i < 0 || i > regex.count()) {
+	if (!regex.last.has_match() || i < 0 || i > regex.last.count()) {
 		throw error("[Index error] Invalid group index in regular expression: %", i);
 	}
 
-	return regex.capture_start(i);
+	return regex.last.capture_start(i);
 }
 
 static Variant regex_get_end(Runtime &, std::span<Variant> args)
 {
-	auto &regex = cast<Regex>(args[0]);
+	auto &regex = cast<ScriptRegex>(args[0]);
 	intptr_t i = cast<intptr_t>(args[1]);
-	if (!regex.has_match() || i < 0 || i > regex.count()) {
+	if (!regex.last.has_match() || i < 0 || i > regex.last.count()) {
 		throw error("[Index error] Invalid group index in regular expression: %", i);
 	}
 
-	return regex.capture_end(i);
+	return regex.last.capture_end(i);
 }
 
 } // namespace phonometrica

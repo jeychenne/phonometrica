@@ -42,10 +42,11 @@ static Variant math_abs(Runtime &, std::span<Variant> args)
 template<double(*f)(double)>
 Variant math_array_func(Runtime &, std::span<Variant> args)
 {
-	auto &array = cast<Array<double>>(args[0]);
+	const auto &array = cast<Array<double>>(args[0]);
 	Array<double> result(array.nrow(), array.ncol(), 0.0);
-	for (intptr_t i = 1; i <= array.size(); i++) {
-		result[i] = f(array[i]);
+	auto out = result.data(); // the result is unique, so this cannot copy
+	for (intptr_t i = 0; i < array.size(); i++) {
+		out[i] = f(array[i]);
 	}
 
 	return make_handle<Array<double>>(std::move(result));
