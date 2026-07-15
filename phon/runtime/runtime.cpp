@@ -2165,8 +2165,11 @@ Handle<Closure> Runtime::compile_string(const String &code)
 Variant Runtime::do_file(const String &path)
 {
 	auto old_path = current_path;
-	current_path = path;
-	auto closure = compile_file(path);
+	// Anchor the script to an absolute path so that script_path() — and script-side
+	// helpers like get_directory(get_script_path()) — keep working when the script is
+	// invoked with a path relative to the caller's working directory.
+	current_path = filesystem::exists(path) ? filesystem::full_path(path) : path;
+	auto closure = compile_file(current_path);
 	auto result = interpret(closure);
 	current_path = old_path;
 
