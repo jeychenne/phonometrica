@@ -1,4 +1,4 @@
-// Phonometrica engine — Array tests (view/buffer, column-major, CoW).
+// Phonometrica engine — NumArray tests (view/buffer, column-major, CoW).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
 #include <phon/engine/types/array.hpp>
@@ -14,9 +14,9 @@ intptr_t cm2(intptr_t r, intptr_t c, intptr_t nrow) { return r + c * nrow; }
 
 } // namespace
 
-TEST_CASE("Array construction: shape, zero-fill, contiguity")
+TEST_CASE("NumArray construction: shape, zero-fill, contiguity")
 {
-	Array a = Array::make_2d(2, 3);
+	NumArray a = NumArray::make_2d(2, 3);
 	CHECK(a.rank() == 2);
 	CHECK(a.dim(0) == 2);
 	CHECK(a.dim(1) == 3);
@@ -31,9 +31,9 @@ TEST_CASE("Array construction: shape, zero-fill, contiguity")
 		CHECK(a.data()[i] == 0.0);
 }
 
-TEST_CASE("Array element write/read (column-major)")
+TEST_CASE("NumArray element write/read (column-major)")
 {
-	Array a = Array::make_2d(2, 3);
+	NumArray a = NumArray::make_2d(2, 3);
 	double *d = a.detach(); // unique+contiguous: in-place base
 	for (intptr_t r = 0; r < 2; ++r)
 		for (intptr_t c = 0; c < 3; ++c)
@@ -52,18 +52,18 @@ TEST_CASE("Array element write/read (column-major)")
 	CHECK(a.get(idx) == 10.0);
 }
 
-TEST_CASE("Array detach on a unique contiguous array mutates in place")
+TEST_CASE("NumArray detach on a unique contiguous array mutates in place")
 {
-	Array a = Array::make_1d(4);
+	NumArray a = NumArray::make_1d(4);
 	double *d1 = a.detach();
 	double *d2 = a.detach(); // still unique+contiguous
 	CHECK(d1 == d2);         // no clone
 	CHECK(a.cell()->buf->header.is_unique());
 }
 
-TEST_CASE("Array CoW: a shared view detaches on mutation")
+TEST_CASE("NumArray CoW: a shared view detaches on mutation")
 {
-	Array a = Array::make_1d(3);
+	NumArray a = NumArray::make_1d(3);
 	{
 		double *d = a.detach();
 		d[0] = 1.0;
@@ -71,7 +71,7 @@ TEST_CASE("Array CoW: a shared view detaches on mutation")
 		d[2] = 3.0;
 	}
 
-	Array b = a; // shares the same view cell (refcount 2)
+	NumArray b = a; // shares the same view cell (refcount 2)
 	CHECK(!a.unique());
 	CHECK(!b.unique());
 	CHECK(a.cell() == b.cell()); // same view before any mutation
@@ -88,11 +88,11 @@ TEST_CASE("Array CoW: a shared view detaches on mutation")
 	CHECK(b.get(&i0) == 99.0);
 }
 
-TEST_CASE("Array equality: shape + elements")
+TEST_CASE("NumArray equality: shape + elements")
 {
-	Array a = Array::make_1d(3);
-	Array b = Array::make_1d(3);
-	Array c = Array::make_1d(2);
+	NumArray a = NumArray::make_1d(3);
+	NumArray b = NumArray::make_1d(3);
+	NumArray c = NumArray::make_1d(2);
 	{
 		double *da = a.detach();
 		double *db = b.detach();
@@ -101,7 +101,7 @@ TEST_CASE("Array equality: shape + elements")
 		da[2] = db[2] = 3.0;
 	}
 	Class *ka = get_class(CID_ARRAY);
-	auto as_cell = [](Array &x) { return reinterpret_cast<const Cell *>(x.cell()); };
+	auto as_cell = [](NumArray &x) { return reinterpret_cast<const Cell *>(x.cell()); };
 	CHECK(ka->equals(as_cell(a), as_cell(b)));  // same shape + elements
 	CHECK(!ka->equals(as_cell(a), as_cell(c))); // different shape
 	double *db2 = b.detach();

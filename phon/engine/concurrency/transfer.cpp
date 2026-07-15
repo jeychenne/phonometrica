@@ -170,9 +170,9 @@ Value do_transfer(Isolate &iso, Value v, SeenMap &seen)
 	}
 	case CID_ARRAY:
 	{
-		// Keep the copy alive in a named local: a temporary Array would release its
+		// Keep the copy alive in a named local: a temporary NumArray would release its
 		// cell at the end of the statement, before we retain the borrowed to_value().
-		Array copy = Array::from_value(v).transfer_to_thread();
+		NumArray copy = NumArray::from_value(v).transfer_to_thread();
 		Value out = copy.to_value();
 		retain(out.as_cell());
 		seen.insert(c, out);

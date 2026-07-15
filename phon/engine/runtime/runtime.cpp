@@ -66,7 +66,7 @@ Value builtin_to_string(Isolate &iso, NativeCell *, Value *args, int argc)
 	(void) argc;
 	// A native returns a value carrying +1. `stringify` yields a temporary String, so
 	// retain its cell before the temporary drops (otherwise a *freshly built* string —
-	// from an Array/List/Table — would be freed out from under the returned value).
+	// from a NumArray/List/Table — would be freed out from under the returned value).
 	String s = stringify(iso, args[0]);
 	Value v = s.to_value();
 	retain(v.as_cell());
@@ -101,7 +101,7 @@ Value builtin_len(Isolate &iso, NativeCell *, Value *args, int argc)
 		case CID_STRING: return Value::make_int(String::from_value(v).length());
 		case CID_TABLE: return Value::make_int(Table::from_value(v).size());
 		case CID_SET: return Value::make_int(Set::from_value(v).size());
-		case CID_ARRAY: return Value::make_int(Array::from_value(v).size());
+		case CID_ARRAY: return Value::make_int(NumArray::from_value(v).size());
 		default: break;
 		}
 	}
@@ -149,7 +149,7 @@ Value builtin_freeze(Isolate &iso, NativeCell *, Value *args, int argc)
 	(void) iso;
 	(void) argc;
 	// freeze(x): make x an immutable, cross-thread-shareable value (§8.3). Strings and
-	// Array buffers flip to the frozen/shared regime (zero-copy on send); other values
+	// NumArray buffers flip to the frozen/shared regime (zero-copy on send); other values
 	// are copied on send anyway, so freezing them is a harmless no-op. Returns x.
 	Value v = args[0];
 	if (v.is_cell())
@@ -157,7 +157,7 @@ Value builtin_freeze(Isolate &iso, NativeCell *, Value *args, int argc)
 		switch (class_of(v))
 		{
 		case CID_STRING: String::from_value(v).make_frozen(); break;
-		case CID_ARRAY: Array::from_value(v).make_frozen(); break;
+		case CID_ARRAY: NumArray::from_value(v).make_frozen(); break;
 		default: break;
 		}
 		retain(v.as_cell()); // native returns a value carrying +1

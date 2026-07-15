@@ -45,7 +45,7 @@ void freeze_constant(Value v)
 		String::from_value(v).make_frozen(); // also builds the lazy caches eagerly
 		break;
 	case CID_ARRAY:
-		Array::from_value(v).make_frozen();
+		NumArray::from_value(v).make_frozen();
 		break;
 	default:
 		mark_frozen_shared(c); // class objects and any other cell-valued constant

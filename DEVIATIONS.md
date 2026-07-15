@@ -76,6 +76,9 @@ recorded here with rationale, for the project owner's review.
    format, and UTF-16/UTF-32 conversion. Deferred to the milestone that supplies
    the dependency: `split`/`join` (Array<String>, M6), `replace(Regex,…)` (M5),
    positional `arg`, Qt/wxWidgets conversions, and `wstring`/`wchar_t` (Windows).
+   *Update (Phonometrica-cutover pass):* `split`/`join`, `replace(Regex,…)`,
+   `arg`, and the Qt conversions are now done — see "Embedding gaps for the
+   Phonometrica cutover" (items 36–39); wxWidgets and `wstring` remain deferred.
 
 7. **The script dictionary is named `Table` (design docs' "Map").** Renamed for
    source compatibility with Phonometrica, whose dictionary type is `Table`
@@ -1646,3 +1649,99 @@ Everything routes through `register_function` (the typed API) — no hand-writte
     churn of three shared string constants; each returns its loop count → total 800 000). ASan catches
     the regression; TSan does not (the racing accesses are relaxed-*atomic*, so no reported race).
 
+## Embedding gaps for the Phonometrica cutover (design §11; MIGRATION_NOTES step 2)
+
+Closes the C++ embedding-surface gaps that blocked Phonometrica's adoption of the
+engine's String/File/Hashmap at VM cutover (Phonometrica's phase-1 audit trail:
+`~/Devel/phonometrica/MIGRATION_NOTES.md`).
+
+35. **The numeric array's C++ name is `NumArray`; a generic CoW `Array<T>` joins the
+    core containers.** Phonometrica needs a generic, growable, copy-on-write
+    `Array<T>` (element types: String, structs, handles, double, complex) as its
+    workhorse application container, with the goal that its `phon/base/array.hpp`
+    is replaced by an engine header at cutover with near-zero call-site churn —
+    which fixes the template's name as `phonometrica::Array<T>`. C++ forbids a
+    class and a class template with one name in one namespace (and a nested
+    namespace + `using` alias hits the same wall), so the numeric script array
+    (types/array.hpp, design §9/§5.3) keeps the **script-visible name "Array"**
+    but its C++ class is renamed **`NumArray`** (registration string, `CID_ARRAY`,
+    `ArrayCell`/`ArrayBuffer`, opcodes, error messages, and golden dumps are all
+    unchanged). The generic template is **adopted wholesale from Phonometrica's
+    phon/base/array.hpp** into `core/array.hpp` (0-based, `npos == -1`, buffer
+    sharing with detach-on-first-mutation, 1-D growable / 2-D fixed column-major
+    matrix), re-based onto engine primitives: `raw_alloc`/`raw_free`,
+    `relocate_range` (memcpy for trivially relocatable T), an intrusive relaxed
+    atomic refcount replacing `Countable`/`IntrusivePtr` (handles may be handed
+    across threads; concurrent mutation of one buffer is unsupported, as before),
+    and value-initialization where the old buffer relied on calloc zero-fill.
+    Architecture §4 lists only Vector/FlatHashMap/SmallVector as core containers,
+    so `Array<T>` is an addition, not a replacement: `Vector<T>` remains the
+    engine-internal buffer (List's storage); `Array<T>` is the *application-facing*
+    container (embedding surface, §11) and nothing in the engine core is required
+    to use it. Bounds-checked paths (`at`, `insert` positions) throw
+    `std::runtime_error` exactly like the old `error()` (which *was* a formatted
+    `std::runtime_error`); unchecked `operator[]` asserts, engine-style. The public
+    facade `phon/array.hpp` now exports both `Array<T>` and `NumArray`.
+    Covered by `test/unit/test_generic_array.cpp` (CoW aliasing, growth schedule,
+    matrix layout, npos queries, move-only and struct elements, span interop).
+
+36. **`String::split(Substring)` / `String::join(Array<String>, Substring)`** (M1 #6
+    deferral closed). Byte-wise scan with old Phonometrica's exact edge cases: an
+    empty separator throws (`std::runtime_error`, "[Runtime error] Cannot split
+    string with empty delimiter"); a separator whose byte length is >= the
+    string's yields the whole string as the single element (so `"ab".split("ab")`
+    is `["ab"]`, not `["", ""]`); leading/trailing/adjacent separators yield empty
+    chunks; `join` inserts the separator between consecutive elements only.
+    `split` returns the new generic `Array<String>` (types/string.hpp now includes
+    core/array.hpp — a downward include).
+
+37. **`String::replace(const Regex &, String after, intptr_t ntimes = -1)`** (M1 #6 /
+    M5 deferral closed), defined in types/regex.cpp so the String TU stays
+    PCRE2-free (string.hpp forward-declares `Regex`). Old Phonometrica semantics,
+    pinned by tests: only the **first** match is replaced; `%%` in `after` is
+    rewritten to the whole match and `%1`..`%9` to the capture groups **before**
+    splicing; `ntimes` bounds those placeholder substitutions inside `after`
+    (matching the old implementation, where it was forwarded to the inner
+    replaces). One deliberate refinement: a capture group that did not participate
+    in the match substitutes the **empty string** — the old code read an undefined
+    PCRE2 ovector entry there (garbage), and Phonometrica's ported phon/base/regex
+    throws; neither is right for a replacement template, and empty is Perl's
+    behavior. `Match` gains the byte-level accessors this needs —
+    `group_byte_start/group_byte_end` (0-based byte offsets, the layer under the
+    1-based grapheme positions) and `subject()`.
+
+38. **`String::arg(Substring...)` ×9 (Qt-style positional `%1`..`%9`)** (M1 #6
+    deferral closed). Sequential `replace("%N", argN)` chains exactly like old
+    Phonometrica, including the documented Qt caveat that a placeholder occurring
+    in an earlier argument's *text* is rewritten by later substitutions (pinned by
+    test).
+
+39. **Qt conversions behind `PHON_WITH_QT`** (M1 #6 deferral closed): `String(const
+    QString &)`, `explicit String(const QByteArray &)`, and `operator QString()`,
+    mirroring old Phonometrica's string.hpp verbatim. Header-only and strictly
+    macro-gated — no CMake option, no dependency added; an embedder defines
+    `PHON_WITH_QT` and provides the Qt include path. Verified against system Qt6
+    (compile + UTF-8 round-trip under ASan); not part of the default build or CI.
+
+40. **String construction self-bootstraps (static-initializer Strings are safe).**
+    Minting any cell needs the class registry (`cell_alloc` reads the class's
+    acyclic flag), so a file-scope `String` in an embedder ran before
+    `bootstrap()` and hit an unregistered registry. Rather than a documented
+    "don't do that" pattern, `string_create` — the single choke point every String
+    constructor funnels through — now calls `ensure_bootstrapped()` first.
+    `bootstrap()` was already idempotent and thread-safe (`std::call_once`), but
+    its fast path measured ~4% on the 2M-allocation strings bench, so the guard is
+    an inline acquire load of `g_bootstrapped` (published with release order at
+    the end of the once-body) + a predicted branch — the strings bench is then
+    unchanged (A/B: 203.8 ms without any check, 206.2 with the inline guard,
+    211.8 with call_once; best-of-5, Release). The declaration
+    lives in object/class.hpp next to the registry API — a declaration-only seam
+    like cell.hpp's cycle-collector seams, so the types layer never includes the
+    runtime; the definition stays in runtime/bootstrap.cpp (upward link-time
+    dependency only, all one library). Destruction order is safe by construction:
+    the registry singleton (a function-local static) completes construction
+    *inside* the first String's initializer, so it is destroyed after every static
+    String. Pinned by a file-scope String in test_string.cpp (constructed
+    pre-main, before the harness's bootstrap, ASan-clean). Other cell types keep
+    the bootstrap-first requirement — the constraint was only ever about Strings
+    (Phonometrica has static-initializer Strings; nothing else).

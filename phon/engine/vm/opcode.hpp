@@ -97,11 +97,11 @@ using Instruction = uint32_t;
 	_(LISTEXTEND)  /* A B    : R[A].append all elements of List R[B] (splat) */ \
 	_(GETINDEX)    /* A B C  : R[A] = R[B][R[C]]                             */ \
 	_(SETINDEX)    /* A B C  : R[A][R[B]] = R[C]                             */ \
-	_(GETIDXN)     /* A B C  : R[A] = R[B][R[B+1..B+C]]  (Array, C indices) */ \
+	_(GETIDXN)     /* A B C  : R[A] = R[B][R[B+1..B+C]]  (NumArray, C indices) */ \
 	_(SETIDXN)     /* A B C  : R[A][R[B..B+rank)] = R[C]; rank in EXTRA_ARG */ \
 	_(GETSLICE)    /* A B C  : R[A] = R[B][slice R[C],R[C+1],R[C+2]]         */ \
 	_(SETSLICE)    /* A B C  : R[A][slice R[B],R[B+1],R[B+2]] = R[C]         */ \
-	_(GETVIEW)     /* A B C  : R[A] = view of Array R[B]; C axes;3 regs/axis */ \
+	_(GETVIEW)     /* A B C  : R[A] = view of NumArray R[B]; C axes;3 regs/axis */ \
 	/* user classes: registration, instances, fields */                         \
 	_(DEFCLASS)    /* A Bx   : register class-def Bx; R[A] = its class obj   */ \
 	_(NEW)         /* A B    : R[A] = fresh instance of class object R[B]    */ \

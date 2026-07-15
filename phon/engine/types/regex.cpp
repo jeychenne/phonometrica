@@ -75,6 +75,62 @@ intptr_t Match::group_end(int n) const
 	return m_subject.distance(m_subject.begin(), m_subject.begin() + e) + 1;
 }
 
+intptr_t Match::group_byte_start(int n) const
+{
+	PHON_ASSERT(in_range(n) && group_is_set(n));
+	return static_cast<intptr_t>(m_starts[static_cast<size_t>(n)]);
+}
+
+intptr_t Match::group_byte_end(int n) const
+{
+	PHON_ASSERT(in_range(n) && group_is_set(n));
+	return static_cast<intptr_t>(m_ends[static_cast<size_t>(n)]);
+}
+
+// --- String::replace(Regex) ----------------------------------------------------
+//
+// Defined here (not string.cpp) so the String layer stays PCRE2-free. Old
+// Phonometrica semantics: replace the FIRST match only; `after` first has `%%`
+// rewritten to the whole match and `%1`..`%9` to the capture groups (a group that
+// did not participate substitutes the empty string); `ntimes` bounds those
+// placeholder substitutions inside `after` (-1 = all).
+
+String &String::replace(const Regex &pattern, String after, intptr_t ntimes)
+{
+	Match m = pattern.match(*this);
+
+	if (m.has_match())
+	{
+		// Byte range of the whole match in this string (the match's subject shares
+		// this string's buffer; offsets stay valid as long as we don't mutate first).
+		intptr_t start = m.group_byte_start(0);
+		intptr_t end = m.group_byte_end(0);
+
+		// Replace the whole match (same as Perl's $&).
+		after.replace("%%", m.group(0), ntimes);
+
+		// At most 9 captures can be replaced.
+		int count = m.group_count() - 1; // excluding group 0
+		if (count > 9)
+			count = 9;
+
+		for (int i = 1; i <= count; ++i)
+		{
+			const char num[3] = {'%', static_cast<char>('0' + i), '\0'};
+			after.replace(num, m.group_is_set(i) ? m.group(i) : String(), ntimes);
+		}
+
+		// Splice `after` over the matched byte range.
+		String out(size() - (end - start) + after.size(), false);
+		out.append(Substring(data(), static_cast<size_t>(start)));
+		out.append(after);
+		out.append(Substring(data() + end, static_cast<size_t>(size() - end)));
+		*this = std::move(out);
+	}
+
+	return *this;
+}
+
 // --- Regex --------------------------------------------------------------------
 
 void Regex::compile()

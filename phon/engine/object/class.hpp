@@ -25,6 +25,8 @@
 #include <phon/engine/core/symbol.hpp>
 #include <phon/engine/core/value.hpp>
 
+#include <atomic>
+
 namespace phonometrica {
 
 struct Cell;
@@ -125,8 +127,8 @@ enum BuiltinClassId : uint32_t
 	// the tree at renumber time — so these append here while keeping CID_INTEGER/FLOAT.
 	CID_NUMBER,
 	CID_REAL,
-	CID_ARRAY,       // numeric Array view (design §9 / architecture §5.3)
-	CID_ARRAYBUFFER, // the Array's separately-refcounted double buffer (never script-visible)
+	CID_ARRAY,       // numeric NumArray view (design §9 / architecture §5.3)
+	CID_ARRAYBUFFER, // the NumArray's separately-refcounted double buffer (never script-visible)
 	CID_BUILTIN_COUNT
 };
 
@@ -174,6 +176,24 @@ uint32_t type_epoch() noexcept;
 // Free dynamically-owned descriptors and class-object cells. Runs automatically
 // at process exit; exposed for tests/embedding teardown.
 void registry_shutdown();
+
+// Populate the registry with the builtin classes. Defined in runtime/bootstrap.cpp
+// (a declaration seam like cell.hpp's, so lower layers can self-bootstrap without
+// including the runtime). Idempotent and thread-safe (std::call_once); called
+// lazily by String construction so static-initializer Strings are safe before the
+// embedder gets to call it.
+void bootstrap();
+
+// True once bootstrap() has completed (set with release order at the end of the
+// once-body). Lets hot paths guard the lazy bootstrap with one inline acquire
+// load + predicted branch instead of the call_once machinery.
+extern std::atomic<bool> g_bootstrapped;
+
+PHON_FORCE_INLINE void ensure_bootstrapped()
+{
+	if (PHON_UNLIKELY(!g_bootstrapped.load(std::memory_order_acquire)))
+		bootstrap();
+}
 
 // --- subtyping ---
 

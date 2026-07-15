@@ -138,7 +138,7 @@ struct ListLiteral final : Ast
 	AstList items;
 };
 
-// `@[a, b, c]` (1-D) or `@[a, b; c, d]` (2-D, `;` separates rows) — a numeric Array
+// `@[a, b, c]` (1-D) or `@[a, b; c, d]` (2-D, `;` separates rows) — a numeric NumArray
 // literal (design §9). `elems` holds every element in row-major source order; `rank`
 // is 1 or 2, with `nrow`/`ncol` the shape (rank 1 → nrow 1). Integer elements are
 // promoted to Float when the array is built.

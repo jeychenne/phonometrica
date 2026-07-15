@@ -147,11 +147,11 @@ TEST_CASE("concurrency: freeze() makes a String immutable + shared, still readab
 	CHECK(s.grapheme_count() == 11);
 }
 
-// Freezing an Array freezes its buffer; a value copy shares that buffer zero-copy, and
+// Freezing a NumArray freezes its buffer; a value copy shares that buffer zero-copy, and
 // any mutation copies-on-write off the frozen original.
-TEST_CASE("concurrency: freeze() on an Array shares the buffer, mutation copies")
+TEST_CASE("concurrency: freeze() on a NumArray shares the buffer, mutation copies")
 {
-	Array a = Array::make_1d(4);
+	NumArray a = NumArray::make_1d(4);
 	double *d = a.detach();
 	for (int i = 0; i < 4; ++i)
 		d[i] = i + 1;
@@ -164,7 +164,7 @@ TEST_CASE("concurrency: freeze() on an Array shares the buffer, mutation copies"
 	const double *base = a.data();
 
 	// A value copy shares the frozen buffer — zero copy, pointer identity.
-	Array b = a;
+	NumArray b = a;
 	CHECK(b.data() == base);
 
 	// Mutating b copies-on-write off the frozen buffer; a stays put and stays frozen.
@@ -326,15 +326,15 @@ TEST_CASE("concurrency: transfer deep-copies a Table and a Set")
 	drop(sr);
 }
 
-TEST_CASE("concurrency: transfer of an unfrozen Array is an independent copy")
+TEST_CASE("concurrency: transfer of an unfrozen NumArray is an independent copy")
 {
 	Isolate iso;
-	Array a = Array::make_1d(3);
+	NumArray a = NumArray::make_1d(3);
 	double *d = a.detach();
 	d[0] = 1, d[1] = 2, d[2] = 3;
 
 	Value r = transfer_across_threads(iso, a.to_value());
-	Array ra = Array::from_value(r);
+	NumArray ra = NumArray::from_value(r);
 	CHECK(ra.data() != a.data()); // a fresh, independent buffer
 	intptr_t i0 = 0, i2 = 2;
 	CHECK(ra.get(&i0) == 1.0);
@@ -342,17 +342,17 @@ TEST_CASE("concurrency: transfer of an unfrozen Array is an independent copy")
 	drop(r);
 }
 
-TEST_CASE("concurrency: transfer of a frozen Array shares the buffer zero-copy")
+TEST_CASE("concurrency: transfer of a frozen NumArray shares the buffer zero-copy")
 {
 	Isolate iso;
-	Array f = Array::make_1d(3);
+	NumArray f = NumArray::make_1d(3);
 	double *fd = f.detach();
 	fd[0] = 5, fd[1] = 6, fd[2] = 7;
 	f.make_frozen();
 	const double *base = f.data();
 
 	Value r = transfer_across_threads(iso, f.to_value());
-	Array rf = Array::from_value(r);
+	NumArray rf = NumArray::from_value(r);
 	CHECK(rf.data() == base); // same buffer — zero copy
 	drop(r);
 }
@@ -401,13 +401,13 @@ TEST_CASE("concurrency: a transferred copy is owned exclusively by the receiver"
 	CHECK(l.size() == 3);
 }
 
-// The zero-copy acceptance case: a frozen Array buffer is shared across two threads by
+// The zero-copy acceptance case: a frozen NumArray buffer is shared across two threads by
 // pointer identity, read concurrently, with atomic refcounts. TSan is the assertion.
-TEST_CASE("concurrency: a frozen Array buffer is shared across threads by identity")
+TEST_CASE("concurrency: a frozen NumArray buffer is shared across threads by identity")
 {
 	Isolate iso;
 	constexpr intptr_t N = 4096;
-	Array shared = Array::make_1d(N);
+	NumArray shared = NumArray::make_1d(N);
 	double *sd = shared.detach();
 	for (intptr_t i = 0; i < N; ++i)
 		sd[i] = static_cast<double>(i);
@@ -419,7 +419,7 @@ TEST_CASE("concurrency: a frozen Array buffer is shared across threads by identi
 	std::atomic<bool> same_buffer{false};
 	std::atomic<double> worker_sum{0};
 	std::thread worker([&] {
-		Array wa = Array::from_value(copy);
+		NumArray wa = NumArray::from_value(copy);
 		same_buffer = (wa.data() == base);
 		double s = 0;
 		for (intptr_t i = 0; i < N; ++i)
@@ -582,16 +582,16 @@ TEST_CASE("concurrency: a Channel transfers List payloads across threads")
 	drop(ch);
 }
 
-// A frozen Array sent through a channel is shared zero-copy: the consumer sees the same
+// A frozen NumArray sent through a channel is shared zero-copy: the consumer sees the same
 // buffer pointer the producer froze, read concurrently while the producer still holds it.
-TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-copy")
+TEST_CASE("concurrency: a frozen NumArray sent through a Channel is shared zero-copy")
 {
 	Isolate main_iso;
 	Value none;
 	Value ch = builtin_channel(main_iso, nullptr, &none, 0);
 
 	constexpr intptr_t M = 2048;
-	Array shared = Array::make_1d(M);
+	NumArray shared = NumArray::make_1d(M);
 	double *sd = shared.detach();
 	for (intptr_t i = 0; i < M; ++i)
 		sd[i] = static_cast<double>(i);
@@ -604,7 +604,7 @@ TEST_CASE("concurrency: a frozen Array sent through a Channel is shared zero-cop
 		WorkerScope w;
 		Value a[1] = {ch};
 		Value v = builtin_receive(w.iso, nullptr, a, 1);
-		Array wa = Array::from_value(v);
+		NumArray wa = NumArray::from_value(v);
 		same = (wa.data() == base);
 		double s = 0;
 		for (intptr_t i = 0; i < M; ++i)

@@ -21,6 +21,7 @@
 #define PHON_TYPES_STRING_HPP
 
 #include <phon/engine/base/definitions.hpp>
+#include <phon/engine/core/array.hpp>
 #include <phon/engine/core/cell.hpp>
 #include <phon/engine/core/handle.hpp>
 #include <phon/engine/core/value.hpp>
@@ -30,7 +31,14 @@
 #include <string>
 #include <string_view>
 
+#ifdef PHON_WITH_QT
+#include <QByteArray>
+#include <QString>
+#endif
+
 namespace phonometrica {
+
+class Regex; // types/regex.hpp; the Regex overload of replace lives in types/regex.cpp
 
 using Substring = std::string_view;
 
@@ -99,6 +107,13 @@ public:
 	String(String &&) noexcept = default;
 	String &operator=(const String &) = default;
 	String &operator=(String &&) noexcept = default;
+
+#ifdef PHON_WITH_QT
+	// Qt interop (opt-in): mirrors old Phonometrica's String exactly.
+	String(const QString &str) : String(str.toUtf8()) {}
+	explicit String(const QByteArray &utf8) : String(utf8.data(), intptr_t(utf8.size())) {}
+	operator QString() const { return QString::fromUtf8(data(), int(size())); }
+#endif
 
 	// --- raw / byte access ---
 
@@ -196,7 +211,28 @@ public:
 	void chop(intptr_t new_byte_size);
 
 	String &replace(Substring before, Substring after, intptr_t ntimes = -1);
+	// Replace the first match of `pattern`, substituting `%%` (the whole match) and
+	// `%1`..`%9` (capture groups) inside `after` first — old Phonometrica semantics.
+	// `ntimes` bounds those placeholder substitutions within `after` (-1 = all).
+	// Defined in types/regex.cpp.
+	String &replace(const Regex &pattern, String after, intptr_t ntimes = -1);
 	String &remove(Substring what, intptr_t ntimes = -1);
+
+	// Replace positional arguments %1 to %9, Qt-style (each `arg` is substituted in
+	// order, so a placeholder occurring in an earlier argument's text is rewritten by
+	// the later ones — exactly the old Phonometrica behavior).
+	String &arg(Substring a1);
+	String &arg(Substring a1, Substring a2);
+	String &arg(Substring a1, Substring a2, Substring a3);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5, Substring a6);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5, Substring a6,
+	            Substring a7);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5, Substring a6,
+	            Substring a7, Substring a8);
+	String &arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5, Substring a6,
+	            Substring a7, Substring a8, Substring a9);
 
 	String &trim();
 	String &ltrim();
@@ -218,6 +254,14 @@ public:
 
 	intptr_t find(Substring needle, intptr_t from = 1) const;
 	intptr_t rfind(Substring needle) const;
+
+	// Split on a byte-wise separator (old Phonometrica semantics: an empty separator
+	// throws; a separator no shorter than the string yields the whole string as the
+	// single element; leading/trailing separators yield empty chunks).
+	Array<String> split(Substring separator) const;
+
+	// Join `strings` with `separator` between consecutive elements.
+	static String join(const Array<String> &strings, Substring separator);
 	bool contains(Substring needle) const;
 	bool contains(char32_t c) const;
 	bool starts_with(Substring prefix) const;

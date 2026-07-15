@@ -4,7 +4,7 @@
 // Three tiers live here:
 //   * sys_alloc/sys_free/sys_realloc — malloc-backed, OOM-checked bytes.
 //   * raw_alloc/raw_free            — over-alignment-aware bytes (container store).
-//   * aligned_alloc64               — 64-byte aligned buffers (Array data, §5.3).
+//   * aligned_alloc64               — 64-byte aligned buffers (NumArray data, §5.3).
 //   * BlockAllocator                — 64 KiB blocks mapped low (< 2^47, §3.3),
 //                                     recycled through a process-global pool.
 // The size-class free-list heap that consumes blocks lives in base/heap.hpp.
@@ -20,7 +20,7 @@ namespace phonometrica {
 // 64 KiB blocks, per §8.1.
 inline constexpr intptr_t PHON_BLOCK_SIZE = 64 * 1024;
 
-// Array buffers and other SIMD payloads are aligned to 64 bytes (AVX-512).
+// NumArray buffers and other SIMD payloads are aligned to 64 bytes (AVX-512).
 inline constexpr intptr_t PHON_CACHELINE = 64;
 
 [[noreturn]] void out_of_memory(intptr_t requested);

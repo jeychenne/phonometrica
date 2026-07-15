@@ -1,7 +1,7 @@
-// Phonometrica engine — elementwise Array kernels (architecture §5.3).
+// Phonometrica engine — elementwise NumArray kernels (architecture §5.3).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
-// [INVARIANT] All elementwise Array kernels live here as free functions over raw
+// [INVARIANT] All elementwise NumArray kernels live here as free functions over raw
 // contiguous `double` spans, so the future SIMD/thread-pool work targets one file
 // (architecture §5.3). Callers gather strided views into contiguous buffers first.
 // Scalar loops for now; vectorization is deferred to the concurrency milestone.

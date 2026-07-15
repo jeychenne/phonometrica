@@ -3,7 +3,7 @@
 //
 // Fine-grained data parallelism lives *inside* the runtime, not in script-visible
 // threads (architecture §2): a fixed pool of `hardware_concurrency - 1` workers runs
-// raw-buffer kernels (elementwise Array ops, and later parallel_map) above a size
+// raw-buffer kernels (elementwise NumArray ops, and later parallel_map) above a size
 // threshold. `parallel_for` partitions [0, n) into `worker_count() + 1` contiguous
 // ranges — one per worker plus the calling thread — and blocks until all complete. Each
 // participant writes a DISJOINT output range, so kernels need no locking on the data.
@@ -65,7 +65,7 @@ private:
 };
 
 // The process-wide pool, sized hardware_concurrency() - 1 (lazily created, joined at
-// process exit). Array kernels reach it through here.
+// process exit). NumArray kernels reach it through here.
 ThreadPool &global_thread_pool();
 
 // Element-count threshold above which elementwise kernels use the pool (architecture §13

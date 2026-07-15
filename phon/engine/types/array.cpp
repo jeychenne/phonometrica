@@ -1,4 +1,4 @@
-// Phonometrica engine — Array implementation (design §9, architecture §5.3).
+// Phonometrica engine — NumArray implementation (design §9, architecture §5.3).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
 #include <phon/engine/types/array.hpp>
@@ -161,7 +161,7 @@ void register_array_class()
 
 // ---------------------------------------------------------------------------
 
-Array Array::make(int rank, const intptr_t *dims)
+NumArray NumArray::make(int rank, const intptr_t *dims)
 {
 	PHON_ASSERT(rank >= 1 && rank <= PHON_MAX_RANK);
 	intptr_t n = product(dims, rank);
@@ -174,16 +174,16 @@ Array Array::make(int rank, const intptr_t *dims)
 	for (int k = 0; k < rank; ++k)
 		v->dim[k] = dims[k];
 	set_contiguous_strides(v);
-	return Array(Handle<ArrayCell>::adopt(v));
+	return NumArray(Handle<ArrayCell>::adopt(v));
 }
 
-Array Array::make_2d(intptr_t nrow, intptr_t ncol)
+NumArray NumArray::make_2d(intptr_t nrow, intptr_t ncol)
 {
 	intptr_t dims[2] = {nrow, ncol};
 	return make(2, dims);
 }
 
-Array Array::make_view(ArrayBuffer *buf, intptr_t offset, int rank, const intptr_t *dim,
+NumArray NumArray::make_view(ArrayBuffer *buf, intptr_t offset, int rank, const intptr_t *dim,
                        const intptr_t *stride)
 {
 	PHON_ASSERT(rank >= 1 && rank <= PHON_MAX_RANK);
@@ -199,38 +199,38 @@ Array Array::make_view(ArrayBuffer *buf, intptr_t offset, int rank, const intptr
 		v->stride[k] = stride[k];
 	}
 	mark_contiguous_if_canonical(v);
-	return Array(Handle<ArrayCell>::adopt(v));
+	return NumArray(Handle<ArrayCell>::adopt(v));
 }
 
-Array Array::from_value(Value v) noexcept
+NumArray NumArray::from_value(Value v) noexcept
 {
 	PHON_ASSERT(v.is_cell() && v.as_cell()->class_id() == CID_ARRAY);
-	return Array(Handle<ArrayCell>(reinterpret_cast<ArrayCell *>(v.as_cell())));
+	return NumArray(Handle<ArrayCell>(reinterpret_cast<ArrayCell *>(v.as_cell())));
 }
 
-Array Array::adopt(Value v) noexcept
+NumArray NumArray::adopt(Value v) noexcept
 {
 	PHON_ASSERT(v.is_cell() && v.as_cell()->class_id() == CID_ARRAY);
-	return Array(Handle<ArrayCell>::adopt(reinterpret_cast<ArrayCell *>(v.as_cell())));
+	return NumArray(Handle<ArrayCell>::adopt(reinterpret_cast<ArrayCell *>(v.as_cell())));
 }
 
-intptr_t Array::size() const noexcept { return product(m_impl->dim, m_impl->rank); }
+intptr_t NumArray::size() const noexcept { return product(m_impl->dim, m_impl->rank); }
 
-Array Array::contiguous() const
+NumArray NumArray::contiguous() const
 {
 	if (m_impl->flags & ARRAY_CONTIGUOUS)
 		return *this; // shares the buffer (Handle copy retains)
-	Array out = make(m_impl->rank, m_impl->dim);
+	NumArray out = make(m_impl->rank, m_impl->dim);
 	gather_column_major(out.m_impl->buf->data, m_impl.get());
 	return out;
 }
 
-bool Array::unique() const noexcept
+bool NumArray::unique() const noexcept
 {
 	return m_impl.unique() && m_impl->buf->header.is_unique();
 }
 
-void Array::make_frozen()
+void NumArray::make_frozen()
 {
 	ArrayCell *v = m_impl.get();
 	if (v->buf->header.is_frozen())
@@ -251,7 +251,7 @@ void Array::make_frozen()
 	mark_frozen_shared(&v->buf->header);
 }
 
-Array Array::transfer_to_thread() const
+NumArray NumArray::transfer_to_thread() const
 {
 	ArrayCell *v = m_impl.get();
 	ArrayCell *nv = view_alloc();
@@ -281,10 +281,10 @@ Array Array::transfer_to_thread() const
 		nv->flags = 0;
 		set_contiguous_strides(nv);
 	}
-	return Array(Handle<ArrayCell>::adopt(nv));
+	return NumArray(Handle<ArrayCell>::adopt(nv));
 }
 
-intptr_t Array::elem_offset(const intptr_t *idx) const noexcept
+intptr_t NumArray::elem_offset(const intptr_t *idx) const noexcept
 {
 	intptr_t off = m_impl->offset;
 	for (int k = 0; k < m_impl->rank; ++k)
@@ -292,7 +292,7 @@ intptr_t Array::elem_offset(const intptr_t *idx) const noexcept
 	return off;
 }
 
-double *Array::detach()
+double *NumArray::detach()
 {
 	ArrayCell *v = m_impl.get();
 	bool view_unique = m_impl.unique();

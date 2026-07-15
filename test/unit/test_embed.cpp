@@ -381,10 +381,10 @@ TEST_CASE("embed: Variant::make round-trips through to<T>")
 	CHECK(std::string(s.data(), static_cast<size_t>(s.size())) == "xyz");
 }
 
-TEST_CASE("embed: Array view from C++ (size/dim/data)")
+TEST_CASE("embed: NumArray view from C++ (size/dim/data)")
 {
 	Runtime rt;
-	Array a = rt.do_string("@[1.0, 2.0, 3.0]").to<Array>();
+	NumArray a = rt.do_string("@[1.0, 2.0, 3.0]").to<NumArray>();
 	CHECK(a.size() == 3);
 	CHECK(a.dim(0) == 3);
 	const double *d = a.data();

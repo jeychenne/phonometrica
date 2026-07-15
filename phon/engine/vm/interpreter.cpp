@@ -81,7 +81,7 @@ bool is_table(Value v) { return v.is_cell() && class_of(v) == CID_TABLE; }
 bool is_set(Value v) { return v.is_cell() && class_of(v) == CID_SET; }
 bool is_array(Value v) { return v.is_cell() && class_of(v) == CID_ARRAY; }
 
-// Render a numeric Array (design §9). 1-D as `[a, b, c]`, 2-D row-major (natural
+// Render a numeric NumArray (design §9). 1-D as `[a, b, c]`, 2-D row-major (natural
 // reading order) with `;` between rows; higher ranks list elements column-major with a
 // shape prefix. Elements are doubles.
 String array_to_string(const ArrayCell *a)
@@ -127,7 +127,7 @@ String array_to_string(const ArrayCell *a)
 	return out;
 }
 
-// Validate `nidx` 1-based indices (negatives count from the end) against an Array's
+// Validate `nidx` 1-based indices (negatives count from the end) against a NumArray's
 // shape and return the buffer element offset (design §9). The index count must equal
 // the rank. Raises an Index/Type error otherwise.
 intptr_t array_index_offset(Isolate &iso, int line, const ArrayCell *arr, const Value *idx,
@@ -154,13 +154,13 @@ intptr_t array_index_offset(Isolate &iso, int line, const ArrayCell *arr, const 
 	return off;
 }
 
-// Elementwise Array arithmetic (design §9): array⊕array (shape-checked), array⊕scalar
+// Elementwise NumArray arithmetic (design §9): array⊕array (shape-checked), array⊕scalar
 // and scalar⊕array (broadcast). Strided operands are gathered contiguous first; the
-// result is a fresh contiguous Array. `op` is one of '+','-','*','/','^'. Returns a
+// result is a fresh contiguous NumArray. `op` is one of '+','-','*','/','^'. Returns a
 // Value carrying +1. Raises on a shape or type mismatch.
 Value array_arith(Isolate &iso, int line, char op, Value x, Value y)
 {
-	auto owned = [](Array &res) {
+	auto owned = [](NumArray &res) {
 		Value v = res.to_value();
 		retain(v.as_cell()); // the caller reg_move's this (+1)
 		return v;
@@ -174,9 +174,9 @@ Value array_arith(Isolate &iso, int line, char op, Value x, Value y)
 			same = ax->dim[k] == ay->dim[k];
 		if (!same)
 			iso.raise(String("[Shape error] Array operands must have the same shape"), line);
-		Array cx = Array::from_value(x).contiguous();
-		Array cy = Array::from_value(y).contiguous();
-		Array res = Array::make(ax->rank, ax->dim);
+		NumArray cx = NumArray::from_value(x).contiguous();
+		NumArray cy = NumArray::from_value(y).contiguous();
+		NumArray res = NumArray::make(ax->rank, ax->dim);
 		double *out = res.detach();
 		array_binop(op, out, cx.data(), cy.data(), res.size());
 		return owned(res);
@@ -187,18 +187,18 @@ Value array_arith(Isolate &iso, int line, char op, Value x, Value y)
 			iso.raise(String("[Type error] an Array combines only with a number or another Array"),
 			          line);
 		auto *ax = reinterpret_cast<const ArrayCell *>(x.as_cell());
-		Array cx = Array::from_value(x).contiguous();
-		Array res = Array::make(ax->rank, ax->dim);
+		NumArray cx = NumArray::from_value(x).contiguous();
+		NumArray res = NumArray::make(ax->rank, ax->dim);
 		double *out = res.detach();
 		array_binop_as(op, out, cx.data(), y.to_double(), res.size());
 		return owned(res);
 	}
-	// y is the Array, x a scalar.
+	// y is the NumArray, x a scalar.
 	if (!x.is_number())
 		iso.raise(String("[Type error] an Array combines only with a number or another Array"), line);
 	auto *ay = reinterpret_cast<const ArrayCell *>(y.as_cell());
-	Array cy = Array::from_value(y).contiguous();
-	Array res = Array::make(ay->rank, ay->dim);
+	NumArray cy = NumArray::from_value(y).contiguous();
+	NumArray res = NumArray::make(ay->rank, ay->dim);
 	double *out = res.detach();
 	array_binop_sa(op, out, x.to_double(), cy.data(), res.size());
 	return owned(res);
@@ -1631,7 +1631,7 @@ Value run(Isolate &iso)
 				dims[0] = nrow;
 				dims[1] = ncol;
 			}
-			Array arr = Array::make(rank, dims);
+			NumArray arr = NumArray::make(rank, dims);
 			double *d = arr.detach(); // fresh, unique, contiguous
 			for (intptr_t r = 0; r < nrow; ++r)
 				for (intptr_t c = 0; c < ncol; ++c)
@@ -1738,7 +1738,7 @@ Value run(Isolate &iso)
 		}
 		case Opcode::GETIDXN:
 		{
-			// R[A] = R[B][ R[B+1 .. B+C] ] — a scalar element of an Array (C indices).
+			// R[A] = R[B][ R[B+1 .. B+C] ] — a scalar element of a NumArray (C indices).
 			int objreg = op_b(ins), nidx = op_c(ins);
 			Value obj = base[objreg];
 			if (!is_array(obj))
@@ -1806,7 +1806,7 @@ Value run(Isolate &iso)
 				auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
 				(void) array_index_offset(iso, cur_line(), arr0, &idx, 1); // validate pre-detach
 				base[a] = Value::make_null();
-				Array arr = Array::adopt(obj);
+				NumArray arr = NumArray::adopt(obj);
 				arr.detach();
 				intptr_t off = array_index_offset(iso, cur_line(), arr.cell(), &idx, 1);
 				arr.cell()->buf->data[off] = x;
@@ -1818,7 +1818,7 @@ Value run(Isolate &iso)
 		}
 		case Opcode::SETIDXN:
 		{
-			// R[A][ R[B .. B+rank) ] = R[C] — write a scalar Array element. The object at
+			// R[A][ R[B .. B+rank) ] = R[C] — write a scalar NumArray element. The object at
 			// R[A] is an lvalue mutated in place (then written back to its binding by the
 			// lowerer); indices sit in their own block at R[B]; rank is in EXTRA_ARG.
 			int idxbase = op_b(ins);
@@ -1835,7 +1835,7 @@ Value run(Isolate &iso)
 			auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
 			(void) array_index_offset(iso, cur_line(), arr0, &base[idxbase], nidx); // validate
 			base[a] = Value::make_null();
-			Array arr = Array::adopt(obj);
+			NumArray arr = NumArray::adopt(obj);
 			arr.detach();
 			intptr_t off = array_index_offset(iso, cur_line(), arr.cell(), &base[idxbase], nidx);
 			arr.cell()->buf->data[off] = x;
@@ -1867,7 +1867,7 @@ Value run(Isolate &iso)
 			}
 			else if (is_array(obj))
 			{
-				// A single slice indexes a 1-D Array, producing a **zero-copy view** that
+				// A single slice indexes a 1-D NumArray, producing a **zero-copy view** that
 				// shares the buffer (design §9). start0 = 0-based first position; count and
 				// step give the new dim/stride.
 				auto *arr = reinterpret_cast<ArrayCell *>(obj.as_cell());
@@ -1883,7 +1883,7 @@ Value run(Isolate &iso)
 				intptr_t new_off = arr->offset + first * arr->stride[0];
 				intptr_t new_dim = count;
 				intptr_t new_stride = arr->stride[0] * s.step;
-				Array view = Array::make_view(arr->buf, new_off, 1, &new_dim, &new_stride);
+				NumArray view = NumArray::make_view(arr->buf, new_off, 1, &new_dim, &new_stride);
 				reg_copy(base, a, view.to_value());
 			}
 			else
@@ -1892,7 +1892,7 @@ Value run(Isolate &iso)
 		}
 		case Opcode::GETVIEW:
 		{
-			// R[A] = a view of Array R[B] over C axes. Each axis has a 3-register slice-part
+			// R[A] = a view of NumArray R[B] over C axes. Each axis has a 3-register slice-part
 			// block at R[B+1+3k]; a scalar axis (marked in the EXTRA_ARG mask) collapses —
 			// its index is R[B+1+3k] and it drops from the result rank. Zero-copy: the view
 			// shares the buffer (design §9).
@@ -1944,7 +1944,7 @@ Value run(Isolate &iso)
 				reg_move(base, a, Value::make(arr->buf->data[new_off]));
 			else
 			{
-				Array view = Array::make_view(arr->buf, new_off, out_rank, out_dim, out_stride);
+				NumArray view = NumArray::make_view(arr->buf, new_off, out_rank, out_dim, out_stride);
 				reg_copy(base, a, view.to_value());
 			}
 			break;
@@ -1959,7 +1959,7 @@ Value run(Isolate &iso)
 				iso.raise(String("[Type error] a String slice is read-only"), cur_line());
 			if (is_array(obj))
 			{
-				// 1-D Array slice assignment: element-wise from a same-length 1-D Array rhs,
+				// 1-D NumArray slice assignment: element-wise from a same-length 1-D NumArray rhs,
 				// or a scalar broadcast (mirrors the List slice-assign rule). CoW-detached.
 				auto *arr0 = reinterpret_cast<ArrayCell *>(obj.as_cell());
 				if (arr0->rank != 1)
@@ -1981,7 +1981,7 @@ Value run(Isolate &iso)
 				else
 					iso.raise(String("[Type error] Array elements must be numbers"), cur_line());
 				base[a] = Value::make_null();
-				Array arr = Array::adopt(obj);
+				NumArray arr = NumArray::adopt(obj);
 				arr.detach();
 				ArrayCell *v = arr.cell();
 				int64_t j = 0;

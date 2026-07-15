@@ -4,9 +4,11 @@
 // This file is UTF-8 encoded.
 
 #include <phon/engine/types/string.hpp>
+#include <phon/engine/types/regex.hpp>
 #include <phon/engine/base/unicode.hpp>
 #include "test_framework.hpp"
 
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -310,4 +312,172 @@ TEST_CASE("String to_value / from_value round-trip")
 	String back = String::from_value(v);
 	CHECK(back == "round-trip");
 	CHECK(back.use_count() == 2); // s and back share the cell
+}
+
+// ---------------------------------------------------------------------------
+// Embedding-surface additions (split/join, %N arg, Regex replace, static init)
+// ---------------------------------------------------------------------------
+
+// Constructed before main() — and before any explicit bootstrap() call — to pin
+// the static-initializer guarantee: String construction self-bootstraps the class
+// registry (see string_create), so embedders may keep file-scope Strings.
+static const String g_static_init_string("static-init δῶρον");
+
+TEST_CASE("String construction is safe in a static initializer (pre-bootstrap)")
+{
+	CHECK(g_static_init_string == "static-init δῶρον");
+	CHECK(g_static_init_string.length() == 17);
+	String copy = g_static_init_string;
+	copy.append("!");
+	CHECK(copy.ends_with("!"));
+	CHECK(g_static_init_string.ends_with("δῶρον"));
+}
+
+TEST_CASE("String::split: separators, boundaries, errors")
+{
+	auto parts = String("a,b,c").split(",");
+	REQUIRE(parts.size() == 3);
+	CHECK(parts[0] == "a");
+	CHECK(parts[1] == "b");
+	CHECK(parts[2] == "c");
+
+	// Leading/trailing separators yield empty chunks.
+	parts = String(",a,b,").split(",");
+	REQUIRE(parts.size() == 4);
+	CHECK(parts[0] == "");
+	CHECK(parts[1] == "a");
+	CHECK(parts[2] == "b");
+	CHECK(parts[3] == "");
+
+	// A string equal to (or shorter than) the separator is a single chunk.
+	parts = String("ab").split("ab");
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0] == "ab");
+	parts = String("a").split("--");
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0] == "a");
+	parts = String().split(",");
+	REQUIRE(parts.size() == 1);
+	CHECK(parts[0] == "");
+
+	// Adjacent separators.
+	parts = String("aaa").split("a");
+	REQUIRE(parts.size() == 4);
+	for (intptr_t i = 0; i < 4; ++i)
+		CHECK(parts[i] == "");
+
+	// Multi-byte (UTF-8) separator.
+	parts = String("un→deux→trois").split("→");
+	REQUIRE(parts.size() == 3);
+	CHECK(parts[1] == "deux");
+
+	// Multi-char separator with partial-overlap text.
+	parts = String("xx-y-xx--z").split("--");
+	REQUIRE(parts.size() == 2);
+	CHECK(parts[0] == "xx-y-xx");
+	CHECK(parts[1] == "z");
+
+	// Empty separator throws.
+	bool threw = false;
+	try
+	{
+		String("abc").split("");
+	}
+	catch (std::runtime_error &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("String::join and split/join round-trip")
+{
+	Array<String> items{String("a"), String("b"), String("c")};
+	CHECK(String::join(items, ", ") == "a, b, c");
+	CHECK(String::join(items, "") == "abc");
+
+	Array<String> empty;
+	CHECK(String::join(empty, ",") == "");
+
+	Array<String> one{String("solo")};
+	CHECK(String::join(one, ",") == "solo");
+
+	String src("π,e,,φ");
+	CHECK(String::join(src.split(","), ",") == src);
+}
+
+TEST_CASE("String::arg replaces positional %1..%9")
+{
+	String t("%1 + %2 = %3");
+	t.arg("1", "2", "3");
+	CHECK(t == "1 + 2 = 3");
+
+	// Every occurrence of a placeholder is replaced.
+	String r("%1%1");
+	r.arg("x");
+	CHECK(r == "xx");
+
+	// Qt-style sequential substitution: a placeholder inside an earlier argument's
+	// text is rewritten by the later ones (old Phonometrica behavior, pinned).
+	String s("%1 and %2");
+	s.arg("A%2", "B");
+	CHECK(s == "AB and B");
+
+	String nine("%1%2%3%4%5%6%7%8%9");
+	nine.arg("a", "b", "c", "d", "e", "f", "g", "h", "i");
+	CHECK(nine == "abcdefghi");
+
+	// Chaining single-argument calls fills successive placeholders only if the
+	// text names them; %2 stays put until substituted.
+	String chain("%2-%1");
+	chain.arg("first");
+	CHECK(chain == "%2-first");
+	chain.arg("second"); // no %1 left; %2 untouched by arg(a1)
+	CHECK(chain == "%2-first");
+}
+
+TEST_CASE("String::replace(Regex): first match, %% and %1..%9 substitution")
+{
+	// Captures substitute into the replacement.
+	String s("hello world");
+	s.replace(Regex("wor(l)d"), "W%1D");
+	CHECK(s == "hello WlD");
+
+	// %% is the whole match (Perl's $&).
+	String t("abc");
+	t.replace(Regex("b+"), "[%%]");
+	CHECK(t == "a[b]c");
+
+	// Only the first match is replaced.
+	String u("aaa");
+	u.replace(Regex("a"), "b");
+	CHECK(u == "baa");
+
+	// No match: unchanged.
+	String v("abc");
+	v.replace(Regex("z"), "!");
+	CHECK(v == "abc");
+
+	// A non-participating group substitutes the empty string.
+	String w("b");
+	w.replace(Regex("(a)|(b)"), "[%1|%2]");
+	CHECK(w == "[|b]");
+
+	// ntimes bounds the placeholder substitutions inside the replacement text
+	// (old Phonometrica semantics, pinned).
+	String x("ab");
+	x.replace(Regex("(a)"), "%1%1", 1);
+	CHECK(x == "a%1b");
+
+	// Multiple captures, non-ASCII subject.
+	String y("café au lait");
+	y.replace(Regex("(caf.) au (lait)"), "%2 et %1");
+	CHECK(y == "lait et café");
+
+	// Anchored replacement at the very start and end.
+	String z("prefix-rest");
+	z.replace(Regex("^prefix"), "P");
+	CHECK(z == "P-rest");
+	z.replace(Regex("rest$"), "R");
+	CHECK(z == "P-R");
 }

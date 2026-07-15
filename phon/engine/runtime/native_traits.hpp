@@ -19,7 +19,7 @@
 // back into the VM.
 //
 // Supported parameter/return types (M8 stage 1): the numeric scalars (bool, any
-// integer type -> Integer, any floating type -> Real), String/List/Table/Set/Array
+// integer type -> Integer, any floating type -> Real), String/List/Table/Set/NumArray
 // wrappers, Handle<T> for registered reference classes (T::phon_class, stage 2),
 // Variant and raw Value (untyped pass-through), and `void` return. `ref` parameters
 // (phon::Ref<T>) are a later sub-stage — see DEVIATIONS.
@@ -57,13 +57,13 @@ class Isolate;
 // reference** parameter is a `ref` that writes back to the caller's slot; a by-value
 // or `const T&` parameter is read-only (design §11.3, references.md §4). So:
 //
-//     rt.add_function("normalize", [](Array &x) { /* mutates x in place */ });
+//     rt.add_function("normalize", [](NumArray &x) { /* mutates x in place */ });
 //     rt.add_function("trim",      [](String &s) { s = s.trim(); });
 //     double duration(const Interval &i);   // read-only — NOT a ref
 //
 // ref-ness is uniform per generic; the registration installs the matching ref-mask so
 // direct calls promote the argument (references.md §6). Supported ref types: numeric
-// scalars and the String/List/Table/Array wrappers (see RefMarshal).
+// scalars and the String/List/Table/NumArray wrappers (see RefMarshal).
 
 // The semantics of a registered C++ class (design §11.2): a Reference class has
 // identity (no copy), a Value class copies on write (needs a clone hook).
@@ -162,7 +162,7 @@ template<class T>
 inline constexpr bool is_registered_class_v =
     std::is_class_v<T> && !is_handle_type<T>::value && !std::is_same_v<T, String> &&
     !std::is_same_v<T, List> && !std::is_same_v<T, Table> && !std::is_same_v<T, Set> &&
-    !std::is_same_v<T, Array> && !std::is_same_v<T, Variant> && !std::is_same_v<T, Value> &&
+    !std::is_same_v<T, NumArray> && !std::is_same_v<T, Variant> && !std::is_same_v<T, Value> &&
     !std::is_same_v<T, Isolate>;
 
 // A write-back (`ref`) parameter is a non-const lvalue reference of a *value* type —
@@ -224,10 +224,10 @@ struct ArgTraits<Table, void>
 };
 
 template<>
-struct ArgTraits<Array, void>
+struct ArgTraits<NumArray, void>
 {
 	static Class *dispatch_class() { return get_class(CID_ARRAY); }
-	static Array unbox(Value v) { return Array::from_value(v); }
+	static NumArray unbox(Value v) { return NumArray::from_value(v); }
 };
 
 // Untyped pass-through. Variant retains (owning); raw Value is borrowed.
@@ -314,9 +314,9 @@ struct RetTraits<Table, void>
 	static Value box(const Table &t) { return box_wrapper(t); }
 };
 template<>
-struct RetTraits<Array, void>
+struct RetTraits<NumArray, void>
 {
-	static Value box(const Array &a) { return box_wrapper(a); }
+	static Value box(const NumArray &a) { return box_wrapper(a); }
 };
 
 template<>
@@ -430,7 +430,7 @@ struct RefMarshal<Table, void> : WrapperRefMarshal<Table>
 {
 };
 template<>
-struct RefMarshal<Array, void> : WrapperRefMarshal<Array>
+struct RefMarshal<NumArray, void> : WrapperRefMarshal<NumArray>
 {
 };
 

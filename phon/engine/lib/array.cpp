@@ -1,10 +1,10 @@
-// Phonometrica engine — numeric Array standard library (architecture §12).
+// Phonometrica engine — numeric NumArray standard library (architecture §12).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
 // Constructors (zeros/ones), reductions (sum/mean/min/max), shape queries, in-place
 // clear, and elementwise math over arrays. The elementwise functions overload the
 // same generics as the scalar math module (`sqrt`, `sin`, …): a Number argument takes
-// the scalar method, an Array argument this one — type-based dispatch selecting the
+// the scalar method, a NumArray argument this one — type-based dispatch selecting the
 // right kernel, exactly as the old engine's math_array_func overloads did. Indexing
 // and slicing are language-level (opcodes), so they are not library functions.
 
@@ -21,11 +21,11 @@ namespace {
 
 // Contiguous element origin of a view: after contiguous(), elements are flat at
 // data()+offset() over size() entries.
-const double *origin(const Array &a) { return a.data() + a.offset(); }
+const double *origin(const NumArray &a) { return a.data() + a.offset(); }
 
-Array filled_1d(intptr_t n, double val)
+NumArray filled_1d(intptr_t n, double val)
 {
-	Array a = Array::make_1d(n);
+	NumArray a = NumArray::make_1d(n);
 	if (val != 0.0)
 	{
 		double *d = a.detach();
@@ -35,9 +35,9 @@ Array filled_1d(intptr_t n, double val)
 	return a;
 }
 
-Array filled_2d(intptr_t nrow, intptr_t ncol, double val)
+NumArray filled_2d(intptr_t nrow, intptr_t ncol, double val)
 {
-	Array a = Array::make_2d(nrow, ncol);
+	NumArray a = NumArray::make_2d(nrow, ncol);
 	if (val != 0.0)
 	{
 		double *d = a.detach();
@@ -48,9 +48,9 @@ Array filled_2d(intptr_t nrow, intptr_t ncol, double val)
 	return a;
 }
 
-double reduce_sum(const Array &a)
+double reduce_sum(const NumArray &a)
 {
-	Array c = a.contiguous();
+	NumArray c = a.contiguous();
 	const double *d = origin(c);
 	intptr_t n = c.size();
 	double s = 0.0;
@@ -60,14 +60,14 @@ double reduce_sum(const Array &a)
 }
 
 // Apply `f` elementwise, returning a fresh contiguous array of the same shape.
-Array map(const Array &a, double (*f)(double))
+NumArray map(const NumArray &a, double (*f)(double))
 {
-	Array src = a.contiguous();
+	NumArray src = a.contiguous();
 	int rank = src.rank();
 	intptr_t dims[PHON_MAX_RANK];
 	for (int k = 0; k < rank; ++k)
 		dims[k] = src.dim(k);
-	Array out = Array::make(rank, dims);
+	NumArray out = NumArray::make(rank, dims);
 	const double *s = origin(src);
 	double *d = out.detach();
 	intptr_t n = out.size();
@@ -103,19 +103,19 @@ void register_array_lib()
 	});
 
 	// --- shape ---
-	register_function("nrow", [](const Array &a) { return a.dim(0); });
-	register_function("ncol", [](const Array &a) { return a.rank() >= 2 ? a.dim(1) : intptr_t(1); });
+	register_function("nrow", [](const NumArray &a) { return a.dim(0); });
+	register_function("ncol", [](const NumArray &a) { return a.rank() >= 2 ? a.dim(1) : intptr_t(1); });
 
 	// --- reductions ---
-	register_function("sum", [](const Array &a) { return reduce_sum(a); });
-	register_function("mean", [](Isolate &iso, const Array &a) {
+	register_function("sum", [](const NumArray &a) { return reduce_sum(a); });
+	register_function("mean", [](Isolate &iso, const NumArray &a) {
 		intptr_t n = a.size();
 		if (n == 0)
 			iso.raise(String("[Value error] 'mean' of an empty Array"), 0);
 		return reduce_sum(a) / static_cast<double>(n);
 	});
-	register_function("min", [](Isolate &iso, const Array &a) {
-		Array c = a.contiguous();
+	register_function("min", [](Isolate &iso, const NumArray &a) {
+		NumArray c = a.contiguous();
 		intptr_t n = c.size();
 		if (n == 0)
 			iso.raise(String("[Value error] 'min' of an empty Array"), 0);
@@ -126,8 +126,8 @@ void register_array_lib()
 				m = d[i];
 		return m;
 	});
-	register_function("max", [](Isolate &iso, const Array &a) {
-		Array c = a.contiguous();
+	register_function("max", [](Isolate &iso, const NumArray &a) {
+		NumArray c = a.contiguous();
 		intptr_t n = c.size();
 		if (n == 0)
 			iso.raise(String("[Value error] 'max' of an empty Array"), 0);
@@ -140,7 +140,7 @@ void register_array_lib()
 	});
 
 	// --- in-place ---
-	register_function("clear", [](Array &a) {
+	register_function("clear", [](NumArray &a) {
 		double *d = a.detach();
 		intptr_t n = a.size();
 		for (intptr_t i = 0; i < n; ++i)
@@ -148,14 +148,14 @@ void register_array_lib()
 	});
 
 	// --- elementwise math (overloads of the scalar math generics) ---
-	register_function("abs", [](const Array &a) { return map(a, [](double x) { return std::fabs(x); }); });
-	register_function("sqrt", [](const Array &a) { return map(a, [](double x) { return std::sqrt(x); }); });
-	register_function("exp", [](const Array &a) { return map(a, [](double x) { return std::exp(x); }); });
-	register_function("log", [](const Array &a) { return map(a, [](double x) { return std::log(x); }); });
-	register_function("sin", [](const Array &a) { return map(a, [](double x) { return std::sin(x); }); });
-	register_function("cos", [](const Array &a) { return map(a, [](double x) { return std::cos(x); }); });
-	register_function("floor", [](const Array &a) { return map(a, [](double x) { return std::floor(x); }); });
-	register_function("ceil", [](const Array &a) { return map(a, [](double x) { return std::ceil(x); }); });
+	register_function("abs", [](const NumArray &a) { return map(a, [](double x) { return std::fabs(x); }); });
+	register_function("sqrt", [](const NumArray &a) { return map(a, [](double x) { return std::sqrt(x); }); });
+	register_function("exp", [](const NumArray &a) { return map(a, [](double x) { return std::exp(x); }); });
+	register_function("log", [](const NumArray &a) { return map(a, [](double x) { return std::log(x); }); });
+	register_function("sin", [](const NumArray &a) { return map(a, [](double x) { return std::sin(x); }); });
+	register_function("cos", [](const NumArray &a) { return map(a, [](double x) { return std::cos(x); }); });
+	register_function("floor", [](const NumArray &a) { return map(a, [](double x) { return std::floor(x); }); });
+	register_function("ceil", [](const NumArray &a) { return map(a, [](double x) { return std::ceil(x); }); });
 }
 
 } // namespace phonometrica

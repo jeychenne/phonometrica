@@ -1,4 +1,4 @@
-// Phonometrica engine — Array: the numeric workhorse (design §9, architecture §5.3).
+// Phonometrica engine — NumArray: the numeric workhorse (design §9, architecture §5.3).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 //
 // Two cells: a value-semantic **view** (`ArrayCell`) and a separately refcounted
@@ -41,7 +41,7 @@ struct ArrayBuffer
 	double data[]; // inline
 };
 
-// The script-visible Array value: a strided view into an ArrayBuffer.
+// The script-visible NumArray value: a strided view into an ArrayBuffer.
 struct ArrayCell
 {
 	Cell header;
@@ -55,24 +55,24 @@ struct ArrayCell
 
 void register_array_class();
 
-class Array final
+class NumArray final
 {
 public:
-	Array(const Array &) = default;
-	Array(Array &&) noexcept = default;
-	Array &operator=(const Array &) = default;
-	Array &operator=(Array &&) noexcept = default;
+	NumArray(const NumArray &) = default;
+	NumArray(NumArray &&) noexcept = default;
+	NumArray &operator=(const NumArray &) = default;
+	NumArray &operator=(NumArray &&) noexcept = default;
 
 	// --- construction ---
 
 	// A fresh contiguous, zero-filled array of the given shape (column-major).
-	static Array make(int rank, const intptr_t *dims);
-	static Array make_1d(intptr_t n) { return make(1, &n); }
-	static Array make_2d(intptr_t nrow, intptr_t ncol);
+	static NumArray make(int rank, const intptr_t *dims);
+	static NumArray make_1d(intptr_t n) { return make(1, &n); }
+	static NumArray make_2d(intptr_t nrow, intptr_t ncol);
 
 	// A new strided view over an existing buffer (zero-copy slicing): retains `buf`.
 	// The CONTIGUOUS flag is set iff the given offset/strides are canonical column-major.
-	static Array make_view(ArrayBuffer *buf, intptr_t offset, int rank, const intptr_t *dim,
+	static NumArray make_view(ArrayBuffer *buf, intptr_t offset, int rank, const intptr_t *dim,
 	                       const intptr_t *stride);
 
 	// --- shape ---
@@ -96,7 +96,7 @@ public:
 	// A contiguous version of this array (design §5.3): shares the buffer when already
 	// contiguous, otherwise a fresh compacted column-major copy. Lets kernels run over
 	// flat spans (its data() + offset()==0 is the element origin).
-	Array contiguous() const;
+	NumArray contiguous() const;
 
 	// Ensure this view uniquely owns a contiguous buffer (CoW): if the view or its
 	// buffer is shared, or the view is non-contiguous, build a fresh contiguous buffer
@@ -112,17 +112,17 @@ public:
 	// Produce a copy safe to hand to another thread (transfer walk, §8.3): if the buffer
 	// is frozen it is shared zero-copy (atomic retain) and only the view is copied;
 	// otherwise a fully independent contiguous copy is made. Returns a +1 view.
-	Array transfer_to_thread() const;
+	NumArray transfer_to_thread() const;
 
 	// --- engine interop ---
 
 	Value to_value() const noexcept { return Value::make_cell(m_impl.cell()); }
-	static Array from_value(Value v) noexcept;
-	static Array adopt(Value v) noexcept; // take ownership without retaining
+	static NumArray from_value(Value v) noexcept;
+	static NumArray adopt(Value v) noexcept; // take ownership without retaining
 	ArrayCell *cell() const noexcept { return m_impl.get(); }
 
 private:
-	explicit Array(Handle<ArrayCell> h) noexcept : m_impl(std::move(h)) {}
+	explicit NumArray(Handle<ArrayCell> h) noexcept : m_impl(std::move(h)) {}
 
 	Handle<ArrayCell> m_impl;
 };

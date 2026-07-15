@@ -58,6 +58,13 @@ Class g_error{.id = CID_ERROR, .name = "Error", .base = &g_object,
 
 std::once_flag g_boot_once;
 
+} // namespace
+
+// Fast-path witness for ensure_bootstrapped() (object/class.hpp).
+std::atomic<bool> g_bootstrapped{false};
+
+namespace {
+
 void do_bootstrap()
 {
 	register_class(&g_object);
@@ -76,7 +83,7 @@ void do_bootstrap()
 	register_list_class();
 	register_table_class();
 	register_set_class();
-	register_array_class(); // the numeric Array view + its double buffer (design §9)
+	register_array_class(); // the numeric NumArray view + its double buffer (design §9)
 
 	// The root metaclass registers after the concrete value types. (Subtype intervals
 	// no longer equal the stable ids now that the abstract Number/Real bases are spliced
@@ -97,6 +104,10 @@ void do_bootstrap()
 
 	// Compute subtype intervals from the assembled hierarchy.
 	renumber_types();
+
+	// Publish for ensure_bootstrapped()'s inline fast path (release pairs with its
+	// acquire load, so a thread that sees `true` also sees the registry writes).
+	g_bootstrapped.store(true, std::memory_order_release);
 }
 
 } // namespace

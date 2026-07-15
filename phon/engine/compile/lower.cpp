@@ -689,7 +689,7 @@ void Lowerer::expr_to(Ast *node, int dest)
 		}
 		if (e->indices.size() > 1 && has_slice)
 		{
-			// Multi-dimensional slicing (Array): object then a 3-register slice-part block
+			// Multi-dimensional slicing (NumArray): object then a 3-register slice-part block
 			// per axis; scalar axes (marked in the mask) collapse. GETVIEW builds a view.
 			int save = fs->free_reg;
 			int objbase = reg_alloc(node);
@@ -716,7 +716,7 @@ void Lowerer::expr_to(Ast *node, int dest)
 		}
 		if (e->indices.size() > 1)
 		{
-			// Multi-dimensional scalar indexing (Array only): object then one register per
+			// Multi-dimensional scalar indexing (NumArray only): object then one register per
 			// index, staged contiguously; GETIDXN reads the element.
 			int save = fs->free_reg;
 			int objbase = reg_alloc(node);
@@ -1406,7 +1406,7 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		}
 		if (ix->indices.size() > 1)
 		{
-			// Multi-dimensional scalar assignment (Array): indices in a contiguous block,
+			// Multi-dimensional scalar assignment (NumArray): indices in a contiguous block,
 			// value in its own register; the object stays at `o` for in-place / write-back.
 			int rank = static_cast<int>(ix->indices.size());
 			int ibase = reg_alloc(target);

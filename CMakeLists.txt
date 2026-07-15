@@ -166,6 +166,7 @@ add_executable(phon_unit_tests
     test/unit/test_table.cpp
     test/unit/test_set.cpp
     test/unit/test_array.cpp
+    test/unit/test_generic_array.cpp
     test/unit/test_grapheme_conformance.cpp
     test/unit/test_scanner.cpp
     test/unit/test_ast.cpp

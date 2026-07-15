@@ -6,7 +6,7 @@
 // touching the sender's heap:
 //
 //   * immediates (Int, Float, Bool, Null, Symbol) copy trivially — no cell;
-//   * a frozen String or frozen Array buffer is *shared* (atomic retain), zero-copy;
+//   * a frozen String or frozen NumArray buffer is *shared* (atomic retain), zero-copy;
 //   * Lists, Tables, Sets, unfrozen Strings/Arrays and value-class instances are
 //     deep-copied, with a seen-map so in-graph sharing (a DAG of value objects) is
 //     preserved and pathological duplication is bounded;

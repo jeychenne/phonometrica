@@ -58,6 +58,14 @@ public:
 	intptr_t group_start(int n) const;
 	intptr_t group_end(int n) const;
 
+	// 0-based byte offsets of group `n` in the subject (precondition: group_is_set(n)).
+	// The byte-level layer under the grapheme positions above, for splicing (replace).
+	intptr_t group_byte_start(int n) const;
+	intptr_t group_byte_end(int n) const;
+
+	// The subject this match indexes into (shares the buffer of the matched string).
+	const String &subject() const noexcept { return m_subject; }
+
 private:
 	String m_subject;
 	std::vector<PCRE2_SIZE> m_starts; // byte offsets; PCRE2_UNSET == not participating

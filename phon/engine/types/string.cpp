@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 
 namespace phonometrica {
 
@@ -32,6 +33,12 @@ intptr_t str_capacity_for(intptr_t need)
 StringCell *string_create(const char *str, intptr_t len, intptr_t cap_hint)
 {
 	PHON_ASSERT(len >= 0);
+	// Every String construction funnels through here, and minting a cell needs the
+	// class registry (cell_alloc reads the class's acyclic flag). Bootstrapping
+	// lazily makes Strings safe in static initializers, before the embedder had a
+	// chance to call bootstrap() — see DEVIATIONS "Embedding gaps". Idempotent;
+	// the settled fast path is one inline acquire load + predicted branch.
+	ensure_bootstrapped();
 	intptr_t need = len + 1;
 	intptr_t capacity = str_capacity_for(cap_hint > need ? cap_hint : need);
 	Cell *c = cell_alloc(CID_STRING, STRING_HEADER + capacity);
@@ -595,6 +602,139 @@ String &String::replace(Substring before, Substring after, intptr_t ntimes)
 String &String::remove(Substring what, intptr_t ntimes)
 {
 	return replace(what, Substring(), ntimes);
+}
+
+// ---------------------------------------------------------------------------
+// split / join (byte-wise, old Phonometrica semantics)
+// ---------------------------------------------------------------------------
+
+Array<String> String::split(Substring separator) const
+{
+	if (separator.empty())
+		throw std::runtime_error("[Runtime error] Cannot split string with empty delimiter");
+
+	Array<String> strings;
+	intptr_t string_size = size();
+	intptr_t sep_size = static_cast<intptr_t>(separator.size());
+
+	// A separator no shorter than the string cannot split it (even when equal):
+	// the whole string is the single chunk.
+	if (sep_size >= string_size)
+	{
+		strings.append(*this);
+		return strings;
+	}
+
+	intptr_t substring_start = 0;
+	intptr_t string_last = string_size - sep_size; // last byte position a match can start at
+
+	for (intptr_t i = 0; i <= string_last; ++i)
+	{
+		if (std::memcmp(data() + i, separator.data(), separator.size()) == 0)
+		{
+			// The (possibly empty) unmatched text before this separator.
+			strings.append(String(data() + substring_start, i - substring_start));
+			// Skip the matched separator.
+			substring_start = i + sep_size;
+			i = substring_start - 1;
+		}
+	}
+
+	if (substring_start == string_size) // the string ends with the separator
+		strings.append(String());
+	else
+		strings.append(String(data() + substring_start, string_size - substring_start));
+
+	return strings;
+}
+
+String String::join(const Array<String> &strings, Substring separator)
+{
+	intptr_t total = 0;
+	for (intptr_t i = 0; i < strings.size(); ++i)
+		total += strings[i].size() + static_cast<intptr_t>(separator.size());
+
+	String result(total, false);
+	intptr_t count = strings.size();
+
+	for (intptr_t i = 0; i < count; ++i)
+	{
+		result.append(strings[i]);
+		if (i < count - 1)
+			result.append(separator);
+	}
+
+	return result;
+}
+
+// ---------------------------------------------------------------------------
+// Positional arguments (%1..%9, Qt-style)
+// ---------------------------------------------------------------------------
+
+String &String::arg(Substring a1)
+{
+	replace("%1", a1);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2)
+{
+	replace("%1", a1);
+	replace("%2", a2);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3)
+{
+	arg(a1, a2);
+	replace("%3", a3);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4)
+{
+	arg(a1, a2, a3);
+	replace("%4", a4);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5)
+{
+	arg(a1, a2, a3, a4);
+	replace("%5", a5);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5,
+                    Substring a6)
+{
+	arg(a1, a2, a3, a4, a5);
+	replace("%6", a6);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5,
+                    Substring a6, Substring a7)
+{
+	arg(a1, a2, a3, a4, a5, a6);
+	replace("%7", a7);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5,
+                    Substring a6, Substring a7, Substring a8)
+{
+	arg(a1, a2, a3, a4, a5, a6, a7);
+	replace("%8", a8);
+	return *this;
+}
+
+String &String::arg(Substring a1, Substring a2, Substring a3, Substring a4, Substring a5,
+                    Substring a6, Substring a7, Substring a8, Substring a9)
+{
+	arg(a1, a2, a3, a4, a5, a6, a7, a8);
+	replace("%9", a9);
+	return *this;
 }
 
 namespace {

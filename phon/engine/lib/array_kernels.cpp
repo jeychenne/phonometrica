@@ -1,4 +1,4 @@
-// Phonometrica engine — elementwise Array kernels (architecture §5.3).
+// Phonometrica engine — elementwise NumArray kernels (architecture §5.3).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
 #include <phon/engine/lib/array_kernels.hpp>
