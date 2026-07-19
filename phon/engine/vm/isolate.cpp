@@ -6,6 +6,8 @@
 #include <phon/engine/object/generic.hpp>
 #include <phon/engine/object/instance.hpp>
 #include <phon/engine/types/atom.hpp>
+#include <phon/engine/types/list.hpp>
+#include <phon/engine/types/table.hpp>
 
 #include <utility>
 
@@ -205,7 +207,41 @@ String Isolate::backtrace(int top_line)
 		out.append(p->name == NO_SYMBOL ? String("<module>") : String(symbol_name(p->name)));
 		out.append(" (line ");
 		out.append(String::convert(static_cast<intptr_t>(line)));
-		out.append(")\n");
+		out.append(")");
+		if (!p->source_path.empty())
+		{
+			out.append(" in ");
+			out.append(p->source_path);
+		}
+		out.append("\n");
+	}
+	return out;
+}
+
+// The same walk as `backtrace`, as structured data: a List of {function, line, file}
+// Tables, innermost first. Backs the Error `frames` field (slot 2), so tooling (the
+// GUI's clickable trace, the editor's error highlight) needs no string parsing.
+List Isolate::backtrace_frames(int top_line)
+{
+	List out;
+	intptr_t n = frames.size();
+	String k_function("function"), k_line("line"), k_file("file");
+	for (intptr_t i = n - 1; i >= 0; --i)
+	{
+		Proto *p = frames[i].cl->proto;
+		int line = top_line;
+		if (i != n - 1)
+		{
+			intptr_t idx = (frames[i + 1].ret_ip - p->code.data()) - 1;
+			line = static_cast<int>(p->line_at(idx));
+		}
+		Table fr;
+		String fn = p->name == NO_SYMBOL ? String("<module>") : String(symbol_name(p->name));
+		fr.set(Variant(k_function.to_value()), Variant(fn.to_value()));
+		fr.set(Variant(k_line.to_value()), Variant::from_int(line));
+		String file(p->source_path);
+		fr.set(Variant(k_file.to_value()), Variant(file.to_value()));
+		out.append(Variant(fr.to_value()));
 	}
 	return out;
 }
@@ -220,6 +256,12 @@ void capture_error_trace(Isolate &iso, Cell *err, int top_line)
 	if (tv.is_cell())
 		retain(tv.as_cell()); // the instance's field owns this reference
 	f[1] = tv;
+	List frames = iso.backtrace_frames(top_line);
+	Value fv = frames.to_value();
+	retain(fv.as_cell()); // slot 2 owns the frames List
+	if (f[2].is_cell())
+		release(f[2].as_cell()); // a user-assigned pre-raise value, if any
+	f[2] = fv;
 }
 
 void Isolate::safepoint(int line)
@@ -237,6 +279,10 @@ void Isolate::safepoint(int line)
 
 void Isolate::raise(String message, int line)
 {
+	// A native raises with line 0 (it has no source line of its own): substitute the
+	// script line of the call that invoked it, stamped by the interpreter.
+	if (line == 0 && native_call_line != 0)
+		line = native_call_line;
 	// Builtin errors are thrown as Error instances so scripts can `catch` them.
 	Cell *e = make_error(message);
 	capture_error_trace(*this, e, line);

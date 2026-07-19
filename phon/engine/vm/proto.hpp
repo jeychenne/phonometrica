@@ -22,6 +22,7 @@
 #include <phon/engine/vm/opcode.hpp>
 
 #include <memory>
+#include <string>
 
 namespace phonometrica {
 
@@ -106,6 +107,10 @@ struct Proto final
 	Vector<Symbol> option_names;               // keyword-only options, in slot order (design §6)
 
 	Symbol name = NO_SYMBOL; // function name (NO_SYMBOL for anonymous / module)
+	// Source file this proto was compiled from ("" for a path-less <string> chunk).
+	// Stamped over the whole tree after compilation (see stamp_source_path); feeds
+	// the `file` component of error traces/frames.
+	std::string source_path;
 	int num_params = 0;      // fixed positional parameter count
 	int num_regs = 0;        // frame register count (stack slots to reserve)
 	int num_ic = 0;          // inline-cache slots this proto needs (CALLG sites)

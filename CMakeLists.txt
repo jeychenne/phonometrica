@@ -90,6 +90,7 @@ add_library(phon_engine STATIC
     phon/engine/lib/regex.cpp
     phon/engine/lib/string.cpp
     phon/engine/lib/system.cpp
+    phon/engine/lib/table.cpp
     phon/engine/concurrency/transfer.cpp
     phon/engine/concurrency/parallel.cpp
     phon/engine/concurrency/channel.cpp

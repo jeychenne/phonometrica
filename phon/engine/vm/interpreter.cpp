@@ -3,6 +3,7 @@
 
 #include <phon/engine/vm/interpreter.hpp>
 
+#include <phon/engine/base/script_error.hpp>
 #include <phon/engine/object/generic.hpp>
 #include <phon/engine/object/class.hpp>
 #include <phon/engine/object/instance.hpp>
@@ -19,7 +20,9 @@
 #include <phon/engine/vm/opcode.hpp>
 
 #include <cmath>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 namespace phonometrica {
@@ -517,6 +520,9 @@ Value run(Isolate &iso)
 				iso.raise(String("[Argument error] '") + String(symbol_name(nf->name)).view() +
 				              "' called with the wrong number of arguments",
 				          cur_line());
+			// Record the call line so a native that raises without one (natives pass
+			// line 0) reports this call site instead of "line 0".
+			iso.native_call_line = cur_line();
 			Value result = nf->fn(iso, nf, &base[a + 1], nargs);
 			for (int i = 0; i <= nargs; ++i)
 			{
@@ -594,6 +600,43 @@ Value run(Isolate &iso)
 					iso.raise(String("[Index error] List slice index out of range"), cur_line());
 				body(i - 1);
 			}
+	};
+
+	// Land an in-flight error on the innermost handler belonging to this run: unwind
+	// the frames above the try, rebind the dispatch state, and bind the error into the
+	// handler's register. Returns false when no handler of this run applies (the
+	// caller propagates the error). Shared by the RuntimeError and ScriptError paths.
+	auto land_on_handler = [&](RuntimeError &err) -> bool {
+		if (iso.handlers.empty() || iso.handlers.back().frame_depth <= stop_depth)
+			return false;
+
+		Isolate::Handler h = iso.handlers.back();
+		iso.handlers.pop_back();
+
+		// Unwind the frames above the try's frame, releasing their registers.
+		while (static_cast<intptr_t>(iso.frames.size()) > h.frame_depth)
+		{
+			CallFrame f = iso.frames.back();
+			iso.close_upvalues(f.base);
+			for (int i = 0; i < f.cl->proto->num_regs; ++i)
+			{
+				release_value(f.base[i]);
+				f.base[i] = Value::make_null();
+			}
+			iso.frames.pop_back();
+		}
+
+		// Resume in the try's frame at its catch dispatch, with the error bound.
+		CallFrame &top = iso.frames.back();
+		cl = top.cl;
+		proto = cl->proto;
+		base = top.base;
+		K = proto->constants.data();
+		ic_base_cur = iso.ic_base(proto);
+		ip = h.land_ip;
+		release_value(base[h.err_reg]);
+		base[h.err_reg] = err.error; // adopt the in-flight error's reference
+		return true;
 	};
 
 	// Outer retry loop: the inner interpreter loop runs until it returns (RET/HALT at
@@ -913,6 +956,22 @@ Value run(Isolate &iso)
 			}
 			else if (is_table(coll))
 				reg_copy(base, a + 2, Table::from_value(coll).keys().to_value());
+			else if (is_string(coll))
+			{
+				// A String iterates its graphemes (design §12): materialized to a List
+				// of one-grapheme Strings at loop entry, like a Set. The 1-based loop
+				// keys are grapheme positions.
+				String s = String::from_value(coll);
+				List gs;
+				intptr_t n = s.length();
+				for (intptr_t i = 1; i <= n; ++i)
+				{
+					String g(s.at(i));
+					gs.append(Variant(g.to_value()));
+				}
+				reg_copy(base, a, gs.to_value());
+				reg_move(base, a + 2, Value::make_null());
+			}
 			else
 				iso.raise(String("[Type error] value is not iterable"), cur_line());
 			// reg_move: R[A+1] may still hold a temporary from the collection expression.
@@ -2134,35 +2193,21 @@ Value run(Isolate &iso)
 		catch (RuntimeError &err)
 		{
 			// No handler belongs to this run -> propagate to the caller / do_string.
-			if (iso.handlers.empty() || iso.handlers.back().frame_depth <= stop_depth)
+			if (!land_on_handler(err))
 				throw;
-
-			Isolate::Handler h = iso.handlers.back();
-			iso.handlers.pop_back();
-
-			// Unwind the frames above the try's frame, releasing their registers.
-			while (static_cast<intptr_t>(iso.frames.size()) > h.frame_depth)
-			{
-				CallFrame f = iso.frames.back();
-				iso.close_upvalues(f.base);
-				for (int i = 0; i < f.cl->proto->num_regs; ++i)
-				{
-					release_value(f.base[i]);
-					f.base[i] = Value::make_null();
-				}
-				iso.frames.pop_back();
-			}
-
-			// Resume in the try's frame at its catch dispatch, with the error bound.
-			CallFrame &top = iso.frames.back();
-			cl = top.cl;
-			proto = cl->proto;
-			base = top.base;
-			K = proto->constants.data();
-			ic_base_cur = iso.ic_base(proto);
-			ip = h.land_ip;
-			release_value(base[h.err_reg]);
-			base[h.err_reg] = err.error; // adopt the in-flight error's reference
+		}
+		catch (const ScriptError &se)
+		{
+			// A recoverable types-layer failure (bad index, empty container, …):
+			// convert it to a thrown script Error at the current line — mirroring
+			// Isolate::raise, but built here so it can be dispatched to a handler of
+			// this run without re-throwing through the enclosing try.
+			String msg(se.what());
+			Cell *ec = make_error(msg);
+			capture_error_trace(iso, ec, cur_line());
+			RuntimeError err{std::move(msg), cur_line(), Value::make_cell(ec)};
+			if (!land_on_handler(err))
+				throw err;
 		}
 	}
 }
@@ -2205,6 +2250,31 @@ Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
 	return run(iso);
 }
 
+// --- named functions as first-class values (design §6) -------------------------
+// `var f = twice` loads the singleton Function cell for the generic `twice`; a call
+// through the variable lands here, resolves the generic by name on the actual
+// argument types, and invokes the selected method — so the value stays correct as
+// overloads are added (or retracted by the registration journal) after it was taken.
+
+namespace {
+
+Value generic_value_trampoline(Isolate &iso, NativeCell *self, Value *args, int argc)
+{
+	GenericFunction *g = find_generic(self->name);
+	if (!g || g->methods.size() == 0)
+		iso.raise(String("[Name error] function '") + String(symbol_name(self->name)).view() +
+		              "' is not defined",
+		          0);
+	Method *m = resolve(g, args, argc);
+	if (!m)
+		iso.raise(String("[Dispatch error] no applicable method for '") +
+		              String(symbol_name(self->name)).view() + "'",
+		          0);
+	return vm_call(iso, Value::make_cell(reinterpret_cast<Cell *>(m->code)), args, argc);
+}
+
+} // namespace
+
 String stringify_dispatch(Isolate &iso, Value v)
 {
 	// A user class with a `to_string` method stringifies through it (design §12);
@@ -2233,6 +2303,22 @@ String stringify_dispatch(Isolate &iso, Value v)
 }
 
 } // namespace
+
+Cell *generic_function_value(Symbol name)
+{
+	// One cell per name, for the life of the process (generics are never destroyed;
+	// the mutex covers the rare concurrent-compilation case).
+	static std::mutex mu;
+	static std::unordered_map<uint32_t, Cell *> cells;
+	std::lock_guard<std::mutex> lock(mu);
+	auto it = cells.find(name.id);
+	if (it != cells.end())
+		return it->second;
+	NativeCell *nf = make_native(&generic_value_trampoline, name, 0, -1);
+	Cell *c = reinterpret_cast<Cell *>(nf); // the map keeps the creation reference
+	cells.emplace(name.id, c);
+	return c;
+}
 
 Value execute(Isolate &iso, ClosureCell *main)
 {

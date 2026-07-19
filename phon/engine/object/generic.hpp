@@ -93,6 +93,14 @@ void remove_method(GenericFunction *g, const SmallVector<Class *, 4> &sig, bool 
 // dispatches on its referent (ref-ness is uniform, not a dispatch dimension).
 Method *resolve(GenericFunction *g, const Value *args, int argc);
 
+// A generic function as a first-class script value (design §6): the singleton
+// Function cell for `name`, created on first use. The cell is a native trampoline
+// that resolves the generic BY NAME at each call, so the value tracks later-added
+// (or journal-retracted) overloads, and two references to the same function
+// compare equal. Defined in vm/interpreter.cpp — a declaration seam like the cc_*
+// collector hooks: dispatch sits below the VM, but the value must invoke through it.
+Cell *generic_function_value(Symbol name);
+
 // The per-generic memo cache in `resolve` is shared mutable state, so it is used only
 // while dispatch is single-threaded. A spawned worker brackets its run with these
 // (concurrency §13): each worker increments on entry — so a worker always observes a

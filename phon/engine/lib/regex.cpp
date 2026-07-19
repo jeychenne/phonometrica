@@ -122,6 +122,22 @@ void register_regex_lib()
 		check_group(iso, m, n);
 		return static_cast<int64_t>(m.group_end(static_cast<int>(n)));
 	});
+	// groups(m): the captures as a List — [group(m,1), …]; a non-participating group
+	// contributes null. (Replaces the old engine's iteration over the regex object.)
+	register_function("groups", [](const Match &m) {
+		List out;
+		for (int i = 1; i < m.group_count(); ++i)
+		{
+			if (m.group_is_set(i))
+				out.append(Variant::make(m.group(i)));
+			else
+				out.append(Variant::null());
+		}
+		return out;
+	});
+
+	// --- Regex accessors ---
+	register_function("pattern", [](const Regex &re) { return re.pattern(); });
 }
 
 } // namespace phonometrica

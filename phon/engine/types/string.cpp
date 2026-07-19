@@ -4,6 +4,7 @@
 #include <phon/engine/types/string.hpp>
 
 #include <phon/engine/base/alloc.hpp>
+#include <phon/engine/base/script_error.hpp>
 #include <phon/engine/base/unicode.hpp>
 #include <phon/engine/core/hash.hpp>
 #include <phon/engine/object/class.hpp>
@@ -323,7 +324,7 @@ String::const_iterator String::index_to_iter(intptr_t i) const
 		return grapheme_ptr(s, i - 1);
 	if (i < 0 && i >= -gl)
 		return grapheme_ptr(s, gl + i);
-	PHON_CHECK(false, "[Index error] String index out of range");
+	PHON_SCRIPT_CHECK(false, "[Index error] String index out of range");
 	return end();
 }
 
@@ -510,7 +511,7 @@ String &String::insert(intptr_t grapheme_pos, Substring infix)
 	intptr_t gi = grapheme_pos - 1;
 	if (grapheme_pos < 0)
 		gi = gl + grapheme_pos + 1;
-	PHON_CHECK(gi >= 0 && gi <= gl, "[Index error] String insert position out of range");
+	PHON_SCRIPT_CHECK(gi >= 0 && gi <= gl, "[Index error] String insert position out of range");
 	intptr_t byte_off = static_cast<intptr_t>(grapheme_ptr(s0, gi) - s0->data);
 
 	intptr_t len = static_cast<intptr_t>(infix.size());

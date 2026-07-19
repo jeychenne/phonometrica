@@ -50,6 +50,23 @@ public:
 	// in a later one.
 	Variant do_string(const String &code);
 
+	// Run a script file. Unlike do_string, the chunk knows its source file: `import`
+	// resolves in the script's own directory (before any add_import_path directory
+	// and $PHON_MODULE_PATH), and get_script_path() reports the file, so scripts can
+	// locate sibling data. Throws std::runtime_error if the file cannot be read.
+	Variant do_file(const String &path);
+
+	// Toggle the interactive (REPL) leniencies for subsequent do_string calls
+	// (design §11): bare assignment to an unresolved name auto-declares a session
+	// binding. Off by default; never applies to do_file.
+	void set_interactive(bool on) noexcept;
+
+	// Inject a value into this session's isolate-global namespace (design §11): the
+	// embedder's channel for app state (`phon`, the current selection, …). The name
+	// resolves from every chunk and module compiled after the call, like a
+	// script-side `global var`. Re-injecting an existing name rebinds it.
+	void add_global(const char *name, const Variant &value);
+
 	// Expose a C++ callable to scripts as a method on the generic `name` (the typed
 	// registration front end, design §11.3). The callable's parameter types map to a
 	// dispatch signature and its return type is boxed automatically:

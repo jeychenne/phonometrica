@@ -99,7 +99,10 @@ void register_function_classes()
 	g_closure = add_class("Function", object, CLASS_BUILTIN | CLASS_REF);
 	g_closure->finalize = &closure_finalize;
 	g_closure->trace = &closure_trace;
-	g_native = add_class("Function", object, CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
+	// The native class derives from the closure class so `x is Function` (which
+	// resolves the name to the first-registered class) covers both callable kinds —
+	// including the generic-function value cells, which are natives.
+	g_native = add_class("Function", g_closure, CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
 	g_native->finalize = &native_finalize;
 	// The captured-callable environment for typed natives. Acyclic from the
 	// collector's view: it never traces into the C++ callable, so a script cell

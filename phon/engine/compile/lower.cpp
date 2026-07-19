@@ -286,6 +286,20 @@ private:
 			r.index = it->second;
 			return r;
 		}
+		// An isolate global (design §11 search order: … → module namespace → isolate
+		// globals): a `global var` declared by any module of the session, or a value
+		// the embedder injected with Runtime::add_global. Same shared slot vector, so
+		// the ordinary module opcodes serve it.
+		if (m_env && m_env->loader)
+		{
+			int gslot = m_env->loader->find_global(name);
+			if (gslot >= 0)
+			{
+				r.kind = NameKind::Module;
+				r.index = gslot;
+				return r;
+			}
+		}
 		if (Class *c = class_by_name(name))
 		{
 			r.kind = NameKind::ClassObject;
@@ -604,8 +618,16 @@ void Lowerer::expr_to(Ast *node, int dest)
 			emit_ABx(Opcode::LOADK, dest, static_cast<uint32_t>(k_class(nr.cls)), ln(node));
 			break;
 		case NameKind::Generic:
-			error(node, "[Name error] '" + std::string(symbol_name(v->name)) +
-			                "' is a generic function and cannot be used as a value yet (M8)");
+		{
+			// A named function is a first-class value (design §6): load its singleton
+			// Function cell. The cell resolves the generic by name per call, so
+			// overloads added after the value was taken are still seen.
+			Cell *fc = generic_function_value(v->name);
+			emit_ABx(Opcode::LOADK, dest,
+			         static_cast<uint32_t>(P().add_constant(Variant(Value::make_cell(fc)))),
+			         ln(node));
+			break;
+		}
 		case NameKind::None:
 		{
 			// A bare builtin constant (PI, E, …) inlines as a compile-time constant load.
@@ -972,26 +994,33 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 	}
 	// A list element `c[i]`: load the container for in-place mutation, promote the
 	// element to a boxed reference, then write the (detached) container back (§7).
+	// The container/index temporaries are freed afterwards: they must not stay
+	// allocated, or the NEXT argument's staging slot lands past them and the callee
+	// reads the leaked temp as its argument.
 	if (auto *ix = arg->as<IndexExpression>())
 	{
 		if (ix->indices.size() != 1 || ix->indices[0]->is<SliceExpression>())
 			error(arg, "[Index error] only a single-element reference is supported");
+		int save = fs->free_reg;
 		int wb, wbidx;
 		int cont = load_index_object(ix, wb, wbidx);
 		int idxr = expr_any(ix->indices[0].get());
 		emit_ABC(Opcode::PROMOTEINDEX, r, cont, idxr, ln(arg));
 		emit_index_writeback(cont, wb, wbidx, ln(arg));
+		reg_free_to(save);
 		return;
 	}
 	// An object field `o.field`: as above, for a field slot.
 	if (auto *fa = arg->as<FieldAccess>())
 	{
+		int save = fs->free_reg;
 		int wb, wbidx;
 		int obj = load_object_for_write(fa->object.get(), wb, wbidx);
 		int sreg = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fa->name)), ln(arg));
 		emit_ABC(Opcode::PROMOTEFIELD, r, obj, sreg, ln(arg));
 		emit_index_writeback(obj, wb, wbidx, ln(arg));
+		reg_free_to(save);
 		return;
 	}
 	error(arg, "[Compile error] a 'ref' parameter requires an lvalue: a variable, a list "
@@ -1316,7 +1345,14 @@ void Lowerer::compile_declaration(Declaration *d)
 {
 	if (fs->is_module)
 	{
-		int slot = module_lookup(d->name);
+		// A `global var/const` binds in the isolate-global namespace when the session
+		// provides one (pass 1 declared it there); otherwise it degrades to a module
+		// binding, which is also where plain declarations go.
+		int slot = -1;
+		if (d->modifier == DeclModifier::Global && m_env && m_env->loader)
+			slot = m_env->loader->find_global(d->name);
+		if (slot < 0)
+			slot = module_lookup(d->name);
 		if (slot < 0)
 			slot = module_define(d->name);
 		if (d->init)
@@ -1377,6 +1413,19 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		case NameKind::ClassObject:
 		case NameKind::Generic:
 		case NameKind::None:
+			// Interactive leniency (design §11, REPL only): bare assignment to an
+			// unresolved name auto-declares a session binding. Reads of unknown
+			// names still error, and file runs are never lenient.
+			if (nr.kind == NameKind::None && m_env && m_env->interactive)
+			{
+				int slot = module_define(v->name);
+				int save = fs->free_reg;
+				int t = reg_alloc(target);
+				expr_to(value, t);
+				emit_ABx(Opcode::SETMODULE, t, static_cast<uint32_t>(slot), ln(target));
+				reg_free_to(save);
+				break;
+			}
 			error(target, "[Name error] cannot assign to '" + std::string(symbol_name(v->name)) +
 			                  "' (assignment never declares — use 'var')");
 		}
@@ -1525,17 +1574,19 @@ void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
 
 void Lowerer::emit_index_unshare(int wb, int wbidx, Ast *node)
 {
-	// Only module (1) and upvalue (2) bindings keep a live slot reference alongside the
-	// loaded temp; a local's register IS the storage and a `ref` writes through its box.
-	if (wb != 1 && wb != 2)
-		return;
-	int tmp = reg_alloc(node);
-	emit_ABC(Opcode::LOADNULL, tmp, 0, 0, ln(node)); // null the slot: releases its ref,
-	if (wb == 1)                                      // leaving the loaded temp unique
-		emit_ABx(Opcode::SETMODULE, tmp, static_cast<uint32_t>(wbidx), ln(node));
-	else
-		emit_ABC(Opcode::SETUPVAL, tmp, wbidx, 0, ln(node));
-	// tmp is reclaimed by the caller's enclosing reg_free_to(save).
+	// DISABLED (correctness over speed). This used to null the module/upvalue slot so
+	// the loaded temp was uniquely owned and the following indexed/field store mutated
+	// in place without a copy-on-write clone. But a store can now fail with a
+	// CATCHABLE error (an out-of-range index, a throwing field setter): the write-back
+	// that restores the binding never runs, and after `catch` the binding reads null —
+	// silent state corruption. Until an exception-safe variant exists (e.g. a pending-
+	// write-back journal on the Isolate that the error-landing path replays), the slot
+	// keeps its reference: the store detaches a clone and the write-back stores it,
+	// which is slower (O(n) per element store to a module/upvalue-held container) but
+	// leaves the binding untouched when the store throws. See DEVIATIONS.
+	(void) wb;
+	(void) wbidx;
+	(void) node;
 }
 
 void Lowerer::emit_option_prologue(AstList &params)
@@ -2557,6 +2608,12 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 	{
 		if (auto *d = s->as<Declaration>())
 		{
+			// `global` declares in the isolate-global namespace, not the module's —
+			// the name must resolve session-wide, from modules compiled later, and
+			// a module slot here would shadow the global within this module.
+			if (d->modifier == DeclModifier::Global && m_env && m_env->loader &&
+			    m_env->loader->declare_global(d->name) >= 0)
+				continue;
 			module_define(d->name);
 			if (d->modifier == DeclModifier::None) // public var/const: visible as M.name
 				m_ns.exported.insert(d->name.id);

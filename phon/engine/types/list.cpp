@@ -3,6 +3,7 @@
 
 #include <phon/engine/types/list.hpp>
 
+#include <phon/engine/base/script_error.hpp>
 #include <phon/engine/core/reference.hpp>
 #include <phon/engine/object/class.hpp>
 #include <phon/engine/object/value_ops.hpp>
@@ -149,7 +150,7 @@ intptr_t List::normalize(intptr_t i, bool allow_end) const
 		idx = n + i + 1; // -1 -> last
 	--idx;               // to 0-based
 	intptr_t upper = allow_end ? n : n - 1;
-	PHON_CHECK(idx >= 0 && idx <= upper, "[Index error] List index out of range");
+	PHON_SCRIPT_CHECK(idx >= 0 && idx <= upper, "[Index error] List index out of range");
 	return idx;
 }
 
@@ -225,7 +226,7 @@ void List::insert(intptr_t i, const Variant &v)
 
 Variant List::pop()
 {
-	PHON_CHECK(m_impl->size > 0, "[Value error] pop from empty List");
+	PHON_SCRIPT_CHECK(m_impl->size > 0, "[Value error] pop from empty List");
 	ListCell *l = detach_for_write(m_impl->size);
 	Value v = l->data[l->size - 1];
 	Variant result(deref(v)); // the element may be a reference; return its value

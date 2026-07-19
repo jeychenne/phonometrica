@@ -59,6 +59,15 @@ void register_list_lib()
 	// --- queries and derivations ---
 	register_function("contains", [](const List &xs, Variant v) { return xs.contains(v); });
 	register_function("find", [](const List &xs, Variant v) { return xs.index_of(v); });
+	// find(xs, v, from): first match at or after 1-based position `from` (0 if none).
+	register_function("find", [](const List &xs, Variant v, int64_t from) -> int64_t {
+		if (from < 1)
+			from = 1;
+		for (int64_t i = from; i <= xs.size(); ++i)
+			if (value_equals(xs.get(i).value(), v.value()))
+				return i;
+		return 0;
+	});
 	register_function("is_empty", [](const List &xs) { return xs.empty(); });
 	register_function("first", [](Isolate &iso, const List &xs) {
 		if (xs.empty())
@@ -100,7 +109,12 @@ void register_list_lib()
 	// --- in-place mutators (the `List &` parameter writes back) ---
 	register_function("append", [](List &xs, Variant v) { xs.append(v); });
 	register_function("prepend", [](List &xs, Variant v) { xs.prepend(v); });
-	register_function("insert", [](List &xs, int64_t i, Variant v) { xs.insert(i, v); });
+	register_function("insert", [](List &xs, int64_t i, Variant v) {
+		// Old-engine contract: an insert position past the end appends.
+		if (i > xs.size())
+			i = xs.size() + 1;
+		xs.insert(i, v);
+	});
 	register_function("remove_at", [](List &xs, int64_t i) { xs.remove_at(i); });
 	register_function("clear", [](List &xs) { xs.clear(); });
 	register_function("pop", [](Isolate &iso, List &xs) {

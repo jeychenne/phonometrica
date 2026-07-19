@@ -105,6 +105,7 @@ void register_array_lib()
 	// --- shape ---
 	register_function("nrow", [](const NumArray &a) { return a.dim(0); });
 	register_function("ncol", [](const NumArray &a) { return a.rank() >= 2 ? a.dim(1) : intptr_t(1); });
+	register_function("ndim", [](const NumArray &a) { return static_cast<int64_t>(a.rank()); });
 
 	// --- reductions ---
 	register_function("sum", [](const NumArray &a) { return reduce_sum(a); });

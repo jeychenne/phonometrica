@@ -290,17 +290,32 @@ void register_builtins()
 
 std::once_flag g_init_once;
 
-// Parse `src` and compile it against `ns` (the persistent namespace). `Source` is
-// the compiler-layer text buffer: it holds the script as a std::string because it
-// reads files via std::ifstream and scans with std::string_view, so the engine
-// String is converted once here at the boundary (cold path).
+// Parse an already-built Source and compile it against `ns` (the persistent
+// namespace). `Source` is the compiler-layer text buffer: it holds the script as a
+// std::string because it reads files via stdio and scans with std::string_view, so
+// engine Strings are converted once at this boundary (cold path).
+void compile_source_parsed(Source source, ModuleNamespace &ns, CompiledModule &cm,
+                           CompileEnv *env = nullptr)
+{
+	Parser parser(source);
+	AutoAst ast = parser.parse();
+	compile_module(ast.get(), ns, cm, env);
+}
+
 void compile_source(const String &src, ModuleNamespace &ns, CompiledModule &cm,
                     CompileEnv *env = nullptr)
 {
 	Source source = Source::from_string(std::string(src.data(), static_cast<size_t>(src.size())));
-	Parser parser(source);
-	AutoAst ast = parser.parse();
-	compile_module(ast.get(), ns, cm, env);
+	compile_source_parsed(std::move(source), ns, cm, env);
+}
+
+// Stamp the source file over a compiled Proto tree, so error traces/frames can name
+// the file each frame belongs to.
+void stamp_source_path(Proto *p, const std::string &path)
+{
+	p->source_path = path;
+	for (auto &child : p->children)
+		stamp_source_path(child.get(), path);
 }
 
 // The session's module loader (design §11): resolves `import M` to a file, compiles it
@@ -316,6 +331,23 @@ public:
 	int alloc_slot() override { return m_next_slot++; }
 	int total_slots() const noexcept { return m_next_slot; }
 	const std::vector<LoadedModule *> &load_order() const noexcept { return m_order; }
+
+	// The isolate-global namespace (design §11): session-wide name → shared-slot map,
+	// fed by `global var` declarations and Runtime::add_global.
+	int find_global(Symbol name) override
+	{
+		auto it = m_globals.find(name.id);
+		return it == m_globals.end() ? -1 : it->second;
+	}
+	int declare_global(Symbol name) override
+	{
+		auto it = m_globals.find(name.id);
+		if (it != m_globals.end())
+			return it->second;
+		int slot = alloc_slot();
+		m_globals[name.id] = slot;
+		return slot;
+	}
 
 	LoadedModule *load(Symbol name, const std::string &from_dir) override
 	{
@@ -350,6 +382,7 @@ public:
 		for (intptr_t i = 0; i < env.public_classes.size(); ++i)
 			lm->classes.insert(env.public_classes[i]);
 		lm->main = std::move(cm.main);
+		stamp_source_path(lm->main.get(), path);
 
 		LoadedModule *raw = lm.get();
 		m_cache[path] = raw;             // replace the in-progress marker
@@ -400,7 +433,17 @@ private:
 	std::vector<std::unique_ptr<LoadedModule>> m_owned;
 	std::vector<LoadedModule *> m_order; // dependency order (deps before dependents)
 	std::vector<std::string> m_paths;
+	std::unordered_map<uint32_t, int> m_globals; // isolate globals: symbol id -> slot
 	int m_next_slot = 0;
+};
+
+// Keeps Isolate::script_paths balanced around one chunk/module top-level execution,
+// so get_script_path() reports the file whose code is currently running.
+struct ScriptPathScope
+{
+	Isolate &iso;
+	ScriptPathScope(Isolate &i, const std::string &p) : iso(i) { iso.script_paths.push_back(p); }
+	~ScriptPathScope() { iso.script_paths.pop_back(); }
 };
 
 } // namespace
@@ -418,6 +461,7 @@ void init_runtime()
 		register_math_lib();
 		register_string_lib();
 		register_list_lib();
+		register_table_lib();
 		register_array_lib();
 		register_system_lib();
 		register_file_lib();
@@ -443,7 +487,13 @@ struct Runtime::State
 	Vector<std::unique_ptr<CompiledModule>> history;
 	ModuleNamespace shell;
 	ModuleManager modules;
+	bool interactive = false;
 	Isolate isolate;
+
+	// Compile `source` against the persistent namespace and run it: the common body
+	// behind do_string (`dir`/`path` empty) and do_file (the file's directory feeds
+	// import resolution; its path feeds get_script_path()).
+	Variant run(Source source, const std::string &dir, const std::string &path);
 };
 
 Runtime::Runtime() : m_state(std::make_unique<State>()) { init_runtime(); }
@@ -451,13 +501,45 @@ Runtime::~Runtime() = default;
 
 Variant Runtime::do_string(const String &code)
 {
+	Source source =
+	    Source::from_string(std::string(code.data(), static_cast<size_t>(code.size())));
+	return m_state->run(std::move(source), "", "");
+}
+
+Variant Runtime::do_file(const String &path)
+{
+	std::string p(path.data(), static_cast<size_t>(path.size()));
+	std::error_code ec;
+	fs::path canon = fs::weakly_canonical(fs::path(p), ec);
+	std::string cpath = (ec || canon.empty()) ? p : canon.string();
+	Source source = Source::from_file(cpath); // throws std::runtime_error if unreadable
+	return m_state->run(std::move(source), fs::path(cpath).parent_path().string(), cpath);
+}
+
+void Runtime::set_interactive(bool on) noexcept
+{
+	m_state->interactive = on;
+}
+
+void Runtime::add_global(const char *name, const Variant &value)
+{
 	State &st = *m_state;
+	int slot = st.modules.declare_global(intern(name));
+	if (st.isolate.module_slots.size() <= slot)
+		st.isolate.module_slots.resize(slot + 1);
+	st.isolate.module_slots[slot] = value;
+}
+
+Variant Runtime::State::run(Source source, const std::string &dir, const std::string &path)
+{
+	State &st = *this;
 
 	auto cm = std::make_unique<CompiledModule>();
 	CompileEnv env;
 	env.loader = &st.modules; // resolves `import`, allocates session-global slots
-	env.dir = "";             // a <string> chunk has no file directory
-	compile_source(code, st.shell, *cm, &env);
+	env.dir = dir;            // "" for a <string> chunk: no file directory
+	env.interactive = st.interactive;
+	compile_source_parsed(std::move(source), st.shell, *cm, &env);
 
 	// Grow the Isolate's module-slot vector to cover every module's session-global slots
 	// (design §11: one shared vector; indices never move, so growth preserves values).
@@ -470,6 +552,8 @@ Variant Runtime::do_string(const String &code)
 	// Keep the Proto tree alive: module-slot closures created by this chunk outlive
 	// the call and borrow their Proto.
 	Proto *main_proto = cm->main.get();
+	if (!path.empty())
+		stamp_source_path(main_proto, path);
 	st.history.push_back(std::move(cm));
 
 	Isolate *prev = current_isolate();
@@ -489,12 +573,14 @@ Variant Runtime::do_string(const String &code)
 			if (lm->has_run)
 				continue;
 			Handle<ClosureCell> mc = Handle<ClosureCell>::adopt(make_closure(lm->main.get()));
+			ScriptPathScope mscope(st.isolate, lm->path);
 			Value r = execute(st.isolate, mc.get());
 			if (r.is_cell())
 				release(r.as_cell());
 			lm->has_run = true;
 		}
 
+		ScriptPathScope scope(st.isolate, path);
 		Value result = execute(st.isolate, main.get());
 		out = Variant(result);         // retains
 		if (result.is_cell())

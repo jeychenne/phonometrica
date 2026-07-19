@@ -49,10 +49,12 @@ Class g_symbol{.id = CID_SYMBOL, .name = "Symbol", .base = &g_object,
 Class g_class{.id = CID_CLASS, .name = "Class", .base = &g_object,
               .flags = CLASS_BUILTIN | CLASS_REF | CLASS_META | CLASS_SEALED};
 
-// The base Error class (design §12): a value class with `message` (slot 0) and
-// `trace` (slot 1, the backtrace captured at first raise) fields, so its instances
-// (and user subclasses) go through the ordinary instance machinery.
-FieldInfo g_error_fields[2];
+// The base Error class (design §12): a value class with `message` (slot 0),
+// `trace` (slot 1, the rendered backtrace captured at first raise), and `frames`
+// (slot 2, the same backtrace as structured data — a List of {function, line,
+// file} Tables) fields, so its instances (and user subclasses) go through the
+// ordinary instance machinery.
+FieldInfo g_error_fields[3];
 Class g_error{.id = CID_ERROR, .name = "Error", .base = &g_object,
               .flags = CLASS_BUILTIN | CLASS_VALUE};
 
@@ -90,13 +92,15 @@ void do_bootstrap()
 	// into the tree — intervals come from renumber_types() over the assembled hierarchy.)
 	register_class(&g_class);
 
-	// Error carries `message` and `trace` fields (Strings), via the instance machinery.
+	// Error carries `message`/`trace` (Strings) and `frames` (a List of {function,
+	// line, file} Tables), via the instance machinery.
 	g_error_fields[0] = FieldInfo{intern("message"), get_class(CID_STRING), nullptr, nullptr, false};
 	g_error_fields[1] = FieldInfo{intern("trace"), get_class(CID_STRING), nullptr, nullptr, false};
+	g_error_fields[2] = FieldInfo{intern("frames"), get_class(CID_LIST), nullptr, nullptr, false};
 	g_error.fields = g_error_fields;
-	g_error.field_count = 2;
+	g_error.field_count = 3;
 	g_error.instance_size =
-	    static_cast<intptr_t>(sizeof(Cell)) + 2 * static_cast<intptr_t>(sizeof(Value));
+	    static_cast<intptr_t>(sizeof(Cell)) + 3 * static_cast<intptr_t>(sizeof(Value));
 	g_error.finalize = &instance_finalize;
 	g_error.clone = &instance_clone_hook;
 	g_error.trace = &instance_trace; // user subclasses may add cyclic fields (§8.2)

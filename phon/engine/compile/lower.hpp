@@ -57,6 +57,15 @@ struct ModuleLoader
 
 	// Hand out the next session-global module slot (shared across all modules).
 	virtual int alloc_slot() = 0;
+
+	// The isolate-global namespace (design §11): `global var` bindings and values the
+	// embedder injects with Runtime::add_global. Globals live in the same shared slot
+	// vector as module bindings (access is plain GET/SET_MODULE), but their name→slot
+	// map is session-wide, so a global declared by one module resolves from every
+	// later-compiled module. The defaults keep loaders that provide no global
+	// namespace working: `global var` then falls back to a module binding.
+	virtual int find_global(Symbol name) { (void) name; return -1; }    // -1: not a global
+	virtual int declare_global(Symbol name) { (void) name; return -1; } // find-or-create
 };
 
 // The result of compiling one chunk: the top-level Proto (owns its nested
@@ -93,6 +102,8 @@ struct CompileEnv
 {
 	ModuleLoader *loader = nullptr;
 	std::string dir;                    // importing module's directory ("" for <string>)
+	bool interactive = false;           // REPL leniencies (design §11): bare assignment
+	                                    // to an unresolved name auto-declares a binding
 	Vector<LoadedModule *> imports;     // out: modules imported (in encounter order)
 	Vector<uint32_t> public_functions;  // out: this module's public generic names
 	Vector<uint32_t> public_classes;    // out: this module's public class names

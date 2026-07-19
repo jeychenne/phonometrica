@@ -38,6 +38,15 @@ auto guarded(Isolate &iso, F &&f) -> decltype(f())
 
 void register_system_lib()
 {
+	// The file whose code is currently running (maintained by the Runtime around
+	// each do_file chunk / imported module top-level), so scripts can locate data
+	// relative to themselves. A path-less context (do_string, the REPL) raises.
+	register_function("get_script_path", [](Isolate &iso) {
+		if (iso.script_paths.empty() || iso.script_paths.back().empty())
+			iso.raise(String("[Runtime error] no script file is associated with this code"), 0);
+		return String(iso.script_paths.back());
+	});
+
 	// --- pure path manipulation (no OS access, cannot fail) ---
 	register_function("get_path_separator", [] { return fs::separator(); });
 	register_function("get_base_name", [](const String &p) { return fs::base_name(p.view()); });

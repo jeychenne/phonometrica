@@ -28,9 +28,7 @@
 #include <phon/engine/vm/interpreter.hpp> // stringify
 
 #include <cmath>
-#include <fstream>
 #include <iostream>
-#include <sstream>
 #include <string>
 
 using namespace phonometrica;
@@ -73,23 +71,21 @@ void register_host_extensions(Runtime &rt)
 	// changes the shared object (identity), just like in application C++ code.
 	rt.add_function("bump", [](Counter &c) { return ++c.value; });
 	rt.add_function("count", [](const Counter &c) { return c.value; });
+
+	// Embedder-injected isolate global (design §11): scripts read `host_version`
+	// bare, like a script-side `global var`.
+	rt.add_global("host_version", Variant::make(String("phon example host 1.0")));
 }
 
 // --- run modes ----------------------------------------------------------------
 
 int run_file(Runtime &rt, const std::string &path)
 {
-	std::ifstream in(path, std::ios::binary);
-	if (!in)
-	{
-		std::cerr << "phon: cannot open '" << path << "'\n";
-		return 1;
-	}
-	std::ostringstream ss;
-	ss << in.rdbuf();
 	try
 	{
-		rt.do_string(String(ss.str()));
+		// do_file gives the chunk its source file: imports resolve in the script's
+		// own directory and get_script_path() works.
+		rt.do_file(String(path));
 	}
 	catch (const SyntaxError &e)
 	{
@@ -101,6 +97,11 @@ int run_file(Runtime &rt, const std::string &path)
 		std::cerr << to_std(e.message) << " (line " << e.line << ")\n";
 		return 1;
 	}
+	catch (const std::exception &e)
+	{
+		std::cerr << "phon: " << e.what() << "\n";
+		return 1;
+	}
 	return 0;
 }
 
@@ -108,6 +109,7 @@ int run_repl(Runtime &rt)
 {
 	std::cout << "phon REPL — enter an expression, Ctrl-D to exit.\n"
 	             "Try: hypot(3, 4)   |   var c = make_counter(10)   |   bump(c)\n";
+	rt.set_interactive(true); // REPL leniencies (design §11): x = 5 auto-declares
 	std::string line;
 	std::cout << "phon> " << std::flush;
 	while (std::getline(std::cin, line))

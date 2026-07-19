@@ -12,6 +12,7 @@
 #include <phon/engine/runtime/native_traits.hpp>
 #include <phon/engine/types/list.hpp>
 #include <phon/engine/types/string.hpp>
+#include <phon/engine/vm/isolate.hpp> // Isolate::raise (to_int/to_float)
 
 namespace phonometrica {
 
@@ -39,7 +40,8 @@ void register_string_lib()
 		return String(s.mid(from, to - from + 1));
 	});
 
-	// split(s, sep) -> List of the pieces between occurrences of `sep`.
+	// split(s, sep) -> List of the pieces between occurrences of `sep`. A leading,
+	// trailing, or doubled separator yields an empty field, so split/join round-trip.
 	register_function("split", [](const String &s, const String &sep) {
 		List out;
 		if (sep.empty())
@@ -47,20 +49,41 @@ void register_string_lib()
 			out.append(Variant::make(s));
 			return out;
 		}
-		intptr_t start = 1; // 1-based grapheme cursor
+		intptr_t n = s.length();
 		intptr_t sep_len = sep.length();
-		for (;;)
+		intptr_t start = 1; // 1-based grapheme cursor
+		while (start <= n)
 		{
 			intptr_t pos = s.find(sep, start);
 			if (pos == 0)
 			{
 				out.append(Variant::make(String(s.mid(start))));
-				break;
+				return out;
 			}
 			out.append(Variant::make(String(s.mid(start, pos - start))));
 			start = pos + sep_len;
 		}
+		// The string is empty or ends with the separator: one final empty field.
+		out.append(Variant::make(String()));
 		return out;
+	});
+
+	// --- conversions ---
+	// to_int / to_float parse the whole (whitespace-trimmed) string; an unparseable
+	// string raises a [Value error] rather than yielding a silent 0.
+	register_function("to_int", [](Isolate &iso, const String &s) -> int64_t {
+		bool ok = false;
+		intptr_t v = s.to_int(&ok);
+		if (!ok)
+			iso.raise(String("[Value error] cannot convert '") + s + "' to Integer", 0);
+		return static_cast<int64_t>(v);
+	});
+	register_function("to_float", [](Isolate &iso, const String &s) -> double {
+		bool ok = false;
+		double v = s.to_float(&ok);
+		if (!ok)
+			iso.raise(String("[Value error] cannot convert '") + s + "' to Float", 0);
+		return v;
 	});
 
 	// --- in-place mutators: the `String &` parameter writes back to the caller ---

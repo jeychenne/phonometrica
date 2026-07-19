@@ -1745,3 +1745,114 @@ engine's String/File/Hashmap at VM cutover (Phonometrica's phase-1 audit trail:
     pre-main, before the harness's bootstrap, ASan-clean). Other cell types keep
     the bootstrap-first requirement — the constraint was only ever about Strings
     (Phonometrica has static-initializer Strings; nothing else).
+
+## Post-port hardening (Phonometrica script-port findings, 2026-07-18)
+
+The Phonometrica shipped-script port (repo `../phonometrica`, MIGRATION_NOTES.md
+step 3) ran real workloads over the engine and surfaced three script-reachable
+crashes plus a set of embedding/stdlib gaps. All are fixed here; each stayed green
+under the normal, ASan, and TSan builds (394 unit cases each).
+
+1. **Recoverable script errors from the types layer: `ScriptError` /
+   `PHON_SCRIPT_CHECK` (`base/script_error.hpp`).** `PHON_CHECK` aborts the process,
+   which is right for invariants but wrong for script-caused conditions: an
+   out-of-range List *write* (`lst[0] = x` — reads were opcode-checked and fine),
+   `insert` past the end, `pop` from an empty List, and String index/insert
+   positions all killed the interpreter. Those four sites now throw `ScriptError`;
+   the interpreter's retry loop converts an in-flight `ScriptError` into a thrown
+   script Error at the current line (sharing the handler-landing path with
+   RuntimeError via a factored `land_on_handler`), so scripts can `catch` them.
+   `PHON_CHECK` remains for genuine invariants.
+
+2. **Script-level `insert` past the end appends (lib/list.cpp).** Restores the old
+   engine's contract (pinned by Phonometrica's `test_base_migration.phon` L22); the
+   C++ `List::insert` itself stays strict (a `ScriptError` on a bad position).
+
+3. **Argument-staging register leak in ref promotion (compile/lower.cpp,
+   `emit_promote_arg`) — the cause of a memory-corrupting bug.** The
+   container/index temporaries allocated for `PROMOTEINDEX`/`PROMOTEFIELD` were
+   never freed, so the NEXT argument staged past them and the callee read the
+   leaked container temp as its argument: `append(t["k"], v)` appended the
+   *container* into itself (a self-referential list → infinite recursion in
+   stringify, segfaults). Single-argument promotions never showed it. The
+   temporaries are now freed after emission. This was references.md §7's suspected
+   "CoW × ref corner"; the promotion machinery itself was correct.
+
+4. **`split` with a leading/trailing/doubled separator (lib/string.cpp).** The
+   grapheme-cursor loop ran `mid(start)` one past the end when the subject ended
+   with the separator (aborting via the String index check — hit by any
+   `split(e.trace, "\n")`, since traces end with a newline). Rewritten with an
+   explicit `start <= n` guard and a final empty field, so split/join round-trip.
+
+5. **The in-place-mutation "unshare" fast path is disabled (compile/lower.cpp,
+   `emit_index_unshare`), correctness over speed.** It nulled a module/upvalue
+   binding around an indexed/field store so the store could mutate in place; with
+   store failures now catchable (bad index, throwing field setter), the write-back
+   that restores the binding can be skipped, leaving the variable null after
+   `catch` — including a *pre-existing* corruption for Array out-of-range writes.
+   Until an exception-safe variant exists (sketch: a pending-write-back journal on
+   the Isolate that the error-landing path replays), stores to module/upvalue-held
+   containers pay a copy-on-write clone. Golden disasm corpus regenerated
+   (`arrays.dis`, `slices.dis`).
+
+6. **`Runtime::do_file` + `get_script_path()` (E1).** `do_file(path)` runs a script
+   file with its identity attached: `import` resolves in the script's own directory
+   (before `add_import_path` dirs and `$PHON_MODULE_PATH`), and the new
+   `get_script_path()` builtin (lib/system.cpp) reports the file whose code is
+   currently executing — maintained as a stack on the Isolate, pushed around each
+   module top-level and the main chunk, matching the old engine's dynamic
+   `current_path` semantics (a path-less context raises). `examples/repl.cpp`
+   `run_file` now uses it.
+
+7. **Isolate globals are real (E2): `global var` + `Runtime::add_global`.** The
+   parser accepted `global` but the lowerer made a plain module binding, so a
+   global declared in module A was invisible to module B. The ModuleLoader now
+   carries a session-wide name→slot map (`find_global`/`declare_global`, default
+   implementations keep other loaders working); `global var` declares there in
+   pass 1 (no shadowing module slot), reads/writes resolve through the ordinary
+   GET/SET_MODULE opcodes on the shared slot vector, and the embedder injects
+   values with `Runtime::add_global(name, value)` (design §11's GUI channel,
+   demonstrated by repl.cpp's `host_version`).
+
+8. **The REPL's interactive leniency #1 (design §11) is implemented.**
+   `Runtime::set_interactive(true)` (set by the example REPL) makes bare
+   assignment to an unresolved name auto-declare a session binding — previously
+   `x = 5` errored even interactively. Reads of unknown names still error, and
+   file runs are never lenient.
+
+9. **Stdlib additions.** `lib/table.cpp` (new): `contains`/`is_empty`/`keys`/
+   `values` and in-place `remove`/`clear` for Table — `contains` is the only way to
+   distinguish a stored null from a missing key. `to_int`/`to_float` string
+   parsing (raise `[Value error]` on unparseable input). List `find(xs, v, from)`.
+   `ndim(Array)`. Regex `pattern(re)` accessor and `groups(m)` (the captures as a
+   List, replacing the old engine's iteration over the regex object).
+
+10. **Strings iterate (`for c in s`), by grapheme.** The ITER_INIT String arm
+    materializes a List of one-grapheme Strings at loop entry (the Set precedent);
+    pair form binds 1-based grapheme positions. Closes the M5 Stage 3b deferral
+    for the builtin-collection path.
+
+11. **Error traces carry the file, and a structured form.** Protos record their
+    `source_path` (stamped over the compiled tree by the Runtime for file-backed
+    chunks/modules); trace lines render `  at <fn> (line N) in <file>` when known
+    (unchanged for path-less chunks, so existing exact-match tests still pass
+    under do_string). `Error` gains a third builtin field **`frames`** (slot 2): a
+    List of `{function, line, file}` Tables, innermost first, captured at first
+    raise alongside the rendered `trace` — the structured surface the GUI's
+    clickable trace / editor highlight needs, with no string parsing.
+
+12. **Natives raise with the script call line.** The interpreter stamps
+    `Isolate::native_call_line` before each native invocation; `raise(msg, 0)`
+    (the native convention) substitutes it, so `assert` failures and stdlib
+    errors report the call site instead of "(line 0)".
+
+13. **Named functions are first-class values (closing M4 #1's remaining stub /
+    M5 #6).** A generic name in value position loads a singleton native
+    trampoline cell (`generic_function_value`, one per name for the process) that
+    resolves the generic BY NAME on each call — so the value tracks overloads
+    added or journal-retracted after it was taken, `f == g` is per-function
+    identity, and calls through variables/list elements/table values dispatch like
+    direct calls. The native "Function" class now derives from the closure
+    "Function" class so `x is Function` covers both callable kinds. Limitations
+    (documented): keyword options and `ref` promotion do not flow through an
+    indirect call.

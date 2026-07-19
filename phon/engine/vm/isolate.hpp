@@ -24,8 +24,12 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace phonometrica {
+
+class List; // types/list.hpp (backtrace_frames returns one)
 
 struct Class;
 struct GenericFunction;
@@ -129,6 +133,17 @@ public:
 	// keeping module-level functions/values alive for the module's lifetime.
 	Vector<Variant> module_slots;
 
+	// The file whose code is currently executing, innermost last (host-side paths,
+	// maintained by the Runtime around each chunk/module top-level run). Backs the
+	// get_script_path() builtin; empty entries mark path-less <string> chunks.
+	std::vector<std::string> script_paths;
+
+	// The source line of the script call currently invoking a native, stamped by the
+	// interpreter at each native invocation. `raise(msg, 0)` — the way natives raise,
+	// having no line of their own — substitutes it, so a native error reports the
+	// script call site rather than "line 0".
+	int native_call_line = 0;
+
 	// --- open upvalues (shared while their register is live) ---
 
 	UpvalueCell *find_or_make_open_upvalue(Value *slot);
@@ -187,6 +202,10 @@ public:
 	// A formatted backtrace of the current call stack (`top_line` is the active line
 	// of the innermost frame). Captured into an Error's `trace` field at first raise.
 	String backtrace(int top_line);
+
+	// The same walk as structured data: a List of {function, line, file} Tables,
+	// innermost first. Captured into an Error's `frames` field at first raise.
+	List backtrace_frames(int top_line);
 
 	// Release the live register span and drop all frames after an uncaught error, so
 	// an aborted run leaves no leaked cells (a minimal stand-in until the full
