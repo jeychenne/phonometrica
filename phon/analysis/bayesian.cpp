@@ -176,7 +176,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 			if (fam.loglik_d3 && fam.linkinv)
 			{
 				Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
-				Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+				Eigen::Map<ColVector<double>> ym(const_cast<double *>(model.y.data()), n);
 
 				// η̂ at the MAP, with offset if present.
 				Eigen::VectorXd eta_hat = Xm * beta_map;
@@ -417,11 +417,11 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 			p_draw = p;  // fallback to parametric-only
 
 		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p_draw);
-		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+		Eigen::Map<ColVector<double>> ym(const_cast<double *>(model.y.data()), n);
 
 		// Full posterior mean and covariance (parametric block adjusted,
 		// smooth block unchanged from penalized MLE).
-		Eigen::Map<Vector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
+		Eigen::Map<ColVector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
 		Eigen::Map<Matrix<double>> vcov_full(const_cast<double *>(model.vcov.data()), p_draw, p_draw);
 
 		// Cholesky of full posterior covariance for correlated draws.

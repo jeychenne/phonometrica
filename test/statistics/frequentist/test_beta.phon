@@ -18,21 +18,21 @@
 #   M5 — accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)
 # =====================================================================
 
-let A = import("../lib/assert")
+import stat_assert
 
-let DATA = A.resolve_data_path("beta_accuracy.csv")
-let REF  = A.resolve_sibling("reference_beta.json")
+var DATA = resolve_data_path("beta_accuracy.csv")
+var REF  = resolve_sibling("reference_beta.json")
 
-let refs_root = A.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-A.start_section("BETA")
+start_section("BETA")
 
-A.fit_and_check("M1", "accuracy ~ difficulty * domain", d, "beta", refs["M1"], 0.001, 0.001, 0.01)
-A.fit_and_check("M2", "accuracy ~ difficulty + domain + (1|subject)", d, "beta", refs["M2"], 0.005, 0.005, 0.05)
-A.fit_and_check("M3", "accuracy ~ difficulty + domain + (1+difficulty|subject)", d, "beta", refs["M3"], 0.005, 0.005, 0.05)
-A.fit_and_check("M4", "accuracy ~ difficulty + domain + (1|subject) + (1|item)", d, "beta", refs["M4"], 0.005, 0.005, 0.05)
-A.fit_and_check("M5", "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)", d, "beta", refs["M5"], 0.01, 0.01, 0.1)
+fit_and_check("M1", "accuracy ~ difficulty * domain", d, "beta", refs["M1"], 0.001, 0.001, 0.01)
+fit_and_check("M2", "accuracy ~ difficulty + domain + (1|subject)", d, "beta", refs["M2"], 0.005, 0.005, 0.05)
+fit_and_check("M3", "accuracy ~ difficulty + domain + (1+difficulty|subject)", d, "beta", refs["M3"], 0.005, 0.005, 0.05)
+fit_and_check("M4", "accuracy ~ difficulty + domain + (1|subject) + (1|item)", d, "beta", refs["M4"], 0.005, 0.005, 0.05)
+fit_and_check("M5", "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)", d, "beta", refs["M5"], 0.01, 0.01, 0.1)
 
-A.end_section()
+end_section()

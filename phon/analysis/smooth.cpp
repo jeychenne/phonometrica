@@ -289,10 +289,10 @@ static ConstraintResult absorb_constraint(const Matrix<double> &B_raw,
 	intptr_t k = B_raw.cols();
 
 	// Column sums vector.
-	Vector<double> c = B_raw.colwise().sum().transpose();  // k × 1
+	ColVector<double> c = B_raw.colwise().sum().transpose();  // k × 1
 
 	// QR decomposition of c.
-	HouseholderQR<Vector<double>> qr(c);
+	HouseholderQR<ColVector<double>> qr(c);
 	Matrix<double> Q_full = qr.householderQ();  // k × k orthogonal
 
 	// Z = columns 1..k-1 of Q_full (skipping column 0 which spans c).

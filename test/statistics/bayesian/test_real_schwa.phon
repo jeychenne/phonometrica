@@ -9,19 +9,20 @@
 # present = 1 and everything else = 0 (matches the frequentist suite).
 # =====================================================================
 
-let B = import("../lib/bayes_assert")
+import stat_assert
+import bayes_assert
 
-let DATA = B.resolve_data_path("schwa_eychenne2019.csv")
-let REF  = B.resolve_sibling("reference_real_schwa.json")
+var DATA = resolve_data_path("schwa_eychenne2019.csv")
+var REF  = resolve_sibling("reference_real_schwa.json")
 
-let refs_root = B.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
 # Recode response inline to match the R reference (present = 1).
-let schwa_col = get_column(d, "schwa")
-let n_rows = len(schwa_col)
-let schwa01 = ones(n_rows)
+var schwa_col = get_column(d, "schwa")
+var n_rows = len(schwa_col)
+var schwa01 = ones(n_rows)
 for i = 1 to n_rows do
     if schwa_col[i] == "present" then
         schwa01[i] = 1
@@ -29,12 +30,12 @@ for i = 1 to n_rows do
         schwa01[i] = 0
     end
 end
-append(d, schwa01, "schwa01")
+add_column(d, schwa01, "schwa01")
 
-B.start_section("BAYESIAN REAL SCHWA")
+start_section("BAYESIAN REAL SCHWA")
 
-let tol_default = B.default_tolerance()
-let tol_slope = B.default_tolerance()
+var tol_default = default_tolerance()
+var tol_slope = default_tolerance()
 tol_slope["mean_rel"]       = 0.30
 tol_slope["sd_rel"]         = 0.30
 tol_slope["ci_rel"]         = 0.50
@@ -42,10 +43,10 @@ tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.40
 tol_slope["hyper_ci_rel"]   = 0.50
 
-B.bayes_fit_and_check("M1", "schwa01 ~ dialect * gender + task", d, "binomial", refs["M1"], tol_default)
-B.bayes_fit_and_check("M2", "schwa01 ~ dialect + gender + task + (1|subject)", d, "binomial", refs["M2"], tol_default)
-B.bayes_fit_and_check("M3", "schwa01 ~ dialect + gender + task + (1+task|subject)", d, "binomial", refs["M3"], tol_slope)
-B.bayes_fit_and_check("M4", "schwa01 ~ dialect + gender + task + (1|subject) + (1|word)", d, "binomial", refs["M4"], tol_default)
-B.bayes_fit_and_check("M5", "schwa01 ~ dialect + gender + task + (1+task|subject) + (1|word)", d, "binomial", refs["M5"], tol_slope)
+bayes_fit_and_check("M1", "schwa01 ~ dialect * gender + task", d, "binomial", refs["M1"], tol_default)
+bayes_fit_and_check("M2", "schwa01 ~ dialect + gender + task + (1|subject)", d, "binomial", refs["M2"], tol_default)
+bayes_fit_and_check("M3", "schwa01 ~ dialect + gender + task + (1+task|subject)", d, "binomial", refs["M3"], tol_slope)
+bayes_fit_and_check("M4", "schwa01 ~ dialect + gender + task + (1|subject) + (1|word)", d, "binomial", refs["M4"], tol_default)
+bayes_fit_and_check("M5", "schwa01 ~ dialect + gender + task + (1+task|subject) + (1|word)", d, "binomial", refs["M5"], tol_slope)
 
-B.end_section()
+end_section()

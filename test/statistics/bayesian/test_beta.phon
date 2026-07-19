@@ -6,19 +6,20 @@
 # hyper_names.
 # =====================================================================
 
-let B = import("../lib/bayes_assert")
+import stat_assert
+import bayes_assert
 
-let DATA = B.resolve_data_path("beta_accuracy.csv")
-let REF  = B.resolve_sibling("reference_beta.json")
+var DATA = resolve_data_path("beta_accuracy.csv")
+var REF  = resolve_sibling("reference_beta.json")
 
-let refs_root = B.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-B.start_section("BAYESIAN BETA")
+start_section("BAYESIAN BETA")
 
-let tol_default = B.default_tolerance()
-let tol_slope = B.default_tolerance()
+var tol_default = default_tolerance()
+var tol_slope = default_tolerance()
 tol_slope["mean_rel"]       = 0.30
 tol_slope["sd_rel"]         = 0.30
 tol_slope["ci_rel"]         = 0.50
@@ -26,10 +27,10 @@ tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.40
 tol_slope["hyper_ci_rel"]   = 0.50
 
-B.bayes_fit_and_check("M1", "accuracy ~ difficulty * domain", d, "beta", refs["M1"], tol_default)
-B.bayes_fit_and_check("M2", "accuracy ~ difficulty + domain + (1|subject)", d, "beta", refs["M2"], tol_default)
-B.bayes_fit_and_check("M3", "accuracy ~ difficulty + domain + (1+difficulty|subject)", d, "beta", refs["M3"], tol_slope)
-B.bayes_fit_and_check("M4", "accuracy ~ difficulty + domain + (1|subject) + (1|item)", d, "beta", refs["M4"], tol_default)
-B.bayes_fit_and_check("M5", "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)", d, "beta", refs["M5"], tol_slope)
+bayes_fit_and_check("M1", "accuracy ~ difficulty * domain", d, "beta", refs["M1"], tol_default)
+bayes_fit_and_check("M2", "accuracy ~ difficulty + domain + (1|subject)", d, "beta", refs["M2"], tol_default)
+bayes_fit_and_check("M3", "accuracy ~ difficulty + domain + (1+difficulty|subject)", d, "beta", refs["M3"], tol_slope)
+bayes_fit_and_check("M4", "accuracy ~ difficulty + domain + (1|subject) + (1|item)", d, "beta", refs["M4"], tol_default)
+bayes_fit_and_check("M5", "accuracy ~ difficulty + domain + (1+difficulty|subject) + (1|item)", d, "beta", refs["M5"], tol_slope)
 
-B.end_section()
+end_section()

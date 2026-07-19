@@ -19,22 +19,23 @@
 #   ~0.3-SD shifts in slope variance posteriors.
 # =====================================================================
 
-let B = import("../lib/bayes_assert")
+import stat_assert
+import bayes_assert
 
-let DATA = B.resolve_data_path("inst_eval.csv")
-let REF  = B.resolve_sibling("reference_gaussian.json")
+var DATA = resolve_data_path("inst_eval.csv")
+var REF  = resolve_sibling("reference_gaussian.json")
 
-let refs_root = B.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-B.start_section("BAYESIAN GAUSSIAN")
+start_section("BAYESIAN GAUSSIAN")
 
 # Default tolerances for M1, M2, M4
-let tol_default = B.default_tolerance()
+var tol_default = default_tolerance()
 
 # Loosened tolerances for random-slope models (M3, M5)
-let tol_slope = B.default_tolerance()
+var tol_slope = default_tolerance()
 tol_slope["mean_rel"]       = 0.30
 tol_slope["sd_rel"]         = 0.30
 tol_slope["ci_rel"]         = 0.50
@@ -42,10 +43,10 @@ tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.40
 tol_slope["hyper_ci_rel"]   = 0.50
 
-B.bayes_fit_and_check("M1", "y ~ studage * service", d, "gaussian", refs["M1"], tol_default)
-B.bayes_fit_and_check("M2", "y ~ studage + lectage + service + (1|s)", d, "gaussian", refs["M2"], tol_default)
-B.bayes_fit_and_check("M3", "y ~ studage + lectage + service + (1+service|s)", d, "gaussian", refs["M3"], tol_slope)
-B.bayes_fit_and_check("M4", "y ~ studage + lectage + service + (1|s) + (1|d)", d, "gaussian", refs["M4"], tol_default)
-B.bayes_fit_and_check("M5", "y ~ studage + lectage + service + (1+service|s) + (1|d)", d, "gaussian", refs["M5"], tol_slope)
+bayes_fit_and_check("M1", "y ~ studage * service", d, "gaussian", refs["M1"], tol_default)
+bayes_fit_and_check("M2", "y ~ studage + lectage + service + (1|s)", d, "gaussian", refs["M2"], tol_default)
+bayes_fit_and_check("M3", "y ~ studage + lectage + service + (1+service|s)", d, "gaussian", refs["M3"], tol_slope)
+bayes_fit_and_check("M4", "y ~ studage + lectage + service + (1|s) + (1|d)", d, "gaussian", refs["M4"], tol_default)
+bayes_fit_and_check("M5", "y ~ studage + lectage + service + (1+service|s) + (1|d)", d, "gaussian", refs["M5"], tol_slope)
 
-B.end_section()
+end_section()

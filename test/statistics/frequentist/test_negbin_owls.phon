@@ -30,21 +30,21 @@
 # reporting difference that propagates into AIC/BIC.
 # =====================================================================
 
-let A = import("../lib/assert")
+import stat_assert
 
-let DATA = A.resolve_data_path("owls.csv")
-let REF  = A.resolve_sibling("reference_negbin_owls_lme4.json")
+var DATA = resolve_data_path("owls.csv")
+var REF  = resolve_sibling("reference_negbin_owls_lme4.json")
 
-let refs_root = A.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-A.start_section("NEGATIVE BINOMIAL")
+start_section("NEGATIVE BINOMIAL")
 
-A.fit_and_check("M1", "calls ~ food * sex", d, "negbin", refs["M1"], 0.02, 0.005, 0.05)
-A.fit_and_check("M2", "calls ~ food + sex + (1|nest)", d, "negbin", refs["M2"], 0.02, 0.01, 0.1)
-A.fit_and_check("M3", "calls ~ food + sex + (1+food|nest)", d, "negbin", refs["M3"], 0.02, 0.02, 0.15)
-A.fit_and_check("M4", "calls ~ food + sex + arrival + (1|nest)", d, "negbin", refs["M4"], 0.02, 0.01, 0.1)
-A.fit_and_check("M5", "calls ~ food + sex + arrival + (1+food|nest)", d, "negbin", refs["M5"], 0.02, 0.02, 0.15)
+fit_and_check("M1", "calls ~ food * sex", d, "negbin", refs["M1"], 0.02, 0.005, 0.05)
+fit_and_check("M2", "calls ~ food + sex + (1|nest)", d, "negbin", refs["M2"], 0.02, 0.01, 0.1)
+fit_and_check("M3", "calls ~ food + sex + (1+food|nest)", d, "negbin", refs["M3"], 0.02, 0.02, 0.15)
+fit_and_check("M4", "calls ~ food + sex + arrival + (1|nest)", d, "negbin", refs["M4"], 0.02, 0.01, 0.1)
+fit_and_check("M5", "calls ~ food + sex + arrival + (1+food|nest)", d, "negbin", refs["M5"], 0.02, 0.02, 0.15)
 
-A.end_section()
+end_section()

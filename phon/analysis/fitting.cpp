@@ -1694,9 +1694,9 @@ static void bayesian_summaries(Model &model, const PriorSpec &priors)
 			p_draw = model.nfixed;  // fallback
 
 		Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p_draw);
-		Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+		Eigen::Map<ColVector<double>> ym(const_cast<double *>(model.y.data()), n);
 
-		Eigen::Map<Vector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
+		Eigen::Map<ColVector<double>> beta_full(const_cast<double *>(model.beta.data()), p_draw);
 		Eigen::Map<Matrix<double>> vcov_full(const_cast<double *>(model.vcov.data()), p_draw, p_draw);
 		Eigen::LLT<Eigen::MatrixXd> chol_post(vcov_full);
 

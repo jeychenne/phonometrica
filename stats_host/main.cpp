@@ -1,6 +1,6 @@
 /***********************************************************************************************************************
  *                                                                                                                     *
- * Copyright (C) 2019-2025 Julien Eychenne <jeychenne@gmail.com>                                                       *
+ * Copyright (C) 2019-2026 Julien Eychenne                                                                             *
  *                                                                                                                     *
  * This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public   *
  * License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any      *
@@ -13,48 +13,71 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 05/10/2019                                                                                                 *
+ * Created: 19/07/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: matrix type built on top of Eigen.                                                                         *
+ * Purpose: entry point of phon_stats, the headless statistics host (MIGRATION_NOTES step 4b). Registers the           *
+ * statistics natives on a NEW-engine Runtime and runs the given script: `phon_stats <script.phon>`.                   *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
-#ifndef PHONOMETRICA_MATRIX_HPP
-#define PHONOMETRICA_MATRIX_HPP
+#include <cstdio>
+#include <exception>
+#include <string>
 
-#include <functional>
-#include <phon/array.hpp>
-#include <phon/third_party/Eigen/Dense>
+#include <phon/runtime.hpp>
+#include <phon/string.hpp>
 
-namespace phonometrica {
+namespace phonometrica::stats_host {
+void register_bindings(Runtime &rt);
+}
 
-template <typename T>
-using Matrix = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+int main(int argc, char **argv)
+{
+	using namespace phonometrica;
 
-// Named ColVector (not Vector) because the new engine's core container is
-// phonometrica::Vector<T> — the same known-future-collision policy that renamed the
-// concordance Match to QueryMatch (MIGRATION_NOTES "Coexistence"). Renamed for
-// step 4b, where the analysis layer first compiles against the new engine.
-template <typename T>
-using ColVector = Eigen::Matrix<T, Eigen::Dynamic, 1, Eigen::ColMajor>;
+	const char *script = nullptr;
+	Runtime rt;
+	stats_host::register_bindings(rt);
 
-// Convert an input matrix element-wise using formula.
-Array<double> apply(const Array<double> &X, const std::function<double(double)> &formula);
+	for (int i = 1; i < argc; ++i)
+	{
+		std::string arg(argv[i]);
+		if (arg == "-I" && i + 1 < argc)
+		{
+			rt.add_import_path(String(argv[++i]));
+		}
+		else if (!script)
+		{
+			script = argv[i];
+		}
+		else
+		{
+			std::fprintf(stderr, "usage: phon_stats [-I import_dir]... <script.phon>\n");
+			return 2;
+		}
+	}
+	if (!script)
+	{
+		std::fprintf(stderr, "usage: phon_stats [-I import_dir]... <script.phon>\n");
+		return 2;
+	}
 
-Array<double> transpose(const Array<double> &X);
+	try
+	{
+		rt.do_file(String(script));
+	}
+	catch (RuntimeError &e)
+	{
+		// Not a std::exception: the engine's script-error carrier (message + line).
+		std::fprintf(stderr, "%.*s (line %d)\n", (int) e.message.size(), e.message.data(),
+		             e.line);
+		return 1;
+	}
+	catch (std::exception &e)
+	{
+		std::fprintf(stderr, "%s\n", e.what());
+		return 1;
+	}
 
-Array<double> mul(const Array<double> &X, const Array<double> &Y);
-
-Array<double> mul(const Array<double> &X, double n);
-
-Array<double> div(const Array<double> &X, double n);
-
-Array<double> add(const Array<double> &X, double n);
-
-Array<double> sub(const Array<double> &X, double n);
-
-Array<double> operator-(const Array<double> &x, const Array<double> &y);
-
-} // namespace phonometrica
-
-#endif // PHONOMETRICA_MATRIX_HPP
+	return 0;
+}

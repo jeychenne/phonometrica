@@ -22,21 +22,21 @@
 # different MAP points.
 # =====================================================================
 
-let A = import("../lib/assert")
+import stat_assert
 
-let DATA = A.resolve_data_path("negbin_counts.csv")
-let REF  = A.resolve_sibling("reference_negbin.json")
+var DATA = resolve_data_path("negbin_counts.csv")
+var REF  = resolve_sibling("reference_negbin.json")
 
-let refs_root = A.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-A.start_section("NEGATIVE BINOMIAL")
+start_section("NEGATIVE BINOMIAL")
 
-A.fit_and_check("M1", "count ~ condition * context", d, "negbin", refs["M1"], 0.02, 0.02, 0.05)
-A.fit_and_check("M2", "count ~ condition + context + (1|subject)", d, "negbin", refs["M2"], 0.02, 0.03, 0.1)
-A.fit_and_check("M3", "count ~ condition + context + (1+condition|subject)", d, "negbin", refs["M3"], 0.02, 0.05, 0.15)
-A.fit_and_check("M4", "count ~ condition + context + (1|subject) + (1|item)", d, "negbin", refs["M4"], 0.02, 0.03, 0.1)
-A.fit_and_check("M5", "count ~ condition + context + (1+condition|subject) + (1|item)", d, "negbin", refs["M5"], 0.02, 0.05, 0.15)
+fit_and_check("M1", "count ~ condition * context", d, "negbin", refs["M1"], 0.02, 0.02, 0.05)
+fit_and_check("M2", "count ~ condition + context + (1|subject)", d, "negbin", refs["M2"], 0.02, 0.03, 0.1)
+fit_and_check("M3", "count ~ condition + context + (1+condition|subject)", d, "negbin", refs["M3"], 0.02, 0.05, 0.15)
+fit_and_check("M4", "count ~ condition + context + (1|subject) + (1|item)", d, "negbin", refs["M4"], 0.02, 0.03, 0.1)
+fit_and_check("M5", "count ~ condition + context + (1+condition|subject) + (1|item)", d, "negbin", refs["M5"], 0.02, 0.05, 0.15)
 
-A.end_section()
+end_section()

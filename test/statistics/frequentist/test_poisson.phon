@@ -13,21 +13,21 @@
 # All five reference fits converge cleanly.
 # =====================================================================
 
-let A = import("../lib/assert")
+import stat_assert
 
-let DATA = A.resolve_data_path("poisson_disfluency.csv")
-let REF  = A.resolve_sibling("reference_poisson.json")
+var DATA = resolve_data_path("poisson_disfluency.csv")
+var REF  = resolve_sibling("reference_poisson.json")
 
-let refs_root = A.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-A.start_section("POISSON")
+start_section("POISSON")
 
-A.fit_and_check("M1", "count ~ task * age", d, "poisson", refs["M1"], 0.001, 0.001, 0.01)
-A.fit_and_check("M2", "count ~ task + age + (1|speaker)", d, "poisson", refs["M2"], 0.005, 0.005, 0.05)
-A.fit_and_check("M3", "count ~ task + age + (1+task|speaker)", d, "poisson", refs["M3"], 0.01, 0.01, 0.1)
-A.fit_and_check("M4", "count ~ task + age + (1|speaker) + (1|word)", d, "poisson", refs["M4"], 0.005, 0.005, 0.05)
-A.fit_and_check("M5", "count ~ task + age + (1+task|speaker) + (1|word)", d, "poisson", refs["M5"], 0.01, 0.01, 0.1)
+fit_and_check("M1", "count ~ task * age", d, "poisson", refs["M1"], 0.001, 0.001, 0.01)
+fit_and_check("M2", "count ~ task + age + (1|speaker)", d, "poisson", refs["M2"], 0.005, 0.005, 0.05)
+fit_and_check("M3", "count ~ task + age + (1+task|speaker)", d, "poisson", refs["M3"], 0.01, 0.01, 0.1)
+fit_and_check("M4", "count ~ task + age + (1|speaker) + (1|word)", d, "poisson", refs["M4"], 0.005, 0.005, 0.05)
+fit_and_check("M5", "count ~ task + age + (1+task|speaker) + (1|word)", d, "poisson", refs["M5"], 0.01, 0.01, 0.1)
 
-A.end_section()
+end_section()

@@ -17,20 +17,21 @@
 # band governs the rest.
 # =====================================================================
 
-let B = import("../lib/bayes_assert")
+import stat_assert
+import bayes_assert
 
-let DATA = B.resolve_data_path("binomial_schwa.csv")
-let REF  = B.resolve_sibling("reference_binomial.json")
+var DATA = resolve_data_path("binomial_schwa.csv")
+var REF  = resolve_sibling("reference_binomial.json")
 
-let refs_root = B.load_reference(REF)
-let refs = refs_root["models"]
-let d = load(DATA)
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
+var d = load(DATA)
 
-B.start_section("BAYESIAN BINOMIAL")
+start_section("BAYESIAN BINOMIAL")
 
-let tol_default = B.default_tolerance()
+var tol_default = default_tolerance()
 
-let tol_slope = B.default_tolerance()
+var tol_slope = default_tolerance()
 tol_slope["mean_rel"]       = 0.30
 tol_slope["sd_rel"]         = 0.30
 tol_slope["ci_rel"]         = 0.50
@@ -38,10 +39,10 @@ tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.40
 tol_slope["hyper_ci_rel"]   = 0.50
 
-B.bayes_fit_and_check("M1", "realized ~ position * style", d, "binomial", refs["M1"], tol_default)
-B.bayes_fit_and_check("M2", "realized ~ position + style + (1|speaker)", d, "binomial", refs["M2"], tol_default)
-B.bayes_fit_and_check("M3", "realized ~ position + style + (1+style|speaker)", d, "binomial", refs["M3"], tol_slope)
-B.bayes_fit_and_check("M4", "realized ~ position + style + (1|speaker) + (1|word)", d, "binomial", refs["M4"], tol_default)
-B.bayes_fit_and_check("M5", "realized ~ position + style + (1+style|speaker) + (1|word)", d, "binomial", refs["M5"], tol_slope)
+bayes_fit_and_check("M1", "realized ~ position * style", d, "binomial", refs["M1"], tol_default)
+bayes_fit_and_check("M2", "realized ~ position + style + (1|speaker)", d, "binomial", refs["M2"], tol_default)
+bayes_fit_and_check("M3", "realized ~ position + style + (1+style|speaker)", d, "binomial", refs["M3"], tol_slope)
+bayes_fit_and_check("M4", "realized ~ position + style + (1|speaker) + (1|word)", d, "binomial", refs["M4"], tol_default)
+bayes_fit_and_check("M5", "realized ~ position + style + (1+style|speaker) + (1|word)", d, "binomial", refs["M5"], tol_slope)
 
-B.end_section()
+end_section()

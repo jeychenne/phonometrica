@@ -2,64 +2,54 @@
 # statistics/frequentist/run_all.phon
 # =====================================================================
 # Runs every test_<family>.phon in this directory, accumulates
-# pass/fail counts via the shared assert module, and asserts a clean
-# run at the end.
+# pass/fail counts via the shared stat_assert module, and asserts a
+# clean run at the end.
 #
-# Run from this directory (or pass an absolute path):
-#     phonometrica run_all.phon
+# Run with the headless statistics host (MIGRATION_NOTES step 4b):
+#     phon_stats -I test/statistics/lib test/statistics/frequentist/run_all.phon
+# (the -I flag puts the shared lib on the module search path; each
+# test file's own imports resolve in its directory first).
 #
-# Each test file imports ../lib/assert and exercises one family.
-# `import` caches the loaded module, so every test file shares the
-# same Module instance — counters in assert.phon accumulate across
-# all of them, and one final report() summarises the whole suite.
-#
-# Order of tests: fastest first, slowest last. The real-data binomial
-# is the slowest by an order of magnitude; if you're iterating on a
-# single family you can run that test_<family>.phon directly.
+# PORT NOTE (old -> new engine): `import` is a compile-time statement
+# (no dynamic import(name) loop, no try/catch around a failing import
+# — a missing module is a compile error), and imported module
+# top-levels run BEFORE this chunk's own statements. Consequences:
+#   * the banner and the final tally both print AFTER the tests (the
+#     step-3 run_all made the same move);
+#   * reset_counters() must NOT be called here — it would zero the
+#     tally the imports just accumulated (counters start at 0 anyway);
+#   * a model failure inside a test is still recorded-and-continue
+#     (fit_and_check wraps fit() in try/catch); only a missing
+#     data/reference file aborts the run.
 #
 # Pre-requisites. Each reference_<family>.json must have been
-# generated from R first:
-#     Rscript gen_reference_gaussian.R
-#     ...
-# or all at once via gen_reference_all.R.
+# generated from R first (gen_reference_all.R).
 #
-# Student-t is intentionally excluded from the v1.0 suite. The
-# glmmTMB references for that family are not trustworthy (every
-# robust-block fit failed, and only one mild-block fit produced a
-# logLik). See test_student.phon's banner for the full rationale.
-# When clean references are available — most likely from the
-# Bayesian suite via brms HMC — re-enable by adding the import line
-# below.
+# Student-t is intentionally excluded from the v1.0 suite: the
+# glmmTMB references for that family are not trustworthy (see
+# test_student.phon's banner). When clean references are available —
+# most likely from the Bayesian suite via brms HMC — re-enable by
+# adding the import line below.
 # =====================================================================
 
-let A = import("../lib/assert")
-A.reset_counters()
+import stat_assert
 
-print "######################################################################"
-print "# Phonometrica frequentist statistics validation"
-print "######################################################################"
+# Synthetic-data families, ordered roughly by fit time; module
+# top-levels run at import, before any statement below.
+import test_gaussian
+import test_poisson
+import test_binomial
+import test_negbin
+import test_beta
+import test_real_schwa
+import test_gam
+import test_nested
 
-# Synthetic-data families, ordered roughly by fit time.
-# Each test file's top-level code runs at import time. If a test file
-# can't even start (e.g. its CSV is missing, or the engine throws on
-# the very first fit), wrap the import so the rest of the suite still
-# runs and the failure is logged rather than aborting the whole run.
+# Disabled: test_student — see its banner.
 
-let test_files = ["test_gaussian", "test_poisson", "test_binomial", "test_negbin", "test_beta", "test_real_schwa", "test_gam", "test_nested"]
-
-# Disabled: "test_student" — see test_student.phon banner. The
-# glmmTMB Student-t reference is not trustworthy enough to validate
-# against; the right reference engine for that family is brms HMC,
-# which lives in the Bayesian suite.
-
-foreach name in test_files do
-    try
-        import(name)
-    catch e
-        A.record_fail(name & ": import failed: " & str(e))
-    end
-end
-
-# ── Final tally. ─────────────────────────────────────────────────
-A.report()
-assert A.n_failed == 0, "frequentist statistics suite: " & str(A.n_failed) & " failure(s)"
+# ── Final tally (runs after all imported tests). ─────────────────
+print("######################################################################")
+print("# Phonometrica frequentist statistics validation")
+print("######################################################################")
+report()
+assert(stat_assert.n_failed == 0, "frequentist statistics suite: " & stat_assert.n_failed & " failure(s)")

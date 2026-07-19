@@ -76,37 +76,37 @@ struct Family
 
 	// Inverse link: μ = g⁻¹(η)
 	// Maps the linear predictor to the mean of the response.
-	std::function<Vector<double>(const Vector<double> &eta)> linkinv;
+	std::function<ColVector<double>(const ColVector<double> &eta)> linkinv;
 
 	// Link: η = g(μ)
 	// Maps the mean of the response to the linear predictor.
-	std::function<Vector<double>(const Vector<double> &mu)> link;
+	std::function<ColVector<double>(const ColVector<double> &mu)> link;
 
 	// Log-likelihood: sum over observations of log f(y | μ)
 	// For Gaussian, includes the constant terms.
-	std::function<double(const Vector<double> &y, const Vector<double> &mu)> loglik;
+	std::function<double(const ColVector<double> &y, const ColVector<double> &mu)> loglik;
 
 	// Variance function: V(μ)
 	// Returns a vector of per-observation variances as a function of the mean.
 	// For Gaussian: V(μ) = 1; for Binomial: V(μ) = μ(1-μ); for Poisson: V(μ) = μ;
 	// for NB: V(μ) = μ + μ²/θ; for Beta: V(μ) = μ(1-μ)/(1+φ);
 	// for Student: V(μ) = 1 (identity link, weights handled via custom_weights).
-	std::function<Vector<double>(const Vector<double> &mu)> variance;
+	std::function<ColVector<double>(const ColVector<double> &mu)> variance;
 
 	// Derivative of inverse link: dμ/dη.
 	// For identity: 1; for logit: μ(1-μ); for log: μ.
 	// Used for generalized IWLS weights: w_i = (dμ/dη)² / V(μ).
-	std::function<Vector<double>(const Vector<double> &mu)> mu_eta;
+	std::function<ColVector<double>(const ColVector<double> &mu)> mu_eta;
 
 	// Deviance residuals: d(y, μ)
 	// Returns the vector of signed deviance residuals.
-	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu)> deviance_residuals;
+	std::function<ColVector<double>(const ColVector<double> &y, const ColVector<double> &mu)> deviance_residuals;
 
 	// Optional custom IWLS weights for non-standard families (e.g. Student t).
 	// Takes (y, mu) and returns per-observation weights.  When set, replaces
 	// the standard (dμ/dη)² / V(μ) weight computation in PIRLS.
 	// Student t:  w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²).
-	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu)> custom_weights;
+	std::function<ColVector<double>(const ColVector<double> &y, const ColVector<double> &mu)> custom_weights;
 
 	// Third derivative of per-observation log-likelihood w.r.t. linear predictor η.
 	// Returns ℓ'''(η_i) for each observation.  Used by the simplified Laplace
@@ -116,8 +116,8 @@ struct Family
 	// For other families: captures the skewness of the log-likelihood surface.
 	//
 	// Reference: Rue, Martino & Chopin (2009), Section 3.2.2.
-	std::function<Vector<double>(const Vector<double> &y, const Vector<double> &mu,
-	                             const Vector<double> &eta)> loglik_d3;
+	std::function<ColVector<double>(const ColVector<double> &y, const ColVector<double> &mu,
+	                             const ColVector<double> &eta)> loglik_d3;
 
 	// Factory methods for supported families.
 	static Family gaussian();
@@ -155,17 +155,17 @@ namespace detail {
 
 // --- Gaussian (identity link) ---
 
-inline Vector<double> gaussian_linkinv(const Vector<double> &eta)
+inline ColVector<double> gaussian_linkinv(const ColVector<double> &eta)
 {
 	return eta; // identity
 }
 
-inline Vector<double> gaussian_link(const Vector<double> &mu)
+inline ColVector<double> gaussian_link(const ColVector<double> &mu)
 {
 	return mu; // identity
 }
 
-inline double gaussian_loglik(const Vector<double> &y, const Vector<double> &mu)
+inline double gaussian_loglik(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	// -n/2 * log(2π) - n/2 * log(σ²) - RSS/(2σ²)
 	// For model comparison purposes, we compute the profile log-likelihood
@@ -177,30 +177,30 @@ inline double gaussian_loglik(const Vector<double> &y, const Vector<double> &mu)
 	return -0.5 * n * (std::log(2 * M_PI) + std::log(sigma2) + 1.0);
 }
 
-inline Vector<double> gaussian_variance(const Vector<double> &mu)
+inline ColVector<double> gaussian_variance(const ColVector<double> &mu)
 {
-	return Vector<double>::Ones(mu.size()); // V(μ) = 1
+	return ColVector<double>::Ones(mu.size()); // V(μ) = 1
 }
 
-inline Vector<double> gaussian_mu_eta(const Vector<double> &mu)
+inline ColVector<double> gaussian_mu_eta(const ColVector<double> &mu)
 {
-	return Vector<double>::Ones(mu.size()); // dμ/dη = 1 for identity link
+	return ColVector<double>::Ones(mu.size()); // dμ/dη = 1 for identity link
 }
 
-inline Vector<double> gaussian_deviance_residuals(const Vector<double> &y, const Vector<double> &mu)
+inline ColVector<double> gaussian_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	return y - mu; // for Gaussian, deviance residuals = raw residuals
 }
 
 // --- Binomial (logit link) ---
 
-inline Vector<double> binomial_linkinv(const Vector<double> &eta)
+inline ColVector<double> binomial_linkinv(const ColVector<double> &eta)
 {
 	// μ = 1 / (1 + exp(-η))
 	return 1.0 / (1.0 + (-eta.array()).exp());
 }
 
-inline Vector<double> binomial_link(const Vector<double> &mu)
+inline ColVector<double> binomial_link(const ColVector<double> &mu)
 {
 	// η = log(μ / (1 - μ))
 	// Clamp to avoid log(0)
@@ -208,29 +208,29 @@ inline Vector<double> binomial_link(const Vector<double> &mu)
 	return (clamped / (1.0 - clamped)).log();
 }
 
-inline double binomial_loglik(const Vector<double> &y, const Vector<double> &mu)
+inline double binomial_loglik(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	// sum( y*log(μ) + (1-y)*log(1-μ) )
 	auto clamped = mu.array().max(1e-10).min(1.0 - 1e-10);
 	return (y.array() * clamped.log() + (1.0 - y.array()) * (1.0 - clamped).log()).sum();
 }
 
-inline Vector<double> binomial_variance(const Vector<double> &mu)
+inline ColVector<double> binomial_variance(const ColVector<double> &mu)
 {
 	// V(μ) = μ(1-μ)
 	return (mu.array() * (1.0 - mu.array())).matrix();
 }
 
-inline Vector<double> binomial_mu_eta(const Vector<double> &mu)
+inline ColVector<double> binomial_mu_eta(const ColVector<double> &mu)
 {
 	// dμ/dη = μ(1-μ) for logit link
 	return (mu.array() * (1.0 - mu.array())).matrix();
 }
 
-inline Vector<double> binomial_deviance_residuals(const Vector<double> &y, const Vector<double> &mu)
+inline ColVector<double> binomial_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	intptr_t n = y.size();
-	Vector<double> dr(n);
+	ColVector<double> dr(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double yi = y[i];
@@ -245,17 +245,17 @@ inline Vector<double> binomial_deviance_residuals(const Vector<double> &y, const
 
 // --- Poisson (log link) ---
 
-inline Vector<double> poisson_linkinv(const Vector<double> &eta)
+inline ColVector<double> poisson_linkinv(const ColVector<double> &eta)
 {
 	return eta.array().exp();
 }
 
-inline Vector<double> poisson_link(const Vector<double> &mu)
+inline ColVector<double> poisson_link(const ColVector<double> &mu)
 {
 	return mu.array().max(1e-10).log();
 }
 
-inline double poisson_loglik(const Vector<double> &y, const Vector<double> &mu)
+inline double poisson_loglik(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	// sum( y*log(μ) - μ - lgamma(y+1) )
 	intptr_t n = y.size();
@@ -268,20 +268,20 @@ inline double poisson_loglik(const Vector<double> &y, const Vector<double> &mu)
 	return ll;
 }
 
-inline Vector<double> poisson_variance(const Vector<double> &mu)
+inline ColVector<double> poisson_variance(const ColVector<double> &mu)
 {
 	return mu; // V(μ) = μ
 }
 
-inline Vector<double> poisson_mu_eta(const Vector<double> &mu)
+inline ColVector<double> poisson_mu_eta(const ColVector<double> &mu)
 {
 	return mu; // dμ/dη = μ for log link
 }
 
-inline Vector<double> poisson_deviance_residuals(const Vector<double> &y, const Vector<double> &mu)
+inline ColVector<double> poisson_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu)
 {
 	intptr_t n = y.size();
-	Vector<double> dr(n);
+	ColVector<double> dr(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double yi = y[i];
@@ -304,17 +304,17 @@ inline Vector<double> poisson_deviance_residuals(const Vector<double> &y, const 
 // The log link (η = log μ) is NOT the canonical link for NB, so
 // the IWLS weights differ from V(μ): w = μ²/V(μ) = μθ/(θ+μ).
 
-inline Vector<double> negbin_linkinv(const Vector<double> &eta)
+inline ColVector<double> negbin_linkinv(const ColVector<double> &eta)
 {
 	return eta.array().exp(); // same as Poisson
 }
 
-inline Vector<double> negbin_link(const Vector<double> &mu)
+inline ColVector<double> negbin_link(const ColVector<double> &mu)
 {
 	return mu.array().max(1e-10).log(); // same as Poisson
 }
 
-inline double negbin_loglik(const Vector<double> &y, const Vector<double> &mu, double theta)
+inline double negbin_loglik(const ColVector<double> &y, const ColVector<double> &mu, double theta)
 {
 	intptr_t n = y.size();
 	double ll = 0;
@@ -329,21 +329,21 @@ inline double negbin_loglik(const Vector<double> &y, const Vector<double> &mu, d
 	return ll;
 }
 
-inline Vector<double> negbin_variance(const Vector<double> &mu, double theta)
+inline ColVector<double> negbin_variance(const ColVector<double> &mu, double theta)
 {
 	// V(μ) = μ + μ²/θ
 	return (mu.array() + mu.array().square() / theta).matrix();
 }
 
-inline Vector<double> negbin_mu_eta(const Vector<double> &mu)
+inline ColVector<double> negbin_mu_eta(const ColVector<double> &mu)
 {
 	return mu; // dμ/dη = μ for log link (same as Poisson)
 }
 
-inline Vector<double> negbin_deviance_residuals(const Vector<double> &y, const Vector<double> &mu, double theta)
+inline ColVector<double> negbin_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu, double theta)
 {
 	intptr_t n = y.size();
-	Vector<double> dr(n);
+	ColVector<double> dr(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double yi = y[i];
@@ -392,8 +392,8 @@ inline Vector<double> negbin_deviance_residuals(const Vector<double> &y, const V
 //
 // `theta_init` is typically the previous iteration's θ (warm start) or a
 // method-of-moments estimate ŷ²/(Var(y) − ŷ).
-inline double profile_negbin_theta(const Vector<double> &y,
-                                    const Vector<double> &mu,
+inline double profile_negbin_theta(const ColVector<double> &y,
+                                    const ColVector<double> &mu,
                                     double theta_init,
                                     int max_iter = 50,
                                     double tol = 1e-9)
@@ -489,7 +489,7 @@ inline double profile_negbin_theta(const Vector<double> &y,
 
 // Link and inverse link are the same as binomial logit.
 
-inline double beta_loglik(const Vector<double> &y, const Vector<double> &mu, double phi)
+inline double beta_loglik(const ColVector<double> &y, const ColVector<double> &mu, double phi)
 {
 	intptr_t n = y.size();
 	double ll = 0;
@@ -505,19 +505,19 @@ inline double beta_loglik(const Vector<double> &y, const Vector<double> &mu, dou
 	return ll;
 }
 
-inline Vector<double> beta_variance(const Vector<double> &mu, double phi)
+inline ColVector<double> beta_variance(const ColVector<double> &mu, double phi)
 {
 	// V(μ) = μ(1-μ) / (1+φ)
 	return (mu.array() * (1.0 - mu.array()) / (1.0 + phi)).matrix();
 }
 
-inline Vector<double> beta_deviance_residuals(const Vector<double> &y, const Vector<double> &mu, double phi)
+inline ColVector<double> beta_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu, double phi)
 {
 	// Signed deviance residuals:
 	//   d_i = sign(y_i - μ_i) * sqrt(2 * [loglik_sat_i - loglik_i])
 	// where the saturated model has μ = y.
 	intptr_t n = y.size();
-	Vector<double> dr(n);
+	ColVector<double> dr(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double mi = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
@@ -564,7 +564,7 @@ inline Vector<double> beta_deviance_residuals(const Vector<double> &y, const Vec
 
 // Link and inverse link are the same as Gaussian (identity).
 
-inline double student_loglik(const Vector<double> &y, const Vector<double> &mu,
+inline double student_loglik(const ColVector<double> &y, const ColVector<double> &mu,
                               double sigma, double nu)
 {
 	intptr_t n = y.size();
@@ -579,13 +579,13 @@ inline double student_loglik(const Vector<double> &y, const Vector<double> &mu,
 	return ll;
 }
 
-inline Vector<double> student_weights(const Vector<double> &y, const Vector<double> &mu,
+inline ColVector<double> student_weights(const ColVector<double> &y, const ColVector<double> &mu,
                                        double sigma, double nu)
 {
 	// w_i = (ν + 1) / (ν σ² + (y_i − μ_i)²)
 	intptr_t n = y.size();
 	double nu_sigma2 = nu * sigma * sigma;
-	Vector<double> w(n);
+	ColVector<double> w(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double r = y[i] - mu[i];
@@ -609,12 +609,12 @@ inline Vector<double> student_weights(const Vector<double> &y, const Vector<doub
 // iterations; the exact form here gives a tighter Laplace approximation
 // matching glmmTMB / TMB at convergence, when the resulting H_uu is PD.
 // (When it isn't, the engine falls back to student_weights.)
-inline Vector<double> student_laplace_weights(const Vector<double> &y, const Vector<double> &mu,
+inline ColVector<double> student_laplace_weights(const ColVector<double> &y, const ColVector<double> &mu,
                                                 double sigma, double nu)
 {
 	intptr_t n = y.size();
 	double nu_sigma2 = nu * sigma * sigma;
-	Vector<double> w(n);
+	ColVector<double> w(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double r = y[i] - mu[i];
@@ -625,13 +625,13 @@ inline Vector<double> student_laplace_weights(const Vector<double> &y, const Vec
 	return w;
 }
 
-inline Vector<double> student_deviance_residuals(const Vector<double> &y, const Vector<double> &mu,
+inline ColVector<double> student_deviance_residuals(const ColVector<double> &y, const ColVector<double> &mu,
                                                   double sigma, double nu)
 {
 	// Signed deviance residuals: d_i = sign(y_i − μ_i) · sqrt(2 (ll_sat − ll_fit))
 	// The saturated model has μ = y (ll_sat_i = log_const, since log(1 + 0) = 0).
 	intptr_t n = y.size();
-	Vector<double> dr(n);
+	ColVector<double> dr(n);
 	double sigma2 = sigma * sigma;
 	for (intptr_t i = 0; i < n; i++)
 	{
@@ -653,25 +653,25 @@ inline Vector<double> student_deviance_residuals(const Vector<double> &y, const 
 namespace d3_detail {
 
 // Gaussian (identity link): ℓ(η) = -(y-η)²/(2σ²) → ℓ'''(η) = 0 for all observations.
-inline Vector<double> gaussian_d3(const Vector<double> &y, const Vector<double> &mu,
-                                   const Vector<double> &eta)
+inline ColVector<double> gaussian_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                                   const ColVector<double> &eta)
 {
-	return Vector<double>::Zero(y.size());
+	return ColVector<double>::Zero(y.size());
 }
 
 // Poisson (log link): ℓ(η) = yη - exp(η) → ℓ'''(η) = -exp(η) = -μ.
-inline Vector<double> poisson_d3(const Vector<double> &y, const Vector<double> &mu,
-                                  const Vector<double> &eta)
+inline ColVector<double> poisson_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                                  const ColVector<double> &eta)
 {
 	return -mu;
 }
 
 // Binomial (logit link): ℓ'''(η) = -μ(1-μ)(1-2μ).
-inline Vector<double> binomial_d3(const Vector<double> &y, const Vector<double> &mu,
-                                   const Vector<double> &eta)
+inline ColVector<double> binomial_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                                   const ColVector<double> &eta)
 {
 	intptr_t n = y.size();
-	Vector<double> d3(n);
+	ColVector<double> d3(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double m = std::clamp(mu[i], 1e-10, 1.0 - 1e-10);
@@ -684,11 +684,11 @@ inline Vector<double> binomial_d3(const Vector<double> &y, const Vector<double> 
 //   ℓ''(η)  = -θμ(θ+y) / (μ+θ)²
 //   ℓ'''(η) = -θμ(θ+y)(θ-μ) / (μ+θ)³
 // where μ = exp(η), θ = NB size parameter.
-inline Vector<double> negbin_d3(const Vector<double> &y, const Vector<double> &mu,
-                                 const Vector<double> &eta, double theta)
+inline ColVector<double> negbin_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                                 const ColVector<double> &eta, double theta)
 {
 	intptr_t n = y.size();
-	Vector<double> d3(n);
+	ColVector<double> d3(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double m = std::max(mu[i], 1e-10);
@@ -704,11 +704,11 @@ inline Vector<double> negbin_d3(const Vector<double> &y, const Vector<double> &m
 // ℓ_i(η) = lgamma(φ) − lgamma(μφ) − lgamma((1−μ)φ)
 //         + (μφ−1)log(y_i) + ((1−μ)φ−1)log(1−y_i)
 // where μ = 1/(1+exp(−η)).
-inline Vector<double> beta_d3(const Vector<double> &y, const Vector<double> &mu,
-                               const Vector<double> &eta, double phi)
+inline ColVector<double> beta_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                               const ColVector<double> &eta, double phi)
 {
 	intptr_t n = y.size();
-	Vector<double> d3(n);
+	ColVector<double> d3(n);
 	double h = 1e-4;
 	double inv_2h3 = 1.0 / (2.0 * h * h * h);
 
@@ -738,11 +738,11 @@ inline Vector<double> beta_d3(const Vector<double> &y, const Vector<double> &mu,
 // Student t (identity link):
 //   ℓ_i(η) = const − (ν+1)/2 · log(1 + r²/(νσ²))   where r = y_i − η
 //   ℓ'''(η) = −2(ν+1) r (3νσ² − r²) / (νσ² + r²)³
-inline Vector<double> student_d3(const Vector<double> &y, const Vector<double> &mu,
-                                  const Vector<double> &eta, double sigma, double nu)
+inline ColVector<double> student_d3(const ColVector<double> &y, const ColVector<double> &mu,
+                                  const ColVector<double> &eta, double sigma, double nu)
 {
 	intptr_t n = y.size();
-	Vector<double> d3(n);
+	ColVector<double> d3(n);
 	double s2 = nu * sigma * sigma;
 
 	for (intptr_t i = 0; i < n; i++)
@@ -820,17 +820,17 @@ inline Family Family::negbin(double theta)
 	f.mu_eta = detail::negbin_mu_eta;
 
 	// Capture θ by value in lambdas.
-	f.loglik = [theta](const Vector<double> &y, const Vector<double> &mu) {
+	f.loglik = [theta](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::negbin_loglik(y, mu, theta);
 	};
-	f.variance = [theta](const Vector<double> &mu) {
+	f.variance = [theta](const ColVector<double> &mu) {
 		return detail::negbin_variance(mu, theta);
 	};
-	f.deviance_residuals = [theta](const Vector<double> &y, const Vector<double> &mu) {
+	f.deviance_residuals = [theta](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::negbin_deviance_residuals(y, mu, theta);
 	};
-	f.loglik_d3 = [theta](const Vector<double> &y, const Vector<double> &mu,
-	                       const Vector<double> &eta) {
+	f.loglik_d3 = [theta](const ColVector<double> &y, const ColVector<double> &mu,
+	                       const ColVector<double> &eta) {
 		return d3_detail::negbin_d3(y, mu, eta, theta);
 	};
 	return f;
@@ -849,17 +849,17 @@ inline Family Family::beta(double phi)
 	f.mu_eta = detail::binomial_mu_eta;
 
 	// Capture φ by value in lambdas.
-	f.loglik = [phi](const Vector<double> &y, const Vector<double> &mu) {
+	f.loglik = [phi](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::beta_loglik(y, mu, phi);
 	};
-	f.variance = [phi](const Vector<double> &mu) {
+	f.variance = [phi](const ColVector<double> &mu) {
 		return detail::beta_variance(mu, phi);
 	};
-	f.deviance_residuals = [phi](const Vector<double> &y, const Vector<double> &mu) {
+	f.deviance_residuals = [phi](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::beta_deviance_residuals(y, mu, phi);
 	};
-	f.loglik_d3 = [phi](const Vector<double> &y, const Vector<double> &mu,
-	                     const Vector<double> &eta) {
+	f.loglik_d3 = [phi](const ColVector<double> &y, const ColVector<double> &mu,
+	                     const ColVector<double> &eta) {
 		return d3_detail::beta_d3(y, mu, eta, phi);
 	};
 	return f;
@@ -882,17 +882,17 @@ inline Family Family::student(double sigma, double nu)
 	f.variance = detail::gaussian_variance;
 
 	// Capture σ and ν by value in lambdas.
-	f.loglik = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+	f.loglik = [sigma, nu](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::student_loglik(y, mu, sigma, nu);
 	};
-	f.deviance_residuals = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+	f.deviance_residuals = [sigma, nu](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::student_deviance_residuals(y, mu, sigma, nu);
 	};
-	f.custom_weights = [sigma, nu](const Vector<double> &y, const Vector<double> &mu) {
+	f.custom_weights = [sigma, nu](const ColVector<double> &y, const ColVector<double> &mu) {
 		return detail::student_weights(y, mu, sigma, nu);
 	};
-	f.loglik_d3 = [sigma, nu](const Vector<double> &y, const Vector<double> &mu,
-	                           const Vector<double> &eta) {
+	f.loglik_d3 = [sigma, nu](const ColVector<double> &y, const ColVector<double> &mu,
+	                           const ColVector<double> &eta) {
 		return d3_detail::student_d3(y, mu, eta, sigma, nu);
 	};
 	return f;

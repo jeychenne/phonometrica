@@ -315,7 +315,7 @@ static EMMResult compute_emm_from_L(
 	double conf_level)
 {
 	// Compute EMMs on link scale.
-	Eigen::Map<const Vector<double>> beta(model.beta.data(), p);
+	Eigen::Map<const ColVector<double>> beta(model.beta.data(), p);
 	Eigen::VectorXd emm_link = L * beta;
 
 	// V_eta = L V L'  (covariance of link-scale EMMs)
@@ -835,7 +835,7 @@ EMMResult emtrends(const Model &model, const String &factor, const String &var,
 
 	// ── Compute slopes and SEs on the link scale ────────────────────
 
-	Eigen::Map<const Vector<double>> beta(model.beta.data(), p);
+	Eigen::Map<const ColVector<double>> beta(model.beta.data(), p);
 	Eigen::VectorXd trends = L * beta;
 
 	Eigen::Map<const Matrix<double>> V_full(model.vcov.data(), model.vcov.nrow(), model.vcov.ncol());

@@ -105,7 +105,7 @@ WeeninkModel model_segment(const Matrix<double> &F, const Matrix<double> &B, uns
 		}
 
 		// Normalize Observed frequencies by their bandwidth
-		Vector<double> b(ndata);
+		ColVector<double> b(ndata);
 
 		for (int i = 0; i < ndata; ++i)
 		{
@@ -117,7 +117,7 @@ WeeninkModel model_segment(const Matrix<double> &F, const Matrix<double> &B, uns
 		Eigen::BDCSVD<Matrix<double>> svd(A, Eigen::ComputeThinU|Eigen::ComputeThinV);
 
 		// Estimate the parameters of the model
-		Vector<double> beta = svd.solve(b);
+		ColVector<double> beta = svd.solve(b);
 
 		for (unsigned int i = 0; i < p; i++) {
 			model.coeff(i,k) = beta(i);

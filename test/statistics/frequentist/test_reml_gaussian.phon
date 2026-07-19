@@ -5,21 +5,22 @@
 # test/gen_reference_reml_gaussian.R). Run from the repository root.
 # =============================================================================
 
-let ROOT = "/home/julien/Devel/phonometrica"
+# Resolve the repository root from this script (test/statistics/frequentist -> up 3).
+var ROOT = get_directory(get_directory(get_directory(get_directory(get_script_path()))))
 
 # ── Case 1: simple random intercept ──────────────────────────────────────────
 print("=== Case 1: f1 ~ gender + (1 | speaker) ===")
 print("")
 
-let d1 = load(join_path(ROOT, "test/data/gaussian_f1.csv"))
+var d1 = load(join_path(ROOT, "test/data/gaussian_f1.csv"))
 
 print("--- ML (default) ---")
-let m1_ml = fit("f1 ~ gender + (1 | speaker)", d1)
+var m1_ml = fit("f1 ~ gender + (1 | speaker)", d1)
 summarize(m1_ml)
 print("")
 
 print("--- REML (opt-in) ---")
-let m1_reml = fit("f1 ~ gender + (1 | speaker)", d1, fit_method="REML")
+var m1_reml = fit("f1 ~ gender + (1 | speaker)", d1, {"fit_method": "REML"})
 summarize(m1_reml)
 print("")
 
@@ -27,15 +28,15 @@ print("")
 print("=== Case 2: Reaction ~ Days + (1 + Days | Subject) on sleepstudy ===")
 print("")
 
-let d2 = load(join_path(ROOT, "test/data/sleepstudy.tsv"))
+var d2 = load(join_path(ROOT, "test/data/sleepstudy.tsv"))
 
 print("--- ML (default) ---")
-let m2_ml = fit("Reaction ~ Days + (1 + Days | Subject)", d2)
+var m2_ml = fit("Reaction ~ Days + (1 + Days | Subject)", d2)
 summarize(m2_ml)
 print("")
 
 print("--- REML (opt-in) ---")
-let m2_reml = fit("Reaction ~ Days + (1 + Days | Subject)", d2, fit_method="REML")
+var m2_reml = fit("Reaction ~ Days + (1 + Days | Subject)", d2, {"fit_method": "REML"})
 summarize(m2_reml)
 print("")
 
@@ -45,17 +46,17 @@ try
     compare(m1_ml, m1_reml)
     print("FAIL: expected an error for mixed ML/REML comparison")
 catch e
-    print("OK: " & e)
+    print("OK: " & e.message)
 end
 print("")
 
 print("=== Guard check 2: REML compare with different fixed effects must throw ===")
-let m1_reml_alt = fit("f1 ~ 1 + (1 | speaker)", d1, fit_method="REML")
+var m1_reml_alt = fit("f1 ~ 1 + (1 | speaker)", d1, {"fit_method": "REML"})
 try
     compare(m1_reml_alt, m1_reml)
     print("FAIL: expected an error for REML with different fixed effects")
 catch e
-    print("OK: " & e)
+    print("OK: " & e.message)
 end
 print("")
 
@@ -67,13 +68,13 @@ try
     compare(m1_reml, m1_reml)
     print("OK: same-fixed-effects REML comparison allowed")
 catch e
-    print("FAIL: " & e)
+    print("FAIL: " & e.message)
 end
 print("")
 
 # ── Inapplicable REML: should fall back to ML with a warning ────────────────
 print("=== Inapplicable REML: fixed-effects-only Gaussian should fall back ===")
-let m_no_re = fit("f1 ~ gender", d1, fit_method="REML")
+var m_no_re = fit("f1 ~ gender", d1, {"fit_method": "REML"})
 summarize(m_no_re)
 print("")
 

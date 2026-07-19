@@ -64,7 +64,7 @@ public:
 	std::vector<unsigned int> observations;
 
 	// A vector of goodness-of-fit values (1 per formant)
-	Vector<double> chi2;
+	ColVector<double> chi2;
 
 	// Number of polynomials
 	int p;

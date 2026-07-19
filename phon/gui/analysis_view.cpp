@@ -8394,8 +8394,8 @@ static std::optional<NakagawaR2> compute_nakagawa_r2(const stats::Model &m)
 
 	// ── σ²_f: variance of the fixed-effects linear predictor ────────
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(m.X.data()), m.nobs, m.nfixed);
-	Eigen::Map<Vector<double>> bm(const_cast<double*>(m.beta.data()), m.nfixed);
-	Vector<double> eta_fixed = Xm * bm;
+	Eigen::Map<ColVector<double>> bm(const_cast<double*>(m.beta.data()), m.nfixed);
+	ColVector<double> eta_fixed = Xm * bm;
 	double mean_eta = eta_fixed.mean();
 	double var_f = (eta_fixed.array() - mean_eta).square().mean();
 

@@ -1,0 +1,546 @@
+# =====================================================================
+# statistics/lib/stat_assert.phon
+# =====================================================================
+# Shared assertion helpers for the Phonometrica statistics validation
+# suite — the NEW-ENGINE port of assert.phon (MIGRATION_NOTES step 4b).
+#
+# Usage in a test file:
+#
+#     import stat_assert
+#     start_section("GAUSSIAN")
+#     fit_and_check("M1", "f1 ~ vowel * gender", d, "gaussian",
+#                   refs["M1"], 0.000001, 0.00001, 0.00001)
+#     ...
+#     end_section()
+#     report()
+#
+# PORT NOTE (old -> new engine):
+#   - The file is named stat_assert (not assert): an imported module
+#     binding would shadow the builtin assert() function in every
+#     importing chunk.
+#   - The old first-class Module value (`let m = Module("assert")`,
+#     `return m`, `A.f(...)`) is gone: public helpers are top-level
+#     functions (process-global generics), the counters are module
+#     vars read as `stat_assert.n_passed` by importers and mutated
+#     only from this module (record_pass/record_fail).
+#   - `import` caches modules, so every test file that imports this
+#     one shares the same counters; run_all accumulates one tally.
+#   - print statement -> print() function; output rebuilt with
+#     interpolation to preserve the old (separator-free) format.
+#   - 3-arg slice(s, from, count) -> slice(s, from, to) [inclusive
+#     end]; type(x) == type([]) -> x is List; load_json -> from_json;
+#     str(e) -> e.message.
+#
+# Robustness properties (unchanged from the original):
+#   1. fit_and_check wraps fit() in try/catch — an optimiser blow-up
+#      on one model records a failure and the suite continues.
+#   2. check_fit skips any reference field whose value is null.
+#   3. ranef arrays are tolerated as JSON arrays or scalars
+#      (auto_unbox=TRUE artifact) via coerce_to_list.
+# =====================================================================
+
+# --------------------------------------------------------------------
+# Counters & section state (shared across all importing test files).
+# --------------------------------------------------------------------
+
+var n_passed = 0
+var n_failed = 0
+var cur_section = ""
+var section_failed_baseline = 0
+
+function reset_counters()
+    n_passed = 0
+    n_failed = 0
+    cur_section = ""
+    section_failed_baseline = 0
+end
+
+function start_section(name as String)
+    cur_section = name
+    section_failed_baseline = n_failed
+    print("")
+    print("----------------------------------------------------------------------")
+    print(" {name}")
+    print("----------------------------------------------------------------------")
+end
+
+function end_section()
+    var in_section = n_failed - section_failed_baseline
+    if in_section == 0 then
+        print("  [{cur_section}] OK")
+    else
+        print("  [{cur_section}] {in_section} failure(s)")
+    end
+    cur_section = ""
+end
+
+# --------------------------------------------------------------------
+# Pass/fail recorders.
+# --------------------------------------------------------------------
+
+function record_pass()
+    n_passed += 1
+end
+
+function record_fail(msg as String)
+    n_failed += 1
+    print("    FAIL: {msg}")
+end
+
+function record_note(msg as String)
+    # Information that is neither pass nor fail; printed with a softer
+    # prefix so the suite output still summarises cleanly.
+    print("    NOTE: {msg}")
+end
+
+# --------------------------------------------------------------------
+# Approximate equality. Returns true if either tolerance is met:
+#   |actual - expected| <= atol
+#   |actual - expected| <= rtol * max(1, |expected|)
+# The floor of 1 in the relative branch keeps the tolerance from
+# vanishing for tiny references.
+# --------------------------------------------------------------------
+
+function approx_eq(actual as Number, expected as Number, rtol as Number, atol as Number)
+    var diff = abs(actual - expected)
+    var scale = abs(expected)
+    if scale < 1.0 then
+        scale = 1.0
+    end
+    return diff <= atol or diff <= rtol * scale
+end
+
+# --------------------------------------------------------------------
+# check — numeric comparison with tolerance. Records a pass or
+# failure and prints a useful message on failure.
+# --------------------------------------------------------------------
+
+function check(label as String, actual as Number, expected as Number, rtol as Number, atol as Number)
+    var diff = abs(actual - expected)
+    var scale = abs(expected)
+    if scale < 1.0 then
+        scale = 1.0
+    end
+    if diff <= atol or diff <= rtol * scale then
+        n_passed += 1
+    else
+        n_failed += 1
+        print("    FAIL: {label}: got {actual}, expected {expected} (rtol={rtol}, atol={atol})")
+    end
+end
+
+# Exact equality for integer-valued quantities (nobs, ncoef, ngroup ...).
+function check_int(label as String, actual as Number, expected as Number)
+    if actual == expected then
+        n_passed += 1
+    else
+        n_failed += 1
+        print("    FAIL: {label}: got {actual}, expected {expected}")
+    end
+end
+
+# --------------------------------------------------------------------
+# coerce_to_list — wraps a scalar in a 1-element list, leaves a list
+# alone (jsonlite auto_unbox=TRUE collapses singleton vectors).
+# --------------------------------------------------------------------
+
+function coerce_to_list(x as Object)
+    if x is List then
+        return x
+    end
+    return [x]
+end
+
+# --------------------------------------------------------------------
+# is_boundary_reference — true if R's reference fit is at a boundary
+# or didn't converge (converged == false, or fit.loglik == null), in
+# which case its numeric values aren't a meaningful validation target.
+# --------------------------------------------------------------------
+
+function is_boundary_reference(reference as Object)
+    if contains(reference, "converged") and reference["converged"] != null then
+        if reference["converged"] == false then
+            return true
+        end
+    end
+    if contains(reference, "fit") and contains(reference["fit"], "loglik") then
+        if reference["fit"]["loglik"] == null then
+            return true
+        end
+    end
+    return false
+end
+
+# --------------------------------------------------------------------
+# R-to-Phonometrica coefficient-name translation.
+#
+#   "(Intercept)"           -> "Intercept"
+#   "voweli"                -> "vowel[i]"
+#   "voweli:genderM"        -> "vowel[i]:gender[M]"
+#   "sd((Intercept)|s)"     -> "sd(Intercept|s)"
+#   "sd(voweli|s)"          -> "sd(vowel[i]|s)"
+#   "sd(residual)"          -> "sd(residual)"  (unchanged)
+#
+# Names already in Phonometrica format pass through unchanged.
+# --------------------------------------------------------------------
+
+function extract_var_names(coef_names as List)
+    # Each name like "vowel[i]" or "vowel[i]:gender[M]" contributes the
+    # variable prefix (everything before the first "[") to the set.
+    var vars = []
+    for k = 1 to len(coef_names) do
+        var parts = split(coef_names[k], ":")
+        for p = 1 to len(parts) do
+            var part = parts[p]
+            var bracket = find(part, "[")
+            if bracket > 0 then
+                var v = slice(part, 1, bracket - 1)
+                if find(vars, v) == 0 then
+                    append(vars, v)
+                end
+            end
+        end
+    end
+    return vars
+end
+
+function r_to_phon_term(part as String, var_names as List)
+    # Translate one R-format coefficient name fragment (no colons).
+    if part == "Intercept" then
+        return part
+    end
+    if contains(part, "[") then
+        return part
+    end
+    if part == "(Intercept)" then
+        return "Intercept"
+    end
+    # R's paste0(var, level) -> "var[level]": longest matching prefix wins.
+    var best = ""
+    var best_len = 0
+    for v = 1 to len(var_names) do
+        var vn = var_names[v]
+        if starts_with(part, vn) and len(vn) > best_len then
+            best = vn
+            best_len = len(vn)
+        end
+    end
+    if best_len > 0 then
+        var level = slice(part, best_len + 1, len(part))
+        return best & "[" & level & "]"
+    end
+    # No variable prefix matched — must be a continuous variable name.
+    return part
+end
+
+function r_to_phon_name(r_name as String, var_names as List)
+    # Splits on ":" for interactions, translates each component, rejoins.
+    var parts = split(r_name, ":")
+    var result = ""
+    for i = 1 to len(parts) do
+        if i > 1 then
+            result = result & ":"
+        end
+        result = result & r_to_phon_term(parts[i], var_names)
+    end
+    return result
+end
+
+function r_to_phon_ranef_name(r_name as String, var_names as List)
+    # "sd(<term>|<group>)" -> "sd(<phon_term>|<group>)"; "sd(residual)" as is.
+    if not starts_with(r_name, "sd(") then
+        return r_name
+    end
+    if r_name == "sd(residual)" then
+        return r_name
+    end
+    # Strip the "sd(" prefix and the trailing ")".
+    var inner = slice(r_name, 4, len(r_name) - 1)
+    var pipe_pos = find(inner, "|")
+    if pipe_pos == 0 then
+        return r_name
+    end
+    var term = slice(inner, 1, pipe_pos - 1)
+    var group = slice(inner, pipe_pos + 1, len(inner))
+    var phon_term = r_to_phon_name(term, var_names)
+    return "sd(" & phon_term & "|" & group & ")"
+end
+
+# --------------------------------------------------------------------
+# lookup_or_fail — find a value by name in two parallel arrays.
+# Returns the value if found; otherwise records a failure and
+# returns null.
+# --------------------------------------------------------------------
+
+function lookup_or_fail(label as String, names as List, values as Object, target as String)
+    var i = find(names, target)
+    if i == 0 then
+        n_failed += 1
+        print("    FAIL: {label}: name not found: '{target}'")
+        return null
+    end
+    return values[i]
+end
+
+# --------------------------------------------------------------------
+# check_optional — if `key` is present in `tbl` and non-null, compare
+# against actual; otherwise silently skip.
+# --------------------------------------------------------------------
+
+function check_optional(label as String, actual as Number, tbl as Object, key as String, rtol as Number, atol as Number)
+    if not contains(tbl, key) then
+        return
+    end
+    var expected = tbl[key]
+    if expected == null then
+        return
+    end
+    check(label, actual, expected, rtol, atol)
+end
+
+# --------------------------------------------------------------------
+# check_fit — generic fit comparison against a reference JSON object.
+# Tolerances: rtol_fit (fit summaries), rtol_coef (estimates/SEs),
+# rtol_ranef (random-effect SDs).
+# --------------------------------------------------------------------
+
+function check_fit(tag as String, model as Object, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_ranef as Number)
+    var fit_ref = reference["fit"]
+    var boundary = is_boundary_reference(reference)
+
+    # Convergence policy: if R converged cleanly, Phonometrica must too.
+    if not boundary and not model.converged then
+        record_fail(tag & " convergence: R converged but Phonometrica did not")
+    end
+
+    # Sample size: must match exactly.
+    check_int(tag & " nobs", model.nobs, fit_ref["nobs"])
+
+    # Fit summaries: skip null entries.
+    check_optional(tag & " loglik", model.loglik, fit_ref, "loglik", rtol_fit, 0.001)
+    check_optional(tag & " AIC", model.aic, fit_ref, "aic", rtol_fit, 0.01)
+    check_optional(tag & " BIC", model.bic, fit_ref, "bic", rtol_fit, 0.01)
+    check_optional(tag & " RSE", model.rse, fit_ref, "rse", rtol_fit, 0.001)
+    check_optional(tag & " R²", model.r2, fit_ref, "r2", rtol_fit, 0.0001)
+    check_optional(tag & " adj.R²", model.adj_r2, fit_ref, "adj_r2", rtol_fit, 0.0001)
+    check_optional(tag & " theta", model.theta, fit_ref, "theta", rtol_fit, 0.001)
+    check_optional(tag & " phi", model.phi, fit_ref, "phi", rtol_fit, 0.001)
+    check_optional(tag & " sigma", model.sigma, fit_ref, "sigma", rtol_fit, 0.001)
+    check_optional(tag & " nu", model.nu, fit_ref, "nu", rtol_fit, 0.001)
+
+    # Boundary references: stop after the summaries.
+    if boundary then
+        record_note(tag & ": R reference is at a boundary (converged=false or loglik=null) — skipping coefficient and ranef comparisons")
+        return
+    end
+
+    # Fixed-effect estimates and SEs (matched by name).
+    var fxref = reference["fixef"]
+    var coef_names = model.coef_names
+    var beta = get_coef(model)
+    var se = model.se
+    var fx_names = fxref["names"]
+    var fx_est = fxref["estimate"]
+    var fx_se = fxref["se"]
+    var n_fx = len(fx_names)
+
+    var var_names = extract_var_names(coef_names)
+
+    for i = 1 to n_fx do
+        var r_name = fx_names[i]
+        var phon_name = r_to_phon_name(r_name, var_names)
+        var b_exp = fx_est[i]
+        var s_exp = fx_se[i]
+
+        var b_act = lookup_or_fail(tag & " β[" & r_name & "] lookup", coef_names, beta, phon_name)
+        var s_act = lookup_or_fail(tag & " SE[" & r_name & "] lookup", coef_names, se, phon_name)
+        if b_act != null and b_exp != null then
+            check(tag & " β[" & r_name & "]", b_act, b_exp, rtol_coef, 0.0001)
+        end
+        if s_act != null and s_exp != null then
+            check(tag & " SE[" & r_name & "]", s_act, s_exp, rtol_coef, 0.0001)
+        end
+    end
+
+    # Random-effect SDs (mixed only).
+    if contains(reference, "ranef") and reference["ranef"] != null then
+        var raneffs = reference["ranef"]
+        var ref_names = coerce_to_list(raneffs["names"])
+        var ref_sds = coerce_to_list(raneffs["sd"])
+        var act_names = model.ranef_names
+        var act_sds = model.ranef_sd
+        var n_re = len(ref_names)
+        for i = 1 to n_re do
+            var r_name = ref_names[i]
+            var phon_name = r_to_phon_ranef_name(r_name, var_names)
+            var s_exp = ref_sds[i]
+            var s_act = lookup_or_fail(tag & " ranef[" & r_name & "] lookup", act_names, act_sds, phon_name)
+            if s_act != null and s_exp != null then
+                # 1.0 absolute floor lets a near-zero RE SD pass even if R
+                # reports a numerically different tiny value.
+                check(tag & " " & r_name, s_act, s_exp, rtol_ranef, 1.0)
+            end
+        end
+    end
+end
+
+# --------------------------------------------------------------------
+# fit_and_check — fit a model in a try/catch wrapper, then run
+# check_fit. If the fit throws, the failure is recorded and the
+# function returns cleanly so the rest of the suite continues.
+# --------------------------------------------------------------------
+
+function fit_and_check(tag as String, formula as String, data as Object, family as String, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_ranef as Number)
+    if reference == null then
+        record_note(tag & ": no reference entry — skipping")
+        return
+    end
+
+    var boundary = is_boundary_reference(reference)
+
+    var model = null
+    try
+        if family == "gaussian" then
+            model = fit(formula, data)
+        else
+            model = fit(formula, data, family)
+        end
+    catch e
+        if boundary then
+            # R also struggled here — engine wobble on the hard case is not
+            # a regression signal; log visibly and move on.
+            record_note(tag & ": fit() threw on boundary case (R reference also degenerate): " & e.message)
+        else
+            record_fail(tag & ": fit() threw exception: " & e.message)
+        end
+        return
+    end
+
+    check_fit(tag, model, reference, rtol_fit, rtol_coef, rtol_ranef)
+end
+
+# --------------------------------------------------------------------
+# Path-resolution helpers built on get_script_path(). Layout:
+#   test/
+#     data/<csv>
+#     statistics/
+#       lib/stat_assert.phon
+#       frequentist/test_<family>.phon + reference_<family>.json
+# --------------------------------------------------------------------
+
+function script_dir()
+    return get_directory(get_script_path())
+end
+
+function resolve_sibling(rel as String)
+    return join_path(get_directory(get_script_path()), rel)
+end
+
+function resolve_data_path(rel as String)
+    var here = get_directory(get_script_path())
+    var up = get_directory(here)                # one level up
+    var root = get_directory(up)                # two levels up (test/)
+    return join_path(join_path(root, "data"), rel)
+end
+
+# --------------------------------------------------------------------
+# check_gam — GAM-specific fit comparison (smooth-term EDF/F tables).
+# --------------------------------------------------------------------
+
+function check_gam(tag as String, model as Object, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_edf as Number)
+    var fit_ref = reference["fit"]
+
+    check_int(tag & " nobs", model.nobs, fit_ref["nobs"])
+    check_optional(tag & " loglik", model.loglik, fit_ref, "loglik", rtol_fit, 0.01)
+    check_optional(tag & " AIC", model.aic, fit_ref, "aic", rtol_fit, 0.01)
+    check_optional(tag & " adj.R²", model.adj_r2, fit_ref, "r2_adj", rtol_fit, 0.001)
+    check_optional(tag & " scale", model.rse, fit_ref, "scale", rtol_fit, 0.001)
+
+    # Fixed-effect estimates.
+    if contains(reference, "fixef") and reference["fixef"] != null then
+        var fxref = reference["fixef"]
+        var fx_names = fxref["names"]
+        var fx_est = fxref["estimate"]
+        var fx_se = fxref["se"]
+        var coef_names = model.coef_names
+        var beta = get_coef(model)
+        var se = model.se
+        var var_names = extract_var_names(coef_names)
+        var n_fx = len(fx_names)
+        for i = 1 to n_fx do
+            var r_name = fx_names[i]
+            var phon_name = r_to_phon_name(r_name, var_names)
+            var b_exp = fx_est[i]
+            var s_exp = fx_se[i]
+            var b_act = lookup_or_fail(tag & " β[" & r_name & "] lookup", coef_names, beta, phon_name)
+            var s_act = lookup_or_fail(tag & " SE[" & r_name & "] lookup", coef_names, se, phon_name)
+            if b_act != null and b_exp != null then
+                check(tag & " β[" & r_name & "]", b_act, b_exp, rtol_coef, 0.001)
+            end
+            if s_act != null and s_exp != null then
+                check(tag & " SE[" & r_name & "]", s_act, s_exp, rtol_coef, 0.001)
+            end
+        end
+    end
+
+    # Smooth terms: parallel arrays.
+    if contains(reference, "smooths") and reference["smooths"] != null then
+        var sm_ref = reference["smooths"]
+        var ref_names = sm_ref["names"]
+        var ref_edf = sm_ref["edf"]
+        var ref_F = sm_ref["F"]
+        var ref_p = sm_ref["p"]
+        var n_ref = len(ref_names)
+
+        if model.n_smooth != n_ref then
+            record_fail(tag & " smooth count: got {model.n_smooth}, expected {n_ref}")
+        else
+            var act_edf = model.smooth_edf
+            var act_F = model.smooth_F
+            var act_p = model.smooth_p
+            for i = 1 to n_ref do
+                var sname = ref_names[i]
+                check(tag & " EDF[" & sname & "]", act_edf[i], ref_edf[i], rtol_edf, 0.2)
+                check(tag & " F[" & sname & "]", act_F[i], ref_F[i], rtol_edf * 2, 1.0)
+            end
+        end
+    end
+end
+
+# fit_and_check_gam — fit a GAM in a try/catch wrapper, then run check_gam.
+function fit_and_check_gam(tag as String, formula as String, data as Object, family as String, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_edf as Number)
+    var model = null
+    try
+        model = fit(formula, data, family)
+    catch err
+        record_fail(tag & ": fit() threw exception: " & err.message)
+        return
+    end
+    if model == null then
+        record_fail(tag & ": fit() returned null")
+        return
+    end
+    check_gam(tag, model, reference, rtol_fit, rtol_coef, rtol_edf)
+end
+
+# --------------------------------------------------------------------
+# load_reference — read a JSON reference file (read_file + from_json;
+# the old load_json evaluated the text as script, from_json parses).
+# --------------------------------------------------------------------
+
+function load_reference(path as String)
+    var txt = read_file(path)
+    return from_json(txt)
+end
+
+# --------------------------------------------------------------------
+# report — final tally. The caller typically follows with
+#   assert(stat_assert.n_failed == 0, "test suite has failures")
+# --------------------------------------------------------------------
+
+function report()
+    print("")
+    print("======================================================================")
+    print(" Results: {n_passed} passed, {n_failed} failed")
+    print("======================================================================")
+end

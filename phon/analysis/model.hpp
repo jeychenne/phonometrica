@@ -442,20 +442,20 @@ struct Model
 	// For Gaussian: fitted = X * beta.
 	// For GLMs: fitted = linkinv(X * beta).
 	// Caller must provide the inverse link function.
-	void compute_fitted(const std::function<Vector<double>(const Vector<double> &)> &linkinv)
+	void compute_fitted(const std::function<ColVector<double>(const ColVector<double> &)> &linkinv)
 	{
 		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
-		Eigen::Map<Vector<double>> bm(beta.data(), nfixed);
-		Vector<double> eta = Xm * bm;
+		Eigen::Map<ColVector<double>> bm(beta.data(), nfixed);
+		ColVector<double> eta = Xm * bm;
 		if (!offset.empty()) {
-			Eigen::Map<const Vector<double>> off(offset.data(), nobs);
+			Eigen::Map<const ColVector<double>> off(offset.data(), nobs);
 			eta += off;
 		}
-		Vector<double> mu = linkinv(eta);
+		ColVector<double> mu = linkinv(eta);
 
 		fitted.resize(nobs);
 		residuals.resize(nobs);
-		Eigen::Map<Vector<double>> ym(y.data(), nobs);
+		Eigen::Map<ColVector<double>> ym(y.data(), nobs);
 		for (intptr_t i = 0; i < nobs; i++)
 		{
 			fitted[i] = mu[i];
@@ -473,10 +473,10 @@ struct Model
 
 		// σ²_f: variance of the fixed-effects linear predictor.
 		Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), nobs, nfixed);
-		Eigen::Map<Vector<double>> bm(const_cast<double*>(beta.data()), nfixed);
-		Vector<double> eta_fixed = Xm * bm;
+		Eigen::Map<ColVector<double>> bm(const_cast<double*>(beta.data()), nfixed);
+		ColVector<double> eta_fixed = Xm * bm;
 		if (!offset.empty()) {
-			Eigen::Map<const Vector<double>> off(const_cast<double*>(offset.data()), nobs);
+			Eigen::Map<const ColVector<double>> off(const_cast<double*>(offset.data()), nobs);
 			eta_fixed += off;
 		}
 		double mean_eta = eta_fixed.mean();

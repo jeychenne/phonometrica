@@ -156,17 +156,17 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 	if (!offset.empty()) model.offset = offset;
 
 	// If an offset is present, solve OLS on y_adj = y - offset.
-	Map<Vector<double>> y1(const_cast<double*>(y.data()), n);
-	Vector<double> y_work = y1;
+	Map<ColVector<double>> y1(const_cast<double*>(y.data()), n);
+	ColVector<double> y_work = y1;
 	if (!offset.empty()) {
-		Map<const Vector<double>> off(offset.data(), n);
+		Map<const ColVector<double>> off(offset.data(), n);
 		y_work -= off;
 	}
 
 	// Solve via SVD
 	model.beta = Array<double>(m, 0.0);
 	Map<Matrix<double>> X1(const_cast<double*>(X.data()), n, m);
-	Map<Vector<double>> b1(model.beta.data(), m);
+	Map<ColVector<double>> b1(model.beta.data(), m);
 
 	BDCSVD<Matrix<double>, ComputeThinU | ComputeThinV> svd(X1);
 	b1 = svd.solve(y_work);
@@ -232,8 +232,8 @@ Model lm(const Array<double> &y, const Array<double> &X, const Array<double> &of
 	model.adj_r2 = 1 - (1 - model.r2) * (double(n - 1) / (n - np - 1));
 
 	// Log-likelihood (Gaussian profile log-likelihood)
-	Map<Vector<double>> y_eig(const_cast<double*>(y.data()), n);
-	Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	Map<ColVector<double>> y_eig(const_cast<double*>(y.data()), n);
+	Map<ColVector<double>> mu_eig(model.fitted.data(), n);
 	model.loglik = detail::gaussian_loglik(y_eig, mu_eig);
 	model.compute_information_criteria();
 
@@ -261,13 +261,13 @@ static Matrix<double> glm_covariance(const Array<double> &X, const Family &fam,
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
 
-	Vector<double> eta = Xm * beta;
+	ColVector<double> eta = Xm * beta;
 	if (!offset.empty()) {
-		Eigen::Map<const Vector<double>> off(offset.data(), n);
+		Eigen::Map<const ColVector<double>> off(offset.data(), n);
 		eta += off;
 	}
-	Vector<double> mu = fam.linkinv(eta);
-	Vector<double> W = fam.variance(mu);
+	ColVector<double> mu = fam.linkinv(eta);
+	ColVector<double> W = fam.variance(mu);
 
 	return (Xm.transpose() * W.asDiagonal() * Xm).inverse();
 }
@@ -282,17 +282,17 @@ static Matrix<double> glm_robust_covariance(const Array<double> &y, const Array<
 	intptr_t m = X.ncol();
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, m);
-	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double*>(y.data()), n);
 
-	Vector<double> eta = Xm * beta;
+	ColVector<double> eta = Xm * beta;
 	if (!offset.empty()) {
-		Eigen::Map<const Vector<double>> off(offset.data(), n);
+		Eigen::Map<const ColVector<double>> off(offset.data(), n);
 		eta += off;
 	}
-	Vector<double> mu = fam.linkinv(eta);
-	Vector<double> W = fam.variance(mu);
+	ColVector<double> mu = fam.linkinv(eta);
+	ColVector<double> W = fam.variance(mu);
 
-	Vector<double> e2(n);
+	ColVector<double> e2(n);
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double e = ym[i] - mu[i];
@@ -322,11 +322,11 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 
 	// Eigen views over the input arrays
 	Eigen::Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, m);
-	Eigen::Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double *>(y.data()), n);
 	const bool has_off = !offset.empty();
 	Eigen::VectorXd off_eig;
 	if (has_off) {
-		off_eig = Eigen::Map<const Vector<double>>(offset.data(), n);
+		off_eig = Eigen::Map<const ColVector<double>>(offset.data(), n);
 	}
 
 	// Diagnostic flag (PHON_DIAG_IRLS=1) — one-shot env-var read,
@@ -560,7 +560,7 @@ Model glm(const Array<double> &y, const Array<double> &X, const Family &fam, boo
 
 	// ── Fitted values, log-likelihood, information criteria ──
 	model.compute_fitted(fam.linkinv);
-	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	Eigen::Map<ColVector<double>> mu_eig(model.fitted.data(), n);
 	model.loglik = fam.loglik(ym, mu_eig);
 	model.compute_information_criteria();
 
@@ -619,7 +619,7 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const
 	intptr_t p = X.ncol();
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
-	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double*>(y.data()), n);
 
 	// Map offset (may be empty).
 	bool has_off = !offset.empty();
@@ -754,7 +754,7 @@ Model negbin(const Array<double> &y, const Array<double> &X, int max_iter, const
 	model.compute_fitted(fam.linkinv);
 
 	// Log-likelihood
-	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	Eigen::Map<ColVector<double>> mu_eig(model.fitted.data(), n);
 	model.loglik = fam.loglik(ym, mu_eig);
 	model.compute_information_criteria();
 
@@ -827,7 +827,7 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	intptr_t p = X.ncol();
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double*>(X.data()), n, p);
-	Eigen::Map<Vector<double>> ym(const_cast<double*>(y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double*>(y.data()), n);
 
 	// Map offset (may be empty).
 	bool has_off = !offset.empty();
@@ -974,7 +974,7 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 	model.compute_fitted(fam.linkinv);
 
 	// Log-likelihood
-	Eigen::Map<Vector<double>> mu_eig(model.fitted.data(), n);
+	Eigen::Map<ColVector<double>> mu_eig(model.fitted.data(), n);
 	model.loglik = fam.loglik(ym, mu_eig);
 	model.compute_information_criteria();
 
@@ -1071,9 +1071,9 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 //   edf(λ) = tr(X (X'X + λS)⁻¹ X') = tr((X'X + λS)⁻¹ X'X)
 //
 static std::tuple<double, double, double>
-gcv_score(const Matrix<double> &XtX, const Vector<double> &Xty,
+gcv_score(const Matrix<double> &XtX, const ColVector<double> &Xty,
           const Matrix<double> &Sm, const Matrix<double> &Xm,
-          const Vector<double> &ym, double lambda, intptr_t n, intptr_t p)
+          const ColVector<double> &ym, double lambda, intptr_t n, intptr_t p)
 {
 	using namespace Eigen;
 
@@ -1125,7 +1125,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	intptr_t K = (intptr_t)smooth_ranges.size(); // number of penalty blocks
 
 	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
-	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Map<ColVector<double>> ym(const_cast<double *>(y.data()), n);
 	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
 
 	// For Gaussian with identity link, absorb offset into the response:
@@ -1459,7 +1459,7 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	intptr_t p = X.ncol();
 
 	Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
-	Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Map<ColVector<double>> ym(const_cast<double *>(y.data()), n);
 	Map<Matrix<double>> Sm(const_cast<double *>(S.data()), p, p);
 
 	bool has_off = !offset.empty();

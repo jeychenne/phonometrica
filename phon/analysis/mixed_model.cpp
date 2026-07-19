@@ -560,7 +560,7 @@ static double penalized_deviance_for_ls(
     const std::vector<Eigen::MatrixXd> &D_inv,
     const Family &fam,
     const Eigen::Map<Matrix<double>> &Xm,
-    const Eigen::Map<Vector<double>> &ym,
+    const Eigen::Map<ColVector<double>> &ym,
     const GroupLayout &lay,
     intptr_t n, intptr_t p,
     const Eigen::VectorXd *off_ptr,
@@ -1248,7 +1248,7 @@ static ProfiledResult solve_gaussian_henderson(
 	const std::vector<double> &log_det_Dg,
 	double sigma2,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p,
 	const PriorSpec *priors = nullptr,
@@ -1471,7 +1471,7 @@ static ProfiledResult solve_gaussian_henderson(
 struct GaussianCholObjective
 {
 	const Eigen::Map<Matrix<double>> &Xm;
-	const Eigen::Map<Vector<double>> &ym;
+	const Eigen::Map<ColVector<double>> &ym;
 	const GroupLayout &lay;
 	intptr_t n, p;
 	intptr_t n_chol;
@@ -1539,7 +1539,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
                                    const std::vector<double> &log_det_Dg,
                                    const Family &fam,
                                    const Eigen::Map<Matrix<double>> &Xm,
-                                   const Eigen::Map<Vector<double>> &ym,
+                                   const Eigen::Map<ColVector<double>> &ym,
                                    const GroupLayout &lay,
                                    intptr_t n, intptr_t p,
                                    const Eigen::VectorXd &beta_init,
@@ -1890,7 +1890,7 @@ static ProfiledResult solve_pirls(const std::vector<Eigen::MatrixXd> &D_inv,
 static ProfiledResult solve_pirls(const Eigen::VectorXd &sigma2_u,
                                    const Family &fam,
                                    const Eigen::Map<Matrix<double>> &Xm,
-                                   const Eigen::Map<Vector<double>> &ym,
+                                   const Eigen::Map<ColVector<double>> &ym,
                                    const GroupLayout &lay,
                                    intptr_t n, intptr_t p,
                                    const Eigen::VectorXd &beta_init)
@@ -1919,7 +1919,7 @@ static ProfiledResult solve_u_given_beta(
     const std::vector<double> &log_det_Dg,
     const Family &fam,
     const Eigen::Map<Matrix<double>> &Xm,
-    const Eigen::Map<Vector<double>> &ym,
+    const Eigen::Map<ColVector<double>> &ym,
     const GroupLayout &lay,
     intptr_t n, intptr_t p,
     const Eigen::VectorXd &beta,
@@ -2302,7 +2302,7 @@ struct PirlsObjective
 {
 	const Family &fam;
 	const Eigen::Map<Matrix<double>> &Xm;
-	const Eigen::Map<Vector<double>> &ym;
+	const Eigen::Map<ColVector<double>> &ym;
 	const GroupLayout &lay;
 	intptr_t n, p;
 	Eigen::VectorXd beta_init;
@@ -2488,7 +2488,7 @@ struct LaplaceJointObjective
 {
 	const Family &fam;
 	const Eigen::Map<Matrix<double>> &Xm;
-	const Eigen::Map<Vector<double>> &ym;
+	const Eigen::Map<ColVector<double>> &ym;
 	const GroupLayout &lay;
 	intptr_t n, p, n_chol;
 	const PriorSpec *priors;
@@ -3490,7 +3490,7 @@ static GridPointResult eval_gaussian_grid_point(
 	const Eigen::VectorXd &theta,
 	const GaussianCholObjective &obj,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const PriorSpec *priors,
@@ -3646,7 +3646,7 @@ static GridPointResult eval_pirls_grid_point(
 	const Eigen::VectorXd &theta,
 	const Family &fam,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const Eigen::VectorXd &beta_init,
@@ -4268,7 +4268,7 @@ static void compute_grid_waic(
 	const Eigen::VectorXd &theta_star,
 	const Eigen::MatrixXd &T,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	intptr_t n, intptr_t p,
 	intptr_t n_chol,
 	std::function<double(double)> linkinv_scalar,
@@ -4802,7 +4802,7 @@ static DiagNllBreakdown diag_eval_gaussian_breakdown(
 	const Eigen::VectorXd &theta,
 	const GaussianCholObjective &obj,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const PriorSpec *priors,
@@ -5026,7 +5026,7 @@ static void inla_grid_integrate_gaussian(
 	const GaussianCholObjective &obj,
 	const Eigen::VectorXd &theta_star,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const PriorSpec *priors,
@@ -6011,7 +6011,7 @@ static void inla_grid_integrate_pirls(
 	const Eigen::VectorXd &theta_star,
 	const Family &fam,
 	const Eigen::Map<Matrix<double>> &Xm,
-	const Eigen::Map<Vector<double>> &ym,
+	const Eigen::Map<ColVector<double>> &ym,
 	const GroupLayout &lay,
 	intptr_t n, intptr_t p, intptr_t n_chol,
 	const Eigen::VectorXd &beta_init,
@@ -6763,7 +6763,7 @@ static void no_re_bayesian_laplace(
     Model &model,
     const Family &fam,
     const Eigen::Map<Matrix<double>> &Xm,
-    const Eigen::Map<Vector<double>> &ym,
+    const Eigen::Map<ColVector<double>> &ym,
     const GroupLayout &lay,           // G == 0 expected
     intptr_t n, intptr_t p,
     intptr_t saved_n_chol,            // 0 for G == 0
@@ -7053,7 +7053,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	intptr_t G = lay.G;
 
 	Eigen::Map<Matrix<double>> Xm(const_cast<double *>(X.data()), n, p);
-	Eigen::Map<Vector<double>> ym(const_cast<double *>(y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double *>(y.data()), n);
 
 	// ── Starting values ─────────────────────────────────────────────
 	//
@@ -8858,7 +8858,7 @@ EvaluationResult evaluate_at(const Model &model, const EvaluationOverrides &ov)
 
 	// ── Build Eigen maps over X, y ───────────────────────────────────
 	Eigen::Map<Matrix<double>> Xm(const_cast<double *>(model.X.data()), n, p);
-	Eigen::Map<Vector<double>> ym(const_cast<double *>(model.y.data()), n);
+	Eigen::Map<ColVector<double>> ym(const_cast<double *>(model.y.data()), n);
 
 	// ── Override fixed effects (β) ───────────────────────────────────
 	Eigen::VectorXd beta(p);

@@ -39,6 +39,9 @@ set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to 
 if(PHON_WITH_NEW_ENGINE)
     if(EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
         add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
+        # Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the new
+        # engine, no old-engine or GUI dependency. Target: phon_stats.
+        add_subdirectory(stats_host)
     else()
         message(STATUS "New engine not found at ${PHON_ENGINE_DIR}; skipping (set PHON_ENGINE_DIR)")
     endif()
