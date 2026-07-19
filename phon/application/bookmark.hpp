@@ -30,9 +30,9 @@ class Bookmark : public Element
 {
 public:
 
-	Bookmark(Class *klass, Directory *parent);
+	explicit Bookmark(Directory *parent);
 
-	Bookmark(Class *klass, Directory *parent, String title);
+	Bookmark(Directory *parent, String title);
 
 	String label() const override;
 
@@ -59,6 +59,8 @@ protected:
 class TimeStamp final : public Bookmark
 {
 public:
+
+	String class_name() const override { return "TimeStamp"; }
 
 	TimeStamp(Directory *parent, String title, Handle<Annotation> annot, size_t layer, double start,
 			  double end, String match, std::pair<String, String> context);

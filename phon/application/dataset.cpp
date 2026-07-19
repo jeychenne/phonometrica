@@ -34,13 +34,13 @@ Dataset::Column::~Column()
 }
 
 Dataset::Dataset(Directory *parent, String path) :
-		DataTable(meta::get_class<Dataset>(), parent, std::move(path))
+		DataTable(parent, std::move(path))
 {
 
 }
 
 Dataset::Dataset(const Dataset &other) :
-		DataTable(other.klass, other.parent(), String()), m_labels(other.m_labels)
+		DataTable(other.parent(), String()), m_labels(other.m_labels)
 {
 	for (auto &col : other.m_columns) {
 		m_columns.append(std::unique_ptr<Column>(col->clone()));

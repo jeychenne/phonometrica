@@ -30,6 +30,8 @@ class Note final : public Document
 {
 public:
 
+	String class_name() const override { return "Note"; }
+
 	explicit Note(Directory *parent, String path = String());
 
 	const String &content() const;

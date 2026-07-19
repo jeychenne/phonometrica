@@ -35,7 +35,7 @@
 namespace phonometrica {
 
 FormantQuery::FormantQuery(Directory *parent, String path) :
-		Query(meta::get_class<FormantQuery>(), parent, String()) // Pass empty path to avoid vtable issue
+		Query(parent, String()) // Pass empty path to avoid vtable issue
 {
 	// Set the path ourselves and call our own load(), since during base-class construction
 	// the vtable still points to Query, not FormantQuery.

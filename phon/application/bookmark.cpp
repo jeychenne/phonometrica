@@ -26,15 +26,15 @@
 
 namespace phonometrica {
 
-Bookmark::Bookmark(Class *klass, Directory *parent) :
-		Element(klass, parent)
+Bookmark::Bookmark(Directory *parent) :
+		Element(parent)
 {
 
 }
 
 
-Bookmark::Bookmark(Class *klass, Directory *parent, String title) :
-		Element(klass, parent), m_title(std::move(title))
+Bookmark::Bookmark(Directory *parent, String title) :
+		Element(parent), m_title(std::move(title))
 {
 
 }
@@ -63,7 +63,7 @@ void Bookmark::set_title(const String &value)
 
 TimeStamp::TimeStamp(Directory *parent, String title, Handle<Annotation> annot, size_t layer,
 					 double start, double end, String match, std::pair<String, String> context) :
-		Bookmark(meta::get_class<TimeStamp>(), parent, std::move(title)), m_annot(std::move(annot)), m_target(std::move(match)),
+		Bookmark(parent, std::move(title)), m_annot(std::move(annot)), m_target(std::move(match)),
 		m_context(std::move(context))
 {
 	m_layer = layer;

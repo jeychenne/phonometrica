@@ -30,6 +30,8 @@ class Script final : public Document
 {
 public:
 
+	String class_name() const override { return "Script"; }
+
 	explicit Script(Directory *parent, String path = String());
 
 	const String &content() const;

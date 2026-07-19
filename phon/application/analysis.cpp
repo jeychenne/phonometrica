@@ -40,7 +40,7 @@ namespace phonometrica {
 // =====================================================================
 
 Analysis::Analysis(Directory *parent, Handle<DataTable> source) :
-	Document(meta::get_class<Analysis>(), parent, String()),
+	Document(parent, String()),
 	m_source(std::move(source))
 {
 	m_source->open();
@@ -51,7 +51,7 @@ Analysis::Analysis(Directory *parent, Handle<DataTable> source) :
 }
 
 Analysis::Analysis(Directory *parent, const String &path) :
-	Document(meta::get_class<Analysis>(), parent, path)
+	Document(parent, path)
 {
 
 }

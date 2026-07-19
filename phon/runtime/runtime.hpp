@@ -70,68 +70,69 @@ class Runtime final
 			}
 		}
 
-		static Object *clone(const Object *o)
+		// Payload access that also works for poly-boxed hierarchies (whose object_type is the
+		// type-erased PolyObject, which has no value() member).
+		static const T &payload(const Object *o)
 		{
 			auto obj = static_cast<const typename Handle<T>::object_type*>(o);
 
-			if constexpr (traits::is_object<T>::value)
+			if constexpr (traits::is_object<T>::value) {
+				return *obj;
+			}
+			else if constexpr (traits::is_poly_boxed<T>) {
+				return *poly_value<T>(obj);
+			}
+			else {
+				return obj->value();
+			}
+		}
+
+		static Object *clone(const Object *o)
+		{
+			if constexpr (traits::is_poly_boxed<T>)
 			{
-				if constexpr (traits::is_collectable<T>::value) {
-					return new typename Handle<T>::object_type(static_cast<const Collectable*>(obj)->runtime, *obj);
-				}
-				else {
-					return new typename Handle<T>::object_type(*obj);
-				}
+				return new TPolyObject<T>(payload(o));
 			}
 			else
 			{
-				if constexpr (traits::is_collectable<T>::value) {
-					return new typename Handle<T>::object_type(static_cast<const Collectable*>(obj)->runtime, obj->value());
+				auto obj = static_cast<const typename Handle<T>::object_type*>(o);
+
+				if constexpr (traits::is_object<T>::value)
+				{
+					if constexpr (traits::is_collectable<T>::value) {
+						return new typename Handle<T>::object_type(static_cast<const Collectable*>(obj)->runtime, *obj);
+					}
+					else {
+						return new typename Handle<T>::object_type(*obj);
+					}
 				}
-				else {
-					return new typename Handle<T>::object_type(obj->value());
+				else
+				{
+					if constexpr (traits::is_collectable<T>::value) {
+						return new typename Handle<T>::object_type(static_cast<const Collectable*>(obj)->runtime, obj->value());
+					}
+					else {
+						return new typename Handle<T>::object_type(obj->value());
+					}
 				}
 			}
 		}
 
 		static String to_string(const Object *o)
 		{
-			auto obj = static_cast<const typename Handle<T>::object_type*>(o);
-
-			if constexpr (traits::is_object<T>::value) {
-				return meta::to_string(*obj);
-			}
-			else {
-				return meta::to_string(obj->value());
-			}
+			return meta::to_string(payload(o));
 		}
 
 		static int compare(const Object *o1, const Object *o2)
 		{
 			assert(o1->get_class() == o2->get_class());
-			auto obj1 = static_cast<const typename Handle<T>::object_type*>(o1);
-			auto obj2 = static_cast<const typename Handle<T>::object_type*>(o2);
-
-			if constexpr (traits::is_object<T>::value) {
-				return meta::compare(*obj1, *obj2);
-			}
-			else {
-				return meta::compare(obj1->value(), obj2->value());
-			}
+			return meta::compare(payload(o1), payload(o2));
 		}
 
 		static bool equal(const Object *o1, const Object *o2)
 		{
 			assert(o1->get_class() == o2->get_class());
-			auto obj1 = static_cast<const typename Handle<T>::object_type*>(o1);
-			auto obj2 = static_cast<const typename Handle<T>::object_type*>(o2);
-
-			if constexpr (traits::is_object<T>::value) {
-				return o1->clonable() ? meta::equal(*obj1, *obj2) : (o1 == o2);
-			}
-			else {
-				return o1->clonable() ? meta::equal(obj1->value(), obj2->value()) : (o1 == o2);
-			}
+			return o1->clonable() ? meta::equal(payload(o1), payload(o2)) : (o1 == o2);
 		}
 	};
 

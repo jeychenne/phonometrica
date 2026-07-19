@@ -33,6 +33,8 @@ class PitchQuery final : public Query
 {
 public:
 
+	String class_name() const override { return "PitchQuery"; }
+
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match

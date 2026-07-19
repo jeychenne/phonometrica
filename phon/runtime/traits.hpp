@@ -49,6 +49,19 @@ class Number {};
 
 namespace traits {
 
+// Plain polymorphic C++ hierarchies exposed to scripts (the VFS Element tree). Such classes carry no
+// engine machinery: the runtime boxes them in a TPolyObject<T> (see typed_object.hpp) whose handles
+// are type-erased so that a Handle<Base> can hold any subclass instance. Each class in a boxed
+// hierarchy declares an explicit specialization mapping it to the hierarchy root (next to the class
+// definition, so every TU that can name the class sees the same boxing decision).
+template<typename T> struct hierarchy_root { using type = void; };
+
+template<typename T>
+using hierarchy_root_t = typename hierarchy_root<typename std::remove_cv<T>::type>::type;
+
+template<typename T>
+inline constexpr bool is_poly_boxed = !std::is_void_v<hierarchy_root_t<T>>;
+
 // Type that may contain cyclic references
 template<typename T> struct maybe_cyclic : std::true_type
 {
@@ -88,7 +101,9 @@ struct is_object<Class> : std::false_type { };
 
 template<typename T> struct is_collectable
 {
-	static constexpr bool value = !std::is_scalar<T>::value && maybe_cyclic<T>::value;
+	// Poly-boxed hierarchies never store script values, so they cannot participate in reference
+	// cycles; they are always boxed as Atomic regardless of maybe_cyclic's default.
+	static constexpr bool value = !std::is_scalar<T>::value && maybe_cyclic<T>::value && !is_poly_boxed<T>;
 };
 
 #if 0

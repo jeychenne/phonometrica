@@ -53,7 +53,7 @@ Signal<int> Sound::update_loading;
 
 
 Sound::Sound(Directory *parent, String path) :
-		Document(meta::get_class<Sound>(), parent, std::move(path))
+		Document(parent, std::move(path))
 {
     if (has_path()) {
         auto h = handle();

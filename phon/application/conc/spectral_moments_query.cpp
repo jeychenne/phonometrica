@@ -29,7 +29,7 @@
 namespace phonometrica {
 
 SpectralMomentsQuery::SpectralMomentsQuery(Directory *parent, String path) :
-		Query(meta::get_class<SpectralMomentsQuery>(), parent, String())
+		Query(parent, String())
 {
 	m_path = std::move(path);
 	if (!m_path.empty()) {

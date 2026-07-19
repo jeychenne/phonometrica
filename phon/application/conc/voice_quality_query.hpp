@@ -35,6 +35,8 @@ class VoiceQualityQuery final : public Query
 {
 public:
 
+	String class_name() const override { return "VoiceQualityQuery"; }
+
 	VoiceQualityQuery(Directory *parent, String path);
 
 	~VoiceQualityQuery() override = default;

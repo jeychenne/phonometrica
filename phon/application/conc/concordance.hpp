@@ -37,6 +37,8 @@ class Concordance : public DataTable
 {
 public:
 
+	String class_name() const override { return "Concordance"; }
+
 	enum class Context
 	{
 		None,       // no context

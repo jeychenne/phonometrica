@@ -31,6 +31,8 @@ class Dataset final : public DataTable
 {
 public:
 
+	String class_name() const override { return "Dataset"; }
+
     enum class ColumnType
     {
         Boolean,

@@ -40,8 +40,8 @@
 namespace phonometrica {
 
 
-DataTable::DataTable(Class *klass, Directory *parent, String path) :
-		Document(klass, parent, std::move(path))
+DataTable::DataTable(Directory *parent, String path) :
+		Document(parent, std::move(path))
 {
 
 }

@@ -36,6 +36,8 @@ class Analysis : public Document
 {
 public:
 
+	String class_name() const override { return "Analysis"; }
+
 	// Create a new analysis from a data source (no path yet — must be saved).
 	Analysis(Directory *parent, Handle<DataTable> source);
 

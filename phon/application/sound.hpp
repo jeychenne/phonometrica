@@ -49,6 +49,8 @@ class Sound final : public Document
 {
 public:
 
+	String class_name() const override { return "Sound"; }
+
 	enum class Format
 	{
 		WAV  = SF_FORMAT_WAV,

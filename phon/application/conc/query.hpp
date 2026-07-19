@@ -35,6 +35,8 @@ class Query : public Document
 {
 public:
 
+	String class_name() const override { return "Query"; }
+
 	enum class Type
 	{
 		Text      = 1,
@@ -124,11 +126,9 @@ public:
 
 protected:
 
-	// Protected constructor for subclasses that need their own metaclass (e.g. FormantQuery).
-	// If path is non-empty, load() is called — but note that during base-class construction
-	// the vtable still points here, so subclasses should pass an empty path and load themselves.
-	Query(Class *klass, Directory *parent, String path);
-
+	// Subclasses chain the public Query constructor. If path is non-empty, it calls load() —
+	// but during base-class construction the vtable still points here, so subclasses should
+	// pass an empty path and load themselves.
 	void load() override;
 
 	void write() override;

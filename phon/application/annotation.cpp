@@ -32,7 +32,7 @@ namespace phonometrica {
 
 
 Annotation::Annotation(Directory *parent, String path) :
-		Document(meta::get_class<Annotation>(), parent, std::move(path))
+		Document(parent, std::move(path))
 {
 	m_type = guess_type();
 	if (is_native() && has_path()) preload();

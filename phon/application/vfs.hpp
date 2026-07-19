@@ -48,16 +48,68 @@ enum class FileType
 };
 
 
+class Element;
 class Directory;
+class Document;
+class DataTable;
+class Dataset;
+class Concordance;
+class Annotation;
+class Sound;
+class Spectrum;
+class Script;
+class Note;
+class Query;
+class FormantQuery;
+class PitchQuery;
+class IntensityQuery;
+class SpectralMomentsQuery;
+class VoiceQualityQuery;
+class Bookmark;
+class TimeStamp;
+class Analysis;
+
+// The VFS hierarchy consists of plain C++ classes (no engine base); script exposure goes through
+// the old runtime's poly boxing (TPolyObject in phon/runtime/typed_object.hpp). This block is the
+// single cell-ness seam: it declares every class of the boxed hierarchy, and must list each one —
+// a missing entry makes Handle<T> fall back to the non-polymorphic TObject<T> box.
+// The specializations must precede any Handle<T> instantiation, which is why they all live here,
+// before the class definitions.
+namespace traits {
+template<> struct hierarchy_root<Element> { using type = Element; };
+template<> struct hierarchy_root<Directory> { using type = Element; };
+template<> struct hierarchy_root<Document> { using type = Element; };
+template<> struct hierarchy_root<DataTable> { using type = Element; };
+template<> struct hierarchy_root<Dataset> { using type = Element; };
+template<> struct hierarchy_root<Concordance> { using type = Element; };
+template<> struct hierarchy_root<Annotation> { using type = Element; };
+template<> struct hierarchy_root<Sound> { using type = Element; };
+template<> struct hierarchy_root<Spectrum> { using type = Element; };
+template<> struct hierarchy_root<Script> { using type = Element; };
+template<> struct hierarchy_root<Note> { using type = Element; };
+template<> struct hierarchy_root<Query> { using type = Element; };
+template<> struct hierarchy_root<FormantQuery> { using type = Element; };
+template<> struct hierarchy_root<PitchQuery> { using type = Element; };
+template<> struct hierarchy_root<IntensityQuery> { using type = Element; };
+template<> struct hierarchy_root<SpectralMomentsQuery> { using type = Element; };
+template<> struct hierarchy_root<VoiceQualityQuery> { using type = Element; };
+template<> struct hierarchy_root<Bookmark> { using type = Element; };
+template<> struct hierarchy_root<TimeStamp> { using type = Element; };
+template<> struct hierarchy_root<Analysis> { using type = Element; };
+}
 
 
-class Element : public Atomic
+class Element
 {
 public:
 
-	Element(Class *klass, Directory *parent);
+	explicit Element(Directory *parent);
 
 	virtual ~Element() = default;
+
+	// Name the class was registered under with the scripting engine ("Annotation", "Sound", ...).
+	// Used for project serialization: the returned strings are part of the project XML format.
+	virtual String class_name() const = 0;
 
 	void detach(bool mutate = true);
 
@@ -130,6 +182,8 @@ public:
 
 	String label() const override;
 
+	String class_name() const override { return "Directory"; }
+
 	void set_label(String value);
 
 	bool empty() const;
@@ -189,7 +243,7 @@ class Document : public Element
 {
 public:
 
-	Document(Class *klass, Directory *parent, String path);
+	Document(Directory *parent, String path);
 
 	String label() const override;
 
@@ -282,15 +336,10 @@ protected:
 	bool m_metadata_modified = false;
 };
 
+namespace traits {
+}
 
 using DocList = Array<Handle<Document>>;
-
-
-namespace traits {
-template<> struct maybe_cyclic<Element> : std::false_type { };
-template<> struct maybe_cyclic<Directory> : std::false_type { };
-template<> struct maybe_cyclic<Document> : std::false_type { };
-}
 
 
 } // namespace phonometrica

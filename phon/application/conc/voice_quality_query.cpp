@@ -29,7 +29,7 @@
 namespace phonometrica {
 
 VoiceQualityQuery::VoiceQualityQuery(Directory *parent, String path) :
-		Query(meta::get_class<VoiceQualityQuery>(), parent, String())
+		Query(parent, String())
 {
 	m_path = std::move(path);
 	if (!m_path.empty()) {

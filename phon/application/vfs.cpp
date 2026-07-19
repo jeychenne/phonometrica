@@ -30,8 +30,8 @@ Signal<const String &, const String &, int> Element::request_progress;
 Signal<int> Element::update_progress;
 Signal<> Document::file_modified;
 
-Element::Element(Class *klass, Directory *parent) :
-		Atomic(klass), m_parent(parent)
+Element::Element(Directory *parent) :
+		m_parent(parent)
 {
 
 }
@@ -76,7 +76,7 @@ const Directory *Element::toplevel() const
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 Directory::Directory(Directory *parent, String label) :
-		Element(meta::get_class<Directory>(), parent), m_label(std::move(label))
+		Element(parent), m_label(std::move(label))
 {
 
 }
@@ -304,8 +304,8 @@ void Directory::sort()
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-Document::Document(Class *klass, Directory *parent, String path) :
-		Element(klass, parent), m_path(std::move(path))
+Document::Document(Directory *parent, String path) :
+		Element(parent), m_path(std::move(path))
 {
 
 }

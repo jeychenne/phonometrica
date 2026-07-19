@@ -32,6 +32,8 @@ class FormantQuery final : public Query
 {
 public:
 
+	String class_name() const override { return "FormantQuery"; }
+
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match

@@ -29,7 +29,7 @@
 namespace phonometrica {
 
 PitchQuery::PitchQuery(Directory *parent, String path) :
-		Query(meta::get_class<PitchQuery>(), parent, String()) // Pass empty path to avoid vtable issue
+		Query(parent, String()) // Pass empty path to avoid vtable issue
 {
 	// Set the path ourselves and call our own load(), since during base-class construction
 	// the vtable still points to Query, not PitchQuery.

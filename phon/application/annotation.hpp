@@ -35,6 +35,8 @@ class Annotation final : public Document
 {
 public:
 
+	String class_name() const override { return "Annotation"; }
+
 	enum Type {
 		Undefined,
 		Native,

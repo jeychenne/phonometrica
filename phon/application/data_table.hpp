@@ -46,7 +46,7 @@ class DataTable : public Document
 {
 public:
 
-	explicit DataTable(Class *klass, Directory *parent, String path = String());
+	explicit DataTable(Directory *parent, String path = String());
 
 	void from_xml(xml_node root, const String &project_dir);
 

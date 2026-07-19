@@ -92,6 +92,9 @@ public:
 			m_data_type(Datatype::Object)
 	{
 		using Type = std::remove_reference<typename std::remove_cv<T>::type>::type;
+		// Poly-boxed hierarchy instances are shared objects: they must be wrapped explicitly
+		// (Variant{Handle<T>(...)}), never copied into a fresh box.
+		static_assert(!traits::is_poly_boxed<Type>, "cannot box a poly hierarchy value by copy; pass a Handle instead");
 		as.object = new TObject<Type>(std::forward<Type>(val));
 	}
 
@@ -323,6 +326,10 @@ T &cast(Variant &v)
 
 			if constexpr (traits::is_object<T>::value) {
 				return *ptr;
+			}
+			else if constexpr (traits::is_poly_boxed<Type>) {
+				// The payload's dynamic type may be a subclass of Type; the address is the same.
+				return *poly_value<Type>(ptr);
 			}
 			else {
 				return ptr->value();

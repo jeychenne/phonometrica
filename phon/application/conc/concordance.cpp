@@ -39,13 +39,13 @@ int Concordance::next_id() { return ++s_concordance_id; }
 
 
 Concordance::Concordance(Directory *parent, const String &path) :
-		DataTable(meta::get_class<Concordance>(), parent, path)
+		DataTable(parent, path)
 {
 	preload();
 }
 
 Concordance::Concordance(intptr_t target_count, Context ctx, intptr_t context_length, Array <AutoMatch> matches, Directory *parent, const String &path) :
-		DataTable(meta::get_class<Concordance>(), parent, path), m_matches(std::move(matches))
+		DataTable(parent, path), m_matches(std::move(matches))
 {
 	m_target_count = (int) target_count;
 	m_context_type = ctx;
@@ -57,7 +57,7 @@ Concordance::Concordance(intptr_t target_count, Context ctx, intptr_t context_le
 }
 
 Concordance::Concordance(const Concordance &other) :
-		DataTable(other.klass, other.parent(), String())
+		DataTable(other.parent(), String())
 {
 	m_target_count = other.m_target_count;
 	m_context_type = other.m_context_type;

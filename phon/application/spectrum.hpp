@@ -47,6 +47,8 @@ class Spectrum final : public Document
 {
 public:
 
+	String class_name() const override { return "Spectrum"; }
+
 	/// Construct a Spectrum by loading it from a saved file.
 	explicit Spectrum(Directory *parent, String path = String());
 

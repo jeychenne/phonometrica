@@ -28,7 +28,7 @@
 namespace phonometrica {
 
 IntensityQuery::IntensityQuery(Directory *parent, String path) :
-		Query(meta::get_class<IntensityQuery>(), parent, String())
+		Query(parent, String())
 {
 	m_path = std::move(path);
 	if (!m_path.empty()) {

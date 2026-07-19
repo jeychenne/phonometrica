@@ -28,15 +28,7 @@
 namespace phonometrica {
 
 Query::Query(Directory *parent, String path) :
-		Document(meta::get_class<Query>(), parent, std::move(path))
-{
-	if (!m_path.empty()) {
-		load();
-	}
-}
-
-Query::Query(Class *klass, Directory *parent, String path) :
-		Document(klass, parent, std::move(path))
+		Document(parent, std::move(path))
 {
 	if (!m_path.empty()) {
 		load();

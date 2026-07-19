@@ -37,7 +37,7 @@ namespace phonometrica {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Spectrum::Spectrum(Directory *parent, String path) :
-	Document(meta::get_class<Spectrum>(), parent, std::move(path))
+	Document(parent, std::move(path))
 {
 }
 
@@ -45,7 +45,7 @@ Spectrum::Spectrum(Directory *parent, const Handle<Sound> &sound, int channel,
                    double t1, double t2, speech::WindowType window_type,
                    int zero_padding, double preemph, double max_frequency,
                    double dynamic_range, int lpc_order) :
-	Document(meta::get_class<Spectrum>(), parent, String()),
+	Document(parent, String()),
 	m_sound_path(sound->path()),
 	m_channel(channel),
 	m_window_type(window_type),

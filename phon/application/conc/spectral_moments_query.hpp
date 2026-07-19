@@ -32,6 +32,8 @@ class SpectralMomentsQuery final : public Query
 {
 public:
 
+	String class_name() const override { return "SpectralMomentsQuery"; }
+
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match

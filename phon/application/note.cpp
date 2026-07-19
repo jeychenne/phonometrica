@@ -28,7 +28,7 @@
 namespace phonometrica {
 
 Note::Note(Directory *parent, String path) :
-		Document(meta::get_class<Note>(), parent, std::move(path))
+		Document(parent, std::move(path))
 {
 
 }
