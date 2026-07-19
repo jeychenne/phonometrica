@@ -278,6 +278,12 @@ public:
 	bool to_bool(bool strict = false) const;
 	static String format(const char *fmt, ...);
 
+	// True if `codepoint` is a letter (old-Phonometrica String API parity, used by
+	// tokenizers for non-ASCII identifier characters). Approximated by the Unicode
+	// ID_Start property minus '_' — ID_Start ≈ the letter categories plus Nl, which
+	// is the right notion for identifier-shaped names.
+	static bool is_letter(char32_t codepoint);
+
 	std::u16string to_utf16() const;
 	std::u32string to_utf32() const;
 	static String from_utf16(const std::u16string &s);

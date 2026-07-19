@@ -98,6 +98,17 @@ public:
 		return phonometrica::add_class<T>(name, base, kind);
 	}
 
+	// Expose a read-only field on a class registered with add_class<T>: scripts read
+	// `obj.name`, routed to the getter (writes raise read-only). See register_field in
+	// native_traits.hpp for the supported getter shapes.
+	//
+	//     rt.add_field<Model>("loglik", [](const Model &m) { return m.loglik; });
+	template<class T, class F>
+	void add_field(const char *name, F &&f)
+	{
+		register_field<T>(name, std::forward<F>(f));
+	}
+
 	// Look up a registered class by name (e.g. "Object" for a base). Null if none.
 	Class *get_class(const char *name) const noexcept { return find_class(name); }
 

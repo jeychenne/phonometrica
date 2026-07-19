@@ -160,6 +160,18 @@ int32_t field_slot(const Class *c, Symbol name) noexcept;
 // Field descriptor at `slot` (0-based), or null if out of range.
 const FieldInfo *field_at(const Class *c, int32_t slot) noexcept;
 
+// Append a read-only field to a registered foreign class (design §11.2, Phonometrica
+// step 4b): `getter` is a NativeCell taking the object as its single argument. Unlike
+// user-class fields there is no instance slot — GETFIELD always routes through the
+// getter — so this never touches `instance_size`, and a foreign subclass inherits its
+// base's fields by *lookup* (find_foreign_field walks the base chain), not by copy.
+// The caller keeps `getter` alive (registration keepalive); the class does not retain.
+void add_foreign_field(Class *c, Symbol name, Cell *getter);
+
+// Resolve field `name` on a foreign class, walking `c` then its ancestors (a foreign
+// class may derive from another foreign class). Null if absent.
+const FieldInfo *find_foreign_field(const Class *c, Symbol name) noexcept;
+
 Class *get_class(uint32_t id) noexcept;
 bool has_class(uint32_t id) noexcept;
 intptr_t class_count() noexcept;

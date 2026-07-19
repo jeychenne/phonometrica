@@ -16,6 +16,7 @@
 #include <phon/engine/core/cell.hpp>
 #include <phon/engine/core/handle.hpp>
 #include <phon/engine/core/variant.hpp>
+#include <phon/engine/types/atom.hpp> // intern (foreign-field duplicate guard)
 
 #include "test_framework.hpp"
 
@@ -431,4 +432,84 @@ TEST_CASE("embed: a foreign class without gc_trace is a GC leaf (acyclic)")
 		rt.add_class<GcNode>("GcNode", rt.get_class("Object"));
 	CHECK((class_of<GcNode>()->flags & CLASS_ACYCLIC) == 0);
 	CHECK(class_of<GcNode>()->trace != nullptr);
+}
+
+// A foreign subclass for the field-inheritance check (add_field, Phonometrica step 4b):
+// fields registered on the base resolve on a derived instance via the base-chain lookup.
+struct EmbedPoint3 : EmbedPoint
+{
+	double z;
+	EmbedPoint3(double x_, double y_, double z_) : EmbedPoint(x_, y_), z(z_) {}
+};
+
+TEST_CASE("embed: read-only fields on a registered class route through native getters")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	rt.add_function("make_point",
+	                [](double x, double y) { return Handle<EmbedPoint>::make(x, y); });
+	rt.add_field<EmbedPoint>("x", [](const EmbedPoint &p) { return p.x; });
+	rt.add_field<EmbedPoint>("y", [](const EmbedPoint &p) { return p.y; });
+	// A computed field (no stored member), and one built from a Handle parameter.
+	rt.add_field<EmbedPoint>("norm2", [](const EmbedPoint &p) { return p.x * p.x + p.y * p.y; });
+	rt.add_field<EmbedPoint>("tag", [](Handle<EmbedPoint>) { return String("pt"); });
+
+	rt.do_string("var p = make_point(3.0, 4.0)");
+	CHECK(rt.do_string("p.x").as_double() == 3.0);
+	CHECK(rt.do_string("p.y").as_double() == 4.0);
+	CHECK(rt.do_string("p.norm2").as_double() == 25.0);
+	CHECK(rt.do_string("p.tag").to<String>() == String("pt"));
+	// Field reads compose in expressions and through aliases.
+	CHECK(rt.do_string("var q = p\nq.x + q.norm2").as_double() == 28.0);
+
+	// An unknown field raises a catchable Name error.
+	Variant e1 = rt.do_string("var r1 = \"\"\n"
+	                          "try\n var v = p.nope\ncatch e as Error\n r1 = e.message\nend\n"
+	                          "r1");
+	CHECK(e1.to<String>().find("has no field") != 0);
+	// Writing a foreign field raises read-only, catchably.
+	Variant e2 = rt.do_string("var r2 = \"\"\n"
+	                          "try\n p.x = 9.0\ncatch e as Error\n r2 = e.message\nend\n"
+	                          "r2");
+	CHECK(e2.to<String>().find("read-only") != 0);
+	// The failed write left the object untouched.
+	CHECK(rt.do_string("p.x").as_double() == 3.0);
+
+	// A duplicate field registration is an embedding error, surfaced eagerly.
+	bool threw = false;
+	try
+	{
+		rt.add_field<EmbedPoint>("x", [](const EmbedPoint &p) { return p.x; });
+	}
+	catch (std::exception &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+}
+
+TEST_CASE("embed: a foreign subclass inherits its base's fields by chain lookup")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	if (!class_of<EmbedPoint3>())
+		rt.add_class<EmbedPoint3>("EmbedPoint3", rt.get_class("EmbedPoint"));
+	rt.add_function("make_point3", [](double x, double y, double z) {
+		return Handle<EmbedPoint3>::make(x, y, z);
+	});
+	// `x`/`y` may already be registered on the base by the previous case (process-global
+	// registration); make sure they exist without tripping the duplicate check.
+	if (!find_foreign_field(class_of<EmbedPoint>(), intern("x")))
+		rt.add_field<EmbedPoint>("x", [](const EmbedPoint &p) { return p.x; });
+	rt.add_field<EmbedPoint3>("z", [](const EmbedPoint3 &p) { return p.z; });
+
+	rt.do_string("var p3 = make_point3(1.0, 2.0, 7.0)");
+	// Own field, and a base field resolved through the chain (the base getter receives
+	// the derived cell; the boxed payload upcasts under single non-virtual inheritance).
+	CHECK(rt.do_string("p3.z").as_double() == 7.0);
+	CHECK(rt.do_string("p3.x").as_double() == 1.0);
+	// The derived class is still a subtype for dispatch/`is`.
+	CHECK(rt.do_string("p3 is EmbedPoint").as_bool() == true);
 }

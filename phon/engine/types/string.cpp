@@ -1008,6 +1008,11 @@ String String::convert(double x)
 	return String(buf, len);
 }
 
+bool String::is_letter(char32_t codepoint)
+{
+	return codepoint != U'_' && unicode::is_id_start(codepoint);
+}
+
 double String::to_float(bool *ok) const
 {
 	// NUL-terminated (single-allocation guarantee), so strtod is safe.

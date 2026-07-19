@@ -1578,7 +1578,27 @@ Value run(Isolate &iso)
 		{
 			Value obj = base[op_b(ins)];
 			if (!is_instance(obj))
+			{
+				// A registered C++ class (add_class<T>) exposes read-only fields whose
+				// getters are typed natives (design §11.2, add_field<T>): route the read
+				// through the getter, exactly like an accessor'd user field. RAW cannot
+				// occur here (no script accessor bodies on a foreign class) but routes
+				// identically for safety.
+				if (obj.is_cell() && (get_class(class_of(obj))->flags & CLASS_FOREIGN))
+				{
+					Class *fc = get_class(class_of(obj));
+					Symbol fn = base[op_c(ins)].as_symbol();
+					const FieldInfo *ffi = find_foreign_field(fc, fn);
+					if (!ffi)
+						iso.raise(String("[Name error] '") + String(fc->name).view() +
+						              "' has no field '" + String(symbol_name(fn)).view() + "'",
+						          cur_line());
+					Value r = vm_call(iso, Value::make_cell(ffi->getter), &obj, 1);
+					reg_move(base, a, r); // r carries +1
+					break;
+				}
 				iso.raise(String("[Type error] value has no fields"), cur_line());
+			}
 			Symbol fname = base[op_c(ins)].as_symbol();
 			Class *c = get_class(class_of(obj));
 			int32_t slot = field_slot(c, fname);
@@ -1608,7 +1628,24 @@ Value run(Isolate &iso)
 			// R[A].field(R[B]) = R[C]. GETFIELD/SETFIELD route through accessors; the
 			// RAW variants (used inside a field's own accessor) reach the slot directly.
 			if (!is_instance(base[a]))
+			{
+				// Foreign-class fields (add_field<T>) are read-only: a known field
+				// raises the accessor read-only error, an unknown one the name error.
+				if (base[a].is_cell() && (get_class(class_of(base[a]))->flags & CLASS_FOREIGN))
+				{
+					Class *fc = get_class(class_of(base[a]));
+					Symbol fn = base[op_b(ins)].as_symbol();
+					if (find_foreign_field(fc, fn))
+						iso.raise(String("[Name error] field '") +
+						              String(symbol_name(fn)).view() + "' of '" +
+						              String(fc->name).view() + "' is read-only",
+						          cur_line());
+					iso.raise(String("[Name error] '") + String(fc->name).view() +
+					              "' has no field '" + String(symbol_name(fn)).view() + "'",
+					          cur_line());
+				}
 				iso.raise(String("[Type error] value has no fields"), cur_line());
+			}
 			Symbol fname = base[op_b(ins)].as_symbol();
 			Cell *obj = base[a].as_cell();
 			Class *c = get_class(obj->class_id());

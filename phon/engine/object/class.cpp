@@ -165,6 +165,33 @@ const FieldInfo *field_at(const Class *c, int32_t slot) noexcept
 	return (slot >= 0 && slot < c->field_count) ? &c->fields[slot] : nullptr;
 }
 
+void add_foreign_field(Class *c, Symbol name, Cell *getter)
+{
+	PHON_ASSERT_MSG(c->flags & CLASS_FOREIGN, "add_foreign_field on a non-foreign class");
+	PHON_ASSERT_MSG(getter != nullptr, "add_foreign_field: null getter");
+	int32_t n = c->field_count;
+	auto *arr = static_cast<FieldInfo *>(
+	    sys_alloc(static_cast<intptr_t>(n + 1) * static_cast<intptr_t>(sizeof(FieldInfo))));
+	for (int32_t i = 0; i < n; ++i)
+		arr[i] = c->fields[i];
+	arr[n] = FieldInfo{name, nullptr, getter, nullptr, false};
+	if (c->fields)
+		sys_free(c->fields);
+	c->fields = arr;
+	c->field_count = n + 1;
+}
+
+const FieldInfo *find_foreign_field(const Class *c, Symbol name) noexcept
+{
+	for (; c != nullptr; c = c->base)
+	{
+		int32_t slot = field_slot(c, name);
+		if (slot >= 0)
+			return &c->fields[slot];
+	}
+	return nullptr;
+}
+
 Class *error_class() noexcept { return get_class(CID_ERROR); }
 
 Class *get_class(uint32_t id) noexcept

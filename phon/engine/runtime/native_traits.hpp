@@ -83,6 +83,10 @@ enum class ClassKind
 void register_typed_native(const char *name, NativeFn fn, Cell *env,
                            const SmallVector<Class *, 4> &sig, int arity, uint64_t ref_mask);
 
+// Install a generated thunk as the read-only field `name` on foreign class `cls`
+// (the add_field<T> front end below). Throws std::runtime_error on a duplicate name.
+void register_foreign_field(Class *cls, const char *name, NativeFn fn, Cell *env);
+
 // Register a C++ type as a phon class (design §11.2): records `instance_size`, wires the
 // finalizer/clone hooks, and returns the Class. The template add_class<T> below binds
 // `T::phon_class`. The class is globally nameable (like a builtin) so scripts can use it
@@ -634,6 +638,30 @@ struct Registrar<F, R, HasIso, std::tuple<A...>>
 	}
 };
 
+// The add_field<T> analogue of Registrar: same thunk generation, but the NativeCell is
+// installed as a foreign-class field getter instead of a generic method.
+template<class T, class F, class R, bool HasIso, class Tuple>
+struct FieldRegistrar;
+
+template<class T, class F, class R, bool HasIso, class... A>
+struct FieldRegistrar<T, F, R, HasIso, std::tuple<A...>>
+{
+	static void reg(Class *cls, const char *name, F f)
+	{
+		static_assert(sizeof...(A) == 1,
+		              "a field getter takes exactly the object (plus an optional leading "
+		              "Isolate&)");
+		static_assert(!std::is_void_v<R>, "a field getter must return a value");
+		static_assert((std::is_same_v<std::decay_t<A>, T> && ...) ||
+		                  (std::is_same_v<std::decay_t<A>, Handle<T>> && ...),
+		              "the getter's parameter must be the registered class (const T&, T& or "
+		              "Handle<T>)");
+		Cell *env = make_native_env<F>(std::move(f));
+		NativeFn thunk = &Thunk<F, R, HasIso, A...>::entry;
+		register_foreign_field(cls, name, thunk, env);
+	}
+};
+
 // The finalizer for a registered application class: run T's destructor (on the boxed
 // value, at its offset after the header) before the cell is freed — releasing any
 // C++-owned members (vectors, buffers, file handles).
@@ -726,6 +754,28 @@ void register_function(const char *name, F &&f)
 	using Strip = detail::strip_isolate<typename Sig::args>;
 	detail::Registrar<DF, typename Sig::ret, Strip::has_iso, typename Strip::type>::reg(
 	    name, std::forward<F>(f));
+}
+
+// Expose a read-only field on a class previously registered with add_class<T>
+// (design §11.2; Phonometrica MIGRATION_NOTES step 4b, gap G1): scripts read
+// `obj.name`, which routes to `getter` with the object as its argument. Writes raise
+// "[Name error] … is read-only". A foreign subclass sees its base's fields (chain
+// lookup at GETFIELD). The getter takes `const T&`/`T&`/`Handle<T>` (optionally after
+// a leading `Isolate&`) and returns any boxable type:
+//
+//     rt.add_field<Model>("loglik", [](const Model &m) { return m.loglik; });
+template<class T, class F>
+void register_field(const char *name, F &&f)
+{
+	Class *cls = class_of<T>();
+	if (!cls)
+		throw std::runtime_error(std::string("[Registration error] add_field(\"") + name +
+		                         "\"): the class must be registered with add_class<T> first");
+	using DF = std::decay_t<F>;
+	using Sig = detail::callable_signature<DF>;
+	using Strip = detail::strip_isolate<typename Sig::args>;
+	detail::FieldRegistrar<T, DF, typename Sig::ret, Strip::has_iso, typename Strip::type>::reg(
+	    cls, name, std::forward<F>(f));
 }
 
 // Register the C++ type `T` as a phon class named `name`, deriving from `base` (design

@@ -1856,3 +1856,62 @@ under the normal, ASan, and TSan builds (394 unit cases each).
     "Function" class so `x is Function` covers both callable kinds. Limitations
     (documented): keyword options and `ref` promotion do not flow through an
     indirect call.
+
+## Step-4b embedding support (Phonometrica headless statistics, 2026-07-19)
+
+Phonometrica's step-4a native inventory (its MIGRATION_NOTES.md) identified
+foreign-class field access as gap G1, blocking the statistics port (scripts read
+`model.loglik`, `sound.duration`, …). Owner selected the engine-side design.
+
+14. **Read-only fields on registered C++ classes: `rt.add_field<T>(name, getter)`
+    (design §11.2 extension).** The getter is an ordinary typed callable taking
+    the object (`const T&`, `T&`, or `Handle<T>`, optionally after a leading
+    `Isolate&`) and returning any boxable type; the same `Thunk` machinery as
+    `add_function` generates a NativeCell which is installed as a `FieldInfo`
+    on the (foreign) Class — reusing the user-class accessor descriptor, with
+    no instance slot and no `instance_size` impact (`add_foreign_field` /
+    `find_foreign_field` in object/class.*). `GETFIELD` on a non-instance cell
+    whose class is `CLASS_FOREIGN` resolves the field by **base-chain lookup**
+    (a foreign subclass inherits by lookup, not layout copy — the boxed payload
+    upcasts under single non-virtual inheritance) and routes through the getter
+    via `vm_call`, exactly like an accessor'd user field. `SETFIELD` on a known
+    foreign field raises "[Name error] … is read-only"; an unknown name raises
+    the usual has-no-field error — both catchable. Duplicate field registration
+    throws eagerly (releasing the not-yet-adopted env cell — the ASan-caught
+    leak on the error path is fixed). GETFIELDRAW routes identically (no script
+    accessor bodies can exist on a foreign class). Field setters are deliberately
+    NOT provided — every Phonometrica field surface is read-only (mutation goes
+    through natives); revisit only if a real embedding needs `obj.field = x`.
+    Tests: test_embed.cpp "read-only fields on a registered class" (getter
+    routing, computed fields, Handle-parameter getter, catchable name/read-only
+    errors, duplicate-registration throw) and "a foreign subclass inherits its
+    base's fields by chain lookup". 396 cases green under normal/ASan/TSan.
+
+15. **`String::is_letter(char32_t)` (old-String API parity, M1 #6 family).** Used by
+    Phonometrica's formula tokenizer for non-ASCII identifier characters (ASCII is
+    classified inline at the call sites). Implemented as ID_Start minus '_' over the
+    engine's Unicode ID-property tables — ID_Start ≈ the letter categories plus Nl,
+    the right notion for identifier-shaped names; the old utf8proc Lu..Lo test and
+    this differ only on exotic corners no formula name hits.
+
+16. **Embedding findings from the Phonometrica statistics port (recorded, not yet
+    changed):**
+    - *Per-generic ref-mask uniformity blocks a real old-engine overload set.* The
+      old app registered `append(ref DataTable, List, String)` alongside the stdlib
+      `append(ref List, item)` / `append(ref String, suffix)`. Under the new engine
+      a registered-class reference is identity (mask 0) while the stdlib methods
+      mark parameter 1 as write-back (mask 1) — `add_method` rejects the mix
+      (AddMethod::RefMaskConflict). The 4b host names the table natives
+      `add_column` instead; the cutover either keeps such renames or the engine
+      moves to per-method (or per-first-arg-class) ref-masks. (§4 uniformity was
+      chosen for call-site promotion simplicity — revisit with a design note.)
+    - *A registered class name shadows a same-named factory generic at compile
+      time* (`class_by_name` resolves before generics), so the old `add_constructor`
+      pattern cannot be emulated by naming a factory after the class: `Prior()`
+      parsed as forbidden construction. Idiom: class "PriorSpec" + factory generic
+      "Prior" (the example REPL's make_point already did this; now recorded as THE
+      pattern for old constructor-styled natives).
+    - *`RuntimeError` is not a `std::exception`*: an embedder's catch-all does not
+      catch it; a missed catch turns an ordinary uncaught script error into
+      std::terminate. phon_repl and the 4b host both catch it explicitly — worth a
+      doc note (or deriving from std::exception) before more embedders appear.

@@ -240,6 +240,27 @@ void register_typed_native(const char *name, NativeFn fn, Cell *env,
 		                         "' is ambiguous against an existing overload");
 }
 
+// Install a read-only field on a registered foreign class (add_field<T>): the getter
+// thunk becomes a keepalive-owned NativeCell that GETFIELD invokes with the object as
+// its single argument. Duplicate names are an embedding bug, surfaced eagerly.
+void register_foreign_field(Class *cls, const char *name, NativeFn fn, Cell *env)
+{
+	PHON_ASSERT_MSG(cls != nullptr, "register_foreign_field: null class");
+	Symbol s = intern(name);
+	if (find_foreign_field(cls, s))
+	{
+		// The env cell's +1 has not been adopted yet (make_native below) — release it
+		// so the error path doesn't leak the captured callable.
+		if (env)
+			release(env);
+		throw std::runtime_error(std::string("[Registration error] class '") + cls->name +
+		                         "' already has a field '" + name + "'");
+	}
+	NativeCell *nf = make_native(fn, s, 1, 1, env); // adopts env's +1
+	native_keepalive().cells.push_back(nf);         // retains via make_native's +1
+	add_foreign_field(cls, s, reinterpret_cast<Cell *>(nf));
+}
+
 // Register a C++ type as a phon class (native_traits.hpp add_class<T>). Marked
 // CLASS_BUILTIN so the compiler's name resolver finds it (usable in `is`/annotations and
 // dispatch), which also makes it non-script-constructible — instances come from C++.
