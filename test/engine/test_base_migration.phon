@@ -1,0 +1,253 @@
+# =====================================================================
+# test_base_migration.phon
+# =====================================================================
+# Regression suite for the base-class migration (0-based copy-on-write
+# Array + stateless Regex/Match underneath the runtime).
+#
+# The script contract it pins: lists and arrays remain 1-based (with
+# negative indices counting from the end), lists keep value semantics,
+# find/find_back return 0 when absent, and a match at the last position
+# is found (the T-rfind fix).
+#
+# PORT NOTE (old -> new engine). Beyond the mechanical `let`->`var` and
+# call-form assert/print, these pinned behaviours CHANGED and are
+# gap-logged in MIGRATION_NOTES.md:
+#   - `lst.first/.last/.length` fields -> first()/last()/len() calls.
+#   - destructuring (`let a, b, c = lst`) is not implemented -> explicit
+#     reads.
+#   - sorted_find of an ABSENT value returns 0 (was: lower-bound pos).
+#   - Arrays: shape comes from ndim()/nrow()/ncol()/len() functions
+#     (the old field accessors are gone). Arrays now have VALUE
+#     semantics (copy-on-write assignment), which is what A18a/A18b
+#     always asserted.
+#   - Regex: the stateful match-then-group API on the Regex object is
+#     gone. match() returns a Match value (or null); group()/
+#     group_start()/group_end()/group_count()/groups() read the Match,
+#     pattern() reads the Regex. group positions keep the 1-based,
+#     end-one-past convention. group_count() INCLUDES group 0 (old
+#     count() did not).
+# =====================================================================
+
+print("==== base migration: lists ====")
+
+var lst = ["a", "b", "c", "d", "e"]
+assert(len(lst) == 5, "L1: len")
+assert(lst[1] == "a", "L2: first element via [1]")
+assert(lst[5] == "e", "L3: last element via [size]")
+assert(lst[-1] == "e", "L4: negative index -1")
+assert(lst[-5] == "a", "L5: negative index -size")
+assert(first(lst) == "a", "L6: first()")
+assert(last(lst) == "e", "L7: last()")
+
+# Indexed assignment
+lst[2] = "B"
+assert(lst[2] == "B", "L9: set item")
+lst[-1] = "E"
+assert(lst[5] == "E", "L10: set item via negative index")
+lst[2] = "b"
+lst[5] = "e"
+
+# Out-of-range indexing must throw
+var caught = false
+try
+    var x = lst[6]
+catch e
+    caught = true
+end
+assert(caught, "L11: reading past the end must throw")
+caught = false
+try
+    lst[0] = "x"
+catch e
+    caught = true
+end
+assert(caught, "L12: writing at index 0 must throw")
+
+# find / find_back are 1-based, 0 means "not found"
+assert(find(lst, "a") == 1, "L13: find first")
+assert(find(lst, "c") == 3, "L14: find middle")
+assert(find(lst, "z") == 0, "L15: find absent returns 0")
+assert(find(lst, "c", 4) == 0, "L16: find with start past match")
+assert(find_back(lst, "a") == 1, "L17: find_back")
+assert(find_back(lst, "z") == 0, "L18: find_back absent returns 0")
+# Deliberate fix pinned across engines: a match at the last position
+# used to return 0.
+assert(find_back(lst, "e") == 5, "T-rfind: match at last position is now found")
+
+# insert / remove_at
+var ins = [1, 2, 4]
+insert(ins, 3, 3)
+assert(len(ins) == 4, "L19: insert length")
+assert(ins[3] == 3, "L20: insert position")
+assert(ins[4] == 4, "L21: shifted element")
+insert(ins, 100, 5)
+assert(ins[5] == 5, "L22: insert past the end appends")
+remove_at(ins, 1)
+assert(ins[1] == 2, "L23: remove_at start")
+remove_at(ins, -1)
+assert(last(ins) == 4, "L24: remove_at negative index")
+
+# left / right / join
+var lr = [10, 20, 30, 40]
+var l3 = left(lr, 2)
+assert(len(l3) == 2, "L25: left length")
+assert(l3[1] == 10, "L26: left order")
+assert(l3[2] == 20, "L27: left order")
+assert(join(lr, "-") == "10-20-30-40", "L28: join")
+
+# shift / pop
+var sp = [1, 2, 3]
+assert(shift(sp) == 1, "L29: shift returns first")
+assert(pop(sp) == 3, "L30: pop returns last")
+assert(len(sp) == 1, "L31: shift/pop length")
+
+# Value semantics: a copy is independent
+var a = [1, 2, 3]
+var b = a
+append(b, 4)
+assert(len(a) == 3, "L32: source list unchanged after append to copy")
+assert(len(b) == 4, "L33: copy grew")
+b[1] = 99
+assert(a[1] == 1, "L34: source list unchanged after set on copy")
+
+# Iteration: keys are 1-based positions in source order
+var keys = []
+var vals = []
+for k, v in ["x", "y", "z"] do
+    append(keys, k)
+    append(vals, v)
+end
+assert(keys[1] == 1 and keys[2] == 2 and keys[3] == 3, "L35: iteration keys are 1-based")
+assert(vals[1] == "x" and vals[3] == "z", "L36: iteration values in order")
+
+# Destructuring was removed from the language; explicit reads bind in
+# source order by construction.
+var dsrc = [7, 8, 9]
+var d1 = dsrc[1]
+var d2 = dsrc[2]
+var d3 = dsrc[3]
+assert(d1 == 7 and d2 == 8 and d3 == 9, "L37: element reads (destructuring removed)")
+
+# sorted_find returns the 1-based position of a PRESENT value.
+# (CHANGED: an absent value now yields 0, not its lower-bound slot.)
+var sf = [10, 20, 30]
+assert(sorted_find(sf, 20) == 2, "L38: sorted_find")
+assert(sorted_find(sf, 25) == 0, "L38b: sorted_find absent returns 0")
+
+print("==== base migration: arrays ====")
+
+var A = zeros(3)
+assert(len(A) == 3, "A1: len")
+assert(ndim(A) == 1, "A2: ndim")
+A[1] = 1.5
+A[3] = 4.5
+assert(A[1] == 1.5, "A3: 1-D get/set")
+assert(A[3] == 4.5, "A4: 1-D get/set last")
+assert(A[-1] == 4.5, "A5: negative index")
+
+var M = zeros(2, 3)
+assert(ndim(M) == 2, "A6: ndim 2")
+assert(nrow(M) == 2, "A7: nrow")
+assert(ncol(M) == 3, "A8: ncol")
+assert(len(M) == 6, "A6b: len is the element count")
+M[2, 3] = 7.0
+assert(M[2, 3] == 7.0, "A9: 2-D get/set")
+M[-1, -1] = 8.0
+assert(M[2, 3] == 8.0, "A10: negative 2-D indices")
+
+# Array literals fill row by row
+var L1 = @[1, 2, 3]
+assert(len(L1) == 3, "A11: literal length")
+assert(L1[1] == 1 and L1[2] == 2 and L1[3] == 3, "A12: 1-D literal order")
+var L2 = @[1, 2; 3, 4]
+assert(nrow(L2) == 2 and ncol(L2) == 2, "A13: 2-D literal shape")
+assert(L2[1, 1] == 1 and L2[1, 2] == 2, "A14: 2-D literal first row")
+assert(L2[2, 1] == 3 and L2[2, 2] == 4, "A15: 2-D literal second row")
+
+# min / max / ones
+var O = ones(2, 2)
+assert(O[1, 1] == 1.0, "A16: ones")
+assert(min(L2) == 1 and max(L2) == 4, "A17: min/max")
+
+# Arrays are value types: assignment copies the value (cheaply, via the
+# shared buffer), so modifying the copy must not affect the original
+# (copy-on-write fires on the first write).
+var A2 = L1
+A2[1] = 42
+assert(A2[1] == 42, "A18a: copy sees its own write")
+assert(L1[1] == 1, "A18b: source array unchanged after write to copy")
+
+# Out-of-range must throw
+caught = false
+try
+    var x = L1[4]
+catch e
+    caught = true
+end
+assert(caught, "A19: 1-D out of range throws")
+caught = false
+try
+    var x = L2[3, 1]
+catch e
+    caught = true
+end
+assert(caught, "A20: 2-D out of range throws")
+
+print("==== base migration: regex ====")
+
+var re = regex('(\d+)-(\d+)')
+var m = match(re, "42-58")
+assert(m != null, "R1: match")
+assert(m is Match, "R2: match yields a Match value")
+assert(group_count(m) == 3, "R3: group_count includes group 0")
+assert(group(m, 0) == "42-58", "R4: whole match")
+assert(group(m, 1) == "42", "R5: first group")
+assert(group(m, 2) == "58", "R6: second group")
+assert(group_start(m, 1) == 1, "R7: group start")
+assert(group_end(m, 1) == 3, "R8: group end (one past)")
+
+assert(pattern(re) == '(\d+)-(\d+)', "R9: pattern accessor")
+
+# The captures of a match come back as a List (replaces the old
+# iteration over the regex object).
+var gs = groups(m)
+assert(len(gs) == 2, "R11: capture count")
+assert(gs[1] == "42" and gs[2] == "58", "R12: capture values")
+
+# No match yields null (the Regex itself holds no state)
+assert(match(re, "no digits here") == null, "R13: no match is null")
+
+# Match with a start position (1-based)
+var re2 = regex("b+")
+var m2 = match(re2, "abba", 3)
+assert(m2 != null, "R16: match from position")
+assert(group(m2, 0) == "b", "R17: only the second run is seen")
+
+# Empty subject never matches
+assert(match(re2, "") == null, "R18: empty subject")
+
+# Case-insensitive flag
+var re3 = regex("hello", "caseless")
+assert(match(re3, "HELLO world") != null, "R19: caseless flag")
+
+# Matches from the same or different Regex objects are independent
+# values (the old test pinned per-object mutable state; there is no
+# state left to interfere).
+var ra = regex("(a+)")
+var rb = regex("(b+)")
+var mra = match(ra, "aaa")
+var mrb = match(rb, "bb")
+assert(group(mra, 1) == "aaa", "R22: first match intact")
+assert(group(mrb, 1) == "bb", "R23: second match intact")
+
+print("==== base migration: strings (unchanged 1-based API) ====")
+
+var s = "hello world"
+assert(find(s, "world") == 7, "S3: string find is 1-based")
+assert(find(s, "xyz") == 0, "S4: string find absent returns 0")
+var parts = split("a,b,c", ",")
+assert(len(parts) == 3, "S5: split count")
+assert(parts[1] == "a" and parts[3] == "c", "S6: split parts")
+assert(join(parts, ",") == "a,b,c", "S7: join round-trip")
+
+print("test_base_migration.phon passed")

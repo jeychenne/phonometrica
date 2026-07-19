@@ -1,130 +1,100 @@
 # =====================================================================
 # test_gui_trace.phon — manual smoke test for the GUI trace rendering.
 # =====================================================================
-# Open this in the script editor and hit Run. You should see:
+# NOT part of run_all.phon: this script deliberately ends with an
+# UNCAUGHT error so the surrounding application (script editor /
+# console) can demonstrate its trace rendering. Run it by hand.
 #
-# 1.  In the OUTPUT panel (above the console):
-#     A walk through three caught errors. For each, the script prints
-#     `get_error_line()` and iterates `get_error_trace()`, listing the
-#     frames innermost-first. Confirms the script-level API works inside
-#     the GUI runtime, independent of the visual trace rendering.
+# PORT NOTE (old -> new engine): `get_error_line()`/`get_error_trace()`
+# do not exist; a caught error carries `e.message` and `e.trace` (a
+# rendered String, innermost-first, one `at <fn> (line N)` per frame,
+# with no file component — gap-logged). The old `bad_math()` used float
+# 1/0, which no longer raises (it yields inf): it now uses `1 div 0`.
+# The old `bad_var()` (undefined variable at runtime) is gone — an
+# unresolved name is a COMPILE error in the new engine.
 #
-# 2.  In the CONSOLE (below the output panel):
-#     One uncaught error rendered as:
-#         Error at line <N>
-#         <error message>
-#           at <file>:<line> in <function>     <-- muted red, indented
-#           at <file>:<line> in <function>
-#           ...
-#     Trace lines are innermost-first; the throw site is the topmost
-#     trace row, the catching frame (here the implicit `<chunk>`) is
-#     the bottom row.
-#
-# 3.  In the EDITOR (this buffer):
-#     The line corresponding to the deepest IN-THIS-FILE frame of the
-#     uncaught error is underlined and scrolled into view. With the
-#     default `outer()` selection below, that should land on the
-#     `throw "from the bottom"` line inside `deep_throw` (the
-#     innermost frame is also in this file, so the deepest in-file
-#     frame == innermost frame).
-#
-# To exercise different error paths, comment out the active call at
-# the bottom and uncomment one of the alternatives. Each demonstrates
-# a different runtime throw site:
-#
-#     outer()         - 3-deep script throw
-#     bad_math()      - native float divide-by-zero in a callee
-#     bad_index()     - native out-of-bounds index in a callee
-#     bad_var()       - undefined variable in a callee
-#     same_frame_throw() - 1-frame trace, throw at top level
+# What to expect when run under the future GUI runtime:
+# 1. The caught-error section prints each error's message and trace.
+# 2. The final uncaught error should be rendered by the host with its
+#    trace, and the editor should highlight the deepest in-file frame
+#    (the `throw Error(...)` line inside deep_throw).
 # =====================================================================
 
 
 # --- Helper functions ----------------------------------------------
 
-function deep_throw()
-    throw "from the bottom"
+local function deep_throw()
+    throw Error("from the bottom")
 end
 
-function middle()
+local function middle()
     deep_throw()
 end
 
-function outer()
+local function outer()
     middle()
 end
 
-function bad_math()
-    let x = 1 / 0
+local function bad_math()
+    var x = 1 div 0
 end
 
-function bad_index()
-    let xs = [1, 2, 3]
-    let v = xs[100]
+local function bad_index()
+    var xs = [1, 2, 3]
+    var v = xs[100]
 end
 
-function bad_var()
-    return some_undefined_name
-end
-
-function same_frame_throw()
-    throw "top-level throw"
+local function same_frame_throw()
+    throw Error("top-level throw")
 end
 
 
-# --- Helper to dump a trace to the output panel --------------------
+# --- Helper to dump a caught error ---------------------------------
 
-function dump_trace(label)
-    print "--- " & label & " ---"
-    print "  line: " & str(get_error_line())
-    let tr = get_error_trace()
-    print "  depth: " & str(len(tr))
-    foreach entry in tr do
-        let f = entry["function"]
-        let l = entry["line"]
-        let p = entry["file"]
-        print "    at " & str(p) & ":" & str(l) & " in " & str(f)
-    end
-    print ""
+local function dump_trace(label, e)
+    print("--- " & label & " ---")
+    print("  message: " & e.message)
+    print("  trace:")
+    print(e.trace)
+    print("")
 end
 
 
-# --- Section 1: API verification (caught errors → output panel) ---
+# --- Section 1: API verification (caught errors) -------------------
 
-print "================================================================"
-print "Caught-error traces (script-level get_error_trace API)"
-print "================================================================"
+print("================================================================")
+print("Caught-error traces (Error.trace field)")
+print("================================================================")
 
 try
     outer()
-catch
-    dump_trace("3-deep script throw via outer()")
+catch e
+    dump_trace("3-deep script throw via outer()", e)
 end
 
 try
     bad_math()
-catch
-    dump_trace("native float divide-by-zero via bad_math()")
+catch e
+    dump_trace("integer divide-by-zero via bad_math()", e)
 end
 
 try
     bad_index()
-catch
-    dump_trace("native out-of-bounds via bad_index()")
+catch e
+    dump_trace("native out-of-bounds via bad_index()", e)
 end
 
 
-# --- Section 2: uncaught error (GUI renders the trace in red) -----
+# --- Section 2: uncaught error (host renders the trace) ------------
 
-print "================================================================"
-print "About to raise an uncaught error; trace should appear in the"
-print "console (red) and the deepest in-file line should be highlighted."
-print "================================================================"
+print("================================================================")
+print("About to raise an uncaught error; the host should render its")
+print("trace and highlight the deepest in-file line.")
+print("================================================================")
 
 # Uncomment exactly ONE of the following lines.
 
 outer()
 # bad_math()
 # bad_index()
-# bad_var()
 # same_frame_throw()

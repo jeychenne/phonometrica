@@ -1,0 +1,175 @@
+########################################################################################################################
+# app_stubs.phon — HEADLESS HARNESS ONLY.                                                                              #
+#                                                                                                                      #
+# The std/ scripts call natives that the Phonometrica application registers on the runtime (settings paths, the       #
+# `phon` namespace object, GUI dialogs, sound/annotation accessors). Under the new engine an unresolved name is a     #
+# COMPILE error, so the ported std/ scripts import this module when run headless (phon_repl). At app integration      #
+# the application registers the real natives via the embedding API (rt.add_function / add_global) and these imports   #
+# are dropped — see MIGRATION_NOTES.md ("std/ port" section) for the full list of app natives each script needs.      #
+#                                                                                                                      #
+# Stubs are deliberately side-effect-light: paths live under the system temporary directory, dialogs auto-cancel,     #
+# and analysis accessors return "no current sound".                                                                   #
+########################################################################################################################
+
+# --- the `phon` namespace object ------------------------------------------------------------------------------------
+# The old engine exposed a global `phon` module value with a `settings` field. Headless stand-in: a ref-class
+# instance (so `phon.settings = ...` mutates the shared object) bound as an ISOLATE GLOBAL — exactly how the
+# application injects the real one via Runtime::add_global, so the std scripts reference `phon` bare with no
+# import ceremony.
+
+ref class PhonApp
+    field settings = {}
+end
+
+global var phon = PhonApp()
+
+# --- user directories (app: derived from the Qt standard paths) ------------------------------------------------------
+
+local var stub_root = join_path(get_temp_directory(), "phon_headless")
+
+# The app guarantees the parent of its user directories exists; mirror that here.
+if not exists(stub_root) then
+    create_directory(stub_root)
+end
+
+function get_settings_directory()
+    return join_path(stub_root, "settings")
+end
+
+function get_plugin_directory()
+    return join_path(stub_root, "plugins")
+end
+
+function get_metadata_directory()
+    return join_path(stub_root, "metadata")
+end
+
+function get_script_directory()
+    return join_path(stub_root, "scripts")
+end
+
+function get_config_path()
+    return join_path(stub_root, "settings.phon")
+end
+
+# --- GUI ---------------------------------------------------------------------------------------------------------------
+
+function alert(msg as String)
+    print("[alert] " & msg)
+end
+
+# Yes/no question; headless answers "no".
+function ask(msg as String)
+    print("[ask] " & msg)
+    return false
+end
+
+function view_text(path as String, title as String)
+    print("[view_text] " & title & " (" & path & ")")
+end
+
+# User-defined dialog described by a JSON-shaped table. Headless it returns a canned result (as if the user kept
+# the defaults and pressed OK) so import-time scripts like transphon exercise their whole processing path; the
+# harness can switch it to auto-cancel with stub_set_dialog_accepted(false).
+local var dialog_accepted = true
+
+function stub_set_dialog_accepted(accepted as Boolean)
+    dialog_accepted = accepted
+end
+
+function create_dialog(ui as Table)
+    print("[create_dialog] " & ui["title"])
+    if not dialog_accepted then
+        return null
+    end
+    return {
+        "path": join_path(stub_root, "transphon_output.txt"),
+        "layers": "",
+        "annotations": [],
+        "separator": 2
+    }
+end
+
+# --- sound / acoustic analysis ---------------------------------------------------------------------------------------
+# Headless: a dummy "current sound" so the report_* main paths are exercisable; the harness can toggle it off to
+# exercise the no-view alert branches (stub_set_sound(false)).
+
+ref class StubSound
+    field path = "stub.wav"
+end
+
+local var current_sound = StubSound()
+
+function stub_set_sound(active as Boolean)
+    if active then
+        current_sound = StubSound()
+    else
+        current_sound = null
+    end
+end
+
+function get_current_sound()
+    return current_sound
+end
+
+function get_visible_channels()
+    return [0, 1]
+end
+
+function get_intensity(sound, channel as Integer, time as Number)
+    return 60.0
+end
+
+function get_mean_intensity(sound, channel as Integer, t1 as Number, t2 as Number)
+    return 60.0
+end
+
+function get_pitch(sound, channel as Integer, time as Number)
+    return 120.0
+end
+
+function get_mean_pitch(sound, channel as Integer, t1 as Number, t2 as Number)
+    return 120.0
+end
+
+function get_formants(sound, channel as Integer, time as Number)
+    return @[500.0, 80.0; 1500.0, 90.0; 2500.0, 100.0; 3500.0, 120.0]
+end
+
+# --- annotations -------------------------------------------------------------------------------------------------------
+
+ref class StubAnnotation
+    field path = ""
+    field nlayer = 1
+end
+
+# Headless: a small fabricated project (two annotations, two layers each).
+local var stub_annotations = []
+local var stub_annot1 = StubAnnotation()
+stub_annot1.path = join_path(stub_root, "annot1.phon-annot")
+stub_annot1.nlayer = 2
+append(stub_annotations, stub_annot1)
+local var stub_annot2 = StubAnnotation()
+stub_annot2.path = join_path(stub_root, "annot2.phon-annot")
+stub_annot2.nlayer = 2
+append(stub_annotations, stub_annot2)
+
+function get_annotations()
+    return stub_annotations
+end
+
+function get_layer_label(annot, layer as Integer)
+    return "layer " & layer
+end
+
+function get_event_count(annot, layer as Integer)
+    return 3
+end
+
+# Event 2 is empty so callers exercise their skip-empty path.
+function get_event_text(annot, layer as Integer, event as Integer)
+    if event == 2 then
+        return ""
+    end
+    return "w" & event & "L" & layer
+end

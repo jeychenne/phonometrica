@@ -1,0 +1,174 @@
+# =====================================================================
+# test_fixed_gaps.phon
+# =====================================================================
+# Pins the engine fixes that closed the gaps found during the script
+# port (MIGRATION_NOTES.md, step 3 + fixes):
+#   - B1: out-of-range List writes/inserts raise catchable [Index error]
+#         (they used to abort the process); insert past the end appends
+#         (the old-engine contract).
+#   - B2: split() handles leading/trailing/doubled separators (it used
+#         to abort on a trailing one — e.g. any e.trace).
+#   - B3: passing a Table slot / List element to a mutating native
+#         (append(t[k], v)) mutates in place without corrupting the
+#         container (the staging-register leak in ref promotion).
+#   - M1: the Table function surface (contains/keys/values/remove/…).
+#   - M2: to_int / to_float string parsing.
+#   - M5: e.frames — the structured backtrace; e.trace names the file.
+#   - M6: a native's error reports the script call line, not line 0.
+#   - M7: named functions are first-class values.
+#   - M9: Strings iterate by grapheme.
+#   - E1: get_script_path() (this file, when run directly; the module's
+#         own file when imported by run_all).
+# A failure here means one of those regressions came back.
+# =====================================================================
+
+print("==== fixed-gaps regression pins ====")
+
+# --- B1: catchable index errors on writes -----------------------------
+print("--- B1: out-of-range writes are catchable ---")
+var lst = ["a", "b", "c"]
+var caught = false
+try
+    lst[0] = "x"
+catch e
+    caught = true
+end
+assert(caught, "B1a: write at 0")
+caught = false
+try
+    lst[100] = "x"
+catch e
+    caught = true
+end
+assert(caught, "B1b: write past the end")
+var empty = []
+caught = false
+try
+    var p = pop(empty)
+catch e
+    caught = true
+end
+assert(caught, "B1c: pop from empty")
+var ins = [1, 2]
+insert(ins, 100, 3)
+assert(len(ins) == 3 and ins[3] == 3, "B1d: insert past the end appends")
+# A failed store must leave the binding intact (the in-place-mutation fast
+# path used to drop the module binding across the store, so a caught index
+# error left the variable null).
+assert(len(lst) == 3 and lst[1] == "a", "B1e: binding intact after failed store")
+var arr = zeros(2)
+caught = false
+try
+    arr[100] = 1.0
+catch e
+    caught = true
+end
+assert(caught, "B1f: array write out of range is catchable")
+assert(len(arr) == 2, "B1g: array binding intact after failed store")
+
+# --- B2: split edge cases ---------------------------------------------
+print("--- B2: split separators at the edges ---")
+assert(len(split("a,b,c,", ",")) == 4, "B2a: trailing separator")
+assert(split("a,b,c,", ",")[4] == "", "B2b: trailing field is empty")
+assert(len(split(",a", ",")) == 2, "B2c: leading separator")
+assert(len(split("a,,b", ",")) == 3, "B2d: doubled separator")
+assert(join(split("a,b,", ","), ",") == "a,b,", "B2e: split/join round-trip")
+
+# --- B3: mutating natives through container slots ---------------------
+print("--- B3: append through table slot / list element ---")
+var t = {}
+t["k"] = [ 10 ]
+append(t["k"], 20)
+assert(len(t["k"]) == 2 and t["k"][1] == 10 and t["k"][2] == 20, "B3a: table slot")
+var slot2 = function (x)
+    return 2
+end
+var u = {"fs": []}
+append(u["fs"], slot2)
+var got = u["fs"][1]
+assert(got(0) == 2, "B3b: closure stored through table slot")
+var outer = [[10]]
+append(outer[1], 20)
+assert(len(outer[1]) == 2 and outer[1][2] == 20, "B3c: list element")
+
+# --- M1: Table functions ----------------------------------------------
+print("--- M1: Table function surface ---")
+var tab = {"a": 1, "b": null}
+assert(contains(tab, "a"), "M1a: contains")
+assert(contains(tab, "b"), "M1b: contains a stored null")
+assert(not contains(tab, "z"), "M1c: not contains")
+assert(len(keys(tab)) == 2, "M1d: keys")
+assert(len(values(tab)) == 2, "M1e: values")
+remove(tab, "a")
+assert(not contains(tab, "a"), "M1f: remove")
+clear(tab)
+assert(is_empty(tab), "M1g: clear + is_empty")
+
+# --- M2: string -> number ---------------------------------------------
+print("--- M2: to_int / to_float ---")
+assert(to_int("42") == 42 and to_int("42") is Integer, "M2a: to_int")
+assert(to_float("3.5") == 3.5 and to_float("3.5") is Float, "M2b: to_float")
+caught = false
+try
+    to_int("not a number")
+catch e
+    caught = true
+end
+assert(caught, "M2c: unparseable raises")
+
+# --- M5/M6: error frames, file names, native call lines ---------------
+print("--- M5/M6: structured traces ---")
+local function deep_gap()
+    throw Error("gap")
+end
+try
+    deep_gap()
+catch e
+    assert(e.frames is List, "M5a: frames is a List")
+    assert(len(e.frames) == 2, "M5b: frame count")
+    assert(e.frames[1]["function"] == "deep_gap", "M5c: innermost function")
+    assert(e.frames[1]["line"] > 0, "M5d: line recorded")
+    assert(contains(e.frames[1]["file"], "test_fixed_gaps"), "M5e: file recorded")
+    assert(contains(e.trace, "test_fixed_gaps"), "M5f: trace names the file")
+end
+caught = false
+try
+    to_int("nope")
+catch e
+    caught = not contains(e.trace, "(line 0)")
+end
+assert(caught, "M6: native error carries the call line")
+
+# --- M7: named functions as values ------------------------------------
+print("--- M7: named functions as values ---")
+function twice_gap(x as Number)
+    return x * 2
+end
+var f = twice_gap
+assert(f(21) == 42, "M7a: call through a variable")
+assert(f is Function, "M7b: is Function")
+assert(f == twice_gap, "M7c: same function compares equal")
+var fs2 = [twice_gap]
+assert(fs2[1](5) == 10, "M7d: call from a list element")
+var blen = len
+assert(blen("abc") == 3, "M7e: builtin as a value")
+
+# --- M9: string iteration ---------------------------------------------
+print("--- M9: string iteration ---")
+var chars = []
+for c in "abc" do
+    append(chars, c)
+end
+assert(len(chars) == 3 and chars[1] == "a" and chars[3] == "c", "M9a: graphemes")
+var pairs = []
+for i, c in "xy" do
+    append(pairs, i & ":" & c)
+end
+assert(pairs[1] == "1:x" and pairs[2] == "2:y", "M9b: 1-based positions")
+
+# --- E1: the running script knows its file ----------------------------
+print("--- E1: get_script_path ---")
+assert(contains(get_script_path(), "test_fixed_gaps.phon"), "E1: script path")
+
+print("")
+print("==== ALL fixed-gap pins passed ====")

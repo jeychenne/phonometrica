@@ -20,17 +20,24 @@
 # return a value. Values returned by all the slots connected to an event are collected into a list, which is           #
 # returned by emit().                                                                                                  #
 #                                                                                                                      #
+# PORT NOTE (old -> new engine):                                                                                       #
+#   - Slots are first-class function values: anonymous functions or (since the M7 fix) named functions passed by      #
+#     name. Slot identity (`slot == s`) compares function identity.                                                    #
+#   - `ref bindings[id]` alias bindings are gone; mutating natives take the table slot directly                        #
+#     (`append(bindings[id], slot)` mutates the stored list in place).                                                 #
+#   - `for i = n downto 1` -> `for i = n to 1 step -1`; `callbacks.length` -> `len(callbacks)`.                        #
+#   - The internal state (`bindings`, `slot_id`) is `local` (module-private), which the old file could not express.   #
 ########################################################################################################################
 
 # Table mapping a signal to a list of callbacks
-let bindings = {}
-let slot_id = 0
+local var bindings = {}
+local var slot_id = 0
 
 # Create a new signal, which is represented as a string
-function create_signal() 
-	let id = slot_id
+function create_signal()
+	var id = slot_id
 	slot_id += 1
-	
+
 	return "__SIGNAL_" & id
 end
 
@@ -39,27 +46,23 @@ function connect(id as String, slot as Function)
 	if not contains(bindings, id) then
 		bindings[id] = [ slot ]
 	else
-		let callbacks	= ref bindings[id]
-
 		# Check whether the signal is already there
-		foreach s in callbacks do
+		for s in bindings[id] do
 			if slot == s then
 				return
 			end
 		end
 
-		append(callbacks, slot)
+		append(bindings[id], slot)
 	end
 end
 
 # Disconnect a signal from a slot
 function disconnect(id as String, slot as Function)
 	if contains(bindings, id) then
-		let callbacks = ref bindings[id]
-
-		for i = callbacks.length downto 1 do
-			if callbacks[i] == slot then
-				remove_at(callbacks, i)
+		for i = len(bindings[id]) to 1 step -1 do
+			if bindings[id][i] == slot then
+				remove_at(bindings[id], i)
 				return
 			end
 		end
@@ -69,10 +72,10 @@ end
 # Emit a signal, with an argument which will be passed to each slot the event is connected to.
 function emit(id as String, args as Object)
 	if contains(bindings, id) then
-		let callbacks = bindings[id]
-		let result = []
+		var callbacks = bindings[id]
+		var result = []
 
-		foreach callback in callbacks do
+		for callback in callbacks do
 			append(result, callback(args))
 		end
 
@@ -82,15 +85,16 @@ end
 
 # Emit a signal without any argument
 function emit(id as String)
-	emit(id, null)
+	return emit(id, null)
 end
 
 
-# Define standard events
-SIGNAL_ANNOTATION_IMPORTED = "__SIGNAL_ANNOTATION_IMPORTED"
-SIGNAL_SOUND_IMPORTED = "__SIGNAL_SOUND_IMPORTED"
-SIGNAL_ANNOTATION_LOADED = "__SIGNAL_ANNOTATION_LOADED"
-SIGNAL_SOUND_LOADED = "__SIGNAL_SOUND_LOADED"
-SIGNAL_SCRIPT_LOADED = "__SIGNAL_SCRIPT_LOADED"
-SIGNAL_DATASET_LOADED = "__SIGNAL_DATASET_LOADED"
-SIGNAL_PROJECT_LOADED = "__SIGNAL_PROJECT_LOADED"
+# Define standard events. (The old file created these by implicit global
+# assignment; assignment never declares in the new language.)
+var SIGNAL_ANNOTATION_IMPORTED = "__SIGNAL_ANNOTATION_IMPORTED"
+var SIGNAL_SOUND_IMPORTED = "__SIGNAL_SOUND_IMPORTED"
+var SIGNAL_ANNOTATION_LOADED = "__SIGNAL_ANNOTATION_LOADED"
+var SIGNAL_SOUND_LOADED = "__SIGNAL_SOUND_LOADED"
+var SIGNAL_SCRIPT_LOADED = "__SIGNAL_SCRIPT_LOADED"
+var SIGNAL_DATASET_LOADED = "__SIGNAL_DATASET_LOADED"
+var SIGNAL_PROJECT_LOADED = "__SIGNAL_PROJECT_LOADED"

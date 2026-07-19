@@ -16,7 +16,12 @@
 #                                                                                                                      #
 # purpose: Default user settings.                                                                                      #
 #                                                                                                                      #
+# PORT NOTE (old -> new engine): the table literal is unchanged ({} braces, ":" keys — the new language keeps the      #
+# JSON-superset shape). `phon` is an isolate global: injected by the app via Runtime::add_global, or declared by      #
+# app_stubs when headless. See MIGRATION_NOTES.md.                                                                     #
 ########################################################################################################################
+
+import app_stubs   # headless harness; dropped at app integration
 
 phon.settings = {
 	"recent_projects": [],
@@ -49,8 +54,8 @@ phon.settings = {
 
 	"praat_path": "",
 
-	"statistics": { 
-		"estimation": "frequentist" 
+	"statistics": {
+		"estimation": "frequentist"
 	},
 
 	"concordance": {
@@ -101,5 +106,3 @@ phon.settings = {
 		"max_bandwidth": 400
 	}
 }
-
-

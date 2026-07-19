@@ -1,0 +1,112 @@
+# =====================================================================
+# headless_test.phon — HEADLESS HARNESS ONLY (not shipped behaviour).
+# =====================================================================
+# Drives the ported std/ scripts under the new engine's script runner
+# with the app natives stubbed by app_stubs.phon:
+#
+#     phon_repl headless_test.phon
+#
+# Import order note: every imported module's top level runs BEFORE this
+# file's own statements, so by the time the asserts below execute,
+# initialize/read_settings/write_settings/transphon have already run.
+# =====================================================================
+
+import app_stubs
+import initialize
+import read_settings
+import write_settings
+import signal
+import speech_analysis
+import transphon
+
+print("--- initialize: user directories created ---")
+assert(exists(get_settings_directory()), "settings dir")
+assert(exists(get_plugin_directory()), "plugin dir")
+assert(exists(get_metadata_directory()), "metadata dir")
+assert(exists(get_script_directory()), "script dir")
+
+print("--- read_settings: phon.settings populated ---")
+assert(phon.settings["project_ratio"] == 0.17, "scalar setting")
+assert(phon.settings["full_screen"] == true, "boolean setting")
+assert(phon.settings["pitch_tracking"]["method"] == "reaper", "nested setting")
+assert(len(phon.settings["geometry"]) == 4, "list setting")
+
+print("--- write_settings: config file written ---")
+assert(exists(get_config_path()), "config file exists")
+var config = read_file(get_config_path())
+assert(contains(config, "phon.settings = "), "config carries the assignment prefix")
+assert(contains(config, "\"project_ratio\""), "config carries a serialized key")
+
+print("--- signal: connect/emit/disconnect ---")
+var received = []
+var slot1 = function (arg)
+    append(received, "one:" & arg)
+    return 1
+end
+var slot2 = function (arg)
+    append(received, "two:" & arg)
+    return 2
+end
+var sig = create_signal()
+connect(sig, slot1)
+connect(sig, slot2)
+connect(sig, slot1)   # duplicate: must be ignored
+var results = emit(sig, "hello")
+assert(len(received) == 2, "each slot fired once, got " & len(received))
+assert(received[1] == "one:hello" and received[2] == "two:hello", "slots saw the argument in order")
+assert(len(results) == 2 and results[1] == 1 and results[2] == 2, "emit collects the returns")
+disconnect(sig, slot1)
+received = []
+emit(sig, "again")
+assert(len(received) == 1 and received[1] == "two:again", "disconnected slot no longer fires")
+var sig2 = create_signal()
+assert(sig != sig2, "signals are unique")
+assert(emit(sig2) == null, "emitting an unconnected signal is a no-op")
+
+# Named functions are first-class values (M7 fix): a top-level function
+# passed by name works as a slot, including the duplicate check.
+function named_slot(arg)
+    append(received, "named:" & arg)
+    return 3
+end
+var sig3 = create_signal()
+connect(sig3, named_slot)
+connect(sig3, named_slot)   # duplicate: must be ignored
+received = []
+var results3 = emit(sig3, "go")
+assert(len(received) == 1 and received[1] == "named:go", "named slot fired once")
+assert(len(results3) == 1 and results3[1] == 3, "named slot return collected")
+disconnect(sig3, named_slot)
+received = []
+emit(sig3, "gone")
+assert(len(received) == 0, "named slot disconnected")
+
+print("--- speech_analysis: stub sound -> report paths ---")
+report_intensity(0.5)
+report_pitch(0.5)
+report_formants(0.5)
+report_mean_intensity(0.0, 1.0)
+report_mean_pitch(0.0, 1.0)
+
+print("--- speech_analysis: no current sound -> alert branch ---")
+stub_set_sound(false)
+report_intensity(0.5)
+report_mean_formants(0.0, 1.0)
+stub_set_sound(true)
+
+print("--- transphon: canned dialog accepted, export written ---")
+# app_stubs' create_dialog returned the defaults (all annotations, all
+# layers, one event per line), so transphon's import-time run exported
+# the fabricated stub project.
+var out_path = join_path(get_temp_directory(), "phon_headless/transphon_output.txt")
+assert(exists(out_path), "transphon output file exists")
+var out_text = read_file(out_path)
+assert(contains(out_text, "annot1.phon-annot"), "annotation 1 banner")
+assert(contains(out_text, "annot2.phon-annot"), "annotation 2 banner")
+assert(contains(out_text, "%%%% Layer: layer 1"), "layer 1 title")
+assert(contains(out_text, "%%%% Layer: layer 2"), "layer 2 title")
+assert(contains(out_text, "w1L1"), "event text written")
+assert(contains(out_text, "w3L2"), "last event text written")
+
+print("")
+print("==== std/ headless harness passed ====")

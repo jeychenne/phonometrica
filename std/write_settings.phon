@@ -16,10 +16,16 @@
 #                                                                                                                      #
 # purpose: Write user settings.                                                                                        #
 #                                                                                                                      #
+# PORT NOTE (old -> new engine): `dump_json` -> `to_json`; `File(path, "w")` -> `open_file(path, "w")` (File is not    #
+# script-constructible; the opener returns a File whose handle closes with the value). write/write_line/close are      #
+# engine builtins. `phon` is an isolate global (app: Runtime::add_global; headless: app_stubs); get_config_path()     #
+# comes from the app. See MIGRATION_NOTES.md.                                                                          #
 ########################################################################################################################
 
-let settings = dump_json(phon.settings)
-let f = File(get_config_path(), "w")
+import app_stubs   # headless harness; dropped at app integration
+
+var settings = to_json(phon.settings)
+var f = open_file(get_config_path(), "w")
 
 write_line(f, "# This file was generated automatically.")
 write_line(f, "# Do not edit it unless you know what you are doing.")
@@ -27,4 +33,3 @@ write_line(f, "# Do not edit it unless you know what you are doing.")
 write(f, "phon.settings = ")
 write(f, settings)
 close(f)
-

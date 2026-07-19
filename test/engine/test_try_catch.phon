@@ -1,66 +1,133 @@
-# Smoke test for try/catch in the scripting language.
-# Run this from Phonometrica's script runner; each block prints a banner so failures are localized.
+# =====================================================================
+# test_try_catch.phon
+# =====================================================================
+# Smoke test for try/catch in the scripting language. Each block prints
+# a banner so failures are localized.
+#
+# PORT NOTE (old -> new engine): only `Error` values can be thrown
+# (`throw "oops"` / `throw 42` are now themselves a catchable
+# [Type error]); a caught error is an Error INSTANCE, its text is
+# `e.message` (the old engine bound the message String directly).
+# Catch clauses can select on class (`catch e as IOError`), and user
+# error types subclass Error. `finally` now exists. `rethrow` does not
+# exist: re-raising is `throw e` (preserves the original trace).
+# See MIGRATION_NOTES.md.
+# =====================================================================
 
-# 1. Basic catch of a string-valued throw.
-print "--- 1. basic throw/catch ---"
+# 1. Basic catch of a thrown Error.
+print("--- 1. basic throw/catch ---")
+var r1 = ""
 try
-    throw "oops"
+    throw Error("oops")
 catch e
-    print "caught:", e   # expected: caught: oops
+    r1 = e.message
 end
+assert(r1 == "oops", "T1: expected 'oops', got " & r1)
 
-# 2. Catch of a non-string thrown value (the runtime should preserve the original Variant).
-print "--- 2. typed throw ---"
+# 2. Only Error values may be thrown: a non-Error throw raises a
+#    catchable [Type error] (old engine allowed throwing any value).
+print("--- 2. non-Error throw is a Type error ---")
+var caught2 = false
+var msg2 = ""
 try
     throw 42
 catch e
-    print "caught int:", e, "(", type(e), ")"   # expected: caught int: 42 ( Number )
+    caught2 = true
+    msg2 = e.message
 end
+assert(caught2, "T2a: expected the invalid throw to be caught")
+assert(contains(msg2, "Error"), "T2b: message should mention Error, got: " & msg2)
 
 # 3. Catch with no identifier — value is discarded.
-print "--- 3. anonymous catch ---"
+print("--- 3. anonymous catch ---")
+var reached3 = false
 try
-    throw "ignored"
+    throw Error("ignored")
 catch
-    print "reached anonymous catch body"
+    reached3 = true
 end
+assert(reached3, "T3: anonymous catch body must run")
 
 # 4. Native runtime error caught by user code.
-print "--- 4. native error ---"
+print("--- 4. native error ---")
+var caught4 = false
 try
-    let xs = [1, 2, 3]
-    let bad = xs[100]   # out-of-bounds: native code raises std::runtime_error
+    var xs = [1, 2, 3]
+    var bad = xs[100]   # out-of-bounds: the runtime raises an Index error
 catch e
-    print "caught native:", e
+    caught4 = true
+    assert(e is Error, "T4a: native errors are Error instances")
 end
+assert(caught4, "T4b: native out-of-bounds must be caught")
 
 # 5. Throw from inside a called function — handler in the caller's frame.
-print "--- 5. cross-frame ---"
-function inner()
-    throw "from inner"
+print("--- 5. cross-frame ---")
+local function inner()
+    throw Error("from inner")
 end
+var r5 = ""
 try
     inner()
 catch e
-    print "caught across frame:", e
+    r5 = e.message
 end
+assert(r5 == "from inner", "T5: expected 'from inner', got " & r5)
 
-# 6. Nested try — inner catch handles, outer never sees it.
-print "--- 6. nested try ---"
+# 6. Nested try — inner catch handles, outer sees only the re-throw.
+print("--- 6. nested try + rethrow via `throw e` ---")
+var inner6 = ""
+var outer6 = ""
 try
     try
-        throw "inner"
+        throw Error("inner")
     catch e
-        print "inner caught:", e
-        throw "rethrown"
+        inner6 = e.message
+        throw Error("rethrown")
     end
 catch e
-    print "outer caught:", e
+    outer6 = e.message
 end
+assert(inner6 == "inner", "T6a")
+assert(outer6 == "rethrown", "T6b")
+
+# 6b. Typed catch clauses: a subclass handler is selected by class.
+print("--- 6b. typed catch on an Error subclass ---")
+class LocalIOError is Error
+end
+var picked = ""
+try
+    throw LocalIOError("disk on fire")
+catch e as LocalIOError
+    picked = "io:" & e.message
+catch e as Error
+    picked = "base"
+end
+assert(picked == "io:disk on fire", "T6c: subclass clause must win, got " & picked)
+
+# 6c. finally runs on both paths.
+print("--- 6c. finally ---")
+var flog = ""
+try
+    flog &= "body"
+finally
+    flog &= "+finally"
+end
+assert(flog == "body+finally", "T6d: finally after normal completion")
+flog = ""
+try
+    try
+        throw Error("x")
+    finally
+        flog &= "cleanup"
+    end
+catch e
+    flog &= "+caught"
+end
+assert(flog == "cleanup+caught", "T6e: finally runs during unwinding, got " & flog)
 
 # 7. `return` from inside a try body — handler stack must not leak.
-print "--- 7. return inside try ---"
-function f()
+print("--- 7. return inside try ---")
+local function f()
     try
         return 7
     catch e
@@ -68,17 +135,19 @@ function f()
         return 0
     end
 end
-print "f() =", f()
+assert(f() == 7, "T7a: f() must return 7")
 # A subsequent throw must NOT be caught by the (popped) handler from f.
+var r7 = ""
 try
-    throw "after f"
+    throw Error("after f")
 catch e
-    print "post-f caught:", e
+    r7 = e.message
 end
+assert(r7 == "after f", "T7b")
 
 # 8. `break` out of a loop from inside a try body.
-print "--- 8. break inside try ---"
-let i = 0
+print("--- 8. break inside try ---")
+var i = 0
 while i < 5 do
     try
         if i == 2 then
@@ -86,19 +155,17 @@ while i < 5 do
         end
         i = i + 1
     catch e
-        print "should not happen"
+        assert(false, "T8a: should not happen")
     end
 end
-print "i =", i   # expected: 2
-# Verify the handler stack is clean: another throw must reach the top-level.
+assert(i == 2, "T8b: expected 2, got " & i)
+# Verify the handler stack is clean: another throw must reach this handler.
+var r8 = ""
 try
-    throw "after break"
+    throw Error("after break")
 catch e
-    print "post-break caught:", e
+    r8 = e.message
 end
+assert(r8 == "after break", "T8c")
 
-# 9. Uncaught throw still surfaces a sensible error message at the top level.
-# (Comment this out unless you want the script to abort here.)
-# throw "uncaught"
-
-print "--- all done ---"
+print("--- all done ---")

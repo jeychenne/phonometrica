@@ -1,356 +1,72 @@
 # =====================================================================
 # test_multiple_declaration.phon
 # =====================================================================
-# Regression suite for multi-LHS `let` declarations.
+# PORT NOTE (old -> new engine): THIS FEATURE WAS REMOVED.
 #
-# History. Before this change, the scripting engine rejected anything
-# but a single-variable `let` at compile time with the message
-# "Multiple declaration not implemented". The parser already accepted
-# the multi-LHS syntax for `let x, y` and `let x, y = 1, 2`, but the
-# compiler aborted on both. `let x, y = expr` (single-source) was
-# rejected even earlier, by the parser, with a size-mismatch error.
+# The old engine supported multi-LHS declarations and assignments:
+#     let x, y            let x, y = 1, 2         let x, y = lst
+#     x, y = b, a         a, b, c = lst
+# The new language deliberately has neither multiple declaration nor
+# multiple assignment (DEVIATIONS.md, M3 AST #4): `var`/`const` and
+# assignment are single-target; the only multi-binding construct is
+# `for k, v in ...`. Implicit globals (assignment declaring a new name)
+# are also gone: assignment never declares (design §11), so a typo'd
+# target is now a COMPILE error.
 #
-# Three shapes are now supported, all outside class field
-# declarations:
-#   1. `let x, y`               -- parallel declaration, no init
-#   2. `let x, y = 1, 2`        -- parallel declaration with init
-#   3. `let x, y = lst`         -- single-source destructure
-#
-# Shape 3 emits a new UnpackList opcode that type-checks the RHS as a
-# List and length-checks it against the LHS arity, raising a clear
-# runtime error otherwise.
-#
-# Each block below targets one shape or one error path. A regression
-# would surface as one of the asserts failing -- the script aborts at
-# that point with a clear message. Single-variable `let` is also
-# exercised at the end as a guard against accidental over-correction
-# breaking the case that was always working.
+# This file keeps the old path and pins the new-language equivalents of
+# the patterns the old suite covered, so the cutover suite still
+# exercises the surface scripts will actually use. The removal itself
+# is gap-logged in MIGRATION_NOTES.md.
 # =====================================================================
 
-print "==== multiple-variable declaration ===="
+print("==== multiple declaration (removed) -> single-target equivalents ====")
 
-# ---------- Shape 1: parallel declaration with init ----------
+# Old shape 1: `let x, y = 1, 2`  ->  two declarations.
+print("--- 1. parallel declaration -> two vars ---")
+var x1 = 1
+var y1 = 2
+assert(x1 == 1, "T1a")
+assert(y1 == 2, "T1b")
 
-print "--- 1. let x, y = 1, 2 ---"
-let x1, y1 = 1, 2
-assert x1 == 1, "T1a: expected x1 == 1, got " & x1
-assert y1 == 2, "T1b: expected y1 == 2, got " & y1
+# Old shape 2: `let x, y = lst`  ->  explicit element reads.
+print("--- 2. destructure -> explicit indexing ---")
+var pair = [3, 10]
+var lo = pair[1]
+var hi = pair[2]
+assert(lo == 3, "T2a")
+assert(hi == 10, "T2b")
+# Source list is untouched, and a mutated copy detaches (CoW).
+var inner = pair
+append(inner, 99)
+assert(len(pair) == 2, "T2c: source list must stay length 2 (CoW)")
 
-print "--- 2. three-way parallel ---"
-let a2, b2, c2 = "alpha", 42, true
-assert a2 == "alpha", "T2a: expected alpha, got " & a2
-assert b2 == 42, "T2b: expected 42, got " & b2
-assert c2 == true, "T2c: expected true, got " & c2
+# Old shape 3: swap `a, b = b, a`  ->  explicit temporary.
+print("--- 3. swap -> explicit temporary ---")
+var a = 1
+var b = 2
+var tmp = a
+a = b
+b = tmp
+assert(a == 2 and b == 1, "T3: swap via temporary")
 
-# Left-to-right evaluation of the RHS. We use a counter mutated by a
-# helper to confirm the order; a regression that visited RHS in reverse
-# would swap the recorded values.
-print "--- 3. left-to-right RHS evaluation ---"
-let counter3 = 0
-function next3()
-    counter3 += 1
-    return counter3
+# The one surviving multi-binding construct: `for k, v in ...`.
+print("--- 4. for k, v in list (the remaining multi-binding form) ---")
+var ks = []
+var vs = []
+for k, v in ["a", "b", "c"] do
+    append(ks, k)
+    append(vs, v)
 end
-let p3, q3, r3 = next3(), next3(), next3()
-assert p3 == 1, "T3a: expected 1, got " & p3
-assert q3 == 2, "T3b: expected 2, got " & q3
-assert r3 == 3, "T3c: expected 3, got " & r3
+assert(ks[1] == 1 and ks[2] == 2 and ks[3] == 3, "T4a: 1-based keys")
+assert(vs[1] == "a" and vs[3] == "c", "T4b: values in order")
 
-# Mixed types in parallel; just makes sure no type cross-talk happens
-# when assignments land in different local slots.
-print "--- 4. mixed types ---"
-let s4, n4, b4 = "hello", 3.14, false
-assert s4 == "hello", "T4a"
-assert n4 == 3.14, "T4b"
-assert b4 == false, "T4c"
-
-# ---------- Shape 2: single-source destructure ----------
-
-print "--- 5. let x, y = [1, 2] ---"
-let x5, y5 = [1, 2]
-assert x5 == 1, "T5a: expected x5 == 1, got " & x5
-assert y5 == 2, "T5b: expected y5 == 2, got " & y5
-
-print "--- 6. destructure from a variable ---"
-let lst6 = ["a", "b", "c"]
-let p6, q6, r6 = lst6
-assert p6 == "a", "T6a: expected a, got " & p6
-assert q6 == "b", "T6b: expected b, got " & q6
-assert r6 == "c", "T6c: expected c, got " & r6
-# Source list must be untouched.
-assert lst6[1] == "a", "T6d: source list was mutated"
-assert lst6[2] == "b", "T6e: source list was mutated"
-assert lst6[3] == "c", "T6f: source list was mutated"
-
-# Destructure from the return value of a function call. The function
-# is called exactly once; UnpackList works on the result.
-print "--- 7. destructure from function return ---"
-let call_count7 = 0
-function make_pair7()
-    call_count7 += 1
+# Function returning several values: return a List, read elements.
+print("--- 5. multi-value return -> List return ---")
+local function make_pair()
     return [10, 20]
 end
-let x7, y7 = make_pair7()
-assert x7 == 10, "T7a: expected 10, got " & x7
-assert y7 == 20, "T7b: expected 20, got " & y7
-assert call_count7 == 1, "T7c: RHS evaluated more than once, count was " & call_count7
+var mp = make_pair()
+assert(mp[1] == 10 and mp[2] == 20, "T5: list-returning function")
 
-# ---------- Shape 3: declaration without init ----------
-# This shape was already accepted by the parser but rejected by the
-# compiler, so it's a regression target alongside the new ones.
-
-print "--- 8. let x, y (no init) ---"
-let x8, y8
-assert x8 == null, "T8a: x8 should be null"
-assert y8 == null, "T8b: y8 should be null"
-# And we can assign after the fact.
-x8 = 5
-y8 = 6
-assert x8 == 5, "T8c"
-assert y8 == 6, "T8d"
-
-# ---------- Error paths ----------
-
-# Destructuring a non-list value must raise a clear runtime error
-# mentioning the actual type. We use try/catch to capture the
-# RuntimeError without aborting the script, then inspect the message
-# (which is bound to `e` as a String for native runtime errors).
-print "--- 9. destructure non-list -> runtime error ---"
-let caught9 = false
-let msg9 = ""
-try
-    let a9, b9 = 42
-catch e
-    caught9 = true
-    msg9 = e
-end
-assert caught9, "T9a: expected a runtime error when destructuring a non-list"
-# The exact phrasing is fixed by the UnpackList opcode; if it ever
-# changes, update the substring below.
-assert contains(msg9, "destructure"), "T9b: error message should mention destructure, got: " & msg9
-
-print "--- 10. destructure string -> runtime error ---"
-let caught10 = false
-try
-    let a10, b10 = "hello"
-catch e
-    caught10 = true
-end
-assert caught10, "T10: expected a runtime error when destructuring a string"
-
-# Length-mismatch must also raise a clear runtime error. Both the
-# too-short and the too-long cases are exercised.
-print "--- 11. destructure size mismatch (too short) ---"
-let caught11 = false
-let msg11 = ""
-try
-    let a11, b11, c11 = [1, 2]
-catch e
-    caught11 = true
-    msg11 = e
-end
-assert caught11, "T11a: expected a runtime error for size mismatch"
-assert contains(msg11, "size"), "T11b: error message should mention size, got: " & msg11
-
-print "--- 12. destructure size mismatch (too long) ---"
-let caught12 = false
-try
-    let a12, b12 = [1, 2, 3]
-catch e
-    caught12 = true
-end
-assert caught12, "T12: expected a runtime error for size mismatch"
-
-# ---------- Regression guards: existing single-LHS paths ----------
-
-print "--- 13. let x = 1 (single, with init) ---"
-let single13 = 99
-assert single13 == 99, "T13"
-
-print "--- 14. let x (single, no init) ---"
-let single14
-assert single14 == null, "T14: single14 should be null"
-single14 = 100
-assert single14 == 100, "T14b"
-
-# ---------- Scope and shadowing ----------
-
-# Multi-LHS inside a nested scope must not leak into the outer scope.
-print "--- 15. scope isolation ---"
-let outer15 = "outer"
-if true then
-    let inner15_a, inner15_b = "inner", "helper"
-    assert inner15_a == "inner", "T15a"
-    assert inner15_b == "helper", "T15b"
-end
-assert outer15 == "outer", "T15c: outer was clobbered"
-
-# Destructuring inside a function body uses the function's frame.
-print "--- 16. destructure inside function ---"
-function split16(pair)
-    let lo, hi = pair
-    return hi - lo
-end
-let diff16 = split16([3, 10])
-assert diff16 == 7, "T16: expected 7, got " & diff16
-
-# ---------- COW semantics on destructured list elements ----------
-
-# Destructuring a list of lists: each variable should get a value
-# equivalent to what `src[i]` would yield. Both reading and writing
-# must match that baseline. List is a COW value type -- append() calls
-# unshare() before mutating -- so mutating a destructured local must
-# NOT propagate back to the source list. This is the same isolation
-# you get from
-#     let inner = src[1]; append(inner, 99)
-# and we guard that destructure inherits the same semantics rather
-# than producing aliases that bypass COW.
-print "--- 17. nested-list values and COW isolation ---"
-let src17 = [[1, 2], [3, 4]]
-let first17, second17 = src17
-# Read access: the destructured values match what indexing would give.
-assert len(first17) == 2, "T17a: first17 should have 2 elements, got " & len(first17)
-assert first17[1] == 1, "T17b"
-assert first17[2] == 2, "T17c"
-assert len(second17) == 2, "T17d: second17 should have 2 elements, got " & len(second17)
-assert second17[1] == 3, "T17e"
-assert second17[2] == 4, "T17f"
-# Mutation via append must unshare; the source stays at length 2.
-append(first17, 99)
-assert len(first17) == 3, "T17g: local should have the appended element, got len " & len(first17)
-assert len(src17[1]) == 2, "T17h: source nested list must stay length 2 after COW, got len " & len(src17[1])
-
-# =====================================================================
-# Multi-target bare assignment (no `let`)
-# =====================================================================
-# `x, y = a, b` outside a `let` exercises a separate code path: the
-# parser builds a MultiAssignment node (not a Declaration), and the
-# compiler routes each LHS through set_variable(), so the same syntax
-# works for already-declared locals, upvalues, and implicit globals.
-# Indexed and field LHS are intentionally rejected at parse time; the
-# error cases at the bottom of this block cover that.
-
-print "==== multi-target bare assignment ===="
-
-# ---------- Parallel into already-declared locals ----------
-
-print "--- 18. bare parallel into locals ---"
-let x18, y18
-x18, y18 = 10, 20
-assert x18 == 10, "T18a: expected 10, got " & x18
-assert y18 == 20, "T18b: expected 20, got " & y18
-
-# ---------- Swap. The canonical use case for parallel assignment.
-# All RHS values are evaluated and stacked before any LHS is written,
-# so the right-hand reads of a and b see the pre-assignment values.
-
-print "--- 19. swap a, b = b, a ---"
-let a19 = 1
-let b19 = 2
-a19, b19 = b19, a19
-assert a19 == 2, "T19a: expected a19 == 2 after swap, got " & a19
-assert b19 == 1, "T19b: expected b19 == 1 after swap, got " & b19
-
-# Three-way rotation as a stronger swap test.
-print "--- 20. three-way rotation ---"
-let p20 = "first"
-let q20 = "second"
-let r20 = "third"
-p20, q20, r20 = q20, r20, p20
-assert p20 == "second", "T20a"
-assert q20 == "third", "T20b"
-assert r20 == "first", "T20c"
-
-# ---------- Destructure into already-declared locals ----------
-
-print "--- 21. bare destructure into locals ---"
-let lo21, hi21
-lo21, hi21 = [3, 10]
-assert lo21 == 3, "T21a"
-assert hi21 == 10, "T21b"
-
-print "--- 22. bare destructure from a variable ---"
-let lst22 = ["alpha", "beta", "gamma"]
-let a22, b22, c22
-a22, b22, c22 = lst22
-assert a22 == "alpha", "T22a"
-assert b22 == "beta", "T22b"
-assert c22 == "gamma", "T22c"
-
-# ---------- Implicit globals ----------
-# Names not declared with `let` become globals on first assignment.
-# We prefix them so they don't collide with anything else the test
-# suite might define; bare assignment doesn't have block scope, so
-# these survive past the end of this script.
-
-print "--- 23. parallel into implicit globals ---"
-mdtest_g1, mdtest_g2 = 100, 200
-assert mdtest_g1 == 100, "T23a"
-assert mdtest_g2 == 200, "T23b"
-
-print "--- 24. destructure into implicit globals ---"
-mdtest_g3, mdtest_g4 = ["x", "y"]
-assert mdtest_g3 == "x", "T24a"
-assert mdtest_g4 == "y", "T24b"
-
-# Mixed: one already-declared local, one new global. Each LHS resolves
-# independently via set_variable(), so the routing is per-name.
-print "--- 25. mixed local + global ---"
-let local25
-local25, mdtest_g5 = "to_local", "to_global"
-assert local25 == "to_local", "T25a"
-assert mdtest_g5 == "to_global", "T25b"
-
-# ---------- Inside a function body ----------
-# The same construct must work within a function frame, where the
-# parser+compiler resolve names against the function's locals and
-# upvalues before falling through to globals.
-
-print "--- 26. parallel inside function ---"
-function rotate26(x, y, z)
-    x, y, z = y, z, x
-    return [x, y, z]
-end
-let rotated26 = rotate26(1, 2, 3)
-assert rotated26[1] == 2, "T26a"
-assert rotated26[2] == 3, "T26b"
-assert rotated26[3] == 1, "T26c"
-
-print "--- 27. destructure inside function ---"
-function unpack27(pair)
-    let lo, hi
-    lo, hi = pair
-    return hi - lo
-end
-assert unpack27([5, 12]) == 7, "T27"
-
-# ---------- Error paths for bare destructure ----------
-# Same UnpackList opcode as in the `let` form, so the runtime checks
-# are inherited. We re-cover them here because the parser path is
-# different and we want to make sure both lead to the same diagnostic.
-
-print "--- 28. bare destructure non-list -> runtime error ---"
-let caught28 = false
-let msg28 = ""
-let dest28a, dest28b
-try
-    dest28a, dest28b = 42
-catch e
-    caught28 = true
-    msg28 = e
-end
-assert caught28, "T28a: expected runtime error"
-assert contains(msg28, "destructure"), "T28b: error should mention destructure, got: " & msg28
-
-print "--- 29. bare destructure size mismatch -> runtime error ---"
-let caught29 = false
-let dest29a, dest29b, dest29c
-try
-    dest29a, dest29b, dest29c = [1, 2]
-catch e
-    caught29 = true
-end
-assert caught29, "T29: expected runtime error for size mismatch"
-
-print ""
-print "==== ALL multiple-declaration tests passed ===="
+print("")
+print("==== multiple-declaration equivalents passed ====")

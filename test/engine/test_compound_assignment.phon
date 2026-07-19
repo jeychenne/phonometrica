@@ -3,126 +3,141 @@
 # =====================================================================
 # Regression suite for compound-assignment lowering in the compiler.
 #
-# History. A bug present before May 2026 caused `m.field += value`
-# (dot-notation, compound op, on a Module field) to silently lose the
-# compound part: the compiler emitted SetField with just the rhs as
-# the value, so `m.n += 1` became `m.n = 1`. The first call from a
-# zero-initialised field looked correct (because 0 + 1 == 1) but
-# every subsequent call kept overwriting the field with the same rhs.
-# The bracket form (`m["n"] += 1`), local variables, and Table
-# subscripts were unaffected; only dot notation on Module fields had
-# the issue.
+# History. The original suite pinned a fix for `m.field += value` on the
+# OLD engine's first-class Module objects, which the new language does
+# not have (a module is not a runtime value). The equivalent surface in
+# the new language is exercised instead: module bindings, locals,
+# upvalues, Table/List subscripts, and (explicit-form) instance fields.
 #
-# The fix in compiler.cpp's visit_assignment mirrors the
-# IndexedExpression branch's handling: re-visit the LHS in
-# non-assigned mode to emit GetField, then push the rhs and the op,
-# then SetField.
-#
-# Each block below targets one operator on Module-field LHSs. A
-# regression in the lowering would surface as one of the asserts
-# failing — the script aborts at that point with a clear message.
-# Local-variable and Table-subscript checks at the end guard against
-# accidental over-correction breaking the cases that were already
-# working.
+# PORT NOTE (old -> new engine):
+#   - `Module("test")` and first-class module values do not exist; the
+#     dot-notation tests now target a user class instance where the old
+#     suite targeted a Module.
+#   - Compound assignment on an OBJECT FIELD (`obj.field += v`) is a
+#     compile error in the new engine ("invalid compound-assignment
+#     target"); only the explicit form `obj.field = obj.field + v`
+#     works. Gap-logged in MIGRATION_NOTES.md.
+#   - The operator set is `+= -= *= /= &=` (design §12). The old `^=`
+#     and `%=` no longer exist (`%` is not an operator; `mod` has no
+#     compound form). Their blocks use the explicit form.
 # =====================================================================
 
-print "==== compound assignment x dot notation ===="
+print("==== compound assignment ====")
 
-let m = Module("test")
-
-# 1. += on a numeric field, repeated. The pre-fix bug made this
-#    stay at 1 forever after the first call.
-print "--- 1. m.n += 1 (x3) ---"
-m.n = 0
-m.n += 1
-m.n += 1
-m.n += 1
-assert m.n == 3, "T1: expected 3, got " & m.n
-
-# 2. -= on a numeric field, repeated.
-print "--- 2. m.x -= 1 (x3) ---"
-m.x = 10
-m.x -= 1
-m.x -= 1
-m.x -= 1
-assert m.x == 7, "T2: expected 7, got " & m.x
-
-# 3. *= on a numeric field, repeated.
-print "--- 3. m.y *= 2 (x3) ---"
-m.y = 1
-m.y *= 2
-m.y *= 2
-m.y *= 2
-assert m.y == 8, "T3: expected 8, got " & m.y
-
-# 4. /= on a numeric field, repeated.
-print "--- 4. m.z /= 2 (x2) ---"
-m.z = 100
-m.z /= 2
-m.z /= 2
-assert m.z == 25, "T4: expected 25, got " & m.z
-
-# 5. ^= on a numeric field.
-print "--- 5. m.p ^= 2 ---"
-m.p = 3
-m.p ^= 2
-assert m.p == 9, "T5: expected 9, got " & m.p
-
-# 6. %= on a numeric field.
-print "--- 6. m.q %= 4 ---"
-m.q = 13
-m.q %= 4
-assert m.q == 1, "T6: expected 1, got " & m.q
-
-# 7. &= on a string field, repeated.
-print "--- 7. m.s &= ... (x2) ---"
-m.s = "a"
-m.s &= "b"
-m.s &= "c"
-assert m.s == "abc", "T7: expected abc, got " & m.s
-
-# 8. += inside a closure that captured the module. Confirms that
-#    the fix works through indirection (the value is read from the
-#    field, not from a snapshot taken at closure creation).
-print "--- 8. closure m.n += 1 (x3) ---"
-m.bump = function ()
-    m.n += 1
+# 1. += on a module binding, repeated, mutated from a function.
+print("--- 1. module binding n += 1 (x3) ---")
+var mn = 0
+local function bump_mn()
+    mn += 1
 end
-m.bump()
-m.bump()
-m.bump()
-assert m.n == 6, "T8: expected 6, got " & m.n
+bump_mn()
+bump_mn()
+bump_mn()
+assert(mn == 3, "T1: expected 3, got " & mn)
+
+# 2. -= on a numeric local, repeated.
+print("--- 2. x -= 1 (x3) ---")
+var x = 10
+x -= 1
+x -= 1
+x -= 1
+assert(x == 7, "T2: expected 7, got " & x)
+
+# 3. *= on a numeric local, repeated.
+print("--- 3. y *= 2 (x3) ---")
+var y = 1
+y *= 2
+y *= 2
+y *= 2
+assert(y == 8, "T3: expected 8, got " & y)
+
+# 4. /= on a numeric local, repeated. `/` always yields Float.
+print("--- 4. z /= 2 (x2) ---")
+var z = 100
+z /= 2
+z /= 2
+assert(z == 25, "T4: expected 25, got " & z)
+
+# 5. ^ has no compound form in the new language; explicit form.
+print("--- 5. p = p ^ 2 ---")
+var p = 3
+p = p ^ 2
+assert(p == 9, "T5: expected 9, got " & p)
+
+# 6. mod has no compound form in the new language; explicit form.
+print("--- 6. q = q mod 4 ---")
+var q = 13
+q = q mod 4
+assert(q == 1, "T6: expected 1, got " & q)
+
+# 7. &= on a string local, repeated.
+print("--- 7. s &= ... (x2) ---")
+var s = "a"
+s &= "b"
+s &= "c"
+assert(s == "abc", "T7: expected abc, got " & s)
+
+# 8. += inside a closure that captured an enclosing local (upvalue).
+print("--- 8. closure upvalue += 1 (x3) ---")
+local function make_counter()
+    var count = 0
+    var inc = function ()
+        count += 1
+    end
+    inc()
+    inc()
+    inc()
+    return count
+end
+assert(make_counter() == 3, "T8: expected 3")
 
 # 9. Mixed read-after-write: confirm the post-state is observable.
-print "--- 9. read-after-write ---"
-m.k = 5
-m.k += 7
-let after = m.k
-assert after == 12, "T9: expected 12 after read, got " & after
+print("--- 9. read-after-write ---")
+var kk = 5
+kk += 7
+var after = kk
+assert(after == 12, "T9: expected 12 after read, got " & after)
 
-# 10. Bracket form still works (regression guard for the case that
-#     was always correct, in case of accidental over-correction).
-print "--- 10. bracket m['n'] += 1 (x2) ---"
-m.bn = 0
-m["bn"] += 1
-m["bn"] += 1
-assert m.bn == 2, "T10: expected 2, got " & m.bn
+# 10. Instance fields: explicit form works (the compound form is a
+#     compile error in the new engine — see the port note).
+print("--- 10. instance field explicit form ---")
+class Acc
+    field n = 0
+    field s = ""
+end
+var m = Acc()
+m.n = m.n + 1
+m.n = m.n + 1
+m.n = m.n + 1
+assert(m.n == 3, "T10a: expected 3, got " & m.n)
+m.s = m.s & "ab"
+m.s = m.s & "c"
+assert(m.s == "abc", "T10b: expected abc, got " & m.s)
 
-# 11. Table subscript still works (the bug never affected Tables).
-print "--- 11. t['k'] += 1 (x3) ---"
-let t = {"k": 0}
+# 11. Table subscript.
+print("--- 11. t['k'] += 1 (x3) ---")
+var t = {"k": 0}
 t["k"] += 1
 t["k"] += 1
 t["k"] += 1
-assert t["k"] == 3, "T11: expected 3, got " & t["k"]
+assert(t["k"] == 3, "T11: expected 3, got " & t["k"])
 
-# 12. Local variable still works.
-print "--- 12. local n += 1 (x3) ---"
-let n = 0
-n += 1
-n += 1
-n += 1
-assert n == 3, "T12: expected 3, got " & n
+# 12. List subscript.
+print("--- 12. xs[1] += 1 (x3) ---")
+var xs = [0, 100]
+xs[1] += 1
+xs[1] += 1
+xs[1] += 1
+assert(xs[1] == 3, "T12a: expected 3, got " & xs[1])
+assert(xs[2] == 100, "T12b: neighbour untouched")
 
-print ""
-print "==== ALL compound-assignment tests passed ===="
+# 13. Local variable (the always-working case, guarded).
+print("--- 13. local n += 1 (x3) ---")
+var n = 0
+n += 1
+n += 1
+n += 1
+assert(n == 3, "T13: expected 3, got " & n)
+
+print("")
+print("==== ALL compound-assignment tests passed ====")

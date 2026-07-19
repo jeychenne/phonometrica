@@ -1,40 +1,61 @@
+# =====================================================================
+# test_class_ref.phon — value classes vs. ref classes.
+# =====================================================================
+# PORT NOTE (old -> new engine): class fields are declared with
+# `field x = 0` (bare `x = 0` was the old syntax) and the constructor
+# hook is `init` (was `initialize`). Two semantic changes are pinned
+# here and gap-logged in MIGRATION_NOTES.md:
+#   - `==` on two INDEPENDENTLY constructed value-class instances is
+#     now false (the old engine compared instances structurally; the
+#     new engine has no equals hook for instances yet, so equality is
+#     identity/sharing-based for both class kinds).
+#   - Mutating a shared value-class instance detaches a private copy
+#     (copy-on-write), so the alias also stops being == to the mutated
+#     binding. The observable the old test cared about — the alias
+#     keeps the old field value — is unchanged.
+# =====================================================================
+
 class Point
-	x = 0
-	y = 0
-	
-	method initialize(x as Number, y as Number)
-		this.x = x
-		this.y = y
-	end
+    field x = 0
+    field y = 0
+
+    method init(x as Number, y as Number)
+        this.x = x
+        this.y = y
+    end
 end
 
 
 ref class PointRef
-	x = 0
-	y = 0
-	
-	method initialize(x as Number, y as Number)
-		this.x = x
-		this.y = y
-	end
+    field x = 0
+    field y = 0
+
+    method init(x as Number, y as Number)
+        this.x = x
+        this.y = y
+    end
 end
 
-let p1 = Point(10, 5)
-let p2 = p1
-let p3 = Point(10, 5)
-assert p1 == p2
-assert p1 == p3
+# --- value class ------------------------------------------------------
+var p1 = Point(10, 5)
+var p2 = p1
+var p3 = Point(10, 5)
+assert(p1 == p2, "aliased value instances compare equal")
+# CHANGED from the old engine: no structural equality for instances.
+assert(p1 != p3, "independently built value instances are not equal (identity semantics; was structural)")
+assert(p3.x == 10 and p3.y == 5, "fields initialised through init")
 p1.x = 100
-assert p2.x == 10
+assert(p1.x == 100, "mutated binding sees its own write")
+assert(p2.x == 10, "alias keeps the old value (copy-on-write)")
 
-
-let pr1 = PointRef(10, 5)
-let pr2 = pr1
-let pr3 = PointRef(10, 5)
-assert pr1 == pr2
-assert pr1 != pr3
+# --- ref class --------------------------------------------------------
+var pr1 = PointRef(10, 5)
+var pr2 = pr1
+var pr3 = PointRef(10, 5)
+assert(pr1 == pr2, "aliased ref instances compare equal")
+assert(pr1 != pr3, "independently built ref instances are not equal")
 pr1.x = 100
-assert pr2.x == 100
+assert(pr2.x == 100, "ref-class mutation is visible through every alias")
 
 
-print "All test assertions for class value/reference passed."
+print("All test assertions for class value/reference passed.")

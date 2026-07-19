@@ -1,47 +1,52 @@
 # =====================================================================
 # engine/run_all.phon — runs every test_*.phon under engine/.
 # =====================================================================
-# Run from the engine/ directory:
-#     phonometrica run_all.phon
-# or from anywhere using an absolute path:
-#     phonometrica /path/to/test/engine/run_all.phon
+# Run with the new engine's script runner:
+#
+#     phon_repl run_all.phon
+#
+# (The runner executes files through Runtime::do_file, so imports
+# resolve in this file's own directory — no module path needed.)
 #
 # Each test_*.phon is self-contained: it uses the built-in `assert`
-# statement and aborts on the first failure with a clear message and
-# line number. There are no shared counters, so this orchestrator is
-# just a sequential `import` of every test file in this directory.
+# function and aborts on the first failure with a clear message. There
+# are no shared counters, so this orchestrator is just a sequential
+# `import` of every test file in this directory.
 #
-# A regression in any test surfaces as the script aborting at the
-# offending line — `phonometrica` returns a non-zero exit code, which
-# CI can pick up.
+# PORT NOTE: `import` is now a statement (not a function), and every
+# imported module's top level runs BEFORE this file's own statements,
+# in import order — so the closing banner below prints after all
+# tests, and there is no opening banner. A regression in any test
+# surfaces as the run aborting at the offending line with a non-zero
+# exit code, which CI can pick up.
+#
+# test_gui_trace.phon is intentionally NOT imported: it is a manual
+# smoke test that ends with a deliberate uncaught error.
 #
 # This file is engine-tests-only. Statistics validation lives under
 # ../statistics/ and uses the JSON-reference + assertion-helper
 # pattern; the two suites are intentionally kept apart.
 # =====================================================================
 
-print "######################################################################"
-print "# Phonometrica engine regression suite"
-print "######################################################################"
-
 # Order matters only insofar as a failure prints a clear localised
 # message; tests are otherwise independent. We run the simplest
 # scanner/parser tests first, then the more involved compiler ones.
 
-import("test_scientific_notation")
-import("test_string_interpolation")
-import("test_compound_assignment")
-import("test_multiple_declaration")
-import("test_upvalues")
-import("test_try_catch")
-import("test_try_catch_loops")
-import("test_nested_error_lines")
-import("test_error_trace")
-import("test_list_comprehension")
-import("test_class_ref")
-import("test_base_migration")
+import test_scientific_notation
+import test_string_interpolation
+import test_compound_assignment
+import test_multiple_declaration
+import test_upvalues
+import test_try_catch
+import test_try_catch_loops
+import test_nested_error_lines
+import test_error_trace
+import test_list_comprehension
+import test_class_ref
+import test_base_migration
+import test_fixed_gaps
 
-print ""
-print "######################################################################"
-print "# All engine tests passed."
-print "######################################################################"
+print("")
+print("######################################################################")
+print("# All engine tests passed.")
+print("######################################################################")

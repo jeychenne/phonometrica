@@ -1,156 +1,143 @@
 # =====================================================================
 # test_error_trace.phon
 # =====================================================================
-# Verifies `get_error_trace()` — the call-stack trace attached to the
-# most recently caught error. The trace is accumulated by the runtime
-# at every interpret() catch handler as the exception propagates, so
-# each call frame the error passed through contributes one entry.
+# Verifies the call-stack trace attached to an error at its FIRST
+# raise. In the new engine the trace lives on the Error value itself
+# (`e.trace`, a String), captured once by the raise and preserved
+# across re-throws; there is no separate get_error_trace() builtin.
 #
-# Trace shape (innermost-first):
-#   trace[1] = { file, line, function }    # throw site
-#   trace[2] = { file, line, function }    # next-out call site
-#   ...
-#   trace[N] = { file, line, function }    # catching frame
+# Trace shape (innermost-first, one frame per line):
+#     at <function> (line N)
+#     at <function> (line N)
+#     ...
+#     at <module> (line N)          # top-level frame
 #
-# Entry fields:
-#   - `file`     (String):  source path; "" for in-memory chunks
-#   - `line`     (Integer): 1-based; throw line for the innermost,
-#                           call-site line for each enclosing one
-#   - `function` (String):  routine name; "<chunk>" for top-level
-#
-# IMPORTANT: this test asserts specific physical line numbers. The
-# throw/error sites are concentrated in the helper block below; each
-# is paired with a `LINE_*` constant on the next line. If you edit
-# this file, keep the constants in sync with the actual line numbers.
+# PORT NOTE (old -> new engine): the old API returned a List of
+# {file, line, function} Tables; the new trace is a rendered String,
+# so these tests parse lines out of it. There is no `file` component
+# (gap-logged). Line numbers are asserted via LINE_* constants that
+# must match the physical lines of the helpers below; the trace is
+# captured at first raise, so the "replacement across catches" test
+# becomes "each new Error gets its own fresh trace".
 # =====================================================================
 
 # --- Helpers --------------------------------------------------------
 
-function throw_inner()
-    throw "deep"
+local function throw_inner()
+    throw Error("deep")
 end
-let LINE_THROW = 30
 
-function call_inner()
+local function call_inner()
     throw_inner()
 end
-let LINE_CALL_INNER_CALL = 35
 
-function call_call_inner()
+local function call_call_inner()
     call_inner()
 end
-let LINE_CALL_CALL_INNER_CALL = 40
 
-function divide_zero()
-    let x = 1 / 0
+local function divide_zero()
+    var x = 1 div 0
 end
-let LINE_DIVIDE = 45
+
+var LINE_THROW = 27
+var LINE_CALL_INNER_CALL = 31
+var LINE_CALL_CALL_INNER_CALL = 35
+var LINE_DIVIDE = 39
+
+# Split a trace into its lines. (rtrim first: the trace ends with a
+# newline and the engine's split currently aborts on a trailing
+# separator — gap-logged in MIGRATION_NOTES.md.)
+local function trace_entries(e)
+    var tr = e.trace
+    rtrim(tr)
+    return split(tr, "\n")
+end
 
 # --- Tests ----------------------------------------------------------
 
-# 1. Before any error has been caught: trace is empty.
-print "--- 1. initial state (no error) ---"
-let tr0 = get_error_trace()
-assert len(tr0) == 0, "expected empty trace before any catch, got " & str(len(tr0))
-
-# 2. Same-frame catch of a script throw: trace has one entry, the throw site.
-print "--- 2. same-frame throw ---"
+# 1. Same-frame catch of a script throw: trace has one entry, the
+#    module-level throw site.
+print("--- 1. same-frame throw ---")
 try
-    throw "same-frame"
-catch
-    let tr = get_error_trace()
-    assert len(tr) == 1, "same-frame: expected 1 entry, got " & str(len(tr))
-    # The function name here is "<chunk>" — top-level code, no enclosing function.
-    assert tr[1]["function"] == "<chunk>", "same-frame: expected function \"<chunk>\", got " & str(tr[1]["function"])
+    throw Error("same-frame")
+catch e
+    var tr = trace_entries(e)
+    assert(len(tr) == 1, "same-frame: expected 1 entry, got " & len(tr))
+    assert(contains(tr[1], "<module>"), "same-frame: expected frame <module>, got " & tr[1])
 end
 
-# 3. One-deep script throw. The throw is in throw_inner; the call site
-#    is inside call_inner; the catch sits in <chunk>. So the trace is
-#    three frames deep: [throw_inner, call_inner, <chunk>].
-#    CALL_SITE_3 must match the physical line of the `call_inner()` call below.
-print "--- 3. one-deep script throw ---"
-let CALL_SITE_3 = 74
+# 2. One-deep script throw. The throw is in throw_inner; the call site
+#    is inside call_inner; the catch sits at the module level. So the
+#    trace is three frames deep: [throw_inner, call_inner, <module>].
+#    CALL_SITE_2 must match the physical line of the `call_inner()`
+#    call below.
+print("--- 2. one-deep script throw ---")
+var CALL_SITE_2 = 77
 try
     call_inner()
-catch
-    let tr = get_error_trace()
-    assert len(tr) == 3, "one-deep: expected 3 entries, got " & str(len(tr))
+catch e
+    var tr = trace_entries(e)
+    assert(len(tr) == 3, "one-deep: expected 3 entries, got " & len(tr))
 
     # Innermost: the throw site inside throw_inner.
-    assert tr[1]["line"]     == LINE_THROW,         "one-deep tr[1].line: expected " & str(LINE_THROW) & ", got " & str(tr[1]["line"])
-    assert tr[1]["function"] == "throw_inner",      "one-deep tr[1].function: expected \"throw_inner\", got " & str(tr[1]["function"])
+    assert(contains(tr[1], "throw_inner (line " & LINE_THROW & ")"), "one-deep tr[1]: expected throw_inner line " & LINE_THROW & ", got " & tr[1])
 
     # Middle: the call site to throw_inner inside call_inner.
-    assert tr[2]["line"]     == LINE_CALL_INNER_CALL, "one-deep tr[2].line: expected " & str(LINE_CALL_INNER_CALL) & ", got " & str(tr[2]["line"])
-    assert tr[2]["function"] == "call_inner",        "one-deep tr[2].function: expected \"call_inner\", got " & str(tr[2]["function"])
+    assert(contains(tr[2], "call_inner (line " & LINE_CALL_INNER_CALL & ")"), "one-deep tr[2]: expected call_inner line " & LINE_CALL_INNER_CALL & ", got " & tr[2])
 
-    # Outermost: the call site to call_inner inside <chunk>.
-    assert tr[3]["line"]     == CALL_SITE_3,         "one-deep tr[3].line: expected " & str(CALL_SITE_3) & ", got " & str(tr[3]["line"])
-    assert tr[3]["function"] == "<chunk>",           "one-deep tr[3].function: expected \"<chunk>\", got " & str(tr[3]["function"])
+    # Outermost: the call site to call_inner at the module level.
+    assert(contains(tr[3], "<module> (line " & CALL_SITE_2 & ")"), "one-deep tr[3]: expected <module> line " & CALL_SITE_2 & ", got " & tr[3])
 end
 
-# 4. Two-deep script throw — trace must have four entries.
-#    CALL_SITE_4 must match the physical line of the `call_call_inner()` call below.
-print "--- 4. two-deep script throw ---"
-let CALL_SITE_4 = 97
+# 3. Two-deep script throw — trace must have four entries.
+#    CALL_SITE_3 must match the physical line of the
+#    `call_call_inner()` call below.
+print("--- 3. two-deep script throw ---")
+var CALL_SITE_3 = 98
 try
     call_call_inner()
-catch
-    let tr = get_error_trace()
-    assert len(tr) == 4, "two-deep: expected 4 entries, got " & str(len(tr))
-    assert tr[1]["function"] == "throw_inner",      "two-deep tr[1].function: expected \"throw_inner\""
-    assert tr[2]["function"] == "call_inner",       "two-deep tr[2].function: expected \"call_inner\""
-    assert tr[3]["function"] == "call_call_inner",  "two-deep tr[3].function: expected \"call_call_inner\""
-    assert tr[4]["function"] == "<chunk>",          "two-deep tr[4].function: expected \"<chunk>\""
-    assert tr[1]["line"]     == LINE_THROW,         "two-deep tr[1].line"
-    assert tr[2]["line"]     == LINE_CALL_INNER_CALL,      "two-deep tr[2].line"
-    assert tr[3]["line"]     == LINE_CALL_CALL_INNER_CALL, "two-deep tr[3].line"
-    assert tr[4]["line"]     == CALL_SITE_4,        "two-deep tr[4].line"
+catch e
+    var tr = trace_entries(e)
+    assert(len(tr) == 4, "two-deep: expected 4 entries, got " & len(tr))
+    assert(contains(tr[1], "throw_inner (line " & LINE_THROW & ")"), "two-deep tr[1]")
+    assert(contains(tr[2], "call_inner (line " & LINE_CALL_INNER_CALL & ")"), "two-deep tr[2]")
+    assert(contains(tr[3], "call_call_inner (line " & LINE_CALL_CALL_INNER_CALL & ")"), "two-deep tr[3]")
+    assert(contains(tr[4], "<module> (line " & CALL_SITE_3 & ")"), "two-deep tr[4]")
 end
 
-# 5. Native error (1/0) deep in a callee: trace should still report
-#    the throwing function. This exercises the "upgrade bare
-#    std::runtime_error" path in the runtime's catch handler — the
-#    error originally has no embedded line, but the interpreter
-#    seeds a RuntimeError with this frame's info before unwinding.
-#    CALL_SITE_5 must match the physical line of the `divide_zero()` call below.
-print "--- 5. native error one-deep ---"
-let CALL_SITE_5 = 120
+# 4. Native error (integer division by zero) deep in a callee: the
+#    trace must still report the throwing function. (Float 1/0 yields
+#    inf in the new engine, so the native error is `div`.)
+#    CALL_SITE_4 must match the physical line of the `divide_zero()`
+#    call below.
+print("--- 4. native error one-deep ---")
+var CALL_SITE_4 = 116
 try
     divide_zero()
-catch
-    let tr = get_error_trace()
-    assert len(tr) == 2, "native one-deep: expected 2 entries, got " & str(len(tr))
-    assert tr[1]["line"]     == LINE_DIVIDE,    "native tr[1].line: expected " & str(LINE_DIVIDE) & ", got " & str(tr[1]["line"])
-    assert tr[1]["function"] == "divide_zero",  "native tr[1].function: expected \"divide_zero\", got " & str(tr[1]["function"])
-    assert tr[2]["line"]     == CALL_SITE_5,    "native tr[2].line: expected " & str(CALL_SITE_5) & ", got " & str(tr[2]["line"])
-    assert tr[2]["function"] == "<chunk>",      "native tr[2].function: expected \"<chunk>\""
+catch e
+    var tr = trace_entries(e)
+    assert(len(tr) == 2, "native one-deep: expected 2 entries, got " & len(tr))
+    assert(contains(tr[1], "divide_zero (line " & LINE_DIVIDE & ")"), "native tr[1]: expected divide_zero line " & LINE_DIVIDE & ", got " & tr[1])
+    assert(contains(tr[2], "<module> (line " & CALL_SITE_4 & ")"), "native tr[2]: expected <module> line " & CALL_SITE_4 & ", got " & tr[2])
 end
 
-# 6. Trace and line agree: get_error_line() always equals trace[1].line.
-print "--- 6. line/trace agreement ---"
+# 5. Each caught error carries its own fresh trace (the trace is a
+#    field of the Error value, not runtime-global state).
+print("--- 5. traces are per-error ---")
+var first_trace = ""
 try
-    call_inner()
-catch
-    let tr = get_error_trace()
-    assert get_error_line() == tr[1]["line"], "line/trace disagree: get_error_line()=" & str(get_error_line()) & " vs tr[1].line=" & str(tr[1]["line"])
-end
-
-# 7. After a fresh catch, the runtime's stored trace is replaced —
-#    not appended. Catching a second error must give a clean trace.
-print "--- 7. trace replacement across catches ---"
-try
-    throw "first"
-catch
-    let len_first = len(get_error_trace())
-    assert len_first == 1, "first catch: expected 1 entry"
+    throw Error("first")
+catch e
+    first_trace = e.trace
+    assert(len(trace_entries(e)) == 1, "first catch: expected 1 entry")
 end
 try
     call_inner()
-catch
-    let tr = get_error_trace()
-    assert len(tr) == 3, "second catch (after first): expected 3 entries, got " & str(len(tr))
-    assert tr[1]["function"] == "throw_inner", "second catch: tr[1] must be inner"
+catch e
+    var tr = trace_entries(e)
+    assert(len(tr) == 3, "second catch (after first): expected 3 entries, got " & len(tr))
+    assert(contains(tr[1], "throw_inner"), "second catch: tr[1] must be inner")
+    assert(e.trace != first_trace, "the two errors must not share a trace")
 end
 
-print "test_error_trace: OK"
+print("test_error_trace: OK")

@@ -2,64 +2,68 @@
 # Each section banner localizes any failure: assert raises a runtime error,
 # halting the script at the first regression. Tolerances absorb harmless
 # representation noise on float comparisons.
+#
+# PORT NOTE (old -> new engine): `let` -> `var`; `assert`/`print` are ordinary
+# functions (parenthesized calls). Literal syntax is unchanged (scientific
+# notation, signed exponents, `_` separators). See MIGRATION_NOTES.md.
 
-let tol = 0.000_000_001
+var tol = 0.000_000_001
 
 # 1. Integer mantissa, no sign.
-print "--- 1. integer mantissa ---"
-assert abs(1e10 - 10000000000.0) <= tol, "1e10"
-assert abs(1E10 - 10000000000.0) <= tol, "1E10"
-assert abs(2e3  - 2000.0)        <= tol, "2e3"
+print("--- 1. integer mantissa ---")
+assert(abs(1e10 - 10000000000.0) <= tol, "1e10")
+assert(abs(1E10 - 10000000000.0) <= tol, "1E10")
+assert(abs(2e3  - 2000.0)        <= tol, "2e3")
 
 # 2. Integer mantissa with explicit sign.
-print "--- 2. signed exponent on integer mantissa ---"
-assert abs(1e+10 - 10000000000.0) <= tol, "1e+10"
-assert abs(1e-10 - 0.0000000001)  <= tol, "1e-10"
-assert abs(5E-2  - 0.05)          <= tol, "5E-2"
+print("--- 2. signed exponent on integer mantissa ---")
+assert(abs(1e+10 - 10000000000.0) <= tol, "1e+10")
+assert(abs(1e-10 - 0.0000000001)  <= tol, "1e-10")
+assert(abs(5E-2  - 0.05)          <= tol, "5E-2")
 
 # 3. Float mantissa (the form R typically emits).
-print "--- 3. float mantissa ---"
-assert abs(1.5e-3    - 0.0015)     <= tol, "1.5e-3"
-assert abs(1.234e-05 - 0.00001234) <= tol, "1.234e-05"
-assert abs(2.3E+05   - 230000.0)   <= tol, "2.3E+05"
-assert abs(0.0e0     - 0.0)        <= tol, "0.0e0"
+print("--- 3. float mantissa ---")
+assert(abs(1.5e-3    - 0.0015)     <= tol, "1.5e-3")
+assert(abs(1.234e-05 - 0.00001234) <= tol, "1.234e-05")
+assert(abs(2.3E+05   - 230000.0)   <= tol, "2.3E+05")
+assert(abs(0.0e0     - 0.0)        <= tol, "0.0e0")
 
 # 4. Underscore digit separators in mantissa and exponent.
-print "--- 4. underscore separators ---"
-assert abs(1_000e2 - 100000.0)      <= tol, "1_000e2"
-assert abs(1.5e1_0 - 15000000000.0) <= tol, "1.5e1_0"
+print("--- 4. underscore separators ---")
+assert(abs(1_000e2 - 100000.0)      <= tol, "1_000e2")
+assert(abs(1.5e1_0 - 15000000000.0) <= tol, "1.5e1_0")
 
 # 5. Unary minus combines with scientific literal as expected.
-print "--- 5. unary minus ---"
-assert abs(-1.234e-05 - (-0.00001234)) <= tol, "-1.234e-05"
-assert abs(-2e3       - (-2000.0))     <= tol, "-2e3"
+print("--- 5. unary minus ---")
+assert(abs(-1.234e-05 - (-0.00001234)) <= tol, "-1.234e-05")
+assert(abs(-2e3       - (-2000.0))     <= tol, "-2e3")
 
 # 6. Arithmetic with scientific literals.
-print "--- 6. arithmetic ---"
-assert abs((1e3 + 2e3)      - 3000.0)   <= tol, "1e3 + 2e3"
-assert abs((1.5e2 * 2)      - 300.0)    <= tol, "1.5e2 * 2"
-assert abs((1e-3 + 2e-3)    - 0.003)    <= tol, "1e-3 + 2e-3"
-assert abs(((1e10) / (1e5)) - 100000.0) <= tol, "(1e10) / (1e5)"
+print("--- 6. arithmetic ---")
+assert(abs((1e3 + 2e3)      - 3000.0)   <= tol, "1e3 + 2e3")
+assert(abs((1.5e2 * 2)      - 300.0)    <= tol, "1.5e2 * 2")
+assert(abs((1e-3 + 2e-3)    - 0.003)    <= tol, "1e-3 + 2e-3")
+assert(abs(((1e10) / (1e5)) - 100000.0) <= tol, "(1e10) / (1e5)")
 
 # 7. Scientific literals in lists and as function arguments.
-print "--- 7. lists ---"
-let xs = [1e0, 1e1, 1e2, 1e3]
-assert abs(xs[1] - 1.0)    <= tol, "xs[1]"
-assert abs(xs[4] - 1000.0) <= tol, "xs[4]"
+print("--- 7. lists ---")
+var xs = [1e0, 1e1, 1e2, 1e3]
+assert(abs(xs[1] - 1.0)    <= tol, "xs[1]")
+assert(abs(xs[4] - 1000.0) <= tol, "xs[4]")
 
 # 8. Scientific literals inside JSON-shaped tables (the engine being a
 #    JSON superset is the whole point — R's JSON output uses 1.234e-05).
-print "--- 8. JSON-shaped table ---"
-let t = { "lo": 1.0e-9, "hi": 9.9e9 }
-assert abs(t["lo"] - 1e-9) <= tol, "t.lo"
-assert abs(t["hi"] - 9.9e9) <= tol, "t.hi"
+print("--- 8. JSON-shaped table ---")
+var t = { "lo": 1.0e-9, "hi": 9.9e9 }
+assert(abs(t["lo"] - 1e-9) <= tol, "t.lo")
+assert(abs(t["hi"] - 9.9e9) <= tol, "t.hi")
 
 # 9. Conservative fallback: 'e' not followed by sign-or-digit is NOT
 #    treated as part of the number. The literal here is integer 1, and
 #    multiplication with the variable e2 must still work as before.
-print "--- 9. fallback for ambiguous 'e<letter>' ---"
-let e2 = 7
-assert (1 * e2) == 7, "1 * e2"
+print("--- 9. fallback for ambiguous 'e<letter>' ---")
+var e2 = 7
+assert((1 * e2) == 7, "1 * e2")
 
-print ""
-print "All scientific-notation assertions passed."
+print("")
+print("All scientific-notation assertions passed.")
