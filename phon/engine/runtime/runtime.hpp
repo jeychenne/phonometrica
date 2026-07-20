@@ -24,8 +24,10 @@
 #include <phon/engine/types/string.hpp>
 #include <phon/engine/vm/isolate.hpp> // RuntimeError (the error embedders catch)
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace phonometrica {
@@ -123,6 +125,51 @@ public:
 	// do_string throws a RuntimeError carrying an "[Interrupt]" message. A no-op if no
 	// run is in progress by the time the next run clears it.
 	void request_interrupt() noexcept;
+
+	// --- calling script functions from C++ (design §11; roadmap E1) --------------
+
+	// Call a script-callable value `fn` with `nargs` positional arguments and return
+	// its result (null for a void/no-return callable). `fn` is a function value —
+	// typically from get_function(name) or get_global(name), or any Variant holding a
+	// closure/native. Works whether or not a script is currently running on this
+	// session (it re-enters an in-progress run, or drives a fresh call when idle).
+	// Throws RuntimeError on an uncaught script error, and on a non-callable `fn`.
+	//
+	// Limitation (engine DEVIATIONS item 13): keyword options and `ref` promotion do
+	// NOT flow through an indirect call — pass only positional arguments, and the
+	// callee must not declare keyword/ref parameters. This suffices for the app's
+	// signal dispatch (Project::emit_signal calls `emit(event, payload)`).
+	Variant call(const Variant &fn, const Variant *args, int nargs);
+	Variant call(const Variant &fn) { return call(fn, nullptr, 0); }
+
+	// The first-class value of a named generic function (design §6: named functions are
+	// values), for feeding to call(). Returns a null Variant if no such function is
+	// defined. This is how C++ reaches a script-defined top-level function such as the
+	// signal system's `emit`.
+	Variant get_function(const char *name) const;
+
+	// Read a value from this session's isolate-global namespace — the inverse of
+	// add_global, also resolving script-side `global var` bindings. Returns a null
+	// Variant if the name is not a global.
+	Variant get_global(const char *name) const;
+
+	// --- output redirection (roadmap E3) -----------------------------------------
+	//
+	// Install sinks for script/host output, mirroring the old Runtime's print /
+	// show_error / clear_output seams the GUI console swaps. A null hook restores the
+	// default (stdout/stderr; clear is a no-op). The `print` builtin and the emitters
+	// below all route through these.
+	void set_output_hook(std::function<void(std::string_view)> hook);
+	void set_error_output_hook(std::function<void(std::string_view)> hook);
+	void set_clear_output_hook(std::function<void()> hook);
+
+	// Emit host-side output through the same sinks the `print` builtin uses (the
+	// statistics printers, diagnostics, …). `print` writes the text verbatim (add your
+	// own newline); `print_error` routes to the error sink; `clear_output` empties the
+	// console.
+	void print(std::string_view text);
+	void print_error(std::string_view text);
+	void clear_output();
 
 	// Force a cycle-collection pass now (design/architecture §8.2). Normally the
 	// collector runs itself at safepoints; this is the explicit hook for the

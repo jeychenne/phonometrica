@@ -23,8 +23,10 @@
 #include <phon/engine/vm/proto.hpp>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace phonometrica {
@@ -143,6 +145,26 @@ public:
 	// having no line of their own — substitutes it, so a native error reports the
 	// script call site rather than "line 0".
 	int native_call_line = 0;
+
+	// --- output redirection (embedding, roadmap E3) ------------------------------
+	//
+	// Redirectable sinks for script/host output, mirroring the old Runtime's print /
+	// show_error / clear_output seams the GUI console swaps (phon/gui/console.cpp).
+	// Null by default: write_output goes to stdout and write_error_output to stderr, so
+	// a headless run prints normally. The GUI installs hooks (Runtime::set_output_hook /
+	// set_error_output_hook / set_clear_output_hook) so `print`, error-styled output, and
+	// console-clear land in its panel instead. The `print` builtin and the host-side
+	// Runtime::print/print_error/clear_output all funnel through these, so one set of
+	// hooks covers script and C++ output alike. Text arrives already formatted (print
+	// keeps its trailing newline).
+	std::function<void(std::string_view)> output_hook;
+	std::function<void(std::string_view)> error_output_hook;
+	std::function<void()> clear_output_hook;
+
+	// Route formatted text to the installed sink, or to stdout/stderr when none is set.
+	void write_output(std::string_view s);
+	void write_error_output(std::string_view s);
+	void clear_output();
 
 	// --- open upvalues (shared while their register is live) ---
 

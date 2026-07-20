@@ -31,6 +31,13 @@ Value execute(Isolate &iso, ClosureCell *main);
 // Throws RuntimeError on an uncaught worker error.
 Value run_callable(Isolate &iso, Value callee, Value *args, int argc);
 
+// Call `callee`(args) on `iso` from the embedding boundary (Runtime::call, roadmap E1),
+// transparently choosing the fresh-stack path when `iso` has no live frame or the
+// re-entrant path (staging above the caller's registers) when a script is already
+// running on it. The args are borrowed; the result carries +1. Throws RuntimeError on
+// an uncaught error.
+Value call_from_host(Isolate &iso, Value callee, Value *args, int argc);
+
 // Spawn seam (architecture §1: concurrency provides thread entry, vm calls it). Launches
 // `callee`(transferred `args`) on a fresh Isolate + OS thread and returns a thread-handle
 // cell (+1) joinable via `wait`. Declared here so the SPAWN opcode can call it; DEFINED in

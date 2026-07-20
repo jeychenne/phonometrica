@@ -55,7 +55,7 @@ Value builtin_print(Isolate &iso, NativeCell *, Value *args, int argc)
 		out.append(stringify(iso, args[i]));
 	}
 	out.append("\n");
-	std::fwrite(out.data(), 1, static_cast<size_t>(out.size()), stdout);
+	iso.write_output(std::string_view(out.data(), static_cast<size_t>(out.size())));
 	return Value::make_null();
 }
 
@@ -644,6 +644,120 @@ intptr_t Runtime::gc_candidate_count() const
 {
 	return m_state->isolate.collector().candidate_count();
 }
+
+// --- calling script functions from C++ (roadmap E1) ---------------------------
+
+Variant Runtime::call(const Variant &fn, const Variant *args, int nargs)
+{
+	Isolate &iso = m_state->isolate;
+	Value callee = fn.value();
+	if (!is_closure(callee) && !is_native(callee))
+	{
+		// A guard at the embedding boundary (not a script-raised error): carry the
+		// message only, with a null error value, so a catcher that inspects just
+		// e.message needs to release nothing.
+		throw RuntimeError{String("[Type error] value is not callable"), 0, Value::make_null()};
+	}
+
+	// Stage the positional arguments as raw Values (borrowed; the call retains as needed).
+	std::vector<Value> argv;
+	argv.reserve(static_cast<size_t>(nargs));
+	for (int i = 0; i < nargs; ++i)
+		argv.push_back(args[i].value());
+
+	// If a script is already running on this session, re-enter it (vm_call stages above
+	// the live frame); otherwise we own the run and drive it from the empty stack. The
+	// isolate/collector context and interrupt reset are ours to manage only in the
+	// latter case — touching them mid-run would disturb the in-flight script.
+	const bool owns_run = iso.frames.size() == 0;
+	Isolate *prev = nullptr;
+	CycleCollector *prev_cc = nullptr;
+	if (owns_run)
+	{
+		prev = current_isolate();
+		prev_cc = current_collector();
+		set_current_isolate(&iso);
+		set_current_collector(&iso.collector());
+		iso.clear_interrupt();
+	}
+	try
+	{
+		Value r = call_from_host(iso, callee, argv.data(), nargs);
+		Variant out(r);
+		if (r.is_cell())
+			release(r.as_cell()); // drop the call's +1; `out` holds its own reference
+		if (owns_run)
+		{
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		return out;
+	}
+	catch (RuntimeError &e)
+	{
+		// When we own the run, clean up like State::run does (release the live stack and
+		// the in-flight error value, keeping message/line) and restore the context. When
+		// re-entrant, leave everything for the outer run()'s handler and just propagate.
+		if (owns_run)
+		{
+			iso.unwind_on_error();
+			if (e.error.is_cell())
+				release(e.error.as_cell());
+			e.error = Value::make_null();
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		throw;
+	}
+	catch (...)
+	{
+		if (owns_run)
+		{
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		throw;
+	}
+}
+
+Variant Runtime::get_function(const char *name) const
+{
+	Symbol s = intern(name);
+	GenericFunction *g = find_generic(s);
+	if (!g || g->methods.size() == 0)
+		return Variant(); // null: no such function
+	return Variant(Value::make_cell(generic_function_value(s)));
+}
+
+Variant Runtime::get_global(const char *name) const
+{
+	State &st = *m_state;
+	int slot = st.modules.find_global(intern(name));
+	if (slot < 0 || static_cast<intptr_t>(slot) >= st.isolate.module_slots.size())
+		return Variant(); // null: not a global
+	return st.isolate.module_slots[slot];
+}
+
+// --- output redirection (roadmap E3) ------------------------------------------
+
+void Runtime::set_output_hook(std::function<void(std::string_view)> hook)
+{
+	m_state->isolate.output_hook = std::move(hook);
+}
+
+void Runtime::set_error_output_hook(std::function<void(std::string_view)> hook)
+{
+	m_state->isolate.error_output_hook = std::move(hook);
+}
+
+void Runtime::set_clear_output_hook(std::function<void()> hook)
+{
+	m_state->isolate.clear_output_hook = std::move(hook);
+}
+
+void Runtime::print(std::string_view text) { m_state->isolate.write_output(text); }
+void Runtime::print_error(std::string_view text) { m_state->isolate.write_error_output(text); }
+void Runtime::clear_output() { m_state->isolate.clear_output(); }
 
 Variant do_string(const String &src)
 {

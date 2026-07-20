@@ -578,3 +578,104 @@ TEST_CASE("embed: polymorphic handle upcast, checked downcast, and base-handle c
 	// Every retained reference was balanced — no leak from the extra handles.
 	CHECK(g_points_alive == before);
 }
+
+// E1 / gap G2: call a script-defined function from C++ (Project::emit_signal's shape).
+TEST_CASE("embed: Runtime::call invokes a script function from C++")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	if (!find_foreign_field(class_of<EmbedPoint>(), intern("x")))
+		rt.add_field<EmbedPoint>("x", [](const EmbedPoint &p) { return p.x; });
+
+	// A named script function is a first-class value: fetch it and call it from C++.
+	rt.do_string("function twice(n)\n return n * 2\nend");
+	Variant twice = rt.get_function("twice");
+	CHECK(!twice.is_null());
+	Variant a0 = Variant::from_int(21);
+	CHECK(rt.call(twice, &a0, 1).as_int() == 42);
+
+	// The gate case: pass a boxed foreign-class instance across the boundary — the script
+	// reads a registered field off the C++ object we hand it.
+	rt.do_string("function px_plus(p, d)\n return p.x + d\nend");
+	Handle<EmbedPoint> p = Handle<EmbedPoint>::make(3.0, 4.0);
+	Variant args[2] = {Variant::make(p), Variant::from_double(1.5)};
+	CHECK(rt.call(rt.get_function("px_plus"), args, 2).as_double() == 4.5);
+
+	// get_function on an undefined name is null; calling a non-callable throws.
+	CHECK(rt.get_function("no_such_fn").is_null());
+	bool threw = false;
+	try
+	{
+		Variant n = Variant::from_int(5);
+		rt.call(n, &n, 1);
+	}
+	catch (RuntimeError &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
+
+	// An uncaught script error propagates as RuntimeError and leaves the session usable.
+	rt.do_string("function boom()\n return 1 div 0\nend");
+	bool threw2 = false;
+	try
+	{
+		rt.call(rt.get_function("boom"));
+	}
+	catch (RuntimeError &)
+	{
+		threw2 = true;
+	}
+	CHECK(threw2);
+	CHECK(rt.do_string("1 + 1").as_int() == 2);
+
+	// A re-entrant call: a native, invoked mid-run, calls back into a script function
+	// while a frame is live (the vm_call path inside call_from_host).
+	rt.add_function("reenter", [&rt](int64_t n) {
+		Variant arg = Variant::from_int(n);
+		return rt.call(rt.get_function("twice"), &arg, 1).as_int();
+	});
+	CHECK(rt.do_string("reenter(20) + 1").as_int() == 41);
+
+	// get_global is the inverse of add_global (and reads null for an absent name).
+	rt.add_global("inj", Variant::from_int(99));
+	CHECK(rt.get_global("inj").as_int() == 99);
+	CHECK(rt.get_global("nope").is_null());
+}
+
+// E3 / gap G4: redirectable print / error / clear-output hooks.
+TEST_CASE("embed: output hooks redirect print, error output, and clear")
+{
+	Runtime rt;
+	std::string out;
+	rt.set_output_hook([&](std::string_view s) { out.append(s); });
+
+	rt.do_string("print(\"hello\")");
+	CHECK(out == "hello\n");
+	out.clear();
+	rt.do_string("print(1, 2, 3)"); // print joins with a space and adds a newline
+	CHECK(out == "1 2 3\n");
+
+	// Host-side output funnels through the same sink.
+	out.clear();
+	rt.print("direct");
+	CHECK(out == "direct");
+
+	// Error output and clear route to their own hooks.
+	std::string err;
+	bool cleared = false;
+	rt.set_error_output_hook([&](std::string_view s) { err.append(s); });
+	rt.set_clear_output_hook([&] { cleared = true; });
+	rt.print_error("oops");
+	rt.clear_output();
+	CHECK(err == "oops");
+	CHECK(cleared);
+
+	// Clearing a hook restores the default (no capture): the next print does not reach
+	// our buffer (it goes to stdout).
+	rt.set_output_hook(nullptr);
+	out.clear();
+	rt.print("to stdout");
+	CHECK(out.empty());
+}

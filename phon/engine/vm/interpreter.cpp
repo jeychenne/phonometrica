@@ -2264,8 +2264,12 @@ Value vm_call(Isolate &iso, Value callee, Value *args, int argc)
 	auto *cl = reinterpret_cast<ClosureCell *>(callee.as_cell());
 	Proto *cp = cl->proto;
 
-	CallFrame &top = iso.frames.back();
-	Value *nb = top.base + top.cl->proto->num_regs; // above the caller's live registers
+	// Base the new frame above the caller's live registers, or — when invoked at the host
+	// boundary with no live frame (Runtime::call on an idle session, via call_from_host) —
+	// at the stack root, the same base execute() uses. run()'s stop_depth is derived from
+	// the frame count at entry, so it terminates correctly either way.
+	Value *nb = iso.frames.size() == 0 ? iso.stack() + 1
+	                                   : iso.frames.back().base + iso.frames.back().cl->proto->num_regs;
 	Value *stack_end = iso.stack() + iso.stack_capacity();
 	// The frame needs room for its registers *and* the staged args (a variadic callee
 	// stages more positional args than its packed frame holds).
@@ -2344,16 +2348,22 @@ String stringify_dispatch(Isolate &iso, Value v)
 Cell *generic_function_value(Symbol name)
 {
 	// One cell per name, for the life of the process (generics are never destroyed;
-	// the mutex covers the rare concurrent-compilation case).
+	// the mutex covers the rare concurrent-compilation case). The map is a
+	// deliberately never-destroyed heap root, reachable from the static pointer: a
+	// value-typed static would run its destructor at exit *before* LeakSanitizer's
+	// check (atexit LIFO vs. the early-registered LSan hook), orphaning these
+	// process-lifetime cells and reporting each as a leak. Keeping the map alive keeps
+	// the cells reachable, so a legitimate function-value (script `var f = g`, or the
+	// embedding get_function) is clean under ASan.
 	static std::mutex mu;
-	static std::unordered_map<uint32_t, Cell *> cells;
+	static auto *cells = new std::unordered_map<uint32_t, Cell *>();
 	std::lock_guard<std::mutex> lock(mu);
-	auto it = cells.find(name.id);
-	if (it != cells.end())
+	auto it = cells->find(name.id);
+	if (it != cells->end())
 		return it->second;
 	NativeCell *nf = make_native(&generic_value_trampoline, name, 0, -1);
 	Cell *c = reinterpret_cast<Cell *>(nf); // the map keeps the creation reference
-	cells.emplace(name.id, c);
+	cells->emplace(name.id, c);
 	return c;
 }
 
@@ -2401,6 +2411,16 @@ Value run_callable(Isolate &iso, Value callee, Value *args, int argc)
 	setup_callee_frame(iso, cp, base, argc, /*nnamed=*/0, 0);
 	iso.frames.push_back(CallFrame{cl, base, nullptr, &stack[0]});
 	return run(iso);
+}
+
+Value call_from_host(Isolate &iso, Value callee, Value *args, int argc)
+{
+	// vm_call handles both the re-entrant case (a script is running on `iso`) and the
+	// idle case (no live frame — it bases the frame at the stack root, like execute()).
+	// Unlike run_callable it also works when `callee` is a native that re-enters the VM
+	// (a named-function value's dispatch trampoline), which is exactly what a fetched
+	// script function is.
+	return vm_call(iso, callee, args, argc);
 }
 
 // Stringify dispatching a user to_string (for print and the string library).

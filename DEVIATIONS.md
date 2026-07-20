@@ -1956,3 +1956,50 @@ two *explicit C++ handle primitives* that were still missing.
       whose element still reports its derived class and downcasts selectively. 397
       cases green under normal/ASan/TSan (leak-balanced: `g_points_alive` returns to
       its baseline).
+
+## Step-5 cutover support — Runtime::call + output hooks (Phonometrica roadmap E1/E3, 2026-07-20)
+
+The GUI cutover (roadmap A4) needs two Runtime seams the old engine had and the new one
+lacked: a way for C++ to call a script function value (Project::emit_signal invokes the
+signal system's `emit`), and redirectable print/error/clear-output sinks the GUI console
+swaps in.
+
+18. **`Runtime::call` + function/global accessors (roadmap E1, gap G2).**
+    - `Runtime::call(const Variant &fn, const Variant *args, int nargs)` calls a
+      script-callable value and returns its result. It works whether or not a script is
+      already running on the session: the new `call_from_host` (interpreter.hpp) routes
+      to `vm_call`, which now bases its frame at the stack root when `iso.frames` is
+      empty (the idle host-boundary case) and above the caller's registers otherwise.
+      This one change lets `vm_call` also drive a *native that re-enters the VM* — a
+      named-function value's dispatch trampoline — from an idle session, which the old
+      `run_callable` native path could not (it pushed no frame, so the trampoline's inner
+      `vm_call` hit an empty frame stack). `run()`'s stop_depth is the frame count at
+      entry, so termination is correct in both modes. When Runtime::call owns the run it
+      manages the isolate/collector context and unwinds on an uncaught error like
+      State::run; re-entrant, it leaves that to the outer run. Indirect-call limits from
+      item 13 (no keyword/ref flow) are documented on the API.
+    - `Runtime::get_function(name)` returns the first-class value of a named generic (null
+      if undefined) — how C++ reaches a script-defined top-level function such as `emit`.
+      `Runtime::get_global(name)` is the inverse of add_global (also resolves `global
+      var`), null for a non-global.
+    - Hardening surfaced by the ASan gate: `generic_function_value`'s per-name singleton
+      map is now a deliberately never-destroyed heap root (a value-typed static ran its
+      destructor before LSan's exit check, orphaning the process-lifetime cells and
+      reporting each as a leak). A legitimate function value — script `var f = g` or the
+      new get_function — is now clean under ASan. The non-callable guard in Runtime::call
+      throws a message-only RuntimeError (null error value) so a catcher releases nothing.
+
+19. **Output redirection hooks (roadmap E3, gap G4).** The Isolate carries three
+    settable sinks — `output_hook`, `error_output_hook`, `clear_output_hook` — plus
+    `write_output`/`write_error_output`/`clear_output` that route to them or fall back to
+    stdout/stderr (clear: no-op) when unset. The `print` builtin now writes through
+    `iso.write_output`. Runtime exposes `set_output_hook`/`set_error_output_hook`/
+    `set_clear_output_hook` and the host-side emitters `print`/`print_error`/
+    `clear_output`, so the GUI console (phon/gui/console.cpp) and the statistics printers
+    reach the same sink. Mirrors the old Runtime's print/show_error/clear_output seams.
+
+    Tests (test_embed.cpp): "Runtime::call invokes a script function from C++" (named-fn
+    fetch + call, a boxed foreign-class argument the script reads a field off, null
+    get_function, non-callable throw, uncaught-error propagation + session still usable,
+    a re-entrant native→script call, add_global/get_global round-trip) and "output hooks
+    redirect print, error output, and clear". 399 cases green under normal/ASan/TSan.

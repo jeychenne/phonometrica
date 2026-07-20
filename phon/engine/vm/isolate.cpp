@@ -9,9 +9,32 @@
 #include <phon/engine/types/list.hpp>
 #include <phon/engine/types/table.hpp>
 
+#include <cstdio>
 #include <utility>
 
 namespace phonometrica {
+
+void Isolate::write_output(std::string_view s)
+{
+	if (output_hook)
+		output_hook(s);
+	else if (!s.empty())
+		std::fwrite(s.data(), 1, s.size(), stdout);
+}
+
+void Isolate::write_error_output(std::string_view s)
+{
+	if (error_output_hook)
+		error_output_hook(s);
+	else if (!s.empty())
+		std::fwrite(s.data(), 1, s.size(), stderr);
+}
+
+void Isolate::clear_output()
+{
+	if (clear_output_hook)
+		clear_output_hook();
+}
 
 Cell *make_error(const String &message)
 {
