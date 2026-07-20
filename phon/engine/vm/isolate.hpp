@@ -23,6 +23,7 @@
 #include <phon/engine/vm/proto.hpp>
 
 #include <atomic>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <string>
@@ -60,11 +61,27 @@ inline constexpr uint64_t kICEmpty = ~uint64_t(0);
 // per-Isolate handler stack catches it at a `try`; if none applies it propagates as
 // this C++ exception to the `do_string` boundary. `error` holds one reference the
 // catcher adopts.
-struct RuntimeError
+struct RuntimeError : std::exception
 {
 	String message;
-	int line;
+	int line = 0;
 	Value error = Value::make_null();
+
+	// Derives from std::exception (roadmap E5/G6c) so an embedder's catch-all
+	// (`catch (std::exception &)`) catches an uncaught script error instead of letting
+	// it reach std::terminate. `what()` returns the message bytes; the copy is built
+	// here (the error path is rare) so what() stays trivially noexcept and the pointer
+	// stays valid for the exception's lifetime.
+	RuntimeError(String msg, int ln, Value err = Value::make_null())
+	    : message(std::move(msg)), line(ln), error(err),
+	      m_what(message.data(), static_cast<size_t>(message.size()))
+	{
+	}
+
+	const char *what() const noexcept override { return m_what.c_str(); }
+
+private:
+	std::string m_what;
 };
 
 // Create an Error instance carrying `message` (refcount 1). Used by `raise` and the

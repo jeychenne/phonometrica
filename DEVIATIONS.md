@@ -2003,3 +2003,68 @@ swaps in.
     get_function, non-callable throw, uncaught-error propagation + session still usable,
     a re-entrant native→script call, add_global/get_global round-trip) and "output hooks
     redirect print, error output, and clear". 399 cases green under normal/ASan/TSan.
+
+## Step-5 cutover support — Table dot-sugar + RuntimeError std::exception (Phonometrica roadmap E2/E5, 2026-07-20)
+
+The GUI cutover (roadmap A4) injects a `phon` namespace whose members are read and
+called with dot syntax (`phon.get_version()`, `phon.settings = {...}`,
+`phon.project.save()`). The owner chose the smallest-delta option: a Table injected via
+add_global, with dot-access sugar on Tables (verified necessary — dot-access on a Table
+previously raised "value has no fields"). The RuntimeError std::exception change (G6c)
+and the G6a ratification below were decided in the same pass.
+
+20. **Table dot-sugar: `t.name` reads/writes the string key "name" (roadmap E2, gap G3).**
+    GETFIELD on a Table looks up the field name as a string key; a **missing key raises
+    `[Key error]`** (dot implies a known member — `t["name"]` stays lenient, returning
+    null for a dynamic key). SETFIELD on a Table mirrors SETINDEX exactly: a reference
+    value is written through its box (no detach), otherwise the CoW table detaches if
+    shared and the possibly-new table is written back to R[A]. A function-valued key is
+    callable as `t.f(...)`; nested reads chain (`a.b.c`). This reproduces the old app's
+    `phon.*` syntax with no new object kind.
+    - **CoW caveat for A4 (important).** Table is a value (CoW) type. A top-level field
+      write on a *global* table persists (the compiler stores back to the global slot —
+      verified: `phon.settings = {...}` works). But (a) a **nested** write
+      `a.b.c = x` does NOT persist — the inner table detaches and writes back to a temp,
+      not the outer container; this is the SAME pre-existing limitation as nested INDEX
+      writes `a["b"]["c"] = x` (references.md §7), not new to dot-sugar. And (b) any field
+      write to `phon` detaches it (its refcount is ≥2 via the global slot + the transient
+      GETGLOBAL register), so C++ must **re-fetch `phon` via get_global rather than cache a
+      Handle** across script runs — the injected namespace does not stay pointer-stable
+      through script mutation the way the old reference-typed Module did. The app already
+      re-reads settings after a script run (settings.cpp), so this fits, but A4 must not
+      hold a long-lived C++ Handle to the phon table expecting to see script writes.
+      (If pointer-stable shared mutation is later required, that argues for a dedicated
+      reference-typed namespace object — roadmap E2 option (b).)
+    - Implementation note: the key Variant is built with `Variant(kname.to_value())`, not
+      `Variant::make` — `Variant::make<String>` pulls `detail::variant_from<String>`
+      (native_traits.hpp), which interpreter.cpp does not include (it linked only by
+      incidental instantiation under -O2, and the TSan build caught the undefined
+      reference).
+
+21. **`RuntimeError` derives from `std::exception` (roadmap E5/G6c).** An embedder's
+    `catch (std::exception &)` now catches an uncaught script error instead of letting it
+    reach std::terminate (the "missed catch → fake segfault" the 4b host hit). `what()`
+    returns the message bytes (built in the constructor so what() stays noexcept and the
+    pointer stays valid for the exception's lifetime). The three aggregate-init sites use
+    the added `(String, int, Value)` constructor unchanged. Safe: the interpreter's
+    run-loop catches RuntimeError/ScriptError explicitly (no bare `catch(std::exception)`
+    around natives); the only std::exception catchers (regex, embedder bindings) are not
+    re-entrant VM paths. A native that BOTH catches std::exception to convert C++ errors
+    AND re-enters the VM would now also catch a propagating RuntimeError — such a native
+    should catch RuntimeError explicitly first; none exists today.
+
+**Owner decisions recorded (no engine change):**
+- **G6a — ratify the rename policy.** Per-generic ref-mask uniformity stays; native
+  overload sets that would mix ref-shapes under one name (the old `append(ref List, …)` +
+  `append(ref DataTable, …)`) are renamed at A3 (4b already used `add_column`). No move to
+  per-method ref-masks.
+- **S6** (structural equality for value-class instances) and **L5** (field compound
+  assignment `o.f += 1`, which also blocks `t.a += 1` on a dot-sugared Table) are
+  **deferred** — no shipped script needs S6, and L5 is an ergonomic wart, not a blocker.
+
+Tests (test_embed.cpp): "Table dot-sugar reads and writes string keys" (dot read/write,
+member call, nested read, missing-key [Key error] vs null index, injected-namespace
+global with a callable member + assignable field) and "an uncaught script error is
+catchable as std::exception". 401 cases green under normal/ASan/TSan; the ported
+test/engine suite (phon_repl) and the frequentist statistics suite (552/552, phon_stats
+rebuilt against this engine) re-verified.

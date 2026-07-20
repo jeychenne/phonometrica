@@ -679,3 +679,55 @@ TEST_CASE("embed: output hooks redirect print, error output, and clear")
 	rt.print("to stdout");
 	CHECK(out.empty());
 }
+
+// E2 / gap G3: Table dot-sugar — the `phon` namespace shape (callable members +
+// an assignable field), with dot reading/writing string keys and a missing member
+// raising [Key error] while indexing stays lenient.
+TEST_CASE("embed: Table dot-sugar reads and writes string keys")
+{
+	Runtime rt;
+	CHECK(rt.do_string("var t = {\"a\": 1}\nt.a").as_int() == 1);          // dot read
+	CHECK(rt.do_string("var t = {}\nt.b = 42\nt[\"b\"]").as_int() == 42);  // dot write == index set
+	CHECK(rt.do_string("var t = {\"f\": function() return 7 end}\nt.f()").as_int() == 7); // member call
+	CHECK(rt.do_string("var n = {\"p\": {\"x\": 5}}\nn.p.x").as_int() == 5);              // nested read
+
+	// A missing member: dot raises [Key error]; indexing the same key returns null.
+	CHECK(rt.do_string("var t = {\"a\": 1}\nt[\"nope\"] == null").as_bool());
+	bool threw = false;
+	try
+	{
+		rt.do_string("var t = {\"a\": 1}\nt.nope");
+	}
+	catch (RuntimeError &e)
+	{
+		threw = true;
+		CHECK(std::string(e.what()).find("Key error") != std::string::npos);
+	}
+	CHECK(threw);
+
+	// The injected-namespace shape: a global table with a callable member and an
+	// assignable field (top-level field writes on a global table persist).
+	rt.add_global("phon",
+	              rt.do_string("{\"get_version\": function() return \"1.5\" end, \"settings\": {}}"));
+	CHECK(rt.do_string("phon.get_version()").to<String>() == String("1.5"));
+	rt.do_string("phon.settings = {\"x\": 3}");
+	CHECK(rt.do_string("phon.settings[\"x\"]").as_int() == 3);
+}
+
+// E5 / G6c: an uncaught script error is catchable through a std::exception handler
+// (RuntimeError now derives from std::exception), so an embedder's catch-all works.
+TEST_CASE("embed: an uncaught script error is catchable as std::exception")
+{
+	Runtime rt;
+	bool caught = false;
+	try
+	{
+		rt.do_string("1 div 0"); // raises [Math error]
+	}
+	catch (const std::exception &e)
+	{
+		caught = true;
+		CHECK(std::string(e.what()).find("Math error") != std::string::npos);
+	}
+	CHECK(caught);
+}

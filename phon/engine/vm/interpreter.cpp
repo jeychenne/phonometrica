@@ -1597,6 +1597,22 @@ Value run(Isolate &iso)
 					reg_move(base, a, r); // r carries +1
 					break;
 				}
+				if (is_table(obj))
+				{
+					// Table dot-sugar (roadmap E2): t.name reads the string key "name",
+					// so an injected namespace like `phon` exposes phon.get_version() /
+					// phon.settings. A missing key is a [Key error] — dot implies a known
+					// member; t["name"] stays lenient (null) for dynamic keys.
+					Symbol fn = base[op_c(ins)].as_symbol();
+					String kname(symbol_name(fn));
+					Variant key(kname.to_value());
+					Table tbl = Table::from_value(obj);
+					if (!tbl.contains(key))
+						iso.raise(String("[Key error] Table has no member '") + kname.view() + "'",
+						          cur_line());
+					reg_copy(base, a, tbl.get(key).value());
+					break;
+				}
 				iso.raise(String("[Type error] value has no fields"), cur_line());
 			}
 			Symbol fname = base[op_c(ins)].as_symbol();
@@ -1643,6 +1659,34 @@ Value run(Isolate &iso)
 					iso.raise(String("[Name error] '") + String(fc->name).view() +
 					              "' has no field '" + String(symbol_name(fn)).view() + "'",
 					          cur_line());
+				}
+				if (is_table(base[a]))
+				{
+					// Table dot-sugar (roadmap E2): t.name = v sets the string key "name".
+					// Mirrors SETINDEX on a Table — a reference value is written through
+					// its box (no detach), otherwise the CoW table detaches if shared and
+					// the (possibly new) table is written back to R[A].
+					Symbol fn = base[op_b(ins)].as_symbol();
+					String kname(symbol_name(fn));
+					Variant key(kname.to_value());
+					Value tobj = base[a];
+					auto *tc = reinterpret_cast<TableCell *>(tobj.as_cell());
+					auto it = tc->table.find(key.value());
+					if (it != tc->table.end() && it->second.is_reference())
+					{
+						UpvalueCell *box = reference_box(it->second);
+						Value v = base[op_c(ins)];
+						retain_value(v);
+						release_value(*box->slot);
+						*box->slot = v;
+						break;
+					}
+					base[a] = Value::make_null();
+					Table t = Table::from_value(tobj);
+					release(tobj.as_cell());
+					t.set(key, Variant(base[op_c(ins)]));
+					reg_copy(base, a, t.to_value());
+					break;
 				}
 				iso.raise(String("[Type error] value has no fields"), cur_line());
 			}
