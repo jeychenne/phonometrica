@@ -15,6 +15,7 @@
 // Handle/Variant/Cell have no public forwarder yet — reach into the engine directly.
 #include <phon/engine/core/cell.hpp>
 #include <phon/engine/core/handle.hpp>
+#include <phon/engine/core/handle_cast.hpp>
 #include <phon/engine/core/variant.hpp>
 #include <phon/engine/types/atom.hpp> // intern (foreign-field duplicate guard)
 
@@ -512,4 +513,68 @@ TEST_CASE("embed: a foreign subclass inherits its base's fields by chain lookup"
 	CHECK(rt.do_string("p3.x").as_double() == 1.0);
 	// The derived class is still a subtype for dispatch/`is`.
 	CHECK(rt.do_string("p3 is EmbedPoint").as_bool() == true);
+}
+
+// E4 / gap G5: explicit Handle<Derived> -> Handle<Base> upcast (implicit converting
+// ctor) and the checked handle_cast<Derived>(Handle<Base>) downcast, plus a
+// container of base handles holding derived instances — the primitives roadmap A2
+// swaps the old unchecked recast<T> onto.
+TEST_CASE("embed: polymorphic handle upcast, checked downcast, and base-handle containers")
+{
+	Runtime rt;
+	if (!class_of<EmbedPoint>())
+		rt.add_class<EmbedPoint>("EmbedPoint", rt.get_class("Object"));
+	if (!class_of<EmbedPoint3>())
+		rt.add_class<EmbedPoint3>("EmbedPoint3", rt.get_class("EmbedPoint"));
+
+	int before = g_points_alive;
+	{
+		// Implicit upcast: a Handle<EmbedPoint3> flows into a Handle<EmbedPoint> and
+		// keeps pointing at the same box (same cell, one shared reference).
+		Handle<EmbedPoint3> d = Handle<EmbedPoint3>::make(1.0, 2.0, 7.0);
+		CHECK(d.use_count() == 1);
+		Handle<EmbedPoint> b = d; // converting ctor
+		CHECK(b.cell() == d.cell());
+		CHECK(b.use_count() == 2);
+		CHECK(b->x == 1.0);              // base subobject reachable through the base handle
+		CHECK(b.cell()->class_id() == class_of<EmbedPoint3>()->id); // dynamic class preserved
+
+		// handle_cast upcast agrees with the converting ctor.
+		Handle<EmbedPoint> b2 = handle_cast<EmbedPoint>(d);
+		CHECK(b2.cell() == d.cell());
+
+		// Checked downcast succeeds: the box really is an EmbedPoint3.
+		Handle<EmbedPoint3> back = handle_cast<EmbedPoint3>(b);
+		CHECK(back.get() != nullptr);
+		CHECK(back.cell() == d.cell());
+		CHECK(back->z == 7.0);
+
+		// Checked downcast fails on a box whose dynamic class is only the base: an
+		// empty Handle, not a mistyped one (the old recast<T> would have lied).
+		Handle<EmbedPoint> plain = Handle<EmbedPoint>::make(5.0, 6.0);
+		Handle<EmbedPoint3> bad = handle_cast<EmbedPoint3>(plain);
+		CHECK(bad.get() == nullptr);
+
+		// A null handle casts to a null handle both ways.
+		Handle<EmbedPoint3> nd;
+		CHECK(handle_cast<EmbedPoint>(nd).get() == nullptr);
+		Handle<EmbedPoint> nb;
+		CHECK(handle_cast<EmbedPoint3>(nb).get() == nullptr);
+
+		// A container typed on the base holds derived instances by upcast; each
+		// element still reports its dynamic class, and a base-typed C++ view reads
+		// the shared payload.
+		Array<Handle<EmbedPoint>> elems;
+		elems.append(Handle<EmbedPoint3>::make(10.0, 0.0, 1.0));
+		elems.append(plain);
+		CHECK(elems.size() == 2);
+		CHECK(elems[0].cell()->class_id() == class_of<EmbedPoint3>()->id);
+		CHECK(elems[1].cell()->class_id() == class_of<EmbedPoint>()->id);
+		CHECK(elems[0]->x == 10.0);
+		// Only the first element downcasts to EmbedPoint3.
+		CHECK(handle_cast<EmbedPoint3>(elems[0]).get() != nullptr);
+		CHECK(handle_cast<EmbedPoint3>(elems[1]).get() == nullptr);
+	}
+	// Every retained reference was balanced — no leak from the extra handles.
+	CHECK(g_points_alive == before);
 }

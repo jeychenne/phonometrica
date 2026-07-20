@@ -1915,3 +1915,44 @@ foreign-class field access as gap G1, blocking the statistics port (scripts read
       catch it; a missed catch turns an ordinary uncaught script error into
       std::terminate. phon_repl and the 4b host both catch it explicitly — worth a
       doc note (or deriving from std::exception) before more embedders appear.
+
+## Step-5 cutover support — polymorphic handle casts (Phonometrica roadmap E4/G5, 2026-07-20)
+
+Phonometrica's step-4a inventory (its MIGRATION_ROADMAP.md, item E4) identified the
+last blocker for registering the app's VFS class hierarchy (A2): the app holds its
+documents in `Array<Handle<Element>>` containers, passes subclass handles to
+`Document`-typed natives, and downcasts them with the old engine's unchecked
+`recast<T>`. The boxed-payload layout already permits this under single non-virtual
+inheritance (a base subobject sits at payload offset 0 and `box_value_offset` is
+alignment-only, so it is identical for base and derived — core/cell.hpp), and typed
+dispatch already accepts a derived cell for a base-typed parameter (proven by the
+stats_host Dataset→DataTable path and test_embed's field-chain case). E4 adds the
+two *explicit C++ handle primitives* that were still missing.
+
+17. **`Handle<Derived>` → `Handle<Base>` upcast (implicit converting constructor) and
+    `handle_cast<Derived>(Handle<Base>)` checked cast (core/handle_cast.hpp).**
+    - The converting constructor on `Handle<T>` (core/handle.hpp) is enabled only when
+      `U` strictly derives from `T` (`std::is_base_of_v<T, U> && !is_same`); it
+      `static_cast`s the payload to the base subobject (offset 0) and retains the same
+      box. Implicit, so a `Handle<Derived>` flows into a `Handle<Base>` slot or an
+      `Array<Handle<Base>>` element with no ceremony. A `static_assert` pins the
+      box-offset equality (equal alignment) the layout argument depends on.
+    - `handle_cast<D>(Handle<B>)` is one call for both directions. Upcast (or `D == B`)
+      delegates to the retaining ctor with no runtime check. Downcast (B a strict base
+      of D) checks the cell's **dynamic** class through the engine class registry
+      (`is_a` on `get_class(cell->class_id())`) — not C++ RTTI, so it works for the
+      non-polymorphic plain classes `add_class` registers — and returns an **empty
+      Handle** when the object is not actually a `D`. This is the safe replacement for
+      the old unchecked `recast<T>` (which produced a mistyped handle on a wrong cast,
+      the misleading `if (auto q = recast<...>())` sites A2 fixes). Null in → null out
+      both ways.
+    - Mirrors the old poly-box seam's `operator Handle<Base>`
+      (phon/runtime/typed_object.hpp) so A2's swap is `recast<T>` →
+      `handle_cast<T>` plus implicit upcasts at the container/parameter sites.
+    - Test: test_embed.cpp "polymorphic handle upcast, checked downcast, and
+      base-handle containers" — same-cell/shared-refcount upcast, dynamic class
+      preserved through a base handle, successful and null-returning downcasts,
+      null-in/null-out, and an `Array<Handle<EmbedPoint>>` holding an `EmbedPoint3`
+      whose element still reports its derived class and downcasts selectively. 397
+      cases green under normal/ASan/TSan (leak-balanced: `g_points_alive` returns to
+      its baseline).

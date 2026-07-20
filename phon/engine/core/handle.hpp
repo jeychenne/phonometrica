@@ -13,6 +13,7 @@
 #include <phon/engine/base/definitions.hpp>
 #include <phon/engine/core/cell.hpp>
 #include <new>
+#include <type_traits>
 #include <utility>
 
 namespace phonometrica {
@@ -60,6 +61,25 @@ public:
 	}
 
 	Handle(Handle &&o) noexcept : m_ptr(o.m_ptr) { o.m_ptr = nullptr; }
+
+	// Upcasting constructor: build a Handle<T> from a Handle<U> where U derives from T
+	// under single, non-virtual inheritance (the constraint every add_class hierarchy
+	// satisfies — MIGRATION_NOTES step 5). The boxed base subobject shares the payload
+	// address (offset 0) and box_value_offset is alignment-only, so it is identical for
+	// T and U; the cell is therefore the same box, and this just retains it. Implicit,
+	// so a Handle<Derived> flows into a Handle<Base> slot or an Array<Handle<Base>>
+	// element. Mirrors the old poly-box seam's `operator Handle<Base>`
+	// (phon/runtime/typed_object.hpp) that roadmap A0 relied on; the checked inverse is
+	// `handle_cast<Derived>` (core/handle_cast.hpp).
+	template<class U, class = std::enable_if_t<!std::is_same_v<T, U> && std::is_base_of_v<T, U>>>
+	Handle(const Handle<U> &o) noexcept : m_ptr(o.get() ? static_cast<T *>(o.get()) : nullptr)
+	{
+		static_assert(box_value_offset<T>() == box_value_offset<U>(),
+		              "Handle upcast requires an identical box offset (equal alignment); the "
+		              "hierarchy must use single, non-virtual inheritance");
+		if (m_ptr)
+			retain(cell_of(m_ptr));
+	}
 
 	Handle &operator=(const Handle &o) noexcept
 	{
