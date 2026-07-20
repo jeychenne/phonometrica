@@ -39,6 +39,10 @@ enum class Encoding : uint8_t
 	Utf16be,
 	Utf32le,
 	Utf32be,
+	// Sentinel for the File(path, mode) ctor: "auto-detect from the BOM" (old
+	// Phonometrica parity). Never stored on a File — the ctor resolves it to a concrete
+	// encoding on open.
+	Undefined,
 };
 
 // Map an encoding name ("utf-8"/"utf-16"/"utf16-le"/"utf16-be"/"utf-32"/… ) to an
@@ -57,7 +61,28 @@ struct File
 	bool writable = false;
 	Encoding encoding = Encoding::Utf8;
 
+	// Open modes (old Phonometrica parity). Bit flags so `mode & Read` / `mode & Write`
+	// work; the Plus variants open for update ("+").
+	enum Mode : uint8_t
+	{
+		Read = 1,
+		Write = 2,
+		Plus = 4,
+		Append = 8,
+		ReadPlus = Read | Plus,
+		WritePlus = Write | Plus,
+		AppendPlus = Append | Plus,
+	};
+
 	File(std::FILE *h, bool w) noexcept : handle(h), writable(w) {}
+
+	// Open `path` in `mode` as a standalone C++ object (the app's direct file I/O; the
+	// script surface goes through open_file instead). Throws std::runtime_error if the
+	// file cannot be opened. On a read that starts at byte 0 the encoding is BOM-sniffed
+	// (UTF-8 default); a non-Undefined `enc` then forces it for a BOM-less file. Writing
+	// is always UTF-8 with no BOM.
+	explicit File(const String &path, Mode mode = Read, Encoding enc = Encoding::Undefined);
+
 	~File() { close(); }
 
 	bool is_open() const noexcept { return handle != nullptr; }
@@ -104,6 +129,9 @@ struct File
 	List read_lines();
 	void write(const String &text);
 	void write_line(const String &text);
+	// printf-formatted write (old Phonometrica parity): formats `fmt` and writes the
+	// resulting UTF-8 bytes. Used by the app's text exporters (e.g. Praat TextGrids).
+	void format(const char *fmt, ...);
 
 private:
 	// Read the next Unicode codepoint from a UTF-16/UTF-32 handle (honouring byte order),

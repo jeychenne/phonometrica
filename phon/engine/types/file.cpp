@@ -8,9 +8,12 @@
 #include <phon/engine/core/variant.hpp>
 
 #include <bit>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 namespace phonometrica {
 
@@ -74,8 +77,73 @@ const char *encoding_name(Encoding enc)
 		case Encoding::Utf16be: return "utf16-be";
 		case Encoding::Utf32le: return "utf32-le";
 		case Encoding::Utf32be: return "utf32-be";
+		case Encoding::Undefined: return "utf-8"; // never stored; ctor sentinel only
 	}
 	return "utf-8";
+}
+
+namespace {
+// Map a File::Mode to a stdio mode string (binary, so byte offsets are exact) plus the
+// read/write disposition, mirroring the script open_file's decode_mode.
+const char *mode_to_cmode(File::Mode m, bool &writable, bool &at_start) noexcept
+{
+	switch (m)
+	{
+		case File::Read: writable = false; at_start = true; return "rb";
+		case File::Write: writable = true; at_start = false; return "wb";
+		case File::Append: writable = true; at_start = false; return "ab";
+		case File::ReadPlus: writable = true; at_start = true; return "r+b";
+		case File::WritePlus: writable = true; at_start = true; return "w+b";
+		case File::AppendPlus: writable = true; at_start = false; return "a+b";
+		default: break;
+	}
+	writable = false;
+	at_start = true;
+	return "rb";
+}
+} // namespace
+
+File::File(const String &path, Mode mode, Encoding enc)
+{
+	if (path.empty())
+		throw std::runtime_error("[System error] cannot open a file with an empty path");
+	bool w, at_start;
+	const char *c_mode = mode_to_cmode(mode, w, at_start);
+	handle = os_open_file(path, c_mode);
+	if (!handle)
+		throw std::runtime_error(std::string("[System error] cannot open file '") +
+		                         std::string(path.data(), static_cast<size_t>(path.size())) + "'");
+	writable = w;
+	encoding = Encoding::Utf8;
+	// A read that starts at byte 0 BOM-sniffs the encoding (UTF-8 default); a forced
+	// non-Undefined encoding then overrides it for a BOM-less file. Writing is UTF-8.
+	if (!w && at_start)
+	{
+		detect_encoding();
+		if (enc != Encoding::Undefined)
+			encoding = enc;
+	}
+}
+
+void File::format(const char *fmt, ...)
+{
+	char buf[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	int n = std::vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	if (n < 0)
+		return;
+	if (static_cast<size_t>(n) < sizeof(buf))
+	{
+		write(String(std::string_view(buf, static_cast<size_t>(n))));
+		return;
+	}
+	std::string big(static_cast<size_t>(n) + 1, '\0');
+	va_start(ap, fmt);
+	std::vsnprintf(big.data(), big.size(), fmt, ap);
+	va_end(ap);
+	write(String(std::string_view(big.data(), static_cast<size_t>(n))));
 }
 
 void File::detect_encoding()

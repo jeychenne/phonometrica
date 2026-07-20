@@ -1133,4 +1133,84 @@ String String::from_utf32(const std::u32string &s)
 	return String(out);
 }
 
+// std::wstring encodes UTF-16 on a 2-byte wchar_t (Windows) and UTF-32 on a 4-byte one
+// (POSIX); to_wide/from_wide branch on sizeof(wchar_t) at compile time, mirroring the old
+// Phonometrica String. On a 2-byte wchar_t, code points above the BMP become surrogate
+// pairs (as in to_utf16); on a 4-byte one, each code point is a single unit (as in
+// to_utf32).
+std::wstring String::to_wide(std::string_view s)
+{
+	std::wstring out;
+	const char *p = s.data();
+	const char *e = p + s.size();
+	while (p < e)
+	{
+		char32_t cp;
+		bool valid;
+		p += unicode::decode(p, e, &cp, &valid);
+		if constexpr (sizeof(wchar_t) == 2)
+		{
+			if (cp < 0x10000u)
+			{
+				out.push_back(static_cast<wchar_t>(cp));
+			}
+			else
+			{
+				cp -= 0x10000u;
+				out.push_back(static_cast<wchar_t>(0xD800u + (cp >> 10)));
+				out.push_back(static_cast<wchar_t>(0xDC00u + (cp & 0x3FFu)));
+			}
+		}
+		else
+		{
+			out.push_back(static_cast<wchar_t>(cp));
+		}
+	}
+	return out;
+}
+
+std::wstring String::to_wide() const
+{
+	return to_wide(std::string_view(data(), static_cast<size_t>(size())));
+}
+
+String String::from_wide(const wchar_t *s, intptr_t len)
+{
+	std::string out;
+	char buf[4];
+	if constexpr (sizeof(wchar_t) == 2)
+	{
+		const uint16_t *p = reinterpret_cast<const uint16_t *>(s);
+		const uint16_t *e = p + len;
+		while (p < e)
+		{
+			char32_t cp;
+			bool valid;
+			p += unicode::utf16_decode(p, e, &cp, &valid);
+			size_t n = unicode::encode(cp, buf);
+			if (n == 0)
+				n = unicode::encode(unicode::REPLACEMENT, buf);
+			out.append(buf, n);
+		}
+	}
+	else
+	{
+		for (intptr_t i = 0; i < len; ++i)
+		{
+			size_t n = unicode::encode(static_cast<char32_t>(s[i]), buf);
+			if (n == 0)
+				n = unicode::encode(unicode::REPLACEMENT, buf);
+			out.append(buf, n);
+		}
+	}
+	return String(out);
+}
+
+String String::from_wide(const std::wstring &s)
+{
+	return from_wide(s.data(), static_cast<intptr_t>(s.size()));
+}
+
+String::String(const std::wstring &other) : String(from_wide(other)) {}
+
 } // namespace phonometrica

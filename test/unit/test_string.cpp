@@ -481,3 +481,23 @@ TEST_CASE("String::replace(Regex): first match, %% and %1..%9 substitution")
 	z.replace(Regex("rest$"), "R");
 	CHECK(z == "P-R");
 }
+
+// Wide-string interop (roadmap A1 stage 1): old Phonometrica parity for the app's wide
+// OS-path code. On this host wchar_t is 4 bytes (UTF-32); the Windows 2-byte (UTF-16)
+// branch is compile-selected and not exercised here.
+TEST_CASE("String: to_wide / from_wide round-trip and the std::wstring ctor")
+{
+	// "Aé€🎵" — ASCII, 2-byte, 3-byte, and an astral (4-byte) code point.
+	String s("Aé€\U0001F3B5");
+	std::wstring w = s.to_wide();
+	if constexpr (sizeof(wchar_t) == 4)
+		CHECK(w.size() == 4); // one wchar_t per code point in UTF-32
+	CHECK(String::from_wide(w) == s);          // round-trip through wstring
+	CHECK(String(w) == s);                     // the std::wstring ctor
+	CHECK(String::to_wide(std::string_view("hi")).size() == 2); // static overload
+	CHECK(String::from_wide(w.data(), static_cast<intptr_t>(w.size())) == s);
+
+	// Empty and pure-ASCII edge cases.
+	CHECK(String("").to_wide().empty());
+	CHECK(String::from_wide(std::wstring()) == String(""));
+}

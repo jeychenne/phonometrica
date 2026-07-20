@@ -2068,3 +2068,35 @@ global with a callable member + assignable field) and "an uncaught script error 
 catchable as std::exception". 401 cases green under normal/ASan/TSan; the ported
 test/engine suite (phon_repl) and the frequentist statistics suite (552/552, phon_stats
 rebuilt against this engine) re-verified.
+
+## Step-5 cutover support — String/File wide + rich-File parity (Phonometrica roadmap A1 stage 1, 2026-07-20)
+
+Closing the base-type API gaps the app relies on, so the A1 base-type swap (the app
+linking this engine instead of the old one) needs no String/File rewrites. Found by
+surveying the app's direct usage against this engine's String/File.
+
+22. **`String::to_wide`/`from_wide` + the `std::wstring` ctor (old Phonometrica parity).**
+    `std::wstring` is UTF-16 where wchar_t is 2 bytes (Windows) and UTF-32 where it is 4
+    (POSIX); the conversions branch on `sizeof(wchar_t)` at compile time (surrogate pairs
+    on the 2-byte branch, one unit per code point on the 4-byte one), reusing the same
+    `unicode::` decode/encode as to_utf16/to_utf32. The app uses `path.to_wide()` /
+    `String::to_wide(mode)` and `String(some_wstring)` in its wide OS-path code (~23 sites,
+    almost all under PHON_WINDOWS — the Windows build needs them, Linux compiles but does
+    not exercise them). Test: test_string.cpp "to_wide / from_wide round-trip".
+
+23. **`File` rich surface: `Mode` enum, path-opening ctor, `format()` (old parity).** The
+    engine File was a thin FILE* wrapper (the script surface opens via `open_file`); the
+    app's direct C++ I/O instead does `File(path, File::Write, Encoding::Utf8)` and
+    `file.format(...)`. Added: `enum Mode { Read, Write, Plus, Append, +Plus variants }`
+    (bit flags, `mode & Read` works); `explicit File(const String&, Mode = Read, Encoding
+    = Undefined)` which opens via os_open_file (throwing std::runtime_error on failure —
+    it is a standalone object with no Isolate), sets writable, and on a byte-0 read
+    BOM-sniffs the encoding (UTF-8 default), a non-Undefined `enc` forcing it for a
+    BOM-less file — writing stays UTF-8, no BOM; and `void format(const char*, ...)`
+    (vsnprintf → write). `Encoding` gained an `Undefined` sentinel (ctor "auto-detect"
+    only; never stored — encoding_name handles it). The app's `File::path()`/`File::size()`
+    turned out to be Document::path()/container .size() false positives — not File gaps.
+    Test: test_file_encoding.cpp "the path-opening ctor writes with format() and reads
+    back" (write via format, read-back with auto-detect, open-failure throw).
+
+403 cases green under normal/ASan/TSan.

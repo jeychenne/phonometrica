@@ -11,6 +11,7 @@
 #include <phon/string.hpp>
 #include <phon/error.hpp>
 #include <phon/engine/core/variant.hpp>
+#include <phon/engine/types/file.hpp>
 
 #include "test_framework.hpp"
 
@@ -143,4 +144,41 @@ TEST_CASE("file encoding: line reads honour the encoding and strip CRLF")
 	        .to<String>();
 	CHECK(joined == String("line one|líne two|2"));
 	std::filesystem::remove(p);
+}
+
+// A1 stage 1: the standalone C++ File(path, Mode) ctor + format(), the app's direct
+// file-I/O surface (old Phonometrica parity). Writing is UTF-8; the read ctor
+// auto-detects the encoding from a BOM.
+TEST_CASE("file: the path-opening ctor writes with format() and reads back")
+{
+	auto p = tmp_path("ctor_format.txt");
+	{
+		File out(String(p.string().c_str()), File::Write, Encoding::Utf8);
+		out.format("xmin = %.2f\n", 1.5);
+		out.format("name = \"%s\"\n", "café"); // UTF-8 bytes pass through
+		out.write(String("done\n"));
+	} // ~File closes it
+
+	{
+		File in(String(p.string().c_str())); // read, BOM auto-detect (none → UTF-8)
+		CHECK(in.is_open());
+		CHECK(in.encoding == Encoding::Utf8);
+		CHECK(in.read_line() == String("xmin = 1.50"));
+		CHECK(in.read_line() == String("name = \"café\""));
+		CHECK(in.read_line() == String("done"));
+		CHECK(in.at_end());
+	}
+	std::filesystem::remove(p);
+
+	// Opening a nonexistent file for reading throws (standalone object → std::exception).
+	bool threw = false;
+	try
+	{
+		File bad(String("/nonexistent_dir_xyz/nope.txt"), File::Read);
+	}
+	catch (const std::exception &)
+	{
+		threw = true;
+	}
+	CHECK(threw);
 }

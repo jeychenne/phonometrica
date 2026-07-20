@@ -100,6 +100,10 @@ public:
 	String(Substring s);
 	String(const std::string &s);
 	String(char32_t codepoint, intptr_t count);
+	// Wide-string interop (old Phonometrica parity): std::wstring is UTF-16 where
+	// wchar_t is 2 bytes (Windows) and UTF-32 where it is 4 (POSIX). Used by the app's
+	// wide OS-path code (mostly under PHON_WINDOWS).
+	explicit String(const std::wstring &other);
 	// Pre-allocate `capacity` bytes for an empty string (append without regrow).
 	explicit String(intptr_t capacity, bool exact = false);
 
@@ -288,6 +292,13 @@ public:
 	std::u32string to_utf32() const;
 	static String from_utf16(const std::u16string &s);
 	static String from_utf32(const std::u32string &s);
+
+	// std::wstring interop (old Phonometrica parity): UTF-16 on a 2-byte wchar_t,
+	// UTF-32 on a 4-byte one. The app uses these for wide OS paths (Windows).
+	std::wstring to_wide() const;
+	static std::wstring to_wide(std::string_view s);
+	static String from_wide(const std::wstring &s);
+	static String from_wide(const wchar_t *s, intptr_t len);
 
 	// --- engine interop ---
 
