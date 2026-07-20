@@ -16,23 +16,53 @@
  * Created: 19/07/2026                                                                                                 *
  *                                                                                                                     *
  * Purpose: model summary/comparison printers for the headless statistics host (MIGRATION_NOTES step 4b). Ported       *
- * verbatim from phon/application/data_table.cpp (print_model_summary + the compare_models callback body) with         *
- * rt.printf -> std::printf — the old Runtime's console redirection is the GUI's concern; the headless host prints     *
- * to stdout. At the full cutover these printers move back next to the registrations, on the engine's output hook      *
- * (step-4a gap G4).                                                                                                   *
+ * verbatim from phon/application/data_table.cpp (print_model_summary + the compare_models callback body). Output now   *
+ * routes through the engine's redirectable sink (Isolate::write_output, roadmap E3 / gap G4) via the local emit()      *
+ * helper — the format strings are unchanged from the old rt.printf calls, so output is byte-identical; with no hook    *
+ * installed the headless host still lands on stdout. The GUI cutover installs a console hook (Runtime::set_output_hook)*
+ * and these printers move back next to the registrations unchanged.                                                   *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <cstdarg>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/error.hpp>
+#include <phon/engine/vm/isolate.hpp>
 
 #include "printers.hpp"
 
 namespace phonometrica::stats_host {
+
+// printf-formatted output routed through the engine's redirectable sink (roadmap E3):
+// the headless host still lands on stdout by default (no hook installed), while the GUI
+// cutover will set a console hook. Replaces the port's std::printf stopgap; the format
+// strings are unchanged, so the output is byte-identical.
+static void emit(Isolate &iso, const char *fmt, ...)
+{
+	char buf[2048];
+	va_list ap;
+	va_start(ap, fmt);
+	int n = std::vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	if (n < 0)
+		return;
+	if (static_cast<size_t>(n) < sizeof(buf))
+	{
+		iso.write_output(std::string_view(buf, static_cast<size_t>(n)));
+		return;
+	}
+	// Rare long line: format into a right-sized buffer.
+	std::string big(static_cast<size_t>(n) + 1, '\0');
+	va_start(ap, fmt);
+	std::vsnprintf(big.data(), big.size(), fmt, ap);
+	va_end(ap);
+	iso.write_output(std::string_view(big.data(), static_cast<size_t>(n)));
+}
 
 // First-column width helper for printf-style summary tables.
 //
@@ -51,46 +81,46 @@ static int summary_column_width(const Array<String> &names, int min_w, int pad =
 	return w;
 }
 
-void print_model_summary(const stats::Model &m)
+void print_model_summary(Isolate &iso, const stats::Model &m)
 {
 	const char *family_display = m.family.data();
 	if (m.is_negbin()) family_display = "Negative binomial";
 	if (m.is_beta()) family_display = "Beta";
 	if (m.is_student()) family_display = "Student t (robust)";
 
-	std::printf("\nFamily: %s (%s)\n", family_display, m.link.data());
+	emit(iso, "\nFamily: %s (%s)\n", family_display, m.link.data());
 	if (m.is_negbin()) {
-		std::printf("Theta (overdispersion): %.4f\n", m.theta);
+		emit(iso, "Theta (overdispersion): %.4f\n", m.theta);
 	}
 	if (m.is_beta()) {
-		std::printf("Phi (precision): %.4f\n", m.phi);
+		emit(iso, "Phi (precision): %.4f\n", m.phi);
 	}
 	if (m.is_student()) {
-		std::printf("Sigma (scale): %.4f\n", m.sigma);
-		std::printf("Nu (df): %.4f\n", m.nu);
+		emit(iso, "Sigma (scale): %.4f\n", m.sigma);
+		emit(iso, "Nu (df): %.4f\n", m.nu);
 		if (!m.laplace_method.empty()) {
 			const char *method_label =
 				(m.laplace_method == "exact")
 				    ? "exact"
 				    : "Fisher-information (robust fallback)";
-			std::printf("Laplace correction: %s\n", method_label);
+			emit(iso, "Laplace correction: %s\n", method_label);
 		}
 	}
-	std::printf("Formula: %s\n", m.formula.data());
+	emit(iso, "Formula: %s\n", m.formula.data());
 	if (m.is_bayesian()) {
-		std::printf("Estimation: Bayesian (Gaussian approximation)\n");
+		emit(iso, "Estimation: Bayesian (Gaussian approximation)\n");
 	} else if (m.method == stats::Method::REML) {
-		std::printf("Estimation: Frequentist (restricted maximum likelihood)\n");
+		emit(iso, "Estimation: Frequentist (restricted maximum likelihood)\n");
 	} else {
-		std::printf("Estimation: Frequentist (maximum likelihood)\n");
+		emit(iso, "Estimation: Frequentist (maximum likelihood)\n");
 	}
-	std::printf("Observations: %ld\n", (long)m.nobs);
+	emit(iso, "Observations: %ld\n", (long)m.nobs);
 
 	// Experimental notice: smooth terms are not yet at production parity.
 	// Printed once per summary so users inspecting GAM output are aware
 	// that EDF and effective penalty values may differ from mgcv.
 	if (m.smooth_terms.size() > 0) {
-		std::printf("\nNote: GAM support (s() smooth terms) is experimental in this release.\n"
+		emit(iso, "\nNote: GAM support (s() smooth terms) is experimental in this release.\n"
 		          "      Fitted curves and inference are qualitatively reliable, but smooth\n"
 		          "      EDF and lambda values may differ numerically from reference\n"
 		          "      implementations such as R's mgcv\n");
@@ -99,21 +129,21 @@ void print_model_summary(const stats::Model &m)
 	if (m.is_bayesian())
 	{
 		auto prior_str = stats::format_prior_summary(m.priors, m.family);
-		std::printf("\n%s", prior_str.c_str());
+		emit(iso, "\n%s", prior_str.c_str());
 	}
 
 	if (!m.response_levels.empty())
 	{
-		std::printf("Response levels: %s = 0, %s = 1\n",
+		emit(iso, "Response levels: %s = 0, %s = 1\n",
 		          m.response_levels[0].data(), m.response_levels[1].data());
 	}
 
-	std::printf("\n");
+	emit(iso, "\n");
 
 	if (m.is_bayesian())
 	{
 		// ── Bayesian summary ────────────────────────────────────
-		std::printf("Fixed effects (posterior):\n");
+		emit(iso, "Fixed effects (posterior):\n");
 
 		bool has_mode = !m.posterior_mode.empty();
 		bool has_median = !m.posterior_median.empty();
@@ -123,13 +153,13 @@ void print_model_summary(const stats::Model &m)
 
 		if (has_mode && has_median)
 		{
-			std::printf((lbl_fmt + " %12s %12s %12s %12s %12s %12s %8s\n").c_str(),
+			emit(iso, (lbl_fmt + " %12s %12s %12s %12s %12s %12s %8s\n").c_str(),
 			          "", "Post.Mean", "Post.Mode", "Post.Median",
 			          "Post.SD", "CI.lower", "CI.upper", "pd");
 		}
 		else
 		{
-			std::printf((lbl_fmt + " %12s %12s %12s %12s %8s\n").c_str(),
+			emit(iso, (lbl_fmt + " %12s %12s %12s %12s %8s\n").c_str(),
 			          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper", "pd");
 		}
 
@@ -152,7 +182,7 @@ void print_model_summary(const stats::Model &m)
 
 			if (has_mode && has_median)
 			{
-				std::printf(row_full.c_str(),
+				emit(iso, row_full.c_str(),
 				          name,
 				          m.posterior_mean[i], m.posterior_mode[i], m.posterior_median[i],
 				          m.posterior_sd[i],
@@ -161,7 +191,7 @@ void print_model_summary(const stats::Model &m)
 			}
 			else
 			{
-				std::printf(row_brief.c_str(),
+				emit(iso, row_brief.c_str(),
 				          name,
 				          m.posterior_mean[i], m.posterior_sd[i],
 				          m.ci_lower[i], m.ci_upper[i],
@@ -169,8 +199,8 @@ void print_model_summary(const stats::Model &m)
 			}
 		}
 
-		std::printf("---\n");
-		std::printf("pd thresholds: 0.999 '***' 0.99 '**' 0.975 '*' 0.95 '.' (two-sided equivalents)\n\n");
+		emit(iso, "---\n");
+		emit(iso, "pd thresholds: 0.999 '***' 0.99 '**' 0.975 '*' 0.95 '.' (two-sided equivalents)\n\n");
 
 		// Hyperparameters
 		if (!m.hyper_names.empty())
@@ -184,14 +214,14 @@ void print_model_summary(const stats::Model &m)
 
 			if (has_hyper_sd)
 			{
-				std::printf("Hyperparameters (posterior):\n");
-				std::printf((hyper_fmt + " %12s %12s %12s %12s\n").c_str(),
+				emit(iso, "Hyperparameters (posterior):\n");
+				emit(iso, (hyper_fmt + " %12s %12s %12s %12s\n").c_str(),
 				          "", "Post.Mean", "Post.SD", "CI.lower", "CI.upper");
 
 				std::string hyper_row = hyper_fmt + " %12.4f %12.4f %12.4f %12.4f\n";
 				for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 				{
-					std::printf(hyper_row.c_str(),
+					emit(iso, hyper_row.c_str(),
 					          m.hyper_names[i].data(),
 					          m.hyper_posterior_mean[i], m.hyper_posterior_sd[i],
 					          m.hyper_ci_lower[i], m.hyper_ci_upper[i]);
@@ -199,29 +229,29 @@ void print_model_summary(const stats::Model &m)
 			}
 			else
 			{
-				std::printf("Hyperparameters (posterior):\n");
-				std::printf((hyper_fmt + " %12s\n").c_str(), "", "Post.Mean");
+				emit(iso, "Hyperparameters (posterior):\n");
+				emit(iso, (hyper_fmt + " %12s\n").c_str(), "", "Post.Mean");
 
 				std::string hyper_row = hyper_fmt + " %12.4f\n";
 				for (intptr_t i = 0; i < m.hyper_names.size(); i++)
 				{
-					std::printf(hyper_row.c_str(),
+					emit(iso, hyper_row.c_str(),
 					          m.hyper_names[i].data(), m.hyper_posterior_mean[i]);
 				}
 			}
-			std::printf("\n");
+			emit(iso, "\n");
 		}
 	}
 	else
 	{
 		// ── Frequentist summary ─────────────────────────────────
 		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
-		std::printf("Fixed effects:\n");
+		emit(iso, "Fixed effects:\n");
 
 		int name_w = summary_column_width(m.coef_names, 24);
 		std::string lbl_fmt = "%-" + std::to_string(name_w) + "s";
 
-		std::printf((lbl_fmt + " %12s %12s %12s %12s\n").c_str(),
+		emit(iso, (lbl_fmt + " %12s %12s %12s %12s\n").c_str(),
 		          "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
 
 		std::string row_fmt = lbl_fmt + " %12.4f %12.4f %12.3f %12s%s\n";
@@ -239,12 +269,12 @@ void print_model_summary(const stats::Model &m)
 			else if (m.p[i] < 0.05) stars = " *";
 			else if (m.p[i] < 0.1) stars = " .";
 
-			std::printf(row_fmt.c_str(),
+			emit(iso, row_fmt.c_str(),
 			          name, m.beta[i], m.se[i], m.stat[i], pbuf, stars);
 		}
 
-		std::printf("---\n");
-		std::printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+		emit(iso, "---\n");
+		emit(iso, "Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 	}
 
 	// ── Smooth terms (GAM / penalized regression) ───────────────
@@ -280,8 +310,8 @@ void print_model_summary(const stats::Model &m)
 		int name_w = summary_column_width(labels, 24);
 		std::string lbl_fmt = "%-" + std::to_string(name_w) + "s";
 
-		std::printf("Approximate significance of smooth terms:\n");
-		std::printf((lbl_fmt + " %8s %8s %10s %12s\n").c_str(),
+		emit(iso, "Approximate significance of smooth terms:\n");
+		emit(iso, (lbl_fmt + " %8s %8s %10s %12s\n").c_str(),
 		          "", "edf", "Ref.df", "F", "p-value");
 
 		std::string row_fmt = lbl_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
@@ -300,11 +330,11 @@ void print_model_summary(const stats::Model &m)
 			else if (sm.p_value < 0.05) stars = " *";
 			else if (sm.p_value < 0.1) stars = " .";
 
-			std::printf(row_fmt.c_str(),
+			emit(iso, row_fmt.c_str(),
 			          labels[i].data(), sm.edf, sm.ref_df, sm.F_stat, pbuf, stars);
 		}
-		std::printf("---\n");
-		std::printf("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
+		emit(iso, "---\n");
+		emit(iso, "Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1\n\n");
 	}
 
 	if (m.has_random_effects())
@@ -359,12 +389,12 @@ void print_model_summary(const stats::Model &m)
 		std::string grp_fmt  = "%-" + std::to_string(name_w) + "s";
 		std::string term_fmt = "%-" + std::to_string(term_w) + "s";
 
-		std::printf("Random effects:\n");
+		emit(iso, "Random effects:\n");
 		if (show_corr) {
-			std::printf((grp_fmt + " %12s %12s %8s   %s\n").c_str(),
+			emit(iso, (grp_fmt + " %12s %12s %8s   %s\n").c_str(),
 				"Group", "Variance", "Std.Dev.", "Levels", "Corr");
 		} else {
-			std::printf((grp_fmt + " %12s %12s %8s\n").c_str(),
+			emit(iso, (grp_fmt + " %12s %12s %8s\n").c_str(),
 				"Group", "Variance", "Std.Dev.", "Levels");
 		}
 
@@ -381,52 +411,52 @@ void print_model_summary(const stats::Model &m)
 				double sd = std::sqrt(std::max(var, 0.0));
 
 				if (t == 0) {
-					std::printf(grp_row.c_str(),
+					emit(iso, grp_row.c_str(),
 						re.group_name.data(), var, sd, (long)re.nlevels);
 				} else {
 					// Indented term name, blank Levels slot, then one corr per
 					// previous term in the same group.
-					std::printf(term_row.c_str(),
+					emit(iso, term_row.c_str(),
 						re.term_names[t].data(), var, sd, "");
 					for (intptr_t s = 0; s < t; s++) {
 						double var_s = (s < re.variance.size()) ? re.variance[s] : 0.0;
 						double denom = std::sqrt(std::max(var_s, 1e-30)
 						                       * std::max(var,   1e-30));
 						double corr  = cov_st(re.cov_chol, s, t) / denom;
-						std::printf(" %+7.4f", corr);
+						emit(iso, " %+7.4f", corr);
 					}
-					std::printf("\n");
+					emit(iso, "\n");
 				}
 			}
 		}
 
 		if (m.is_gaussian()) {
 			std::string res_fmt = grp_fmt + " %12.4f %12.4f\n";
-			std::printf(res_fmt.c_str(), "Residual", m.rse * m.rse, m.rse);
+			emit(iso, res_fmt.c_str(), "Residual", m.rse * m.rse, m.rse);
 		}
-		std::printf("\n");
+		emit(iso, "\n");
 	}
 	else if (m.is_gaussian() && !m.is_bayesian())
 	{
-		std::printf("Residual standard error: %.4f on %ld degrees of freedom\n", m.rse, (long)m.df_residual);
-		std::printf("R-squared: %.4f, Adjusted R-squared: %.4f\n", m.r2, m.adj_r2);
+		emit(iso, "Residual standard error: %.4f on %ld degrees of freedom\n", m.rse, (long)m.df_residual);
+		emit(iso, "R-squared: %.4f, Adjusted R-squared: %.4f\n", m.r2, m.adj_r2);
 	}
 
 	if (!m.is_bayesian())
 	{
-		std::printf("AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
+		emit(iso, "AIC: %.1f  BIC: %.1f  logLik: %.1f\n", m.aic, m.bic, m.loglik);
 	}
 	else
 	{
 		if (!std::isnan(m.log_marginal))
-			std::printf("Log-marginal likelihood: %.2f  logLik: %.1f\n", m.log_marginal, m.loglik);
+			emit(iso, "Log-marginal likelihood: %.2f  logLik: %.1f\n", m.log_marginal, m.loglik);
 		else
-			std::printf("logLik: %.1f\n", m.loglik);
+			emit(iso, "logLik: %.1f\n", m.loglik);
 
 		if (!std::isnan(m.waic))
-			std::printf("WAIC: %.1f  p_WAIC: %.1f\n", m.waic, m.p_waic);
+			emit(iso, "WAIC: %.1f  p_WAIC: %.1f\n", m.waic, m.p_waic);
 		if (!std::isnan(m.loo_ic))
-			std::printf("LOO-IC: %.1f  p_LOO: %.1f\n", m.loo_ic, m.p_loo);
+			emit(iso, "LOO-IC: %.1f  p_LOO: %.1f\n", m.loo_ic, m.p_loo);
 
 		// Pareto k diagnostic summary.
 		if (!m.pareto_k.empty())
@@ -441,12 +471,12 @@ void print_model_summary(const stats::Model &m)
 				else              n_verybad++;
 			}
 			if (n_bad == 0 && n_verybad == 0 && n_ok == 0)
-				std::printf("Pareto k: all < 0.5 (good)\n");
+				emit(iso, "Pareto k: all < 0.5 (good)\n");
 			else if (n_bad == 0 && n_verybad == 0)
-				std::printf("Pareto k: %d/%ld > 0.5 (ok, LOO-IC reliable)\n",
+				emit(iso, "Pareto k: %d/%ld > 0.5 (ok, LOO-IC reliable)\n",
 				          n_ok, (long)m.pareto_k.size());
 			else
-				std::printf("Pareto k: %d/%ld > 0.7 (LOO-IC may be unreliable; consider WAIC)\n",
+				emit(iso, "Pareto k: %d/%ld > 0.7 (LOO-IC may be unreliable; consider WAIC)\n",
 				          n_bad + n_verybad, (long)m.pareto_k.size());
 		}
 	}
@@ -458,9 +488,9 @@ void print_model_summary(const stats::Model &m)
 		else if (m.optimizer == "lbfgs") opt_suffix = " (L-BFGS)";
 
 		if (m.converged)
-			std::printf("Converged in %d iterations%s\n", m.niter, opt_suffix);
+			emit(iso, "Converged in %d iterations%s\n", m.niter, opt_suffix);
 		else
-			std::printf("WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
+			emit(iso, "WARNING: did not converge after %d iterations%s\n", m.niter, opt_suffix);
 	}
 
 	// Identifiability diagnostic.  Independent of the optimizer's
@@ -470,7 +500,7 @@ void print_model_summary(const stats::Model &m)
 	// component, etc.).  Only printed when the fit set the flag.
 	if (!m.well_identified && !m.fit_warning.empty())
 	{
-		std::printf("Note: %s\n", m.fit_warning.data());
+		emit(iso, "Note: %s\n", m.fit_warning.data());
 	}
 
 	// Prior-scale diagnostic (Bayesian only).  Separate from the
@@ -479,13 +509,13 @@ void print_model_summary(const stats::Model &m)
 	// the response scale (see Model::prior_warning).
 	if (!m.prior_warning.empty())
 	{
-		std::printf("Warning (prior scale): %s\n", m.prior_warning.data());
+		emit(iso, "Warning (prior scale): %s\n", m.prior_warning.data());
 	}
 
-	std::printf("\n");
+	emit(iso, "\n");
 }
 
-void print_model_comparison(const stats::Model &m1, const stats::Model &m2)
+void print_model_comparison(Isolate &iso, const stats::Model &m1, const stats::Model &m2)
 {
 	// Both models must use the same estimation method.
 	if (m1.estimation != m2.estimation)
@@ -504,7 +534,7 @@ void print_model_comparison(const stats::Model &m1, const stats::Model &m2)
 		auto result = stats::bayesian_compare(models);
 
 		for (auto &w : result.warnings)
-			std::printf("Warning: %s\n", w.data());
+			emit(iso, "Warning: %s\n", w.data());
 
 		// Summary table.
 		bool show_marginal = result.has_bayes_factors;
@@ -512,57 +542,57 @@ void print_model_comparison(const stats::Model &m1, const stats::Model &m2)
 		bool show_loo = !std::isnan(m1.loo_ic) || !std::isnan(m2.loo_ic);
 
 		// Header.
-		std::printf("\n%-8s %6s %12s", "Model", "npar", "logLik");
-		if (show_marginal) std::printf(" %14s", "log p(y|M)");
-		if (show_waic)     std::printf(" %10s %8s", "WAIC", "p_WAIC");
-		if (show_loo)      std::printf(" %10s %8s", "LOO-IC", "p_LOO");
-		std::printf("\n");
+		emit(iso, "\n%-8s %6s %12s", "Model", "npar", "logLik");
+		if (show_marginal) emit(iso, " %14s", "log p(y|M)");
+		if (show_waic)     emit(iso, " %10s %8s", "WAIC", "p_WAIC");
+		if (show_loo)      emit(iso, " %10s %8s", "LOO-IC", "p_LOO");
+		emit(iso, "\n");
 
 		for (size_t i = 0; i < result.rows.size(); i++)
 		{
 			auto &r = result.rows[i];
-			std::printf("%-8d %6ld %12.1f", (int)r.original_index + 1, (long)r.npar, r.loglik);
+			emit(iso, "%-8d %6ld %12.1f", (int)r.original_index + 1, (long)r.npar, r.loglik);
 			if (show_marginal)
-				std::printf(" %14.2f", r.log_marginal);
+				emit(iso, " %14.2f", r.log_marginal);
 			if (show_waic) {
-				if (std::isnan(r.waic)) std::printf(" %10s %8s", "--", "--");
-				else std::printf(" %10.1f %8.1f", r.waic, r.p_waic);
+				if (std::isnan(r.waic)) emit(iso, " %10s %8s", "--", "--");
+				else emit(iso, " %10.1f %8.1f", r.waic, r.p_waic);
 			}
 			if (show_loo) {
-				if (std::isnan(r.loo_ic)) std::printf(" %10s %8s", "--", "--");
-				else std::printf(" %10.1f %8.1f", r.loo_ic, r.p_loo);
+				if (std::isnan(r.loo_ic)) emit(iso, " %10s %8s", "--", "--");
+				else emit(iso, " %10.1f %8.1f", r.loo_ic, r.p_loo);
 			}
-			std::printf("\n");
+			emit(iso, "\n");
 		}
 
 		// Bayes factors.
 		if (show_marginal)
 		{
-			std::printf("\nPairwise log Bayes factors:\n");
+			emit(iso, "\nPairwise log Bayes factors:\n");
 			for (auto &p : result.pairs)
 			{
 				if (std::isnan(p.log_bf)) continue;
-				std::printf("  1 vs 2:  log BF = %.2f", p.log_bf);
-				if (p.log_bf > 0)      std::printf("  (favours model 1)");
-				else if (p.log_bf < 0) std::printf("  (favours model 2)");
-				std::printf("\n");
+				emit(iso, "  1 vs 2:  log BF = %.2f", p.log_bf);
+				if (p.log_bf > 0)      emit(iso, "  (favours model 1)");
+				else if (p.log_bf < 0) emit(iso, "  (favours model 2)");
+				emit(iso, "\n");
 			}
 		}
 
 		// Pairwise IC differences.
 		if (show_waic || show_loo)
 		{
-			std::printf("\nPairwise information criteria (negative favours model 1):\n");
+			emit(iso, "\nPairwise information criteria (negative favours model 1):\n");
 			for (auto &p : result.pairs)
 			{
 				if (show_waic && !std::isnan(p.delta_waic))
-					std::printf("  WAIC:    delta = %10.1f  SE = %10.1f\n", p.delta_waic, p.se_diff);
+					emit(iso, "  WAIC:    delta = %10.1f  SE = %10.1f\n", p.delta_waic, p.se_diff);
 				if (show_loo && !std::isnan(p.delta_loo))
-					std::printf("  LOO-IC:  delta = %10.1f  SE = %10.1f\n", p.delta_loo, p.se_loo_diff);
+					emit(iso, "  LOO-IC:  delta = %10.1f  SE = %10.1f\n", p.delta_loo, p.se_loo_diff);
 			}
 		}
 
-		std::printf("\n");
+		emit(iso, "\n");
 	}
 	else
 	{
@@ -570,16 +600,16 @@ void print_model_comparison(const stats::Model &m1, const stats::Model &m2)
 		auto result = stats::anova_compare(models);
 
 		for (auto &w : result.warnings)
-			std::printf("Warning: %s\n", w.data());
+			emit(iso, "Warning: %s\n", w.data());
 
-		std::printf("\n%-8s %6s %12s %12s %12s %12s\n", "Model", "npar", "logLik", "AIC", "BIC", "deviance");
+		emit(iso, "\n%-8s %6s %12s %12s %12s %12s\n", "Model", "npar", "logLik", "AIC", "BIC", "deviance");
 		for (size_t i = 0; i < result.rows.size(); i++) {
 			auto &r = result.rows[i];
-			std::printf("%-8d %6ld %12.4f %12.4f %12.4f %12.4f\n",
+			emit(iso, "%-8d %6ld %12.4f %12.4f %12.4f %12.4f\n",
 			          r.original_index + 1, (long)r.npar, r.loglik, r.aic, r.bic, r.deviance);
 		}
 
-		std::printf("\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
+		emit(iso, "\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
 		for (auto &p : result.pairs) {
 			char pbuf[16];
 			if (std::isnan(p.p_value)) snprintf(pbuf, sizeof(pbuf), "NA");
@@ -592,10 +622,10 @@ void print_model_comparison(const stats::Model &m1, const stats::Model &m2)
 			snprintf(label, sizeof(label), "%d vs %d",
 			         result.rows[p.index_b].original_index + 1,
 			         result.rows[p.index_a].original_index + 1);
-			std::printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
+			emit(iso, "%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
 			          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
 		}
-		std::printf("---\nNote: a significant test favours the more complex model (named first).\n\n");
+		emit(iso, "---\nNote: a significant test favours the more complex model (named first).\n\n");
 	}
 }
 

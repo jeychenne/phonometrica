@@ -85,10 +85,10 @@ intptr_t script_index(Isolate &iso, intptr_t i, intptr_t n, const char *what)
 }
 
 // GAM notice printed by every fit overload (parity with the old callbacks).
-void note_gam(const stats::Model &model)
+void note_gam(Isolate &iso, const stats::Model &model)
 {
 	if (model.smooth_terms.size() > 0)
-		std::printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		iso.write_output("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 }
 
 // The options-Table parser of the old fit_opts callbacks: strict key/value
@@ -265,7 +265,7 @@ void register_fit(Runtime &rt)
 		    {
 			    auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian");
 			    model.compute_pseudo_r2();
-			    note_gam(model);
+			    note_gam(iso, model);
 			    return Handle<stats::Model>::make(std::move(model));
 		    }
 		    catch (std::exception &e)
@@ -282,7 +282,7 @@ void register_fit(Runtime &rt)
 		                {
 			                auto model = stats::fit(data, stats::Formula::parse(formula), family);
 			                model.compute_pseudo_r2();
-			                note_gam(model);
+			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
 		                }
 		                catch (std::exception &e)
@@ -301,7 +301,7 @@ void register_fit(Runtime &rt)
 			                auto model =
 			                    stats::fit(data, stats::Formula::parse(formula), "gaussian", opts);
 			                model.compute_pseudo_r2();
-			                note_gam(model);
+			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
 		                }
 		                catch (std::exception &e)
@@ -320,7 +320,7 @@ void register_fit(Runtime &rt)
 			                auto model =
 			                    stats::fit(data, stats::Formula::parse(formula), family, opts);
 			                model.compute_pseudo_r2();
-			                note_gam(model);
+			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
 		                }
 		                catch (std::exception &e)
@@ -338,7 +338,7 @@ void register_fit(Runtime &rt)
 			                auto model =
 			                    stats::fit(data, stats::Formula::parse(formula), "gaussian", priors);
 			                model.compute_pseudo_r2();
-			                note_gam(model);
+			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
 		                }
 		                catch (std::exception &e)
@@ -356,7 +356,7 @@ void register_fit(Runtime &rt)
 			                auto model =
 			                    stats::fit(data, stats::Formula::parse(formula), family, priors);
 			                model.compute_pseudo_r2();
-			                note_gam(model);
+			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
 		                }
 		                catch (std::exception &e)
@@ -368,12 +368,13 @@ void register_fit(Runtime &rt)
 	rt.add_function("get_coef",
 	                [](const stats::Model &m) -> NumArray { return to_numarray(m.beta); });
 
-	rt.add_function("summarize", [](const stats::Model &m) { print_model_summary(m); });
+	rt.add_function("summarize",
+	                [](Isolate &iso, const stats::Model &m) { print_model_summary(iso, m); });
 
 	rt.add_function("compare", [](Isolate &iso, const stats::Model &m1, const stats::Model &m2) {
 		try
 		{
-			print_model_comparison(m1, m2);
+			print_model_comparison(iso, m1, m2);
 		}
 		catch (std::exception &e)
 		{

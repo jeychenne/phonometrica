@@ -24,14 +24,19 @@
 
 #include <phon/analysis/model.hpp>
 
+namespace phonometrica {
+class Isolate;
+}
+
 namespace phonometrica::stats_host {
 
-// The `summarize(model)` output, ported from the app's print_model_summary.
-void print_model_summary(const stats::Model &m);
+// The `summarize(model)` output, ported from the app's print_model_summary. Output
+// goes through the engine's redirectable sink (Isolate::write_output, roadmap E3).
+void print_model_summary(Isolate &iso, const stats::Model &m);
 
 // The `compare(m1, m2)` output (ANOVA / WAIC / Bayes factors), ported from the
 // app's compare_models callback. Throws on estimation-method mismatch.
-void print_model_comparison(const stats::Model &m1, const stats::Model &m2);
+void print_model_comparison(Isolate &iso, const stats::Model &m1, const stats::Model &m2);
 
 } // namespace phonometrica::stats_host
 
