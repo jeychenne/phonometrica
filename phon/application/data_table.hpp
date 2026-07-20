@@ -131,10 +131,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct maybe_cyclic<DataTable> : std::false_type { };
-}
-
 } // namespace phonometrica
 
 #endif // PHONOMETRICA_DATA_TABLE_HPP

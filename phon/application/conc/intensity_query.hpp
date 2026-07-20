@@ -110,7 +110,6 @@ private:
 };
 
 namespace traits {
-template<> struct maybe_cyclic<IntensityQuery> : std::false_type { };
 template<> struct is_clonable<IntensityQuery> : std::false_type { };
 }
 

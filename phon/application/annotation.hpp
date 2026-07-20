@@ -201,7 +201,6 @@ struct AnnotationLessComparator
 
 
 namespace traits {
-template<> struct maybe_cyclic<Annotation> : std::false_type { };
 template<> struct is_clonable<Annotation> : std::false_type { };
 }
 

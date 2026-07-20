@@ -102,11 +102,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct maybe_cyclic<Bookmark> : std::false_type { };
-template<> struct maybe_cyclic<TimeStamp> : std::false_type { };
-}
-
 
 } // namespace phonometrica
 

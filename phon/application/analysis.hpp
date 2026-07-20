@@ -147,10 +147,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct maybe_cyclic<Analysis> : std::false_type { };
-}
-
 } // namespace phonometrica
 
 #endif // PHONOMETRICA_ANALYSIS_HPP

@@ -199,7 +199,6 @@ private:
 };
 
 namespace traits {
-template<> struct maybe_cyclic<VoiceQualityQuery> : std::false_type { };
 template<> struct is_clonable<VoiceQualityQuery> : std::false_type { };
 }
 

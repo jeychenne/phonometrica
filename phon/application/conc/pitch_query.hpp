@@ -229,7 +229,6 @@ private:
 };
 
 namespace traits {
-template<> struct maybe_cyclic<PitchQuery> : std::false_type { };
 template<> struct is_clonable<PitchQuery> : std::false_type { };
 }
 

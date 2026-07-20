@@ -612,7 +612,6 @@ protected:
 
 
 namespace traits {
-template<> struct maybe_cyclic<Concordance> : std::false_type { };
 template<> struct is_clonable<Concordance> : std::false_type { };
 }
 
