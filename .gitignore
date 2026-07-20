@@ -2,6 +2,10 @@
 CMakeLists.txt.user
 .DS_Store
 __pycache__/
+.cache/
+.claude/
+build*/
+
 *.pyc
 *.exe
 cmake-build-debug-visual-studio
