@@ -605,6 +605,50 @@ String &String::remove(Substring what, intptr_t ntimes)
 	return replace(what, Substring(), ntimes);
 }
 
+String &String::replace(const_iterator from, const_iterator to, Substring after)
+{
+	PHON_ASSERT(from >= begin() && to <= end() && from <= to);
+	std::string out;
+	out.reserve(static_cast<size_t>(size()) - static_cast<size_t>(to - from) + after.size());
+	out.append(begin(), static_cast<size_t>(from - begin()));
+	out.append(after.data(), after.size());
+	out.append(to, static_cast<size_t>(end() - to));
+	*this = String(out);
+	return *this;
+}
+
+String &String::replace_first(Substring before, Substring after)
+{
+	return replace(before, after, 1);
+}
+
+String &String::replace_last(Substring before, Substring after)
+{
+	if (before.empty())
+		return *this;
+	size_t hit = view().rfind(before);
+	if (hit != Substring::npos)
+	{
+		std::string out;
+		Substring hay = view();
+		out.append(hay.data(), hit);
+		out.append(after.data(), after.size());
+		out.append(hay.data() + hit + before.size(), hay.size() - hit - before.size());
+		*this = String(out);
+	}
+	return *this;
+}
+
+String &String::remove_first(Substring what)
+{
+	return replace_first(what, Substring());
+}
+
+String &String::remove_last(Substring what)
+{
+	return replace_last(what, Substring());
+}
+
 // ---------------------------------------------------------------------------
 // split / join (byte-wise, old Phonometrica semantics)
 // ---------------------------------------------------------------------------
@@ -916,6 +960,38 @@ Substring String::mid(intptr_t from, intptr_t count) const
 	return Substring(start, static_cast<size_t>(stop - start));
 }
 
+Substring String::mid(const_iterator from, const_iterator to) const
+{
+	PHON_ASSERT(from >= begin() && to <= end() && from <= to);
+	return Substring(from, static_cast<size_t>(to - from));
+}
+
+Substring String::mid(const_iterator from, intptr_t count) const
+{
+	const_iterator to;
+	if (count < 0)
+		to = end();
+	else
+	{
+		to = from;
+		advance(to, count);
+	}
+	return mid(from, to);
+}
+
+Substring String::rmid(const_iterator to, intptr_t count) const
+{
+	const_iterator from;
+	if (count < 0)
+		from = begin();
+	else
+	{
+		from = to;
+		advance(from, -count);
+	}
+	return mid(from, to);
+}
+
 // ---------------------------------------------------------------------------
 // Search (grapheme positions)
 // ---------------------------------------------------------------------------
@@ -946,6 +1022,58 @@ intptr_t String::rfind(Substring needle) const
 	return static_cast<intptr_t>(
 	           unicode::byte_to_grapheme(s->data, static_cast<size_t>(s->byte_size), pos)) +
 	       1;
+}
+
+String::const_iterator String::find(Substring needle, const_iterator from) const
+{
+	PHON_ASSERT(from >= begin() && from <= end());
+	Substring hay(from, static_cast<size_t>(end() - from));
+	size_t pos = hay.find(needle);
+	return (pos == Substring::npos) ? end() : from + pos;
+}
+
+String::const_iterator String::find(char32_t c, const_iterator from) const
+{
+	Codepoint cp = encode(c);
+	return find(Substring(cp.data, cp.size), from);
+}
+
+bool String::iequals(Substring self, Substring other)
+{
+	const char *p1 = self.data(), *e1 = p1 + self.size();
+	const char *p2 = other.data(), *e2 = p2 + other.size();
+	bool valid;
+	while (p1 < e1 && p2 < e2)
+	{
+		char32_t c1, c2;
+		p1 += unicode::decode(p1, e1, &c1, &valid);
+		p2 += unicode::decode(p2, e2, &c2, &valid);
+		if (unicode::to_lower_simple(c1) != unicode::to_lower_simple(c2))
+			return false;
+	}
+	return p1 == e1 && p2 == e2;
+}
+
+String::const_iterator String::ifind(Substring needle, const_iterator from, const_iterator *to) const
+{
+	if (to)
+		*to = nullptr;
+	if (needle.empty())
+		return end();
+	auto n = static_cast<intptr_t>(unicode::grapheme_count(needle.data(), needle.size()));
+	const_iterator it = from;
+	while (it != end())
+	{
+		Substring part = mid(it, n);
+		if (iequals(part, needle))
+		{
+			if (to)
+				*to = it + part.size();
+			return it;
+		}
+		advance(it, 1);
+	}
+	return end();
 }
 
 bool String::contains(Substring needle) const { return view().find(needle) != Substring::npos; }
@@ -1021,6 +1149,35 @@ double String::to_float(bool *ok) const
 	if (ok)
 		*ok = (endp == data() + size());
 	return v;
+}
+
+double String::to_float(Substring str, bool *ok)
+{
+	// The view need not be NUL-terminated: copy into a bounded buffer first.
+	char buf[64];
+	if (str.size() < sizeof(buf))
+	{
+		std::memcpy(buf, str.data(), str.size());
+		buf[str.size()] = '\0';
+		char *endp = nullptr;
+		double v = std::strtod(buf, &endp);
+		if (ok)
+			*ok = (endp == buf + str.size()) && !str.empty();
+		return v;
+	}
+	return String(str.data(), static_cast<intptr_t>(str.size())).to_float(ok);
+}
+
+String &String::trim_new_line()
+{
+	intptr_t len = size();
+	intptr_t last = len;
+	const char *p = data();
+	while (last > 0 && (p[last - 1] == '\n' || p[last - 1] == '\r'))
+		--last;
+	if (last != len)
+		*this = String(p, last);
+	return *this;
 }
 
 intptr_t String::to_int(bool *ok) const

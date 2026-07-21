@@ -29,6 +29,8 @@
 
 #include <phon/engine/compile/diagnostic.hpp>
 
+#include <algorithm>
+#include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -348,6 +350,10 @@ class ModuleManager final : public ModuleLoader
 {
 public:
 	void add_import_path(const std::string &dir) { m_paths.push_back(dir); }
+	void remove_import_path(const std::string &dir)
+	{
+		m_paths.erase(std::remove(m_paths.begin(), m_paths.end(), dir), m_paths.end());
+	}
 
 	int alloc_slot() override { return m_next_slot++; }
 	int total_slots() const noexcept { return m_next_slot; }
@@ -636,6 +642,11 @@ void Runtime::add_import_path(const String &dir)
 	m_state->modules.add_import_path(std::string(dir.data(), static_cast<size_t>(dir.size())));
 }
 
+void Runtime::remove_import_path(const String &dir)
+{
+	m_state->modules.remove_import_path(std::string(dir.data(), static_cast<size_t>(dir.size())));
+}
+
 void Runtime::request_interrupt() noexcept { m_state->isolate.request_interrupt(); }
 
 void Runtime::collect_garbage() { m_state->isolate.collector().collect(); }
@@ -755,7 +766,48 @@ void Runtime::set_clear_output_hook(std::function<void()> hook)
 	m_state->isolate.clear_output_hook = std::move(hook);
 }
 
+std::function<void(std::string_view)> Runtime::output_hook() const
+{
+	return m_state->isolate.output_hook;
+}
+
+std::function<void(std::string_view)> Runtime::error_output_hook() const
+{
+	return m_state->isolate.error_output_hook;
+}
+
+std::function<void()> Runtime::clear_output_hook() const
+{
+	return m_state->isolate.clear_output_hook;
+}
+
 void Runtime::print(std::string_view text) { m_state->isolate.write_output(text); }
+
+void Runtime::printf(const char *fmt, ...)
+{
+	char stack_buf[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	va_list ap2;
+	va_copy(ap2, ap);
+	int n = std::vsnprintf(stack_buf, sizeof(stack_buf), fmt, ap);
+	va_end(ap);
+	if (n < 0)
+	{
+		va_end(ap2);
+		return;
+	}
+	if (static_cast<size_t>(n) < sizeof(stack_buf))
+	{
+		va_end(ap2);
+		print(std::string_view(stack_buf, static_cast<size_t>(n)));
+		return;
+	}
+	std::string big(static_cast<size_t>(n), '\0');
+	std::vsnprintf(big.data(), big.size() + 1, fmt, ap2);
+	va_end(ap2);
+	print(big);
+}
 void Runtime::print_error(std::string_view text) { m_state->isolate.write_error_output(text); }
 void Runtime::clear_output() { m_state->isolate.clear_output(); }
 

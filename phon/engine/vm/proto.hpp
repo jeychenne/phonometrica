@@ -122,7 +122,10 @@ struct Proto final
 
 	// --- emission helpers (used by lowering) ---
 
-	intptr_t emit(Instruction ins, uint32_t line)
+	// Named emit_ins, not emit: this header reaches embedders, and Qt's keyword
+	// macros (#define emit) would otherwise mangle the declaration in any TU that
+	// includes Qt headers first.
+	intptr_t emit_ins(Instruction ins, uint32_t line)
 	{
 		code.push_back(ins);
 		lines.push_back(line);

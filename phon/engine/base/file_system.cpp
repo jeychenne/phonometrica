@@ -3,14 +3,11 @@
 
 #include <phon/engine/base/file_system.hpp>
 
-#include <phon/engine/core/variant.hpp>
-
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <random>
-#include <vector>
 
 #if PHON_WINDOWS
 	#include <windows.h>
@@ -139,6 +136,17 @@ String user_directory()
 #endif
 }
 
+String application_directory()
+{
+#if PHON_WINDOWS
+	return join(user_directory(), "AppData", "Roaming");
+#elif defined(__APPLE__)
+	return join(user_directory(), "Library", "Application Support");
+#else
+	return join(user_directory(), ".config");
+#endif
+}
+
 String current_directory()
 {
 #if PHON_WINDOWS
@@ -176,6 +184,12 @@ String join(std::string_view s1, std::string_view s2)
 	check_end(path);
 	path.append(Substring(s2.data(), s2.size()));
 	return path;
+}
+
+void append(String &s1, std::string_view s2)
+{
+	check_end(s1);
+	s1.append(Substring(s2.data(), s2.size()));
 }
 
 String temp_directory()
@@ -319,15 +333,12 @@ void read_dir_entries(const String &path, Fn fn, bool include_hidden)
 
 } // namespace
 
-List list_directory(const String &path, bool include_hidden)
+Array<String> list_directory(const String &path, bool include_hidden)
 {
-	std::vector<String> names;
-	read_dir_entries(path, [&](String s) { names.push_back(std::move(s)); }, include_hidden);
+	Array<String> names;
+	read_dir_entries(path, [&](String s) { names.append(std::move(s)); }, include_hidden);
 	std::sort(names.begin(), names.end());
-	List out;
-	for (auto &n : names)
-		out.append(Variant(n.to_value()));
-	return out;
+	return names;
 }
 
 bool remove_directory(const String &dir, bool recursive)
@@ -337,10 +348,8 @@ bool remove_directory(const String &dir, bool recursive)
 		                      "\" is not a directory");
 	if (recursive)
 	{
-		List entries = list_directory(dir, true);
-		for (intptr_t i = 1; i <= entries.size(); ++i)
+		for (auto &name : list_directory(dir, true))
 		{
-			String name = String::from_value(entries.get(i).value());
 			String path = join(dir, name);
 			if (is_directory(path))
 				remove_directory(path, true);

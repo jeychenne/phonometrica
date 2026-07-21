@@ -209,6 +209,17 @@ public:
 
 	String &operator+=(Substring s) { return append(s); }
 	String operator+(Substring s) const;
+	// Exact-match overloads: under PHON_WITH_QT the implicit operator QString() makes
+	// Qt's free operator+(QString, QString) a rival candidate, turning `str + "lit"`
+	// and `str + str` ambiguous without these.
+	String operator+(const String &s) const { return operator+(s.view()); }
+	String operator+(const char *s) const { return operator+(Substring(s)); }
+	friend String operator+(const char *lhs, const String &rhs)
+	{
+		String result(lhs);
+		result.append(rhs.view());
+		return result;
+	}
 
 	void clear();
 	void reserve(intptr_t bytes);
@@ -220,6 +231,13 @@ public:
 	// `ntimes` bounds those placeholder substitutions within `after` (-1 = all).
 	// Defined in types/regex.cpp.
 	String &replace(const Regex &pattern, String after, intptr_t ntimes = -1);
+	// Replace the byte range [from, to) with `after` (old Phonometrica parity; used
+	// with the iterator-based searches above).
+	String &replace(const_iterator from, const_iterator to, Substring after);
+	String &replace_first(Substring before, Substring after);
+	String &replace_last(Substring before, Substring after);
+	String &remove_first(Substring what);
+	String &remove_last(Substring what);
 	String &remove(Substring what, intptr_t ntimes = -1);
 
 	// Replace positional arguments %1 to %9, Qt-style (each `arg` is substituted in
@@ -241,6 +259,8 @@ public:
 	String &trim();
 	String &ltrim();
 	String &rtrim();
+	// Strip trailing '\n'/'\r' bytes (old Phonometrica parity; line-oriented readers).
+	String &trim_new_line();
 
 	// --- non-mutating derivations (return a new String) ---
 
@@ -254,10 +274,31 @@ public:
 	// Grapheme-range substring view: `count` graphemes from 1-based `from`.
 	Substring mid(intptr_t from, intptr_t count = -1) const;
 
+	// Iterator-based substring views (old Phonometrica parity: the app's annotation /
+	// concordance context extraction walks strings by iterator). `mid(from, count)`
+	// takes `count` graphemes forward from `from`; `rmid(to, count)` takes `count`
+	// graphemes backward, ending at `to`; a negative count means "to the end"
+	// (resp. "from the beginning").
+	Substring mid(const_iterator from, const_iterator to) const;
+	Substring mid(const_iterator from, intptr_t count = -1) const;
+	Substring rmid(const_iterator to, intptr_t count = -1) const;
+
 	// --- search (grapheme positions; 0 = not found) ---
 
 	intptr_t find(Substring needle, intptr_t from = 1) const;
 	intptr_t rfind(Substring needle) const;
+
+	// Iterator-based search (old Phonometrica parity): first occurrence at or after
+	// `from`; end() when not found.
+	const_iterator find(Substring needle, const_iterator from) const;
+	const_iterator find(char32_t c, const_iterator from) const;
+
+	// Case-insensitive search from `from`; when found and `to` is non-null, `*to`
+	// receives one past the matched text. end() when not found.
+	const_iterator ifind(Substring needle, const_iterator from, const_iterator *to = nullptr) const;
+
+	// Case-insensitive equality (simple code-point lowercase folding).
+	static bool iequals(Substring self, Substring other);
 
 	// Split on a byte-wise separator (old Phonometrica semantics: an empty separator
 	// throws; a separator no shorter than the string yields the whole string as the
@@ -268,8 +309,12 @@ public:
 	static String join(const Array<String> &strings, Substring separator);
 	bool contains(Substring needle) const;
 	bool contains(char32_t c) const;
+	// Case-insensitive contains (old Phonometrica parity; quick-search filters).
+	bool icontains(Substring needle) const { return ifind(needle, begin()) != end(); }
 	bool starts_with(Substring prefix) const;
 	bool ends_with(Substring suffix) const;
+	bool starts_with(char c) const { return !empty() && data()[0] == c; }
+	bool ends_with(char c) const { return !empty() && data()[size() - 1] == c; }
 	intptr_t count(Substring needle) const;
 
 	// --- conversion ---
@@ -278,6 +323,7 @@ public:
 	static String convert(intptr_t n);
 	static String convert(double x);
 	double to_float(bool *ok = nullptr) const;
+	static double to_float(Substring str, bool *ok = nullptr);
 	intptr_t to_int(bool *ok = nullptr) const;
 	bool to_bool(bool strict = false) const;
 	static String format(const char *fmt, ...);

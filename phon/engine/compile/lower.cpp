@@ -93,7 +93,7 @@ private:
 
 	// --- emission ---
 	Proto &P() { return fs->proto; }
-	intptr_t emit(Instruction ins, uint32_t line) { return P().emit(ins, line); }
+	intptr_t emit(Instruction ins, uint32_t line) { return P().emit_ins(ins, line); }
 	static uint32_t ln(Ast *n) { return static_cast<uint32_t>(n ? n->line : 0); }
 
 	intptr_t emit_ABC(Opcode op, int a, int b, int c, uint32_t line)

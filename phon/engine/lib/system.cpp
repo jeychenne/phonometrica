@@ -88,11 +88,17 @@ void register_system_lib()
 	register_function("exists", [](const String &p) { return fs::exists(p); });
 	register_function("is_directory", [](const String &p) { return fs::is_directory(p); });
 	register_function("is_document", [](const String &p) { return fs::is_file(p); });
-	register_function("list_directory", [](Isolate &iso, const String &p) {
-		return guarded(iso, [&] { return fs::list_directory(p, false); });
+	auto entry_list = [](Array<String> names) {
+		List out;
+		for (auto &n : names)
+			out.append(Variant(n.to_value()));
+		return out;
+	};
+	register_function("list_directory", [entry_list](Isolate &iso, const String &p) {
+		return guarded(iso, [&] { return entry_list(fs::list_directory(p, false)); });
 	});
-	register_function("list_directory", [](Isolate &iso, const String &p, bool hidden) {
-		return guarded(iso, [&] { return fs::list_directory(p, hidden); });
+	register_function("list_directory", [entry_list](Isolate &iso, const String &p, bool hidden) {
+		return guarded(iso, [&] { return entry_list(fs::list_directory(p, hidden)); });
 	});
 
 	// --- mutating operations ---

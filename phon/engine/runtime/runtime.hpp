@@ -118,6 +118,7 @@ public:
 	// looks for `M.phon` or `M/initialize.phon` in the importing file's directory, then
 	// in each directory added here, then in $PHON_MODULE_PATH.
 	void add_import_path(const String &dir);
+	void remove_import_path(const String &dir);
 
 	// Cooperatively interrupt the script currently running on this session (the GUI's
 	// "stop script" button, architecture §9.4). Safe to call from another thread while
@@ -163,12 +164,22 @@ public:
 	void set_error_output_hook(std::function<void(std::string_view)> hook);
 	void set_clear_output_hook(std::function<void()> hook);
 
+	// Read back the currently installed hooks (null when the default sink is active),
+	// so an embedder can swap sinks temporarily and restore them (the GUI's script
+	// view redirects print/clear to its output panel for the duration of a run).
+	std::function<void(std::string_view)> output_hook() const;
+	std::function<void(std::string_view)> error_output_hook() const;
+	std::function<void()> clear_output_hook() const;
+
 	// Emit host-side output through the same sinks the `print` builtin uses (the
 	// statistics printers, diagnostics, …). `print` writes the text verbatim (add your
 	// own newline); `print_error` routes to the error sink; `clear_output` empties the
 	// console.
 	void print(std::string_view text);
 	void print_error(std::string_view text);
+	// printf-style formatting routed through the output sink (old Runtime parity: the
+	// statistics summary printers are written against it).
+	void printf(const char *fmt, ...);
 	void clear_output();
 
 	// Force a cycle-collection pass now (design/architecture §8.2). Normally the

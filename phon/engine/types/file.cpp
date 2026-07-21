@@ -223,6 +223,12 @@ bool File::next_codepoint(char32_t &cp)
 	return true;
 }
 
+String File::read_all(const String &path, Encoding enc)
+{
+	File infile(path, Read, enc);
+	return infile.read_all();
+}
+
 String File::read_all()
 {
 	String out;

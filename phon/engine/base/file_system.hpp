@@ -12,7 +12,7 @@
 #ifndef PHON_OS_FILE_SYSTEM_HPP
 #define PHON_OS_FILE_SYSTEM_HPP
 
-#include <phon/engine/types/list.hpp>
+#include <phon/engine/core/array.hpp>
 #include <phon/engine/types/string.hpp>
 
 #include <stdexcept>
@@ -48,6 +48,10 @@ String full_path(const String &relative_path);
 // The current user's home directory ($HOME / %USERPROFILE% / SHGetFolderPathW).
 String user_directory();
 
+// The per-user application-data directory (AppData/Roaming, Library/Application
+// Support, or ~/.config).
+String application_directory();
+
 // The process working directory.
 String current_directory();
 void set_current_directory(const String &path);
@@ -57,6 +61,8 @@ String separator();
 
 // Join two path components with exactly one separator between them.
 String join(std::string_view s1, std::string_view s2);
+// In-place join: append a path component to s1 with exactly one separator between them.
+void append(String &s1, std::string_view s2);
 template<typename... Args>
 String join(std::string_view s1, std::string_view s2, Args... args)
 {
@@ -77,9 +83,11 @@ bool remove_directory(const String &dir, bool recursive);
 bool remove_file(const String &path);
 bool remove(const String &path); // dispatches to remove_directory / remove_file
 
-// Directory entries (names only), sorted; hidden (dotfile) entries optional. Returns a
-// List of String, one per entry.
-List list_directory(const String &path, bool include_hidden = false);
+// Directory entries (names only), sorted; hidden (dotfile) entries optional. Returns
+// one String per entry. (Returned as the plain container, not a script List, so the
+// embedding application can consume it directly; the stdlib wrapper in lib/system.cpp
+// converts to a List.)
+Array<String> list_directory(const String &path, bool include_hidden = false);
 
 bool exists(const String &path);
 bool is_directory(const String &path);

@@ -28,6 +28,8 @@ namespace detail {
 template<class T>
 T variant_to(Value v);
 template<class T>
+bool variant_is(Value v);
+template<class T>
 Variant variant_from(const T &x);
 } // namespace detail
 
@@ -94,6 +96,14 @@ public:
 	T to() const
 	{
 		return detail::variant_to<T>(m_value);
+	}
+
+	// Non-throwing type test: `v.is<Table>()`, `v.is<Handle<Sound>>()`. True when
+	// to<T>() would succeed (modulo numeric widening, which is<T> also honours).
+	template<class T>
+	bool is() const
+	{
+		return detail::variant_is<T>(m_value);
 	}
 
 	// Build a Variant from a C++ value: `Variant::make(2.5)`, `Variant::make(some_string)`,

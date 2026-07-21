@@ -127,7 +127,14 @@ struct File
 	String read_all();
 	String read_line();
 	List read_lines();
+	// Read a whole file in one call (old Phonometrica parity).
+	static String read_all(const String &path, Encoding enc = Encoding::Undefined);
 	void write(const String &text);
+	void write(char c)
+	{
+		if (handle)
+			std::fputc(c, handle);
+	}
 	void write_line(const String &text);
 	// printf-formatted write (old Phonometrica parity): formats `fmt` and writes the
 	// resulting UTF-8 bytes. Used by the app's text exporters (e.g. Praat TextGrids).

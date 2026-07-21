@@ -2100,3 +2100,55 @@ surveying the app's direct usage against this engine's String/File.
     back" (write via format, read-back with auto-detect, open-failure throw).
 
 403 cases green under normal/ASan/TSan.
+
+## Step-5 cutover support — filesystem app parity (Phonometrica roadmap A1 stage 2, 2026-07-21)
+
+At the A1 flip the app stops compiling its own phon/utils/file_system.cpp and includes
+this engine's base/file_system.hpp instead (both define `phonometrica::filesystem::*`,
+so two implementations cannot coexist in one binary — the engine's, being needed
+internally, wins). Three app-parity changes so the app's call sites compile unchanged:
+
+24. **`filesystem::list_directory` now returns `Array<String>`, not `List`.** Every app
+    call site consumes the entry names as plain strings (plugin scan, project import,
+    protocol discovery); only the stdlib `system` module wants a script List, so the
+    conversion moved into lib/system.cpp's two `list_directory` bindings (an
+    `entry_list` lambda boxing each name). remove_directory's recursive walk simplified
+    to range-for over the container. Also added, ported verbatim from the app's
+    phon/utils/file_system.cpp: **`void append(String &s1, std::string_view s2)`**
+    (in-place join, used pervasively by the app's Settings paths) and
+    **`String application_directory()`** (AppData/Roaming ~ Library/Application Support
+    ~ ~/.config; branches on the compiler's platform macros since the engine has no
+    PHON_MACOS define). base/file_system.hpp now includes core/array.hpp instead of
+    types/list.hpp.
+
+25. **A1 stage-2 parity batch (the flip itself).** Added while compiling the whole
+    application against this engine; all are old-Phonometrica parity or embedder
+    hygiene, none change script semantics. (a) **Qt-keyword safety**: `Proto::emit` →
+    `emit_ins` (vm/proto.hpp reaches app TUs through the embedding umbrella, and Qt's
+    `#define emit` mangled the declaration); grepped headers clean of
+    emit/signals/slots/foreach. (b) **Handle**: `Handle(std::nullptr_t)` + `==`/`!=`
+    nullptr (app compares/reset handles with nullptr pervasively). (c) **String**:
+    iterator-based `mid(from,to)`/`mid(from,count)`/`rmid(to,count)`,
+    `find(needle,it)`/`find(char32_t,it)`, `ifind` (+ *to out-iterator), static
+    `iequals`, `icontains`, byte-range `replace(from,to,after)`,
+    `replace_first/replace_last/remove_first/remove_last`, `trim_new_line`, static
+    `to_float(Substring,bool*)`, `starts_with(char)`/`ends_with(char)`, and
+    `operator+(const String&)`/`operator+(const char*)`/`operator+(const char*, String)`
+    — the latter because under PHON_WITH_QT the implicit `operator QString()` made Qt's
+    free operator+ a rival candidate and `str + "lit"` ambiguous. (d) **Match/Regex**:
+    `operator bool`, `count()` (groups sans 0), `capture(n)`,
+    `capture_start_iter/capture_end_iter` (byte iterators into subject()), and
+    `Regex::match(subject, const_iterator)` — thin wrappers over group data (the
+    query-matching engine walks subjects by iterator). (e) **File**: `write(char)`,
+    static `read_all(path, enc)`. (f) **Runtime**: variadic `printf` through the output
+    sink (the data_table model printers), hook getters
+    `output_hook/error_output_hook/clear_output_hook` (the script view swaps sinks
+    around a run and restores them), `remove_import_path` (plugin unload path).
+    (g) **Variant::is<T>** (non-throwing type test via the same ArgTraits mapping as
+    to<T>; plugin/protocol description walkers). (h) **add_class** now guards the CoW
+    clone hook with `if constexpr (std::is_copy_constructible_v<T>)` so ABSTRACT and
+    non-copyable classes register (the VFS hierarchy: Element/Document are abstract
+    bases; PHON_CHECK enforces copyability for Value kind). (i) lib/system.cpp converts
+    the now-Array<String> fs::list_directory to a List in its two bindings (item 24).
+    Suite: 403 cases green ×3 builds; the full Phonometrica app + phon_stats compile and
+    link against the engine, the ported test/engine suite passes through the app binary.

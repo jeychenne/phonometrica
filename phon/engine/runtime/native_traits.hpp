@@ -736,6 +736,12 @@ T variant_to(Value v)
 }
 
 template<class T>
+bool variant_is(Value v)
+{
+	return value_is_a(deref(v), ArgTraits<T>::dispatch_class());
+}
+
+template<class T>
 Variant variant_from(const T &x)
 {
 	return Variant::adopt(RetTraits<std::decay_t<T>>::box(x));
@@ -801,10 +807,22 @@ Class *add_class(const char *name, Class *base, ClassKind kind = ClassKind::Refe
 	GcFreeHook gc_free = nullptr;
 	if constexpr (detail::has_gc_free_v<T>)
 		gc_free = &detail::foreign_gc_free<T>;
+	// Only a Value class needs a CoW clone, and only a copyable type can provide one —
+	// `if constexpr` so foreign_clone<T> is never instantiated for an abstract or
+	// non-copyable class (e.g. the Phonometrica VFS hierarchy, all Reference kind).
+	CloneHook clone = nullptr;
+	if constexpr (std::is_copy_constructible_v<T>)
+	{
+		if (!is_reference)
+			clone = &detail::foreign_clone<T>;
+	}
+	else
+	{
+		PHON_CHECK(is_reference, "add_class<T>: a Value class must be copy-constructible");
+	}
 	Class *c = register_foreign_class(name, base, is_reference,
 	                                  static_cast<intptr_t>(box_total_size<T>()),
-	                                  &detail::foreign_finalize<T>,
-	                                  is_reference ? nullptr : &detail::foreign_clone<T>, trace,
+	                                  &detail::foreign_finalize<T>, clone, trace,
 	                                  gc_free, /*acyclic=*/!traceable);
 	g_registered_class<T> = c;
 	return c;

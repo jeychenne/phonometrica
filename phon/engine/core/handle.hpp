@@ -44,6 +44,10 @@ public:
 
 	Handle() = default;
 
+	// Null handle (old Phonometrica parity: handles are compared to and reset with
+	// nullptr all over the application).
+	Handle(std::nullptr_t) noexcept {}
+
 	// Retaining constructor: takes a borrowed pointer and adds a reference.
 	explicit Handle(T *p) noexcept : m_ptr(p)
 	{
@@ -179,6 +183,8 @@ public:
 
 	bool operator==(const Handle &o) const noexcept { return m_ptr == o.m_ptr; }
 	bool operator!=(const Handle &o) const noexcept { return m_ptr != o.m_ptr; }
+	bool operator==(std::nullptr_t) const noexcept { return m_ptr == nullptr; }
+	bool operator!=(std::nullptr_t) const noexcept { return m_ptr != nullptr; }
 
 private:
 	static PHON_FORCE_INLINE Cell *cell_of(T *p) noexcept

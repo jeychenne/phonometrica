@@ -41,9 +41,28 @@ public:
 	Match(String subject, int total_groups, int rc, const PCRE2_SIZE *ovector);
 
 	bool has_match() const noexcept { return m_total_groups > 0; }
+	explicit operator bool() const noexcept { return has_match(); }
 
 	// Number of groups including the implicit group 0 (so `(a)(b)(c)` yields 4).
 	int group_count() const noexcept { return m_total_groups; }
+
+	// --- old Phonometrica accessors (thin wrappers used by the application) ---
+
+	// Number of capture groups excluding group 0 (so `(a)(b)(c)` yields 3).
+	intptr_t count() const noexcept { return m_total_groups > 0 ? m_total_groups - 1 : 0; }
+
+	// The text captured by group `nth`, with 0 <= nth <= count().
+	String capture(intptr_t nth) const { return group(static_cast<int>(nth)); }
+
+	// Byte iterators into subject() delimiting a capture.
+	String::const_iterator capture_start_iter(intptr_t nth) const
+	{
+		return m_subject.begin() + group_byte_start(static_cast<int>(nth));
+	}
+	String::const_iterator capture_end_iter(intptr_t nth) const
+	{
+		return m_subject.begin() + group_byte_end(static_cast<int>(nth));
+	}
 
 	// True when `n` names a group of this match (0 <= n < group_count()).
 	bool in_range(int64_t n) const noexcept { return n >= 0 && n < m_total_groups; }
@@ -115,6 +134,12 @@ public:
 	// Returns an empty Match (has_match() == false) if the pattern does not match. On a
 	// genuine PCRE2 error, sets `*error` (if non-null) and returns an empty Match.
 	Match match(const String &subject, intptr_t from = 0, String *error = nullptr) const;
+
+	// Old Phonometrica overload: start at an iterator into `subject`.
+	Match match(const String &subject, String::const_iterator from) const
+	{
+		return match(subject, static_cast<intptr_t>(from - subject.begin()));
+	}
 
 	// Translate a "caseless|multiline|dotall|extended|anchored|dollar_endonly|ungreedy"
 	// flags string into the combined Option bits (unknown tokens are ignored).
