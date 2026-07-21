@@ -350,7 +350,7 @@ Handle<Annotation> duplicate_annotation(Annotation &src, const String &out_path)
 {
 	src.open();
 
-	auto result = make_handle<Annotation>();
+	auto result = Handle<Annotation>::make();
 
 	// Layers.
 	for (auto &layer : src.layers()) {
@@ -386,7 +386,7 @@ extract_layers(Annotation &src,
 	src.open();
 	validate_layer_indices(layer_indices, src.layer_count());
 
-	auto result = make_handle<Annotation>();
+	auto result = Handle<Annotation>::make();
 
 	for (intptr_t idx : layer_indices) {
 		const auto &layer = src.layers()[idx];
@@ -430,7 +430,7 @@ merge_annotations(Annotation &base,
 		}
 	}
 
-	auto result = make_handle<Annotation>();
+	auto result = Handle<Annotation>::make();
 
 	// Layers: base first, then each "other".
 	for (auto &layer : base.layers()) {
@@ -479,7 +479,7 @@ extract_annotation_slice(Annotation &src,
 	}
 	src.open();
 
-	auto result = make_handle<Annotation>();
+	auto result = Handle<Annotation>::make();
 
 	for (auto &src_layer : src.layers())
 	{
@@ -564,7 +564,7 @@ concatenate_annotations(std::span<const Handle<Annotation>> sources,
 		}
 	}
 
-	auto result = make_handle<Annotation>();
+	auto result = Handle<Annotation>::make();
 
 	// Build each output layer by concatenating events with cumulative offsets.
 	for (intptr_t k = 0; k < nlayers; ++k)
@@ -670,7 +670,7 @@ extract_sound_slice(Sound &src,
 	// Flush the writer by destroying its handle (RAII closes the file).
 	writer = SndfileHandle();
 
-	return make_handle<Sound>(nullptr, out_path);
+	return Handle<Sound>::make(nullptr, out_path);
 }
 
 
@@ -728,7 +728,7 @@ concatenate_sounds(std::span<const Handle<Sound>> sources,
 
 	writer = SndfileHandle();  // flush via RAII
 
-	return make_handle<Sound>(nullptr, out_path);
+	return Handle<Sound>::make(nullptr, out_path);
 }
 
 
@@ -901,7 +901,7 @@ convert_sound(Sound &src,
 
 	writer = SndfileHandle();  // flush via RAII
 
-	return make_handle<Sound>(nullptr, out_path);
+	return Handle<Sound>::make(nullptr, out_path);
 }
 
 

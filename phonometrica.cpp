@@ -93,7 +93,10 @@ static bool argv_is_script_invocation(int argc, char **argv)
 static void register_script_api(Runtime &rt)
 {
 #ifdef PHON_GUI
-	rt["phon"] = make_handle<Module>(&rt, "phon");
+	// The `phon` namespace is a Table held as an isolate global (engine roadmap E2).
+	// It is CoW: C++-side writers must re-fetch it via get_global and write back
+	// through add_global (see Settings).
+	rt.add_global("phon", Variant::make(Table()));
 	Project::preinitialize(rt);
 	Project::create(rt);
 	Project::initialize(rt);
@@ -147,8 +150,10 @@ int main(int argc, char **argv)
 
 	if (text_mode)
 	{
-		Runtime runtime(argv[0]);
-		runtime.set_text_mode(true);
+		// Note: the old Runtime took argv[0] to derive the resources directory on
+		// Windows/macOS (Settings uses it there); the new engine has no program_path.
+		// TODO(A7): restore a program-path channel for the Windows/macOS builds.
+		Runtime runtime;
 
 		// Register the scripting API (data/stats/document) so scripts run
 		// from the command line have access to load(), fit(), compare(),
@@ -167,8 +172,11 @@ int main(int argc, char **argv)
 
 				if (option == "-l")
 				{
-					auto closure = runtime.compile_file(path);
-					runtime.disassemble(*closure, "main");
+					// TODO(A4): the new engine's disassembler (compile/disassembler.hpp)
+					// needs a public compile-without-run entry before -l/-a can list
+					// bytecode again.
+					utils::print(stderr, "bytecode listing is not available in this build\n");
+					error_code = 1;
 				}
 				else if (option == "-r")
 				{
@@ -176,10 +184,8 @@ int main(int argc, char **argv)
 				}
 				else if (option == "-a")
 				{
-					auto closure = runtime.compile_file(path);
-					runtime.disassemble(*closure, "main");
-					puts("-------------------------------------------------------------------\n");
-					runtime.interpret(closure);
+					utils::print(stderr, "bytecode listing is not available in this build; running only\n");
+					runtime.do_file(path);
 				}
 				else
 				{
@@ -195,7 +201,7 @@ int main(int argc, char **argv)
 		}
 		catch (RuntimeError &e)
 		{
-			utils::fprintf(stderr, "Error on line %:\n", e.line_no());
+			utils::fprintf(stderr, "Error on line %:\n", e.line);
 			utils::print(stderr, e.what());
 			utils::print(stderr, "\n");
 			error_code = 1;
@@ -263,8 +269,7 @@ int main(int argc, char **argv)
 		argv_paths.append(p);
 	}
 
-	Runtime runtime(argv[0]);
-	runtime.set_text_mode(false);
+	Runtime runtime; // see the text-mode note about argv[0]/program_path
 	initialize(runtime);
 
 	MainWindow window(runtime);

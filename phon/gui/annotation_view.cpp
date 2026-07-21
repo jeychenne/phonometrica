@@ -1362,7 +1362,7 @@ void AnnotationView::onCreateBookmark()
 	// Construct the TimeStamp directly: QueryMatch::to_bookmark is only available
 	// when there is a concordance match, which is not the case here. The
 	// context pair is empty; TimeStamp::tooltip() handles that cleanly.
-	auto bm = make_handle<TimeStamp>(nullptr, title, m_annot, (size_t) focus_layer,
+	auto bm = Handle<TimeStamp>::make(nullptr, title, m_annot, (size_t) focus_layer,
 		t1, t2, event_text, std::make_pair(String(), String()));
 	bm->set_notes(notes);
 

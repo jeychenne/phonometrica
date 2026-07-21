@@ -25,7 +25,7 @@
 #define PHONOMETRICA_SCRIPT_EDITOR_HPP
 
 #include <Qsci/qsciscintilla.h>
-#include <phon/runtime/compiler/script_index.hpp>
+#include <phon/gui/script_index.hpp>
 
 class QTimer;
 class QsciAPIs;

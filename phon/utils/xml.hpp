@@ -23,6 +23,7 @@
 #define PHONOMETRICA_XML_HPP
 
 #include <phon/third_party/pugixml/pugixml.hpp>
+#include <phon/error.hpp>
 
 namespace phonometrica {
 

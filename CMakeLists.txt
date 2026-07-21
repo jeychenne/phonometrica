@@ -27,25 +27,20 @@ option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool"
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
-# --- New scripting engine (coexistence during the migration) --------------------------------------
-# The new engine lives in a sibling repository and is built alongside the old one so that both
-# engines coexist in the code base until the old engine is stripped. The two engines define
-# identically named types in namespace phonometrica (String, Handle, Variant, Runtime, ...), so the
-# application binary links ONLY the old engine; the new engine and its unit tests are exposed as
-# extra targets (phon_engine, phon_unit_tests, phon_repl) to keep it building and passing against
-# the same toolchain. Build them explicitly, e.g.: cmake --build build --target phon_unit_tests
-option(PHON_WITH_NEW_ENGINE "Make the new scripting engine's targets available" ON)
+# --- New scripting engine (A1 base-type swap: the app now links the NEW engine) -------------------
+# The new engine lives in a sibling repository. Since the A1 flip the application targets link
+# phon_engine and include its headers via the phon/*.hpp forwarders; the old engine
+# (phon/runtime, target phon-runtime) is kept in-tree for archaeology only and is excluded from
+# the default build (the two engines define identically named types in namespace phonometrica and
+# can never meet in one binary or TU).
 set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to the new engine repository")
-if(PHON_WITH_NEW_ENGINE)
-    if(EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
-        add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
-        # Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the new
-        # engine, no old-engine or GUI dependency. Target: phon_stats.
-        add_subdirectory(stats_host)
-    else()
-        message(STATUS "New engine not found at ${PHON_ENGINE_DIR}; skipping (set PHON_ENGINE_DIR)")
-    endif()
+if(NOT EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
+    message(FATAL_ERROR "New engine not found at ${PHON_ENGINE_DIR} (set PHON_ENGINE_DIR); the application requires it since the A1 base-type swap")
 endif()
+add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
+# Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the new
+# engine, no old-engine or GUI dependency. Target: phon_stats.
+add_subdirectory(stats_host)
 
 
 ###########################
@@ -152,8 +147,15 @@ if(WITH_GUI)
     find_package(Qt6 REQUIRED COMPONENTS Core)
 endif()
 
+# App root first so the app's phon/*.hpp forwarders (and its self-contained
+# phon/error.hpp) win; the engine's headers resolve underneath via <phon/engine/...>.
 include_directories(${CMAKE_SOURCE_DIR})
+include_directories(${PHON_ENGINE_DIR})
 
+# --- Old engine (archaeology only; NOT part of the default build) ---
+# Broken since the A1 flip repointed the shared phon/*.hpp and phon/utils/*.hpp headers
+# onto the new engine; kept until A6 demolition. Build a pristine pre-flip commit in a
+# scratch worktree if a baseline binary is needed.
 file(GLOB_RECURSE RUNTIME_SOURCES
         phon/base/*.cpp
         phon/runtime/*.cpp
@@ -165,13 +167,12 @@ set(THIRDPARTY_SOURCES
         phon/third_party/zip/zip.cpp
 )
 
-add_library(phon-runtime STATIC ${RUNTIME_SOURCES} ${THIRDPARTY_SOURCES})
+add_library(phon-runtime STATIC EXCLUDE_FROM_ALL ${RUNTIME_SOURCES} ${THIRDPARTY_SOURCES})
 set_property(TARGET phon-runtime PROPERTY POSITION_INDEPENDENT_CODE ON)
 target_link_libraries(phon-runtime PRIVATE pcre2-8)
 
 if(WITH_GUI)
     target_link_libraries(phon-runtime PUBLIC Qt6::Core)
-    #add_definitions(-DPHON_WITH_QT=1)
     target_compile_definitions(phon-runtime PUBLIC PHON_WITH_QT=1)
 endif()
 
@@ -180,6 +181,20 @@ if(WIN32)
 else()
     target_link_libraries(phon-runtime PRIVATE m)
 endif()
+
+# --- Utility sources shared by the app targets ---
+# Compiled into phon-app since the A1 flip (they lived in phon-runtime before).
+# alloc.cpp and file_system.cpp stay out: their functionality now comes from the new
+# engine (base/alloc, base/file_system).
+set(UTILS_SOURCES
+        phon/utils/helpers.cpp
+        phon/utils/matrix.cpp
+        phon/utils/os.cpp
+        phon/utils/print.cpp
+        phon/utils/text.cpp
+        phon/utils/zip.cpp
+        phon/third_party/zip/zip.cpp
+)
 
 #############################
 ##  APPLICATION LAYER LIB  ##
@@ -250,9 +265,16 @@ if(WITH_APPLICATION)
         phon/third_party/world/*.cc
     )
 
-    add_library(phon-app STATIC ${APP_SOURCES} ${VENDOR_APP_SOURCES})
+    add_library(phon-app STATIC ${APP_SOURCES} ${VENDOR_APP_SOURCES} ${UTILS_SOURCES})
     set_property(TARGET phon-app PROPERTY POSITION_INDEPENDENT_CODE ON)
-    target_link_libraries(phon-app PRIVATE phon-runtime)
+    target_link_libraries(phon-app PUBLIC phon_engine)
+
+    if(WITH_GUI)
+        # The engine String's QString interop is header-inline and opt-in per TU
+        # (PHON_WITH_QT); phon-app owns the definition now that phon-runtime is gone.
+        target_link_libraries(phon-app PUBLIC Qt6::Core)
+        target_compile_definitions(phon-app PUBLIC PHON_WITH_QT=1)
+    endif()
 
     # ---- whisper.cpp (optional, for transcription) ----
 
@@ -337,7 +359,7 @@ if(WITH_GUI)
 
     set_property(TARGET phon-gui PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-    target_link_libraries(phon-gui PRIVATE phon-app phon-runtime Qt6::Widgets Qt6::Svg Qt6::PrintSupport Qt6::Network ${QSCINTILLA_LIBRARIES})
+    target_link_libraries(phon-gui PRIVATE phon-app Qt6::Widgets Qt6::Svg Qt6::PrintSupport Qt6::Network ${QSCINTILLA_LIBRARIES})
 
     if(WIN32)
         target_compile_definitions(phon-gui PRIVATE QSCINTILLA_DLL)
@@ -378,7 +400,7 @@ elseif (WIN32)
 else ()
     add_executable(${PROJECT_NAME} phonometrica.cpp ${QRC_SOURCES})
 endif ()
-target_link_libraries(${PROJECT_NAME} PRIVATE phon-runtime pcre2-8)
+target_link_libraries(${PROJECT_NAME} PRIVATE phon_engine)
 
 if(WITH_APPLICATION)
     target_link_libraries(${PROJECT_NAME} PRIVATE phon-app)
@@ -590,7 +612,7 @@ endif()
 if(BUILD_UNIT_TEST)
     file(GLOB TEST_SOURCES unit_test/*.cpp)
     add_executable(test_phon ${TEST_SOURCES})
-    target_link_libraries(test_phon PRIVATE phon-runtime pcre2-8)
+    target_link_libraries(test_phon PRIVATE phon_engine)
 
     if(WITH_APPLICATION)
         target_link_libraries(test_phon PRIVATE phon-app)
@@ -608,5 +630,5 @@ if(BUILD_CALIBRATION)
         message(FATAL_ERROR "BUILD_CALIBRATION requires WITH_APPLICATION=ON")
     endif()
     add_executable(calibrate_formants tools/calibrate_formants.cpp)
-    target_link_libraries(calibrate_formants PRIVATE phon-app phon-runtime pcre2-8)
+    target_link_libraries(calibrate_formants PRIVATE phon-app phon_engine)
 endif()

@@ -30,6 +30,7 @@
 #include <phon/application/dataset.hpp>
 #include <phon/application/metadata.hpp>
 #include <phon/application/conc/query.hpp>
+#include <phon/engine/core/variant.hpp>
 #include <phon/utils/signal.hpp>
 #include <phon/error.hpp>
 #include <phon/dictionary.hpp>
@@ -263,10 +264,10 @@ private:
 		for (auto &elem : dir)
 		{
 			if (dynamic_cast<T*>(elem.get())) {
-				files.append(recast<T>(elem));
+				files.append(handle_cast<T>(elem));
 			}
 			else if (elem->is<Directory>()) {
-				find_files<T>(*recast<Directory>(elem), files);
+				find_files<T>(*handle_cast<Directory>(elem), files);
 			}
 		}
 	}

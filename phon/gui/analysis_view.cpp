@@ -186,8 +186,8 @@ bool AnalysisView::save()
 	{
 		auto *project = Project::get();
 		auto *analyses_dir = project->analyses().get();
-		analyses_dir->append(recast<Element>(m_analysis), false);
-		project->register_file(m_analysis->path(), recast<Document>(m_analysis));
+		analyses_dir->append(handle_cast<Element>(m_analysis), false);
+		project->register_file(m_analysis->path(), handle_cast<Document>(m_analysis));
 		project->modify();
 		emit addedToProject();
 	}

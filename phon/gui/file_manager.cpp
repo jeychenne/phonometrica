@@ -777,7 +777,7 @@ void FileManager::onContextMenu(const QPoint &pos)
 				menu.addSeparator();
 				menu.addAction(tr("Create annotation"), [this, sound]() {
 					// Use default constructor which sets m_type = Native.
-					auto annot = make_handle<Annotation>();
+					auto annot = Handle<Annotation>::make();
 					annot->set_sound(Handle<Sound>(sound));
 					// Mark as modified so the save dialog will appear.
 					annot->set_graph_modified(true);

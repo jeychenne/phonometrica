@@ -170,8 +170,8 @@ bool NoteView::save()
 	if (firstSave)
 	{
 		auto *project = Project::get();
-		m_note->parent()->append(recast<Element>(m_note), false);
-		project->register_file(m_note->path(), recast<Document>(m_note));
+		m_note->parent()->append(handle_cast<Element>(m_note), false);
+		project->register_file(m_note->path(), handle_cast<Document>(m_note));
 		project->modify();
 		emit addedToProject();
 	}

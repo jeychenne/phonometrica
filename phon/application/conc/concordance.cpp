@@ -1992,7 +1992,7 @@ void Concordance::parse_matches_from_xml(xml_node root)
 			if (subnode.name() == str("Annotation"))
 			{
 				path = subnode.text().get();
-				annot = recast<Annotation>(Project::get()->get(path));
+				annot = handle_cast<Annotation>(Project::get()->get(path));
 			}
 			else if (subnode.name() == str("Targets"))
 			{
@@ -2693,7 +2693,7 @@ Handle<Concordance> Concordance::unite(const Concordance &other, const String &l
 		origins.push_back(entry.second);
 	}
 
-	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
+	auto conc = Handle<Concordance>::make(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
 
@@ -2773,7 +2773,7 @@ Handle<Concordance> Concordance::intersect(const Concordance &other, const Strin
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
+	auto conc = Handle<Concordance>::make(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
 
@@ -2841,7 +2841,7 @@ Handle<Concordance> Concordance::complement(const Concordance &other, const Stri
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
+	auto conc = Handle<Concordance>::make(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
 
@@ -2901,7 +2901,7 @@ Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, con
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
+	auto conc = Handle<Concordance>::make(m_target_count, m_context_type, m_context_length, std::move(result), nullptr);
 	conc->set_label(label, false);
 	copy_metadata_to(*conc);
 
@@ -3048,7 +3048,7 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 	}
 
 	// Start with a copy of this concordance.
-	auto result = make_handle<Concordance>(*this);
+	auto result = Handle<Concordance>::make(*this);
 	result->m_loaded = true;
 	result->set_label(label, false);
 

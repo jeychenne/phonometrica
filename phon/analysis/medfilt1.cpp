@@ -17,6 +17,7 @@
 
 #include <cmath>
 #include <phon/array.hpp>
+#include <phon/definitions.hpp>
 
 using namespace phonometrica;
 

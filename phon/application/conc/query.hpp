@@ -190,9 +190,6 @@ protected:
 };
 
 
-namespace traits {
-template<> struct is_clonable<Query> : std::false_type { };
-}
 
 } // namespace phonometrica
 

@@ -39,7 +39,7 @@ namespace phonometrica {
 int IntensityQueryEditor::s_query_id = 0;
 
 IntensityQueryEditor::IntensityQueryEditor(QWidget *parent) :
-	IntensityQueryEditor(make_handle<IntensityQuery>(nullptr, String()), parent) {}
+	IntensityQueryEditor(Handle<IntensityQuery>::make(nullptr, String()), parent) {}
 
 IntensityQueryEditor::IntensityQueryEditor(Handle<IntensityQuery> query, QWidget *parent) :
 	QDialog(parent), m_query(std::move(query))
@@ -362,7 +362,7 @@ void IntensityQueryEditor::parseQuery()
 	for (int i = 0; i < m_file_list->count(); i++) {
 		if (m_file_list->item(i)->checkState() == Qt::Checked) {
 			String path(m_file_list->item(i)->data(Qt::UserRole).toString().toUtf8().constData());
-			auto annot = recast<Annotation>(Project::get()->get(path));
+			auto annot = handle_cast<Annotation>(Project::get()->get(path));
 			if (annot) annotations.append(std::move(annot));
 		}
 	}

@@ -37,8 +37,8 @@
 #include <phon/application/plugin.hpp>
 #include <phon/application/protocol.hpp>
 #include <phon/application/protocol_apply.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/runtime/file.hpp>
+#include <phon/runtime.hpp>
+#include <phon/file.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {

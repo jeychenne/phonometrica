@@ -1003,7 +1003,7 @@ void SoundView::onViewSpectralSlice(SpectrumDisplayMode mode)
 
 	try
 	{
-		auto spec = make_handle<Spectrum>(nullptr, m_sound, channel, t1, t2,
+		auto spec = Handle<Spectrum>::make(nullptr, m_sound, channel, t1, t2,
 			window_type, 2, preemph, max_freq, dynamic_range, lpc_order);
 		auto *view = new SpectrumView(spec, mode, this);
 		view->setAttribute(Qt::WA_DeleteOnClose);

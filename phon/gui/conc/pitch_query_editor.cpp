@@ -58,7 +58,7 @@ static ThresholdInfo getThresholdInfo(int algo_index)
 int PitchQueryEditor::s_query_id = 0;
 
 PitchQueryEditor::PitchQueryEditor(QWidget *parent) :
-	PitchQueryEditor(make_handle<PitchQuery>(nullptr, String()), parent) {}
+	PitchQueryEditor(Handle<PitchQuery>::make(nullptr, String()), parent) {}
 
 PitchQueryEditor::PitchQueryEditor(Handle<PitchQuery> query, QWidget *parent) :
 	QDialog(parent), m_query(std::move(query))
@@ -793,7 +793,7 @@ void PitchQueryEditor::parseQuery()
 	for (int i = 0; i < m_file_list->count(); i++) {
 		if (m_file_list->item(i)->checkState() == Qt::Checked) {
 			String path(m_file_list->item(i)->data(Qt::UserRole).toString().toUtf8().constData());
-			auto annot = recast<Annotation>(Project::get()->get(path));
+			auto annot = handle_cast<Annotation>(Project::get()->get(path));
 			if (annot) annotations.append(std::move(annot));
 		}
 	}

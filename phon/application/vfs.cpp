@@ -209,13 +209,13 @@ void Directory::save_content()
 	{
 		if (file->is<Document>() && file->modified())
 		{
-			auto vf = raw_recast<Document>(file);
+			auto vf = static_cast<Document*>(file.get());
 			assert(vf->has_path());
 			vf->save();
 		}
 		else if (file->is<Directory>())
         {
-		    auto folder = raw_recast<Directory>(file);
+		    auto folder = static_cast<Directory*>(file.get());
 		    folder->save_content();
         }
 	}
@@ -259,7 +259,7 @@ const Directory *Directory::toplevel() const
 
 void Directory::add_subfolder(const String &name)
 {
-	append(make_handle<Directory>(this, name));
+	append(Handle<Directory>::make(this, name));
 }
 
 void Directory::set_modified(bool value)
@@ -649,6 +649,8 @@ bool Document::anchored() const
 
 void Document::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
 	auto add_property = [](Runtime &, std::span<Variant> args) -> Variant  {
 		auto &doc = cast<Document>(args[0]);
 		auto &category = cast<String>(args[1]);
@@ -705,6 +707,7 @@ void Document::initialize(Runtime &rt)
 	rt.add_global("remove_property", remove_property, { CLS(Document), CLS(String) });
 	rt.add_global("get_property", get_property, { CLS(Document), CLS(String) });
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 

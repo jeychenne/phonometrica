@@ -191,7 +191,7 @@ void Query::parse_metaconstraints_from_xml(xml_node root)
 				}
 				String path = subnode.text().get();
 				auto vfile = Project::get()->get(path);
-				auto annot = recast<Annotation>(vfile);
+				auto annot = handle_cast<Annotation>(vfile);
 
 				if (!annot) {
 					throw error("Invalid annotation in text query file selection");
@@ -517,7 +517,7 @@ void Query::parse_options_from_xml(xml_node root)
 
 Handle<Query> Query::copy() const
 {
-	auto copy = make_handle<Query>(this->parent(), String());
+	auto copy = Handle<Query>::make(this->parent(), String());
 	copy->m_constraints = m_constraints;
 	copy->m_metaconstraints = m_metaconstraints;
 	copy->selected_annotations = selected_annotations;
@@ -535,7 +535,7 @@ Handle<Query> Query::copy() const
 
 Handle<Concordance> Query::execute()
 {
-	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, search(), nullptr);
+	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, search(), nullptr);
 	if (m_include_duration) {
 		conc->set_has_duration(true);
 		conc->set_duration_in_ms(m_duration_in_ms);

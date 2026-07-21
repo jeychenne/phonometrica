@@ -26,7 +26,7 @@
 #include <stdexcept>
 #include <phon/application/sound_recorder.hpp>
 #include <phon/application/settings.hpp>
-#include <phon/runtime/definitions.hpp>
+#include <phon/definitions.hpp>
 
 #if PHON_WINDOWS
 #define RECORDER_API RtAudio::WINDOWS_DS

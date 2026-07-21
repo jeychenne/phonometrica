@@ -27,8 +27,8 @@
 #define PHONOMETRICA_VFS_HPP
 
 #include <vector>
-#include <phon/runtime/typed_object.hpp>
-#include <phon/runtime/class.hpp>
+#include <phon/engine/core/handle.hpp>
+#include <phon/engine/core/handle_cast.hpp>
 #include <phon/application/property.hpp>
 #include <phon/utils/xml.hpp>
 #include <phon/utils/signal.hpp>
@@ -68,35 +68,13 @@ class VoiceQualityQuery;
 class Bookmark;
 class TimeStamp;
 class Analysis;
+class Runtime;
 
-// The VFS hierarchy consists of plain C++ classes (no engine base); script exposure goes through
-// the old runtime's poly boxing (TPolyObject in phon/runtime/typed_object.hpp). This block is the
-// single cell-ness seam: it declares every class of the boxed hierarchy, and must list each one —
-// a missing entry makes Handle<T> fall back to the non-polymorphic TObject<T> box.
-// The specializations must precede any Handle<T> instantiation, which is why they all live here,
-// before the class definitions.
-namespace traits {
-template<> struct hierarchy_root<Element> { using type = Element; };
-template<> struct hierarchy_root<Directory> { using type = Element; };
-template<> struct hierarchy_root<Document> { using type = Element; };
-template<> struct hierarchy_root<DataTable> { using type = Element; };
-template<> struct hierarchy_root<Dataset> { using type = Element; };
-template<> struct hierarchy_root<Concordance> { using type = Element; };
-template<> struct hierarchy_root<Annotation> { using type = Element; };
-template<> struct hierarchy_root<Sound> { using type = Element; };
-template<> struct hierarchy_root<Spectrum> { using type = Element; };
-template<> struct hierarchy_root<Script> { using type = Element; };
-template<> struct hierarchy_root<Note> { using type = Element; };
-template<> struct hierarchy_root<Query> { using type = Element; };
-template<> struct hierarchy_root<FormantQuery> { using type = Element; };
-template<> struct hierarchy_root<PitchQuery> { using type = Element; };
-template<> struct hierarchy_root<IntensityQuery> { using type = Element; };
-template<> struct hierarchy_root<SpectralMomentsQuery> { using type = Element; };
-template<> struct hierarchy_root<VoiceQualityQuery> { using type = Element; };
-template<> struct hierarchy_root<Bookmark> { using type = Element; };
-template<> struct hierarchy_root<TimeStamp> { using type = Element; };
-template<> struct hierarchy_root<Analysis> { using type = Element; };
-}
+// The VFS hierarchy consists of plain C++ classes (no engine base). Script exposure goes
+// through the new engine's plain-class boxing: each class is registered with
+// rt.add_class<T> in base-first order (roadmap A2; the registration site mirrors the class
+// list above), Handle<Derived> upcasts implicitly to Handle<Element>, and checked
+// downcasts go through handle_cast<T> (dynamic class via the engine class registry).
 
 
 class Element
@@ -335,9 +313,6 @@ protected:
 
 	bool m_metadata_modified = false;
 };
-
-namespace traits {
-}
 
 using DocList = Array<Handle<Document>>;
 

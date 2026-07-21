@@ -17,7 +17,7 @@
 
 #include <cstdio>
 #include <string>
-#include <phon/runtime/definitions.hpp>
+#include <phon/definitions.hpp>
 
 /* Use byte swapping primitives if available, otherwise default to generic versions */
 #if defined(_WIN32) && !defined(PHON_MINGW)

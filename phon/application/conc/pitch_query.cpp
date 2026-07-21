@@ -144,8 +144,7 @@ Handle<Concordance> PitchQuery::execute()
 	{
 		auto &rt = Project::get()->runtime();
 		auto emit_msg = [&](const String &msg) {
-			if (rt.show_error) rt.show_error(msg);
-			else if (rt.print) rt.print(msg);
+			rt.print_error(msg);
 		};
 
 		auto known = Property::get_values(m_override_category);
@@ -205,7 +204,7 @@ Handle<Concordance> PitchQuery::execute()
 	}
 
 	// Build concordance with pitch metadata
-	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
+	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
 	// Duration columns
 	if (m_include_duration) {
@@ -343,7 +342,7 @@ void PitchQuery::measure_match(QueryMatch &match) const
 
 Handle<Query> PitchQuery::copy() const
 {
-	auto c = make_handle<PitchQuery>(this->parent(), String());
+	auto c = Handle<PitchQuery>::make(this->parent(), String());
 
 	// Copy base class fields
 	c->m_constraints = m_constraints;

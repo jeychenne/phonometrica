@@ -421,7 +421,7 @@ QModelIndex ProjectModel::addSubfolder(const QString &name, const QModelIndex &p
 
 	auto bytes = name.toUtf8();
 	auto label = String(bytes.constData(), bytes.size());
-	auto folder = make_handle<Directory>(dir, std::move(label));
+	auto folder = Handle<Directory>::make(dir, std::move(label));
 
 	return appendElement(std::move(folder), parentIndex);
 }

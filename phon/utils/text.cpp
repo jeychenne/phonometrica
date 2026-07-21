@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <phon/file.hpp>
+#include <phon/error.hpp>
 #include <phon/utils/text.hpp>
 
 namespace phonometrica { namespace utils {

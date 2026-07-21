@@ -17,7 +17,7 @@
 
 #include <atomic>
 #include <utility>
-#include <phon/runtime/definitions.hpp>
+#include <phon/definitions.hpp>
 
 namespace phonometrica {
 

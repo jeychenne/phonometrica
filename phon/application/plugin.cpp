@@ -20,7 +20,11 @@
  ***********************************************************************************************************************/
 
 #include <phon/application/plugin.hpp>
+#include <phon/error.hpp>
+#include <phon/table.hpp>
+#include <phon/list.hpp>
 #include <phon/utils/file_system.hpp>
+#include <phon/utils/print.hpp>
 
 namespace phonometrica {
 
@@ -66,66 +70,68 @@ void Plugin::parse_description(Callback &callback)
 	}
 	
 	auto result = runtime.do_file(desc_path);
-	if (!check_type<Table>(result)) {
+	if (!result.is<Table>()) {
 		throw error("File \"description.phon\" must contain a table");
 	}
-	auto table = std::move(raw_cast<Table>(result).data());
+	auto table = result.to<Table>();
+	auto key = [](const char *k) { return Variant::make(String(k)); };
 
-	auto it = table.find("name");
-	if (it == table.end()) {
+	auto name_v = table.get(key("name"));
+	if (name_v.is_null()) {
 		throw error("Plugin % has no \"name\" key in description.phon", label());
 	}
-	m_label = cast<String>(it->second);
+	m_label = name_v.to<String>();
 
-	it = table.find("version");
-	if (it != table.end()) {
-		m_version = cast<String>(it->second);
+	auto version_v = table.get(key("version"));
+	if (!version_v.is_null()) {
+		m_version = version_v.to<String>();
 	}
 
-	it = table.find("description");
-	if (it != table.end())
+	auto desc_v = table.get(key("description"));
+	if (!desc_v.is_null())
 	{
-		if (check_type<List>(it->second))
+		if (desc_v.is<List>())
 		{
-			auto lines = std::move(raw_cast<List>(it->second).items());
-			for (auto &line : lines)
+			auto list = desc_v.to<List>();
+			for (intptr_t i = 1; i <= list.size(); i++)
 			{
-				m_description.append(cast<String>(line));
+				m_description.append(list.get(i).to<String>());
 			}
 		}
 		else
 		{
-			m_description = cast<String>(it->second);
+			m_description = desc_v.to<String>();
 		}
 	}
 
-	it = table.find("actions");
-	if (it != table.end())
+	auto actions_v = table.get(key("actions"));
+	if (!actions_v.is_null())
 	{
 		// Fields "name" and "target" are compulsory, and represent the action's name and the target script, respectively.
 		// Additionally, the user may specify a "shortcut".
-		if (!check_type<List>(it->second)) {
+		if (!actions_v.is<List>()) {
 			throw error("Error in plugin %: actions must be a list", label());
 		}
-		auto actions = std::move(raw_cast<List>(it->second).items());
-		for (auto &action_var : actions)
+		auto actions = actions_v.to<List>();
+		for (intptr_t i = 1; i <= actions.size(); i++)
 		{
-			if (!check_type<Table>(action_var)) {
+			auto action_var = actions.get(i);
+			if (!action_var.is<Table>()) {
 				throw error("Error in plugin %: actions in description.phon must be tables", label());
 			}
-			auto action = std::move(raw_cast<Table>(action_var).data());
+			auto action = action_var.to<Table>();
 
-			it = action.find("name");
-			if (it == action.end()) {
+			auto action_name = action.get(key("name"));
+			if (action_name.is_null()) {
 				throw error("Error in plugin %: action in description.phon has no \"name\" key", label());
 			}
-			String name = cast<String>(it->second);
+			String name = action_name.to<String>();
 
-			it = action.find("target");
-			if (it == action.end()) {
+			auto action_target = action.get(key("target"));
+			if (action_target.is_null()) {
 				throw error("Error in plugin %: action in description.phon has no \"target\" key", label());
 			}
-			String target = cast<String>(it->second);
+			String target = action_target.to<String>();
 			auto file = target.ends_with(".html") ? get_documentation_page(target) : get_script(target);
 			if (!filesystem::is_file(file)) {
 				throw error("Error in plugin %: cannot find file \"%\"", label(), file);

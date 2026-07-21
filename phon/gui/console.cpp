@@ -30,7 +30,8 @@
 #include <phon/gui/font_helpers.hpp>
 #include <phon/gui/console.hpp>
 #include <phon/runtime.hpp>
-#include <phon/runtime/file.hpp>
+#include <phon/engine/vm/interpreter.hpp> // stringify()
+#include <phon/file.hpp>
 
 namespace phonometrica {
 
@@ -41,13 +42,9 @@ Console::Console(Runtime &rt, QWidget *parent) :
 	setUndoRedoEnabled(false);
 	setFont(defaultMonoFont());
 
-	// Make the console accessible from the runtime (used by ScriptView::execute).
-	rt.console = this;
-
-	// Redirect runtime output to the console.
-	if (!rt.is_text_mode())
+	// Redirect runtime output to the console (new-engine output hooks, roadmap E3).
 	{
-		rt.print = [this](const String &s) {
+		rt.set_output_hook([this](std::string_view s) {
 			auto qs = QString::fromUtf8(s.data(), (int) s.size());
 			// When called outside the REPL flow (e.g. from a query dispatched
 			// from a dialog), the cursor is sitting on the current prompt line
@@ -73,7 +70,7 @@ Console::Console(Runtime &rt, QWidget *parent) :
 				}
 				addPrompt();
 			}
-		};
+		});
 
 		// Route runtime errors/warnings through showError so they render in red
 		// and the console tab is auto-raised. Trailing newlines are stripped
@@ -81,7 +78,7 @@ Console::Console(Runtime &rt, QWidget *parent) :
 		// about that detail. Same prompt-handling logic as `print` above so
 		// warnings emitted from non-REPL contexts (e.g. queries fired from a
 		// dialog) land on a fresh line and leave a usable prompt behind.
-		rt.show_error = [this](const String &s) {
+		rt.set_error_output_hook([this](std::string_view s) {
 			QString qs = QString::fromUtf8(s.data(), (int) s.size());
 			while (qs.endsWith('\n')) qs.chop(1);
 			if (!m_in_runcode)
@@ -98,7 +95,7 @@ Console::Console(Runtime &rt, QWidget *parent) :
 			if (!m_in_runcode) {
 				addPrompt();
 			}
-		};
+		});
 
 		// Install the default clear-output behaviour. When the scripting
 		// `clear()` global is invoked from the REPL (i.e. while this
@@ -109,20 +106,19 @@ Console::Console(Runtime &rt, QWidget *parent) :
 		// would leave two prompts stacked. ScriptView::execute() swaps
 		// this out while a script is running so that `clear()` targets
 		// the OutputPanel instead.
-		rt.clear_output = [this] {
+		rt.set_clear_output_hook([this] {
 			clear();
-		};
+		});
 	}
 
-	// Register the `clear` scripting global. It dispatches through
-	// rt.clear_output so the currently active output surface is the one
-	// that gets cleared. Note: this is the zero-argument overload of
+	// Register the `clear` scripting global. It dispatches through the
+	// runtime's clear-output hook so the currently active output surface is
+	// the one that gets cleared. Note: this is the zero-argument overload of
 	// `clear` — the one-argument overloads for List/Table/Array/Set are
-	// registered separately in builtins.cpp.
-	rt.add_global("clear", [](Runtime &rt, std::span<Variant>) -> Variant {
-		if (rt.clear_output) rt.clear_output();
-		return Variant();
-	}, {});
+	// builtins of the new engine.
+	rt.add_function("clear", [&rt]() {
+		rt.clear_output();
+	});
 
 	addPrompt();
 }
@@ -265,21 +261,15 @@ void Console::runCode(const QString &code)
 
 		if (!result.is_null())
 		{
-			auto s = result.to_string(true);
+			auto s = stringify(result.value());
 			appendOutput(s);
 		}
 	}
 	catch (std::exception &e)
 	{
 		showError(e.what());
-		// If the exception carries a call-stack trace (RuntimeError and its
-		// subclass ScriptException do; bare std::exception does not), render it
-		// under the message. For console-typed code the trace is usually one
-		// entry deep (just `<chunk>`), but anything calling helpers or imports
-		// can produce a useful chain.
-		if (auto re = dynamic_cast<RuntimeError*>(&e)) {
-			showTrace(re->trace());
-		}
+		// TODO(A4): the new engine carries the call-stack trace in the script-side
+		// Error value (`e.frames`); surface it here so traces render again.
 	}
 
 	addPrompt();

@@ -268,9 +268,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct is_clonable<Dataset> : std::false_type { };
-}
 
 } // namespace phonometrica
 

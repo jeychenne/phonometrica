@@ -32,7 +32,7 @@
 #include <phon/gui/script_editor.hpp>
 #include <phon/gui/phon_lexer.hpp>
 #include <phon/gui/font_helpers.hpp>
-#include <phon/runtime/compiler/script_index.hpp>
+#include <phon/gui/script_index.hpp>
 #include <phon/include/autocompletion_list.hpp>
 #include <phon/include/function_declarations.hpp>
 
@@ -618,7 +618,7 @@ void ScriptEditor::goToDefinition(const QString &word)
 
 	QByteArray utf8 = word.toUtf8();
 	String name(utf8.constData(), intptr_t(utf8.size()));
-	const Symbol *sym = m_last_index.find(name);
+	const ScriptSymbol *sym = m_last_index.find(name);
 	if (!sym)
 	{
 		// Entry points (Ctrl+click, context menu) already gate on

@@ -26,9 +26,9 @@
 #endif
 #include <sndfile.h>
 //#include <iostream>
-#include <phon/runtime/runtime.hpp>
-#include <phon/runtime/object.hpp>
-#include <phon/runtime/table.hpp>
+#include <phon/runtime.hpp>
+
+#include <phon/engine/types/table.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/resampler.hpp>
@@ -614,6 +614,8 @@ speech::VoiceReport Sound::compute_voice_report(int channel, double t1, double t
 
 void Sound::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
 	auto sound_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &sound = cast<Sound>(args[0]);
 		auto &key = cast<String>(args[1]);
@@ -661,7 +663,7 @@ void Sound::initialize(Runtime &rt)
 	// NaN compares unequal to itself. num_pulses is an integer so it
 	// round-trips through arithmetic and comparisons without surprises.
 	auto pack_voice_report = [](Runtime &rt, const speech::VoiceReport &r) -> Variant {
-		auto table = make_handle<Table>(&rt);
+		auto table = Handle<Table>::make(&rt);
 		auto &map  = table->data();
 
 		map["num_pulses"]       = r.num_pulses;
@@ -1095,6 +1097,7 @@ void Sound::initialize(Runtime &rt)
 	rt.add_global("convert", sound_convert1, {CLS(Sound), CLS(String), CLS(String) });
 	rt.add_global("convert", sound_convert2, {CLS(Sound), CLS(String), CLS(String), CLS(Number) });
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 double Sound::max_value() const

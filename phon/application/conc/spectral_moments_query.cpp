@@ -152,7 +152,7 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
+	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
 	// Duration columns
 	if (m_include_duration) {
@@ -281,7 +281,7 @@ void SpectralMomentsQuery::measure_match(QueryMatch &match) const
 
 Handle<Query> SpectralMomentsQuery::copy() const
 {
-	auto c = make_handle<SpectralMomentsQuery>(this->parent(), String());
+	auto c = Handle<SpectralMomentsQuery>::make(this->parent(), String());
 
 	c->m_constraints = m_constraints;
 	c->m_metaconstraints = m_metaconstraints;

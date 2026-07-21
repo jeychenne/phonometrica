@@ -196,9 +196,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct is_clonable<Spectrum> : std::false_type { };
-}
 
 } // namespace phonometrica
 

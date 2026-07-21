@@ -61,9 +61,6 @@ private:
 };
 
 
-namespace traits {
-template<> struct is_clonable<Script> : std::false_type { };
-}
 
 } // namespace phonometrica
 

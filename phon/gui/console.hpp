@@ -26,11 +26,22 @@
 #include <deque>
 #include <vector>
 #include <QPlainTextEdit>
-#include <phon/runtime/error.hpp>
+#include <phon/error.hpp>
 
 namespace phonometrica {
 
 class Runtime;
+
+// One frame of a call-stack trace displayed under an error message. This used to come
+// from the old engine's RuntimeError; the new engine carries frames in the script-side
+// Error value instead. TODO(A4): populate from `e.frames` when the error value is
+// surfaced to C++ — until then traces are empty and only the message + line show.
+struct TraceEntry
+{
+	std::string file;    // empty for in-memory chunks
+	intptr_t    line = 0;
+	std::string routine; // "<chunk>" for top-level code
+};
 
 class Console : public QPlainTextEdit
 {

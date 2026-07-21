@@ -119,7 +119,7 @@ Handle<Concordance> IntensityQuery::execute()
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
+	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
 	// Duration columns
 	if (m_include_duration) {
@@ -225,7 +225,7 @@ void IntensityQuery::measure_match(QueryMatch &match) const
 
 Handle<Query> IntensityQuery::copy() const
 {
-	auto c = make_handle<IntensityQuery>(this->parent(), String());
+	auto c = Handle<IntensityQuery>::make(this->parent(), String());
 
 	c->m_constraints = m_constraints;
 	c->m_metaconstraints = m_metaconstraints;

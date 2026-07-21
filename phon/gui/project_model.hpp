@@ -27,7 +27,7 @@
 #include <QAbstractItemModel>
 #include <QMimeData>
 #include <QIcon>
-#include <phon/runtime/typed_object.hpp>
+#include <phon/engine/core/handle.hpp>
 #include <phon/application/conc/query.hpp>
 
 namespace phonometrica {

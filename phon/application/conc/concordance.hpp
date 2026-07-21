@@ -611,9 +611,6 @@ protected:
 };
 
 
-namespace traits {
-template<> struct is_clonable<Concordance> : std::false_type { };
-}
 
 } // namespace phonometrica
 

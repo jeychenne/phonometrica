@@ -196,9 +196,6 @@ private:
     double m_duration = 0.0;
 };
 
-namespace traits {
-template<> struct is_clonable<Sound> : std::false_type { };
-}
 } // namespace phonometrica
 
 #endif // PHONOMETRICA_SOUND_HPP

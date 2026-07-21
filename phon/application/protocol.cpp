@@ -20,6 +20,9 @@
  ***********************************************************************************************************************/
 
 #include <phon/file.hpp>
+#include <phon/error.hpp>
+#include <phon/table.hpp>
+#include <phon/list.hpp>
 #include <phon/application/protocol.hpp>
 
 namespace phonometrica {
@@ -53,51 +56,51 @@ void Protocol::parse()
 
 void Protocol::parse_variant(Variant result)
 {
-	if (!check_type<Table>(result)) {
+	if (!result.is<Table>()) {
 		throw error("File % must contain a table", m_path);
 	}
-	auto json = std::move(raw_cast<Table>(result).data());
-	Variant var;
+	auto json = result.to<Table>();
+	auto key = [](const char *k) { return Variant::make(String(k)); };
 
-	auto it = json.find("type");
-	if (it == json.end()) {
+	auto type_v = json.get(key("type"));
+	if (type_v.is_null()) {
 		throw error("Protocol has no \"type\" key");
 	}
 
-	auto type = cast<String>(it->second);
+	auto type = type_v.to<String>();
 	if (type != "coding_protocol") {
 		throw error("Invalid type in protocol: \"%\"", type);
 	}
 
-	it = json.find("name");
-	if (it == json.end()) {
+	auto name_v = json.get(key("name"));
+	if (name_v.is_null()) {
 		throw error("Protocol has no \"name\" key");
 	}
-	m_name = cast<String>(it->second);
+	m_name = name_v.to<String>();
 
-	it = json.find("version");
-	if (it != json.end()) {
-		m_version = cast<String>(it->second);
+	auto version_v = json.get(key("version"));
+	if (!version_v.is_null()) {
+		m_version = version_v.to<String>();
 	}
 
-	it = json.find("separator");
-	if (it != json.end()) {
-		m_separator = cast<String>(it->second);
+	auto separator_v = json.get(key("separator"));
+	if (!separator_v.is_null()) {
+		m_separator = separator_v.to<String>();
 	}
 
-	it = json.find("layer_index");
-	if (it != json.end()) {
-		m_layer_index = int(cast<intptr_t>(it->second));
+	auto layer_index_v = json.get(key("layer_index"));
+	if (!layer_index_v.is_null()) {
+		m_layer_index = int(layer_index_v.to<int64_t>());
 	}
 
-	it = json.find("layer_name");
-	if (it != json.end()) {
-		m_layer_pattern = cast<String>(it->second);
+	auto layer_name_v = json.get(key("layer_name"));
+	if (!layer_name_v.is_null()) {
+		m_layer_pattern = layer_name_v.to<String>();
 	}
 
-	it = json.find("layer_field");
-	if (it != json.end()) {
-		m_layer_field = int(cast<intptr_t>(it->second));
+	auto layer_field_v = json.get(key("layer_field"));
+	if (!layer_field_v.is_null()) {
+		m_layer_field = int(layer_field_v.to<int64_t>());
 	}
 
 	// Don't use layer index if we have a valid name or if we use a layer field.
@@ -107,108 +110,110 @@ void Protocol::parse_variant(Variant result)
 		throw error("Invalid negative layer index");
 	}
 
-	it = json.find("case_sensitive");
-	if (it != json.end()) {
-		m_case_sensitive = cast<bool>(it->second);
+	auto case_v = json.get(key("case_sensitive"));
+	if (!case_v.is_null()) {
+		m_case_sensitive = case_v.to<bool>();
 	}
 
-	it = json.find("fields_per_row");
-	if (it != json.end()) {
-		m_fields_per_row = int(cast<intptr_t>(it->second));
+	auto fpr_v = json.get(key("fields_per_row"));
+	if (!fpr_v.is_null()) {
+		m_fields_per_row = int(fpr_v.to<int64_t>());
 	}
 
-	it = json.find("fields");
-	if (it == json.end()) {
+	auto fields_v = json.get(key("fields"));
+	if (fields_v.is_null()) {
 		throw error("Protocol has no fields");
 	}
 
-
-	if (!check_type<List>(it->second)) {
+	if (!fields_v.is<List>()) {
 		throw error("\"fields\" must be a list");
 	}
-	auto fields = std::move(raw_cast<List>(it->second).items());
+	auto fields = fields_v.to<List>();
 
-	int f = 0; // for error reporting
-	for (auto &field_var : fields)
+	for (intptr_t fi = 1; fi <= fields.size(); fi++)
 	{
-		f++;
+		int f = int(fi); // for error reporting
 		SearchField search_field;
 
-		if (!check_type<Table>(field_var)) {
+		auto field_var = fields.get(fi);
+		if (!field_var.is<Table>()) {
 			throw error("Field % is not a table", f);
 		}
-		auto field = std::move(raw_cast<Table>(field_var).data());
+		auto field = field_var.to<Table>();
 
-		it = field.find("name"); // can be anonymous
-		if (it != field.end()) {
-			search_field.name = cast<String>(it->second);
+		auto fname_v = field.get(key("name")); // can be anonymous
+		if (!fname_v.is_null()) {
+			search_field.name = fname_v.to<String>();
 		}
 
-		it = field.find("match_all"); // can be empty
-		if (it == field.end()) {
+		auto match_all_v = field.get(key("match_all")); // can be empty
+		if (match_all_v.is_null()) {
 			throw error("Field % has no \"match_all\" key", f);
 		}
-		search_field.match_all = cast<String>(it->second);
+		search_field.match_all = match_all_v.to<String>();
 
-		it = field.find("layer_pattern");
-		if (it != field.end()) {
+		auto layer_pattern_v = field.get(key("layer_pattern"));
+		if (!layer_pattern_v.is_null()) {
 			if (f != m_layer_field) {
 				throw error("Key \"layer_pattern\" can only be found in layer-selecting field");
 			}
-			search_field.layer_pattern = cast<String>(it->second);
+			search_field.layer_pattern = layer_pattern_v.to<String>();
 		}
 
-		it = field.find("values");
-		if (it == field.end()) {
+		auto values_v = field.get(key("values"));
+		if (values_v.is_null()) {
 			throw error("Field % has no values", f);
 		}
 
-		if (!check_type<List>(it->second)) {
+		if (!values_v.is<List>()) {
 			throw error("\"values\" must be a list in field %", f);
 		}
-		auto values = std::move(raw_cast<List>(it->second).items());
+		auto values = values_v.to<List>();
 
-		int g = 0; // for error reporting
-		for (auto &value_var : values)
+		for (intptr_t gi = 1; gi <= values.size(); gi++)
 		{
-			g++;
+			int g = int(gi); // for error reporting
 			SearchValue search_value;
 
-			if (!check_type<Table>(value_var)) {
+			auto value_var = values.get(gi);
+			if (!value_var.is<Table>()) {
 				throw error("Value % must be a ble in field %", g, f);
 			}
-			auto value = raw_cast<Table>(value_var).data();
+			auto value = value_var.to<Table>();
 
-			it = value.find("match");
-			if (it == value.end()) {
+			auto match_v = value.get(key("match"));
+			if (match_v.is_null()) {
 				throw error("Value % has no \"match\" key in field %", g, f);
 			}
-			search_value.match = cast<String>(it->second);
+			search_value.match = match_v.to<String>();
 
-			it = value.find("text");
-			if (it == value.end()) {
+			auto text_v = value.get(key("text"));
+			if (text_v.is_null()) {
 				throw error("Value % has no \"text\" key in field %", g, f);
 			}
-			search_value.text = cast<String>(it->second);
+			search_value.text = text_v.to<String>();
 
 			if (f == m_layer_field)
 			{
-				it = value.find("layer_name");
-				if (it == value.end()) {
+				auto layer_name_val = value.get(key("layer_name"));
+				if (layer_name_val.is_null()) {
 					throw error("Value % has no \"layer_name\" key in field %", g, f);
 				}
-				search_value.layer_name = cast<String>(it->second);
+				search_value.layer_name = layer_name_val.to<String>();
 			}
 
-			it = value.find("choices");
-			if (it != value.end())
+			auto choices_v = value.get(key("choices"));
+			if (!choices_v.is_null())
 			{
-				String choices = cast<String>(it->second);
-				auto it2 = value.find("display");
-				if (it2 == value.end()) {
+				String choices = choices_v.to<String>();
+				auto display_v = value.get(key("display"));
+				if (display_v.is_null()) {
 					throw error("Value % in field % has choices but no \"display\" key", g, f);
 				}
-				String display = cast<String>(it->second);
+				// Deliberate fix vs. the old engine: the old code re-read the "choices"
+				// key here (a stale-iterator bug), so display texts silently mirrored
+				// the match patterns.
+				String display = display_v.to<String>();
 
 				auto choice_items = choices.split("|");
 				auto display_items = display.split("|");

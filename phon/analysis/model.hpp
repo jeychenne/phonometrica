@@ -574,8 +574,4 @@ struct Model
 
 } // namespace phonometrica::stats
 
-namespace phonometrica::traits {
-template<> struct maybe_cyclic<stats::Model> : std::false_type { };
-}
-
 #endif // PHONOMETRICA_MODEL_HPP

@@ -43,7 +43,7 @@ int ProtocolQueryEditor::s_query_id = 0;
 ProtocolQueryEditor::ProtocolQueryEditor(AutoProtocol protocol, QWidget *parent) :
 	QDialog(parent),
 	m_protocol(std::move(protocol)),
-	m_query(make_handle<Query>(nullptr, String()))
+	m_query(Handle<Query>::make(nullptr, String()))
 {
 	auto name = m_protocol->name();
 	setWindowTitle(QString::fromUtf8(name.data(), (int) name.size()));
@@ -408,7 +408,7 @@ void ProtocolQueryEditor::parseQuery()
 			auto path_str = m_file_list->item(i)->data(Qt::UserRole).toString();
 			String path(path_str.toUtf8().constData());
 			auto vfile = Project::get()->get(path);
-			auto annot = recast<Annotation>(vfile);
+			auto annot = handle_cast<Annotation>(vfile);
 			if (annot)
 				annotations.append(std::move(annot));
 		}

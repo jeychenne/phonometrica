@@ -27,7 +27,7 @@
 #include <QShowEvent>
 #include <phon/gui/start_view.hpp>
 #include <phon/application/settings.hpp>
-#include <phon/runtime/variant.hpp>
+#include <phon/engine/core/variant.hpp>
 #include <phon/utils/helpers.hpp>
 
 namespace phonometrica {
@@ -186,11 +186,11 @@ void StartView::refreshRecentProjects()
 
 	try
 	{
-		auto &lst = Settings::get_list("recent_projects");
+		auto lst = Settings::get_list("recent_projects");
 
-		for (intptr_t i = 0; i < lst.size() && i < 10; i++)
+		for (intptr_t i = 1; i <= lst.size() && i <= 10; i++)
 		{
-			auto path = cast<String>(lst[i]);
+			auto path = lst.get(i).to<String>();
 			auto qpath = QString::fromUtf8(path.data(), (int) path.size());
 
 			// Show just the filename for a compact display, with full path as tooltip.

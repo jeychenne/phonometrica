@@ -41,7 +41,7 @@
 #include <phon/application/macros.hpp>
 #include <phon/file.hpp>
 #include <phon/utils/file_system.hpp>
-#include <phon/runtime/error.hpp>
+#include <phon/error.hpp>
 
 namespace phonometrica {
 
@@ -207,8 +207,8 @@ bool ScriptView::save()
 	{
 		// Register the script with the project so it appears in the file manager.
 		auto *project = Project::get();
-		m_script->parent()->append(recast<Element>(m_script), false);
-		project->register_file(m_script->path(), recast<Document>(m_script));
+		m_script->parent()->append(handle_cast<Element>(m_script), false);
+		project->register_file(m_script->path(), handle_cast<Document>(m_script));
 		project->modify();
 		emit addedToProject();
 	}
@@ -257,27 +257,27 @@ void ScriptView::execute()
 	// guard ensures restoration even if an unexpected exception escapes
 	// the catch blocks below — otherwise the runtime would be left with
 	// dangling lambdas capturing the OutputPanel pointer.
-	auto oldPrint = m_runtime.print;
-	auto oldClear = m_runtime.clear_output;
+	auto oldPrint = m_runtime.output_hook();
+	auto oldClear = m_runtime.clear_output_hook();
 
 	struct Restore
 	{
 		Runtime &rt;
 		decltype(oldPrint) &p;
 		decltype(oldClear) &c;
-		~Restore() { rt.print = std::move(p); rt.clear_output = std::move(c); }
+		~Restore() { rt.set_output_hook(std::move(p)); rt.set_clear_output_hook(std::move(c)); }
 	} restore{ m_runtime, oldPrint, oldClear };
 
 	auto *output = OutputPanel::instance();
 	if (output)
 	{
-		m_runtime.print = [output](const String &s) {
+		m_runtime.set_output_hook([output](std::string_view s) {
 			auto qs = QString::fromUtf8(s.data(), (int) s.size());
 			output->appendText(qs);
-		};
-		m_runtime.clear_output = [output] {
+		});
+		m_runtime.set_clear_output_hook([output] {
 			output->clear();
-		};
+		});
 	}
 
 	auto bytes = code.toUtf8();
@@ -290,7 +290,9 @@ void ScriptView::execute()
 
 	try
 	{
-		m_runtime.do_string(String(bytes.constData(), bytes.size()), chunk_path);
+		// TODO(A4): pass chunk_path through so get_script_path() works for saved buffers
+		(void) chunk_path;
+		m_runtime.do_string(String(bytes.constData(), bytes.size()));
 	}
 	catch (RuntimeError &e)
 	{
@@ -305,7 +307,9 @@ void ScriptView::execute()
 		// For an unsaved buffer (chunk_path empty) we match against entries
 		// whose file is also empty: do_string passes an empty path through,
 		// so trace entries for the top-level chunk come back with file == "".
-		const auto &trace = e.trace();
+		// TODO(A4): the new engine carries frames in the script-side Error value
+		// (`e.frames`); surface them here so cross-file highlights work again.
+		std::vector<TraceEntry> trace;
 		std::string this_file(chunk_path.data(), size_t(chunk_path.size()));
 		int highlight_line = 0;
 		for (const auto &entry : trace)
@@ -324,7 +328,7 @@ void ScriptView::execute()
 			// Pre-trace fallback: nothing better to go on than the recorded
 			// line. Will be wrong for cross-file throws but matches the
 			// historical behaviour.
-			m_editor->showError(int(e.line_no()));
+			m_editor->showError(int(e.line));
 		}
 		// else: error is in some other file; the console trace below tells
 		// the user where to look — better silence than misleading highlight.
@@ -332,7 +336,7 @@ void ScriptView::execute()
 		if (m_console)
 		{
 			m_console->appendNewLine();
-			m_console->showError(QString("Error at line %1").arg(e.line_no()));
+			m_console->showError(QString("Error at line %1").arg(e.line));
 			m_console->showError(e.what());
 			m_console->showTrace(trace);
 			m_console->addPrompt();
@@ -432,6 +436,10 @@ void ScriptView::onToggleErrorChecking(bool checked)
 
 void ScriptView::onViewBytecode()
 {
+#ifdef PHON_TODO_A3
+	// The old engine exposed compile_string + disassemble on the Runtime. The new
+	// engine has a disassembler (compile/disassembler.hpp) but no public
+	// compile-without-run entry yet; re-enable when one lands (roadmap A4 polish).
 	auto oldPrint = m_runtime.print;
 
 	try
@@ -465,6 +473,7 @@ void ScriptView::onViewBytecode()
 	}
 
 	m_runtime.print = oldPrint;
+#endif // PHON_TODO_A3
 }
 
 

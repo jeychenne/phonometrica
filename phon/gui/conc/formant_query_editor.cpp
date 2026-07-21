@@ -44,7 +44,7 @@ namespace phonometrica {
 int FormantQueryEditor::s_query_id = 0;
 
 FormantQueryEditor::FormantQueryEditor(QWidget *parent) :
-	FormantQueryEditor(make_handle<FormantQuery>(nullptr, String()), parent)
+	FormantQueryEditor(Handle<FormantQuery>::make(nullptr, String()), parent)
 {
 }
 
@@ -1026,7 +1026,7 @@ void FormantQueryEditor::parseQuery()
 			auto path_str = m_file_list->item(i)->data(Qt::UserRole).toString();
 			String path(path_str.toUtf8().constData());
 			auto vfile = Project::get()->get(path);
-			auto annot = recast<Annotation>(vfile);
+			auto annot = handle_cast<Annotation>(vfile);
 			if (annot) {
 				annotations.append(std::move(annot));
 			}

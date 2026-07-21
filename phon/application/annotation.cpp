@@ -22,9 +22,9 @@
 #include <phon/application/annotation.hpp>
 #include <phon/application/annotation_ops.hpp>
 #include <phon/application/constants.hpp>
-#include <phon/runtime/runtime.hpp>
-#include <phon/runtime/object.hpp>
-#include <phon/runtime/index_conversion.hpp>
+#include <phon/runtime.hpp>
+
+#include <phon/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -156,6 +156,8 @@ void Annotation::set_path(String path, bool mutate)
 
 void Annotation::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
 	auto annot_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &annot = cast<Annotation>(args[0]);
 		auto &key = cast<String>(args[1]);
@@ -183,7 +185,7 @@ void Annotation::initialize(Runtime &rt)
 		auto &path = cast<String>(args[1]);
 		auto project = Project::get();
 		project->import_file(path);
-		auto snd = recast<Sound>(project->get(path));
+		auto snd = handle_cast<Sound>(project->get(path));
 		if (snd) annot.set_sound(snd);
 		return Variant();
 	};
@@ -194,7 +196,7 @@ void Annotation::initialize(Runtime &rt)
 	// that need to round-trip through disk without setting up a fixture file
 	// up front.
 	auto new_annotation_fn = [](Runtime &, std::span<Variant>) -> Variant {
-		return make_handle<Annotation>();
+		return Handle<Annotation>::make();
 	};
 
 	auto get_event_count = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -638,6 +640,7 @@ void Annotation::initialize(Runtime &rt)
 	rt.add_global("concatenate_sounds", concat_sounds_fn,
 	              { CLS(List), CLS(String) });
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 bool Annotation::modified() const
@@ -808,7 +811,7 @@ void Annotation::metadata_from_xml(xml_node meta_node)
 			auto it = project->files().find(sound_path);
 			if (it != project->files().end())
 			{
-				auto snd = recast<Sound>(it->second);
+				auto snd = handle_cast<Sound>(it->second);
 				if (snd)
 					set_sound(snd, false);
 			}

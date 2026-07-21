@@ -21,7 +21,7 @@
 
 #include <algorithm>
 #include <phon/regex.hpp>
-#include <phon/runtime/runtime.hpp>
+#include <phon/runtime.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/application/property.hpp>
@@ -30,7 +30,7 @@
 #include <phon/utils/helpers.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/text.hpp>
-#include <phon/runtime/object.hpp>
+
 #include <phon/application/conc/formant_query.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/conc/intensity_query.hpp>
@@ -68,13 +68,13 @@ void Project::open(String path)
 
 Project::Project(Runtime &rt, String path) :
 		rt(rt),
-		m_corpus(make_handle<Directory>(nullptr, "Corpus")),
-		m_bookmarks(make_handle<Directory>(nullptr, "Bookmarks")),
-		m_scripts(make_handle<Directory>(nullptr, "Scripts")),
-        m_data(make_handle<Directory>(nullptr, "Data tables")),
-		m_analyses(make_handle<Directory>(nullptr, "Analyses")),
-		m_queries(make_handle<Directory>(nullptr, "Queries")),
-		m_notes(make_handle<Directory>(nullptr, "Notes"))
+		m_corpus(Handle<Directory>::make(nullptr, "Corpus")),
+		m_bookmarks(Handle<Directory>::make(nullptr, "Bookmarks")),
+		m_scripts(Handle<Directory>::make(nullptr, "Scripts")),
+        m_data(Handle<Directory>::make(nullptr, "Data tables")),
+		m_analyses(Handle<Directory>::make(nullptr, "Analyses")),
+		m_queries(Handle<Directory>::make(nullptr, "Queries")),
+		m_notes(Handle<Directory>::make(nullptr, "Notes"))
 {
 	if (path.empty())
 	{
@@ -115,7 +115,7 @@ bool Project::has_path() const
 
 void Project::set_path(String value)
 {
-	filesystem::nativize(value);
+	value = filesystem::nativize(value);
 	m_directory = filesystem::directory_name(value);
 	m_path = std::move(value);
 }
@@ -256,7 +256,7 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -283,15 +283,15 @@ void Project::parse_corpus(xml_node root, Directory *folder)
 
 				if (cls == "Annotation")
 				{
-					auto annot = make_handle<Annotation>(folder, std::move(path));
-					vfile = recast<Document>(annot);
-	                emit_signal(annotation_loaded, std::move(annot));
+					auto annot = Handle<Annotation>::make(folder, std::move(path));
+					vfile = handle_cast<Document>(annot);
+	                emit_signal(annotation_loaded, Variant::make(annot));
 				}
 				else if (cls == "Sound")
 				{
-					auto sound = make_handle<Sound>(folder, std::move(path));
-					vfile = recast<Document>(sound);
-	                emit_signal(sound_loaded, std::move(sound));
+					auto sound = Handle<Sound>::make(folder, std::move(path));
+					vfile = handle_cast<Document>(sound);
+	                emit_signal(sound_loaded, Variant::make(sound));
 				}
 				else
 				{
@@ -329,7 +329,7 @@ void Project::register_file(const String &path, Handle<Document> file)
 {
 	if (m_files.find(path) == m_files.end())
 	{
-		m_files.insert({path, std::move(file)});
+		m_files.emplace(path, std::move(file));
 	}
 }
 
@@ -378,7 +378,7 @@ void Project::parse_scripts(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -406,7 +406,7 @@ void Project::parse_scripts(xml_node root, Directory *folder)
 			{
 				if (cls == script_tag)
 				{
-					auto script = make_handle<Script>(folder, std::move(path));
+					auto script = Handle<Script>::make(folder, std::move(path));
 					folder->append(script, false);
 					register_file(script->path(), script);
 				}
@@ -441,7 +441,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -469,7 +469,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 			{
 				if (cls == text_query_tag)
 				{
-					auto query = make_handle<Query>(folder, std::move(path));
+					auto query = Handle<Query>::make(folder, std::move(path));
 
 					// Read inline metadata from the project file.
 					auto meta_child = node.child("Metadata");
@@ -482,7 +482,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				}
 				else if (cls == formant_query_tag)
 				{
-					auto query = make_handle<FormantQuery>(folder, std::move(path));
+					auto query = Handle<FormantQuery>::make(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -494,7 +494,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				}
 				else if (cls == pitch_query_tag)
 				{
-					auto query = make_handle<PitchQuery>(folder, std::move(path));
+					auto query = Handle<PitchQuery>::make(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -506,7 +506,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				}
 				else if (cls == intensity_query_tag)
 				{
-					auto query = make_handle<IntensityQuery>(folder, std::move(path));
+					auto query = Handle<IntensityQuery>::make(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -518,7 +518,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				}
 				else if (cls == spectral_moments_query_tag)
 				{
-					auto query = make_handle<SpectralMomentsQuery>(folder, std::move(path));
+					auto query = Handle<SpectralMomentsQuery>::make(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -530,7 +530,7 @@ void Project::parse_queries(xml_node root, Directory *folder)
 				}
 				else if (cls == voice_quality_query_tag)
 				{
-					auto query = make_handle<VoiceQualityQuery>(folder, std::move(path));
+					auto query = Handle<VoiceQualityQuery>::make(folder, std::move(path));
 
 					auto meta_child = node.child("Metadata");
 					if (meta_child) {
@@ -566,7 +566,7 @@ void Project::parse_data(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -594,21 +594,21 @@ void Project::parse_data(xml_node root, Directory *folder)
 			{
 				if (cls == str("Dataset"))
 				{
-					auto dataset = make_handle<Dataset>(folder, std::move(path));
+					auto dataset = Handle<Dataset>::make(folder, std::move(path));
 					dataset->from_xml(node, m_directory);
 					folder->append(dataset, false);
 					register_file(dataset->path(), dataset);
 				}
 				else if (cls == std::string_view("Concordance"))
 				{
-					auto conc = make_handle<Concordance>(folder, std::move(path));
+					auto conc = Handle<Concordance>::make(folder, std::move(path));
 					conc->from_xml(node, m_directory);
 					folder->append(conc, false);
 					register_file(conc->path(), conc);
 				}
 				else if (cls == std::string_view("Analysis"))
 				{
-					auto analysis = make_handle<Analysis>(folder, std::move(path));
+					auto analysis = Handle<Analysis>::make(folder, std::move(path));
 					folder->append(analysis, false);
 					register_file(analysis->path(), analysis);
 				}
@@ -637,7 +637,7 @@ void Project::parse_notes(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -657,7 +657,7 @@ void Project::parse_notes(xml_node root, Directory *folder)
 
 			try
 			{
-				auto note = make_handle<Note>(folder, std::move(path));
+				auto note = Handle<Note>::make(folder, std::move(path));
 				folder->append(note, false);
 				register_file(note->path(), note);
 			}
@@ -682,7 +682,7 @@ void Project::parse_bookmarks(xml_node root, Directory *folder)
 			String label;
 			auto attr = node.attribute("label");
 			if (attr) label = attr.value();
-			auto subfolder = make_handle<Directory>(folder, std::move(label));
+			auto subfolder = Handle<Directory>::make(folder, std::move(label));
 			auto sub = subfolder.get();
 			folder->append(std::move(subfolder), false);
 
@@ -731,8 +731,8 @@ void Project::parse_bookmarks(xml_node root, Directory *folder)
 
 				if (file->is<Annotation>())
 				{
-					auto annot = recast<Annotation>(file);
-					auto bookmark = make_handle<TimeStamp>(folder, title, std::move(annot), layer, start, end, match,
+					auto annot = handle_cast<Annotation>(file);
+					auto bookmark = Handle<TimeStamp>::make(folder, title, std::move(annot), layer, start, end, match,
 											std::make_pair(std::move(left), std::move(right)));
 					bookmark->set_notes(notes, false);
 					folder->append(std::move(bookmark), false);
@@ -906,26 +906,26 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 
 	if ((ext == PHON_EXT_ANNOTATION || ext == ".textgrid") && (static_cast<int>(type)&static_cast<int>(FileType::Annotation)))
 	{
-	    auto annot = make_handle<Annotation>(parent.get(), std::move(path));
-		vfile = recast<Document>(annot);
+	    auto annot = Handle<Annotation>::make(parent.get(), std::move(path));
+		vfile = handle_cast<Document>(annot);
 		parent->append(vfile);
 		if (importing) {
-            emit_signal(annotation_imported, annot);
+            emit_signal(annotation_imported, Variant::make(annot));
 		}
 		else {
-            emit_signal(annotation_loaded, annot);
+            emit_signal(annotation_loaded, Variant::make(annot));
 		}
 	}
 	else if (Sound::supports_format(ext) && (static_cast<int>(type)&static_cast<int>(FileType::Sound)))
 	{
-	    auto sound = make_handle<Sound>(parent.get(), std::move(path));
-		vfile = recast<Document>(sound);
+	    auto sound = Handle<Sound>::make(parent.get(), std::move(path));
+		vfile = handle_cast<Document>(sound);
 		parent->append(vfile);
 		if (importing) {
-            emit_signal(sound_imported, sound);
+            emit_signal(sound_imported, Variant::make(sound));
 		}
 		else {
-            emit_signal(sound_loaded, sound);
+            emit_signal(sound_loaded, Variant::make(sound));
 		}
 	}
 	else if (ext == PHON_EXT_QUERY)
@@ -947,34 +947,34 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 		auto query_type = get_query_type(path);
 		if (query_type == Query::Type::Text)
 		{
-			query = make_handle<Query>(p, std::move(path));
+			query = Handle<Query>::make(p, std::move(path));
 		}
 		else if (query_type == Query::Type::Formant)
 		{
-			query = make_handle<FormantQuery>(p, std::move(path));
+			query = Handle<FormantQuery>::make(p, std::move(path));
 		}
 		else if (query_type == Query::Type::Pitch)
 		{
-			query = make_handle<PitchQuery>(p, std::move(path));
+			query = Handle<PitchQuery>::make(p, std::move(path));
 		}
 		else if (query_type == Query::Type::Intensity)
 		{
-			query = make_handle<IntensityQuery>(p, std::move(path));
+			query = Handle<IntensityQuery>::make(p, std::move(path));
 		}
 		else if (query_type == Query::Type::SpectralMoments)
 		{
-			query = make_handle<SpectralMomentsQuery>(p, std::move(path));
+			query = Handle<SpectralMomentsQuery>::make(p, std::move(path));
 		}
 		else if (query_type == Query::Type::VoiceQuality)
 		{
-			query = make_handle<VoiceQualityQuery>(p, std::move(path));
+			query = Handle<VoiceQualityQuery>::make(p, std::move(path));
 		}
 		else
 		{
 			throw error("Cannot parse query file: unsupported query type");
 		}
 
-		vfile = recast<Document>(query);
+		vfile = handle_cast<Document>(query);
 		p->append(vfile);
 	}
 	else if (ext == PHON_EXT_CONCORDANCE)
@@ -992,8 +992,8 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 			return set_import_flag();
 		}
 
-		auto conc = make_handle<Concordance>(p, std::move(path));
-		vfile = recast<Document>(conc);
+		auto conc = Handle<Concordance>::make(p, std::move(path));
+		vfile = handle_cast<Document>(conc);
 		p->append(vfile);
 	}
 	else if (ext == ".csv" || ext == ".tsv")
@@ -1011,16 +1011,16 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 			return set_import_flag();
 		}
 
-		auto dataset = make_handle<Dataset>(p, std::move(path));
-		vfile = recast<Document>(dataset);
+		auto dataset = Handle<Dataset>::make(p, std::move(path));
+		vfile = handle_cast<Document>(dataset);
 		p->append(vfile);
 //		emit_signal(dataset_loaded, std::move(dataset));
 	}
 	else if (ext == PHON_EXT_ANALYSIS)
 	{
 		Directory *p = m_analyses.get();
-		auto analysis = make_handle<Analysis>(p, std::move(path));
-		vfile = recast<Document>(analysis);
+		auto analysis = Handle<Analysis>::make(p, std::move(path));
+		vfile = handle_cast<Document>(analysis);
 		p->append(vfile);
 	}
 	else if ((ext == PHON_EXT_SCRIPT || ext == ".phon-script"))
@@ -1038,10 +1038,10 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 			return set_import_flag();
 		}
 
-        auto script = make_handle<Script>(p, std::move(path));
-		vfile = recast<Document>(script);
+        auto script = Handle<Script>::make(p, std::move(path));
+		vfile = handle_cast<Document>(script);
 		p->append(vfile);
-        //emit_signal(script_loaded, make_handle<Handle<Script>>(std::move(script)));
+        //emit_signal(script_loaded, Handle<Handle<Script>>::make(std::move(script)));
 	}
 	else if (ext == PHON_EXT_NOTE)
 	{
@@ -1058,8 +1058,8 @@ bool Project::add_file(String path, const Handle<Directory> &parent, FileType ty
 			return set_import_flag();
 		}
 
-		auto note = make_handle<Note>(p, std::move(path));
-		vfile = recast<Document>(note);
+		auto note = Handle<Note>::make(p, std::move(path));
+		vfile = handle_cast<Document>(note);
 		p->append(vfile);
 	}
 	else
@@ -1084,7 +1084,7 @@ const String &Project::uuid() const
 
 void Project::import_directory(String path)
 {
-	filesystem::nativize(path);
+	path = filesystem::nativize(path);
 	add_folder(std::move(path), m_corpus, true);
 	bind_annotations();
 	// Try to find a sound that matches the annotation's name.
@@ -1095,7 +1095,7 @@ void Project::import_directory(String path)
 String Project::import_file(String path)
 {
 	interpolate(path, directory());
-	filesystem::nativize(path);
+	path = filesystem::nativize(path);
 
 	// Assume that the file will be added to the corpus. add_file() will change the parent if necessary.
 	if (add_file(path, m_corpus, FileType::Any, false))
@@ -1103,10 +1103,10 @@ String Project::import_file(String path)
         m_modified = true;
         auto &f = m_files[path];
         if (f->is<Annotation>()) {
-            emit_signal(annotation_imported, recast<Annotation>(f));
+            emit_signal(annotation_imported, Variant::make(handle_cast<Annotation>(f)));
         }
         else if (f->is<Sound>()) {
-            emit_signal(sound_imported, recast<Sound>(f));
+            emit_signal(sound_imported, Variant::make(handle_cast<Sound>(f)));
         }
 	}
 	// Try to find a sound that matches the annotation's name.
@@ -1127,7 +1127,7 @@ void Project::add_folder(String path, const Handle<Directory> &parent, bool impo
 
 		if (filesystem::is_directory(file))
 		{
-			auto subfolder = make_handle<Directory>(parent.get(), name);
+			auto subfolder = Handle<Directory>::make(parent.get(), name);
 			parent->append(subfolder);
 			add_folder(file, subfolder, importing);
 		}
@@ -1169,11 +1169,11 @@ void Project::remove(ElementList &files)
 	{
 		if (file->is<Directory>())
 		{
-			remove(recast<Directory>(file));
+			remove(handle_cast<Directory>(file));
 		}
 		else
 		{
-			remove(recast<Document>(file));
+			remove(handle_cast<Document>(file));
 		}
 	}
 }
@@ -1238,7 +1238,7 @@ void Project::bind_annotations()
 
 		if (it != m_files.end())
 		{
-			auto snd = recast<Sound>(it->second);
+			auto snd = handle_cast<Sound>(it->second);
 			// This method is only called when a project is loading, so we don't mutate the annotation
 			annot->set_sound(snd, false);
 		}
@@ -1301,7 +1301,7 @@ void Project::remove_empty_script()
 
 		if (node->is<Script>())
 		{
-			auto script = raw_recast<Script>(node);
+			auto script = static_cast<Script*>(node.get());
 
 			if (!script->has_path()) {
 				m_scripts->remove(node);
@@ -1312,6 +1312,8 @@ void Project::remove_empty_script()
 
 void Project::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
 	Annotation::initialize(rt);
 	Sound::initialize(rt);
 	Spectrum::initialize(rt);
@@ -1378,7 +1380,7 @@ void Project::initialize(Runtime &rt)
 		    result.append(std::move(annot));
 	    }
 
-    	return make_handle<List>(&rt, std::move(result));
+    	return Handle<List>::make(&rt, std::move(result));
     };
 
     auto get_annotation = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1390,7 +1392,7 @@ void Project::initialize(Runtime &rt)
 		    return Variant();
 	    }
 	    else if (file->second->is<Annotation>()) {
-			return recast<Annotation>(file->second);
+			return handle_cast<Annotation>(file->second);
 	    }
 	    else {
 		    throw error("File \"%\" is not an annotation", path);
@@ -1404,7 +1406,7 @@ void Project::initialize(Runtime &rt)
 		    result.append(std::move(sound));
 	    }
 
-    	return make_handle<List>(&rt, std::move(result));
+    	return Handle<List>::make(&rt, std::move(result));
     };
 
     auto get_sound = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1416,7 +1418,7 @@ void Project::initialize(Runtime &rt)
 			return Variant();
 		}
 		else if (file->second->is<Sound>()) {
-			return recast<Sound>(file->second);
+			return handle_cast<Sound>(file->second);
 		}
 		else {
 			throw error("File \"%\" is not a sound", path);
@@ -1428,7 +1430,7 @@ void Project::initialize(Runtime &rt)
     	for (auto &conc : instance->get_concordances()) {
 		    result.append(std::move(conc));
 	    }
-    	return make_handle<List>(&rt, std::move(result));
+    	return Handle<List>::make(&rt, std::move(result));
     };
 
     auto get_concordance = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1440,7 +1442,7 @@ void Project::initialize(Runtime &rt)
 		    return Variant();
 	    }
 	    else if (file->second->is<Concordance>()) {
-			return recast<Concordance>(file->second);
+			return handle_cast<Concordance>(file->second);
 	    }
 	    else {
 		    throw error("File \"%\" is not a concordance", path);
@@ -1452,7 +1454,7 @@ void Project::initialize(Runtime &rt)
     	for (auto &ds : instance->get_datasets()) {
 		    result.append(std::move(ds));
 	    }
-    	return make_handle<List>(&rt, std::move(result));
+    	return Handle<List>::make(&rt, std::move(result));
     };
 
     auto get_dataset = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1464,7 +1466,7 @@ void Project::initialize(Runtime &rt)
 		    return Variant();
 	    }
 	    else if (file->second->is<Dataset>()) {
-			return recast<Dataset>(file->second);
+			return handle_cast<Dataset>(file->second);
 	    }
 	    else {
 		    throw error("File \"%\" is not a dataset", path);
@@ -1486,7 +1488,7 @@ void Project::initialize(Runtime &rt)
 
 	// Create submodule for project.
 	// FIXME: DO we put this in phon or global?
-	auto proj = make_handle<Module>(&rt, "project");
+	auto proj = Handle<Module>::make(&rt, "project");
 	proj->define(&rt, "open", open_project, {CLS(String) });
 	proj->define(&rt, "close", close_project, { });
 	proj->define(&rt, "add_folder", add_folder, {CLS(String) });
@@ -1504,6 +1506,7 @@ void Project::initialize(Runtime &rt)
 	doc_class->add_method(rt.get_field_string, document_get_field, {CLS(Document), CLS(String)});
 	rt.add_global("load", load_file, { CLS(String) });
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 void Project::clear()
@@ -1574,12 +1577,12 @@ void Project::remove(const Handle<Directory> &folder)
     	auto &node = folder->get(i);
         if (node->is<Document>())
         {
-            auto file = recast<Document>(node);
+            auto file = handle_cast<Document>(node);
             remove(file);
         }
         else if (node->is<Directory>())
         {
-            auto subfolder = recast<Directory>(node);
+            auto subfolder = handle_cast<Directory>(node);
             remove(subfolder);
         }
         else
@@ -1609,17 +1612,22 @@ bool Project::is_root(const Directory *folder) const
 
 void Project::emit_signal(const String &signal, Variant value)
 {
-    rt.push(rt[emit_name]);
-    rt.push(signal);
-    rt.push(std::move(value));
-    rt.call(2);
+	// Dispatch through the script-side signal hub `emit(event, payload)` (roadmap E1:
+	// Runtime::call drives a script function value from C++).
+	auto fn = rt.get_function(emit_name.data());
+	if (fn.is_null())
+		return; // signal system not loaded yet (startup scripts not run)
+	Variant args[2] = { Variant::make(signal), std::move(value) };
+	rt.call(fn, args, 2);
 }
 
 void Project::emit_signal(const String &signal)
 {
-    rt.push(rt[emit_name]);
-    rt.push(signal);
-    rt.call(1);
+	auto fn = rt.get_function(emit_name.data());
+	if (fn.is_null())
+		return;
+	Variant arg = Variant::make(signal);
+	rt.call(fn, &arg, 1);
 }
 
 void Project::import_metadata(const String &path, const String &separator)
@@ -1683,7 +1691,10 @@ void Project::import_metadata(const String &path, const String &separator)
 
 void Project::export_metadata(const String &path)
 {
-	auto paths = m_files.keys();
+	Array<String> paths;
+	for (auto &entry : m_files) {
+		paths.append(entry.first);
+	}
 	std::sort(paths.begin(), paths.end());
 	auto &categories = Property::get_categories();
 	Array<Array<String>> csv;
@@ -1747,7 +1758,7 @@ void Project::tag_file(Handle<Document> &file, const String &category, const Str
 	{
 		if (filesystem::exists(value) && file->is<Annotation>())
 		{
-			auto annot = recast<Annotation>(file);
+			auto annot = handle_cast<Annotation>(file);
 			bind_annotation(annot, value);
 		}
 
@@ -1800,7 +1811,7 @@ void Project::set_default_bindings()
 
 		if (vf->is<Annotation>())
 		{
-			auto annot = raw_recast<Annotation>(vf);
+			auto annot = static_cast<Annotation*>(vf.get());
 			if (!annot->has_sound())
 			{
 				for (auto &ext : Sound::common_sound_formats())
@@ -1810,7 +1821,7 @@ void Project::set_default_bindings()
 					if (filesystem::exists(path))
 					{
 						add_file(path, m_corpus, FileType::Any, false);
-						auto sound = recast<Sound>(m_files[path]);
+						auto sound = handle_cast<Sound>(m_files[path]);
 						// Mutate the annotation, so that its metadata are saved.
 						annot->set_sound(sound, true);
 					}
@@ -1855,7 +1866,7 @@ void Project::interpolate(String &path, std::string_view project_dir)
 		if (!expand(VAR_APPDIR, filesystem::application_directory()))
 			expand(VAR_HOME, filesystem::user_directory());
 
-	filesystem::nativize(path);
+	path = filesystem::nativize(path);
 }
 
 void Project::compress(String &path, std::string_view project_dir)
@@ -1884,33 +1895,38 @@ void Project::compress(String &path, std::string_view project_dir)
 		if (!compact(filesystem::application_directory(), VAR_APPDIR))
 			compact(filesystem::user_directory(), VAR_HOME);
 
-	filesystem::genericize(path);
+	path = filesystem::genericize(path);
 }
 
 void Project::preinitialize(Runtime &rt)
 {
-	auto elem_type = rt.add_standard_type<Element>("Element");
-	rt.add_standard_type<Directory>("Directory", elem_type.get());
-	auto doc_type = rt.add_standard_type<Document>("Document", elem_type.get());
-	rt.add_standard_type<Annotation>("Annotation", doc_type.get());
-	rt.add_standard_type<Sound>("Sound", doc_type.get());
-	rt.add_standard_type<Spectrum>("Spectrum", doc_type.get());
-	auto dt_type = rt.add_standard_type<DataTable>("DataTable", doc_type.get());
-	rt.add_standard_type<Dataset>("Dataset", dt_type.get());
-	rt.add_standard_type<Concordance>("Concordance", dt_type.get());
-	rt.add_standard_type<Script>("Script", doc_type.get());
-	rt.add_standard_type<Note>("Note", doc_type.get());
-	rt.add_standard_type<Query>("Query", doc_type.get());
-	rt.add_standard_type<FormantQuery>("FormantQuery", doc_type.get());
-	rt.add_standard_type<PitchQuery>("PitchQuery", doc_type.get());
-	rt.add_standard_type<IntensityQuery>("IntensityQuery", doc_type.get());
-	rt.add_standard_type<SpectralMomentsQuery>("SpectralMomentsQuery", doc_type.get());
-	rt.add_standard_type<VoiceQualityQuery>("VoiceQualityQuery", doc_type.get());
-	auto bookmark_type = rt.add_standard_type<Bookmark>("Bookmark", elem_type.get());
-	rt.add_standard_type<TimeStamp>("TimeStamp", bookmark_type.get());
-	rt.add_standard_type<stats::Model>("Model");
-	rt.add_standard_type<stats::PriorSpec>("Prior");
-	rt.add_standard_type<Analysis>("Analysis", doc_type.get());
+	// Register the VFS hierarchy with the NEW engine (roadmap A2): base-first, the
+	// same names the old registrations used — `class_name()` and the project-XML
+	// format depend on them. All Reference kind (the old is_clonable<T> : false_type
+	// specializations). "PriorSpec" follows the class + Prior() factory idiom (G6b).
+	Class *object = rt.get_class("Object");
+	Class *elem_type = rt.add_class<Element>("Element", object);
+	rt.add_class<Directory>("Directory", elem_type);
+	Class *doc_type = rt.add_class<Document>("Document", elem_type);
+	rt.add_class<Annotation>("Annotation", doc_type);
+	rt.add_class<Sound>("Sound", doc_type);
+	rt.add_class<Spectrum>("Spectrum", doc_type);
+	Class *dt_type = rt.add_class<DataTable>("DataTable", doc_type);
+	rt.add_class<Dataset>("Dataset", dt_type);
+	rt.add_class<Concordance>("Concordance", dt_type);
+	rt.add_class<Script>("Script", doc_type);
+	rt.add_class<Note>("Note", doc_type);
+	Class *query_type = rt.add_class<Query>("Query", doc_type);
+	rt.add_class<FormantQuery>("FormantQuery", query_type);
+	rt.add_class<PitchQuery>("PitchQuery", query_type);
+	rt.add_class<IntensityQuery>("IntensityQuery", query_type);
+	rt.add_class<SpectralMomentsQuery>("SpectralMomentsQuery", query_type);
+	rt.add_class<VoiceQualityQuery>("VoiceQualityQuery", query_type);
+	Class *bookmark_type = rt.add_class<Bookmark>("Bookmark", elem_type);
+	rt.add_class<TimeStamp>("TimeStamp", bookmark_type);
+	rt.add_class<stats::Model>("Model", object);
+	rt.add_class<stats::PriorSpec>("PriorSpec", object);
+	rt.add_class<Analysis>("Analysis", doc_type);
 }
 
 void Project::add_query(Handle<Query> query)

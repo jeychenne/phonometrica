@@ -21,9 +21,9 @@
 
 #include <cmath>
 #include <phon/file.hpp>
-#include <phon/runtime/runtime.hpp>
+#include <phon/runtime.hpp>
 #include <phon/regex.hpp>
-#include <phon/runtime/index_conversion.hpp>
+#include <phon/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/model_comparison.hpp>
 #include <phon/analysis/mixed_model.hpp>
@@ -304,16 +304,16 @@ String DataTable::format_numeric_cell(double value)
 // get_field helper: build a List of column headers.
 // =====================================================================
 
-static Variant make_headers_list(Runtime &rt, DataTable &table)
+static Variant make_headers_list(Runtime &, DataTable &table)
 {
 	auto ncol = table.column_count();
-	Array<Variant> result;
+	List result;
 
 	for (intptr_t j = 0; j < ncol; j++) {
-		result.append(table.get_header(j));
+		result.append(Variant::make(table.get_header(j)));
 	}
 
-	return make_handle<List>(&rt, std::move(result));
+	return Variant::make(result);
 }
 
 
@@ -951,13 +951,13 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 		auto &ds = dynamic_cast<Dataset &>(table);
 		auto result = ds.subset(matching, label);
 		Project::updated();
-		return result;
+		return Variant::make(result);
 	}
 	else if (table.is<Concordance>()) {
 		auto &conc = dynamic_cast<Concordance &>(table);
 		auto result = conc.subset(matching, label);
 		Project::updated();
-		return result;
+		return Variant::make(result);
 	}
 	throw error("[Type error] filter() is not supported for this table type");
 }
@@ -969,6 +969,8 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 
 void DataTable::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3 (4b already ported the stats set to stats_host/bindings.cpp)
 	auto fit2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &formula_str = cast<String>(args[0]);
 		auto &data = cast<DataTable>(args[1]);
@@ -978,7 +980,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 	auto fit3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -991,7 +993,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 	// ── Helper: parse the options Table into a FitOptions struct. ──
@@ -1049,7 +1051,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 	// fit(formula, data, family, options)
@@ -1065,7 +1067,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 	auto summarize_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1074,7 +1076,7 @@ void DataTable::initialize(Runtime &rt)
 	};
 
 	auto coef_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return make_handle<Array<double>>(cast<stats::Model>(args[0]).beta);
+		return Handle<Array<double>>::make(cast<stats::Model>(args[0]).beta);
 	};
 
 	auto model_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
@@ -1104,8 +1106,8 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "well_identified") return model.well_identified;
 		if (key == "warning") return model.fit_warning;
 		if (key == "prior_warning") return model.prior_warning;
-		if (key == "fitted") return make_handle<Array<double>>(model.fitted);
-		if (key == "residuals") return make_handle<Array<double>>(model.residuals);
+		if (key == "fitted") return Handle<Array<double>>::make(model.fitted);
+		if (key == "residuals") return Handle<Array<double>>::make(model.residuals);
 		if (key == "estimation") return String(stats::estimation_name(model.estimation));
 		if (key == "fit_method") {
 			// Surface the ML/REML choice for frequentist Gaussian LMMs. For Bayesian
@@ -1121,19 +1123,19 @@ void DataTable::initialize(Runtime &rt)
 		if (key == "loo_ic") return model.loo_ic;
 		if (key == "p_loo") return model.p_loo;
 		if (key == "se_loo") return model.se_loo;
-		if (key == "pareto_k") return make_handle<Array<double>>(model.pareto_k);
-		if (key == "posterior_mean") return make_handle<Array<double>>(model.posterior_mean);
-		if (key == "posterior_mode") return make_handle<Array<double>>(model.posterior_mode);
-		if (key == "posterior_median") return make_handle<Array<double>>(model.posterior_median);
-		if (key == "posterior_sd") return make_handle<Array<double>>(model.posterior_sd);
-		if (key == "ci_lower") return make_handle<Array<double>>(model.ci_lower);
-		if (key == "ci_upper") return make_handle<Array<double>>(model.ci_upper);
-		if (key == "pd") return make_handle<Array<double>>(model.pd);
+		if (key == "pareto_k") return Handle<Array<double>>::make(model.pareto_k);
+		if (key == "posterior_mean") return Handle<Array<double>>::make(model.posterior_mean);
+		if (key == "posterior_mode") return Handle<Array<double>>::make(model.posterior_mode);
+		if (key == "posterior_median") return Handle<Array<double>>::make(model.posterior_median);
+		if (key == "posterior_sd") return Handle<Array<double>>::make(model.posterior_sd);
+		if (key == "ci_lower") return Handle<Array<double>>::make(model.ci_lower);
+		if (key == "ci_upper") return Handle<Array<double>>::make(model.ci_upper);
+		if (key == "pd") return Handle<Array<double>>::make(model.pd);
 
 		// ── Fixed-effect inference (frequentist) ─────────────────────
-		if (key == "se") return make_handle<Array<double>>(model.se);
-		if (key == "stat") return make_handle<Array<double>>(model.stat);
-		if (key == "p") return make_handle<Array<double>>(model.p);
+		if (key == "se") return Handle<Array<double>>::make(model.se);
+		if (key == "stat") return Handle<Array<double>>::make(model.stat);
+		if (key == "p") return Handle<Array<double>>::make(model.p);
 
 		// ── Names: coefficients and (Bayesian) hyperparameters ───────
 		if (key == "coef_names")
@@ -1141,21 +1143,21 @@ void DataTable::initialize(Runtime &rt)
 			Array<Variant> items;
 			for (intptr_t i = 0; i < model.coef_names.size(); i++)
 				items.append(model.coef_names[i]);
-			return make_handle<List>(&rt, std::move(items));
+			return Handle<List>::make(&rt, std::move(items));
 		}
 		if (key == "hyper_names")
 		{
 			Array<Variant> items;
 			for (intptr_t i = 0; i < model.hyper_names.size(); i++)
 				items.append(model.hyper_names[i]);
-			return make_handle<List>(&rt, std::move(items));
+			return Handle<List>::make(&rt, std::move(items));
 		}
 
 		// ── Hyperparameter posteriors (Bayesian mixed/Gaussian only) ─
-		if (key == "hyper_posterior_mean") return make_handle<Array<double>>(model.hyper_posterior_mean);
-		if (key == "hyper_posterior_sd") return make_handle<Array<double>>(model.hyper_posterior_sd);
-		if (key == "hyper_ci_lower") return make_handle<Array<double>>(model.hyper_ci_lower);
-		if (key == "hyper_ci_upper") return make_handle<Array<double>>(model.hyper_ci_upper);
+		if (key == "hyper_posterior_mean") return Handle<Array<double>>::make(model.hyper_posterior_mean);
+		if (key == "hyper_posterior_sd") return Handle<Array<double>>::make(model.hyper_posterior_sd);
+		if (key == "hyper_ci_lower") return Handle<Array<double>>::make(model.hyper_ci_lower);
+		if (key == "hyper_ci_upper") return Handle<Array<double>>::make(model.hyper_ci_upper);
 
 		// ── Random-effects summary (frequentist mixed models) ────────
 		// Flat layout parallel to hyper_* so test code can compare engines.
@@ -1178,7 +1180,7 @@ void DataTable::initialize(Runtime &rt)
 			}
 			if (model.is_gaussian() && model.has_random_effects())
 				items.append(String("sd(residual)"));
-			return make_handle<List>(&rt, std::move(items));
+			return Handle<List>::make(&rt, std::move(items));
 		}
 		if (key == "ranef_sd")
 		{
@@ -1194,7 +1196,7 @@ void DataTable::initialize(Runtime &rt)
 			}
 			if (model.is_gaussian() && model.has_random_effects())
 				sds.append(model.rse);
-			return make_handle<Array<double>>(std::move(sds));
+			return Handle<Array<double>>::make(std::move(sds));
 		}
 
 		// ── Smooth terms (GAM only) ───────────────────────────────────────
@@ -1213,28 +1215,28 @@ void DataTable::initialize(Runtime &rt)
 				else                  label.append(")");
 				items.append(std::move(label));
 			}
-			return make_handle<List>(&rt, std::move(items));
+			return Handle<List>::make(&rt, std::move(items));
 		}
 		if (key == "smooth_edf")
 		{
 			Array<double> edfs;
 			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				edfs.append(model.smooth_terms[i].edf);
-			return make_handle<Array<double>>(std::move(edfs));
+			return Handle<Array<double>>::make(std::move(edfs));
 		}
 		if (key == "smooth_F")
 		{
 			Array<double> Fs;
 			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				Fs.append(model.smooth_terms[i].F_stat);
-			return make_handle<Array<double>>(std::move(Fs));
+			return Handle<Array<double>>::make(std::move(Fs));
 		}
 		if (key == "smooth_p")
 		{
 			Array<double> ps;
 			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 				ps.append(model.smooth_terms[i].p_value);
-			return make_handle<Array<double>>(std::move(ps));
+			return Handle<Array<double>>::make(std::move(ps));
 		}
 		if (key == "smooth_log_lambda")
 		{
@@ -1245,7 +1247,7 @@ void DataTable::initialize(Runtime &rt)
 			Array<double> lls;
 			for (intptr_t i = 0; i < model.smooth_log_lambda.size(); i++)
 				lls.append(model.smooth_log_lambda[i]);
-			return make_handle<Array<double>>(std::move(lls));
+			return Handle<Array<double>>::make(std::move(lls));
 		}
 		if (key == "n_smooth")
 			return model.smooth_terms.size();
@@ -1442,7 +1444,7 @@ void DataTable::initialize(Runtime &rt)
 		if (!result.ok) {
 			throw error("evaluate(): %", result.error);
 		}
-		auto out = make_handle<Table>(&rt);
+		auto out = Handle<Table>::make(&rt);
 		auto &m = out->data();
 		m[String("loglik")]      = -result.laplace_nll;
 		m[String("laplace_nll")] = result.laplace_nll;
@@ -1458,7 +1460,7 @@ void DataTable::initialize(Runtime &rt)
 		for (intptr_t k = 0; k < result.u_used.size(); k++) {
 			u_items.append(result.u_used.data()[k]);
 		}
-		m[String("u")] = make_handle<List>(&rt, std::move(u_items));
+		m[String("u")] = Handle<List>::make(&rt, std::move(u_items));
 		return out;
 	};
 
@@ -1559,7 +1561,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto polish_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &model = cast<stats::Model>(args[0]);
-		auto out = make_handle<Table>(&rt);
+		auto out = Handle<Table>::make(&rt);
 		auto &m = out->data();
 
 		if (model.family != "student") {
@@ -1687,7 +1689,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto try_phase2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
 		auto &model = cast<stats::Model>(args[0]);
-		auto out = make_handle<Table>(&rt);
+		auto out = Handle<Table>::make(&rt);
 		auto &m = out->data();
 
 		if (model.family != "student") {
@@ -1913,7 +1915,7 @@ void DataTable::initialize(Runtime &rt)
 		if (opts.bare) {
 			ds = Dataset::create_empty(result.fit.size());
 		} else {
-			ds = make_handle<Dataset>(newdata);
+			ds = Handle<Dataset>::make(newdata);
 			ds->mark_loaded();
 		}
 		append_prediction_columns(*ds, result);
@@ -1935,7 +1937,7 @@ void DataTable::initialize(Runtime &rt)
 		if (opts.bare) {
 			ds = Dataset::create_empty(result.fit.size());
 		} else {
-			ds = make_handle<Dataset>(newdata);
+			ds = Handle<Dataset>::make(newdata);
 			ds->mark_loaded();
 		}
 		append_prediction_columns(*ds, result);
@@ -1985,7 +1987,7 @@ void DataTable::initialize(Runtime &rt)
 			for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++) {
 				result[i] = span[i];
 			}
-			return make_handle<Array<double>>(std::move(result));
+			return Handle<Array<double>>::make(std::move(result));
 		}
 		else {
 			// Text or boolean: return as List of strings.
@@ -1993,7 +1995,7 @@ void DataTable::initialize(Runtime &rt)
 			for (intptr_t i = 0; i < ds.row_count(); i++) {
 				items.append(ds.get_cell(i, j));
 			}
-			return make_handle<List>(&rt, std::move(items));
+			return Handle<List>::make(&rt, std::move(items));
 		}
 	};
 
@@ -2041,12 +2043,12 @@ void DataTable::initialize(Runtime &rt)
 				Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
 				for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++)
 					result[i] = span[i];
-				return make_handle<Array<double>>(std::move(result));
+				return Handle<Array<double>>::make(std::move(result));
 			} else {
 				Array<Variant> items;
 				for (intptr_t i = 0; i < ds.row_count(); i++)
 					items.append(ds.get_cell(i, j));
-				return make_handle<List>(&rt, std::move(items));
+				return Handle<List>::make(&rt, std::move(items));
 			}
 		}
 
@@ -2069,11 +2071,11 @@ void DataTable::initialize(Runtime &rt)
 			}
 		}
 		if (all_numeric)
-			return make_handle<Array<double>>(std::move(nums));
+			return Handle<Array<double>>::make(std::move(nums));
 		Array<Variant> items;
 		for (intptr_t i = 0; i < nrow; i++)
 			items.append(table.get_cell(i, j));
-		return make_handle<List>(&rt, std::move(items));
+		return Handle<List>::make(&rt, std::move(items));
 	};
 
 	// ── get_column by index for Concordance ─────────────────────
@@ -2106,11 +2108,11 @@ void DataTable::initialize(Runtime &rt)
 			}
 		}
 		if (all_numeric)
-			return make_handle<Array<double>>(std::move(nums));
+			return Handle<Array<double>>::make(std::move(nums));
 		Array<Variant> items;
 		for (intptr_t i = 0; i < nrow; i++)
 			items.append(conc.get_cell(i, j));
-		return make_handle<List>(&rt, std::move(items));
+		return Handle<List>::make(&rt, std::move(items));
 	};
 
 	// ── append(DataTable, List, String) ─────────────────────
@@ -2331,7 +2333,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto array_mean2 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto dim = (int) cast<intptr_t>(args[1]);
-		return make_handle<Array<double>>(stats::mean(cast<Array<double>>(args[0]), dim));
+		return Handle<Array<double>>::make(stats::mean(cast<Array<double>>(args[0]), dim));
 	};
 
 	auto array_std1 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -2340,7 +2342,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto array_std2 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto dim = (int) cast<intptr_t>(args[1]);
-		return make_handle<Array<double>>(stats::stdev(cast<Array<double>>(args[0]), dim));
+		return Handle<Array<double>>::make(stats::stdev(cast<Array<double>>(args[0]), dim));
 	};
 
 	auto array_sum1 = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -2349,7 +2351,7 @@ void DataTable::initialize(Runtime &rt)
 
 	auto array_sum2 = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto dim = cast<intptr_t>(args[1]);
-		return make_handle<Array<double>>(stats::sum(cast<Array<double>>(args[0]), dim));
+		return Handle<Array<double>>::make(stats::sum(cast<Array<double>>(args[0]), dim));
 	};
 
 	auto array_vrc = [](Runtime &, std::span<Variant> args) -> Variant {
@@ -2359,7 +2361,7 @@ void DataTable::initialize(Runtime &rt)
 	// ── Prior construction and configuration ────────────────────
 
 	auto prior_init = [](Runtime &, std::span<Variant>) -> Variant {
-		return make_handle<stats::PriorSpec>(stats::PriorSpec::default_spec());
+		return Handle<stats::PriorSpec>::make(stats::PriorSpec::default_spec());
 	};
 
 	// set_fixed(prior, mean, sd) — default prior for all fixed effects
@@ -2524,7 +2526,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 	// Bayesian fit: fit(formula, data, family, prior)
@@ -2539,7 +2541,7 @@ void DataTable::initialize(Runtime &rt)
 		if (model.smooth_terms.size() > 0) {
 			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 		}
-		return make_handle<stats::Model>(std::move(model));
+		return Handle<stats::Model>::make(std::move(model));
 	};
 
 #define CLS(T) phonometrica::get_class<T>()
@@ -2623,6 +2625,7 @@ void DataTable::initialize(Runtime &rt)
 
 #undef CLS
 #undef REF
+#endif // PHON_TODO_A3
 }
 
 } // namespace phonometrica

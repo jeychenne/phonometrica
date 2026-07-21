@@ -446,9 +446,9 @@ void Spectrum::load()
 
 	auto lines = file.read_lines();
 
-	for (intptr_t i = 0; i < lines.size(); i++)
+	for (intptr_t i = 1; i <= lines.size(); i++)
 	{
-		auto line = lines[i];
+		auto line = lines.get(i).to<String>();
 		line.trim();
 
 		if (line.empty()) continue;
@@ -563,6 +563,8 @@ speech::WindowType Spectrum::string_to_window_type(const String &s)
 
 void Spectrum::initialize(Runtime &rt)
 {
+	(void) rt;
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
 	auto spectrum_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
 		auto &spec = cast<Spectrum>(args[0]);
 		auto &key = cast<String>(args[1]);
@@ -614,7 +616,7 @@ void Spectrum::initialize(Runtime &rt)
 		auto t1 = args[2].resolve().get_number();
 		auto t2 = args[3].resolve().get_number();
 		sound.open();
-		return make_handle<Spectrum>(nullptr, Handle<Sound>(&sound), channel, t1, t2);
+		return Handle<Spectrum>::make(nullptr, Handle<Sound>(&sound), channel, t1, t2);
 	};
 
 	rt.add_global("get_spectrum", get_spectrum, { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number) });
@@ -632,7 +634,7 @@ void Spectrum::initialize(Runtime &rt)
 		auto m = compute_spectral_moments_at(
 			Handle<Sound>(&sound), channel, time, window_duration,
 			speech::WindowType::Gaussian, min_freq, max_freq, 50.0);
-		auto result = make_handle<Table>(&rt);
+		auto result = Handle<Table>::make(&rt);
 		result->map()[Variant(String("cog"))] = Variant(m.cog);
 		result->map()[Variant(String("spread"))] = Variant(m.spread);
 		result->map()[Variant(String("skewness"))] = Variant(m.skewness);
@@ -644,6 +646,7 @@ void Spectrum::initialize(Runtime &rt)
 	              { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
 
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 } // namespace phonometrica

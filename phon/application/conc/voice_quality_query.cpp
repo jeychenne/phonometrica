@@ -126,8 +126,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 	{
 		auto &rt = Project::get()->runtime();
 		auto emit_msg = [&](const String &msg) {
-			if (rt.show_error) rt.show_error(msg);
-			else if (rt.print) rt.print(msg);
+			rt.print_error(msg);
 		};
 
 		auto known = Property::get_values(m_override_category);
@@ -181,7 +180,7 @@ Handle<Concordance> VoiceQualityQuery::execute()
 		}
 	}
 
-	auto conc = make_handle<Concordance>(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
+	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
 	if (m_include_duration) {
 		conc->set_has_duration(true);
@@ -307,7 +306,7 @@ void VoiceQualityQuery::measure_match(QueryMatch &match) const
 
 Handle<Query> VoiceQualityQuery::copy() const
 {
-	auto c = make_handle<VoiceQualityQuery>(this->parent(), String());
+	auto c = Handle<VoiceQualityQuery>::make(this->parent(), String());
 
 	c->m_constraints       = m_constraints;
 	c->m_metaconstraints   = m_metaconstraints;

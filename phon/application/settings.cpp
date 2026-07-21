@@ -13,19 +13,21 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * You should have received a copy of the GNU General Public License along with this program. If not, see              *
- * <http://www.gnu.org/licenses/>.                                                                                     *
- *                                                                                                                     *
  * Created: 28/02/2019                                                                                                 *
  *                                                                                                                     *
- * purpose: see header.                                                                                                *
+ * purpose: see header. Since the A1 base-type swap the settings store lives in the NEW engine: `phon` is a Table      *
+ * held as an isolate global and `phon.settings` is a nested Table. Both are CoW values (engine roadmap E2), so        *
+ * every C++-side mutation is a read-modify-write: fetch the tables from the global, set the key (which may detach),   *
+ * and write the result back through add_global. Never cache a Table across calls.                                     *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #include <phon/application/constants.hpp>
 #include <phon/application/settings.hpp>
+#include <phon/definitions.hpp>
+#include <phon/error.hpp>
 #include <phon/utils/file_system.hpp>
-#include <phon/runtime/file.hpp>
+#include <phon/file.hpp>
 
 namespace phonometrica {
 
@@ -33,8 +35,38 @@ Runtime *Settings::runtime = nullptr;
 String Settings::std_resource_path;
 std::function<String(const String &)> Settings::load_script;
 
-static String phon_key("phon"), settings_key("settings");
+static String settings_key("settings");
 static String last_dir_key("last_directory");
+
+// --- CoW plumbing -----------------------------------------------------------------
+
+static Variant str_key(const String &s)
+{
+	return Variant::make(s);
+}
+
+static Variant str_key(const char *s)
+{
+	return Variant::make(String(s));
+}
+
+// Fetch phon.settings. Throws if the phon namespace or the settings table is missing.
+static Table fetch_settings(Runtime *rt)
+{
+	auto phon = rt->get_global("phon");
+	if (phon.is_null()) {
+		throw error("[Internal error] The 'phon' namespace is not loaded");
+	}
+	return phon.to<Table>().get(str_key(settings_key)).to<Table>();
+}
+
+// Store a (possibly detached) settings table back into the phon global.
+static void store_settings(Runtime *rt, const Table &settings)
+{
+	auto phon = rt->get_global("phon").to<Table>();
+	phon.set(str_key(settings_key), Variant::make(settings));
+	rt->add_global("phon", Variant::make(phon));
+}
 
 void Settings::initialize(Runtime *rt)
 {
@@ -50,31 +82,21 @@ void Settings::initialize(Runtime *rt)
 #endif
 
 	// Create global functions related to settings
-	auto get_settings_directory = [](Runtime &, std::span<Variant>) -> Variant {
+	rt->add_function("get_settings_directory", []() -> String {
 		return Settings::settings_directory();
-	};
-
-	auto get_metadata_directory = [](Runtime &, std::span<Variant>) -> Variant {
+	});
+	rt->add_function("get_metadata_directory", []() -> String {
 		return Settings::metadata_directory();
-	};
-
-	auto get_plugin_directory = [](Runtime &, std::span<Variant>) -> Variant {
+	});
+	rt->add_function("get_plugin_directory", []() -> String {
 		return Settings::plugin_directory();
-	};
-
-	auto get_script_directory = [](Runtime &, std::span<Variant>) -> Variant {
+	});
+	rt->add_function("get_script_directory", []() -> String {
 		return Settings::user_script_directory();
-	};
-
-	auto get_config_path = [](Runtime &, std::span<Variant>) -> Variant {
+	});
+	rt->add_function("get_config_path", []() -> String {
 		return Settings::config_path();
-	};
-
-	rt->add_global("get_settings_directory", get_settings_directory, {});
-	rt->add_global("get_metadata_directory", get_metadata_directory, {});
-	rt->add_global("get_plugin_directory", get_plugin_directory, {});
-	rt->add_global("get_script_directory", get_script_directory, {});
-	rt->add_global("get_config_path", get_config_path, {});
+	});
 }
 
 String Settings::settings_directory()
@@ -125,10 +147,7 @@ String Settings::get_string(const String &name)
 	try
 	{
 		// Get "phon.settings.name"
-		auto &phon = cast<Module>((*runtime)[phon_key]);
-		auto &settings = cast<Table>(phon.get(settings_key));
-
-		return cast<String>(settings.get(name));
+		return fetch_settings(runtime).get(str_key(name)).to<String>();
 	}
 	catch (std::runtime_error &e)
 	{
@@ -140,11 +159,7 @@ bool Settings::get_boolean(const String &name)
 {
 	try
 	{
-		// Get "phon.settings.name"
-		auto &phon = cast<Module>((*runtime)[phon_key]);
-		auto &settings = cast<Table>(phon.get(settings_key));
-
-		return cast<bool>(settings.get(name));
+		return fetch_settings(runtime).get(str_key(name)).to<bool>();
 	}
 	catch (std::runtime_error &e)
 	{
@@ -156,11 +171,7 @@ double Settings::get_number(const String &name)
 {
 	try
 	{
-		// Get "phon.settings.name"
-		auto &phon = cast<Module>((*runtime)[phon_key]);
-		auto &settings = cast<Table>(phon.get(settings_key));
-
-		return settings.get(name).get_number();
+		return fetch_settings(runtime).get(str_key(name)).to<double>();
 	}
 	catch (std::runtime_error &e)
 	{
@@ -168,42 +179,23 @@ double Settings::get_number(const String &name)
 	}
 }
 
-Array<Variant> &Settings::get_list(const String &name)
+List Settings::get_list(const String &name)
 {
 	try
 	{
-		// Get "phon.settings.name"
-		auto &phon = cast<Module>((*runtime)[phon_key]);
-		auto &settings = cast<Table>(phon.get(settings_key));
-
-		return cast<List>(settings.get(name)).items();
+		return fetch_settings(runtime).get(str_key(name)).to<List>();
 	}
 	catch (std::runtime_error &e)
 	{
 		throw error("Invalid setting \"%\": %", name, e.what());
 	}
-}
-
-Hashmap<Variant, Variant> &Settings::get_table(const String &name)
-{
-    try
-    {
-        auto &phon = cast<Module>((*runtime)[phon_key]);
-        auto &settings = cast<Table>(phon.get(settings_key));
-
-        return cast<Table>(settings.get(name)).data();
-    }
-    catch (std::runtime_error &e)
-    {
-        throw error("Invalid setting \"%\": %", name, e.what());
-    }
 }
 
 String Settings::get_std_script(String name)
 {
 	auto path = Settings::resources_directory();
 	filesystem::append(path, "std");
-	filesystem::nativize(name);
+	name = filesystem::nativize(name);
 	name.append(PHON_EXT_SCRIPT);
 	filesystem::append(path, name);
 
@@ -217,21 +209,25 @@ String Settings::get_last_directory()
 
 void Settings::set_value(const String &key, Variant value)
 {
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	settings[key] = std::move(value);
+	auto settings = fetch_settings(runtime);
+	settings.set(str_key(key), std::move(value));
+	store_settings(runtime, settings);
 }
 
 void Settings::set_value(const String &key, Array<Variant> value)
 {
-	set_value(key, make_handle<List>(runtime, std::move(value)));
+	List list;
+	for (auto &v : value) {
+		list.append(v);
+	}
+	set_value(key, Variant::make(list));
 }
 
 
 void Settings::set_last_directory(const String &path)
 {
 	if (!path.empty()) {
-		set_value(last_dir_key, filesystem::directory_name(path));
+		set_value(last_dir_key, Variant::make(filesystem::directory_name(path)));
 	}
 }
 
@@ -243,67 +239,43 @@ int Settings::get_int(const String &name)
 int Settings::get_int(const String &category, const String &name)
 {
 	// Get "phon.settings.category.name"
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &mod = cast<Table>(settings.get(category));
+	auto mod = fetch_settings(runtime).get(str_key(category)).to<Table>();
 
-	return (int)cast<intptr_t>(mod.get(name));
+	return (int) mod.get(str_key(name)).to<int64_t>();
 }
 
 bool Settings::get_boolean(const String &category, const String &name)
 {
-	// Get "phon.settings.category.name"
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &mod = cast<Table>(settings.get(category));
+	auto mod = fetch_settings(runtime).get(str_key(category)).to<Table>();
 
-	return cast<bool>(mod.get(name));
+	return mod.get(str_key(name)).to<bool>();
 }
 
 double Settings::get_number(const String &category, const String &name)
 {
-	// Get "phon.settings.category.name"
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &mod = cast<Table>(settings.get(category));
+	auto mod = fetch_settings(runtime).get(str_key(category)).to<Table>();
 
-	return mod.get(name).get_number();
+	return mod.get(str_key(name)).to<double>();
 }
 
 String Settings::get_string(const String &category, const String &name)
 {
-	// Get "phon.settings.category.name"
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &mod = cast<Table>(settings.get(category));
+	auto mod = fetch_settings(runtime).get(str_key(category)).to<Table>();
 
-	return cast<String>(mod.get(name));
+	return mod.get(str_key(name)).to<String>();
 }
 
 void Settings::set_value(const String &category, const String &key, Variant value)
 {
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key));
-	auto &settings_map = settings.data();
-
-	auto it = settings_map.find(category);
-	if (it == settings_map.end())
-	{
-		// Self-heal: if the category table does not exist yet, create it.
-		// This can happen when a settings file written by an earlier version
-		// is loaded and a new category (e.g. "font") has been added since.
-		// The migration logic in post_initialize() should normally handle
-		// this, but making set_value() robust prevents a hard crash if a
-		// migration check is ever forgotten.
-		auto tab = make_handle<Table>(runtime);
-		tab->data()[key] = std::move(value);
-		settings_map[category] = std::move(tab);
-	}
-	else
-	{
-		auto &mod = cast<Table>(it->second);
-		mod[key] = std::move(value);
-	}
+	auto settings = fetch_settings(runtime);
+	auto cat_v = settings.get(str_key(category));
+	// Self-heal: if the category table does not exist yet, create it. This can happen
+	// when a settings file written by an earlier version is loaded and a new category
+	// (e.g. "font") has been added since.
+	Table mod = cat_v.is_null() ? Table() : cat_v.to<Table>();
+	mod.set(str_key(key), std::move(value));
+	settings.set(str_key(category), Variant::make(mod));
+	store_settings(runtime, settings);
 }
 
 String Settings::get_std_plugin_directory()
@@ -345,24 +317,24 @@ void Settings::read()
 	catch (std::exception &)
 	{
 		// TODO: notify user that settings are invalid and have been reinitialized.
-        result = run_script((*runtime), "read_settings");
+		result = runtime->do_string(load_script("read_settings"));
 	}
 	// Versions of Phonometrica prior to 0.8 created phon.settings in settings.phon.
 	// We now simply store a table in this file, and create settings.phon ourselves to
 	// hide it from users.
-	if (result.empty())
+	if (result.is_null())
 	{
-		// Sanity checks
-		runtime->do_string(R"__(
-			if not contains(phon, "settings") then
-			    throw "Settings could not be initialized properly: check the file '" & get_config_path() & "'"
-			end
-		)__");
+		// Sanity check: the script must have installed phon.settings itself.
+		auto phon = runtime->get_global("phon");
+		if (phon.is_null() || phon.to<Table>().get(str_key(settings_key)).is_null()) {
+			throw error("Settings could not be initialized properly: check the file '%'", config_path());
+		}
 	}
 	else
 	{
-		auto &phon = cast<Module>((*runtime)[phon_key]);
-		phon["settings"] = std::move(result);
+		auto phon = runtime->get_global("phon").to<Table>();
+		phon.set(str_key(settings_key), std::move(result));
+		runtime->add_global("phon", Variant::make(phon));
 	}
 }
 
@@ -373,7 +345,7 @@ void Settings::write()
 
 String Settings::get_documentation_page(String page)
 {
-	filesystem::nativize(page);
+	page = filesystem::nativize(page);
 	auto path = filesystem::join(resources_directory(), "html", page);
 	if (!path.ends_with(".html")) {
 		filesystem::append(path, "index.html");
@@ -405,45 +377,49 @@ void Settings::post_initialize()
 	// second line of defence: writes to a category whose table is present
 	// but missing the sub-key no longer crash — they insert the sub-key
 	// lazily. This migration just guarantees sensible defaults on reads.
+	//
+	// The settings table is CoW: re-fetch it on every probe (a reset_*
+	// call replaces the stored table, so a cached copy would be stale).
 
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key)).data();
+	auto contains = [](const char *k) {
+		return fetch_settings(Settings::runtime).contains(str_key(k));
+	};
 
 	// --- Window layout and session state ---------------------------------
 	// reset_geometry writes eight scalars directly at the top level of
 	// `settings`. "project_ratio" is used as the canary for the whole set.
-	if (!settings.contains("project_ratio")) {
+	if (!contains("project_ratio")) {
 		reset_geometry();
 	}
-	if (!settings.contains("restore_views")) {
+	if (!contains("restore_views")) {
 		reset_recent_views();
 	}
-	if (!settings.contains("recent_projects")) {
+	if (!contains("recent_projects")) {
 		reset_recent_projects();
 	}
 
 	// --- Top-level scalar preferences ------------------------------------
-	if (!settings.contains("autohints")) {
+	if (!contains("autohints")) {
 		reset_autohints();
 	}
-	if (!settings.contains("autoload")) {
+	if (!contains("autoload")) {
 		reset_autoload();
 	}
-	if (!settings.contains("autosave")) {
+	if (!contains("autosave")) {
 		reset_autosave();
 	}
-	if (!settings.contains("last_directory")) {
+	if (!contains("last_directory")) {
 		reset_last_directory();
 	}
-	if (!settings.contains("enable_mouse_tracking")) {
+	if (!contains("enable_mouse_tracking")) {
 		reset_mouse_tracking();
 	}
-	if (!settings.contains("check_for_updates")) {
+	if (!contains("check_for_updates")) {
 		reset_check_for_updates();
 	}
 
 	// --- Appearance ------------------------------------------------------
-	if (!settings.contains("font")) {
+	if (!contains("font")) {
 		// Added after initial release: users upgrading from a version that
 		// predates the font preference will not have this table. Without
 		// this migration, reading "font"/"name" or "font"/"size" throws,
@@ -453,23 +429,23 @@ void Settings::post_initialize()
 	}
 
 	// --- Signal analysis tables ------------------------------------------
-	if (!settings.contains("waveform")) {
+	if (!contains("waveform")) {
 		reset_waveform();
 	}
-	if (!settings.contains("pitch_tracking")) {
+	if (!contains("pitch_tracking")) {
 		reset_pitch_tracking();
 	}
-	if (!settings.contains("spectrogram")) {
+	if (!contains("spectrogram")) {
 		reset_spectrogram();
 	}
-	if (!settings.contains("intensity")) {
+	if (!contains("intensity")) {
 		reset_intensity();
 	}
 
 	// sound_plots gained "formants", "pitch" and "intensity" sub-keys in
 	// 0.8; probe a late-added key so that pre-0.8 tables are refreshed
 	// rather than silently carrying partial state.
-	if (!settings.contains("sound_plots")) {
+	if (!contains("sound_plots")) {
 		reset_sound_plots();
 	}
 	else {
@@ -482,7 +458,7 @@ void Settings::post_initialize()
 	}
 
 	// formants gained "time_step" in 0.8.
-	if (!settings.contains("formants")) {
+	if (!contains("formants")) {
 		reset_formants();
 	}
 	else {
@@ -495,20 +471,20 @@ void Settings::post_initialize()
 	}
 
 	// --- Concordance, display, statistics --------------------------------
-	if (!settings.contains("concordance")) {
+	if (!contains("concordance")) {
 		reset_concordance();
 	}
-	if (!settings.contains("display")) {
+	if (!contains("display")) {
 		reset_display();
 	}
-	if (!settings.contains("statistics")) {
+	if (!contains("statistics")) {
 		reset_statistics();
 	}
-	if (!settings.contains("whisper_log")) {
+	if (!contains("whisper_log")) {
 		reset_whisper_log();
 	}
 
-	if (!settings.contains("recording")) {
+	if (!contains("recording")) {
 		reset_recording();
 	}
 
@@ -517,7 +493,7 @@ void Settings::post_initialize()
 		Settings::get_string("concordance", "default_context");
 	}
 	catch (...) {
-		Settings::set_value("concordance", "default_context", String("kwic"));
+		Settings::set_value("concordance", "default_context", Variant::make(String("kwic")));
 	}
 }
 
@@ -547,35 +523,32 @@ void Settings::reset()
 
 void Settings::reset_waveform()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("magnitude"), Variant::make(1.0));
+	table.set(str_key("scaling"), Variant::make(String("local")));
 
-	map["magnitude"] = 1.0;
-	map["scaling"] = "local";
-
-	Settings::set_value("waveform", std::move(table));
+	Settings::set_value("waveform", Variant::make(table));
 }
 
 void Settings::reset_mono_font()
 {
-    auto table = make_handle<Table>(runtime);
-    auto &map = table->data();
+	Table table;
 #if PHON_MACOS
-    map["name"] = String("Monaco");
-    map["size"] = intptr_t(13);
+	table.set(str_key("name"), Variant::make(String("Monaco")));
+	table.set(str_key("size"), Variant::make<int64_t>(13));
 #elif PHON_WINDOWS
-    map["name"] = String("Consolas");
-    map["size"] = intptr_t(10);
+	table.set(str_key("name"), Variant::make(String("Consolas")));
+	table.set(str_key("size"), Variant::make<int64_t>(10));
 #else
-    map["name"] = String("Monospace");
-    map["size"] = intptr_t(12);
+	table.set(str_key("name"), Variant::make(String("Monospace")));
+	table.set(str_key("size"), Variant::make<int64_t>(12));
 #endif
-    Settings::set_value("font", std::move(table));
+	Settings::set_value("font", Variant::make(table));
 }
 
 void Settings::reset_autohints()
 {
-	Settings::set_value("autohints", true);
+	Settings::set_value("autohints", Variant::make(true));
 }
 
 void Settings::reset_whisper_log()
@@ -583,157 +556,143 @@ void Settings::reset_whisper_log()
 	// Whisper + ggml normally print diagnostic output to stderr (model load sizes, compute
 	// buffer allocations, etc.). Silenced by default; when toggled on, routed to the
 	// Phonometrica output panel — never back to stderr/stdout.
-	Settings::set_value("whisper_log", false);
+	Settings::set_value("whisper_log", Variant::make(false));
 }
 
 void Settings::reset_check_for_updates()
 {
-	Settings::set_value("check_for_updates", true);
+	Settings::set_value("check_for_updates", Variant::make(true));
 }
 
 void Settings::reset_autoload()
 {
-	Settings::set_value("autoload", false);
+	Settings::set_value("autoload", Variant::make(false));
 }
 
 void Settings::reset_autosave()
 {
-	Settings::set_value("autosave", false);
+	Settings::set_value("autosave", Variant::make(false));
 }
 
 void Settings::reset_recent_views()
 {
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key)).data();
-
-	settings["restore_views"] = false;
-	settings["recent_views"] = make_handle<List>(runtime);
-	settings["selected_view"] = intptr_t(-1);
+	auto settings = fetch_settings(runtime);
+	settings.set(str_key("restore_views"), Variant::make(false));
+	settings.set(str_key("recent_views"), Variant::make(List()));
+	settings.set(str_key("selected_view"), Variant::make<int64_t>(-1));
+	store_settings(runtime, settings);
 }
 
 void Settings::reset_geometry()
 {
-	auto &phon = cast<Module>((*runtime)[phon_key]);
-	auto &settings = cast<Table>(phon.get(settings_key)).data();
-
-	settings["project_ratio"] = 0.17;
-	settings["console_ratio"] = 0.80;
-	settings["info_ratio"] = 0.80;
-	settings["full_screen"] = true;
-	settings["hide_project"] = false;
-	settings["hide_console"] = false;
-	settings["hide_info"] = false;
-	std::initializer_list<Variant> geo = { .0, .0, .0, .0 };
-	settings["geometry"] = make_handle<List>(runtime, geo);
+	auto settings = fetch_settings(runtime);
+	settings.set(str_key("project_ratio"), Variant::make(0.17));
+	settings.set(str_key("console_ratio"), Variant::make(0.80));
+	settings.set(str_key("info_ratio"), Variant::make(0.80));
+	settings.set(str_key("full_screen"), Variant::make(true));
+	settings.set(str_key("hide_project"), Variant::make(false));
+	settings.set(str_key("hide_console"), Variant::make(false));
+	settings.set(str_key("hide_info"), Variant::make(false));
+	List geo = { Variant::make(0.0), Variant::make(0.0), Variant::make(0.0), Variant::make(0.0) };
+	settings.set(str_key("geometry"), Variant::make(geo));
+	store_settings(runtime, settings);
 }
 
 void Settings::reset_concordance()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
-	map["context_length"] = intptr_t(40);
-	map["default_context"] = String("kwic");
-	map["discard_empty"] = true;
-	Settings::set_value("concordance", std::move(table));
+	Table table;
+	table.set(str_key("context_length"), Variant::make<int64_t>(40));
+	table.set(str_key("default_context"), Variant::make(String("kwic")));
+	table.set(str_key("discard_empty"), Variant::make(true));
+	Settings::set_value("concordance", Variant::make(table));
 }
 
 void Settings::reset_display()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
-	map["hz_decimals"] = intptr_t(0); // 0 = round to nearest Hz
-	Settings::set_value("display", std::move(table));
+	Table table;
+	table.set(str_key("hz_decimals"), Variant::make<int64_t>(0)); // 0 = round to nearest Hz
+	Settings::set_value("display", Variant::make(table));
 }
 
 void Settings::reset_statistics()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
-	map["estimation"] = String("frequentist");
-	map["max_iterations"] = intptr_t(200);
-	Settings::set_value("statistics", std::move(table));
+	Table table;
+	table.set(str_key("estimation"), Variant::make(String("frequentist")));
+	table.set(str_key("max_iterations"), Variant::make<int64_t>(200));
+	Settings::set_value("statistics", Variant::make(table));
 }
 
 void Settings::reset_mouse_tracking()
 {
-	Settings::set_value("enable_mouse_tracking", true);
+	Settings::set_value("enable_mouse_tracking", Variant::make(true));
 }
 
 void Settings::reset_sound_plots()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("waveform"), Variant::make(true));
+	table.set(str_key("spectrogram"), Variant::make(true));
+	table.set(str_key("formants"), Variant::make(true));
+	table.set(str_key("pitch"), Variant::make(true));
+	table.set(str_key("intensity"), Variant::make(true));
 
-	map["waveform"] = true;
-	map["spectrogram"] = true;
-	map["formants"] = true;
-	map["pitch"] = true;
-	map["intensity"] = true;
-
-	Settings::set_value("sound_plots", std::move(table));
+	Settings::set_value("sound_plots", Variant::make(table));
 }
 
 void Settings::reset_last_directory()
 {
-	Settings::set_value("last_directory", String());
+	Settings::set_value("last_directory", Variant::make(String()));
 }
 
 void Settings::reset_pitch_tracking()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
-	map["method"] = "praat";
-	map["minimum_pitch"] = intptr_t(70);
-	map["maximum_pitch"] = intptr_t(500);
-	map["time_step"] = 0.01;
-	map["voicing_threshold"] = 0.45;
-	map["octave_jump_cost"] = 0.35;
-	map["voicing_cost"] = 0.14;
-	map["silence_threshold"] = 0.03;
-	map["octave_cost"] = 0.01;
-	map["use_gaussian"] = false;
+	Table table;
+	table.set(str_key("method"), Variant::make(String("praat")));
+	table.set(str_key("minimum_pitch"), Variant::make<int64_t>(70));
+	table.set(str_key("maximum_pitch"), Variant::make<int64_t>(500));
+	table.set(str_key("time_step"), Variant::make(0.01));
+	table.set(str_key("voicing_threshold"), Variant::make(0.45));
+	table.set(str_key("octave_jump_cost"), Variant::make(0.35));
+	table.set(str_key("voicing_cost"), Variant::make(0.14));
+	table.set(str_key("silence_threshold"), Variant::make(0.03));
+	table.set(str_key("octave_cost"), Variant::make(0.01));
+	table.set(str_key("use_gaussian"), Variant::make(false));
 
-	Settings::set_value("pitch_tracking", std::move(table));
+	Settings::set_value("pitch_tracking", Variant::make(table));
 }
 
 void Settings::reset_formants()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("number_of_formants"), Variant::make<int64_t>(4));
+	table.set(str_key("window_size"), Variant::make(0.025));
+	table.set(str_key("lpc_order"), Variant::make<int64_t>(10));
+	table.set(str_key("max_frequency"), Variant::make<int64_t>(5500));
+	table.set(str_key("time_step"), Variant::make(0.01));
 
-	map["number_of_formants"] = intptr_t(4);
-	map["window_size"] = 0.025,
-	map["lpc_order"] = intptr_t(10);
-	map["max_frequency"] = intptr_t(5500);
-	map["time_step"] = 0.01;
-
-	Settings::set_value("formants", std::move(table));
+	Settings::set_value("formants", Variant::make(table));
 }
 
 void Settings::reset_spectrogram()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("window_size"), Variant::make(0.005));
+	table.set(str_key("frequency_range"), Variant::make<int64_t>(5500));
+	table.set(str_key("window_type"), Variant::make(String("Gaussian")));
+	table.set(str_key("dynamic_range"), Variant::make<int64_t>(70));
+	table.set(str_key("preemphasis_threshold"), Variant::make<int64_t>(1000));
 
-	map["window_size"] = 0.005;
-	map["frequency_range"] = intptr_t(5500);
-	map["window_type"] = "Gaussian";
-	map["dynamic_range"] = intptr_t(70);
-	map["preemphasis_threshold"] = intptr_t(1000);
-
-	Settings::set_value("spectrogram", std::move(table));
+	Settings::set_value("spectrogram", Variant::make(table));
 }
 
 void Settings::reset_intensity()
 {
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("minimum_intensity"), Variant::make<int64_t>(50));
+	table.set(str_key("maximum_intensity"), Variant::make<int64_t>(100));
+	table.set(str_key("time_step"), Variant::make(0.01));
 
-	map["minimum_intensity"] = intptr_t(50);
-	map["maximum_intensity"] = intptr_t(100);
-	map["time_step"] = 0.01;
-
-	Settings::set_value("intensity", std::move(table));
+	Settings::set_value("intensity", Variant::make(table));
 }
 
 void Settings::reset_recording()
@@ -744,20 +703,18 @@ void Settings::reset_recording()
 	// in-flight buffer between the audio thread and the writer thread; the
 	// default ~5 s of headroom at 48 kHz stereo absorbs typical disk stalls
 	// (filesystem journal flush, antivirus scan) without dropping frames.
-	auto table = make_handle<Table>(runtime);
-	auto &map = table->data();
+	Table table;
+	table.set(str_key("block_frames"), Variant::make<int64_t>(4096));
+	table.set(str_key("pool_blocks"), Variant::make<int64_t>(64));
+	table.set(str_key("default_format"), Variant::make(String("WAV")));
+	table.set(str_key("default_sample_rate"), Variant::make<int64_t>(44100));
 
-	map["block_frames"]        = intptr_t(4096);
-	map["pool_blocks"]         = intptr_t(64);
-	map["default_format"]      = String("WAV");
-	map["default_sample_rate"] = intptr_t(44100);
-
-	Settings::set_value("recording", std::move(table));
+	Settings::set_value("recording", Variant::make(table));
 }
 
 void Settings::reset_recent_projects()
 {
-	Settings::set_value("recent_projects", make_handle<List>(runtime));
+	Settings::set_value("recent_projects", Variant::make(List()));
 }
 
 } // namespace phonometrica

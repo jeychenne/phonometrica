@@ -571,8 +571,4 @@ inline std::string format_prior_summary(const PriorSpec &p, const String &family
 
 } // namespace phonometrica::stats
 
-namespace phonometrica::traits {
-template<> struct maybe_cyclic<stats::PriorSpec> : std::false_type { };
-}
-
 #endif // PHONOMETRICA_PRIOR_HPP

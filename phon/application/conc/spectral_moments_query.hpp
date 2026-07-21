@@ -159,9 +159,6 @@ private:
 	bool m_output_time = false;    // add measurement-time column(s) to the concordance
 };
 
-namespace traits {
-template<> struct is_clonable<SpectralMomentsQuery> : std::false_type { };
-}
 
 } // namespace phonometrica
 

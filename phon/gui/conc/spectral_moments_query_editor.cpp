@@ -39,7 +39,7 @@ namespace phonometrica {
 int SpectralMomentsQueryEditor::s_query_id = 0;
 
 SpectralMomentsQueryEditor::SpectralMomentsQueryEditor(QWidget *parent) :
-	SpectralMomentsQueryEditor(make_handle<SpectralMomentsQuery>(nullptr, String()), parent) {}
+	SpectralMomentsQueryEditor(Handle<SpectralMomentsQuery>::make(nullptr, String()), parent) {}
 
 SpectralMomentsQueryEditor::SpectralMomentsQueryEditor(Handle<SpectralMomentsQuery> query, QWidget *parent) :
 	QDialog(parent), m_query(std::move(query))
@@ -425,7 +425,7 @@ void SpectralMomentsQueryEditor::parseQuery()
 	for (int i = 0; i < m_file_list->count(); i++) {
 		if (m_file_list->item(i)->checkState() == Qt::Checked) {
 			String path(m_file_list->item(i)->data(Qt::UserRole).toString().toUtf8().constData());
-			auto annot = recast<Annotation>(Project::get()->get(path));
+			auto annot = handle_cast<Annotation>(Project::get()->get(path));
 			if (annot) annotations.append(std::move(annot));
 		}
 	}

@@ -27,6 +27,8 @@
 #include <phon/gui/file_dialog.hpp>
 #include <phon/gui/user_dialog.hpp>
 
+#ifdef PHON_TODO_A3 // rebuilt on new-engine Table specs at roadmap A4
+
 namespace phonometrica {
 
 // ---------------------------------------------------------
@@ -125,7 +127,7 @@ Variant UserDialog::getResult() const
 				values.append(String(val.toUtf8().constData()));
 			}
 		}
-		js[name] = make_handle<List>(const_cast<Runtime *>(&m_runtime), std::move(values));
+		js[name] = Handle<List>::make(const_cast<Runtime *>(&m_runtime), std::move(values));
 	}
 
 	for (auto &[name, group] : m_radiogroups) {
@@ -137,7 +139,7 @@ Variant UserDialog::getResult() const
 		js[name] = String(picker->path().toUtf8().constData());
 	}
 
-	return Variant(make_handle<Table>(const_cast<Runtime *>(&m_runtime), std::move(js)));
+	return Variant(Handle<Table>::make(const_cast<Runtime *>(&m_runtime), std::move(js)));
 }
 
 
@@ -532,3 +534,4 @@ void UserDialog::addSpacing(const Json &item)
 }
 
 } // namespace phonometrica
+#endif // PHON_TODO_A3

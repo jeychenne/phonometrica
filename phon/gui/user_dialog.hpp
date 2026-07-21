@@ -32,8 +32,11 @@
 #include <QButtonGroup>
 #include <QBoxLayout>
 #include <phon/dictionary.hpp>
-#include <phon/runtime/json.hpp>
 #include <phon/runtime.hpp>
+
+// The dialog builder consumed the OLD engine's Json DOM; it is rebuilt on the new
+// engine's Table values at roadmap A4 (create_dialog receives a script Table).
+#ifdef PHON_TODO_A3
 
 namespace phonometrica {
 
@@ -105,5 +108,7 @@ private:
 };
 
 } // namespace phonometrica
+
+#endif // PHON_TODO_A3
 
 #endif // PHONOMETRICA_USER_DIALOG_HPP

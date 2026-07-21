@@ -198,9 +198,6 @@ private:
 	bool m_show_params = true;     // show per-match parameter columns by default
 };
 
-namespace traits {
-template<> struct is_clonable<VoiceQualityQuery> : std::false_type { };
-}
 
 } // namespace phonometrica
 

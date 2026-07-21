@@ -25,7 +25,7 @@
 
 #define VNUM    1.5 // current version
 
-#include <phon/runtime/definitions.hpp>
+#include <phon/definitions.hpp>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>

@@ -39,7 +39,7 @@ namespace phonometrica {
 int QueryEditor::s_query_id = 0;
 
 QueryEditor::QueryEditor(QWidget *parent) :
-	QueryEditor(make_handle<Query>(nullptr, String()), parent)
+	QueryEditor(Handle<Query>::make(nullptr, String()), parent)
 {
 }
 
@@ -392,7 +392,7 @@ void QueryEditor::parseQuery()
 			auto path_str = m_file_list->item(i)->data(Qt::UserRole).toString();
 			String path(path_str.toUtf8().constData());
 			auto vfile = Project::get()->get(path);
-			auto annot = recast<Annotation>(vfile);
+			auto annot = handle_cast<Annotation>(vfile);
 			if (annot) {
 				annotations.append(std::move(annot));
 			}

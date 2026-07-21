@@ -23,6 +23,9 @@
 #define PHONOMETRICA_SETTINGS_HPP
 
 #include <phon/runtime.hpp>
+#include <phon/hashmap.hpp>
+#include <phon/list.hpp>
+#include <phon/table.hpp>
 
 namespace phonometrica {
 
@@ -62,15 +65,38 @@ public:
 
 	static int get_int(const String &category, const String &name);
 
-	static Array<Variant> &get_list(const String &name);
-
-	static Hashmap<Variant,Variant> &get_table(const String &name);
+	// Returns the stored list BY VALUE (the engine List is CoW): mutating callers must
+	// write the modified list back through set_value.
+	static List get_list(const String &name);
 
 	static void set_value(const String &key, Variant value);
 
 	static void set_value(const String &key, Array<Variant> value);
 
 	static void set_value(const String &category, const String &key, Variant value);
+
+	// Convenience overloads boxing plain C++ values (String, bool, numbers, List, Table).
+	static void set_value(const String &key, const char *value)
+	{
+		set_value(key, Variant::make(String(value)));
+	}
+
+	template<typename T>
+	static void set_value(const String &key, T value)
+	{
+		set_value(key, Variant::make(std::move(value)));
+	}
+
+	static void set_value(const String &category, const String &key, const char *value)
+	{
+		set_value(category, key, Variant::make(String(value)));
+	}
+
+	template<typename T>
+	static void set_value(const String &category, const String &key, T value)
+	{
+		set_value(category, key, Variant::make(std::move(value)));
+	}
 
 	static String get_std_plugin_directory();
 

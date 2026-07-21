@@ -88,7 +88,7 @@
 #include <phon/utils/file_system.hpp>
 #include <phon/utils/zip.hpp>
 #include <phon/utils/helpers.hpp>
-#include <phon/runtime/file.hpp>
+#include <phon/file.hpp>
 
 namespace phonometrica {
 
@@ -204,10 +204,10 @@ QMenu *MainWindow::createFileMenu()
 	m_open_recent_action = menu->addAction(tr("Open most recent project"), QKeySequence(tr("Ctrl+Shift+O")), this, [this]() {
 		try
 		{
-			const auto &lst = Settings::get_list("recent_projects");
+			auto lst = Settings::get_list("recent_projects");
 			if (lst.empty()) return;
 			if (!clearForProjectSwitch()) return;
-			auto path = cast<String>(lst.first());
+			auto path = lst.get(1).to<String>();
 			Project::get()->open(path);
 			m_file_manager->refresh();
 			updateRecentProjects(path);
@@ -579,7 +579,7 @@ void MainWindow::createDockWidgets()
 	connect(m_file_manager, &FileManager::documentRequested, this, &MainWindow::onDocumentRequested);
 
 	connect(m_file_manager, &FileManager::noteRequested, this, [this](Directory *dir) {
-		auto note = make_handle<Note>(dir);
+		auto note = Handle<Note>::make(dir);
 		openNote(note);
 		statusBar()->showMessage(tr("New note"), 2000);
 	});
@@ -706,15 +706,21 @@ void MainWindow::updateRecentProjects(const String &mostRecent)
 {
 	try
 	{
-		auto &lst = Settings::get_list("recent_projects");
+		auto lst = Settings::get_list("recent_projects");
 
 		if (!mostRecent.empty())
 		{
-			lst.remove(mostRecent);
-			lst.prepend(mostRecent);
+			auto entry = Variant::make(mostRecent);
+			auto pos = lst.index_of(entry);
+			if (pos != 0)
+				lst.remove_at(pos);
+			lst.prepend(entry);
 
 			while (lst.size() > MAX_RECENT)
-				lst.pop_back();
+				lst.pop();
+
+			// The list is CoW: persist the mutation.
+			Settings::set_value("recent_projects", Variant::make(lst));
 		}
 	}
 	catch (...)
@@ -733,11 +739,11 @@ void MainWindow::rebuildRecentMenu()
 
 	try
 	{
-		const auto &lst = Settings::get_list("recent_projects");
+		auto lst = Settings::get_list("recent_projects");
 
-		for (intptr_t i = 0; i < lst.size() && i < MAX_RECENT; i++)
+		for (intptr_t i = 1; i <= lst.size() && i <= MAX_RECENT; i++)
 		{
-			auto path = cast<String>(lst[i]);
+			auto path = lst.get(i).to<String>();
 			auto qpath = QString::fromUtf8(path.data(), (int) path.size());
 			m_recent_menu->addAction(qpath, [this, path]() {
 				try
@@ -797,14 +803,14 @@ void MainWindow::setLastDirectory(const QString &path)
 
 void MainWindow::onNewScript()
 {
-	auto script = make_handle<Script>(Project::get()->scripts().get());
+	auto script = Handle<Script>::make(Project::get()->scripts().get());
 	openScript(script);
 	statusBar()->showMessage(tr("New script"), 2000);
 }
 
 void MainWindow::onNewNote()
 {
-	auto note = make_handle<Note>(Project::get()->notes().get());
+	auto note = Handle<Note>::make(Project::get()->notes().get());
 	openNote(note);
 	statusBar()->showMessage(tr("New note"), 2000);
 }
@@ -839,7 +845,7 @@ void MainWindow::onNewAnnotation()
 
 	auto &sound = sounds[index];
 
-	auto annot = make_handle<Annotation>();
+	auto annot = Handle<Annotation>::make();
 	annot->set_sound(sound);
 	annot->create_layer(0, "default", false);
 
@@ -1413,7 +1419,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
 	// ── Save open view paths for "Restore views" ──
 	if (Settings::get_boolean("restore_views"))
 	{
-		Array<Variant> views;
+		List views;
 		for (int i = 0; i < m_viewer->count(); i++)
 		{
 			auto *panel = qobject_cast<ViewPanel *>(m_viewer->widget(i));
@@ -1422,11 +1428,11 @@ void MainWindow::closeEvent(QCloseEvent *event)
 			{
 				auto p = v->path();
 				if (!p.empty())
-					views.append(p);
+					views.append(Variant::make(p));
 			}
 		}
 		Settings::set_value("selected_view", intptr_t(m_viewer->currentIndex()));
-		Settings::set_value("recent_views", std::move(views));
+		Settings::set_value("recent_views", Variant::make(views));
 	}
 
 	// ── Handle unsaved tabs ──
@@ -1767,7 +1773,7 @@ void MainWindow::onMeasureVoiceQuality()
 		// Voice quality is undefined on instants — the kernel needs a span of
 		// samples to detect pulses. Surface a single aggregate warning if any
 		// match's reference target was an instant; the offending rows show NaN.
-		if (auto vq = recast<VoiceQualityQuery>(m_last_query)) {
+		if (auto vq = handle_cast<VoiceQualityQuery>(m_last_query)) {
 			intptr_t n_instants = vq->instant_target_count();
 			if (n_instants > 0) {
 				QMessageBox::warning(this, tr("Voice quality"),
@@ -1881,7 +1887,7 @@ void MainWindow::onFindSilences()
 	// last speech region doesn't end at the sound's duration). When no speech is
 	// detected, the whole timeline becomes a single silence interval.
 
-	auto annot = make_handle<Annotation>();
+	auto annot = Handle<Annotation>::make();
 	annot->set_sound(sound);
 	auto layer_label_str = String(layer_name.toUtf8().constData());
 	annot->create_empty_layer(0, layer_label_str, false);
@@ -2003,7 +2009,7 @@ void MainWindow::onTranscribe()
 	{
 		const Layer &layer = worker.result();
 
-		auto annot = make_handle<Annotation>();
+		auto annot = Handle<Annotation>::make();
 		annot->set_sound(sound);
 		annot->create_empty_layer(0, opts.layer_label, false);
 
@@ -2040,7 +2046,7 @@ void MainWindow::onEditLastQuery()
 
 	if (m_last_query->is_formant_query())
 	{
-		auto fq = recast<FormantQuery>(copy);
+		auto fq = handle_cast<FormantQuery>(copy);
 		FormantQueryEditor editor(fq, this);
 
 		if (editor.exec() == QDialog::Accepted)
@@ -2062,7 +2068,7 @@ void MainWindow::onEditLastQuery()
 	}
 	else if (m_last_query->is_pitch_query())
 	{
-		auto pq = recast<PitchQuery>(copy);
+		auto pq = handle_cast<PitchQuery>(copy);
 		PitchQueryEditor editor(pq, this);
 
 		if (editor.exec() == QDialog::Accepted)
@@ -2084,7 +2090,7 @@ void MainWindow::onEditLastQuery()
 	}
 	else if (m_last_query->is_intensity_query())
 	{
-		auto iq = recast<IntensityQuery>(copy);
+		auto iq = handle_cast<IntensityQuery>(copy);
 		IntensityQueryEditor editor(iq, this);
 
 		if (editor.exec() == QDialog::Accepted)
@@ -2106,7 +2112,7 @@ void MainWindow::onEditLastQuery()
 	}
 	else if (m_last_query->is_spectral_moments_query())
 	{
-		auto sq = recast<SpectralMomentsQuery>(copy);
+		auto sq = handle_cast<SpectralMomentsQuery>(copy);
 		SpectralMomentsQueryEditor editor(sq, this);
 
 		if (editor.exec() == QDialog::Accepted)
@@ -2128,7 +2134,7 @@ void MainWindow::onEditLastQuery()
 	}
 	else if (m_last_query->is_voice_quality_query())
 	{
-		auto vq = recast<VoiceQualityQuery>(copy);
+		auto vq = handle_cast<VoiceQualityQuery>(copy);
 		VoiceQualityQueryEditor editor(vq, this);
 
 		if (editor.exec() == QDialog::Accepted)
@@ -2136,7 +2142,7 @@ void MainWindow::onEditLastQuery()
 			m_last_query = editor.query();
 			auto conc = editor.concordance();
 
-			if (auto vqr = recast<VoiceQualityQuery>(m_last_query)) {
+			if (auto vqr = handle_cast<VoiceQualityQuery>(m_last_query)) {
 				intptr_t n_instants = vqr->instant_target_count();
 				if (n_instants > 0) {
 					QMessageBox::warning(this, tr("Voice quality"),
@@ -2200,13 +2206,13 @@ Handle<DataTable> MainWindow::selectDataTable()
 
 	for (auto &c : concordances)
 	{
-		tables.append(recast<DataTable>(c));
+		tables.append(handle_cast<DataTable>(c));
 		auto lbl = c->browser_label();
 		items << QString::fromUtf8(lbl.data(), (int) lbl.size());
 	}
 	for (auto &d : datasets)
 	{
-		tables.append(recast<DataTable>(d));
+		tables.append(handle_cast<DataTable>(d));
 		auto lbl = d->browser_label();
 		items << QString::fromUtf8(lbl.data(), (int) lbl.size());
 	}
@@ -2231,7 +2237,7 @@ void MainWindow::onAnalyzeData()
 	if (!dt)
 		return;
 
-	auto analysis = make_handle<Analysis>(nullptr, std::move(dt));
+	auto analysis = Handle<Analysis>::make(nullptr, std::move(dt));
 	auto *view = new AnalysisView(std::move(analysis));
 	view->setActiveTab(0); // Summary
 	addViewTab(view);
@@ -2267,7 +2273,7 @@ void MainWindow::onQuickAnalyzeData()
 		auto new_datasets = project->get_datasets();
 		if (!new_datasets.empty())
 		{
-			auto dt = recast<DataTable>(new_datasets[new_datasets.size()]);
+			auto dt = handle_cast<DataTable>(new_datasets[new_datasets.size()]);
 			openAnalysis(std::move(dt));
 			statusBar()->showMessage(tr("Analyze data"), 2000);
 		}
@@ -2284,7 +2290,7 @@ void MainWindow::onVisualizeData()
 	if (!dt)
 		return;
 
-	auto analysis = make_handle<Analysis>(nullptr, std::move(dt));
+	auto analysis = Handle<Analysis>::make(nullptr, std::move(dt));
 	auto *view = new AnalysisView(std::move(analysis));
 	view->setActiveTab(3); // EDA
 	addViewTab(view);
@@ -2409,7 +2415,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 
 		if (query_doc->is_formant_query())
 		{
-			auto fq = recast<FormantQuery>(Handle<Query>(query_doc));
+			auto fq = handle_cast<FormantQuery>(Handle<Query>(query_doc));
 			FormantQueryEditor editor(fq, this);
 
 			if (editor.exec() == QDialog::Accepted)
@@ -2431,7 +2437,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 		else if (query_doc->is_pitch_query())
 		{
-			auto pq = recast<PitchQuery>(Handle<Query>(query_doc));
+			auto pq = handle_cast<PitchQuery>(Handle<Query>(query_doc));
 			PitchQueryEditor editor(pq, this);
 
 			if (editor.exec() == QDialog::Accepted)
@@ -2453,7 +2459,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 		else if (query_doc->is_intensity_query())
 		{
-			auto iq = recast<IntensityQuery>(Handle<Query>(query_doc));
+			auto iq = handle_cast<IntensityQuery>(Handle<Query>(query_doc));
 			IntensityQueryEditor editor(iq, this);
 
 			if (editor.exec() == QDialog::Accepted)
@@ -2475,7 +2481,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 		else if (query_doc->is_spectral_moments_query())
 		{
-			auto sq = recast<SpectralMomentsQuery>(Handle<Query>(query_doc));
+			auto sq = handle_cast<SpectralMomentsQuery>(Handle<Query>(query_doc));
 			SpectralMomentsQueryEditor editor(sq, this);
 
 			if (editor.exec() == QDialog::Accepted)
@@ -2497,7 +2503,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 		}
 		else if (query_doc->is_voice_quality_query())
 		{
-			auto vq = recast<VoiceQualityQuery>(Handle<Query>(query_doc));
+			auto vq = handle_cast<VoiceQualityQuery>(Handle<Query>(query_doc));
 			VoiceQualityQueryEditor editor(vq, this);
 
 			if (editor.exec() == QDialog::Accepted)
@@ -2505,7 +2511,7 @@ void MainWindow::onDocumentRequested(Document *doc)
 				m_last_query = editor.query();
 				auto conc = editor.concordance();
 
-				if (auto vqr = recast<VoiceQualityQuery>(m_last_query)) {
+				if (auto vqr = handle_cast<VoiceQualityQuery>(m_last_query)) {
 					intptr_t n_instants = vqr->instant_target_count();
 					if (n_instants > 0) {
 						QMessageBox::warning(this, tr("Voice quality"),
@@ -2778,7 +2784,7 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 
 void MainWindow::openAnalysis(Handle<DataTable> source)
 {
-	auto analysis = make_handle<Analysis>(nullptr, std::move(source));
+	auto analysis = Handle<Analysis>::make(nullptr, std::move(source));
 	auto *view = new AnalysisView(std::move(analysis));
 	connect(view, &AnalysisView::requestOpenSourceRow,
 	        this, &MainWindow::revealSourceRow);
@@ -2982,6 +2988,7 @@ void MainWindow::restoreWindowState()
 
 void MainWindow::setShellFunctions()
 {
+#ifdef PHON_TODO_A3 // old-engine natives (30 shell functions + dialogs); ported at roadmap A3/A4
 	// ── Message dialogs ──
 
 	auto warning1 = [this](Runtime &, std::span<Variant> args) -> Variant {
@@ -3070,7 +3077,7 @@ void MainWindow::setShellFunctions()
 			result.append(String(p.toUtf8().constData()));
 		}
 		std::sort(result.begin(), result.end());
-		return make_handle<List>(&rt, std::move(result));
+		return Handle<List>::make(&rt, std::move(result));
 	};
 
 	auto open_directory_dialog = [this](Runtime &, std::span<Variant> args) -> Variant {
@@ -3217,7 +3224,7 @@ void MainWindow::setShellFunctions()
 				result.append((intptr_t) ch);
 			}
 		}
-		return make_handle<List>(&rt, std::move(result));
+		return Handle<List>::make(&rt, std::move(result));
 	};
 
 	auto get_window_duration = [this](Runtime &, std::span<Variant>) -> Variant {
@@ -3284,7 +3291,7 @@ void MainWindow::setShellFunctions()
 		for (auto &s : Sound::supported_sound_format_names()) {
 			sounds.append(s);
 		}
-		return make_handle<List>(&rt, std::move(sounds));
+		return Handle<List>::make(&rt, std::move(sounds));
 	};
 
 	// ── Register everything ──
@@ -3324,6 +3331,7 @@ void MainWindow::setShellFunctions()
 	phon.define(rt, "get_supported_sound_formats", get_supported_sound_formats, { });
 	phon.define(rt, "close_current_view", close_current_view, { });
 #undef CLS
+#endif // PHON_TODO_A3
 }
 
 
@@ -3513,10 +3521,10 @@ void MainWindow::postInitialize()
 	{
 		try
 		{
-			const auto &lst = Settings::get_list("recent_projects");
+			auto lst = Settings::get_list("recent_projects");
 			if (!lst.empty())
 			{
-				auto path = cast<String>(lst.first());
+				auto path = lst.get(1).to<String>();
 				Project::get()->open(path);
 				m_file_manager->refresh();
 				updateRecentProjects(path);
@@ -3535,10 +3543,10 @@ void MainWindow::postInitialize()
 		{
 			try
 			{
-				auto &views = Settings::get_list("recent_views");
-				for (auto &view : views)
+				auto views = Settings::get_list("recent_views");
+				for (intptr_t vi = 1; vi <= views.size(); vi++)
 				{
-					auto path = cast<String>(view);
+					auto path = views.get(vi).to<String>();
 					auto vfile = Project::get()->get(path);
 					if (vfile)
 						onDocumentRequested(vfile.get());

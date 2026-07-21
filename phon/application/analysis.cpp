@@ -267,7 +267,7 @@ void Analysis::resolve_source()
 		auto doc = project->get(m_source_path);
 		if (doc)
 		{
-			m_source = recast<DataTable>(doc);
+			m_source = handle_cast<DataTable>(doc);
 			if (m_source) {
 				m_source->open();
 				return;
@@ -283,7 +283,7 @@ void Analysis::resolve_source()
 		auto &doc = kv.second;
 		if (filesystem::base_name(doc->path()) == target)
 		{
-			m_source = recast<DataTable>(doc);
+			m_source = handle_cast<DataTable>(doc);
 			if (m_source) {
 				m_source_path = doc->path(); // update to the resolved path
 				m_source->open();

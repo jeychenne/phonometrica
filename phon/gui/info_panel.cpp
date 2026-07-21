@@ -892,7 +892,7 @@ void InfoPanel::onBindSound()
 		String spath(path.toUtf8().constData());
 		m_project->import_file(spath);
 		auto doc = m_project->get(spath);
-		auto sound = recast<Sound>(doc);
+		auto sound = handle_cast<Sound>(doc);
 
 		if (sound)
 		{

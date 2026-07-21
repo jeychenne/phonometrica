@@ -30,6 +30,8 @@
 
 namespace phonometrica {
 
+#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
+
 // ── to_string specialization for Document (must live in meta namespace) ────────
 
 namespace meta {
@@ -95,6 +97,8 @@ static Variant load_file(Runtime &, std::span<Variant> args)
 	return it->second;  // Handle<Document> → Variant
 }
 
+
+#endif // PHON_TODO_A3
 
 } // namespace phonometrica
 

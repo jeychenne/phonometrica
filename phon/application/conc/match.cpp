@@ -304,7 +304,7 @@ bool QueryMatch::update(intptr_t target_index, bool &modified)
 Handle<Bookmark> QueryMatch::to_bookmark(intptr_t target_index, const String &title, const String &notes, std::pair<String, String> context) const
 {
 	auto target = get(target_index);
-	auto b = make_handle<TimeStamp>(nullptr, title, m_annot, target->layer, target->start_time,
+	auto b = Handle<TimeStamp>::make(nullptr, title, m_annot, target->layer, target->start_time,
 			target->end_time, target->value, std::move(context));
 	b->set_notes(notes);
 

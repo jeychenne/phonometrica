@@ -26,7 +26,7 @@
 
 #include <memory>
 #include <phon/string.hpp>
-#include <phon/runtime/runtime.hpp>
+#include <phon/runtime.hpp>
 
 namespace phonometrica {
 

@@ -33,9 +33,11 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cstdlib>
 #include <memory>
 #include <algorithm>
 #include <numeric> // std::iota
+#include <phon/definitions.hpp>
 #include <phon/third_party/pocketfft-cpp/pocketfft_hdronly.h>
 #include <phon/analysis/signal_processing.hpp>
 #include <phon/third_party/sptk4/include/SPTK/analysis/pitch_extraction_by_harvest.h>
@@ -440,7 +442,7 @@ std::vector<double> get_pitch(PitchTracker algorithm, const Array<double> &input
 
 		auto tmp = swipe(vec, sample_rate, min_pitch, max_pitch, voicing_threshold, time_step);
 		std::vector<double> result(tmp.v, tmp.v + tmp.x);
-		utils::free(tmp.v);
+		std::free(tmp.v);
 
 		return result;
 	}

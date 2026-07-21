@@ -200,9 +200,6 @@ struct AnnotationLessComparator
 };
 
 
-namespace traits {
-template<> struct is_clonable<Annotation> : std::false_type { };
-}
 
 } // namespace phonometrica
 

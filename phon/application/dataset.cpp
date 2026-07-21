@@ -603,7 +603,7 @@ Handle<Dataset> Dataset::unite(const Dataset &other, const String &label) const
 	check_columns_compatible(other);
 
 	// Start with a copy of this dataset.
-	auto result = make_handle<Dataset>(*this);
+	auto result = Handle<Dataset>::make(*this);
 	result->m_loaded = true;
 	result->set_label(label, false);
 
@@ -639,7 +639,7 @@ Handle<Dataset> Dataset::intersect(const Dataset &other, const String &label) co
 	}
 
 	// Create an empty result with the same column structure.
-	auto result = make_handle<Dataset>(nullptr);
+	auto result = Handle<Dataset>::make(nullptr);
 	result->m_labels = m_labels;
 	result->ncol = ncol;
 	result->m_loaded = true;
@@ -678,7 +678,7 @@ Handle<Dataset> Dataset::complement(const Dataset &other, const String &label) c
 	}
 
 	// Create an empty result with the same column structure.
-	auto result = make_handle<Dataset>(nullptr);
+	auto result = Handle<Dataset>::make(nullptr);
 	result->m_labels = m_labels;
 	result->ncol = ncol;
 	result->m_loaded = true;
@@ -714,7 +714,7 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 	}
 
 	// Start with a copy of this dataset.
-	auto result = make_handle<Dataset>(*this);
+	auto result = Handle<Dataset>::make(*this);
 	result->m_loaded = true;
 	result->set_label(label, false);
 
@@ -765,7 +765,7 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 Handle<Dataset> Dataset::subset(const std::vector<int> &rows_0based, const String &label) const
 {
 	// Create an empty result with the same column structure.
-	auto result = make_handle<Dataset>(nullptr);
+	auto result = Handle<Dataset>::make(nullptr);
 	result->m_labels = m_labels;
 	result->ncol = ncol;
 	result->m_loaded = true;
@@ -836,7 +836,7 @@ void Dataset::add_text_column(const String &header, const std::vector<String> &v
 
 Handle<Dataset> Dataset::create_empty(intptr_t nrow)
 {
-	auto result = make_handle<Dataset>(nullptr);
+	auto result = Handle<Dataset>::make(nullptr);
 	result->nrow = nrow;
 	result->ncol = 0;
 	result->m_loaded = true;
