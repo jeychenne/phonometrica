@@ -39,6 +39,7 @@
 #include <phon/application/spectrum.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/application/analysis.hpp>
+#include <phon/application/bindings.hpp>
 #include <phon/application/func_document.hpp>
 
 namespace phonometrica {
@@ -1312,8 +1313,8 @@ void Project::remove_empty_script()
 
 void Project::initialize(Runtime &rt)
 {
-	(void) rt;
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
+	using namespace bindings;
+
 	Annotation::initialize(rt);
 	Sound::initialize(rt);
 	Spectrum::initialize(rt);
@@ -1324,189 +1325,137 @@ void Project::initialize(Runtime &rt)
 	Script::initialize(rt);
 	Query::initialize(rt);
 
-	auto open_project = [](Runtime &, std::span<Variant> args) -> Variant
-	{
-		auto &path = cast<String>(args[0]);
-		Project::get()->open(path);
-		return Variant();
-	};
+	// ── Project content accessors ───────────────────────────────
 
-	auto close_project = [](Runtime &, std::span<Variant> args) -> Variant
-	{
-		Project::get()->close();
-		Project::get()->reinitialize();
-		return Variant();
-	};
-
-	auto add_folder = [](Runtime &, std::span<Variant> args) -> Variant
-    {
-	    auto &path = cast<String>(args[0]);
-	    Project::get()->import_directory(path);
-	    return Variant();
-    };
-
-    auto add_file = [](Runtime &, std::span<Variant> args) -> Variant
-    {
-        auto &path = cast<String>(args[0]);
-	    Project::get()->import_file(path);
-        return Variant();
-    };
-
-    auto refresh_project = [](Runtime &, std::span<Variant>) -> Variant
-	{
-    	Project::updated();
-    	return Variant();
-	};
-
-    auto project_has_path = [](Runtime &, std::span<Variant>) -> Variant {
-       	return Project::get()->has_path();
-    };
-
-    auto save_project1 = [](Runtime &, std::span<Variant>) -> Variant {
-	    Project::get()->save();
-        return Variant();
-    };
-
-    auto save_project2 = [](Runtime &, std::span<Variant> args) -> Variant {
-    	auto &path = cast<String>(args[0]);
-	    Project::get()->save(path);
-        return Variant();
-    };
-
-    auto get_annotations = [](Runtime &rt, std::span<Variant> args) -> Variant {
-    	Array<Variant> result;
-
-    	for (auto &annot : instance->get_annotations()) {
-		    result.append(std::move(annot));
-	    }
-
-    	return Handle<List>::make(&rt, std::move(result));
-    };
-
-    auto get_annotation = [](Runtime &rt, std::span<Variant> args) -> Variant {
-	    auto &files = Project::get()->m_files;
-	    auto &path = cast<String>(args[0]);
-	    auto file = files.find(path);
-
-	    if (file == files.end()) {
-		    return Variant();
-	    }
-	    else if (file->second->is<Annotation>()) {
-			return handle_cast<Annotation>(file->second);
-	    }
-	    else {
-		    throw error("File \"%\" is not an annotation", path);
-	    }
-    };
-
-    auto get_sounds = [](Runtime &rt, std::span<Variant> args) -> Variant {
-    	Array<Variant> result;
-
-    	for (auto &sound : instance->get_sounds()) {
-		    result.append(std::move(sound));
-	    }
-
-    	return Handle<List>::make(&rt, std::move(result));
-    };
-
-    auto get_sound = [](Runtime &rt, std::span<Variant> args) -> Variant {
-    	auto &files = Project::get()->m_files;
-    	auto &path = cast<String>(args[0]);
+	rt.add_function("get_annotations", []() -> List {
+		List result;
+		for (auto &annot : instance->get_annotations()) {
+			result.append(Variant::make(annot));
+		}
+		return result;
+	});
+	rt.add_function("get_annotation", [](Isolate &iso, const String &path) -> Variant {
+		auto &files = Project::get()->m_files;
 		auto file = files.find(path);
-
 		if (file == files.end()) {
 			return Variant();
 		}
-		else if (file->second->is<Sound>()) {
-			return handle_cast<Sound>(file->second);
+		if (file->second->is<Annotation>()) {
+			return Variant::make(handle_cast<Annotation>(file->second));
 		}
-		else {
-			throw error("File \"%\" is not a sound", path);
+		iso.raise(String::format("File \"%s\" is not an annotation", path.data()), 0);
+	});
+	rt.add_function("get_sounds", []() -> List {
+		List result;
+		for (auto &sound : instance->get_sounds()) {
+			result.append(Variant::make(sound));
 		}
-    };
+		return result;
+	});
+	rt.add_function("get_sound", [](Isolate &iso, const String &path) -> Variant {
+		auto &files = Project::get()->m_files;
+		auto file = files.find(path);
+		if (file == files.end()) {
+			return Variant();
+		}
+		if (file->second->is<Sound>()) {
+			return Variant::make(handle_cast<Sound>(file->second));
+		}
+		iso.raise(String::format("File \"%s\" is not a sound", path.data()), 0);
+	});
+	rt.add_function("get_concordances", []() -> List {
+		List result;
+		for (auto &conc : instance->get_concordances()) {
+			result.append(Variant::make(conc));
+		}
+		return result;
+	});
+	rt.add_function("get_concordance", [](Isolate &iso, const String &path) -> Variant {
+		auto &files = Project::get()->m_files;
+		auto file = files.find(path);
+		if (file == files.end()) {
+			return Variant();
+		}
+		if (file->second->is<Concordance>()) {
+			return Variant::make(handle_cast<Concordance>(file->second));
+		}
+		iso.raise(String::format("File \"%s\" is not a concordance", path.data()), 0);
+	});
+	rt.add_function("get_datasets", []() -> List {
+		List result;
+		for (auto &ds : instance->get_datasets()) {
+			result.append(Variant::make(ds));
+		}
+		return result;
+	});
+	rt.add_function("get_dataset", [](Isolate &iso, const String &path) -> Variant {
+		auto &files = Project::get()->m_files;
+		auto file = files.find(path);
+		if (file == files.end()) {
+			return Variant();
+		}
+		if (file->second->is<Dataset>()) {
+			return Variant::make(handle_cast<Dataset>(file->second));
+		}
+		iso.raise(String::format("File \"%s\" is not a dataset", path.data()), 0);
+	});
 
-    auto get_concordances = [](Runtime &rt, std::span<Variant> args) -> Variant {
-    	Array<Variant> result;
-    	for (auto &conc : instance->get_concordances()) {
-		    result.append(std::move(conc));
-	    }
-    	return Handle<List>::make(&rt, std::move(result));
-    };
+	// ── phon.project ────────────────────────────────────────────
+	//
+	// The old engine hung these on a Module; the new `phon` namespace is a Table
+	// (roadmap E2), so the members are first-class function values: each native is
+	// registered under an internal generic name and its function value stored under
+	// the public key (`phon.project.open(...)` chains GETFIELDs then calls).
 
-    auto get_concordance = [](Runtime &rt, std::span<Variant> args) -> Variant {
-	    auto &files = Project::get()->m_files;
-	    auto &path = cast<String>(args[0]);
-	    auto file = files.find(path);
+	rt.add_function("__project_open", [](Isolate &iso, const String &path) {
+		guarded(iso, [&] { Project::get()->open(path); return 0; });
+	});
+	rt.add_function("__project_close", [](Isolate &iso) {
+		guarded(iso, [&] {
+			Project::get()->close();
+			Project::get()->reinitialize();
+			return 0;
+		});
+	});
+	rt.add_function("__project_add_folder", [](Isolate &iso, const String &path) {
+		guarded(iso, [&] { Project::get()->import_directory(path); return 0; });
+	});
+	rt.add_function("__project_add_file", [](Isolate &iso, const String &path) {
+		guarded(iso, [&] { Project::get()->import_file(path); return 0; });
+	});
+	rt.add_function("__project_refresh", []() {
+		Project::updated();
+	});
+	rt.add_function("__project_has_path", []() -> bool {
+		return Project::get()->has_path();
+	});
+	rt.add_function("__project_save", [](Isolate &iso) {
+		guarded(iso, [&] { Project::get()->save(); return 0; });
+	});
+	rt.add_function("__project_save", [](Isolate &iso, const String &path) {
+		guarded(iso, [&] { Project::get()->save(path); return 0; });
+	});
+	rt.add_function("__project_is_empty", []() -> bool {
+		return Project::get()->empty();
+	});
 
-	    if (file == files.end()) {
-		    return Variant();
-	    }
-	    else if (file->second->is<Concordance>()) {
-			return handle_cast<Concordance>(file->second);
-	    }
-	    else {
-		    throw error("File \"%\" is not a concordance", path);
-	    }
-    };
+	auto key = [](const char *k) { return Variant::make(String(k)); };
+	Table proj;
+	proj.set(key("open"), rt.get_function("__project_open"));
+	proj.set(key("close"), rt.get_function("__project_close"));
+	proj.set(key("add_folder"), rt.get_function("__project_add_folder"));
+	proj.set(key("add_file"), rt.get_function("__project_add_file"));
+	proj.set(key("refresh"), rt.get_function("__project_refresh"));
+	proj.set(key("has_path"), rt.get_function("__project_has_path"));
+	proj.set(key("save"), rt.get_function("__project_save"));
+	proj.set(key("is_empty"), rt.get_function("__project_is_empty"));
 
-    auto get_datasets = [](Runtime &rt, std::span<Variant> args) -> Variant {
-    	Array<Variant> result;
-    	for (auto &ds : instance->get_datasets()) {
-		    result.append(std::move(ds));
-	    }
-    	return Handle<List>::make(&rt, std::move(result));
-    };
+	auto phon = rt.get_global("phon").to<Table>();
+	phon.set(key("project"), Variant::make(proj));
+	rt.add_global("phon", Variant::make(phon));
 
-    auto get_dataset = [](Runtime &rt, std::span<Variant> args) -> Variant {
-	    auto &files = Project::get()->m_files;
-	    auto &path = cast<String>(args[0]);
-	    auto file = files.find(path);
-
-	    if (file == files.end()) {
-		    return Variant();
-	    }
-	    else if (file->second->is<Dataset>()) {
-			return handle_cast<Dataset>(file->second);
-	    }
-	    else {
-		    throw error("File \"%\" is not a dataset", path);
-	    }
-    };
-
-    auto is_empty = [](Runtime &rt, std::span<Variant> args) -> Variant {
-        return Project::get()->empty();
-    };
- #define CLS(T) get_class<T>()
-	rt.add_global("get_annotations", get_annotations, { });
-	rt.add_global("get_annotation", get_annotation, {CLS(String) });
-	rt.add_global("get_sounds", get_sounds, { });
-	rt.add_global("get_sound", get_sound, {CLS(String) });
-	rt.add_global("get_concordances", get_concordances, { });
-	rt.add_global("get_concordance", get_concordance, {CLS(String) });
-	rt.add_global("get_datasets", get_datasets, { });
-	rt.add_global("get_dataset", get_dataset, {CLS(String) });
-
-	// Create submodule for project.
-	// FIXME: DO we put this in phon or global?
-	auto proj = Handle<Module>::make(&rt, "project");
-	proj->define(&rt, "open", open_project, {CLS(String) });
-	proj->define(&rt, "close", close_project, { });
-	proj->define(&rt, "add_folder", add_folder, {CLS(String) });
-	proj->define(&rt, "add_file", add_file, {CLS(String) });
-	proj->define(&rt, "refresh", refresh_project, { });
-	proj->define(&rt, "has_path", project_has_path, { });
-	proj->define(&rt, "save", save_project1, { });
-	proj->define(&rt, "save", save_project2, {CLS(String) });
-	proj->define(&rt, "is_empty", is_empty, { });
-	auto &phon = cast<Module>(rt["phon"]);
-	phon.define("project", std::move(proj));
-
-	// Generic document access: load() imports or retrieves any file by path.
-	auto doc_class = Class::get<Document>();
-	doc_class->add_method(rt.get_field_string, document_get_field, {CLS(Document), CLS(String)});
-	rt.add_global("load", load_file, { CLS(String) });
-#undef CLS
-#endif // PHON_TODO_A3
+	// Generic document access: doc.path/label/length fields + the polymorphic load().
+	initialize_document_natives(rt);
 }
 
 void Project::clear()

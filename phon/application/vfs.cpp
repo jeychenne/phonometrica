@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <phon/application/vfs.hpp>
+#include <phon/application/bindings.hpp>
 #include <phon/application/project.hpp>
 #include <phon/runtime.hpp>
 #include <phon/utils/file_system.hpp>
@@ -649,65 +650,57 @@ bool Document::anchored() const
 
 void Document::initialize(Runtime &rt)
 {
-	(void) rt;
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
-	auto add_property = [](Runtime &, std::span<Variant> args) -> Variant  {
-		auto &doc = cast<Document>(args[0]);
-		auto &category = cast<String>(args[1]);
-		std::any value;
+	using namespace bindings;
 
-		if (check_type<String>(args[2])) {
-			value = cast<String>(args[2]);
-		}
-		else if (check_type<bool>(args[2])) {
-			value = cast<bool>(args[2]);
-		}
-		else if (args[2].resolve().is_number()) {
-			value = args[2].resolve().get_number();
-		}
-		else {
-			throw error("Invalid property type: %", args[2].class_name());
-		}
-		doc.add_property(Property(category, std::move(value)));
-		Document::file_modified();
+	// add_property(doc, category, value): value may be a String, Boolean or Number
+	// (the old native took Object and type-checked at runtime; typed overloads now).
+	rt.add_function("add_property", [](Isolate &iso, Document &doc, const String &category, const String &value) {
+		guarded(iso, [&] {
+			doc.add_property(Property(category, std::any(value)));
+			Document::file_modified();
+			return 0;
+		});
+	});
+	rt.add_function("add_property", [](Isolate &iso, Document &doc, const String &category, bool value) {
+		guarded(iso, [&] {
+			doc.add_property(Property(category, std::any(value)));
+			Document::file_modified();
+			return 0;
+		});
+	});
+	rt.add_function("add_property", [](Isolate &iso, Document &doc, const String &category, double value) {
+		guarded(iso, [&] {
+			doc.add_property(Property(category, std::any(value)));
+			Document::file_modified();
+			return 0;
+		});
+	});
 
-		return Variant();
-	};
+	rt.add_function("remove_property", [](Isolate &iso, Document &doc, const String &category) {
+		guarded(iso, [&] {
+			doc.remove_property(category);
+			Document::file_modified();
+			return 0;
+		});
+	});
 
-	auto remove_property = [](Runtime &, std::span<Variant> args) -> Variant  {
-		auto &doc = cast<Document>(args[0]);
-		auto &category = cast<String>(args[1]);
-		doc.remove_property(category);
-		Document::file_modified();
-		return Variant();
-	};
-
-	auto get_property = [](Runtime &, std::span<Variant> args) -> Variant  {
-		auto &doc = cast<Document>(args[0]);
-		auto category = cast<String>(args[1]);
-		auto prop = doc.get_property(category);
-
-		if (prop.valid())
-		{
-			if (prop.is_text())
-				return prop.value();
-			else if (prop.is_numeric())
-				return prop.numeric_value();
-			else if (prop.is_boolean())
-				return prop.boolean_value();
-			else
-				throw error("[Internal error] Invalid property type");
-		}
-
-		return Variant();
-	};
-
-#define CLS(T) phonometrica::get_class<T>()
-	rt.add_global("add_property", add_property, { CLS(Document), CLS(String), CLS(Object) });
-	rt.add_global("remove_property", remove_property, { CLS(Document), CLS(String) });
-	rt.add_global("get_property", get_property, { CLS(Document), CLS(String) });
-#undef CLS
-#endif // PHON_TODO_A3
+	rt.add_function("get_property", [](Isolate &iso, Document &doc, const String &category) -> Variant {
+		return guarded(iso, [&]() -> Variant {
+			auto prop = doc.get_property(category);
+			if (prop.valid())
+			{
+				if (prop.is_text())
+					return Variant::make(prop.value());
+				else if (prop.is_numeric())
+					return Variant::make(prop.numeric_value());
+				else if (prop.is_boolean())
+					return Variant::make(prop.boolean_value());
+				else
+					throw error("[Internal error] Invalid property type");
+			}
+			return Variant();
+		});
+	});
 }
 
 

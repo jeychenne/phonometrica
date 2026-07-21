@@ -24,6 +24,7 @@
 #include <complex>
 #include <phon/file.hpp>
 #include <phon/runtime.hpp>
+#include <phon/application/bindings.hpp>
 #include <phon/application/spectrum.hpp>
 #include <phon/application/resampler.hpp>
 #include <phon/application/spectral_moments.hpp>
@@ -563,90 +564,50 @@ speech::WindowType Spectrum::string_to_window_type(const String &s)
 
 void Spectrum::initialize(Runtime &rt)
 {
-	(void) rt;
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
-	auto spectrum_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &spec = cast<Spectrum>(args[0]);
-		auto &key = cast<String>(args[1]);
-		if (key == "path") {
-			return spec.path();
-		}
-		else if (key == "bin_count") {
-			return spec.bin_count();
-		}
-		else if (key == "sample_rate") {
-			return intptr_t(spec.sample_rate());
-		}
-		else if (key == "bandwidth") {
-			return spec.bandwidth();
-		}
-		else if (key == "max_frequency") {
-			return spec.max_frequency();
-		}
-		else if (key == "start_time") {
-			return spec.start_time();
-		}
-		else if (key == "end_time") {
-			return spec.end_time();
-		}
-		else if (key == "peak_dB") {
-			return spec.peak_dB();
-		}
-		else if (key == "floor_dB") {
-			return spec.floor_dB();
-		}
-		else if (key == "lpc_order") {
-			return intptr_t(spec.lpc_order());
-		}
-		else if (key == "has_lpc") {
-			return spec.has_lpc();
-		}
-		throw error("[Index error] Spectrum type has no member named \"%\"", key);
-	};
+	using namespace bindings;
 
-#define CLS(T) phonometrica::get_class<T>()
-	auto cls = CLS(Spectrum);
-	cls->add_method(rt.get_field_string, spectrum_get_field, { CLS(Spectrum), CLS(String) });
+	// ── Fields (old spectrum_get_field dispatcher) ──────────────
+
+	rt.add_field<Spectrum>("path", [](const Spectrum &spec) -> String { return spec.path(); });
+	rt.add_field<Spectrum>("bin_count", [](Spectrum &spec) -> intptr_t { return spec.bin_count(); });
+	rt.add_field<Spectrum>("sample_rate", [](Spectrum &spec) -> intptr_t { return intptr_t(spec.sample_rate()); });
+	rt.add_field<Spectrum>("bandwidth", [](Spectrum &spec) -> double { return spec.bandwidth(); });
+	rt.add_field<Spectrum>("max_frequency", [](Spectrum &spec) -> double { return spec.max_frequency(); });
+	rt.add_field<Spectrum>("start_time", [](Spectrum &spec) -> double { return spec.start_time(); });
+	rt.add_field<Spectrum>("end_time", [](Spectrum &spec) -> double { return spec.end_time(); });
+	rt.add_field<Spectrum>("peak_dB", [](Spectrum &spec) -> double { return spec.peak_dB(); });
+	rt.add_field<Spectrum>("floor_dB", [](Spectrum &spec) -> double { return spec.floor_dB(); });
+	rt.add_field<Spectrum>("lpc_order", [](Spectrum &spec) -> intptr_t { return intptr_t(spec.lpc_order()); });
+	rt.add_field<Spectrum>("has_lpc", [](Spectrum &spec) -> bool { return spec.has_lpc(); });
 
 	// ── Spectrum creation from Sound ────────────────────────────
 
-	auto get_spectrum = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &sound = cast<Sound>(args[0]);
-		auto channel = (int) cast<intptr_t>(args[1]);
-		auto t1 = args[2].resolve().get_number();
-		auto t2 = args[3].resolve().get_number();
-		sound.open();
-		return Handle<Spectrum>::make(nullptr, Handle<Sound>(&sound), channel, t1, t2);
-	};
-
-	rt.add_global("get_spectrum", get_spectrum, { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number) });
+	rt.add_function("get_spectrum",
+	                [](Isolate &iso, Sound &sound, intptr_t channel, double t1, double t2) -> Handle<Spectrum> {
+		return guarded(iso, [&] {
+			sound.open();
+			return Handle<Spectrum>::make(nullptr, Handle<Sound>(&sound), (int) channel, t1, t2);
+		});
+	});
 
 	// ── Spectral moments ────────────────────────────────────────
 
-	auto get_spectral_moments_func = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &sound = cast<Sound>(args[0]);
-		auto channel = (int) cast<intptr_t>(args[1]);
-		auto time = args[2].resolve().get_number();
-		auto window_duration = args[3].resolve().get_number();
-		auto min_freq = args[4].resolve().get_number();
-		auto max_freq = args[5].resolve().get_number();
-		sound.open();
-		auto m = compute_spectral_moments_at(
-			Handle<Sound>(&sound), channel, time, window_duration,
-			speech::WindowType::Gaussian, min_freq, max_freq, 50.0);
-		auto result = Handle<Table>::make(&rt);
-		result->map()[Variant(String("cog"))] = Variant(m.cog);
-		result->map()[Variant(String("spread"))] = Variant(m.spread);
-		result->map()[Variant(String("skewness"))] = Variant(m.skewness);
-		result->map()[Variant(String("kurtosis"))] = Variant(m.kurtosis);
-		return result;
-	};
-
-	rt.add_global("get_spectral_moments", get_spectral_moments_func,
-	              { CLS(Sound), CLS(intptr_t), CLS(Number), CLS(Number), CLS(Number), CLS(Number) });
-
-#undef CLS
-#endif // PHON_TODO_A3
+	rt.add_function("get_spectral_moments",
+	                [](Isolate &iso, Sound &sound, intptr_t channel, double time, double window_duration,
+	                   double min_freq, double max_freq) -> Table {
+		return guarded(iso, [&] {
+			sound.open();
+			auto m = compute_spectral_moments_at(
+				Handle<Sound>(&sound), (int) channel, time, window_duration,
+				speech::WindowType::Gaussian, min_freq, max_freq, 50.0);
+			Table result;
+			result.set(Variant::make(String("cog")), Variant::make(m.cog));
+			result.set(Variant::make(String("spread")), Variant::make(m.spread));
+			result.set(Variant::make(String("skewness")), Variant::make(m.skewness));
+			result.set(Variant::make(String("kurtosis")), Variant::make(m.kurtosis));
+			return result;
+		});
+	});
 }
 
 } // namespace phonometrica

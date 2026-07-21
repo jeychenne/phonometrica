@@ -13,10 +13,10 @@
  * You should have received a copy of the GNU General Public License along with this program. If not, see              *
  * <http://www.gnu.org/licenses/>.                                                                                     *
  *                                                                                                                     *
- * Created: 09/04/2026                                                                                                 *
+ * Created: 2026                                                                                                       *
  *                                                                                                                     *
- * Purpose: Document builtin functions for the scripting engine. Provides load() to import/retrieve files from the     *
- *          project, and field accessors (.path, .label) on Document handles.                                          *
+ * Purpose: Document-level natives shared by Project::initialize (roadmap A3): the doc.path/label/length fields and    *
+ * the polymorphic load() (import-or-retrieve by path). Header-only; included by project.cpp.                          *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -24,81 +24,64 @@
 #define PHONOMETRICA_FUNC_DOCUMENT_HPP
 
 #include <phon/runtime.hpp>
+#include <phon/application/bindings.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/vfs.hpp>
 #include <phon/application/data_table.hpp>
 
 namespace phonometrica {
 
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
+// ── Field access (doc.path, doc.label, doc.length) + load(path) ───────────────
+//
+// Fields registered on Document resolve for every subclass via the engine's
+// base-chain lookup; a subclass's own field (e.g. Annotation's "path") wins.
 
-// ── to_string specialization for Document (must live in meta namespace) ────────
-
-namespace meta {
-
-template<>
-inline String to_string(const Document &doc)
+inline void initialize_document_natives(Runtime &rt)
 {
-	return doc.path();
-}
+	using namespace bindings;
 
-} // namespace meta
-
-
-// ── Field access: doc.path, doc.label, doc.length ──────────────────────────────
-
-static Variant document_get_field(Runtime &rt, std::span<Variant> args)
-{
-	auto &doc = cast<Document>(args[0]);
-	auto &key = cast<String>(args[1]);
-
-	if (key == "path")
+	rt.add_field<Document>("path", [](const Document &doc) -> String {
 		return doc.path();
-	if (key == "label")
+	});
+	rt.add_field<Document>("label", [](const Document &doc) -> String {
 		return doc.label();
-	if (key == rt.length_string)
-	{
+	});
+	rt.add_field<Document>("length", [](Isolate &iso, const Document &doc) -> intptr_t {
 		// For DataTable subclasses (Dataset, Concordance), return row count.
 		auto *dt = dynamic_cast<const DataTable*>(&doc);
 		if (dt) return dt->row_count();
-		throw error("[Index error] Document type \"%\" has no member \"length\"", doc.class_name());
-	}
+		iso.raise(String::format("[Index error] Document type \"%s\" has no member \"length\"",
+		                         doc.class_name().data()), 0);
+	});
 
-	throw error("[Index error] Document type \"%\" has no member named \"%\"", doc.class_name(), key);
+	// load(path) -> Document: if the file is already in the project, return it;
+	// otherwise import it into the project first, then return it. The return is
+	// polymorphic (the dynamic class of the stored document).
+	rt.add_function("load", [](Isolate &iso, const String &path_arg) -> Handle<Document> {
+		return guarded(iso, [&] {
+			String path = path_arg; // copy — interpolate modifies in place
+			auto *project = Project::get();
+			if (!project) {
+				throw error("No project is currently open");
+			}
+
+			Project::interpolate(path, project->directory());
+
+			auto &files = project->files();
+			if (!files.contains(path))
+			{
+				project->import_file(path);
+			}
+
+			auto it = files.find(path);
+			if (it == files.end()) {
+				throw error("Could not load file \"%\"", path);
+			}
+
+			return it->second;
+		});
+	});
 }
-
-
-// ── load(path) → Document ──────────────────────────────────────────────────────
-//
-// If the file is already in the project, return it.
-// Otherwise, import it into the project first, then return it.
-
-static Variant load_file(Runtime &, std::span<Variant> args)
-{
-	auto path = cast<String>(args[0]);  // copy — interpolate modifies in place
-	auto *project = Project::get();
-	if (!project) {
-		throw error("No project is currently open");
-	}
-
-	Project::interpolate(path, project->directory());
-
-	auto &files = project->files();
-	if (!files.contains(path))
-	{
-		project->import_file(path);
-	}
-
-	auto it = files.find(path);
-	if (it == files.end()) {
-		throw error("Could not load file \"%\"", path);
-	}
-
-	return it->second;  // Handle<Document> → Variant
-}
-
-
-#endif // PHON_TODO_A3
 
 } // namespace phonometrica
 

@@ -23,6 +23,8 @@
 #include <phon/file.hpp>
 #include <phon/runtime.hpp>
 #include <phon/regex.hpp>
+#include <phon/application/bindings.hpp>
+#include <phon/engine/vm/interpreter.hpp> // stringify()
 #include <phon/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/analysis/model_comparison.hpp>
@@ -969,350 +971,179 @@ static Variant filter_rows(DataTable &table, const String &expr, const String &l
 
 void DataTable::initialize(Runtime &rt)
 {
-	(void) rt;
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3 (4b already ported the stats set to stats_host/bindings.cpp)
-	auto fit2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		data.open();
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian");
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
-		}
-		return Handle<stats::Model>::make(std::move(model));
+	using namespace bindings;
+	using stats::Model;
+
+	// ── Local helpers ───────────────────────────────────────────────────
+
+	auto note_gam = [](Isolate &iso, const Model &model) {
+		if (model.smooth_terms.size() > 0)
+			iso.write_output("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 	};
 
-	auto fit3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		auto &family_str = cast<String>(args[2]);
-		data.open();
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str);
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
-		}
-		return Handle<stats::Model>::make(std::move(model));
+	auto key = [](const char *k) { return Variant::make(String(k)); };
+
+	// Format a p-value for display.
+	auto format_p = [](double p) -> std::string {
+		if (std::isnan(p)) return "NA";
+		if (p < 0.001)     return "< 0.001";
+		char buf[16];
+		snprintf(buf, sizeof(buf), "%.4f", p);
+		return buf;
 	};
 
-	// ── Helper: parse the options Table into a FitOptions struct. ──
+	// ── fit() ───────────────────────────────────────────────────────────
 	//
-	// The Table comes either from an explicit literal { "fit_method": "REML" }
-	// or from the named-argument syntax (fit_method = "REML"), which the parser
-	// packs into a Table with the same shape. Validation is strict: any
-	// unknown key, or any unrecognized value, is a hard error — silently
-	// ignoring typos like "RELM" would silently demote the fit to ML
-	// without the user noticing. Inapplicable but well-formed requests
-	// (e.g., fit_method="REML" on a non-Gaussian fit) are handled deeper in
-	// the engine, which emits a fit_warning and proceeds with ML.
-	//
-	// Note on naming: the option key is "fit_method" rather than the more
-	// natural "method" because "method" is a reserved keyword in the
-	// scripting engine. Using it as a named argument would conflict with
-	// the parser. "fit_method" is also unambiguous against any future
-	// estimation-related option (e.g. "tolerance", "max_iter").
-	auto parse_fit_options = [](const Table &tab) -> stats::FitOptions {
+	// Options-table validation is strict: any unknown key, or any
+	// unrecognized value, is a hard error — silently ignoring typos like
+	// "RELM" would silently demote the fit to ML without the user noticing.
+	// The option key is "fit_method" rather than "method" because "method"
+	// is a reserved keyword in the scripting language.
+
+	auto parse_fit_options = [](Isolate &iso, const Table &tab) -> stats::FitOptions {
 		stats::FitOptions opts;
-		for (auto &pair : tab.data())
+		List keys = tab.keys();
+		for (intptr_t n = 1; n <= keys.size(); n++)
 		{
-			if (!pair.first.is_string()) {
-				throw error("[Type error] fit() options table: keys must be strings");
+			Variant k = keys.get(n);
+			String key;
+			try
+			{
+				key = k.to<String>();
 			}
-			const String &key = cast<String>(pair.first);
-			if (key == "fit_method") {
-				const String &val = cast<String>(pair.second);
+			catch (std::exception &)
+			{
+				iso.raise(String("[Type error] fit() options table: keys must be strings"), 0);
+			}
+			if (key == "fit_method")
+			{
+				String val = tab.get(k).to<String>();
 				// Case-insensitive match on common spellings.
 				String upper = val.to_upper();
-				if (upper == "ML") {
+				if (upper == "ML")
 					opts.method = stats::Method::ML;
-				} else if (upper == "REML") {
+				else if (upper == "REML")
 					opts.method = stats::Method::REML;
-				} else {
-					throw error("[Value error] fit() options: \"fit_method\" must be \"ML\" or \"REML\" (got \"%\")", val);
-				}
-			} else {
-				throw error("[Value error] fit() options: unknown key \"%\". "
-				            "Supported keys: \"fit_method\".", key);
+				else
+					iso.raise(String::format("[Value error] fit() options: \"fit_method\" must be "
+					                         "\"ML\" or \"REML\" (got \"%s\")", val.data()), 0);
+			}
+			else
+			{
+				iso.raise(String::format("[Value error] fit() options: unknown key \"%s\". "
+				                         "Supported keys: \"fit_method\".", key.data()), 0);
 			}
 		}
 		return opts;
 	};
 
-	// fit(formula, data, options) — Gaussian + options
-	auto fit_opts2 = [parse_fit_options](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		auto &options = cast<Table>(args[2]);
-		data.open();
-		auto opts = parse_fit_options(options);
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", opts);
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
-		}
-		return Handle<stats::Model>::make(std::move(model));
-	};
+	// fit(formula, data) — Gaussian.
+	rt.add_function("fit", [note_gam](Isolate &iso, const String &formula, DataTable &data) -> Handle<Model> {
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian");
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
+	// fit(formula, data, family).
+	rt.add_function("fit",
+	                [note_gam](Isolate &iso, const String &formula, DataTable &data, const String &family) -> Handle<Model> {
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), family);
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
+	// fit(formula, data, options) — Gaussian + options.
+	rt.add_function("fit",
+	                [note_gam, parse_fit_options](Isolate &iso, const String &formula, DataTable &data,
+	                                              const Table &options) -> Handle<Model> {
+		auto opts = parse_fit_options(iso, options);
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian", opts);
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
+	// fit(formula, data, family, options).
+	rt.add_function("fit",
+	                [note_gam, parse_fit_options](Isolate &iso, const String &formula, DataTable &data,
+	                                              const String &family, const Table &options) -> Handle<Model> {
+		auto opts = parse_fit_options(iso, options);
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), family, opts);
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
+	// fit(formula, data, prior) — Bayesian, Gaussian.
+	rt.add_function("fit",
+	                [note_gam](Isolate &iso, const String &formula, DataTable &data,
+	                           const stats::PriorSpec &priors) -> Handle<Model> {
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian", priors);
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
+	// fit(formula, data, family, prior) — Bayesian.
+	rt.add_function("fit",
+	                [note_gam](Isolate &iso, const String &formula, DataTable &data, const String &family,
+	                           const stats::PriorSpec &priors) -> Handle<Model> {
+		return guarded(iso, [&] {
+			data.open();
+			auto model = stats::fit(data, stats::Formula::parse(formula), family, priors);
+			model.compute_pseudo_r2();
+			note_gam(iso, model);
+			return Handle<Model>::make(std::move(model));
+		});
+	});
 
-	// fit(formula, data, family, options)
-	auto fit_opts3 = [parse_fit_options](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		auto &family_str = cast<String>(args[2]);
-		auto &options = cast<Table>(args[3]);
-		data.open();
-		auto opts = parse_fit_options(options);
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str, opts);
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
-		}
-		return Handle<stats::Model>::make(std::move(model));
-	};
+	// ── filter() ────────────────────────────────────────────────────────
 
-	auto summarize_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		print_model_summary(rt, cast<stats::Model>(args[0]));
-		return Variant();
-	};
+	rt.add_function("filter", [](Isolate &iso, DataTable &table, const String &expr) -> Variant {
+		return guarded(iso, [&] {
+			String label("filter: ");
+			label.append(expr);
+			return filter_rows(table, expr, label);
+		});
+	});
+	rt.add_function("filter",
+	                [](Isolate &iso, DataTable &table, const String &expr, const String &label) -> Variant {
+		return guarded(iso, [&] { return filter_rows(table, expr, label); });
+	});
 
-	auto coef_model = [](Runtime &, std::span<Variant> args) -> Variant {
-		return Handle<Array<double>>::make(cast<stats::Model>(args[0]).beta);
-	};
+	// ── Model inspection ────────────────────────────────────────────────
 
-	auto model_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &key = cast<String>(args[1]);
-		if (key == "formula") return model.formula;
-		if (key == "family") return model.family;
-		if (key == "link") return model.link;
-		if (key == "nobs") return model.nobs;
-		if (key == "aic") return model.aic;
-		if (key == "bic") return model.bic;
-		if (key == "loglik") return model.loglik;
-		if (key == "deviance") return model.deviance;
-		if (key == "r2") return model.r2;
-		if (key == "adj_r2") return model.adj_r2;
-		if (key == "r2_marginal") return model.r2_marginal;
-		if (key == "r2_conditional") return model.r2_conditional;
-		if (key == "rse") return model.rse;
-		if (key == "df") return model.df_residual;
-		if (key == "theta") return model.theta;
-		if (key == "phi") return model.phi;
-		if (key == "sigma") return model.sigma;
-		if (key == "nu") return model.nu;
-		if (key == "converged") return model.converged;
-		if (key == "niter") return intptr_t(model.niter);
-		if (key == "optimizer") return model.optimizer;
-		if (key == "well_identified") return model.well_identified;
-		if (key == "warning") return model.fit_warning;
-		if (key == "prior_warning") return model.prior_warning;
-		if (key == "fitted") return Handle<Array<double>>::make(model.fitted);
-		if (key == "residuals") return Handle<Array<double>>::make(model.residuals);
-		if (key == "estimation") return String(stats::estimation_name(model.estimation));
-		if (key == "fit_method") {
-			// Surface the ML/REML choice for frequentist Gaussian LMMs. For Bayesian
-			// fits this returns "ML" (the engine uses ML internally), and the user
-			// should rely on `estimation` to distinguish Bayesian from frequentist.
-			return String(model.method == stats::Method::REML ? "REML" : "ML");
-		}
-		if (key == "log_marginal") return model.log_marginal;
-		if (key == "waic") return model.waic;
-		if (key == "p_waic") return model.p_waic;
-		if (key == "lppd") return model.lppd;
-		if (key == "se_waic") return model.se_waic;
-		if (key == "loo_ic") return model.loo_ic;
-		if (key == "p_loo") return model.p_loo;
-		if (key == "se_loo") return model.se_loo;
-		if (key == "pareto_k") return Handle<Array<double>>::make(model.pareto_k);
-		if (key == "posterior_mean") return Handle<Array<double>>::make(model.posterior_mean);
-		if (key == "posterior_mode") return Handle<Array<double>>::make(model.posterior_mode);
-		if (key == "posterior_median") return Handle<Array<double>>::make(model.posterior_median);
-		if (key == "posterior_sd") return Handle<Array<double>>::make(model.posterior_sd);
-		if (key == "ci_lower") return Handle<Array<double>>::make(model.ci_lower);
-		if (key == "ci_upper") return Handle<Array<double>>::make(model.ci_upper);
-		if (key == "pd") return Handle<Array<double>>::make(model.pd);
+	rt.add_function("summarize", [&rt](const Model &m) {
+		print_model_summary(rt, m);
+	});
+	rt.add_function("get_coef", [](const Model &m) -> NumArray {
+		return to_numarray(m.beta);
+	});
 
-		// ── Fixed-effect inference (frequentist) ─────────────────────
-		if (key == "se") return Handle<Array<double>>::make(model.se);
-		if (key == "stat") return Handle<Array<double>>::make(model.stat);
-		if (key == "p") return Handle<Array<double>>::make(model.p);
-
-		// ── Names: coefficients and (Bayesian) hyperparameters ───────
-		if (key == "coef_names")
-		{
-			Array<Variant> items;
-			for (intptr_t i = 0; i < model.coef_names.size(); i++)
-				items.append(model.coef_names[i]);
-			return Handle<List>::make(&rt, std::move(items));
-		}
-		if (key == "hyper_names")
-		{
-			Array<Variant> items;
-			for (intptr_t i = 0; i < model.hyper_names.size(); i++)
-				items.append(model.hyper_names[i]);
-			return Handle<List>::make(&rt, std::move(items));
-		}
-
-		// ── Hyperparameter posteriors (Bayesian mixed/Gaussian only) ─
-		if (key == "hyper_posterior_mean") return Handle<Array<double>>::make(model.hyper_posterior_mean);
-		if (key == "hyper_posterior_sd") return Handle<Array<double>>::make(model.hyper_posterior_sd);
-		if (key == "hyper_ci_lower") return Handle<Array<double>>::make(model.hyper_ci_lower);
-		if (key == "hyper_ci_upper") return Handle<Array<double>>::make(model.hyper_ci_upper);
-
-		// ── Random-effects summary (frequentist mixed models) ────────
-		// Flat layout parallel to hyper_* so test code can compare engines.
-		// Names are "sd(term|group)" plus a final "sd(residual)" for Gaussian.
-		if (key == "ranef_names")
-		{
-			Array<Variant> items;
-			for (intptr_t g = 0; g < model.random_effects.size(); g++)
-			{
-				auto &re = model.random_effects[g];
-				for (intptr_t t = 0; t < re.term_names.size(); t++)
-				{
-					std::string name = "sd("
-						+ std::string(re.term_names[t].data(), re.term_names[t].size())
-						+ "|"
-						+ std::string(re.group_name.data(), re.group_name.size())
-						+ ")";
-					items.append(String(name));
-				}
-			}
-			if (model.is_gaussian() && model.has_random_effects())
-				items.append(String("sd(residual)"));
-			return Handle<List>::make(&rt, std::move(items));
-		}
-		if (key == "ranef_sd")
-		{
-			Array<double> sds;
-			for (intptr_t g = 0; g < model.random_effects.size(); g++)
-			{
-				auto &re = model.random_effects[g];
-				for (intptr_t t = 0; t < re.term_names.size(); t++)
-				{
-					double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
-					sds.append(std::sqrt(std::max(var, 0.0)));
-				}
-			}
-			if (model.is_gaussian() && model.has_random_effects())
-				sds.append(model.rse);
-			return Handle<Array<double>>::make(std::move(sds));
-		}
-
-		// ── Smooth terms (GAM only) ───────────────────────────────────────
-		// Parallel arrays, one entry per s() term in formula order.
-		// For by-factor smooths, entries appear in the same order as the
-		// by-levels (alphabetical, matching the model summary table).
-		if (key == "smooth_names")
-		{
-			Array<Variant> items;
-			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
-			{
-				auto &sm = model.smooth_terms[i];
-				String label("s(");
-				label.append(sm.variable);
-				if (!sm.by.empty()) { label.append("):"); label.append(sm.by); }
-				else                  label.append(")");
-				items.append(std::move(label));
-			}
-			return Handle<List>::make(&rt, std::move(items));
-		}
-		if (key == "smooth_edf")
-		{
-			Array<double> edfs;
-			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
-				edfs.append(model.smooth_terms[i].edf);
-			return Handle<Array<double>>::make(std::move(edfs));
-		}
-		if (key == "smooth_F")
-		{
-			Array<double> Fs;
-			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
-				Fs.append(model.smooth_terms[i].F_stat);
-			return Handle<Array<double>>::make(std::move(Fs));
-		}
-		if (key == "smooth_p")
-		{
-			Array<double> ps;
-			for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
-				ps.append(model.smooth_terms[i].p_value);
-			return Handle<Array<double>>::make(std::move(ps));
-		}
-		if (key == "smooth_log_lambda")
-		{
-			// Return the per-penalty-block log10(λ) selected by the GCV
-			// inner loop (or supplied via PHON_DIAG_FIXED_LOG_LAMBDA).
-			// One entry per s() term, or one per by-level for by-factor
-			// smooths.  Empty for non-GAM models.
-			Array<double> lls;
-			for (intptr_t i = 0; i < model.smooth_log_lambda.size(); i++)
-				lls.append(model.smooth_log_lambda[i]);
-			return Handle<Array<double>>::make(std::move(lls));
-		}
-		if (key == "n_smooth")
-			return model.smooth_terms.size();
-
-		throw error("[Index error] Model type has no member named \"%\"", key);
-	};
-
-	auto filter2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto &expr  = cast<String>(args[1]);
-		String label("filter: ");
-		label.append(expr);
-		return filter_rows(table, expr, label);
-	};
-
-	auto filter3 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto &expr  = cast<String>(args[1]);
-		auto &label = cast<String>(args[2]);
-		return filter_rows(table, expr, label);
-	};
-
-	auto dataset_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &ds = cast<Dataset>(args[0]);
-		auto &key = cast<String>(args[1]);
-		if (key == "path") return ds.path();
-		if (key == "label") return ds.label();
-		if (key == "description") return ds.description();
-		ds.open();
-		if (key == "nrow" || key == "length") return ds.row_count();
-		if (key == "ncol") return ds.column_count();
-		if (key == "empty") return ds.empty();
-		if (key == "headers") return make_headers_list(rt, ds);
-		throw error("[Index error] Dataset type has no member named \"%\"", key);
-	};
-
-	auto conc_get_field = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &conc = cast<Concordance>(args[0]);
-		auto &key = cast<String>(args[1]);
-		if (key == "path") return conc.path();
-		if (key == "label") return conc.label();
-		if (key == "description") return conc.description();
-		conc.open();
-		if (key == "nrow" || key == "length") return conc.row_count();
-		if (key == "ncol") return conc.column_count();
-		if (key == "empty") return conc.empty();
-		if (key == "headers") return make_headers_list(rt, conc);
-		if (key == "target_count") return intptr_t(conc.target_count());
-		throw error("[Index error] Concordance type has no member named \"%\"", key);
-	};
-
-	auto compare_models = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &m1 = cast<stats::Model>(args[0]);
-		auto &m2 = cast<stats::Model>(args[1]);
-
+	rt.add_function("compare", [&rt, format_p](Isolate &iso, const Model &m1, const Model &m2) {
 		// Both models must use the same estimation method.
 		if (m1.estimation != m2.estimation)
 		{
-			throw error("Cannot compare a % model with a % model. "
-			            "Both models must use the same estimation method.",
-			            stats::estimation_name(m1.estimation),
-			            stats::estimation_name(m2.estimation));
+			iso.raise(String::format("Cannot compare a %s model with a %s model. "
+			                         "Both models must use the same estimation method.",
+			                         stats::estimation_name(m1.estimation),
+			                         stats::estimation_name(m2.estimation)), 0);
 		}
 
-		std::vector<const stats::Model *> models = { &m1, &m2 };
+		guarded(iso, [&] {
+		std::vector<const Model *> models = { &m1, &m2 };
 
 		if (m1.is_bayesian())
 		{
@@ -1397,85 +1228,57 @@ void DataTable::initialize(Runtime &rt)
 
 			rt.printf("\n%-12s %8s %12s %12s\n", "Comparison", "df", "Chi-sq", "Pr(>Chisq)");
 			for (auto &p : result.pairs) {
-				char pbuf[16];
-				if (std::isnan(p.p_value)) snprintf(pbuf, sizeof(pbuf), "NA");
-				else if (p.p_value < 0.001) snprintf(pbuf, sizeof(pbuf), "< 0.001");
-				else snprintf(pbuf, sizeof(pbuf), "%.6f", p.p_value);
-
-				// Label in complex-vs-simpler order: a significant test favours
-				// the model named first.
 				char label[32];
 				snprintf(label, sizeof(label), "%d vs %d",
 				         result.rows[p.index_b].original_index + 1,
 				         result.rows[p.index_a].original_index + 1);
 				rt.printf("%-12s %8ld %12.4f %12s\n", label, (long)p.df_diff,
-				          std::isnan(p.chisq) ? 0.0 : p.chisq, pbuf);
+				          std::isnan(p.chisq) ? 0.0 : p.chisq, format_p(p.p_value).c_str());
 			}
 			rt.printf("---\nNote: a significant test favours the more complex model (named first).\n\n");
 		}
-
-		return Variant();
-	};
+		return 0;
+		});
+	});
 
 	// ── Diagnostic Laplace-NLL evaluation ───────────────────────────
 	//
-	// `evaluate(model)`               re-evaluate at the fitted point
-	//                                 (sanity check; should reproduce
-	//                                 model.loglik to machine precision).
-	//
-	// `evaluate(model, opts_table)`   evaluate at a user-supplied point.
-	//   opts_table fields (all optional):
-	//     beta      List of Number,  length nfixed
-	//     Sigma     List of Array,   one q×q symmetric matrix per RE group
-	//     sigma     Number           Gaussian/Student scale
-	//     nu        Number           Student df
-	//     theta_nb  Number           NegBin overdispersion
-	//     phi       Number           Beta precision
-	//     u         List of Number,  flat BLUPs (length J_total, group-major,
-	//                                then j*q+t within group)
-	//     refit_u   Boolean          if true, run PIRLS from u=0
-	//                                (supplied u, if any, is ignored)
-	//
+	// `evaluate(model)`               re-evaluate at the fitted point.
+	// `evaluate(model, opts_table)`   evaluate at a user-supplied point
+	//   (beta / Sigma / sigma / nu / theta_nb / phi / u / refit_u).
 	// Returns a Table:
 	//   { loglik, laplace_nll, cond_nll, prior_nll, log_det_Huu,
 	//     const_term, u, u_refit }
 
-	auto build_eval_table = [](Runtime &rt, const stats::EvaluationResult &result) -> Variant {
+	auto build_eval_table = [key](Isolate &iso, const stats::EvaluationResult &result) -> Table {
 		if (!result.ok) {
-			throw error("evaluate(): %", result.error);
+			iso.raise(String::format("evaluate(): %s", result.error.data()), 0);
 		}
-		auto out = Handle<Table>::make(&rt);
-		auto &m = out->data();
-		m[String("loglik")]      = -result.laplace_nll;
-		m[String("laplace_nll")] = result.laplace_nll;
-		m[String("cond_nll")]    = result.cond_nll;
-		m[String("prior_nll")]   = result.prior_nll;
-		m[String("log_det_Huu")] = result.log_det_Huu;
-		m[String("const_term")]  = result.const_term;
-		m[String("u_refit")]     = result.u_refit;
-		m[String("laplace_method")] = result.laplace_method;
+		Table out;
+		out.set(key("loglik"),      Variant::make(-result.laplace_nll));
+		out.set(key("laplace_nll"), Variant::make(result.laplace_nll));
+		out.set(key("cond_nll"),    Variant::make(result.cond_nll));
+		out.set(key("prior_nll"),   Variant::make(result.prior_nll));
+		out.set(key("log_det_Huu"), Variant::make(result.log_det_Huu));
+		out.set(key("const_term"),  Variant::make(result.const_term));
+		out.set(key("u_refit"),     Variant::make(result.u_refit));
+		out.set(key("laplace_method"), Variant::make(result.laplace_method));
 
-		Array<Variant> u_items;
-		u_items.reserve(result.u_used.size());
+		List u_items;
 		for (intptr_t k = 0; k < result.u_used.size(); k++) {
-			u_items.append(result.u_used.data()[k]);
+			u_items.append(Variant::make(result.u_used.data()[k]));
 		}
-		m[String("u")] = Handle<List>::make(&rt, std::move(u_items));
+		out.set(key("u"), Variant::make(u_items));
 		return out;
 	};
 
-	auto evaluate1 = [build_eval_table](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
+	rt.add_function("evaluate", [build_eval_table](Isolate &iso, const Model &model) -> Table {
 		stats::EvaluationOverrides ov;
-		auto result = stats::evaluate_at(model, ov);
-		return build_eval_table(rt, result);
-	};
+		auto result = guarded(iso, [&] { return stats::evaluate_at(model, ov); });
+		return build_eval_table(iso, result);
+	});
 
-	auto evaluate2 = [build_eval_table](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &table = cast<Table>(args[1]);
-		auto &map   = table.data();
-
+	rt.add_function("evaluate", [build_eval_table, key](Isolate &iso, const Model &model, const Table &table) -> Table {
 		// Storage outlasts evaluate_at — declared up front so override
 		// pointers in `ov` stay valid until the call returns.
 		Array<double> beta_arr;
@@ -1484,102 +1287,87 @@ void DataTable::initialize(Runtime &rt)
 
 		stats::EvaluationOverrides ov;
 
-		// beta
-		if (auto it = map.find(String("beta")); it != map.end()) {
-			auto &lst = cast<List>(it->second);
-			beta_arr = Array<double>(lst.size(), 0.0);
-			for (intptr_t k = 0; k < lst.size(); k++) {
-				beta_arr.data()[k] = lst.items().data()[k].get_number();
+		return guarded(iso, [&] {
+			// beta
+			if (auto v = table.get(key("beta")); !v.is_null()) {
+				auto lst = v.to<List>();
+				beta_arr = Array<double>(lst.size(), 0.0);
+				for (intptr_t k = 1; k <= lst.size(); k++) {
+					beta_arr[k - 1] = lst.get(k).to<double>();
+				}
+				ov.beta = &beta_arr;
 			}
-			ov.beta = &beta_arr;
-		}
-
-		// Sigma: List of Array<double> matrices, one per RE group
-		if (auto it = map.find(String("Sigma")); it != map.end()) {
-			auto &lst = cast<List>(it->second);
-			sigma_vec.reserve(lst.size());
-			for (intptr_t k = 0; k < lst.size(); k++) {
-				auto &item = lst.items().data()[k];
-				sigma_vec.push_back(cast<Array<double>>(item));
+			// Sigma: List of numeric matrices, one per RE group
+			if (auto v = table.get(key("Sigma")); !v.is_null()) {
+				auto lst = v.to<List>();
+				sigma_vec.reserve(lst.size());
+				for (intptr_t k = 1; k <= lst.size(); k++) {
+					sigma_vec.push_back(to_array_double(lst.get(k).to<NumArray>()));
+				}
+				ov.Sigma = &sigma_vec;
 			}
-			ov.Sigma = &sigma_vec;
-		}
-
-		// Scalar dispersion overrides
-		if (auto it = map.find(String("sigma")); it != map.end()) {
-			ov.has_sigma = true;
-			ov.sigma_val = it->second.get_number();
-		}
-		if (auto it = map.find(String("nu")); it != map.end()) {
-			ov.has_nu = true;
-			ov.nu_val = it->second.get_number();
-		}
-		if (auto it = map.find(String("theta_nb")); it != map.end()) {
-			ov.has_theta_nb = true;
-			ov.theta_nb_val = it->second.get_number();
-		}
-		if (auto it = map.find(String("phi")); it != map.end()) {
-			ov.has_phi = true;
-			ov.phi_val = it->second.get_number();
-		}
-
-		// u
-		if (auto it = map.find(String("u")); it != map.end()) {
-			auto &lst = cast<List>(it->second);
-			u_arr = Array<double>(lst.size(), 0.0);
-			for (intptr_t k = 0; k < lst.size(); k++) {
-				u_arr.data()[k] = lst.items().data()[k].get_number();
+			// Scalar dispersion overrides
+			if (auto v = table.get(key("sigma")); !v.is_null()) {
+				ov.has_sigma = true;
+				ov.sigma_val = v.to<double>();
 			}
-			ov.u = &u_arr;
-		}
+			if (auto v = table.get(key("nu")); !v.is_null()) {
+				ov.has_nu = true;
+				ov.nu_val = v.to<double>();
+			}
+			if (auto v = table.get(key("theta_nb")); !v.is_null()) {
+				ov.has_theta_nb = true;
+				ov.theta_nb_val = v.to<double>();
+			}
+			if (auto v = table.get(key("phi")); !v.is_null()) {
+				ov.has_phi = true;
+				ov.phi_val = v.to<double>();
+			}
+			// u
+			if (auto v = table.get(key("u")); !v.is_null()) {
+				auto lst = v.to<List>();
+				u_arr = Array<double>(lst.size(), 0.0);
+				for (intptr_t k = 1; k <= lst.size(); k++) {
+					u_arr[k - 1] = lst.get(k).to<double>();
+				}
+				ov.u = &u_arr;
+			}
+			// refit_u
+			if (auto v = table.get(key("refit_u")); !v.is_null()) {
+				ov.refit_u = v.to<bool>();
+			}
 
-		// refit_u
-		if (auto it = map.find(String("refit_u")); it != map.end()) {
-			ov.refit_u = cast<bool>(it->second);
-		}
-
-		auto result = stats::evaluate_at(model, ov);
-		return build_eval_table(rt, result);
-	};
+			auto result = stats::evaluate_at(model, ov);
+			return build_eval_table(iso, result);
+		});
+	});
 
 	// ── Diagnostic polish ──────────────────────────────────────────
 	//
-	// `polish(model)` returns a Table:
-	//   { delta:    Number,    // polished_loglik - original_loglik
-	//     loglik:   Number,    // polished loglik (same as model.loglik if no improvement)
-	//     ok:       Boolean,   // true iff polish converged
-	//     message:  String }   // diagnostic message
-	//
-	// Re-runs the Student-t outer optimization from the model's
-	// converged σ and ν with tighter L-BFGS gradient tolerance and
-	// FD step size. If the loglik improves, the original convergence
-	// was limited by FD-gradient noise — switching to AD outer
-	// gradients would close the same gap stably.
-	//
-	// Only meaningful for Student-t mixed models. Returns ok=false
-	// for any other family.
+	// `polish(model)` re-runs the Student-t outer optimization from the
+	// model's converged σ and ν with tighter tolerances; returns a Table
+	// { delta, loglik, ok, message }. Only meaningful for Student-t.
 
-	auto polish_model = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto out = Handle<Table>::make(&rt);
-		auto &m = out->data();
+	rt.add_function("polish", [key](const Model &model) -> Table {
+		Table out;
+		auto set = [&out, key](const char *k, Variant v) { out.set(key(k), std::move(v)); };
 
 		if (model.family != "student") {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("polish() is only meaningful for "
-			                              "Student-t models in the current "
-			                              "iteration.");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("polish() is only meaningful for "
+			                                    "Student-t models in the current "
+			                                    "iteration.")));
 			return out;
 		}
 
 		if (model.X.empty() || model.y.empty()) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("polish() requires a model with "
-			                              "stored X and y.");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("polish() requires a model with "
+			                                    "stored X and y.")));
 			return out;
 		}
 
@@ -1603,12 +1391,12 @@ void DataTable::initialize(Runtime &rt)
 			groups.push_back(std::move(gi));
 		}
 		if (!re_info_ok) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("polish() requires a model fitted "
-			                              "in the current session (Z design "
-			                              "info is not serialized to file).");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("polish() requires a model fitted "
+			                                    "in the current session (Z design "
+			                                    "info is not serialized to file).")));
 			return out;
 		}
 
@@ -1618,7 +1406,6 @@ void DataTable::initialize(Runtime &rt)
 		opts.polish = true;
 
 		// Drive starting σ and ν from the converged values via overrides.
-		// The wrapper applies polish via InitOverrides internally.
 		stats::InitOverrides ov;
 		ov.has_sigma_init = true;  ov.sigma_init = model.sigma;
 		ov.has_nu_init    = true;  ov.nu_init    = model.nu;
@@ -1635,9 +1422,9 @@ void DataTable::initialize(Runtime &rt)
 			bool converged = polished.converged
 			                 && std::isfinite(polished_ll);
 
-			m[String("ok")] = converged;
-			m[String("delta")] = delta;
-			m[String("loglik")] = polished_ll;
+			set("ok", Variant::make(converged));
+			set("delta", Variant::make(delta));
+			set("loglik", Variant::make(polished_ll));
 
 			String msg;
 			if (converged) {
@@ -1645,68 +1432,59 @@ void DataTable::initialize(Runtime &rt)
 					"Polish: ΔlogLik = %+.4f (original %.4f → polished %.4f). ",
 					delta, original_ll, polished_ll));
 				if (delta > 0.5) {
-					msg.append(String("Significant improvement: original "
-					                  "convergence was likely FD-gradient-"
-					                  "noise-limited."));
+					msg.append(Substring("Significant improvement: original "
+					                     "convergence was likely FD-gradient-"
+					                     "noise-limited."));
 				} else if (delta > 0.05) {
-					msg.append(String("Modest improvement: minor FD-noise "
-					                  "effect on convergence."));
+					msg.append(Substring("Modest improvement: minor FD-noise "
+					                     "effect on convergence."));
 				} else {
-					msg.append(String("No meaningful improvement: optimum "
-					                  "is at the function-value precision "
-					                  "floor."));
+					msg.append(Substring("No meaningful improvement: optimum "
+					                     "is at the function-value precision "
+					                     "floor."));
 				}
 			} else {
-				msg.append(String("Polish optimization did not converge."));
+				msg.append(Substring("Polish optimization did not converge."));
 			}
-			m[String("message")] = msg;
+			set("message", Variant::make(msg));
 		}
 		catch (std::exception &e) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
 			String msg("Polish failed: ");
-			msg.append(String(e.what()));
-			m[String("message")] = msg;
+			msg.append(Substring(e.what()));
+			set("message", Variant::make(msg));
 		}
 
 		return out;
-	};
+	});
 
 	// ── Diagnostic Phase 2 retry ──────────────────────────────────
 	//
 	// `try_phase2(model)` re-fits the same Student-t model with Phase 2
-	// (joint β + θ + σ + ν optimization) enabled. Phase 2 is normally
-	// skipped for Student-t because the σ-ν correlation can make the
-	// joint Hessian ill-conditioned. This diagnostic tests whether
-	// Phase 2 actually helps on a given dataset.
-	//
-	// Returns a Table:
-	//   { ok:      Boolean,   // true iff Phase 2 converged
-	//     delta:   Number,    // phase2_loglik - original_loglik
-	//     loglik:  Number,    // Phase 2 loglik (NaN if non-convergent)
-	//     message: String }   // diagnostic message
+	// (joint β + θ + σ + ν optimization) enabled; returns a Table
+	// { ok, delta, loglik, message }.
 
-	auto try_phase2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto out = Handle<Table>::make(&rt);
-		auto &m = out->data();
+	rt.add_function("try_phase2", [key](const Model &model) -> Table {
+		Table out;
+		auto set = [&out, key](const char *k, Variant v) { out.set(key(k), std::move(v)); };
 
 		if (model.family != "student") {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("try_phase2() applies only to "
-			                              "Student-t models.");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("try_phase2() applies only to "
+			                                    "Student-t models.")));
 			return out;
 		}
 
 		if (model.X.empty() || model.y.empty()) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("try_phase2() requires a model "
-			                              "with stored X and y.");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("try_phase2() requires a model "
+			                                    "with stored X and y.")));
 			return out;
 		}
 
@@ -1729,11 +1507,11 @@ void DataTable::initialize(Runtime &rt)
 			groups.push_back(std::move(gi));
 		}
 		if (!re_info_ok) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
-			m[String("message")] = String("try_phase2() requires a model "
-			                              "fitted in the current session.");
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
+			set("message", Variant::make(String("try_phase2() requires a model "
+			                                    "fitted in the current session.")));
 			return out;
 		}
 
@@ -1754,9 +1532,9 @@ void DataTable::initialize(Runtime &rt)
 			double delta = new_ll - original_ll;
 			bool ok = refit.converged && std::isfinite(new_ll);
 
-			m[String("ok")] = ok;
-			m[String("delta")] = delta;
-			m[String("loglik")] = new_ll;
+			set("ok", Variant::make(ok));
+			set("delta", Variant::make(delta));
+			set("loglik", Variant::make(new_ll));
 
 			String msg;
 			if (ok) {
@@ -1764,97 +1542,65 @@ void DataTable::initialize(Runtime &rt)
 					"Phase 2: ΔlogLik = %+.4f (original %.4f → Phase 2 %.4f). ",
 					delta, original_ll, new_ll));
 				if (delta > 1.0) {
-					msg.append(String("Significant improvement: Phase 2 "
-					                  "joint optimization closes a real gap "
-					                  "left by Phase 1 profiling."));
+					msg.append(Substring("Significant improvement: Phase 2 "
+					                     "joint optimization closes a real gap "
+					                     "left by Phase 1 profiling."));
 				} else if (delta > 0.05) {
-					msg.append(String("Modest improvement."));
+					msg.append(Substring("Modest improvement."));
 				} else if (delta > -0.05) {
-					msg.append(String("No meaningful change: Phase 1 "
-					                  "profiling was already at the joint "
-					                  "optimum."));
+					msg.append(Substring("No meaningful change: Phase 1 "
+					                     "profiling was already at the joint "
+					                     "optimum."));
 				} else {
-					msg.append(String("Phase 2 produced a worse fit, "
-					                  "likely due to σ-ν correlation "
-					                  "destabilizing the joint Hessian. "
-					                  "Phase 1 result kept."));
+					msg.append(Substring("Phase 2 produced a worse fit, "
+					                     "likely due to σ-ν correlation "
+					                     "destabilizing the joint Hessian. "
+					                     "Phase 1 result kept."));
 				}
 			} else {
-				msg.append(String("Phase 2 did not converge. The σ-ν "
-				                  "correlation in this dataset makes the "
-				                  "joint optimization unstable; Phase 1 "
-				                  "result was the right choice."));
+				msg.append(Substring("Phase 2 did not converge. The σ-ν "
+				                     "correlation in this dataset makes the "
+				                     "joint optimization unstable; Phase 1 "
+				                     "result was the right choice."));
 			}
-			m[String("message")] = msg;
+			set("message", Variant::make(msg));
 		}
 		catch (std::exception &e) {
-			m[String("ok")] = false;
-			m[String("delta")] = 0.0;
-			m[String("loglik")] = model.loglik;
+			set("ok", Variant::make(false));
+			set("delta", Variant::make(0.0));
+			set("loglik", Variant::make(model.loglik));
 			String msg("Phase 2 attempt failed: ");
-			msg.append(String(e.what()));
-			m[String("message")] = msg;
+			msg.append(Substring(e.what()));
+			set("message", Variant::make(msg));
 		}
 
 		return out;
-	};
+	});
 
-	// ── predict() — fitted values, SE, and CIs at training rows or new data ─
+	// ── predict() ───────────────────────────────────────────────────────
 	//
-	// `predict(model)`               at training rows; in-session only,
-	//                                returns a Dataset with prediction
-	//                                columns (no input echo). Errors after
-	//                                save/reload because the design matrix
-	//                                X is not persisted.
-	//
-	// `predict(model, newdata)`      at the rows of newdata; returns a
-	//                                Dataset that echoes ALL columns of
-	//                                newdata, with prediction columns
-	//                                appended.
-	//
-	// `predict(model, newdata, opts)`  with an options table:
-	//   type      String   "ci" (default).  "pi" / "both" deferred.
-	//   scale     String   "response" (default) or "link".
-	//   bare      Boolean  if true, do not echo newdata's columns.
-	//   ci_level  Number   coverage probability (default 0.95).
-	//
-	// Output columns (always added; "Fit", "SE fit", "CI lower", "CI upper"):
-	//   Fit         predicted mean (response or link scale per opts.scale)
-	//   SE fit      standard error on the link scale
-	//   CI lower    confidence-interval lower bound (transformed to response
-	//               scale if requested; identity otherwise)
-	//   CI upper    confidence-interval upper bound
-	//
-	// Per-row failures (missing values, unseen factor levels, non-numeric
-	// cells in numeric predictors) emit NaN in all four prediction columns
-	// for that row. Structural failures (missing columns, unparseable
-	// formula, mixed-effects models, Bayesian models, by-factor smooths,
-	// PI requests) raise an error explaining what is not yet supported.
-	//
-	// Phase 1 MVP does not support:
-	//   - Mixed-effects models (random-effects terms).
-	//   - By-factor smooths (s(x, by=...)) and re-smooths (s(g, bs="re")).
-	//   - Bayesian estimation.
-	//   - Prediction intervals (type = "pi" or "both").
-	// All of these refuse cleanly with a message naming the limitation.
+	// `predict(model)`                 at training rows (in-session only).
+	// `predict(model, newdata)`        at the rows of newdata (echoes columns).
+	// `predict(model, newdata, opts)`  opts: type / scale / bare / ci_level / re_form.
+	// Adds "Fit", "SE fit", "CI lower", "CI upper" columns; registers the
+	// result Dataset under the project's Data folder.
 
-	auto build_predict_options = [](Table &opts_tbl) -> stats::PredictOptions {
+	auto build_predict_options = [key](const Table &opts_tbl) -> stats::PredictOptions {
 		stats::PredictOptions opts;
-		auto &map = opts_tbl.data();
-		if (auto it = map.find(String("type")); it != map.end()) {
-			opts.type = cast<String>(it->second);
+		if (auto v = opts_tbl.get(key("type")); !v.is_null()) {
+			opts.type = v.to<String>();
 		}
-		if (auto it = map.find(String("scale")); it != map.end()) {
-			opts.scale = cast<String>(it->second);
+		if (auto v = opts_tbl.get(key("scale")); !v.is_null()) {
+			opts.scale = v.to<String>();
 		}
-		if (auto it = map.find(String("bare")); it != map.end()) {
-			opts.bare = cast<bool>(it->second);
+		if (auto v = opts_tbl.get(key("bare")); !v.is_null()) {
+			opts.bare = v.to<bool>();
 		}
-		if (auto it = map.find(String("ci_level")); it != map.end()) {
-			opts.ci_level = it->second.get_number();
+		if (auto v = opts_tbl.get(key("ci_level")); !v.is_null()) {
+			opts.ci_level = v.to<double>();
 		}
-		if (auto it = map.find(String("re_form")); it != map.end()) {
-			opts.re_form = cast<String>(it->second);
+		if (auto v = opts_tbl.get(key("re_form")); !v.is_null()) {
+			opts.re_form = v.to<String>();
 		}
 		return opts;
 	};
@@ -1885,176 +1631,123 @@ void DataTable::initialize(Runtime &rt)
 		return ds;
 	};
 
-	auto predict1 = [append_prediction_columns, register_result_dataset]
-	                (Runtime &, std::span<Variant> args) -> Variant
-	{
-		auto &model = cast<stats::Model>(args[0]);
-		stats::PredictOptions opts;
-		auto result = stats::predict_at_training(model, opts);
-		if (!result.ok) throw error("predict(): %", result.error);
+	rt.add_function("predict",
+	                [append_prediction_columns, register_result_dataset](Isolate &iso, const Model &model) -> Handle<Dataset> {
+		return guarded(iso, [&] {
+			stats::PredictOptions opts;
+			auto result = stats::predict_at_training(model, opts);
+			if (!result.ok) throw error("predict(): %", result.error);
 
-		auto ds = Dataset::create_empty(result.fit.size());
-		append_prediction_columns(*ds, result);
-		return register_result_dataset(std::move(ds), String("predict(model)"));
-	};
+			auto ds = Dataset::create_empty(result.fit.size());
+			append_prediction_columns(*ds, result);
+			return register_result_dataset(std::move(ds), String("predict(model)"));
+		});
+	});
+	rt.add_function("predict",
+	                [append_prediction_columns, register_result_dataset](Isolate &iso, const Model &model,
+	                                                                     Dataset &newdata) -> Handle<Dataset> {
+		return guarded(iso, [&] {
+			stats::PredictOptions opts;
+			auto result = stats::predict_at(model, newdata, opts);
+			if (!result.ok) throw error("predict(): %", result.error);
 
-	auto predict2 = [append_prediction_columns, register_result_dataset]
-	                (Runtime &, std::span<Variant> args) -> Variant
-	{
-		auto &model = cast<stats::Model>(args[0]);
-		auto &newdata = cast<Dataset>(args[1]);
-		stats::PredictOptions opts;
-		auto result = stats::predict_at(model, newdata, opts);
-		if (!result.ok) throw error("predict(): %", result.error);
-
-		// bare=false (default): clone newdata to echo all input columns,
-		// then append predictions. The copy constructor leaves m_loaded
-		// at the default false; mark_loaded() prevents .ncol / .nrow
-		// access from triggering a spurious load().
-		Handle<Dataset> ds;
-		if (opts.bare) {
-			ds = Dataset::create_empty(result.fit.size());
-		} else {
-			ds = Handle<Dataset>::make(newdata);
+			// bare=false (default): clone newdata to echo all input columns,
+			// then append predictions. The copy constructor leaves m_loaded
+			// at the default false; mark_loaded() prevents .ncol / .nrow
+			// access from triggering a spurious load().
+			auto ds = Handle<Dataset>::make(newdata);
 			ds->mark_loaded();
-		}
-		append_prediction_columns(*ds, result);
-		return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
-	};
+			append_prediction_columns(*ds, result);
+			return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
+		});
+	});
+	rt.add_function("predict",
+	                [build_predict_options, append_prediction_columns, register_result_dataset]
+	                (Isolate &iso, const Model &model, Dataset &newdata, const Table &opts_tbl) -> Handle<Dataset> {
+		return guarded(iso, [&] {
+			auto opts = build_predict_options(opts_tbl);
+			auto result = stats::predict_at(model, newdata, opts);
+			if (!result.ok) throw error("predict(): %", result.error);
 
-	auto predict3 = [build_predict_options, append_prediction_columns,
-	                 register_result_dataset]
-	                (Runtime &, std::span<Variant> args) -> Variant
-	{
-		auto &model = cast<stats::Model>(args[0]);
-		auto &newdata = cast<Dataset>(args[1]);
-		auto &opts_tbl = cast<Table>(args[2]);
-		auto opts = build_predict_options(opts_tbl);
-		auto result = stats::predict_at(model, newdata, opts);
-		if (!result.ok) throw error("predict(): %", result.error);
-
-		Handle<Dataset> ds;
-		if (opts.bare) {
-			ds = Dataset::create_empty(result.fit.size());
-		} else {
-			ds = Handle<Dataset>::make(newdata);
-			ds->mark_loaded();
-		}
-		append_prediction_columns(*ds, result);
-		return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
-	};
+			Handle<Dataset> ds;
+			if (opts.bare) {
+				ds = Dataset::create_empty(result.fit.size());
+			} else {
+				ds = Handle<Dataset>::make(newdata);
+				ds->mark_loaded();
+			}
+			append_prediction_columns(*ds, result);
+			return register_result_dataset(std::move(ds), String("predict(model, newdata)"));
+		});
+	});
 
 	// ── Cell and column access ──────────────────────────────────
 
-	auto get_cell = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto i = cast<intptr_t>(args[1]);
-		auto j = cast<intptr_t>(args[2]);
-		table.open();
-		i = dim_index_from_script(i, table.row_count());
-		j = dim_index_from_script(j, table.column_count());
-		return table.get_cell(i, j);
-	};
+	rt.add_function("get_cell", [](Isolate &iso, DataTable &table, intptr_t i, intptr_t j) -> String {
+		return guarded(iso, [&] {
+			table.open();
+			i = dim_index_from_script(i, table.row_count());
+			j = dim_index_from_script(j, table.column_count());
+			return table.get_cell(i, j);
+		});
+	});
+	rt.add_function("set_cell",
+	                [](Isolate &iso, DataTable &table, intptr_t i, intptr_t j, const String &value) {
+		guarded(iso, [&] {
+			table.open();
+			i = dim_index_from_script(i, table.row_count());
+			j = dim_index_from_script(j, table.column_count());
+			table.set_cell(i, j, value);
+			return 0;
+		});
+	});
+	rt.add_function("get_header", [](Isolate &iso, DataTable &table, intptr_t j) -> String {
+		return guarded(iso, [&] {
+			table.open();
+			j = dim_index_from_script(j, table.column_count());
+			return table.get_header(j);
+		});
+	});
 
-	auto set_cell_func = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto i = cast<intptr_t>(args[1]);
-		auto j = cast<intptr_t>(args[2]);
-		auto &value = cast<String>(args[3]);
-		table.open();
-		i = dim_index_from_script(i, table.row_count());
-		j = dim_index_from_script(j, table.column_count());
-		table.set_cell(i, j, value);
-		return Variant();
-	};
-
-	auto get_header = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto j = cast<intptr_t>(args[1]);
-		table.open();
-		j = dim_index_from_script(j, table.column_count());
-		return table.get_header(j);
-	};
-
-	auto get_column = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &ds = cast<Dataset>(args[0]);
-		auto j = cast<intptr_t>(args[1]);
-		ds.open();
-		j = dim_index_from_script(j, ds.column_count());
-		if (ds.is_numeric(j)) {
-			auto span = ds.numeric_column(j);
-			Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
-			for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++) {
-				result[i] = span[i];
-			}
-			return Handle<Array<double>>::make(std::move(result));
-		}
-		else {
-			// Text or boolean: return as List of strings.
-			Array<Variant> items;
-			for (intptr_t i = 0; i < ds.row_count(); i++) {
-				items.append(ds.get_cell(i, j));
-			}
-			return Handle<List>::make(&rt, std::move(items));
-		}
-	};
-
-	auto column_type_func = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &ds = cast<Dataset>(args[0]);
-		auto j = cast<intptr_t>(args[1]);
-		ds.open();
-		j = dim_index_from_script(j, ds.column_count());
-		auto ct = ds.column_type(j);
-		switch (ct) {
-			case Dataset::ColumnType::Numeric: return String("numeric");
-			case Dataset::ColumnType::Text:    return String("text");
-			case Dataset::ColumnType::Boolean: return String("boolean");
-		}
-		return String("unknown");
-	};
-
-	// ── get_column by name (DataTable, String) ──────────────────
-	//
-	// Resolves a column header to a column index, then returns:
-	//   • Array<double>  if the column is (or auto-detects as) numeric
-	//   • List<String>   otherwise
-	//
-	// For Dataset, numeric detection uses the typed column metadata
-	// (Dataset::is_numeric) so that columns flagged numeric at load
-	// time are always returned as Array<double> even when every cell
-	// happens to look like a number. For Concordance and any other
-	// DataTable subtype the cells are read via get_cell() and we try
-	// to parse every cell as a double; a single non-parseable,
-	// non-missing cell forces the List path.
-
-	auto get_column_by_name = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto &name  = cast<String>(args[1]);
-		table.open();
-		auto j = table.find_column(name);
-		if (j < 0)
-			throw error("[Index error] Table has no column named \"%\"", name);
-
-		// ── Dataset: use typed column metadata ───────────────
-		if (table.is<Dataset>()) {
-			auto &ds = static_cast<Dataset &>(table);
+	rt.add_function("get_column", [](Isolate &iso, Dataset &ds, intptr_t j) -> Variant {
+		return guarded(iso, [&]() -> Variant {
+			ds.open();
+			j = dim_index_from_script(j, ds.column_count());
 			if (ds.is_numeric(j)) {
 				auto span = ds.numeric_column(j);
-				Array<double> result(static_cast<intptr_t>(span.size()), 0.0);
-				for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++)
-					result[i] = span[i];
-				return Handle<Array<double>>::make(std::move(result));
-			} else {
-				Array<Variant> items;
-				for (intptr_t i = 0; i < ds.row_count(); i++)
-					items.append(ds.get_cell(i, j));
-				return Handle<List>::make(&rt, std::move(items));
+				NumArray result = NumArray::make_1d(static_cast<intptr_t>(span.size()));
+				double *d = result.detach();
+				for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++) {
+					d[i] = span[i];
+				}
+				return Variant::make(result);
 			}
-		}
+			// Text or boolean: return as List of strings.
+			List items;
+			for (intptr_t i = 0; i < ds.row_count(); i++) {
+				items.append(Variant::make(ds.get_cell(i, j)));
+			}
+			return Variant::make(items);
+		});
+	});
 
-		// ── Generic path: Concordance and future subtypes ────
-		// Auto-detect: if every cell is parseable or a recognised
-		// missing-value sentinel, return Array<double>; otherwise List.
+	rt.add_function("get_column_type", [](Isolate &iso, Dataset &ds, intptr_t j) -> String {
+		return guarded(iso, [&] {
+			ds.open();
+			j = dim_index_from_script(j, ds.column_count());
+			auto ct = ds.column_type(j);
+			switch (ct) {
+				case Dataset::ColumnType::Numeric: return String("numeric");
+				case Dataset::ColumnType::Text:    return String("text");
+				case Dataset::ColumnType::Boolean: return String("boolean");
+			}
+			return String("unknown");
+		});
+	});
+
+	// Auto-detecting column extraction shared by the by-name and Concordance
+	// paths: numeric if every cell parses (or is a missing-value sentinel).
+	auto generic_column = [](DataTable &table, intptr_t j) -> Variant {
 		auto nrow = table.row_count();
 		Array<double> nums(nrow, 0.0);
 		bool all_numeric = true;
@@ -2071,185 +1764,144 @@ void DataTable::initialize(Runtime &rt)
 			}
 		}
 		if (all_numeric)
-			return Handle<Array<double>>::make(std::move(nums));
-		Array<Variant> items;
+			return Variant::make(to_numarray(nums));
+		List items;
 		for (intptr_t i = 0; i < nrow; i++)
-			items.append(table.get_cell(i, j));
-		return Handle<List>::make(&rt, std::move(items));
+			items.append(Variant::make(table.get_cell(i, j)));
+		return Variant::make(items);
 	};
 
-	// ── get_column by index for Concordance ─────────────────────
-	//
-	// Same auto-numeric detection as the generic path above, but
-	// takes an integer index. This mirrors get_column(Dataset, int)
-	// for concordance columns, where the index space includes system
-	// columns (file, match, context, metadata) as well as any
-	// auxiliary measurement columns.
+	// get_column(table, name): typed metadata for Dataset, auto-detection for
+	// Concordance and any other DataTable subtype.
+	rt.add_function("get_column",
+	                [generic_column](Isolate &iso, DataTable &table, const String &name) -> Variant {
+		return guarded(iso, [&]() -> Variant {
+			table.open();
+			auto j = table.find_column(name);
+			if (j < 0)
+				throw error("[Index error] Table has no column named \"%\"", name);
 
-	auto get_column_conc = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &conc = cast<Concordance>(args[0]);
-		auto j = cast<intptr_t>(args[1]);
-		conc.open();
-		j = dim_index_from_script(j, conc.column_count());
-
-		auto nrow = conc.row_count();
-		Array<double> nums(nrow, 0.0);
-		bool all_numeric = true;
-		for (intptr_t i = 0; i < nrow && all_numeric; i++) {
-			auto cell = conc.get_cell(i, j);
-			auto sv   = std::string_view(cell.data(), (size_t)cell.size());
-			if (DataTable::is_missing_value_token(sv)) {
-				nums[i] = std::nan("");
-			} else {
-				bool ok;
-				double v = cell.to_float(&ok);
-				if (ok)  nums[i] = v;
-				else     all_numeric = false;
+			// Dataset: use typed column metadata.
+			if (table.is<Dataset>()) {
+				auto &ds = static_cast<Dataset &>(table);
+				if (ds.is_numeric(j)) {
+					auto span = ds.numeric_column(j);
+					NumArray result = NumArray::make_1d(static_cast<intptr_t>(span.size()));
+					double *d = result.detach();
+					for (intptr_t i = 0; i < static_cast<intptr_t>(span.size()); i++)
+						d[i] = span[i];
+					return Variant::make(result);
+				}
+				List items;
+				for (intptr_t i = 0; i < ds.row_count(); i++)
+					items.append(Variant::make(ds.get_cell(i, j)));
+				return Variant::make(items);
 			}
-		}
-		if (all_numeric)
-			return Handle<Array<double>>::make(std::move(nums));
-		Array<Variant> items;
-		for (intptr_t i = 0; i < nrow; i++)
-			items.append(conc.get_cell(i, j));
-		return Handle<List>::make(&rt, std::move(items));
-	};
 
-	// ── append(DataTable, List, String) ─────────────────────
+			// Generic path: Concordance and future subtypes.
+			return generic_column(table, j);
+		});
+	});
+
+	// get_column(concordance, index): the index space includes system columns
+	// (file, match, context, metadata) as well as auxiliary measurement columns.
+	rt.add_function("get_column", [generic_column](Isolate &iso, Concordance &conc, intptr_t j) -> Variant {
+		return guarded(iso, [&] {
+			conc.open();
+			j = dim_index_from_script(j, conc.column_count());
+			return generic_column(conc, j);
+		});
+	});
+
+	// ── add_column(table, values, name) ─────────────────────────
 	//
-	// Appends a new text column built from a scripting List. Each
-	// element is converted to a String via Variant::to_string(). The
-	// list must have exactly row_count() elements.
-	//
-	// For Dataset the column is appended after all existing columns.
-	// For Concordance it is appended as a new auxiliary text column
-	// (i.e. after all existing aux columns), which is the natural
-	// extension point that leaves the fixed system columns unchanged.
+	// The old engine registered these as `append` with a write-back ref mask;
+	// the new engine's per-generic ref-mask uniformity forbids that (gap G6a),
+	// so the column appenders are named add_column (the 4b decision).
 
-	auto add_column_list = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]); // no need to unshare because data tables are not clonable
-		auto &list  = cast<List>(args[1]);
-		auto &name  = cast<String>(args[2]);
-		table.open();
-		auto nrow = table.row_count();
-		if (list.size() != nrow)
-			throw error("add_column: list has % elements but table has % rows",
-			            list.size(), nrow);
+	rt.add_function("add_column",
+	                [](Isolate &iso, DataTable &table, const List &list, const String &name) {
+		guarded(iso, [&] {
+			table.open();
+			auto nrow = table.row_count();
+			if (list.size() != nrow)
+				throw error("add_column: list has % elements but table has % rows",
+				            list.size(), nrow);
 
-		// Copy List items into std::vector<String> for the application layer.
-		std::vector<String> values;
-		values.reserve((size_t)nrow);
-		for (intptr_t i = 0; i < nrow; i++)
-			values.push_back(list[i].to_string());
+			// Convert List items to String the way `print`/interpolation do.
+			std::vector<String> values;
+			values.reserve((size_t)nrow);
+			for (intptr_t i = 1; i <= nrow; i++)
+				values.push_back(stringify(list.get(i).value()));
 
-		if (table.is<Dataset>())
-			static_cast<Dataset &>(table).add_text_column(name, values);
-		else if (table.is<Concordance>())
-			static_cast<Concordance &>(table).add_text_column(name, values);
-		else
-			throw error("append: unsupported table type");
+			if (table.is<Dataset>())
+				static_cast<Dataset &>(table).add_text_column(name, values);
+			else if (table.is<Concordance>())
+				static_cast<Concordance &>(table).add_text_column(name, values);
+			else
+				throw error("add_column: unsupported table type");
 
-		Project::updated();
-		return Variant();
-	};
+			Project::updated();
+			return 0;
+		});
+	});
+	rt.add_function("add_column",
+	                [](Isolate &iso, DataTable &table, const NumArray &arr, const String &name) {
+		guarded(iso, [&] {
+			table.open();
+			auto nrow = table.row_count();
+			if (arr.size() != nrow)
+				throw error("add_column: array has % elements but table has % rows",
+				            arr.size(), nrow);
 
-	// ── append(DataTable, Array, String) ────────────────────
-	//
-	// Appends a new numeric column from a scripting Array<double>.
-	// The array must have exactly row_count() elements.
-	// NaN values are preserved and round-trip through the table's
-	// standard missing-value serialization ("nan").
+			NumArray flat = arr.contiguous();
+			const double *s = flat.data() + flat.offset();
+			std::vector<double> values(s, s + flat.size());
 
-	auto add_column_array = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]); // no need to unshare because data tables are not clonable
-		const auto &arr = cast<Array<double>>(args[1]);
-		auto &name  = cast<String>(args[2]);
-		table.open();
-		auto nrow = table.row_count();
-		if (arr.size() != nrow)
-			throw error("append: array has % elements but table has % rows",
-			            arr.size(), nrow);
+			if (table.is<Dataset>())
+				static_cast<Dataset &>(table).add_numeric_column(name, values);
+			else if (table.is<Concordance>())
+				static_cast<Concordance &>(table).add_numeric_column(name, values);
+			else
+				throw error("add_column: unsupported table type");
 
-		// Copy Array<double> into std::vector<double> for the application layer.
-		std::vector<double> values;
-		values.reserve((size_t)nrow);
-		for (intptr_t i = 0; i < nrow; i++)
-			values.push_back(arr[i]);
-
-		if (table.is<Dataset>())
-			static_cast<Dataset &>(table).add_numeric_column(name, values);
-		else if (table.is<Concordance>())
-			static_cast<Concordance &>(table).add_numeric_column(name, values);
-		else
-			throw error("append: unsupported table type");
-
-		Project::updated();
-		return Variant();
-	};
+			Project::updated();
+			return 0;
+		});
+	});
 
 	// ── CSV export ──────────────────────────────────────────────
 
-	auto to_csv2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto &path = cast<String>(args[1]);
-		table.open();
-		table.to_csv(path, ",");
-		return Variant();
-	};
-
-	auto to_csv3 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &table = cast<DataTable>(args[0]);
-		auto &path = cast<String>(args[1]);
-		auto &sep = cast<String>(args[2]);
-		table.open();
-		table.to_csv(path, sep);
-		return Variant();
-	};
+	rt.add_function("to_csv", [](Isolate &iso, DataTable &table, const String &path) {
+		guarded(iso, [&] {
+			table.open();
+			table.to_csv(path, ",");
+			return 0;
+		});
+	});
+	rt.add_function("to_csv", [](Isolate &iso, DataTable &table, const String &path, const String &sep) {
+		guarded(iso, [&] {
+			table.open();
+			table.to_csv(path, sep);
+			return 0;
+		});
+	});
 
 	// ── Estimated marginal means ────────────────────────────────
 
-	// Helper: format a p-value for display.
-	auto format_p = [](double p) -> std::string {
-		if (std::isnan(p)) return "NA";
-		if (p < 0.001)     return "< 0.001";
-		char buf[16];
-		snprintf(buf, sizeof(buf), "%.4f", p);
-		return buf;
-	};
-
-	auto emmeans2 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &factor = cast<String>(args[1]);
-		auto emm = stats::emmeans(model, factor);
-
-		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
-		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
+	auto print_emm_table = [&rt](const stats::EMMResult &emm, const char *value_header) {
+		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", value_header, "SE", "lower.CL", "upper.CL");
 		for (intptr_t i = 0; i < emm.levels.size(); i++) {
 			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
 			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
 			          emm.lower_ci[i], emm.upper_ci[i]);
 		}
 		rt.printf("\n");
-		return Variant();
 	};
-
-	auto emmeans3 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &factor = cast<String>(args[1]);
-		auto &adjustment = cast<String>(args[2]);
-		auto emm = stats::emmeans(model, factor);
-
-		rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
-		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "emmean", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 0; i < emm.levels.size(); i++) {
-			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
-			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
-			          emm.lower_ci[i], emm.upper_ci[i]);
-		}
-		rt.printf("\n");
-
+	auto print_contrasts = [&rt, format_p](const Model &model, const stats::EMMResult &emm,
+	                                       const String &adjustment, const char *what) {
 		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
-		rt.printf("Pairwise contrasts (p-value adjustment: %s):\n\n", adjustment.data());
+		rt.printf("Pairwise contrasts%s (p-value adjustment: %s):\n\n", what, adjustment.data());
 		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
 		for (intptr_t i = 0; i < contrasts.label.size(); i++) {
 			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
@@ -2257,375 +1909,353 @@ void DataTable::initialize(Runtime &rt)
 			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());
 		}
 		rt.printf("\n");
-		return Variant();
 	};
 
-	auto emtrends3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &factor = cast<String>(args[1]);
-		auto &var = cast<String>(args[2]);
-		auto emm = stats::emtrends(model, factor, var);
-
-		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
-		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 0; i < emm.levels.size(); i++) {
-			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
-			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
-			          emm.lower_ci[i], emm.upper_ci[i]);
-		}
-		rt.printf("\n");
-		return Variant();
-	};
-
-	auto emtrends4 = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto &factor = cast<String>(args[1]);
-		auto &var = cast<String>(args[2]);
-		auto &adjustment = cast<String>(args[3]);
-		auto emm = stats::emtrends(model, factor, var);
-
-		rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
-		rt.printf("%-16s %12s %10s %12s %12s\n", "Level", "trend", "SE", "lower.CL", "upper.CL");
-		for (intptr_t i = 0; i < emm.levels.size(); i++) {
-			rt.printf("%-16s %12.4f %10.4f %12.4f %12.4f\n",
-			          emm.levels[i].data(), emm.emmean[i], emm.se[i],
-			          emm.lower_ci[i], emm.upper_ci[i]);
-		}
-		rt.printf("\n");
-
-		auto contrasts = stats::pairwise_contrasts(emm, model, adjustment);
-		rt.printf("Pairwise contrasts of trends (p-value adjustment: %s):\n\n", adjustment.data());
-		rt.printf("%-24s %12s %10s %10s %12s\n", "Contrast", "estimate", "SE", "z/t", "p.value");
-		for (intptr_t i = 0; i < contrasts.label.size(); i++) {
-			rt.printf("%-24s %12.4f %10.4f %10.4f %12s\n",
-			          contrasts.label[i].data(), contrasts.estimate[i], contrasts.se[i],
-			          contrasts.stat[i], format_p(contrasts.p_value[i]).c_str());
-		}
-		rt.printf("\n");
-		return Variant();
-	};
+	rt.add_function("emmeans", [&rt, print_emm_table](Isolate &iso, const Model &model, const String &factor) {
+		guarded(iso, [&] {
+			auto emm = stats::emmeans(model, factor);
+			rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
+			print_emm_table(emm, "emmean");
+			return 0;
+		});
+	});
+	rt.add_function("emmeans",
+	                [&rt, print_emm_table, print_contrasts](Isolate &iso, const Model &model, const String &factor,
+	                                                        const String &adjustment) {
+		guarded(iso, [&] {
+			auto emm = stats::emmeans(model, factor);
+			rt.printf("\nEstimated marginal means for '%s':\n\n", factor.data());
+			print_emm_table(emm, "emmean");
+			print_contrasts(model, emm, adjustment, "");
+			return 0;
+		});
+	});
+	rt.add_function("emtrends",
+	                [&rt, print_emm_table](Isolate &iso, const Model &model, const String &factor, const String &var) {
+		guarded(iso, [&] {
+			auto emm = stats::emtrends(model, factor, var);
+			rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
+			print_emm_table(emm, "trend");
+			return 0;
+		});
+	});
+	rt.add_function("emtrends",
+	                [&rt, print_emm_table, print_contrasts](Isolate &iso, const Model &model, const String &factor,
+	                                                        const String &var, const String &adjustment) {
+		guarded(iso, [&] {
+			auto emm = stats::emtrends(model, factor, var);
+			rt.printf("\nEstimated trends for '%s' by '%s':\n\n", var.data(), factor.data());
+			print_emm_table(emm, "trend");
+			print_contrasts(model, emm, adjustment, " of trends");
+			return 0;
+		});
+	});
 
 	// ── DHARMa-style diagnostics ────────────────────────────────
 
-	auto dharma_func = [format_p](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &model = cast<stats::Model>(args[0]);
-		auto result = stats::compute_scaled_residuals(model);
+	rt.add_function("dharma", [&rt, format_p](Isolate &iso, const Model &model) {
+		guarded(iso, [&] {
+			auto result = stats::compute_scaled_residuals(model);
 
-		rt.printf("\nDHARMa-style simulation-based residual diagnostics\n");
-		rt.printf("==================================================\n\n");
-		rt.printf("Uniformity test (KS test against U(0,1)):\n");
-		rt.printf("  statistic = %.4f,  p-value = %s\n\n",
-		          result.ks_statistic, format_p(result.ks_pvalue).c_str());
-		rt.printf("Dispersion test:\n");
-		rt.printf("  ratio = %.4f,  p-value = %s\n\n",
-		          result.dispersion_ratio, format_p(result.dispersion_pvalue).c_str());
-		rt.printf("Outlier test:\n");
-		rt.printf("  n = %d,  p-value = %s\n\n",
-		          result.n_outliers, format_p(result.outlier_pvalue).c_str());
-		return Variant();
-	};
+			rt.printf("\nDHARMa-style simulation-based residual diagnostics\n");
+			rt.printf("==================================================\n\n");
+			rt.printf("Uniformity test (KS test against U(0,1)):\n");
+			rt.printf("  statistic = %.4f,  p-value = %s\n\n",
+			          result.ks_statistic, format_p(result.ks_pvalue).c_str());
+			rt.printf("Dispersion test:\n");
+			rt.printf("  ratio = %.4f,  p-value = %s\n\n",
+			          result.dispersion_ratio, format_p(result.dispersion_pvalue).c_str());
+			rt.printf("Outlier test:\n");
+			rt.printf("  n = %d,  p-value = %s\n\n",
+			          result.n_outliers, format_p(result.outlier_pvalue).c_str());
+			return 0;
+		});
+	});
 
 	// ── Array statistics ────────────────────────────────────────
 
-	auto array_mean1 = [](Runtime &, std::span<Variant> args) -> Variant {
-		return stats::mean(cast<Array<double>>(args[0]));
-	};
-
-	auto array_mean2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto dim = (int) cast<intptr_t>(args[1]);
-		return Handle<Array<double>>::make(stats::mean(cast<Array<double>>(args[0]), dim));
-	};
-
-	auto array_std1 = [](Runtime &, std::span<Variant> args) -> Variant {
-		return stats::stdev(cast<Array<double>>(args[0]));
-	};
-
-	auto array_std2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto dim = (int) cast<intptr_t>(args[1]);
-		return Handle<Array<double>>::make(stats::stdev(cast<Array<double>>(args[0]), dim));
-	};
-
-	auto array_sum1 = [](Runtime &, std::span<Variant> args) -> Variant {
-		return stats::sum(cast<Array<double>>(args[0]));
-	};
-
-	auto array_sum2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto dim = cast<intptr_t>(args[1]);
-		return Handle<Array<double>>::make(stats::sum(cast<Array<double>>(args[0]), dim));
-	};
-
-	auto array_vrc = [](Runtime &, std::span<Variant> args) -> Variant {
-		return stats::sample_variance(cast<Array<double>>(args[0]));
-	};
+	rt.add_function("mean", [](const NumArray &a) -> double {
+		return stats::mean(to_array_double(a));
+	});
+	rt.add_function("mean", [](const NumArray &a, intptr_t dim) -> NumArray {
+		return to_numarray(stats::mean(to_array_double(a), (int) dim));
+	});
+	rt.add_function("std", [](const NumArray &a) -> double {
+		return stats::stdev(to_array_double(a));
+	});
+	rt.add_function("std", [](const NumArray &a, intptr_t dim) -> NumArray {
+		return to_numarray(stats::stdev(to_array_double(a), (int) dim));
+	});
+	rt.add_function("sum", [](const NumArray &a) -> double {
+		return stats::sum(to_array_double(a));
+	});
+	rt.add_function("sum", [](const NumArray &a, intptr_t dim) -> NumArray {
+		return to_numarray(stats::sum(to_array_double(a), (int) dim));
+	});
+	rt.add_function("vrc", [](const NumArray &a) -> double {
+		return stats::sample_variance(to_array_double(a));
+	});
 
 	// ── Prior construction and configuration ────────────────────
+	//
+	// Prior() was an add_constructor on the old engine; new-engine classes are
+	// not script-constructible, so the same call syntax is a factory generic
+	// (class "PriorSpec" + factory "Prior", gap G6b).
 
-	auto prior_init = [](Runtime &, std::span<Variant>) -> Variant {
+	rt.add_function("Prior", []() -> Handle<stats::PriorSpec> {
 		return Handle<stats::PriorSpec>::make(stats::PriorSpec::default_spec());
-	};
+	});
 
-	// set_fixed(prior, mean, sd) — default prior for all fixed effects
-	auto set_fixed3 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		prior.fixed_effects.mean = args[1].to_float();
-		prior.fixed_effects.sd = args[2].to_float();
+	rt.add_function("set_fixed", [](stats::PriorSpec &prior, double mean, double sd) {
+		prior.fixed_effects.mean = mean;
+		prior.fixed_effects.sd = sd;
 		prior.fixed_auto = false;
-		return Variant();
-	};
-
-	// set_fixed(prior, name, mean, sd) — per-coefficient override
-	auto set_fixed4 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		auto &name = cast<String>(args[1]);
+	});
+	rt.add_function("set_fixed",
+	                [](stats::PriorSpec &prior, const String &name, double mean, double sd) {
 		stats::NormalPrior np;
-		np.mean = args[2].to_float();
-		np.sd = args[3].to_float();
-#if defined(PHON_INLA_BAYES_DIAG)
-		std::fprintf(stderr,
-			"[PHON_INLA_BAYES_DIAG/set_fixed4] name=\"%.*s\"  "
-			"np = {mean=%.4f, sd=%.4f}  "
-			"(raw args[2].to_float()=%.4f, args[3].to_float()=%.4f)\n",
-			(int) name.size(), name.data(),
-			np.mean, np.sd,
-			args[2].to_float(), args[3].to_float());
-#endif
+		np.mean = mean;
+		np.sd = sd;
 		prior.coefficient_priors[name] = np;
-#if defined(PHON_INLA_BAYES_DIAG)
-		{
-			auto it = prior.coefficient_priors.find(name);
-			if (it != prior.coefficient_priors.end())
-			{
-				const auto &stored = it->second;
-				std::fprintf(stderr,
-					"[PHON_INLA_BAYES_DIAG/set_fixed4] after insert: "
-					"coefficient_priors[\"%.*s\"] = {mean=%.4f, sd=%.4f}  "
-					"&entry=%p%s\n",
-					(int) name.size(), name.data(),
-					stored.mean, stored.sd,
-					(const void *) &stored,
-					(stored.sd > 0 && std::isfinite(stored.sd))
-						? "" : "  [INVALID SD]");
-			}
-		}
-#endif
-		return Variant();
-	};
+	});
 
-	// Helper to parse a variance prior type string.
-	auto parse_variance_type = [](const String &s) -> stats::VariancePriorType {
+	auto parse_variance_type = [](Isolate &iso, const String &s) -> stats::VariancePriorType {
 		if (s == "pc") return stats::VariancePriorType::PC;
 		if (s == "half_cauchy") return stats::VariancePriorType::HalfCauchy;
 		if (s == "half_normal") return stats::VariancePriorType::HalfNormal;
-		throw error("Unknown variance prior type: \"%\". Expected \"pc\", \"half_cauchy\", or \"half_normal\"", s);
+		iso.raise(String::format("Unknown variance prior type: \"%s\". Expected \"pc\", "
+		                         "\"half_cauchy\", or \"half_normal\"", s.data()), 0);
 	};
 
-	// set_variance(prior, type, param1, param2) — variance components prior
-	auto set_variance4 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		auto &type_str = cast<String>(args[1]);
-		prior.variance_components.type = parse_variance_type(type_str);
-		prior.variance_components.param1 = args[2].to_float();
-		prior.variance_components.param2 = args[3].to_float();
+	rt.add_function("set_variance",
+	                [parse_variance_type](Isolate &iso, stats::PriorSpec &prior, const String &type, double param1) {
+		prior.variance_components.type = parse_variance_type(iso, type);
+		prior.variance_components.param1 = param1;
 		prior.variance_auto = false;
-		return Variant();
-	};
-
-	// set_variance(prior, type, param1) — for HalfCauchy/HalfNormal (single param)
-	auto set_variance3 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		auto &type_str = cast<String>(args[1]);
-		prior.variance_components.type = parse_variance_type(type_str);
-		prior.variance_components.param1 = args[2].to_float();
+	});
+	rt.add_function("set_variance",
+	                [parse_variance_type](Isolate &iso, stats::PriorSpec &prior, const String &type,
+	                                      double param1, double param2) {
+		prior.variance_components.type = parse_variance_type(iso, type);
+		prior.variance_components.param1 = param1;
+		prior.variance_components.param2 = param2;
 		prior.variance_auto = false;
-		return Variant();
-	};
-
-	// set_residual(prior, type, param1, param2)
-	auto set_residual4 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		auto &type_str = cast<String>(args[1]);
-		prior.residual.type = parse_variance_type(type_str);
-		prior.residual.param1 = args[2].to_float();
-		prior.residual.param2 = args[3].to_float();
+	});
+	rt.add_function("set_residual",
+	                [parse_variance_type](Isolate &iso, stats::PriorSpec &prior, const String &type, double param1) {
+		prior.residual.type = parse_variance_type(iso, type);
+		prior.residual.param1 = param1;
 		prior.residual_auto = false;
-		return Variant();
-	};
-
-	// set_residual(prior, type, param1)
-	auto set_residual3 = [&parse_variance_type](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		auto &type_str = cast<String>(args[1]);
-		prior.residual.type = parse_variance_type(type_str);
-		prior.residual.param1 = args[2].to_float();
+	});
+	rt.add_function("set_residual",
+	                [parse_variance_type](Isolate &iso, stats::PriorSpec &prior, const String &type,
+	                                      double param1, double param2) {
+		prior.residual.type = parse_variance_type(iso, type);
+		prior.residual.param1 = param1;
+		prior.residual.param2 = param2;
 		prior.residual_auto = false;
-		return Variant();
-	};
-
-	// set_negbin_theta(prior, shape, rate)
-	auto set_negbin_theta = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		prior.negbin_theta.shape = args[1].to_float();
-		prior.negbin_theta.rate = args[2].to_float();
-		return Variant();
-	};
-
-	// set_beta_phi(prior, shape, rate)
-	auto set_beta_phi = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		prior.beta_phi.shape = args[1].to_float();
-		prior.beta_phi.rate = args[2].to_float();
-		return Variant();
-	};
-
-	// set_lkj(prior, eta) — LKJ prior on random-effect correlation matrix.
-	// Density: p(R | η) ∝ |R|^(η − 1). η = 1 is uniform over correlation
-	// matrices (the default — equivalent to no correlation prior); η > 1
-	// concentrates toward the identity (independent random terms); η < 1
-	// pushes toward strongly correlated random terms. η = 2 gives a mildly
-	// regularising prior, as used in e.g. Vasishth et al. 2018.
-	auto set_lkj = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &prior = cast<stats::PriorSpec>(args[0]);
-		double eta = args[1].to_float();
+	});
+	rt.add_function("set_negbin_theta", [](stats::PriorSpec &prior, double shape, double rate) {
+		prior.negbin_theta.shape = shape;
+		prior.negbin_theta.rate = rate;
+	});
+	rt.add_function("set_beta_phi", [](stats::PriorSpec &prior, double shape, double rate) {
+		prior.beta_phi.shape = shape;
+		prior.beta_phi.rate = rate;
+	});
+	// LKJ prior on the random-effect correlation matrix. Density:
+	// p(R | η) ∝ |R|^(η − 1). η = 1 is uniform over correlation matrices;
+	// η > 1 concentrates toward the identity; η < 1 pushes toward strongly
+	// correlated random terms. η = 2 gives a mildly regularising prior.
+	rt.add_function("set_lkj", [](Isolate &iso, stats::PriorSpec &prior, double eta) {
 		if (!(eta > 0.0)) {
-			throw error("set_lkj: eta must be strictly positive (got %)", eta);
+			iso.raise(String::format("set_lkj: eta must be strictly positive (got %g)", eta), 0);
 		}
 		prior.lkj_eta = eta;
-		return Variant();
-	};
+	});
 
-	// Bayesian fit: fit(formula, data, prior) — Gaussian
-	auto fit_bayes2 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		auto &priors = cast<stats::PriorSpec>(args[2]);
-#if defined(PHON_INLA_BAYES_DIAG)
-		std::fprintf(stderr,
-			"[PHON_INLA_BAYES_DIAG/fit_bayes2] entry — priors state:\n"
-			"  &priors=%p  fixed_effects={mean=%.4f, sd=%.4f}"
-			"  fixed_auto=%s\n",
-			(const void *) &priors,
-			priors.fixed_effects.mean, priors.fixed_effects.sd,
-			priors.fixed_auto ? "true" : "false");
-		std::fprintf(stderr,
-			"  coefficient_priors (%zu entries):\n",
-			priors.coefficient_priors.size());
-		for (const auto &[pname, np] : priors.coefficient_priors)
+	// ── Model fields (the old model_get_field dispatcher, ~60 keys) ─────
+
+	auto string_list = [](const Array<String> &a) { return make_list(a); };
+
+	rt.add_field<Model>("formula", [](const Model &m) { return m.formula; });
+	rt.add_field<Model>("family", [](const Model &m) { return m.family; });
+	rt.add_field<Model>("link", [](const Model &m) { return m.link; });
+	rt.add_field<Model>("nobs", [](const Model &m) { return m.nobs; });
+	rt.add_field<Model>("aic", [](const Model &m) { return m.aic; });
+	rt.add_field<Model>("bic", [](const Model &m) { return m.bic; });
+	rt.add_field<Model>("loglik", [](const Model &m) { return m.loglik; });
+	rt.add_field<Model>("deviance", [](const Model &m) { return m.deviance; });
+	rt.add_field<Model>("r2", [](const Model &m) { return m.r2; });
+	rt.add_field<Model>("adj_r2", [](const Model &m) { return m.adj_r2; });
+	rt.add_field<Model>("r2_marginal", [](const Model &m) { return m.r2_marginal; });
+	rt.add_field<Model>("r2_conditional", [](const Model &m) { return m.r2_conditional; });
+	rt.add_field<Model>("rse", [](const Model &m) { return m.rse; });
+	rt.add_field<Model>("df", [](const Model &m) { return m.df_residual; });
+	rt.add_field<Model>("theta", [](const Model &m) { return m.theta; });
+	rt.add_field<Model>("phi", [](const Model &m) { return m.phi; });
+	rt.add_field<Model>("sigma", [](const Model &m) { return m.sigma; });
+	rt.add_field<Model>("nu", [](const Model &m) { return m.nu; });
+	rt.add_field<Model>("converged", [](const Model &m) { return m.converged; });
+	rt.add_field<Model>("niter", [](const Model &m) { return intptr_t(m.niter); });
+	rt.add_field<Model>("optimizer", [](const Model &m) { return m.optimizer; });
+	rt.add_field<Model>("well_identified", [](const Model &m) { return m.well_identified; });
+	rt.add_field<Model>("warning", [](const Model &m) { return m.fit_warning; });
+	rt.add_field<Model>("prior_warning", [](const Model &m) { return m.prior_warning; });
+	rt.add_field<Model>("fitted", [](const Model &m) { return to_numarray(m.fitted); });
+	rt.add_field<Model>("residuals", [](const Model &m) { return to_numarray(m.residuals); });
+	rt.add_field<Model>("estimation",
+	                    [](const Model &m) { return String(stats::estimation_name(m.estimation)); });
+	// Surface the ML/REML choice for frequentist Gaussian LMMs. For Bayesian
+	// fits this returns "ML" (the engine uses ML internally), and the user
+	// should rely on `estimation` to distinguish Bayesian from frequentist.
+	rt.add_field<Model>("fit_method", [](const Model &m) {
+		return String(m.method == stats::Method::REML ? "REML" : "ML");
+	});
+	rt.add_field<Model>("log_marginal", [](const Model &m) { return m.log_marginal; });
+	rt.add_field<Model>("waic", [](const Model &m) { return m.waic; });
+	rt.add_field<Model>("p_waic", [](const Model &m) { return m.p_waic; });
+	rt.add_field<Model>("lppd", [](const Model &m) { return m.lppd; });
+	rt.add_field<Model>("se_waic", [](const Model &m) { return m.se_waic; });
+	rt.add_field<Model>("loo_ic", [](const Model &m) { return m.loo_ic; });
+	rt.add_field<Model>("p_loo", [](const Model &m) { return m.p_loo; });
+	rt.add_field<Model>("se_loo", [](const Model &m) { return m.se_loo; });
+	rt.add_field<Model>("pareto_k", [](const Model &m) { return to_numarray(m.pareto_k); });
+	rt.add_field<Model>("posterior_mean", [](const Model &m) { return to_numarray(m.posterior_mean); });
+	rt.add_field<Model>("posterior_mode", [](const Model &m) { return to_numarray(m.posterior_mode); });
+	rt.add_field<Model>("posterior_median", [](const Model &m) { return to_numarray(m.posterior_median); });
+	rt.add_field<Model>("posterior_sd", [](const Model &m) { return to_numarray(m.posterior_sd); });
+	rt.add_field<Model>("ci_lower", [](const Model &m) { return to_numarray(m.ci_lower); });
+	rt.add_field<Model>("ci_upper", [](const Model &m) { return to_numarray(m.ci_upper); });
+	rt.add_field<Model>("pd", [](const Model &m) { return to_numarray(m.pd); });
+	// Fixed-effect inference (frequentist).
+	rt.add_field<Model>("se", [](const Model &m) { return to_numarray(m.se); });
+	rt.add_field<Model>("stat", [](const Model &m) { return to_numarray(m.stat); });
+	rt.add_field<Model>("p", [](const Model &m) { return to_numarray(m.p); });
+	// Names: coefficients and (Bayesian) hyperparameters.
+	rt.add_field<Model>("coef_names", [string_list](const Model &m) { return string_list(m.coef_names); });
+	rt.add_field<Model>("hyper_names", [string_list](const Model &m) { return string_list(m.hyper_names); });
+	// Hyperparameter posteriors (Bayesian mixed/Gaussian only).
+	rt.add_field<Model>("hyper_posterior_mean", [](const Model &m) { return to_numarray(m.hyper_posterior_mean); });
+	rt.add_field<Model>("hyper_posterior_sd", [](const Model &m) { return to_numarray(m.hyper_posterior_sd); });
+	rt.add_field<Model>("hyper_ci_lower", [](const Model &m) { return to_numarray(m.hyper_ci_lower); });
+	rt.add_field<Model>("hyper_ci_upper", [](const Model &m) { return to_numarray(m.hyper_ci_upper); });
+
+	// Random-effects summary (frequentist mixed models): flat "sd(term|group)"
+	// layout parallel to hyper_*, plus a final "sd(residual)" for Gaussian.
+	rt.add_field<Model>("ranef_names", [](const Model &m) {
+		List items;
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
 		{
-			std::fprintf(stderr,
-				"    \"%.*s\"  {mean=%.4f, sd=%.4f}  &entry=%p%s\n",
-				(int) pname.size(), pname.data(),
-				np.mean, np.sd,
-				(const void *) &np,
-				(np.sd > 0 && std::isfinite(np.sd))
-					? "" : "  [INVALID SD]");
+			auto &re = m.random_effects[g];
+			for (intptr_t t = 0; t < re.term_names.size(); t++)
+			{
+				std::string name = "sd("
+					+ std::string(re.term_names[t].data(), (size_t) re.term_names[t].size())
+					+ "|"
+					+ std::string(re.group_name.data(), (size_t) re.group_name.size())
+					+ ")";
+				items.append(Variant::make(String(name.data(), (intptr_t) name.size())));
+			}
 		}
-#endif
-		data.open();
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), "gaussian", priors);
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+		if (m.is_gaussian() && m.has_random_effects())
+			items.append(Variant::make(String("sd(residual)")));
+		return items;
+	});
+	rt.add_field<Model>("ranef_sd", [](const Model &m) {
+		Array<double> sds;
+		for (intptr_t g = 0; g < m.random_effects.size(); g++)
+		{
+			auto &re = m.random_effects[g];
+			for (intptr_t t = 0; t < re.term_names.size(); t++)
+			{
+				double var = (t < re.variance.size()) ? re.variance[t] : 0.0;
+				sds.append(std::sqrt(std::max(var, 0.0)));
+			}
 		}
-		return Handle<stats::Model>::make(std::move(model));
-	};
+		if (m.is_gaussian() && m.has_random_effects())
+			sds.append(m.rse);
+		return to_numarray(sds);
+	});
 
-	// Bayesian fit: fit(formula, data, family, prior)
-	auto fit_bayes3 = [](Runtime &rt, std::span<Variant> args) -> Variant {
-		auto &formula_str = cast<String>(args[0]);
-		auto &data = cast<DataTable>(args[1]);
-		auto &family_str = cast<String>(args[2]);
-		auto &priors = cast<stats::PriorSpec>(args[3]);
-		data.open();
-		auto model = stats::fit(data, stats::Formula::parse(formula_str), family_str, priors);
-		model.compute_pseudo_r2();
-		if (model.smooth_terms.size() > 0) {
-			rt.printf("Note: GAM support (s() smooth terms) is experimental in this release.\n");
+	// Smooth terms (GAM only): parallel arrays, one entry per s() term in
+	// formula order (by-factor smooths in by-level order, matching the summary).
+	rt.add_field<Model>("smooth_names", [](const Model &m) {
+		List items;
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+		{
+			auto &sm = m.smooth_terms[i];
+			String label("s(");
+			label.append(sm.variable);
+			if (!sm.by.empty()) { label.append(Substring("):")); label.append(sm.by); }
+			else                  label.append(Substring(")"));
+			items.append(Variant::make(label));
 		}
-		return Handle<stats::Model>::make(std::move(model));
-	};
+		return items;
+	});
+	rt.add_field<Model>("smooth_edf", [](const Model &m) {
+		Array<double> edfs;
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+			edfs.append(m.smooth_terms[i].edf);
+		return to_numarray(edfs);
+	});
+	rt.add_field<Model>("smooth_F", [](const Model &m) {
+		Array<double> Fs;
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+			Fs.append(m.smooth_terms[i].F_stat);
+		return to_numarray(Fs);
+	});
+	rt.add_field<Model>("smooth_p", [](const Model &m) {
+		Array<double> ps;
+		for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+			ps.append(m.smooth_terms[i].p_value);
+		return to_numarray(ps);
+	});
+	// The per-penalty-block log10(λ) selected by the GCV inner loop; empty for
+	// non-GAM models.
+	rt.add_field<Model>("smooth_log_lambda", [](const Model &m) {
+		Array<double> lls;
+		for (intptr_t i = 0; i < m.smooth_log_lambda.size(); i++)
+			lls.append(m.smooth_log_lambda[i]);
+		return to_numarray(lls);
+	});
+	rt.add_field<Model>("n_smooth", [](const Model &m) { return m.smooth_terms.size(); });
 
-#define CLS(T) phonometrica::get_class<T>()
-#define REF(bits) ParamBitset(bits)
-	rt.add_global("fit", fit2, { CLS(String), CLS(DataTable) });
-	rt.add_global("fit", fit3, { CLS(String), CLS(DataTable), CLS(String) });
-	rt.add_global("fit", fit_opts2, { CLS(String), CLS(DataTable), CLS(Table) });
-	rt.add_global("fit", fit_opts3, { CLS(String), CLS(DataTable), CLS(String), CLS(Table) });
-	rt.add_global("fit", fit_bayes2, { CLS(String), CLS(DataTable), CLS(stats::PriorSpec) });
-	rt.add_global("fit", fit_bayes3, { CLS(String), CLS(DataTable), CLS(String), CLS(stats::PriorSpec) });
-	rt.add_global("filter", filter2, { CLS(DataTable), CLS(String) });
-	rt.add_global("filter", filter3, { CLS(DataTable), CLS(String), CLS(String) });
+	// ── Dataset / Concordance fields ────────────────────────────
 
-	rt.add_global("summarize", summarize_model, { CLS(stats::Model) });
-	rt.add_global("get_coef", coef_model, { CLS(stats::Model) });
-	rt.add_global("compare", compare_models, { CLS(stats::Model), CLS(stats::Model) });
-	rt.add_global("evaluate", evaluate1, { CLS(stats::Model) });
-	rt.add_global("evaluate", evaluate2, { CLS(stats::Model), CLS(Table) });
-	rt.add_global("polish", polish_model, { CLS(stats::Model) });
-	rt.add_global("try_phase2", try_phase2, { CLS(stats::Model) });
+	rt.add_field<Dataset>("path", [](const Dataset &ds) { return ds.path(); });
+	rt.add_field<Dataset>("label", [](const Dataset &ds) { return ds.label(); });
+	rt.add_field<Dataset>("description", [](const Dataset &ds) { return ds.description(); });
+	rt.add_field<Dataset>("nrow", [](Dataset &ds) { ds.open(); return ds.row_count(); });
+	rt.add_field<Dataset>("length", [](Dataset &ds) { ds.open(); return ds.row_count(); });
+	rt.add_field<Dataset>("ncol", [](Dataset &ds) { ds.open(); return ds.column_count(); });
+	rt.add_field<Dataset>("empty", [](Dataset &ds) { ds.open(); return ds.empty(); });
+	rt.add_field<Dataset>("headers", [](Dataset &ds) {
+		ds.open();
+		List out;
+		for (intptr_t j = 0; j < ds.column_count(); j++)
+			out.append(Variant::make(ds.get_header(j)));
+		return out;
+	});
 
-	rt.add_global("predict", predict1, { CLS(stats::Model) });
-	rt.add_global("predict", predict2, { CLS(stats::Model), CLS(Dataset) });
-	rt.add_global("predict", predict3, { CLS(stats::Model), CLS(Dataset), CLS(Table) });
-
-	// Cell / column access
-	rt.add_global("get_cell", get_cell, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t) });
-	rt.add_global("set_cell", set_cell_func, { CLS(DataTable), CLS(intptr_t), CLS(intptr_t), CLS(String) });
-	rt.add_global("get_header", get_header, { CLS(DataTable), CLS(intptr_t) });
-	rt.add_global("get_column", get_column,          { CLS(Dataset), CLS(intptr_t) });
-	rt.add_global("get_column", get_column_by_name,  { CLS(DataTable), CLS(String) });
-	rt.add_global("get_column", get_column_conc,     { CLS(Concordance), CLS(intptr_t) });
-	rt.add_global("get_column_type", column_type_func, { CLS(Dataset), CLS(intptr_t) });
-	rt.add_global("append", add_column_list,  { CLS(DataTable), CLS(List), CLS(String) }, REF("01"));
-	rt.add_global("append", add_column_array, { CLS(DataTable), CLS(Array<double>), CLS(String) }, REF("01"));
-
-	// CSV export
-	rt.add_global("to_csv", to_csv2, { CLS(DataTable), CLS(String) });
-	rt.add_global("to_csv", to_csv3, { CLS(DataTable), CLS(String), CLS(String) });
-
-	// EMMs and contrasts
-	rt.add_global("emmeans", emmeans2, { CLS(stats::Model), CLS(String) });
-	rt.add_global("emmeans", emmeans3, { CLS(stats::Model), CLS(String), CLS(String) });
-	rt.add_global("emtrends", emtrends3, { CLS(stats::Model), CLS(String), CLS(String) });
-	rt.add_global("emtrends", emtrends4, { CLS(stats::Model), CLS(String), CLS(String), CLS(String) });
-
-	// Array statistics
-	rt.add_global("mean", array_mean1, { CLS(Array<double>) });
-	rt.add_global("mean", array_mean2, { CLS(Array<double>), CLS(intptr_t) });
-	rt.add_global("std", array_std1, { CLS(Array<double>) });
-	rt.add_global("std", array_std2, { CLS(Array<double>), CLS(intptr_t) });
-	rt.add_global("sum", array_sum1, { CLS(Array<double>) });
-	rt.add_global("sum", array_sum2, { CLS(Array<double>), CLS(intptr_t) });
-	rt.add_global("vrc", array_vrc, { CLS(Array<double>) });
-
-	// Diagnostics
-	rt.add_global("dharma", dharma_func, { CLS(stats::Model) });
-
-	// Prior construction and configuration
-	auto prior_cls = CLS(stats::PriorSpec);
-	prior_cls->add_constructor(prior_init, {});
-
-	rt.add_global("set_fixed", set_fixed3, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
-	rt.add_global("set_fixed", set_fixed4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
-	rt.add_global("set_variance", set_variance3, { CLS(stats::PriorSpec), CLS(String), CLS(Number) });
-	rt.add_global("set_variance", set_variance4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
-	rt.add_global("set_residual", set_residual3, { CLS(stats::PriorSpec), CLS(String), CLS(Number) });
-	rt.add_global("set_residual", set_residual4, { CLS(stats::PriorSpec), CLS(String), CLS(Number), CLS(Number) });
-	rt.add_global("set_negbin_theta", set_negbin_theta, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
-	rt.add_global("set_beta_phi", set_beta_phi, { CLS(stats::PriorSpec), CLS(Number), CLS(Number) });
-	rt.add_global("set_lkj", set_lkj, { CLS(stats::PriorSpec), CLS(Number) });
-
-	auto model_cls = CLS(stats::Model);
-	model_cls->add_method(rt.get_field_string, model_get_field, { CLS(stats::Model), CLS(String) });
-
-	auto dataset_cls = CLS(Dataset);
-	dataset_cls->add_method(rt.get_field_string, dataset_get_field, { CLS(Dataset), CLS(String) });
-
-	auto conc_cls = CLS(Concordance);
-	conc_cls->add_method(rt.get_field_string, conc_get_field, { CLS(Concordance), CLS(String) });
-
-#undef CLS
-#undef REF
-#endif // PHON_TODO_A3
+	rt.add_field<Concordance>("path", [](const Concordance &conc) { return conc.path(); });
+	rt.add_field<Concordance>("label", [](const Concordance &conc) { return conc.label(); });
+	rt.add_field<Concordance>("description", [](const Concordance &conc) { return conc.description(); });
+	rt.add_field<Concordance>("nrow", [](Concordance &conc) { conc.open(); return conc.row_count(); });
+	rt.add_field<Concordance>("length", [](Concordance &conc) { conc.open(); return conc.row_count(); });
+	rt.add_field<Concordance>("ncol", [](Concordance &conc) { conc.open(); return conc.column_count(); });
+	rt.add_field<Concordance>("empty", [](Concordance &conc) { conc.open(); return conc.empty(); });
+	rt.add_field<Concordance>("headers", [](Concordance &conc) {
+		conc.open();
+		List out;
+		for (intptr_t j = 0; j < conc.column_count(); j++)
+			out.append(Variant::make(conc.get_header(j)));
+		return out;
+	});
+	rt.add_field<Concordance>("target_count", [](Concordance &conc) {
+		conc.open();
+		return intptr_t(conc.target_count());
+	});
 }
 
 } // namespace phonometrica

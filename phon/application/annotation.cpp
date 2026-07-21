@@ -24,6 +24,7 @@
 #include <phon/application/constants.hpp>
 #include <phon/runtime.hpp>
 
+#include <phon/application/bindings.hpp>
 #include <phon/index_conversion.hpp>
 #include <phon/application/project.hpp>
 #include <phon/utils/file_system.hpp>
@@ -156,315 +157,168 @@ void Annotation::set_path(String path, bool mutate)
 
 void Annotation::initialize(Runtime &rt)
 {
-	(void) rt;
-#ifdef PHON_TODO_A3 // old-engine natives; ported to the new engine at roadmap A3
-	auto annot_get_field = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &key = cast<String>(args[1]);
+	using namespace bindings;
 
-		if (key == "path") {
-			return annot.path();
-		}
+	// ── Fields (old annot_get_field dispatcher) ─────────────────
+
+	rt.add_field<Annotation>("path", [](const Annotation &annot) -> String {
+		return annot.path();
+	});
+	rt.add_field<Annotation>("sound", [](Annotation &annot) -> Variant {
 		annot.open();
-
-		if (key == "sound")
-		{
-			if (annot.has_sound()) {
-				return annot.sound();
-			}
-			return Variant();
+		if (annot.has_sound()) {
+			return Variant::make(annot.sound());
 		}
-		if (key == "nlayer") {
-			return annot.layer_count();
-		}
-		throw error("[Index error] Annotation type has no member named \"%\"", key);
-	};
-
-	auto bind_to_sound = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &path = cast<String>(args[1]);
-		auto project = Project::get();
-		project->import_file(path);
-		auto snd = handle_cast<Sound>(project->get(path));
-		if (snd) annot.set_sound(snd);
 		return Variant();
+	});
+	rt.add_field<Annotation>("nlayer", [](Annotation &annot) -> intptr_t {
+		annot.open();
+		return annot.layer_count();
+	});
+
+	rt.add_function("bind_to_sound", [](Isolate &iso, Annotation &annot, const String &path) {
+		guarded(iso, [&] {
+			auto project = Project::get();
+			project->import_file(path);
+			auto snd = handle_cast<Sound>(project->get(path));
+			if (snd) annot.set_sound(snd);
+			return 0;
+		});
+	});
+
+	// ── Events ──────────────────────────────────────────────────
+
+	auto layer_index = [](Isolate &iso, Annotation &annot, intptr_t layer, bool allow_end = false) {
+		annot.open();
+		try
+		{
+			return index_from_script(layer, annot.layer_count(), allow_end);
+		}
+		catch (...)
+		{
+			iso.raise(String::format("[Index error] Couldn't find layer %ld", (long) layer), 0);
+		}
 	};
+	auto event_index = [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, intptr_t event)
+	    -> std::pair<intptr_t, intptr_t> {
+		auto i = layer_index(iso, annot, layer);
+		try
+		{
+			return { i, index_from_script(event, annot.layers()[i].count()) };
+		}
+		catch (...)
+		{
+			iso.raise(String::format("[Index error] Couldn't find event %ld on layer %ld",
+			                         (long) event, (long) layer), 0);
+		}
+	};
+
+	rt.add_function("get_event_count", [layer_index](Isolate &iso, Annotation &annot, intptr_t layer) -> intptr_t {
+		return annot.layers()[layer_index(iso, annot, layer)].count();
+	});
+	rt.add_function("get_layer_count", [](Annotation &annot) -> intptr_t {
+		annot.open();
+		return annot.layer_count();
+	});
+	rt.add_function("get_event_start", [event_index](Isolate &iso, Annotation &annot, intptr_t layer, intptr_t event) -> double {
+		auto [i, j] = event_index(iso, annot, layer, event);
+		return annot.get_event(i, j).start;
+	});
+	rt.add_function("get_event_end", [event_index](Isolate &iso, Annotation &annot, intptr_t layer, intptr_t event) -> double {
+		auto [i, j] = event_index(iso, annot, layer, event);
+		return annot.get_event(i, j).end;
+	});
+	rt.add_function("get_event_text", [event_index](Isolate &iso, Annotation &annot, intptr_t layer, intptr_t event) -> String {
+		auto [i, j] = event_index(iso, annot, layer, event);
+		return annot.get_event(i, j).text;
+	});
+	rt.add_function("get_event_index", [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, double time) -> intptr_t {
+		auto i = layer_index(iso, annot, layer);
+		return guarded(iso, [&] { return index_to_script(annot.get_event_at_time(i, time)); });
+	});
+	rt.add_function("set_event_text",
+	                [event_index](Isolate &iso, Annotation &annot, intptr_t layer, intptr_t event, const String &text) {
+		auto [i, j] = event_index(iso, annot, layer, event);
+		annot.set_event_text(i, j, text);
+	});
+	rt.add_function("get_layer_label", [layer_index](Isolate &iso, Annotation &annot, intptr_t layer) -> String {
+		return annot.get_layer_label(layer_index(iso, annot, layer));
+	});
+	rt.add_function("set_layer_label",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, const String &value) {
+		annot.set_layer_label(layer_index(iso, annot, layer), value);
+	});
+	rt.add_function("add_interval",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, double start, double end, const String &text) {
+		auto i = layer_index(iso, annot, layer);
+		guarded(iso, [&] { annot.add_interval(i, start, end, text); return 0; });
+	});
+	rt.add_function("add_instant",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, double time, const String &text) {
+		auto i = layer_index(iso, annot, layer);
+		guarded(iso, [&] { annot.add_instant(i, time, text); return 0; });
+	});
+	rt.add_function("remove_interval",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t layer, double start, double end) {
+		auto i = layer_index(iso, annot, layer);
+		guarded(iso, [&] { annot.remove_interval(i, start, end); return 0; });
+	});
+	rt.add_function("remove_events", [layer_index](Isolate &iso, Annotation &annot, intptr_t layer) {
+		auto i = layer_index(iso, annot, layer);
+		guarded(iso, [&] { annot.remove_events(i); return 0; });
+	});
+
+	// ── Layer management ────────────────────────────────────────
+
+	rt.add_function("create_layer",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t index, const String &name, bool has_instants) {
+		auto i = layer_index(iso, annot, index, /*allow_end=*/true);
+		guarded(iso, [&] { annot.create_layer(i, name, has_instants); return 0; });
+	});
+	rt.add_function("remove_layer", [layer_index](Isolate &iso, Annotation &annot, intptr_t index) {
+		auto i = layer_index(iso, annot, index);
+		guarded(iso, [&] { annot.remove_layer(i); return 0; });
+	});
+	rt.add_function("clear_layer", [layer_index](Isolate &iso, Annotation &annot, intptr_t index) {
+		auto i = layer_index(iso, annot, index);
+		guarded(iso, [&] { annot.clear_layer(i); return 0; });
+	});
+	rt.add_function("duplicate_layer",
+	                [layer_index](Isolate &iso, Annotation &annot, intptr_t index, intptr_t new_index) {
+		auto i = layer_index(iso, annot, index);
+		auto k = layer_index(iso, annot, new_index, /*allow_end=*/true);
+		guarded(iso, [&] { annot.duplicate_layer(i, k); return 0; });
+	});
+	rt.add_function("layer_has_instants", [layer_index](Isolate &iso, Annotation &annot, intptr_t index) -> bool {
+		return annot.layer_has_instants(layer_index(iso, annot, index));
+	});
+
+	// ── Annotation I/O ──────────────────────────────────────────
+
+	rt.add_function("save", [](Isolate &iso, Annotation &annot) {
+		guarded(iso, [&] { annot.write(); return 0; });
+	});
+	rt.add_function("write_as_native", [](Isolate &iso, Annotation &annot) {
+		guarded(iso, [&] { annot.open(); annot.write_as_native(); return 0; });
+	});
+	rt.add_function("write_as_native", [](Isolate &iso, Annotation &annot, const String &path) {
+		guarded(iso, [&] { annot.open(); annot.write_as_native(path); return 0; });
+	});
+	rt.add_function("write_as_textgrid", [](Isolate &iso, Annotation &annot) {
+		guarded(iso, [&] { annot.open(); annot.write_as_textgrid(); return 0; });
+	});
+	rt.add_function("write_as_textgrid", [](Isolate &iso, Annotation &annot, const String &path) {
+		guarded(iso, [&] { annot.open(); annot.write_as_textgrid(path); return 0; });
+	});
 
 	// Construct a fresh empty annotation (native format, no path, no layers).
 	// Layers and events are added via the normal `create_layer`/`add_interval`/
 	// `add_instant` API. Useful for synthetic data generation and for tests
 	// that need to round-trip through disk without setting up a fixture file
 	// up front.
-	auto new_annotation_fn = [](Runtime &, std::span<Variant>) -> Variant {
+	rt.add_function("new_annotation", []() -> Handle<Annotation> {
 		return Handle<Annotation>::make();
-	};
-
-	auto get_event_count = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer_index = cast<intptr_t>(args[1]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer_index, annot.layer_count());
-			return annot.layers()[i].count();
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find layer %", layer_index);
-		}
-	};
-
-	auto get_layer_count = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		annot.open();
-		return annot.layer_count();
-	};
-
-	auto get_event_start = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto event = cast<intptr_t>(args[2]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer, annot.layer_count());
-			auto j = index_from_script(event, annot.layers()[i].count());
-			return annot.get_event(i, j).start;
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find event % on layer %", event, layer);
-		}
-	};
-
-	auto get_event_end = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto event = cast<intptr_t>(args[2]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer, annot.layer_count());
-			auto j = index_from_script(event, annot.layers()[i].count());
-			return annot.get_event(i, j).end;
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find event % on layer %", event, layer);
-		}
-	};
-
-	auto get_event_text = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto event = cast<intptr_t>(args[2]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer, annot.layer_count());
-			auto j = index_from_script(event, annot.layers()[i].count());
-			return annot.get_event(i, j).text;
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find event % on layer %", event, layer);
-		}
-	};
-
-	auto get_event_index = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto time = cast<double>(args[2]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer, annot.layer_count());
-			return index_to_script(annot.get_event_at_time(i, time));
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find event at time % on layer %", time, layer);
-		}
-	};
-
-	auto set_event_text = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto event = cast<intptr_t>(args[2]);
-		auto &text = cast<String>(args[3]);
-		annot.open();
-
-		try
-		{
-			auto i = index_from_script(layer, annot.layer_count());
-			auto j = index_from_script(event, annot.layers()[i].count());
-			annot.set_event_text(i, j, text);
-			return Variant();
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find event % on layer %", event, layer);
-		}
-	};
-
-	auto get_layer_label = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		annot.open();
-		try {
-			return annot.get_layer_label(index_from_script(layer, annot.layer_count()));
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find layer %", layer);
-		}
-	};
-
-	auto set_layer_label = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto &value = cast<String>(args[2]);
-		annot.open();
-		try {
-			annot.set_layer_label(index_from_script(layer, annot.layer_count()), value);
-			return Variant();
-		}
-		catch (...)
-		{
-			throw error("[Index error] Couldn't find layer %", layer);
-		}
-	};
-
-	auto add_interval = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto start = cast<double>(args[2]);
-		auto end = cast<double>(args[3]);
-		auto &text = cast<String>(args[4]);
-
-		annot.open();
-		annot.add_interval(index_from_script(layer, annot.layer_count()), start, end, text);
-		return Variant();
-	};
-
-	auto add_instant = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto time = cast<double>(args[2]);
-		auto &text = cast<String>(args[3]);
-
-		annot.open();
-		annot.add_instant(index_from_script(layer, annot.layer_count()), time, text);
-		return Variant();
-	};
-
-	auto remove_interval = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto layer = cast<intptr_t>(args[1]);
-		auto start = cast<double>(args[2]);
-		auto end = cast<double>(args[3]);
-
-		annot.open();
-		annot.remove_interval(index_from_script(layer, annot.layer_count()), start, end);
-		return Variant();
-	};
-
-	auto remove_events = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto i = cast<intptr_t>(args[1]);
-
-		annot.open();
-		annot.remove_events(index_from_script(i, annot.layer_count()));
-		return Variant();
-	};
-
-	// ── Layer management ────────────────────────────────────────
-
-	auto create_layer = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto index = cast<intptr_t>(args[1]);
-		auto &name = cast<String>(args[2]);
-		auto has_instants = cast<bool>(args[3]);
-		annot.open();
-		annot.create_layer(index_from_script(index, annot.layer_count(), true), name, has_instants);
-		return Variant();
-	};
-
-	auto remove_layer = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto index = cast<intptr_t>(args[1]);
-		annot.open();
-		annot.remove_layer(index_from_script(index, annot.layer_count()));
-		return Variant();
-	};
-
-	auto clear_layer = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto index = cast<intptr_t>(args[1]);
-		annot.open();
-		annot.clear_layer(index_from_script(index, annot.layer_count()));
-		return Variant();
-	};
-
-	auto duplicate_layer = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto index = cast<intptr_t>(args[1]);
-		auto new_index = cast<intptr_t>(args[2]);
-		annot.open();
-		annot.duplicate_layer(index_from_script(index, annot.layer_count()),
-		                      index_from_script(new_index, annot.layer_count(), true));
-		return Variant();
-	};
-
-	auto layer_has_instants = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto index = cast<intptr_t>(args[1]);
-		annot.open();
-		return annot.layer_has_instants(index_from_script(index, annot.layer_count()));
-	};
-
-	// ── Annotation I/O ──────────────────────────────────────────
-
-	auto save_annot = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		annot.write();
-		return Variant();
-	};
-
-	auto write_native1 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		annot.open();
-		annot.write_as_native();
-		return Variant();
-	};
-
-	auto write_native2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &path = cast<String>(args[1]);
-		annot.open();
-		annot.write_as_native(path);
-		return Variant();
-	};
-
-	auto write_textgrid1 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		annot.open();
-		annot.write_as_textgrid();
-		return Variant();
-	};
-
-	auto write_textgrid2 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &path = cast<String>(args[1]);
-		annot.open();
-		annot.write_as_textgrid(path);
-		return Variant();
-	};
+	});
 
 	// ── Structural transformations (annotation_ops) ─────────────
 	//
@@ -473,174 +327,92 @@ void Annotation::initialize(Runtime &rt)
 	// caller wanting project integration should do so explicitly (e.g. via
 	// Project::import_file or add_file).
 
-	auto duplicate_annot = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &path = cast<String>(args[1]);
-		return duplicate_annotation(annot, path);
+	auto to_annotations = [](Isolate &iso, const List &items) {
+		std::vector<Handle<Annotation>> out;
+		out.reserve(items.size());
+		for (intptr_t n = 1; n <= items.size(); n++) {
+			out.push_back(guarded(iso, [&] { return items.get(n).to<Handle<Annotation>>(); }));
+		}
+		return out;
 	};
 
-	// extract_layers(annot, layer_indices_list, out_path)
-	auto extract_layers_fn = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto &items = cast<List>(args[1]).items();
-		auto &path  = cast<String>(args[2]);
-
+	rt.add_function("duplicate_annotation",
+	                [](Isolate &iso, Annotation &annot, const String &path) -> Handle<Annotation> {
+		return guarded(iso, [&] { return duplicate_annotation(annot, path); });
+	});
+	rt.add_function("extract_layers",
+	                [](Isolate &iso, Annotation &annot, const List &items, const String &path) -> Handle<Annotation> {
 		annot.open();
 		std::vector<intptr_t> indices;
 		indices.reserve(items.size());
-		for (auto &it : items) {
-			indices.push_back(index_from_script(cast<intptr_t>(it), annot.layer_count()));
+		for (intptr_t n = 1; n <= items.size(); n++) {
+			guarded(iso, [&] {
+				indices.push_back(index_from_script(items.get(n).to<intptr_t>(), annot.layer_count()));
+				return 0;
+			});
 		}
-		return extract_layers(annot, std::span<const intptr_t>(indices.data(), indices.size()), path);
-	};
-
-	// merge_annotations(base, others_list, out_path)
-	auto merge_annots_fn = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &base = cast<Annotation>(args[0]);
-		auto &items = cast<List>(args[1]).items();
-		auto &path  = cast<String>(args[2]);
-
-		std::vector<Handle<Annotation>> others;
-		others.reserve(items.size());
-		for (auto &it : items) {
-			auto &a = cast<Annotation>(it);
-			others.emplace_back(&a);
-		}
-		return merge_annotations(base, std::span<const Handle<Annotation>>(others.data(), others.size()), path);
-	};
-
-	// extract_annotation_slice(annot, t1, t2, out_path)  — clip_partial defaults true
-	auto extract_annot_slice3 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto t1 = cast<double>(args[1]);
-		auto t2 = cast<double>(args[2]);
-		auto &path = cast<String>(args[3]);
-		return extract_annotation_slice(annot, t1, t2, /*clip_partial=*/true, path);
-	};
-
-	// extract_annotation_slice(annot, t1, t2, clip_partial, out_path)
-	auto extract_annot_slice4 = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &annot = cast<Annotation>(args[0]);
-		auto t1 = cast<double>(args[1]);
-		auto t2 = cast<double>(args[2]);
-		auto clip = cast<bool>(args[3]);
-		auto &path = cast<String>(args[4]);
-		return extract_annotation_slice(annot, t1, t2, clip, path);
-	};
-
-	// concatenate_annotations(sources_list, out_path) — durations inferred from bound sounds
-	auto concat_annots_inferred = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &items = cast<List>(args[0]).items();
-		auto &path  = cast<String>(args[1]);
-
-		std::vector<Handle<Annotation>> srcs;
-		srcs.reserve(items.size());
-		for (auto &it : items) {
-			auto &a = cast<Annotation>(it);
-			srcs.emplace_back(&a);
-		}
-		return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
-		                               std::span<const double>(), path);
-	};
-
-	// concatenate_annotations(sources_list, durations_list, out_path)
-	auto concat_annots_explicit = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &src_items = cast<List>(args[0]).items();
-		auto &dur_items = cast<List>(args[1]).items();
-		auto &path      = cast<String>(args[2]);
-
-		std::vector<Handle<Annotation>> srcs;
-		srcs.reserve(src_items.size());
-		for (auto &it : src_items) {
-			auto &a = cast<Annotation>(it);
-			srcs.emplace_back(&a);
-		}
+		return guarded(iso, [&] {
+			return extract_layers(annot, std::span<const intptr_t>(indices.data(), indices.size()), path);
+		});
+	});
+	rt.add_function("merge_annotations",
+	                [to_annotations](Isolate &iso, Annotation &base, const List &items, const String &path) -> Handle<Annotation> {
+		auto others = to_annotations(iso, items);
+		return guarded(iso, [&] {
+			return merge_annotations(base, std::span<const Handle<Annotation>>(others.data(), others.size()), path);
+		});
+	});
+	// extract_annotation_slice(annot, t1, t2, [clip_partial,] out_path) — clip_partial defaults true
+	rt.add_function("extract_annotation_slice",
+	                [](Isolate &iso, Annotation &annot, double t1, double t2, const String &path) -> Handle<Annotation> {
+		return guarded(iso, [&] { return extract_annotation_slice(annot, t1, t2, /*clip_partial=*/true, path); });
+	});
+	rt.add_function("extract_annotation_slice",
+	                [](Isolate &iso, Annotation &annot, double t1, double t2, bool clip, const String &path) -> Handle<Annotation> {
+		return guarded(iso, [&] { return extract_annotation_slice(annot, t1, t2, clip, path); });
+	});
+	// concatenate_annotations(sources, [durations,] out_path) — durations inferred from bound sounds
+	rt.add_function("concatenate_annotations",
+	                [to_annotations](Isolate &iso, const List &items, const String &path) -> Handle<Annotation> {
+		auto srcs = to_annotations(iso, items);
+		return guarded(iso, [&] {
+			return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
+			                               std::span<const double>(), path);
+		});
+	});
+	rt.add_function("concatenate_annotations",
+	                [to_annotations](Isolate &iso, const List &items, const List &durations, const String &path) -> Handle<Annotation> {
+		auto srcs = to_annotations(iso, items);
 		std::vector<double> durs;
-		durs.reserve(dur_items.size());
-		for (auto &it : dur_items) {
-			durs.push_back(cast<double>(it));
+		durs.reserve(durations.size());
+		for (intptr_t n = 1; n <= durations.size(); n++) {
+			durs.push_back(guarded(iso, [&] { return durations.get(n).to<double>(); }));
 		}
-		return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
-		                               std::span<const double>(durs.data(), durs.size()), path);
-	};
-
+		return guarded(iso, [&] {
+			return concatenate_annotations(std::span<const Handle<Annotation>>(srcs.data(), srcs.size()),
+			                               std::span<const double>(durs.data(), durs.size()), path);
+		});
+	});
 	// extract_sound_slice(sound, t1, t2, out_path) — format inferred from extension
-	auto extract_sound_slice_fn = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &snd  = cast<Sound>(args[0]);
-		auto t1    = cast<double>(args[1]);
-		auto t2    = cast<double>(args[2]);
-		auto &path = cast<String>(args[3]);
-		auto fmt   = sound_format_from_path(path);
-		return extract_sound_slice(snd, t1, t2, path, fmt);
-	};
-
-	// concatenate_sounds(sources_list, out_path)
-	auto concat_sounds_fn = [](Runtime &, std::span<Variant> args) -> Variant {
-		auto &items = cast<List>(args[0]).items();
-		auto &path  = cast<String>(args[1]);
-
+	rt.add_function("extract_sound_slice",
+	                [](Isolate &iso, Sound &snd, double t1, double t2, const String &path) -> Handle<Sound> {
+		return guarded(iso, [&] {
+			auto fmt = sound_format_from_path(path);
+			return extract_sound_slice(snd, t1, t2, path, fmt);
+		});
+	});
+	rt.add_function("concatenate_sounds",
+	                [](Isolate &iso, const List &items, const String &path) -> Handle<Sound> {
 		std::vector<Handle<Sound>> srcs;
 		srcs.reserve(items.size());
-		for (auto &it : items) {
-			auto &s = cast<Sound>(it);
-			srcs.emplace_back(&s);
+		for (intptr_t n = 1; n <= items.size(); n++) {
+			srcs.push_back(guarded(iso, [&] { return items.get(n).to<Handle<Sound>>(); }));
 		}
-		auto fmt = sound_format_from_path(path);
-		return concatenate_sounds(std::span<const Handle<Sound>>(srcs.data(), srcs.size()), path, fmt);
-	};
-
-#define CLS(T) phonometrica::get_class<T>()
-	auto cls = CLS(Annotation);
-	cls->add_method(rt.get_field_string, annot_get_field, { CLS(Annotation), CLS(String) });
-	rt.add_global("bind_to_sound", bind_to_sound, { CLS(Annotation), CLS(String) });
-	rt.add_global("get_event_start", get_event_start, { CLS(Annotation), CLS(intptr_t), CLS(intptr_t) });
-	rt.add_global("get_event_end", get_event_end,  { CLS(Annotation), CLS(intptr_t), CLS(intptr_t) });
-	rt.add_global("get_event_text", get_event_text,  { CLS(Annotation), CLS(intptr_t), CLS(intptr_t) });
-	rt.add_global("set_event_text", set_event_text,  { CLS(Annotation), CLS(intptr_t), CLS(intptr_t), CLS(String) });
-	rt.add_global("get_event_count", get_event_count,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("get_event_index", get_event_index,  { CLS(Annotation), CLS(intptr_t), CLS(Number) });
-	rt.add_global("get_layer_count", get_layer_count,  { CLS(Annotation) });
-	rt.add_global("get_layer_label", get_layer_label,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("set_layer_label", set_layer_label,  { CLS(Annotation), CLS(intptr_t), CLS(String) });
-	rt.add_global("add_interval", add_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number), CLS(String) });
-	rt.add_global("add_instant", add_instant,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(String) });
-	rt.add_global("remove_interval", remove_interval,  { CLS(Annotation), CLS(intptr_t), CLS(Number), CLS(Number) });
-	rt.add_global("remove_events", remove_events,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("create_layer", create_layer,  { CLS(Annotation), CLS(intptr_t), CLS(String), CLS(bool) });
-	rt.add_global("remove_layer", remove_layer,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("clear_layer", clear_layer,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("duplicate_layer", duplicate_layer,  { CLS(Annotation), CLS(intptr_t), CLS(intptr_t) });
-	rt.add_global("layer_has_instants", layer_has_instants,  { CLS(Annotation), CLS(intptr_t) });
-	rt.add_global("save", save_annot,  { CLS(Annotation) });
-	rt.add_global("write_as_native", write_native1,  { CLS(Annotation) });
-	rt.add_global("write_as_native", write_native2,  { CLS(Annotation), CLS(String) });
-	rt.add_global("write_as_textgrid", write_textgrid1,  { CLS(Annotation) });
-	rt.add_global("write_as_textgrid", write_textgrid2,  { CLS(Annotation), CLS(String) });
-
-	// Construction.
-	rt.add_global("new_annotation", new_annotation_fn, {});
-
-	// Structural transformations.
-	rt.add_global("duplicate_annotation", duplicate_annot,
-	              { CLS(Annotation), CLS(String) });
-	rt.add_global("extract_layers", extract_layers_fn,
-	              { CLS(Annotation), CLS(List), CLS(String) });
-	rt.add_global("merge_annotations", merge_annots_fn,
-	              { CLS(Annotation), CLS(List), CLS(String) });
-	rt.add_global("extract_annotation_slice", extract_annot_slice3,
-	              { CLS(Annotation), CLS(Number), CLS(Number), CLS(String) });
-	rt.add_global("extract_annotation_slice", extract_annot_slice4,
-	              { CLS(Annotation), CLS(Number), CLS(Number), CLS(bool), CLS(String) });
-	rt.add_global("concatenate_annotations", concat_annots_inferred,
-	              { CLS(List), CLS(String) });
-	rt.add_global("concatenate_annotations", concat_annots_explicit,
-	              { CLS(List), CLS(List), CLS(String) });
-	rt.add_global("extract_sound_slice", extract_sound_slice_fn,
-	              { CLS(Sound), CLS(Number), CLS(Number), CLS(String) });
-	rt.add_global("concatenate_sounds", concat_sounds_fn,
-	              { CLS(List), CLS(String) });
-#undef CLS
-#endif // PHON_TODO_A3
+		return guarded(iso, [&] {
+			auto fmt = sound_format_from_path(path);
+			return concatenate_sounds(std::span<const Handle<Sound>>(srcs.data(), srcs.size()), path, fmt);
+		});
+	});
 }
 
 bool Annotation::modified() const
