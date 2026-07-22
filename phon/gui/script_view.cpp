@@ -290,9 +290,11 @@ void ScriptView::execute()
 
 	try
 	{
-		// TODO(A4): pass chunk_path through so get_script_path() works for saved buffers
-		(void) chunk_path;
-		m_runtime.do_string(String(bytes.constData(), bytes.size()));
+		// The two-argument do_string attributes the in-memory buffer to its
+		// saved file: get_script_path() returns it, imports resolve relative
+		// to it, and error frames carry it. Empty path (unsaved buffer)
+		// behaves like plain do_string.
+		m_runtime.do_string(String(bytes.constData(), bytes.size()), chunk_path);
 	}
 	catch (RuntimeError &e)
 	{
@@ -441,24 +443,14 @@ void ScriptView::onToggleErrorChecking(bool checked)
 
 void ScriptView::onViewBytecode()
 {
-#ifdef PHON_TODO_A3
-	// The old engine exposed compile_string + disassemble on the Runtime. The new
-	// engine has a disassembler (compile/disassembler.hpp) but no public
-	// compile-without-run entry yet; re-enable when one lands (roadmap A4 polish).
-	auto oldPrint = m_runtime.print;
-
 	try
 	{
-		String buffer;
-		m_runtime.print = [&buffer](const String &s) {
-			buffer.append(s);
-		};
-
+		// Runtime::disassemble compiles the buffer against the live session
+		// (so names registered by the app resolve) and returns the listing
+		// without running the chunk.
 		auto code = m_editor->text().toUtf8();
-		auto closure = m_runtime.compile_string(String(code.constData(), code.size()));
-		m_runtime.disassemble(*closure, "main");
-
-		auto text = QString::fromUtf8(buffer.data(), (int) buffer.size());
+		auto listing = m_runtime.disassemble(String(code.constData(), code.size()));
+		auto text = QString::fromUtf8(listing.data(), (int) listing.size());
 
 		// Show in a simple dialog.
 		QDialog dlg(this);
@@ -476,9 +468,6 @@ void ScriptView::onViewBytecode()
 	{
 		QMessageBox::critical(this, tr("Syntax error"), e.what());
 	}
-
-	m_runtime.print = oldPrint;
-#endif // PHON_TODO_A3
 }
 
 

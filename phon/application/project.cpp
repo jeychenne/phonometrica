@@ -1410,9 +1410,14 @@ void Project::initialize(Runtime &rt)
 	// The old engine hung these on a Module; the new `phon` namespace is a Table
 	// (roadmap E2), so the members are first-class function values: each native is
 	// registered under an internal generic name and its function value stored under
-	// the public key (`phon.project.open(...)` chains GETFIELDs then calls).
+	// the public key (`phon.project.load(...)` chains GETFIELDs then calls).
+	//
+	// NOTE: the old member name `open` is a KEYWORD in the new language, so
+	// `phon.project.open(...)` cannot be written; the member is `load` since A4
+	// (owner decision, 2026-07-22). The global document `load()` generic is
+	// unrelated — this is a Table key, not a generic.
 
-	rt.add_function("__project_open", [](Isolate &iso, const String &path) {
+	rt.add_function("__project_load", [](Isolate &iso, const String &path) {
 		guarded(iso, [&] { Project::get()->open(path); return 0; });
 	});
 	rt.add_function("__project_close", [](Isolate &iso) {
@@ -1446,7 +1451,7 @@ void Project::initialize(Runtime &rt)
 
 	auto key = [](const char *k) { return Variant::make(String(k)); };
 	Table proj;
-	proj.set(key("open"), rt.get_function("__project_open"));
+	proj.set(key("load"), rt.get_function("__project_load"));
 	proj.set(key("close"), rt.get_function("__project_close"));
 	proj.set(key("add_folder"), rt.get_function("__project_add_folder"));
 	proj.set(key("add_file"), rt.get_function("__project_add_file"));

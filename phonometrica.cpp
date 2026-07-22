@@ -19,6 +19,8 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <phon/file.hpp>
+
 #ifdef PHON_GUI
 #include <clocale>
 #include <cstdlib>
@@ -177,11 +179,8 @@ int main(int argc, char **argv)
 
 				if (option == "-l")
 				{
-					// TODO(A4): the new engine's disassembler (compile/disassembler.hpp)
-					// needs a public compile-without-run entry before -l/-a can list
-					// bytecode again.
-					utils::print(stderr, "bytecode listing is not available in this build\n");
-					error_code = 1;
+					auto listing = runtime.disassemble(File::read_all(path));
+					utils::print(stdout, listing.c_str());
 				}
 				else if (option == "-r")
 				{
@@ -189,7 +188,8 @@ int main(int argc, char **argv)
 				}
 				else if (option == "-a")
 				{
-					utils::print(stderr, "bytecode listing is not available in this build; running only\n");
+					auto listing = runtime.disassemble(File::read_all(path));
+					utils::print(stdout, listing.c_str());
 					runtime.do_file(path);
 				}
 				else
