@@ -635,9 +635,15 @@ void Sound::initialize(Runtime &rt)
 	// ── Local helpers ───────────────────────────────────────────────────
 
 	// Elementwise map over a numeric array (the script-visible "Array" class).
+	// The result keeps the input's shape (e.g. mapping over an nformant-by-2
+	// matrix from get_formants must not flatten it).
 	auto apply_fn = [](const NumArray &a, auto &&f) -> NumArray {
 		NumArray src = a.contiguous();
-		NumArray out = NumArray::make_1d(src.size());
+		intptr_t dims[PHON_MAX_RANK];
+		for (int k = 0; k < src.rank(); ++k) {
+			dims[k] = src.dim(k);
+		}
+		NumArray out = NumArray::make(src.rank(), dims);
 		double *d = out.detach();
 		const double *s = src.data() + src.offset();
 		for (intptr_t i = 0; i < src.size(); ++i) {
@@ -917,14 +923,8 @@ void Sound::initialize(Runtime &rt)
 
 	// ── Formants ────────────────────────────────────────────────────────
 
-	// Sound::get_formants returns an nformant×2 matrix (frequency, bandwidth);
-	// to_numarray preserves the 2-D shape (scripts index result[i, 1]/[i, 2]).
-	auto formant_array = [](const Array<double> &values) -> NumArray {
-		return to_numarray(values);
-	};
-
 	rt.add_function("get_formants",
-	                [formant_array](Isolate &iso, Sound &sound, intptr_t channel, double time) -> NumArray {
+	                [](Isolate &iso, Sound &sound, intptr_t channel, double time) -> NumArray {
 		return guarded(iso, [&] {
 			String category("formants");
 			intptr_t nformant = (intptr_t) Settings::get_number(category, "number_of_formants");
@@ -932,16 +932,16 @@ void Sound::initialize(Runtime &rt)
 			double win_size = Settings::get_number(category, "window_size");
 			intptr_t lpc_order = (intptr_t) Settings::get_number(category, "lpc_order");
 			sound.open();
-			return formant_array(sound.get_formants((int) channel, time, nformant, nyquist, win_size, lpc_order));
+			return to_numarray(sound.get_formants((int) channel, time, nformant, nyquist, win_size, lpc_order));
 		});
 	});
 	rt.add_function("get_formants",
-	                [formant_array, parse_formant_options](Isolate &iso, Sound &sound, intptr_t channel, double time,
-	                                                       const Table &options) -> NumArray {
+	                [parse_formant_options](Isolate &iso, Sound &sound, intptr_t channel, double time,
+	                                        const Table &options) -> NumArray {
 		auto o = parse_formant_options(iso, options);
 		return guarded(iso, [&] {
 			sound.open();
-			return formant_array(sound.get_formants((int) channel, time, o.nformant, o.nyquist, o.window_size, o.lpc_order));
+			return to_numarray(sound.get_formants((int) channel, time, o.nformant, o.nyquist, o.window_size, o.lpc_order));
 		});
 	});
 
