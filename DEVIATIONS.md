@@ -2191,3 +2191,20 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     empty-path degradation) and "Runtime::disassemble compiles against the
     session without running" (session global resolves, chunk not executed,
     session usable after). Suite: 406 cases green ×3 builds.
+
+28. **Cycle-collector fix: a host-side last release of a buffered candidate no
+    longer frees the cell out from under its collector (2026-07-22).** Found by
+    the Phonometrica A5 gates (first GUI smoke that loaded a plugin with coding
+    protocols): `Runtime::add_global` overwriting a global released the last
+    reference to a Table that had been buffered as a cycle candidate during an
+    earlier run. `cc_collect_deferred`'s no-collector fallback ("a buffered
+    flag with no owning collector is stale") disposed the cell immediately,
+    leaving the owning collector's candidate slot dangling — heap-use-after-
+    free in the Isolate's final collect_until_stable. The premise was wrong:
+    ~CycleCollector clears BUFFERED on all leftovers, so a set flag always
+    means a live owning collector. Fix: park unconditionally (rc 0, BLACK —
+    parking touches only the cell, needing no collector context); the owning
+    collector's next pass disposes it. Regression test: test_embed.cpp
+    "host-side release of a buffered cycle candidate parks it" (verified to
+    produce the UAF under ASan with the old fallback). Suite: 407 cases ×3
+    builds (normal/ASan/TSan).

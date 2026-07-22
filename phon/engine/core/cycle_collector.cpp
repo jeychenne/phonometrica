@@ -233,15 +233,26 @@ void cc_cell_moved(Cell *old_ptr, Cell *new_ptr) noexcept
 
 void cc_collect_deferred(Cell *c) noexcept
 {
+	// Park the cell (rc 0, BLACK) whether or not a collector is current on this
+	// thread. The BUFFERED flag proves an owning collector still exists and holds
+	// a candidate slot pointing at this cell — ~CycleCollector clears the flag on
+	// any leftovers, so "buffered but the collector is gone" cannot occur — and
+	// parking touches only the cell itself, so it needs no collector context. The
+	// owning collector's next pass (at the latest its Isolate's final
+	// collect_until_stable) disposes the parked cell.
+	//
+	// The no-collector case is real, not theoretical: host code can drop the last
+	// reference outside any run — e.g. Runtime::add_global overwriting a global
+	// whose old value became a cycle candidate during a script. The previous
+	// fallback disposed the cell here, leaving the candidate slot dangling (found
+	// as a use-after-free in the Phonometrica GUI's final collection).
 	if (g_collector)
 	{
 		g_collector->collect_deferred(c);
 		return;
 	}
-	// No collector: honour the drop immediately (a buffered flag with no owning
-	// collector is stale). Dispose as an ordinary last release.
-	c->set_buffered(false);
-	cell_dispose(c);
+	c->set_refcount(0);
+	c->set_gc_color(Cell::COLOR_BLACK);
 }
 
 } // namespace phonometrica

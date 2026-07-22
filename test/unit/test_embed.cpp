@@ -815,3 +815,24 @@ TEST_CASE("embed: Runtime::disassemble compiles against the session without runn
 	auto v = rt.do_string(String("dis_x + 2"));
 	CHECK(v.to<int64_t>() == 7);
 }
+
+TEST_CASE("embed: host-side release of a buffered cycle candidate parks it")
+{
+	{
+		Runtime rt;
+		// A Table global whose cell becomes a cycle candidate: the in-script
+		// copy's release decrements the refcount with the collector current,
+		// buffering the cell as a possible root.
+		rt.add_global("cc_cand", rt.do_string(String("{ \"xs\": [1, 2, 3] }")));
+		rt.do_string(String("var a = cc_cand\na = null"));
+		// Host-side overwrite drops the LAST reference with no collector current
+		// (add_global runs outside any engine run). The old fallback freed the
+		// cell here while the collector's candidate buffer still pointed at it —
+		// a use-after-free in the final collection at ~Runtime. The fix parks it.
+		rt.add_global("cc_cand", Variant::make(Table()));
+		rt.do_string(String("assert(len(cc_cand) == 0)")); // session still sane
+	}
+	// ~Runtime ran its final collection over the parked cell; surviving to this
+	// line (cleanly under ASan) is the regression check.
+	CHECK(true);
+}
