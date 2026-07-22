@@ -2172,3 +2172,22 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     test_embed.cpp "a caught RuntimeError carries the structured backtrace"
     (3-frame shape, innermost-first order, lines, empty file for do_string
     chunks, `e.error` nulled). Suite: 404 cases green ×3 builds.
+
+27. **`Runtime::do_string(code, path)` + `Runtime::disassemble(code)` (Phonometrica
+    roadmap A4 closure, 2026-07-22).** (a) The two-argument do_string runs an
+    in-memory chunk attributed to a source file — the saved-editor-buffer case:
+    get_script_path() reports `path`, error frames carry it, and `import`
+    resolves relative to its directory. Implemented by threading the path into
+    the existing `State::run(source, dir, path)`; an empty path degrades to
+    plain do_string. (b) `disassemble` compiles a chunk against the SESSION's
+    namespace (env.loader = the session's module loader, session shell) and
+    returns the listing without executing — unlike the free
+    `disassemble_source`, names registered on the runtime (add_global values,
+    app natives) resolve. Side effect, documented in the header: imports
+    referenced by the chunk are compiled and registered; their top-levels run
+    on the next do_string/do_file. Consumers: the Phonometrica script editor's
+    bytecode viewer and the CLI `-l`/`-a` switches. Tests: test_embed.cpp
+    "do_string with an associated source path" (get_script_path, frame file,
+    empty-path degradation) and "Runtime::disassemble compiles against the
+    session without running" (session global resolves, chunk not executed,
+    session usable after). Suite: 406 cases green ×3 builds.

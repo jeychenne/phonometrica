@@ -767,3 +767,51 @@ TEST_CASE("embed: a caught RuntimeError carries the structured backtrace")
 	}
 	CHECK(caught);
 }
+
+TEST_CASE("embed: do_string with an associated source path")
+{
+	Runtime rt;
+	// get_script_path() reports the attributed file, not "<string>".
+	auto v = rt.do_string(String("get_script_path()"), String("/tmp/phon_embed/buffer.phon"));
+	CHECK(v.to<String>() == "/tmp/phon_embed/buffer.phon");
+
+	// Error backtraces carry the file too.
+	bool caught = false;
+	try
+	{
+		rt.do_string(String("function ef_boom()\n    throw Error(\"efb\")\nend\nef_boom()\n"),
+		             String("/tmp/phon_embed/buffer.phon"));
+	}
+	catch (const RuntimeError &e)
+	{
+		caught = true;
+		REQUIRE(e.frames.size() >= 1);
+		CHECK(e.frames[0].function == "ef_boom");
+		CHECK(e.frames[0].file == "/tmp/phon_embed/buffer.phon");
+	}
+	CHECK(caught);
+
+	// An empty path degrades to plain do_string.
+	auto w = rt.do_string(String("1 + 1"), String());
+	CHECK(w.to<int64_t>() == 2);
+}
+
+TEST_CASE("embed: Runtime::disassemble compiles against the session without running")
+{
+	Runtime rt;
+	rt.add_global("dis_x", Variant::make<int64_t>(5));
+
+	// Compiles because dis_x is a session global; nothing runs.
+	auto listing = rt.disassemble(String("var dis_probe = dis_x + 1\nprint(dis_probe)\n"));
+	CHECK(listing.find("proto #0") != std::string::npos);
+	CHECK(listing.find("ADD") != std::string::npos);
+
+	// The chunk did NOT run: dis_probe's slot exists (compile-time binding)
+	// but holds null — had the chunk executed it would be 6.
+	auto probe = rt.do_string(String("dis_probe"));
+	CHECK(probe.is_null());
+
+	// The session is still usable.
+	auto v = rt.do_string(String("dis_x + 2"));
+	CHECK(v.to<int64_t>() == 7);
+}

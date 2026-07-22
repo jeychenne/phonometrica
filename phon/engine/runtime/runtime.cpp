@@ -533,6 +533,30 @@ Variant Runtime::do_string(const String &code)
 	return m_state->run(std::move(source), "", "");
 }
 
+Variant Runtime::do_string(const String &code, const String &path)
+{
+	if (path.empty())
+		return do_string(code);
+	std::string p(path.data(), static_cast<size_t>(path.size()));
+	Source source =
+	    Source::from_string(std::string(code.data(), static_cast<size_t>(code.size())), p);
+	return m_state->run(std::move(source), fs::path(p).parent_path().string(), p);
+}
+
+std::string Runtime::disassemble(const String &code)
+{
+	State &st = *m_state;
+	Source source =
+	    Source::from_string(std::string(code.data(), static_cast<size_t>(code.size())));
+	auto cm = std::make_unique<CompiledModule>();
+	CompileEnv env;
+	env.loader = &st.modules;
+	env.dir = "";
+	env.interactive = st.interactive;
+	compile_source_parsed(std::move(source), st.shell, *cm, &env);
+	return phonometrica::disassemble(*cm->main);
+}
+
 Variant Runtime::do_file(const String &path)
 {
 	std::string p(path.data(), static_cast<size_t>(path.size()));

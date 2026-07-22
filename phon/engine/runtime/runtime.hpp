@@ -52,6 +52,19 @@ public:
 	// in a later one.
 	Variant do_string(const String &code);
 
+	// Run an in-memory chunk that is attributed to a source file (a saved editor
+	// buffer executed without re-reading the disk): get_script_path() and error
+	// backtraces report `path`, and `import` resolves relative to its directory.
+	// An empty path behaves exactly like do_string(code).
+	Variant do_string(const String &code, const String &path);
+
+	// Compile a chunk against this session's namespace and return its bytecode
+	// listing WITHOUT running it. Imports referenced by the chunk are resolved
+	// (and compiled) through the session's module loader; their top-levels run
+	// on the next do_string/do_file, not here. The result is a std::string on
+	// purpose (a textual debug listing, cf. disassemble_source below).
+	std::string disassemble(const String &code);
+
 	// Run a script file. Unlike do_string, the chunk knows its source file: `import`
 	// resolves in the script's own directory (before any add_import_path directory
 	// and $PHON_MODULE_PATH), and get_script_path() reports the file, so scripts can
