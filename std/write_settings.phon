@@ -18,11 +18,9 @@
 #                                                                                                                      #
 # PORT NOTE (old -> new engine): `dump_json` -> `to_json`; `File(path, "w")` -> `open_file(path, "w")` (File is not    #
 # script-constructible; the opener returns a File whose handle closes with the value). write/write_line/close are      #
-# engine builtins. `phon` is an isolate global (app: Runtime::add_global; headless: app_stubs); get_config_path()     #
-# comes from the app. See MIGRATION_NOTES.md.                                                                          #
+# engine builtins. `phon` is an isolate global injected by the app via Runtime::add_global; get_config_path()          #
+# comes from the app (Settings::initialize). See MIGRATION_NOTES.md.                                                   #
 ########################################################################################################################
-
-import app_stubs   # headless harness; dropped at app integration
 
 var settings = to_json(phon.settings)
 var f = open_file(get_config_path(), "w")

@@ -22,6 +22,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cctype>
 #include <phon/application/constants.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/definitions.hpp>
@@ -289,6 +290,47 @@ String Settings::get_std_plugin_directory()
 	return filesystem::join(Settings::resources_directory(), name);
 }
 
+// The old engine's dump_json wrote floats with a bare trailing decimal point
+// ("2259.", "0."). The new engine's lexer treats '.' as a decimal point only
+// when a digit follows (so `1.method()` is never mis-lexed), which makes such
+// files syntax errors — and Settings::read would silently reset the user's
+// settings to defaults. Settings files are machine-written, so repair them by
+// inserting the missing '0'. String-aware: quoted values (e.g. paths like
+// "take1.wav") are copied verbatim.
+static String normalize_legacy_floats(const String &content)
+{
+	std::string out;
+	out.reserve(content.size() + 16);
+	const char *s = content.data();
+	intptr_t n = content.size();
+	bool in_string = false;
+
+	for (intptr_t i = 0; i < n; i++)
+	{
+		char c = s[i];
+		out.push_back(c);
+
+		if (in_string)
+		{
+			if (c == '\\' && i + 1 < n)
+				out.push_back(s[++i]); // copy escape pair verbatim
+			else if (c == '"')
+				in_string = false;
+		}
+		else if (c == '"')
+		{
+			in_string = true;
+		}
+		else if (c == '.' && i > 0 && isdigit((unsigned char) s[i-1])
+				 && (i + 1 == n || !isdigit((unsigned char) s[i+1])))
+		{
+			out.push_back('0');
+		}
+	}
+
+	return String(out);
+}
+
 void Settings::read()
 {
 	// `read_settings_script` must always be embedded because we need the resources directory
@@ -298,7 +340,7 @@ void Settings::read()
 
 	if (filesystem::exists(path))
 	{
-		content = File::read_all(path);
+		content = normalize_legacy_floats(File::read_all(path));
 		if (content.trim().empty())
 		{
             content = load_script("read_settings");

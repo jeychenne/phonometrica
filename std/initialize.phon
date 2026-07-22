@@ -17,11 +17,9 @@
 # Purpose: Initialization code.                                                                                        #
 #                                                                                                                      #
 # PORT NOTE (old -> new engine): `let` -> `var`, `foreach ... do` -> `for ... in ... do`. `exists()` and                #
-# `create_directory()` are engine builtins; the four get_*_directory() natives come from the application. The import   #
-# below is the HEADLESS harness only — the app registers the real natives (see MIGRATION_NOTES.md).                   #
+# `create_directory()` are engine builtins; the four get_*_directory() natives come from the application               #
+# (Settings::initialize). See MIGRATION_NOTES.md.                                                                      #
 ########################################################################################################################
-
-import app_stubs   # headless harness; dropped at app integration
 
 # Create directories for user settings.
 var dirs = [get_settings_directory(), get_plugin_directory(), get_metadata_directory(), get_script_directory()]

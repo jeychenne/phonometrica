@@ -21,7 +21,9 @@
 
 #ifdef PHON_GUI
 #include <clocale>
+#include <cstdlib>
 #include <QFile>
+#include <QTimer>
 #include <QString>
 #include <QStringList>
 #include <QFileInfo>
@@ -126,7 +128,10 @@ static void initialize(Runtime &rt)
 
 	run_script(rt, initialize);
 	run_script(rt, signal);
-	run_script(rt, speech_analysis);
+	// NOTE: speech_analysis.phon is loaded in MainWindow::postInitialize(), not
+	// here: it calls natives registered by setShellFunctions() (get_current_sound
+	// & co.), and the new engine resolves names at compile time — running it
+	// before the window exists is a compile error.
 #endif // PHON_GUI
 }
 
@@ -218,6 +223,12 @@ int main(int argc, char **argv)
 			error_code = 1;
 		}
 
+#ifdef PHON_GUI
+		// The project holds engine handles: it must die before the Runtime.
+		// Left to its static destructor, it would be destroyed in atexit
+		// handlers, after the Runtime — a use-after-free.
+		Project::destroy();
+#endif
 		return error_code;
 	}
 
@@ -272,19 +283,39 @@ int main(int argc, char **argv)
 	Runtime runtime; // see the text-mode note about argv[0]/program_path
 	initialize(runtime);
 
-	MainWindow window(runtime);
-	window.show();
+	int result;
+	{
+		// Scoped so the window (whose views hold engine handles and reference
+		// the project) is destroyed before Project::destroy() below, which in
+		// turn must run before the Runtime dies at the end of main.
+		MainWindow window(runtime);
+		window.show();
 
-	// Queue argv paths BEFORE postInitialize() so the autoload-recent-project
-	// logic can see them and skip itself.
-	if (!argv_paths.isEmpty())
-		window.setPendingArgvPaths(argv_paths);
+		// Queue argv paths BEFORE postInitialize() so the autoload-recent-project
+		// logic can see them and skip itself.
+		if (!argv_paths.isEmpty())
+			window.setPendingArgvPaths(argv_paths);
 
-	Settings::post_initialize();
-	window.postInitialize();
+		Settings::post_initialize();
+		window.postInitialize();
 
-	int result = app.exec();
-	finalize(runtime);
+		// Headless smoke-test hook: PHON_GUI_SMOKE=<seconds> quits the event loop
+		// after the given delay so the full startup/shutdown cycle (including the
+		// settings write in finalize()) can run unattended, e.g. under
+		// QT_QPA_PLATFORM=offscreen in CI.
+		if (const char *smoke = std::getenv("PHON_GUI_SMOKE"))
+		{
+			int seconds = std::max(1, atoi(smoke));
+			QTimer::singleShot(seconds * 1000, &app, &QApplication::quit);
+		}
+
+		result = app.exec();
+		finalize(runtime);
+	}
+	// The project holds engine handles: destroy it while the Runtime is alive
+	// (its static singleton would otherwise die in atexit handlers, after the
+	// Runtime — a use-after-free).
+	Project::destroy();
 	return result;
 #else
 	show_usage();

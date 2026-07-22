@@ -111,12 +111,13 @@ Console::Console(Runtime &rt, QWidget *parent) :
 		});
 	}
 
-	// Register the `clear` scripting global. It dispatches through the
+	// Register the `clear_console` scripting global. It dispatches through the
 	// runtime's clear-output hook so the currently active output surface is
-	// the one that gets cleared. Note: this is the zero-argument overload of
-	// `clear` — the one-argument overloads for List/Table/Array/Set are
-	// builtins of the new engine.
-	rt.add_function("clear", [&rt]() {
+	// the one that gets cleared. Renamed from the old engine's zero-argument
+	// `clear`: the engine's container-clearing `clear(ref x)` builtins take a
+	// ref parameter, and per-generic ref-mask uniformity (G6a) forbids mixing
+	// a non-ref overload under the same name.
+	rt.add_function("clear_console", [&rt]() {
 		rt.clear_output();
 	});
 

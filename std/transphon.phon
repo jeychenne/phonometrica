@@ -18,10 +18,8 @@
 #                                                                                                                      #
 # PORT NOTE (old -> new engine): `File(path, "w")` -> `open_file(path, "w")`; `xs.length` -> len(xs); `foreach` ->     #
 # `for ... in`; `int(s)` -> the builtin `to_int(s)`. The annotation objects, dialogs and viewers come from the         #
-# application; headless from app_stubs. See MIGRATION_NOTES.md.                                                        #
+# application. See MIGRATION_NOTES.md.                                                                                 #
 ########################################################################################################################
-
-import app_stubs   # headless harness; dropped at app integration
 
 # Parse a layer number out of a possibly space-padded field.
 local function parse_int(s as String)

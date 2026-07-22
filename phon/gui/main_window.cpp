@@ -20,6 +20,8 @@
  ***********************************************************************************************************************/
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <vector>
 #include <QApplication>
 #include <QMenuBar>
@@ -128,6 +130,15 @@ MainWindow::MainWindow(Runtime &rt, QWidget *parent) :
 			updateSaveActions();
 		});
 		project->notify_error.connect([this](const String &msg) {
+			// In smoke mode a modal box would hang the run forever:
+			// QApplication::quit() cannot break a nested dialog event loop,
+			// and offscreen there is nobody to dismiss it. Report on stderr
+			// so the harness sees the failure instead.
+			if (std::getenv("PHON_GUI_SMOKE"))
+			{
+				std::fprintf(stderr, "[project error] %s\n", msg.data());
+				return;
+			}
 			auto qmsg = QString::fromUtf8(msg.data(), (int) msg.size());
 			QMessageBox::warning(this, tr("Warning"), qmsg);
 		});
@@ -3370,6 +3381,11 @@ void MainWindow::postInitialize()
 	// Register scripting functions before loading plugins, so plugin
 	// scripts can call GUI functions like info(), warning(), etc.
 	setShellFunctions();
+
+	// speech_analysis.phon calls natives registered by setShellFunctions()
+	// (get_current_sound & co.); the engine resolves names at compile time,
+	// so it can only be loaded once the window's natives exist.
+	run_script(m_runtime, speech_analysis);
 
 	// Set up Praat integration (praat --send / praat --open).
 	setupPraat();

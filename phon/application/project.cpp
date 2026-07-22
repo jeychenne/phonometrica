@@ -99,6 +99,11 @@ Project *Project::get()
 	return instance.get();
 }
 
+void Project::destroy()
+{
+	instance.reset();
+}
+
 bool Project::modified() const
 {
 	return m_modified || m_corpus->modified() || m_scripts->modified() || m_bookmarks->modified() || m_data->modified() || m_queries->modified() || m_notes->modified();

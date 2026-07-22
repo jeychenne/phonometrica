@@ -19,10 +19,8 @@
 # PORT NOTE (old -> new engine): print is a function whose default separator is a space, so the old juxtaposed         #
 # `print a, b, c` output is preserved with string interpolation. `result.nrow` -> nrow(result). `if x then` keeps      #
 # working for null-or-value app returns (null is the only falsy non-boolean). The get_* / alert natives come from      #
-# the application; headless from app_stubs. See MIGRATION_NOTES.md.                                                    #
+# the application. See MIGRATION_NOTES.md.                                                                             #
 ########################################################################################################################
-
-import app_stubs   # headless harness; dropped at app integration
 
 function report_intensity(time as Number)
     var sound = get_current_sound()

@@ -57,6 +57,12 @@ public:
 
 	static Project* get();
 
+	// Destroy the singleton. MUST be called before the Runtime is destroyed:
+	// the project holds engine Handles (m_files & co.), and disposing their
+	// cells needs the engine alive. Left to the static destructor, they die
+	// in atexit handlers after the Runtime — a use-after-free.
+	static void destroy();
+
 	Project(const Project &) = delete;
 	Project(Project &&) = delete;
 

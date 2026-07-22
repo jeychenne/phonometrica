@@ -1,7 +1,7 @@
 static const char *autocompletion_list =
 	"abs acos add_instant add_interval add_property alert Analysis Annotation append "
 	"Array asin ask assert atan atan2 bark_to_hertz bind_to_sound bool Boolean break "
-	"ceil char class clear clear_directory clear_layer close get_coef get_column_type compare "
+	"ceil char class clear clear_console clear_directory clear_layer close get_coef get_column_type compare "
 	"Concordance connect contains continue cos count create_dialog create_directory "
 	"create_layer create_progress_dialog create_signal Dataset DataTable debug dharma "
 	"Directory disconnect Document downto dump_json duplicate_layer "
