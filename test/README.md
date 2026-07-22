@@ -1,12 +1,24 @@
 # Phonometrica test suite
 
 This directory holds the automated regression and validation suites
-for Phonometrica. There are two cleanly separated tracks:
+for Phonometrica. There are three cleanly separated tracks:
 
 | Track            | Path             | What it tests                                  |
 |------------------|------------------|------------------------------------------------|
 | Engine tests     | `engine/`        | Scripting language: parser, compiler, runtime  |
 | Statistics tests | `statistics/`    | Regression engine: GLM/GLMM fits vs R           |
+| GUI smoke tests  | `gui/`           | Natives that need the GUI (offscreen)          |
+
+The GUI smoke tests drive the real application offscreen
+(`QT_QPA_PLATFORM=offscreen` + the `PHON_GUI_SMOKE` auto-quit hook),
+because some features are only wired up in GUI initialization — e.g.
+sound formats are registered there, so sound files cannot be imported
+in text mode. Each smoke test has a shell driver that sets up a
+throwaway profile and checks the probe's result file:
+
+```
+test/gui/run_smoke_formants.sh build/phonometrica
+```
 
 The engine suite is pure phon — every test is self-contained and
 aborts on the first failure via the built-in `assert` statement.

@@ -1,0 +1,116 @@
+# =====================================================================
+# smoke_formants.phon — offscreen GUI smoke test for the get_formants
+# natives.
+# =====================================================================
+# Checks that get_formants returns an nformant-by-2 Array (formant
+# frequencies in column 1, bandwidths in column 2, as documented in
+# docs/scripting/api/sound.rst) and that elementwise conversions such
+# as hertz_to_bark preserve the 2-D shape. The input is a synthetic
+# vowel (test/data/vowel_f500_1500_2500.wav: sines at 500/1500/2500 Hz
+# plus low-level noise, 16 kHz mono), so the measured formants are also
+# checked against the known targets.
+#
+# This must run through the GUI (sound formats are only registered in
+# GUI initialization, so wav files cannot be imported in text mode).
+# Use the driver, which installs this script in a throwaway profile's
+# Scripts directory and runs the app offscreen:
+#
+#     test/gui/run_smoke_formants.sh <path-to-phonometrica-binary>
+#
+# The driver substitutes __BASE__ below and greps the result file for
+# "ALL OK".
+# =====================================================================
+
+var base = "__BASE__"
+var f = open_file(base & "/probe_result.txt", "w")
+var failures = 0
+
+try
+    phon.project.add_file(base & "/vowel_f500_1500_2500.wav")
+    var sounds = get_sounds()
+    if len(sounds) == 1 then
+        write_line(f, "PASS wav imported as Sound")
+    else
+        write_line(f, "FAIL wav imported as Sound (len={len(sounds)})")
+        failures = failures + 1
+    end
+    var sound = sounds[1]
+
+    # Default settings: number_of_formants = 4.
+    var result = get_formants(sound, 1, 0.5)
+    if nrow(result) == 4 then
+        write_line(f, "PASS nrow(result) == nformant")
+    else
+        write_line(f, "FAIL nrow(result) == nformant (got {nrow(result)})")
+        failures = failures + 1
+    end
+    if ncol(result) == 2 then
+        write_line(f, "PASS ncol(result) == 2")
+    else
+        write_line(f, "FAIL ncol(result) == 2 (got {ncol(result)})")
+        failures = failures + 1
+    end
+
+    var f1 = result[1, 1]
+    var b1 = result[1, 2]
+    var f2 = result[2, 1]
+    var f3 = result[3, 1]
+    write_line(f, "F1={f1} F2={f2} F3={f3} B1={b1}")
+    if f1 > 350 and f1 < 650 then
+        write_line(f, "PASS F1 near 500 Hz")
+    else
+        write_line(f, "FAIL F1 near 500 Hz (got {f1})")
+        failures = failures + 1
+    end
+    if f2 > 1300 and f2 < 1700 then
+        write_line(f, "PASS F2 near 1500 Hz")
+    else
+        write_line(f, "FAIL F2 near 1500 Hz (got {f2})")
+        failures = failures + 1
+    end
+    if f3 > 2300 and f3 < 2700 then
+        write_line(f, "PASS F3 near 2500 Hz")
+    else
+        write_line(f, "FAIL F3 near 2500 Hz (got {f3})")
+        failures = failures + 1
+    end
+    if b1 > 0 then
+        write_line(f, "PASS B1 positive")
+    else
+        write_line(f, "FAIL B1 positive (got {b1})")
+        failures = failures + 1
+    end
+
+    # The options overload goes through the same conversion.
+    var result2 = get_formants(sound, 1, 0.5, { "nformant": 3, "nyquist": 4000 })
+    if nrow(result2) == 3 and ncol(result2) == 2 then
+        write_line(f, "PASS options overload is 3-by-2")
+    else
+        write_line(f, "FAIL options overload is 3-by-2 (got {nrow(result2)}x{ncol(result2)})")
+        failures = failures + 1
+    end
+
+    # Elementwise conversions must keep the 2-D shape.
+    var bark = hertz_to_bark(result)
+    if nrow(bark) == 4 and ncol(bark) == 2 then
+        write_line(f, "PASS hertz_to_bark keeps the shape")
+    else
+        write_line(f, "FAIL hertz_to_bark keeps the shape (got {nrow(bark)}x{ncol(bark)})")
+        failures = failures + 1
+    end
+
+    # Save (to the throwaway work dir) and close so the project is not
+    # left modified: closeEvent's save prompt is a modal dialog, which
+    # would hang the offscreen smoke quit forever.
+    phon.project.save(base & "/smoke_project.phon-project")
+    phon.project.close()
+
+    if failures == 0 then
+        write_line(f, "ALL OK")
+    else
+        write_line(f, "{failures} FAILURES")
+    end
+catch e
+    write_line(f, "ERROR: {e.message}")
+end
+close(f)
