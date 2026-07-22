@@ -616,7 +616,11 @@ Variant Runtime::State::run(Source source, const std::string &dir, const std::st
 	catch (RuntimeError &e)
 	{
 		// An uncaught script error reaches the embedding boundary: release the live
-		// register stack and the in-flight error value, keeping the message/line.
+		// register stack and the in-flight error value, keeping the message/line —
+		// but first copy the error's structured backtrace into plain host data so
+		// the embedder can render a trace (GUI console, script editor).
+		if (e.frames.empty())
+			e.frames = extract_error_frames(e.error);
 		st.isolate.unwind_on_error();
 		if (e.error.is_cell())
 			release(e.error.as_cell());
@@ -706,11 +710,14 @@ Variant Runtime::call(const Variant &fn, const Variant *args, int nargs)
 	}
 	catch (RuntimeError &e)
 	{
-		// When we own the run, clean up like State::run does (release the live stack and
-		// the in-flight error value, keeping message/line) and restore the context. When
-		// re-entrant, leave everything for the outer run()'s handler and just propagate.
+		// When we own the run, clean up like State::run does (extract the structured
+		// backtrace, then release the live stack and the in-flight error value, keeping
+		// message/line) and restore the context. When re-entrant, leave everything for
+		// the outer run()'s handler and just propagate.
 		if (owns_run)
 		{
+			if (e.frames.empty())
+				e.frames = extract_error_frames(e.error);
 			iso.unwind_on_error();
 			if (e.error.is_cell())
 				release(e.error.as_cell());

@@ -2152,3 +2152,23 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     the now-Array<String> fs::list_directory to a List in its two bindings (item 24).
     Suite: 403 cases green ×3 builds; the full Phonometrica app + phon_stats compile and
     link against the engine, the ported test/engine suite passes through the app binary.
+
+## A4 embedding support — structured backtraces at the host boundary (Phonometrica roadmap A4 chunk 2, 2026-07-22)
+
+26. **`RuntimeError::frames` — the structured backtrace crosses the embedding
+    boundary as plain host data.** The do_string/call boundary releases the
+    in-flight error value and nulls `e.error` before rethrowing (the isolate's
+    cells must not outlive the run), which meant the host could never render the
+    script-side `e.frames` trace. `RuntimeError` now carries
+    `std::vector<ErrorFrame>` (`{function, file, line}`, innermost first — no
+    engine cells, so it stays valid after unwind and even after the Runtime is
+    gone). Populated by the new `extract_error_frames(Value)` (vm/isolate.cpp),
+    which reads the Error instance's `frames` field (slot 2) via the same
+    {function, line, file} Tables `Isolate::backtrace_frames` builds; called in
+    the `State::run` and `Runtime::call` (owns_run) catch blocks right before
+    the value is released. Non-Error values and host-raised errors yield an
+    empty vector. Consumers: the Phonometrica GUI console trace, the script
+    editor's error-line highlight, and the CLI runner's stderr trace. Test:
+    test_embed.cpp "a caught RuntimeError carries the structured backtrace"
+    (3-frame shape, innermost-first order, lines, empty file for do_string
+    chunks, `e.error` nulled). Suite: 404 cases green ×3 builds.

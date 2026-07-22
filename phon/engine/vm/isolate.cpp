@@ -287,6 +287,51 @@ void capture_error_trace(Isolate &iso, Cell *err, int top_line)
 	f[2] = fv;
 }
 
+std::vector<ErrorFrame> extract_error_frames(Value err)
+{
+	std::vector<ErrorFrame> out;
+	if (!err.is_cell())
+		return out;
+	Cell *c = err.as_cell();
+	Class *k = get_class(c->class_id());
+	if (!k || !is_a(k, error_class()))
+		return out;
+	Value fv = instance_fields(c)[2]; // slot 2 == frames
+	if (!fv.is_cell())
+		return out;
+	List frames = List::from_value(fv); // retains while we walk
+	auto is_str = [](Value v) { return v.is_cell() && class_of(v) == CID_STRING; };
+	String k_function("function"), k_line("line"), k_file("file");
+	for (intptr_t i = 1; i <= frames.size(); i++)
+	{
+		// Raw Value checks: the variant_is/variant_to<Table> specializations are
+		// not visible in this TU (cf. the E2 note in the interpreter).
+		Variant item = frames.get(i);
+		Value tv = item.value();
+		if (!(tv.is_cell() && class_of(tv) == CID_TABLE))
+			continue;
+		Table fr = Table::from_value(tv);
+		ErrorFrame ef;
+		Value fn = fr.get(Variant(k_function.to_value())).value();
+		if (is_str(fn))
+		{
+			auto s = String::from_value(fn);
+			ef.function.assign(s.data(), static_cast<size_t>(s.size()));
+		}
+		Value fl = fr.get(Variant(k_file.to_value())).value();
+		if (is_str(fl))
+		{
+			auto s = String::from_value(fl);
+			ef.file.assign(s.data(), static_cast<size_t>(s.size()));
+		}
+		Value ln = fr.get(Variant(k_line.to_value())).value();
+		if (ln.is_number())
+			ef.line = static_cast<int>(ln.to_double());
+		out.push_back(std::move(ef));
+	}
+	return out;
+}
+
 void Isolate::safepoint(int line)
 {
 	uint32_t poll = m_poll.load(std::memory_order_relaxed);

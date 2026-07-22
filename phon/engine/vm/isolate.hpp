@@ -55,17 +55,32 @@ struct ICEntry
 
 inline constexpr uint64_t kICEmpty = ~uint64_t(0);
 
+// One frame of a script backtrace in plain host data (no engine cells), so an
+// embedder can render a trace from a caught RuntimeError after the engine has
+// dropped the in-flight error value. Innermost frame first. Mirrors one entry of
+// the Error value's `frames` field ({function, line, file} — Isolate::
+// backtrace_frames).
+struct ErrorFrame
+{
+	std::string function; // "<module>" for top-level chunks
+	std::string file;     // empty for in-memory chunks (do_string)
+	int line = 0;
+};
+
 // A script error in flight (architecture §10.5). It carries the thrown `Error`
 // value (an instance of Error or a subclass); `message`/`line` mirror the error's
 // message and its origin line for the embedding boundary and diagnostics. The VM's
 // per-Isolate handler stack catches it at a `try`; if none applies it propagates as
 // this C++ exception to the `do_string` boundary. `error` holds one reference the
-// catcher adopts.
+// catcher adopts. At the embedding boundary (State::run / Runtime::call), the
+// engine releases `error` and copies its `frames` field into `frames` below, so
+// the host sees the structured backtrace without touching engine cells.
 struct RuntimeError : std::exception
 {
 	String message;
 	int line = 0;
 	Value error = Value::make_null();
+	std::vector<ErrorFrame> frames;
 
 	// Derives from std::exception (roadmap E5/G6c) so an embedder's catch-all
 	// (`catch (std::exception &)`) catches an uncaught script error instead of letting
@@ -92,6 +107,11 @@ Cell *make_error(const String &message);
 // none yet, so a re-thrown error keeps its original origin (`top_line` is the
 // raise/throw line).
 void capture_error_trace(Isolate &iso, Cell *err, int top_line);
+
+// Read an in-flight error value's `frames` field (slot 2) into plain host data.
+// Empty when the value is not an Error instance or carries no frames. Used by the
+// embedding boundary to populate RuntimeError::frames before releasing the value.
+std::vector<ErrorFrame> extract_error_frames(Value err);
 
 // One journaled generic-method registration (design §11 registration journal).
 // The Isolate holds the +1 reference to the closure supplying the method's code;

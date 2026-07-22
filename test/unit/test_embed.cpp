@@ -731,3 +731,39 @@ TEST_CASE("embed: an uncaught script error is catchable as std::exception")
 	}
 	CHECK(caught);
 }
+
+TEST_CASE("embed: a caught RuntimeError carries the structured backtrace")
+{
+	Runtime rt;
+	bool caught = false;
+	try
+	{
+		// Two script frames above the module chunk, so the trace has a shape
+		// worth asserting: inner (throw site) -> outer -> <module>.
+		rt.do_string("function inner()\n"
+		             "    throw Error(\"boom\")\n"
+		             "end\n"
+		             "function outer()\n"
+		             "    inner()\n"
+		             "end\n"
+		             "outer()\n");
+	}
+	catch (const RuntimeError &e)
+	{
+		caught = true;
+		CHECK(std::string(e.what()).find("boom") != std::string::npos);
+		REQUIRE(e.frames.size() == 3);
+		// Innermost first; the throw site is line 2.
+		CHECK(e.frames[0].function == "inner");
+		CHECK(e.frames[0].line == 2);
+		CHECK(e.frames[1].function == "outer");
+		CHECK(e.frames[1].line == 5);
+		CHECK(e.frames[2].function == "<module>");
+		CHECK(e.frames[2].line == 7);
+		// do_string chunks have no source file.
+		CHECK(e.frames[0].file.empty());
+		// The engine dropped the in-flight error value at the boundary.
+		CHECK(e.error.is_null());
+	}
+	CHECK(caught);
+}
