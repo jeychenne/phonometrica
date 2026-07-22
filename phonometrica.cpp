@@ -209,6 +209,15 @@ int main(int argc, char **argv)
 			utils::fprintf(stderr, "Error on line %:\n", e.line);
 			utils::print(stderr, e.what());
 			utils::print(stderr, "\n");
+			// Structured backtrace (innermost first), copied off the script
+			// Error value at the do_string/do_file boundary.
+			for (const auto &fr : e.frames)
+			{
+				utils::fprintf(stderr, "  at % (line %)", fr.function.c_str(), fr.line);
+				if (!fr.file.empty())
+					utils::fprintf(stderr, " in %", fr.file.c_str());
+				utils::print(stderr, "\n");
+			}
 			error_code = 1;
 		}
 		catch (std::bad_alloc &)

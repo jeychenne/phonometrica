@@ -32,10 +32,9 @@ namespace phonometrica {
 
 class Runtime;
 
-// One frame of a call-stack trace displayed under an error message. This used to come
-// from the old engine's RuntimeError; the new engine carries frames in the script-side
-// Error value instead. TODO(A4): populate from `e.frames` when the error value is
-// surfaced to C++ — until then traces are empty and only the message + line show.
+// One frame of a call-stack trace displayed under an error message. Populated from
+// RuntimeError::frames — the engine copies the script-side Error value's `frames`
+// field onto the exception at the do_string boundary (innermost frame first).
 struct TraceEntry
 {
 	std::string file;    // empty for in-memory chunks

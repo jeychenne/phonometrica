@@ -266,11 +266,26 @@ void Console::runCode(const QString &code)
 			appendOutput(s);
 		}
 	}
+	catch (RuntimeError &e)
+	{
+		showError(e.what());
+		// The engine copies the error's structured backtrace (the script-side
+		// `e.frames` field) onto the exception at the do_string boundary. A
+		// single-frame trace is just the inline chunk itself and adds nothing
+		// beyond the message, so only deeper traces render.
+		if (e.frames.size() > 1)
+		{
+			std::vector<TraceEntry> trace;
+			trace.reserve(e.frames.size());
+			for (const auto &fr : e.frames) {
+				trace.push_back({fr.file, fr.line, fr.function});
+			}
+			showTrace(trace);
+		}
+	}
 	catch (std::exception &e)
 	{
 		showError(e.what());
-		// TODO(A4): the new engine carries the call-stack trace in the script-side
-		// Error value (`e.frames`); surface it here so traces render again.
 	}
 
 	addPrompt();

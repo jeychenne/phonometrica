@@ -304,17 +304,22 @@ void ScriptView::execute()
 		// deepest line that's actually visible to the user; if no frame is
 		// in this buffer, we skip the highlight entirely.
 		//
-		// For an unsaved buffer (chunk_path empty) we match against entries
-		// whose file is also empty: do_string passes an empty path through,
-		// so trace entries for the top-level chunk come back with file == "".
-		// TODO(A4): the new engine carries frames in the script-side Error value
-		// (`e.frames`); surface them here so cross-file highlights work again.
+		// The buffer runs through do_string, which has no chunk path (A4
+		// leftover: get_script_path for saved buffers), so frames belonging
+		// to THIS buffer come back with file == "". Frames from imported
+		// modules carry their real path. Hence: an empty-file frame is the
+		// buffer; a frame matching the saved path is also the buffer (ready
+		// for when the chunk path flows through).
 		std::vector<TraceEntry> trace;
+		trace.reserve(e.frames.size());
+		for (const auto &fr : e.frames) {
+			trace.push_back({fr.file, fr.line, fr.function});
+		}
 		std::string this_file(chunk_path.data(), size_t(chunk_path.size()));
 		int highlight_line = 0;
 		for (const auto &entry : trace)
 		{
-			if (entry.file == this_file)
+			if (entry.file.empty() || entry.file == this_file)
 			{
 				highlight_line = int(entry.line);
 				break;
