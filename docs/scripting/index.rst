@@ -14,6 +14,11 @@ language. Scripting can be used in three ways:
 -  Creating :ref:`page-plugins`, which are extensions that can add features to Phonometrica.
    
 
+.. attention::
+
+   The scripting engine was rewritten. If you have scripts written for an
+   earlier version of Phonometrica, read :ref:`page-migration` to update them.
+
 Tutorials
 ---------
 
@@ -21,7 +26,8 @@ The following pages teach you how to use Phonometrica's scripting language.
 
 .. toctree::
    :maxdepth: 1
-	
+
+   migration
    tutorial/getting_started
    tutorial/values_references
    tutorial/functions

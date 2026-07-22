@@ -109,7 +109,9 @@ space — the set of functions with zero second derivative — is the family of 
 across the data) is absorbed into the basis, reducing the effective dimension from *k* to
 *k* − 1. This ensures the smooth is identifiable in the presence of a model intercept.
 
-For example::
+For example:
+
+.. code:: text
 
    F1 ~ vowel + s(duration)
    F1 ~ vowel + s(duration, k=20)
@@ -140,7 +142,9 @@ in a mixed model. Note that the ``by`` argument has a different meaning here tha
 
 To model both random intercepts and random slopes for the same grouping variable, include
 two separate ``bs=re`` terms. This gives **uncorrelated** random effects (each with its own
-smoothing parameter)::
+smoothing parameter):
+
+.. code:: text
 
    F1 ~ vowel + s(duration) + s(speaker, bs=re) + s(speaker, by=duration, bs=re)
 
@@ -155,7 +159,9 @@ smoothing parameter)::
    right-clicking *duration* and choosing *Remove from formula*) will remove the slope term
    while leaving the random intercept in place.
 
-You can also cross grouping factors::
+You can also cross grouping factors:
+
+.. code:: text
 
    F1 ~ vowel + s(duration) + s(speaker, bs=re) + s(item, bs=re)
 
@@ -1021,10 +1027,10 @@ method, so a REML model stays REML after a refit.
 In scripting, the method is selected via the ``fit_method`` option in the third argument
 of ``fit()``:
 
-.. code-block::
+.. code:: phon
 
-   let m_ml   = fit("f1 ~ gender + (1|speaker)", ds)
-   let m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
+   var m_ml = fit("f1 ~ gender + (1|speaker)", ds)
+   var m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
 
 The option key is ``fit_method`` rather than the more natural ``method`` because the
 latter is a reserved keyword in the scripting engine. See the scripting API documentation

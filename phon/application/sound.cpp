@@ -917,13 +917,10 @@ void Sound::initialize(Runtime &rt)
 
 	// ── Formants ────────────────────────────────────────────────────────
 
-	auto formant_array = [](Array<double> values) -> NumArray {
-		NumArray out = NumArray::make_1d(values.size());
-		double *d = out.detach();
-		for (intptr_t i = 0; i < values.size(); ++i) {
-			d[i] = values[i];
-		}
-		return out;
+	// Sound::get_formants returns an nformant×2 matrix (frequency, bandwidth);
+	// to_numarray preserves the 2-D shape (scripts index result[i, 1]/[i, 2]).
+	auto formant_array = [](const Array<double> &values) -> NumArray {
+		return to_numarray(values);
 	};
 
 	rt.add_function("get_formants",

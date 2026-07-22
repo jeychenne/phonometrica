@@ -3512,6 +3512,13 @@ void MainWindow::loadPluginsAndScripts(const String &root)
 				}
 				catch (std::exception &e)
 				{
+					// Modal dialogs hang the offscreen smoke (nested event loop);
+					// report on stderr there instead.
+					if (std::getenv("PHON_GUI_SMOKE"))
+					{
+						std::fprintf(stderr, "[plugin error] %s\n", e.what());
+						continue;
+					}
 					QMessageBox::critical(this, tr("Plugin initialization failed"),
 						QString::fromUtf8(e.what()));
 				}
@@ -3538,6 +3545,11 @@ void MainWindow::loadPluginsAndScripts(const String &root)
 				catch (std::exception &e)
 				{
 					auto msg = utils::format("Error in script %: %", path, e.what());
+					if (std::getenv("PHON_GUI_SMOKE"))
+					{
+						std::fprintf(stderr, "[startup script error] %s\n", msg.data());
+						continue;
+					}
 					QMessageBox::critical(this, tr("Startup script error"),
 						QString::fromUtf8(msg.data(), (int) msg.size()));
 				}

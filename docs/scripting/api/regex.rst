@@ -1,7 +1,10 @@
 Regular expressions
 ===================
 
-This page documents the ``Regex`` type. ``Regex`` is :ref:`non-clonable <clonability>`.
+This page documents the ``Regex`` and ``Match`` types. A ``Regex`` is an
+immutable compiled pattern: matching it against a string produces a fresh
+``Match`` object (or ``null``), so a ``Regex`` carries no state of its own and
+can be shared and reused freely.
 
 General concepts
 ----------------
@@ -12,7 +15,12 @@ expression (regex) is a string which describes a *set of strings*.
 Suppose that we want to any of the following strings: ``"petit"``,
 ``"petite"``, ``"petits"``, ``"petites"``. Instead of looking for each
 string separately, we can use a regular expression to look for any of
-them. The corresponding regular expression would be ``"petite?s?"``.
+them. The corresponding regular expression would be ``'petite?s?'``.
+
+.. tip:: Write regular expression patterns as single-quoted strings: single
+   quotes create *raw* strings, in which backslashes and braces are not
+   interpreted, so a pattern such as ``'\d+'`` can be written without
+   double escaping.
 
 Syntax
 ~~~~~~
@@ -59,163 +67,186 @@ Regular expressions are "greedy" by default, which means they will match
 the longest string that satisfies the pattern. For instance, given the
 pattern ``j.*e``, which matches the character ``j`` followed by zero or
 more characters followed by ``e``, and the string ``"je te l'ai dit"``,
-a non-greedy search will return the substring ``"je te"`` by default.
+a greedy search will return the substring ``"je te"`` by default.
 Non-greedy search, on the other hand, will yield the substring ``"je"``
 since it extracts the shortest string that satisfies the regular
 expression. To enable non-greedy behavior, we must use the quantifier
-``?`` after the star (in this case, ``"j.*?e"``).
+``?`` after the star (in this case, ``'j.*?e'``).
 
-Constructors
-------------
-
-.. class:: Regex
-
-.. method:: Regex(pattern as String)
-
-Create a new regular expression from a string pattern. The regex can be matched against any string.
+A typical matching sequence looks like this:
 
 .. code:: phon
 
-    re = Regex("^(..)")
+    var re = regex('^a(...)(..)(..)')
+    var m = match(re, "abracadabra")
+
+    if m then
+        # Prints "bra", "ca", "da"
+        for i = 1 to group_count(m) - 1 do
+            print(group(m, i))
+        end
+    end
+
+
+Construction
+------------
+
+.. function:: regex(pattern as String)
+
+Creates a new regular expression from a string pattern, with default options.
+The regex can then be matched against any string with :func:`match`.
+An invalid pattern raises an error.
+
+.. code:: phon
+
+    var re = regex('^(..)')
     # Do something with re...
 
 See also: :func:`pattern`
 
 
-.. method:: Regex(pattern as String, flags as String)
+.. function:: regex(pattern as String, flags as String)
 
-Create a new regular expression from a string pattern. The ``flags`` argument can contain any of the following
-options, separated by the character ``|``:
+Creates a new regular expression from a string pattern. The ``flags`` argument
+can contain any of the following options, separated by the character ``|``:
 
 - ``caseless``: ignore case
-- ``multiline``: match expression on several lines
+- ``multiline``: ``^`` and ``$`` match at internal line breaks as well
+- ``dotall``: ``.`` also matches newline characters
+- ``extended``: ignore unescaped whitespace and ``#`` comments in the pattern
+- ``anchored``: only match at the start of the subject
+- ``dollar_endonly``: ``$`` only matches at the very end of the subject
+- ``ungreedy``: invert the greediness of quantifiers
 
 .. code:: phon
 
-    re = Regex("^(..)", "caseless|multiline")
+    var re = regex('^(..)', "caseless|multiline")
     # Do something with re...
 
 See also: :func:`pattern`
 
 
-Functions
----------
-
-.. function:: count(regex as Regex)
-
-Returns the number of captures in the last match. This is equivalent to ``len()``.
-
-
-------------
-
+Matching
+--------
 
 .. function:: match(regex as Regex, subject as String)
 
-Match ``regex`` against the string ``subject``. Returns
-``true`` if there was a match, and ``false`` otherwise.
-
-See also: :func:`count`, :func:`group`, :func:`has_match`
-
-
-------------
-
-
-.. function:: match(regex as Regex, subject as String, pos as Integer)
-
-Match ``regex`` against the string ``subject``, starting at position ``pos``. Returns
-``true`` if there was a match, and ``false`` otherwise.
-
-See also: :func:`count`, :func:`group`, :func:`has_match`
-
-------------
-
-.. function:: has_match(regex as Regex)
-
-Returns ``true`` if the last call to ``match`` was sucessful, and
-``false`` if it was unsuccessful or if ``match`` was not called.
-
-See also: :func:`match`
-
-
-------------
-
-.. function:: get_end(regex as Regex, nth as Intger)
-
-Returns the index of the last character of the ``nth`` capture in ``regex``. If
-``nth`` equals ``0``, it returns the index of the last character in the
-whole matched string.
-
-See also: :func:`match`, :func:`get_start`
-
-
-------------
-
-.. function:: get_start(regex as Regex, nth as Integer)
-
-Returns the index of the first character of the ``nth`` capture in ``regex``. If
-``nth`` equals ``0``, it returns the index of the first character in the
-whole matched string.
-
-See also: :func:`group`, :func:`get_end`
-
-
-------------
-
-.. function:: group(regex as Regex, nth as Integer)
-
-Returns the ``nth`` captured sub-expression in the last successful call
-to ``match``. If ``nth`` equals ``0``, the whole matched string is
-returned, even if no sub-expression was captured.
-
-See also: :func:`count`, :func:`match`, :func:`first`, :func:`last`
-
-------------
-
-.. function:: len(regex as Regex)
-
-Returns the number of captures in the last match. This function returns 0 if there was no captured
-sub-expression, if there was no match or if ``match`` was not called. This is equivalent to ``count()``.
+Matches ``regex`` against the string ``subject``. Returns a ``Match`` object
+if there was a match, and ``null`` otherwise. Since ``null`` is the only
+non-Boolean value that counts as false, the result can be tested directly
+with ``if``:
 
 .. code:: phon
 
-    re = Regex("^a(...)(..)(..)")
+    var re = regex('\d+')
+    var m = match(re, "abc 123 xyz")
 
-    # Print "bra", "ca", "da"
-    if match(re, "abracadabra") then
-        for i = 1 to len(re) do
-            print group(re, i)
-        end       
+    if m then
+        print(group(m, 0)) # prints "123"
     end
 
-
-Fields
-------
-
-.. attribute:: length
-
-Returns the number of captured sub-expressions in the last call to
-``match``. This field is equal to 0 if there was no captured
-sub-expression, if there was no match or if ``match`` was not called.
-
-.. code:: phon
-
-    re = Regex("^a(...)(..)(..)") 
-
-    # Print "bra", "ca", "da"
-    if match(re, "abracadabra") then
-        for i = 1 to re.length do
-            text = group(re, i)
-            print(text)
-        end       
-    end
-
-See also: :func:`len`, :func:`count`
+See also: :func:`group`, :func:`group_count`
 
 
 ------------
 
-.. attribute:: pattern
 
+.. function:: match(regex as Regex, subject as String, from as Integer)
+
+Matches ``regex`` against the string ``subject``, starting at position ``from``
+(a 1-based character index). Returns a ``Match`` object if there was a match,
+and ``null`` otherwise.
+
+
+Match accessors
+---------------
+
+.. function:: group(match as Match, nth as Integer)
+
+Returns the ``nth`` captured sub-expression of ``match``. If ``nth`` equals
+``0``, the whole matched string is returned. If group ``nth`` exists in the
+pattern but did not participate in the match (for example, an optional group
+that was not filled), ``null`` is returned. An out-of-range group index raises
+an error.
+
+.. code:: phon
+
+    var re = regex('^a(...)(..)(..)')
+    var m = match(re, "abracadabra")
+
+    print(group(m, 0)) # prints "abracada"
+    print(group(m, 1)) # prints "bra"
+
+See also: :func:`group_count`, :func:`groups`, :func:`match`
+
+------------
+
+.. function:: group_count(match as Match)
+
+Returns the number of groups in the match, **including group 0** (the whole
+match). A pattern with three capturing groups therefore yields 4.
+
+.. code:: phon
+
+    var re = regex('^a(...)(..)(..)')
+    var m = match(re, "abracadabra")
+    assert(group_count(m) == 4)
+
+.. note:: The old ``count()``/``len()`` functions on a regex returned the
+   number of *captures* only; ``group_count`` counts the whole match too.
+
+------------
+
+.. function:: group_start(match as Match, nth as Integer)
+
+Returns the position (1-based character index) of the first character of the
+``nth`` group in the subject string. If ``nth`` equals ``0``, it returns the
+start of the whole matched string. Returns 0 if the group did not participate
+in the match.
+
+See also: :func:`group_end`
+
+------------
+
+.. function:: group_end(match as Match, nth as Integer)
+
+Returns the position (1-based character index) *just past* the last character
+of the ``nth`` group in the subject string. If ``nth`` equals ``0``, this is
+the position past the whole matched string. Returns 0 if the group did not
+participate in the match.
+
+.. code:: phon
+
+    var subject = "abracadabra"
+    var m = match(regex('(...)$'), subject)
+    var text = slice(subject, group_start(m, 1), group_end(m, 1) - 1)
+    assert(text == "bra")
+
+See also: :func:`group_start`
+
+------------
+
+.. function:: groups(match as Match)
+
+Returns the captured sub-expressions as a ``List``: ``[group(m, 1), group(m, 2),
+...]``. Group 0 (the whole match) is not included; a group that did not
+participate in the match contributes ``null``.
+
+.. code:: phon
+
+    var m = match(regex('^a(...)(..)(..)'), "abracadabra")
+    print(groups(m)) # prints "[bra, ca, da]"
+
+
+Regex accessors
+---------------
+
+.. function:: pattern(regex as Regex)
 
 Returns the pattern (as a ``String``) from which the regular
 expression was constructed.
+
+.. code:: phon
+
+    var re = regex('\d+')
+    assert(pattern(re) == '\d+')

@@ -30,7 +30,7 @@ Linux (Debian/Ubuntu)
 The official executable is provided for 64-bit architectures. Assuming the ``.deb`` package is in your
 ``Downloads`` directory, you should be able to install it with the following command:
 
-::
+.. code:: bash
 
     sudo apt install ~/Downloads/phonometrica-X.X.X.deb
 

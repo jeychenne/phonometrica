@@ -4,39 +4,64 @@
 
 static std::vector<std::pair<const char*, std::vector<QString>>> function_declarations = {
 
-	// ── Core type conversions ───────────────────────────────────
-	{ "type",  {
-		"type(object as Object)\nReturns the type of `object` as a string."
+	// ── Core builtins ───────────────────────────────────────────
+	{ "print",  {
+		"print(arg1, arg2, ...)\nPrints its arguments (separated by a space) to the console, followed by a new line."
 	}},
 	{ "len",  {
-		"len(file as File)\nReturns the number of bytes in the file.\002",
-		"len(regex as Regex)\nReturns the number of captures in the last match.\001\002",
-		"len(list as List)\nReturns the number of elements in the list.\001\002",
-		"len(string as String)\nReturns the number of characters in the string.\001"
+		"len(list as List)\nReturns the number of elements in the list.\002",
+		"len(string as String)\nReturns the number of characters in the string.\001\002",
+		"len(table as Table)\nReturns the number of key/value pairs in the table.\001\002",
+		"len(set as Set)\nReturns the number of elements in the set.\001"
 	}},
-	{ "str",  {
-		"str(object as Object)\nReturns a string representation of `object`."
+	{ "to_string",  {
+		"to_string(object as Object)\nReturns a string representation of `object`."
 	}},
-	{ "bool",  {
-		"bool(object as Object)\nConverts `object` to a boolean value."
+	{ "to_int",  {
+		"to_int(string as String)\nParses `string` as an integer; raises an error if it is not a valid integer."
 	}},
-	{ "int",  {
-		"int(object as Object)\nConverts `object` to an integer value."
+	{ "to_float",  {
+		"to_float(string as String)\nParses `string` as a floating-point number; raises an error if it is not a valid number."
 	}},
-	{ "float",  {
-		"float(object as Object)\nConverts `object` to a floating-point value."
+	{ "cast",  {
+		"cast(object as Object, type as Class)\nChecked downcast: returns `object` viewed as `type`, or raises a type error."
 	}},
-	{ "import",  {
-		"import(path as String)\nImport and execute a script file.\002",
-		"import(path as String, once as Boolean)\nImport and execute a script file; if `once` is true, skip if already imported.\001"
+	{ "assert",  {
+		"assert(condition as Boolean)\nRaises an error if `condition` is false or null.\002",
+		"assert(condition as Boolean, message as String)\nRaises an error with `message` if `condition` is false or null.\001"
+	}},
+	{ "freeze",  {
+		"freeze(object as Object)\nMakes a string or array immutable and shareable across threads (zero-copy on send). Returns the object."
+	}},
+	{ "collect_garbage",  {
+		"collect_garbage()\nForces a garbage-collection pass over cyclic references."
+	}},
+
+	// ── Concurrency ─────────────────────────────────────────────
+	{ "Channel",  {
+		"Channel()\nCreates a synchronous (unbuffered) channel for communication between spawned threads.\002",
+		"Channel(capacity as Integer)\nCreates a channel with an internal buffer of `capacity` elements.\001"
+	}},
+	{ "send",  {
+		"send(channel as Channel, value as Object)\nSends `value` on the channel, blocking if the channel is full."
+	}},
+	{ "receive",  {
+		"receive(channel as Channel)\nReceives the next value from the channel, blocking until one is available."
+	}},
+	{ "wait",  {
+		"wait(thread as Object)\nWaits for a thread started with `spawn` to finish; re-raises any error it raised."
+	}},
+	{ "parallel_map",  {
+		"parallel_map(items as List, fn as Function)\nApplies `fn` to each element of `items` in parallel and returns the list of results."
 	}},
 
 	// ── JSON ────────────────────────────────────────────────────
-	{ "load_json",  {
-		"load_json(path as String)\nLoads a JSON file and returns it as a Table."
+	{ "to_json",  {
+		"to_json(value as Object)\nSerializes `value` (lists, tables, strings, numbers, booleans, null) as a JSON string.\002",
+		"to_json(value as Object, indent as Integer)\nSerializes `value` as a pretty-printed JSON string with the given indentation.\001"
 	}},
-	{ "dump_json",  {
-		"dump_json(table as Table)\nSerializes a Table as a JSON string."
+	{ "from_json",  {
+		"from_json(text as String)\nParses the JSON string `text` and returns the corresponding value. Never evaluates code."
 	}},
 
 	// ── Math functions ──────────────────────────────────────────
@@ -45,16 +70,13 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"abs(x as Array)\nReturns a copy of the array in which `abs` has been applied to each element.\001"
 	}},
 	{ "acos",  {
-		"acos(x as Number)\nReturns the arccosine of `x`.\002",
-		"acos(x as Array)\nReturns a copy of the array in which `acos` has been applied to each element.\001"
+		"acos(x as Number)\nReturns the arccosine of `x`."
 	}},
 	{ "asin",  {
-		"asin(x as Number)\nReturns the arcsine of `x`.\002",
-		"asin(x as Array)\nReturns a copy of the array in which `asin` has been applied to each element.\001"
+		"asin(x as Number)\nReturns the arcsine of `x`."
 	}},
 	{ "atan",  {
-		"atan(x as Number)\nReturns the arctangent of `x`.\002",
-		"atan(x as Array)\nReturns a copy of the array in which `atan` has been applied to each element.\001"
+		"atan(x as Number)\nReturns the arctangent of `x`."
 	}},
 	{ "atan2",  {
 		"atan2(y as Number, x as Number)\nReturns the four-quadrant inverse tangent of `y` and `x`."
@@ -80,28 +102,25 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"log(x as Array)\nReturns a copy of the array in which `log` has been applied to each element.\001"
 	}},
 	{ "log2",  {
-		"log2(x as Number)\nReturns the logarithm of `x` in base 2.\002",
-		"log2(x as Array)\nReturns a copy of the array in which `log2` has been applied to each element.\001"
+		"log2(x as Number)\nReturns the logarithm of `x` in base 2."
 	}},
 	{ "log10",  {
-		"log10(x as Number)\nReturns the logarithm of `x` in base 10.\002",
-		"log10(x as Array)\nReturns a copy of the array in which `log10` has been applied to each element.\001"
+		"log10(x as Number)\nReturns the logarithm of `x` in base 10."
 	}},
 	{ "max",  {
 		"max(x as Number, y as Number)\nReturns the larger value between `x` and `y`.\002",
-		"max(x as Array)\nReturns the maximum value in the array.\001"
+		"max(x as Array)\nReturns the maximum value in the array (raises an error on an empty array).\001"
 	}},
 	{ "min",  {
 		"min(x as Number, y as Number)\nReturns the smaller value between `x` and `y`.\002",
-		"min(x as Array)\nReturns the minimum value in the array.\001"
+		"min(x as Array)\nReturns the minimum value in the array (raises an error on an empty array).\001"
 	}},
 	{ "random",  {
 		"random()\nReturns a pseudo-random value in the interval [0, 1[ according to a uniform distribution."
 	}},
 	{ "round",  {
 		"round(x as Number)\nRounds `x` to the nearest integer.\002",
-		"round(x as Number, n as Number)\nRounds `x` to `n` decimal places.\001\002",
-		"round(x as Array)\nReturns a copy of the array in which `round` has been applied to each element.\001"
+		"round(x as Number, n as Integer)\nRounds `x` to `n` decimal places.\001"
 	}},
 	{ "sin",  {
 		"sin(x as Number)\nReturns the sine of `x`.\002",
@@ -112,11 +131,10 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"sqrt(x as Array)\nReturns a copy of the array in which `sqrt` has been applied to each element.\001"
 	}},
 	{ "tan",  {
-		"tan(x as Number)\nReturns the tangent of `x`.\002",
-		"tan(x as Array)\nReturns a copy of the array in which `tan` has been applied to each element.\001"
+		"tan(x as Number)\nReturns the tangent of `x`."
 	}},
 
-	// ── Array creation ──────────────────────────────────────────
+	// ── Array creation & inspection ─────────────────────────────
 	{ "zeros",  {
 		"zeros(n as Integer)\nCreates a one-dimensional array of size `n` filled with zeros.\002",
 		"zeros(nrow as Integer, ncol as Integer)\nCreates a two-dimensional array of size `nrow` x `ncol` filled with zeros.\001"
@@ -124,6 +142,30 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "ones",  {
 		"ones(n as Integer)\nCreates a one-dimensional array of size `n` filled with ones.\002",
 		"ones(nrow as Integer, ncol as Integer)\nCreates a two-dimensional array of size `nrow` x `ncol` filled with ones.\001"
+	}},
+	{ "nrow",  {
+		"nrow(x as Array)\nReturns the number of rows in the array."
+	}},
+	{ "ncol",  {
+		"ncol(x as Array)\nReturns the number of columns in the array (1 for a one-dimensional array)."
+	}},
+	{ "ndim",  {
+		"ndim(x as Array)\nReturns the number of dimensions of the array."
+	}},
+	{ "sum",  {
+		"sum(x as Array)\nReturns the sum of the elements in the array `x`.\002",
+		"sum(x as Array, dim as Integer)\nReturns the sums along dimension `dim` (1 = columns, 2 = rows).\001"
+	}},
+	{ "mean",  {
+		"mean(x as Array)\nReturns the mean of the array `x`.\002",
+		"mean(x as Array, dim as Integer)\nReturns the means along dimension `dim` (1 = columns, 2 = rows).\001"
+	}},
+	{ "std",  {
+		"std(x as Array)\nReturns the standard deviation of the array `x`.\002",
+		"std(x as Array, dim as Integer)\nReturns the standard deviations along dimension `dim`.\001"
+	}},
+	{ "vrc",  {
+		"vrc(x as Array)\nReturns the sample variance of the array `x`."
 	}},
 
 	// ── String functions ────────────────────────────────────────
@@ -139,28 +181,28 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"ends_with(string as String, suffix as String)\nReturns true if the string ends with `suffix`, and `false` otherwise."
 	}},
 	{ "find",  {
-		"find(list as List, item as Object)\nReturns the index of `item` in the list.\002",
+		"find(list as List, item as Object)\nReturns the index of `item` in the list, or 0 if it is not found.\002",
 		"find(list as List, item as Object, pos as Integer)\nReturns the index of `item` in the list, starting the search at index `pos`.\001\002",
 		"find(string as String, substring as String)\nReturns the start position of `substring` in `string`, or 0 if it is not found.\001\002",
 		"find(string as String, substring as String, pos as Integer)\nReturns the start position of `substring` in `string`, starting at `pos`.\001"
 	}},
 	{ "find_back",  {
-		"find_back(list as List, item as Object)\nReturns the index of `item` in the list, starting the search from the end.\002",
-		"find_back(string as String, substring as String)\nReturns the start position of `substring` in `string`, searching from the end.\001"
+		"find_back(list as List, item as Object)\nReturns the index of `item` in the list, starting the search from the end."
 	}},
 	{ "left",  {
-		"left(string as String, n as Integer)\nGet the substring corresponding to the `n` first characters of the string."
+		"left(string as String, n as Integer)\nGet the substring corresponding to the `n` first characters of the string.\002",
+		"left(list as List, n as Integer)\nReturns a new list containing the `n` first elements of the list.\001"
 	}},
 	{ "right",  {
-		"right(string as String, n as Integer)\nGet the substring corresponding to the `n` last characters of the string."
+		"right(string as String, n as Integer)\nGet the substring corresponding to the `n` last characters of the string.\002",
+		"right(list as List, n as Integer)\nReturns a new list containing the `n` last elements of the list.\001"
 	}},
 	{ "slice",  {
 		"slice(string as String, from as Integer)\nReturns the substring starting at index `from` until the end of the string.\002",
 		"slice(string as String, from as Integer, to as Integer)\nReturns the substring starting at index `from` and ending at index `to` (inclusive).\001"
 	}},
 	{ "count",  {
-		"count(regex as Regex)\nReturns the number of captures in the last match.\002",
-		"count(string as String, substring as String)\nReturns the number of times `substring` appears in `string`.\001"
+		"count(string as String, substring as String)\nReturns the number of times `substring` appears in `string`."
 	}},
 	{ "to_upper",  {
 		"to_upper(string as String)\nReturns a copy of the string where each character has been converted to upper case."
@@ -183,17 +225,16 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"prepend(ref string as String, prefix as String)\nInserts `prefix` at the beginning of `string`.\001"
 	}},
 	{ "insert",  {
-		"insert(ref list as List, pos as Integer, item as Object)\nInserts the element `item` at index `pos`.\002",
-		"insert(ref string as String, pos as Integer, sub as String)\nInserts the substring `sub` at position `pos`.\001"
+		"insert(ref list as List, pos as Integer, item as Object)\nInserts the element `item` at index `pos`."
 	}},
 	{ "trim",  {
-		"trim(ref string as String)\nRemoves whitespace characters at both ends of the string."
+		"trim(ref string as String)\nRemoves whitespace characters at both ends of the string (in place)."
 	}},
 	{ "ltrim",  {
-		"ltrim(ref string as String)\nRemoves whitespace characters at the left end of the string."
+		"ltrim(ref string as String)\nRemoves whitespace characters at the left end of the string (in place)."
 	}},
 	{ "rtrim",  {
-		"rtrim(ref string as String)\nRemoves whitespace characters at the right end of the string."
+		"rtrim(ref string as String)\nRemoves whitespace characters at the right end of the string (in place)."
 	}},
 	{ "remove",  {
 		"remove(ref table as Table, key as Object)\nRemoves the element whose key is equal to `key`.\002",
@@ -201,28 +242,25 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"remove(ref string as String, sub as String)\nRemoves all (non-overlapping) instances of the substring `sub`.\001"
 	}},
 	{ "remove_first",  {
-		"remove_first(ref list as List, item as Object)\nRemoves the first element in the list that is equal to `item`.\002",
-		"remove_first(ref string as String, sub as String)\nRemoves the first instance of the substring `sub`.\001"
+		"remove_first(ref list as List, item as Object)\nRemoves the first element in the list that is equal to `item`."
 	}},
 	{ "remove_last",  {
-		"remove_last(ref list as List, item as Object)\nRemoves the last element in the list that is equal to `item`.\002",
-		"remove_last(ref string as String, sub as String)\nRemoves the last instance of the substring `sub`.\001"
+		"remove_last(ref list as List, item as Object)\nRemoves the last element in the list that is equal to `item`."
 	}},
 	{ "remove_at",  {
-		"remove_at(ref list as List, pos as Integer)\nRemoves the element at index `pos`.\002",
-		"remove_at(ref string as String, at as Integer, count as Integer)\nRemoves `count` characters, starting at position `at`.\001"
+		"remove_at(ref list as List, pos as Integer)\nRemoves the element at index `pos`."
 	}},
 	{ "replace",  {
-		"replace(ref string as String, old as String, new as String)\nReplaces all (non-overlapping) instances of the substring `old` by `new`."
+		"replace(ref string as String, old as String, new as String)\nReplaces all (non-overlapping) instances of the substring `old` by `new` (in place)."
 	}},
-	{ "replace_first",  {
-		"replace_first(ref string as String, old as String, new as String)\nReplaces the first instance of the substring `old` with `new`."
+	{ "reverse",  {
+		"reverse(ref list as List)\nReverses the order of the elements in the list.\002",
+		"reverse(ref string as String)\nReverses all characters in the string.\001"
 	}},
-	{ "replace_last",  {
-		"replace_last(ref string as String, old as String, new as String)\nReplaces the last instance of the substring `old` with `new`."
-	}},
-	{ "replace_at",  {
-		"replace_at(ref string as String, at as Integer, count as Integer, new as String)\nReplaces `count` characters starting at position `at` with substring `new`."
+	{ "is_empty",  {
+		"is_empty(table as Table)\nReturns `true` if the table contains no element.\002",
+		"is_empty(list as List)\nReturns `true` if the list is empty.\001\002",
+		"is_empty(string as String)\nReturns `true` if the string is empty.\001"
 	}},
 
 	// ── List functions ──────────────────────────────────────────
@@ -236,14 +274,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"join(items as List, delim as String)\nReturns a string in which all the elements in `items` have been joined with the separator `delim`."
 	}},
 	{ "clear",  {
-		"clear()\nClears the currently active output surface (console or Output panel).\002",
-		"clear(ref table as Table)\nRemoves all the elements in the table.\002",
-		"clear(ref list as List)\nEmpty the content of the list.\001"
-	}},
-	{ "is_empty",  {
-		"is_empty(table as Table)\nReturns `true` if the table contains no element.\002",
-		"is_empty(list as List)\nReturns `true` if the list is empty.\001\002",
-		"is_empty(string as String)\nReturns `true` if the string is empty.\001"
+		"clear(ref list as List)\nEmpty the content of the list.\002",
+		"clear(ref table as Table)\nRemoves all the elements in the table.\001\002",
+		"clear(ref x as Array)\nSets all the elements in the array to 0.\001"
 	}},
 	{ "pop",  {
 		"pop(ref list as List)\nRemoves the last element from the list and returns it."
@@ -255,17 +288,13 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"sort(ref list as List)\nSorts the elements in the list in increasing order."
 	}},
 	{ "sorted_find",  {
-		"sorted_find(list as List, item as Object)\nFinds the index of `item` in a sorted list."
+		"sorted_find(list as List, item as Object)\nFinds the index of `item` in a sorted list, or 0 if it is not found."
 	}},
 	{ "sorted_insert",  {
 		"sorted_insert(ref list as List, item as Object)\nInserts `item` into the sorted list at the correct position."
 	}},
 	{ "is_sorted",  {
 		"is_sorted(list as List)\nReturns true if all the elements are sorted in ascending order."
-	}},
-	{ "reverse",  {
-		"reverse(ref list as List)\nReverses the order of the elements in the list.\002",
-		"reverse(ref string as String)\nReverses all characters in the string.\001"
 	}},
 	{ "sample",  {
 		"sample(list as List, n as Integer)\nReturns a list containing `n` elements from the list drawn at random."
@@ -284,15 +313,18 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	}},
 
 	// ── Table functions ─────────────────────────────────────────
-	{ "get",  {
-		"get(table as Table, key as Object)\nReturns the value associated with `key`, or `null` if there is no such value.\002",
-		"get(table as Table, key as Object, default as Object)\nReturns the value associated with `key`, or `default` if there is no such value.\001"
+	{ "keys",  {
+		"keys(table as Table)\nReturns the keys of the table as a List (in unspecified order)."
+	}},
+	{ "values",  {
+		"values(table as Table)\nReturns the values of the table as a List (in unspecified order)."
 	}},
 
 	// ── File I/O ────────────────────────────────────────────────
-	{ "open",  {
-		"open(path as String)\nOpens the file named `path` and returns a handle to it.\002",
-		"open(path as String, mode as String)\nOpens the file with the specified mode (\"r\", \"w\", \"a\").\001"
+	{ "open_file",  {
+		"open_file(path as String)\nOpens the file named `path` for reading and returns a File handle.\002",
+		"open_file(path as String, mode as String)\nOpens the file with the specified mode (\"r\", \"w\", \"a\", ...).\001\002",
+		"open_file(path as String, mode as String, encoding as String)\nOpens the file with the specified mode and text encoding.\001"
 	}},
 	{ "close",  {
 		"close(file as File)\nCloses the file."
@@ -301,7 +333,7 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"read(file as File)\nReads and returns the entire content of the file as a string."
 	}},
 	{ "read_file",  {
-		"read_file(path as String)\nReturn the content of the file named `path` as a string."
+		"read_file(path as String)\nReturn the content of the file named `path` as a string (the encoding is auto-detected)."
 	}},
 	{ "read_line",  {
 		"read_line(file as File)\nReads a line from `file`."
@@ -330,23 +362,36 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "eof",  {
 		"eof(file as File)\nReturns `true` if the cursor is positioned at the end of the file."
 	}},
-
-	// ── Regex ───────────────────────────────────────────────────
-	{ "match",  {
-		"match(regex as Regex, subject as String)\nMatch `regex` against the string `subject`.\002",
-		"match(regex as Regex, subject as String, pos as Integer)\nMatch `regex` against `subject`, starting at position `pos`.\001"
+	{ "encoding",  {
+		"encoding(file as File)\nReturns the file's text encoding, as detected or forced when the file was opened."
 	}},
-	{ "has_match",  {
-		"has_match(regex as Regex)\nReturns `true` if the last call to `match` was successful."
+
+	// ── Regular expressions ─────────────────────────────────────
+	{ "regex",  {
+		"regex(pattern as String)\nCompiles `pattern` and returns a Regex object.\002",
+		"regex(pattern as String, flags as String)\nCompiles `pattern` with the given flags (e.g. \"i\" for case-insensitive).\001"
+	}},
+	{ "match",  {
+		"match(re as Regex, subject as String)\nMatches `re` against `subject`; returns a Match object, or `null` if there is no match.\002",
+		"match(re as Regex, subject as String, pos as Integer)\nMatches `re` against `subject`, starting at position `pos`.\001"
 	}},
 	{ "group",  {
-		"group(regex as Regex, nth as Integer)\nReturns the `nth` captured sub-expression in the last successful call to `match`."
+		"group(m as Match, nth as Integer)\nReturns the `nth` captured group in the match (group 0 is the whole match), or `null` for a non-participating group."
 	}},
-	{ "get_start",  {
-		"get_start(regex as Regex, nth as Integer)\nReturns the index of the first character of the `nth` capture in `regex`."
+	{ "group_count",  {
+		"group_count(m as Match)\nReturns the number of groups in the match, including group 0 (the whole match)."
 	}},
-	{ "get_end",  {
-		"get_end(regex as Regex, nth as Integer)\nReturns the index of the last character of the `nth` capture in `regex`."
+	{ "group_start",  {
+		"group_start(m as Match, nth as Integer)\nReturns the index of the first character of the `nth` group in the subject string."
+	}},
+	{ "group_end",  {
+		"group_end(m as Match, nth as Integer)\nReturns the index of the last character of the `nth` group in the subject string."
+	}},
+	{ "groups",  {
+		"groups(m as Match)\nReturns all the captured groups in the match as a List."
+	}},
+	{ "pattern",  {
+		"pattern(re as Regex)\nReturns the pattern string the regular expression was compiled from."
 	}},
 
 	// ── File system ─────────────────────────────────────────────
@@ -360,11 +405,8 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"is_directory(path as String)\nReturn `true` if `path` exists and is a directory."
 	}},
 	{ "list_directory",  {
-		"list_directory(path as String)\nReturn a table containing the files in `path`.\002",
-		"list_directory(path as String, include_hidden as Boolean)\nReturn a table containing the files in `path`.\001"
-	}},
-	{ "clear_directory",  {
-		"clear_directory(path as String)\nEmpty the content of a directory."
+		"list_directory(path as String)\nReturn a list containing the names of the files in `path`.\002",
+		"list_directory(path as String, include_hidden as Boolean)\nReturn a list containing the names of the files in `path`, optionally including hidden files.\001"
 	}},
 	{ "create_directory",  {
 		"create_directory(path as String)\nCreate a new directory at the specified path."
@@ -383,13 +425,14 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"rename(old_name as String, new_name as String)\nRenames a file."
 	}},
 	{ "get_extension",  {
-		"get_extension(path as String)\nGet the file's extension, starting with a dot."
+		"get_extension(path as String)\nGet the file's extension, starting with a dot.\002",
+		"get_extension(path as String, lower as Boolean)\nGet the file's extension; if `lower` is true, it is converted to lower case.\001"
 	}},
 	{ "strip_extension",  {
 		"strip_extension(path as String)\nReturn `path` without extension."
 	}},
 	{ "split_extension",  {
-		"split_extension(path as String)\nReturn a table whose first element is `path` with the extension removed, and whose second element is the extension."
+		"split_extension(path as String)\nReturn a list whose first element is `path` with the extension removed, and whose second element is the extension."
 	}},
 	{ "join_path",  {
 		"join_path(s1 as String, s2 as String)\nConcatenate `s1` and `s2` using the native path separator."
@@ -409,17 +452,11 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_current_directory",  {
 		"get_current_directory()\nReturns the current working directory."
 	}},
-	{ "get_script_path",  {
-		"get_script_path()\nReturns the absolute path of the script file currently being interpreted. Use `get_directory(get_script_path())` to obtain the directory containing the script, and `join_path(...)` to build sibling paths portably."
-	}},
-	{ "get_error_line",  {
-		"get_error_line()\nInside a `catch` clause, returns the source line of the original throw — preserved across function-call and module-import boundaries. Returns -1 outside a catch body (or for an error with no recorded line). Useful for logging or reporting where an error originated, especially when the error was raised deep in a call chain."
-	}},
-	{ "get_error_trace",  {
-		"get_error_trace()\nInside a `catch` clause, returns the call-stack trace of the original throw as a List of Tables, ordered innermost-first. Each Table has three fields: `file` (String, source file path), `line` (Integer, 1-based source line — throw site for the innermost entry, call-site for outer entries), and `function` (String, routine name; \"<chunk>\" for top-level code). Returns an empty List outside a catch body. Useful for logging deep errors from helper functions or imported modules."
-	}},
 	{ "set_current_directory",  {
 		"set_current_directory(path as String)\nSets the current working directory to `path`."
+	}},
+	{ "get_script_path",  {
+		"get_script_path()\nReturns the absolute path of the script file currently being interpreted. Use `get_directory(get_script_path())` to obtain the directory containing the script, and `join_path(...)` to build sibling paths portably."
 	}},
 	{ "get_temp_directory",  {
 		"get_temp_directory()\nReturns the path of the system's temporary directory."
@@ -456,9 +493,6 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	}},
 
 	// ── Project & document access ───────────────────────────────
-	{ "load",  {
-		"load(path as String)\nImports the file into the project (if not already present) and returns it as a Document."
-	}},
 	{ "get_annotations",  {
 		"get_annotations()\nReturn a list of all the annotations in the current project."
 	}},
@@ -486,13 +520,13 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 
 	// ── Properties ──────────────────────────────────────────────
 	{ "add_property",  {
-		"add_property(doc as Document, category as String, value)\nAdds a metadata property with the given category and value to `doc`."
+		"add_property(doc as Document, category as String, value as Object)\nAdds a metadata property with the given category and value (String, Number or Boolean) to `doc`."
 	}},
 	{ "remove_property",  {
 		"remove_property(doc as Document, category as String)\nRemoves the metadata property with the given category from `doc`."
 	}},
 	{ "get_property",  {
-		"get_property(doc as Document, category as String)\nReturns the value of the metadata property with the given category."
+		"get_property(doc as Document, category as String)\nReturns the value of the metadata property with the given category, or `null`."
 	}},
 
 	// ── Annotation ──────────────────────────────────────────────
@@ -564,6 +598,26 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"write_as_textgrid(annot as Annotation)\nExports the annotation as a Praat TextGrid file.\002",
 		"write_as_textgrid(annot as Annotation, path as String)\nExports the annotation as a TextGrid at the specified `path`.\001"
 	}},
+	{ "new_annotation",  {
+		"new_annotation()\nCreates and returns a new, empty Annotation."
+	}},
+	{ "duplicate_annotation",  {
+		"duplicate_annotation(annot as Annotation, path as String)\nDuplicates the annotation and saves the copy at `path`; returns the new Annotation."
+	}},
+	{ "extract_layers",  {
+		"extract_layers(annot as Annotation, layers as List, path as String)\nCreates a new annotation at `path` containing only the given layers (a list of indices)."
+	}},
+	{ "merge_annotations",  {
+		"merge_annotations(base as Annotation, others as List, path as String)\nMerges the layers of `base` and of the annotations in `others` into a new annotation saved at `path`."
+	}},
+	{ "extract_annotation_slice",  {
+		"extract_annotation_slice(annot as Annotation, t1 as Number, t2 as Number, path as String)\nExtracts the portion of the annotation between `t1` and `t2` into a new annotation saved at `path`.\002",
+		"extract_annotation_slice(annot as Annotation, t1 as Number, t2 as Number, clip as Boolean, path as String)\nExtracts a slice of the annotation; if `clip` is true, events straddling the boundaries are clipped.\001"
+	}},
+	{ "concatenate_annotations",  {
+		"concatenate_annotations(items as List, path as String)\nConcatenates the annotations in `items` (in order) into a new annotation saved at `path`.\002",
+		"concatenate_annotations(items as List, durations as List, path as String)\nConcatenates the annotations, using `durations` for the duration of each source.\001"
+	}},
 
 	// ── Sound & acoustic measurement ────────────────────────────
 	{ "get_pitch",  {
@@ -588,31 +642,49 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_mean_intensity",  {
 		"get_mean_intensity(sound as Sound, channel as Integer, t1 as Number, t2 as Number)\nReturns the mean intensity (dB) between `t1` and `t2`."
 	}},
+	{ "extract_sound_slice",  {
+		"extract_sound_slice(sound as Sound, t1 as Number, t2 as Number, path as String)\nExtracts the portion of the sound between `t1` and `t2` into a new sound file saved at `path`."
+	}},
+	{ "concatenate_sounds",  {
+		"concatenate_sounds(items as List, path as String)\nConcatenates the sounds in `items` (in order) into a new sound file saved at `path`."
+	}},
+	{ "convert",  {
+		"convert(sound as Sound, path as String, format as String)\nConverts the sound to the given format (e.g. \"wav\", \"flac\") and saves it at `path`.\002",
+		"convert(sound as Sound, path as String, format as String, sample_rate as Number)\nConverts the sound to the given format and sample rate, and saves it at `path`.\001"
+	}},
 
 	// ── Frequency conversion ────────────────────────────────────
 	{ "hertz_to_bark",  {
-		"hertz_to_bark(f)\nConverts frequency `f` (in Hertz) to bark."
+		"hertz_to_bark(f as Number)\nConverts frequency `f` (in Hertz) to bark.\002",
+		"hertz_to_bark(f as Array)\nConverts an array of frequencies (in Hertz) to bark.\001"
 	}},
 	{ "bark_to_hertz",  {
-		"bark_to_hertz(z)\nConverts frequency `z` (in bark) to Hertz."
+		"bark_to_hertz(z as Number)\nConverts frequency `z` (in bark) to Hertz.\002",
+		"bark_to_hertz(z as Array)\nConverts an array of frequencies (in bark) to Hertz.\001"
 	}},
 	{ "hertz_to_erb",  {
-		"hertz_to_erb(f)\nConverts frequency `f` (in Hertz) to ERB units."
+		"hertz_to_erb(f as Number)\nConverts frequency `f` (in Hertz) to ERB units.\002",
+		"hertz_to_erb(f as Array)\nConverts an array of frequencies (in Hertz) to ERB units.\001"
 	}},
 	{ "erb_to_hertz",  {
-		"erb_to_hertz(e)\nConverts frequency `e` (in ERB units) to Hertz."
+		"erb_to_hertz(e as Number)\nConverts frequency `e` (in ERB units) to Hertz.\002",
+		"erb_to_hertz(e as Array)\nConverts an array of frequencies (in ERB units) to Hertz.\001"
 	}},
 	{ "hertz_to_mel",  {
-		"hertz_to_mel(f)\nConverts frequency `f` (in Hertz) to mel."
+		"hertz_to_mel(f as Number)\nConverts frequency `f` (in Hertz) to mel.\002",
+		"hertz_to_mel(f as Array)\nConverts an array of frequencies (in Hertz) to mel.\001"
 	}},
 	{ "mel_to_hertz",  {
-		"mel_to_hertz(mel)\nConverts frequency `mel` (in mel) to Hertz."
+		"mel_to_hertz(mel as Number)\nConverts frequency `mel` (in mel) to Hertz.\002",
+		"mel_to_hertz(mel as Array)\nConverts an array of frequencies (in mel) to Hertz.\001"
 	}},
 	{ "hertz_to_semitones",  {
-		"hertz_to_semitones(f0 [, ref])\nConverts frequency `f0` (in Hertz) to semitones, using `ref` as a reference frequency."
+		"hertz_to_semitones(f0 as Number)\nConverts frequency `f0` (in Hertz) to semitones, using the default reference frequency.\002",
+		"hertz_to_semitones(f0 as Number, ref as Number)\nConverts frequency `f0` (in Hertz) to semitones, using `ref` as a reference frequency.\001"
 	}},
 	{ "semitones_to_hertz",  {
-		"semitones_to_hertz(st [, ref])\nConverts the number of semitones `st` to Hertz, using `ref` as a reference frequency."
+		"semitones_to_hertz(st as Number)\nConverts the number of semitones `st` to Hertz, using the default reference frequency.\002",
+		"semitones_to_hertz(st as Number, ref as Number)\nConverts the number of semitones `st` to Hertz, using `ref` as a reference frequency.\001"
 	}},
 
 	// ── Spectrum & spectral moments ─────────────────────────────
@@ -634,10 +706,16 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"get_header(table as DataTable, col as Integer)\nReturns the header (column name) of column `col`."
 	}},
 	{ "get_column",  {
-		"get_column(dataset as Dataset, col as Integer)\nReturns the values in column `col` as an Array (numeric) or a List (text)."
+		"get_column(dataset as Dataset, col as Integer)\nReturns the values in column `col` as an Array (numeric) or a List (text).\002",
+		"get_column(table as DataTable, name as String)\nReturns the values in the column named `name` as an Array (numeric) or a List (text).\001\002",
+		"get_column(conc as Concordance, col as Integer)\nReturns the values in column `col` of the concordance.\001"
 	}},
 	{ "get_column_type",  {
 		"get_column_type(dataset as Dataset, col as Integer)\nReturns the type of column `col`: \"numeric\", \"text\", or \"boolean\"."
+	}},
+	{ "add_column",  {
+		"add_column(table as DataTable, values as List, name as String)\nAppends a new column named `name` with the given values to the table.\002",
+		"add_column(table as DataTable, values as Array, name as String)\nAppends a new numeric column named `name` with the given values to the table.\001"
 	}},
 	{ "to_csv",  {
 		"to_csv(table as DataTable, path as String)\nExports the table to a CSV file at `path`.\002",
@@ -647,21 +725,6 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"filter(table as DataTable, expression as String)\nReturns a new dataset containing only the rows that match the filter expression.\002",
 		"filter(table as DataTable, expression as String, label as String)\nReturns a filtered dataset with the given label.\001"
 	}},
-	{ "mean",  {
-		"mean(x as Array)\nReturns the mean of the array `x`.\002",
-		"mean(x as Array, dim as Integer)\nReturns the means along dimension `dim` (1 = columns, 2 = rows).\001"
-	}},
-	{ "std",  {
-		"std(x as Array)\nReturns the standard deviation of the array `x`.\002",
-		"std(x as Array, dim as Integer)\nReturns the standard deviations along dimension `dim`.\001"
-	}},
-	{ "sum",  {
-		"sum(x as Array)\nReturns the sum of the elements in the array `x`.\002",
-		"sum(x as Array, dim as Integer)\nReturns the sums along dimension `dim`.\001"
-	}},
-	{ "vrc",  {
-		"vrc(x as Array)\nReturns the sample variance of the array `x`."
-	}},
 
 	// ── Statistical modeling ────────────────────────────────────
 	{ "fit",  {
@@ -669,8 +732,8 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"fit(formula as String, data as DataTable, family as String)\nFits a frequentist model with the specified family (\"gaussian\", \"binomial\", \"poisson\", \"negbin\").\002",
 		"fit(formula as String, data as DataTable, options as Table)\nFits a frequentist Gaussian model with options.\nSupported options: fit_method=\"ML\" (default) or fit_method=\"REML\".\nREML applies only to mixed models with at least one random effect;\nit is silently coerced to ML otherwise.\002",
 		"fit(formula as String, data as DataTable, family as String, options as Table)\nFits a frequentist model with the specified family and options.\nSupported options: fit_method=\"ML\" (default) or fit_method=\"REML\".\002",
-		"fit(formula as String, data as DataTable, priors as Prior)\nFits a Bayesian model (Gaussian family) using INLA-style approximate inference.\002",
-		"fit(formula as String, data as DataTable, family as String, priors as Prior)\nFits a Bayesian model with the specified family using INLA-style approximate inference.\001"
+		"fit(formula as String, data as DataTable, priors as PriorSpec)\nFits a Bayesian model (Gaussian family) using INLA-style approximate inference.\002",
+		"fit(formula as String, data as DataTable, family as String, priors as PriorSpec)\nFits a Bayesian model with the specified family using INLA-style approximate inference.\001"
 	}},
 	{ "summarize",  {
 		"summarize(model as Model)\nPrints a detailed summary of the fitted model."
@@ -689,8 +752,47 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"emtrends(model as Model, factor as String, variable as String)\nEstimates the slope of `variable` at each level of `factor`.\002",
 		"emtrends(model as Model, factor as String, variable as String, adjustment as String)\nEstimates slopes and computes pairwise contrasts of trends.\001"
 	}},
-	{ "test_residuals",  {
-		"test_residuals(model as Model)\nComputes DHARMa-style simulation-based residual diagnostics (KS test,\ndispersion test, outlier test) and prints the results."
+	{ "dharma",  {
+		"dharma(model as Model)\nComputes DHARMa-style simulation-based residual diagnostics (KS test,\ndispersion test, outlier test) and prints the results."
+	}},
+	{ "evaluate",  {
+		"evaluate(model as Model)\nEvaluates the model's Laplace objective at its converged parameters and returns\na Table with diagnostic quantities (log-likelihood components, random effects, ...).\002",
+		"evaluate(model as Model, overrides as Table)\nEvaluates the model's objective with the given parameter overrides.\001"
+	}},
+	{ "polish",  {
+		"polish(model as Model)\nRe-runs the Student-t outer optimization with tighter tolerances.\nReturns a Table with keys \"delta\", \"loglik\", \"ok\", \"message\". Only meaningful for Student-t models."
+	}},
+	{ "try_phase2",  {
+		"try_phase2(model as Model)\nRe-fits the same Student-t model with Phase 2 (joint optimization) enabled.\nReturns a Table with keys \"ok\", \"delta\", \"loglik\", \"message\"."
+	}},
+	{ "predict",  {
+		"predict(model as Model)\nComputes fitted values on the training data and returns them as a new Dataset.\002",
+		"predict(model as Model, newdata as Dataset)\nComputes predictions for `newdata` and returns them as a new Dataset.\001\002",
+		"predict(model as Model, newdata as Dataset, options as Table)\nComputes predictions for `newdata` with the given options.\001"
+	}},
+	{ "Prior",  {
+		"Prior()\nCreates a PriorSpec with default priors, to be configured with `set_fixed`,\n`set_variance`, `set_residual`, etc., and passed to `fit` for Bayesian estimation."
+	}},
+	{ "set_fixed",  {
+		"set_fixed(priors as PriorSpec, mean as Number, sd as Number)\nSets the Normal prior (mean, sd) for all fixed-effect coefficients.\002",
+		"set_fixed(priors as PriorSpec, name as String, mean as Number, sd as Number)\nSets the Normal prior (mean, sd) for the fixed-effect coefficient named `name`.\001"
+	}},
+	{ "set_variance",  {
+		"set_variance(priors as PriorSpec, type as String, param1 as Number)\nSets the prior on variance components: `type` is \"pc\", \"half_cauchy\" or \"half_normal\".\002",
+		"set_variance(priors as PriorSpec, type as String, param1 as Number, param2 as Number)\nSets the prior on variance components with two parameters.\001"
+	}},
+	{ "set_residual",  {
+		"set_residual(priors as PriorSpec, type as String, param1 as Number)\nSets the prior on the residual standard deviation: `type` is \"pc\", \"half_cauchy\" or \"half_normal\".\002",
+		"set_residual(priors as PriorSpec, type as String, param1 as Number, param2 as Number)\nSets the prior on the residual standard deviation with two parameters.\001"
+	}},
+	{ "set_negbin_theta",  {
+		"set_negbin_theta(priors as PriorSpec, shape as Number, rate as Number)\nSets the Gamma prior (shape, rate) on the negative-binomial dispersion parameter."
+	}},
+	{ "set_beta_phi",  {
+		"set_beta_phi(priors as PriorSpec, shape as Number, rate as Number)\nSets the Gamma prior (shape, rate) on the Beta precision parameter."
+	}},
+	{ "set_lkj",  {
+		"set_lkj(priors as PriorSpec, eta as Number)\nSets the LKJ prior (with strictly positive shape `eta`) on random-effect correlation matrices."
 	}},
 
 	// ── GUI convenience functions ───────────────────────────────
@@ -709,40 +811,26 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "get_visible_channels",  {
 		"get_visible_channels()\nReturn a list of the visible channel indices in the current view."
 	}},
-	{ "report_intensity",  {
-		"report_intensity(time as Number)\nDisplays the intensity at the given time in the current view."
-	}},
-	{ "report_pitch",  {
-		"report_pitch(time as Number)\nDisplays the pitch at the given time in the current view."
-	}},
-	{ "report_formants",  {
-		"report_formants(time as Number)\nDisplays the values of the visible formants at the given time in the current view."
-	}},
-	{ "report_mean_intensity",  {
-		"report_mean_intensity(t1 as Number, t2 as Number)\nDisplays the mean intensity between `t1` and `t2` in the current view."
-	}},
-	{ "report_mean_pitch",  {
-		"report_mean_pitch(t1 as Number, t2 as Number)\nDisplays the mean pitch between `t1` and `t2` in the current view."
-	}},
-	{ "report_mean_formants",  {
-		"report_mean_formants(t1 as Number, t2 as Number)\nDisplays the mean formant values between `t1` and `t2` in the current view."
-	}},
 
 	// ── Dialogs ─────────────────────────────────────────────────
 	{ "warning",  {
-		"warning(message [, title])\nDisplays a warning dialog."
+		"warning(message as String)\nDisplays a warning dialog.\002",
+		"warning(message as String, title as String)\nDisplays a warning dialog with a custom title.\001"
 	}},
 	{ "alert",  {
-		"alert(message [, title])\nDisplays an error dialog."
+		"alert(message as String)\nDisplays an error dialog.\002",
+		"alert(message as String, title as String)\nDisplays an error dialog with a custom title.\001"
 	}},
 	{ "info",  {
-		"info(message [, title])\nDisplays an information dialog."
+		"info(message as String)\nDisplays an information dialog.\002",
+		"info(message as String, title as String)\nDisplays an information dialog with a custom title.\001"
 	}},
 	{ "ask",  {
-		"ask(message [, title])\nAsks a Yes/No question to the user."
+		"ask(message as String)\nAsks a Yes/No question to the user.\002",
+		"ask(message as String, title as String)\nAsks a Yes/No question with a custom title.\001"
 	}},
 	{ "get_input",  {
-		"get_input(label, title, text)\nDisplays an input dialog whose title is `title` and whose informative text is `label`."
+		"get_input(label as String, title as String, text as String)\nDisplays an input dialog whose title is `title`, informative text is `label`, and initial value is `text`."
 	}},
 	{ "open_file_dialog",  {
 		"open_file_dialog(message as String)\nDisplays a dialog that lets the user select a file."
@@ -757,11 +845,11 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"open_directory_dialog(message as String)\nDisplays a dialog that lets the user select a directory."
 	}},
 	{ "create_dialog",  {
-		"create_dialog(title as String)\nCreates a custom dialog with the given title.\002",
-		"create_dialog(spec as Table)\nCreates a custom dialog from a JSON specification table.\001"
+		"create_dialog(spec as String)\nCreates a custom dialog from a JSON specification string.\002",
+		"create_dialog(spec as Table)\nCreates a custom dialog from a specification table.\001"
 	}},
 	{ "view_text",  {
-		"view_text(path [, title [, width]])\nOpens the plain text file `path` in a new dialog."
+		"view_text(path as String, title as String)\nOpens the plain text file `path` in a new dialog with the given title."
 	}},
 	{ "create_progress_dialog",  {
 		"create_progress_dialog(message as String, title as String, count as Integer)\nCreate a progress dialog with the provided message and title, set up for `count` elements."
@@ -772,6 +860,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	{ "launch_browser",  {
 		"launch_browser(url as String)\nOpens the specified URL in the user's default web browser."
 	}},
+	{ "clear_console",  {
+		"clear_console()\nClears the console."
+	}},
 
 	// ── Plugins ─────────────────────────────────────────────────
 	{ "get_plugin_version",  {
@@ -779,19 +870,5 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	}},
 	{ "get_plugin_resource",  {
 		"get_plugin_resource(plugin as String, resource as String)\nReturns the path to a resource file inside the specified plugin."
-	}},
-
-	// ── Signals (standard library) ──────────────────────────────
-	{ "create_signal",  {
-		"create_signal()\nCreate and return a new signal identifier (id) of type String."
-	}},
-	{ "connect",  {
-		"connect(id as String, slot as Function)\nConnect signal `id` to function `slot`."
-	}},
-	{ "disconnect",  {
-		"disconnect(id as String, slot as Function)\nDisconnect signal `id` from function `slot`."
-	}},
-	{ "emit",  {
-		"emit(id as String, arg as Object)\nEmit signal `id` with an argument `arg`."
 	}}
 };

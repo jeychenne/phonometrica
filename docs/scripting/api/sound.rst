@@ -53,7 +53,7 @@ Structural transformations
 
 These functions produce a **new** sound file on disk and return a fresh ``Sound`` handle (except
 ``convert``, which returns nothing). They do not modify the source and do not add the result to
-the current project — call ``import_file(path)`` if you want the new file in the project. For
+the current project — call ``phon.project.add_file(path)`` if you want the new file in the project. For
 ``extract_sound_slice`` and ``concatenate_sounds``, the on-disk format is inferred from the output
 path's extension (``.wav``, ``.aiff``, ``.flac``, ``.ogg``, or ``.mp3``). For ``convert``, the
 format is passed explicitly as a string so you can write to a path whose extension doesn't match
@@ -101,11 +101,11 @@ PCM_24 stays PCM_24 for WAV/AIFF/FLAC, FLOAT stays FLOAT on WAV, and everything 
 to PCM_16; OGG always writes Vorbis and MP3 always writes Layer III.
 
 ``convert`` returns no value. If you want the new file to appear in the current project, call
-``import_file(path)`` after the conversion.
+``phon.project.add_file(path)`` after the conversion.
 
 Examples::
 
-   let s = get_current_sound()
+   var s = get_current_sound()
 
    # Re-encode without changing the sample rate.
    convert(s, "/tmp/copy.flac", "flac")
@@ -164,16 +164,16 @@ Supported keys:
 
 Example::
 
-   let snd = get_sounds()[1]
+   var snd = get_sounds()[1]
 
    # Defaults from settings.
-   let f0 = get_pitch(snd, 1, 0.5)
+   var f0 = get_pitch(snd, 1, 0.5)
 
    # Override the search range. Named-argument form:
-   let f0b = get_pitch(snd, 1, 0.5, min_pitch = 80, max_pitch = 400)
+   var f0b = get_pitch(snd, 1, 0.5, min_pitch = 80, max_pitch = 400)
 
    # Same call, table-literal form:
-   let f0c = get_pitch(snd, 1, 0.5, { "min_pitch": 80, "max_pitch": 400 })
+   var f0c = get_pitch(snd, 1, 0.5, { "min_pitch": 80, "max_pitch": 400 })
 
 
 ------------
@@ -192,9 +192,9 @@ listed for ``get_pitch`` are accepted, plus:
 
 Example::
 
-   let snd = get_sounds()[1]
+   var snd = get_sounds()[1]
 
-   let m = get_mean_pitch(snd, 1, 0.5, 1.2, min_pitch = 80, max_pitch = 400)
+   var m = get_mean_pitch(snd, 1, 0.5, 1.2, min_pitch = 80, max_pitch = 400)
 
 
 ------------
@@ -222,13 +222,13 @@ Supported keys:
 
 Example::
 
-   let snd = get_sounds()[1]
+   var snd = get_sounds()[1]
 
    # Defaults from settings.
-   let f = get_formants(snd, 1, 0.5)
+   var f = get_formants(snd, 1, 0.5)
 
    # Female-voice band, 5 formants:
-   let f2 = get_formants(snd, 1, 0.5, nformant = 5, nyquist = 5500, lpc_order = 12)
+   var f2 = get_formants(snd, 1, 0.5, nformant = 5, nyquist = 5500, lpc_order = 12)
 
 
 ------------
@@ -283,11 +283,11 @@ full definitions.
 
 Example::
 
-   let snd = get_sounds()[1]
-   let r = get_voice_report(snd, 1, 0.5, 1.2)
-   print "Pulses found: " & r.num_pulses
-   print "Local jitter: " & (100 * r.jitter_local) & " %"
-   print "HNR: " & r.hnr & " dB"
+   var snd = get_sounds()[1]
+   var r = get_voice_report(snd, 1, 0.5, 1.2)
+   print("Pulses found: {r.num_pulses}")
+   print("Local jitter: {100 * r.jitter_local} %")
+   print("HNR: {r.hnr} dB")
 
 When a measure is undefined (e.g. on an unvoiced selection), the corresponding field holds NaN and prints as ``nan`` (or
 ``undefined`` when serialised through JSON). A NaN field can be tested with the standard ``x != x`` idiom, since NaN
@@ -304,10 +304,10 @@ The resulting spectrum can be queried for its properties (see Fields below).
 
 Example::
 
-   let snd = get_sounds()[1]
-   let spec = get_spectrum(snd, 1, 0.5, 0.55)
-   print spec.bin_count
-   print spec.bandwidth
+   var snd = get_sounds()[1]
+   var spec = get_spectrum(snd, 1, 0.5, 0.55)
+   print(spec.bin_count)
+   print(spec.bandwidth)
 
 ------------
 
@@ -325,17 +325,19 @@ Returns a ``Table`` with the following keys:
 
 Example::
 
-   let snd = get_sounds()[1]
-   let m = get_spectral_moments(snd, 1, 0.5, 0.025, 1000, 10000)
-   print "COG = " & m["cog"]
-   print "Skewness = " & m["skewness"]
+   var snd = get_sounds()[1]
+   var m = get_spectral_moments(snd, 1, 0.5, 0.025, 1000, 10000)
+   print("COG = " & m["cog"])
+   print("Skewness = " & m["skewness"])
 
 
 Reporting functions
 -------------------
 
 These convenience functions display acoustic measurements in the output panel for the sound loaded in the
-current view. They are typically used from the console or from scripts attached to keyboard shortcuts.
+current view. They are typically used from the console or from scripts attached to keyboard shortcuts. They are
+implemented in the standard library (``speech_analysis``) on top of the measurement functions above, and are only
+available when Phonometrica runs with its graphical interface.
 
 .. function:: report_intensity(time as Number)
 
@@ -369,7 +371,8 @@ Displays the values of the visible formants at the given time in the current vie
 
 .. function:: report_mean_formants(t1 as Number, t2 as Number)
 
-Displays the mean formant values between ``t1`` and ``t2`` in the current view.
+Displays the mean formant values between ``t1`` and ``t2`` in the current view. (Not implemented yet: the current
+version displays a "Not implemented yet!" message.)
 
 
 Frequency conversion
@@ -469,6 +472,12 @@ Returns the number of channels in the file.
 
 Spectrum fields
 ---------------
+
+.. attribute:: path
+
+Returns the path of the spectrum file, or an empty string for a spectrum computed on the fly with ``get_spectrum``.
+
+------------
 
 .. attribute:: bin_count
 

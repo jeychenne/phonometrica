@@ -2,7 +2,7 @@ Getting started
 ===============
 
 
-Phonometrica's scripting language was designed to be simple to use yet powerful. It bears many similarities with, and draws inspiration from, 
+Phonometrica's scripting language was designed to be simple to use yet powerful. It bears many similarities with, and draws inspiration from,
 existing scripting languages such as Python, Lua, MATLAB and R. Familiarity with any of these languages will certainly be helpful, but is not required
 and the documentation does not assume that the reader has any experience in programming.
 
@@ -10,18 +10,18 @@ and the documentation does not assume that the reader has any experience in prog
 Fundamental notions
 -------------------
 
-The 'print' statement
-~~~~~~~~
+The 'print' function
+~~~~~~~~~~~~~~~~~~~~
 
 The first thing one is usually taught when one learns a new language is how to display
 the text "hello world!". There is no reason for us to break with tradition... The following piece of code illustrates
-how to achieve this using the ``print`` statement, which prints text to Phonometrica's console. The statement is preceded by one line of comment. Comments start with 
+how to achieve this using the ``print`` function, which prints text to Phonometrica's console. The statement is preceded by one line of comment. Comments start with
 the symbol ``#`` and end at the end of the line.
 
 .. code:: phon
 
     # My first script
-    print "hello world!"
+    print("hello world!")
 
 
 Comments can also follow statements, so we could also write something like this:
@@ -29,29 +29,21 @@ Comments can also follow statements, so we could also write something like this:
 
 .. code:: phon
 
-    print "hello world!" # My first script
+    print("hello world!") # My first script
 
 
-To print several values at once on the same line, you can separate them with commas:
-
-.. code:: phon
-
-    print "h", "e", "l", "l", "o"
-
-By default, Phonometrica will append a new line character at the end. If you don't want that to happen, you can add an extra comma at the end:
-
+To print several values at once on the same line, you can pass them as separate arguments, separated by commas:
 
 .. code:: phon
 
-    print "h", "e", "l", "l", "o",
-    print " ",
-    print "world!"
+    print("h", "e", "l", "l", "o")
 
-The above example is another (rather convoluted) way of printing the line ``"hello world!"``, as in the first example.
+``print`` separates its arguments with a single space and appends a new line character at the end. To control the output more
+precisely, build the string yourself using string interpolation or the concatenation operator ``&``, both of which are presented below.
 
 
 **Note about comments**: Although comments can be helpful, we recommend to use them sparingly. In general, a comment should describe *what* the code does or *why*
-something non-trivial is done in a certain way, not *how* things are done. 
+something non-trivial is done in a certain way, not *how* things are done.
 
 
 
@@ -59,25 +51,34 @@ Variables
 ~~~~~~~~~
 
 All programming languages allow you to store and refer to values using *variables*. A variable must start with a letter (upper case or lower case)
-and can followed by any letter, any digit or the symbol ``_``. Additionally, it can end with the symbol ``$``. The name of variables is case-sensitive, which means that ``myvar`` and ``Myvar`` 
-are treated as two different variables. To create a new variable, simply assign a value to it using the assignment operator ``=``: if the variable doesn't exist, it will be created:
+and can be followed by any letter, any digit or the symbol ``_``. The name of variables is case-sensitive, which means that ``myvar`` and ``Myvar``
+are treated as two different variables. To create a new variable, declare it with the keyword ``var`` and give it a value using the assignment operator ``=``:
 
 .. code:: phon
 
-    x = 5
-    print x
+    var x = 5
+    print(x)
 
 
-In this example, the variable ``x`` is created, since it doesn't exist, and it is simultaneously assigned the value 5 (an ``Integer``). Because Phonometrica's 
+In this example, the variable ``x`` is declared and simultaneously assigned the value 5 (an ``Integer``). Note that assignment alone never creates
+a variable in a script: assigning to a name that has not been declared is a compile-time error, which protects you against typos. (In Phonometrica's
+console, bare assignment still creates a session variable, which is convenient for interactive work.) Because Phonometrica's
 scripting language is dynamic, variables can be bound to values of any type. In the following example, ``x`` is first declared as an integer, and is subsequently used to store a string:
 
 
 .. code:: phon
 
-    x = 5
-    print x # prints "5"
+    var x = 5
+    print(x) # prints "5"
     x = "hello"
-    print x # prints "hello"
+    print(x) # prints "hello"
+
+
+If a variable should never be reassigned, declare it with ``const`` instead of ``var``:
+
+.. code:: phon
+
+    const SR = 16000
 
 
 
@@ -94,27 +95,27 @@ The ``Null`` type is a special type that has only one value, namely ``null`` (in
 Boolean
 ~~~~~~~
 
-A ``Boolean`` can take on two values: ``false`` and ``true``. Boolean values are used to express truth conditions about the state of a program. All conditions in control structures must evaluate to a ``Boolean`` value. There are only four values that are interpreted as false: ``null``, ``false``, ``0`` and ``nan`` (a special invalid numeric value). All other values are interpreted as true. 
+A ``Boolean`` can take on two values: ``false`` and ``true``. Boolean values are used to express truth conditions about the state of a program. A condition in a control structure may evaluate to any value, but only two values are interpreted as false: ``false`` itself and ``null``. All other values — including ``0``, the empty string and the empty list — are interpreted as true. This makes the common idiom ``if sound then`` work for functions that return an object or ``null``.
 
 
 Integer
 ~~~~~~~
 
-An ``Integer`` represents a whole number, which can be positive or negative (e.g. ``0``, ``1``, ``-12``). Internally, integers are represented as an 
-integral number whose size is equal to a machine word. This means that on modern 64 bit machines, an integer occupies 64 bits (or 8 bytes) and its 
-value can range from -9223372036854775808 to 9223372036854775807. Note that some operators (such as the division operator ``/``) and functions 
-will automatically convert an ``Integer`` to a ``Float`` if needed. 
+An ``Integer`` represents a whole number, which can be positive or negative (e.g. ``0``, ``1``, ``-12``). Internally, integers are represented as an
+integral number whose size is equal to a machine word. This means that on modern 64 bit machines, an integer occupies 64 bits (or 8 bytes) and its
+value can range from -9223372036854775808 to 9223372036854775807. Note that the division operator ``/`` always yields a ``Float``, even when both of
+its operands are integers; use ``div`` if you need integer division.
 
 
 Float
 ~~~~~
 
 The ``Float`` type is used to represent real numbers, such as ``3.1``, ``-153.9583`` or ``7.0``. Real numbers are represented as double-precision floating point numbers,
-which use 64 bits (8 bytes). 
+which use 64 bits (8 bytes).
 
-There is a special float called ``nan`` ("not a number"), which represents an invalid numeric value. This is the value that you get when you try to measure pitch in an unvoiced part of the speech signal, for instance.
+There is a special float called "nan" ("not a number"), which represents an invalid numeric value. This is the value that you get when you try to measure pitch in an unvoiced part of the speech signal, for instance.
 
-Note that the decimal point is always represented by the symbol ``.`` (dot), even if the language of your operating system uses a different symbol (some languages, such as French, use a comma instead). 
+Note that the decimal point is always represented by the symbol ``.`` (dot), even if the language of your operating system uses a different symbol (some languages, such as French, use a comma instead). A float literal must have at least one digit after the decimal point: write ``2.0``, not ``2.``. Scientific notation is also supported (e.g. ``1.5e-3``).
 
 
 Number
@@ -124,33 +125,40 @@ Number
 while others accept both; in the latter case, the type of the argument(s) is usually ``Number``, which is compatible with both ``Integer`` and ``Float``.
 
 Phonometrica lets you use the underscore ``_`` as a separator for thousands to improve readability. For example, you could write ``1_000_000`` instead of ``1000000``, or
-``0.000_001`` instead of ``0.000001``. 
+``0.000_001`` instead of ``0.000001``.
 
 String
 ~~~~~~
 
 A ``String`` represents an ordered sequence of characters. Characters are understood as "extended grapheme clusters" in the sense of the Unicode,
-specification. Strings must be enclosed between double quotes or single quotes. Thus, ``"abc"`` and ``'abc'`` represent the same string, which is formed by the concatenation of the three characters ``a``, ``b`` and ``c``. 
-Characters may correspond to single letters, but they can represent more complex units. For example, the string ``"é"`` is treated 
+specification. Strings must be enclosed between double quotes or single quotes. Thus, ``"abc"`` and ``'abc'`` represent the same string, which is formed by the concatenation of the three characters ``a``, ``b`` and ``c``.
+Characters may correspond to single letters, but they can represent more complex units. For example, the string ``"é"`` is treated
 one character, even though it is composed of the letter ``e`` and an acute accent. Likewise, the string ``"한글"`` (the name of the Korean alphabet, in Korean) contains two characters, although it is composed of two syllables, each of which contains three letters.
 
-Internally, strings are encoded as UTF-8, which is the most widespread Unicode encoding. Source files are also expected to be encoded in UTF-8. 
+Internally, strings are encoded as UTF-8, which is the most widespread Unicode encoding. Source files are also expected to be encoded in UTF-8.
+
+Although double-quoted and single-quoted strings look similar, they are processed differently. **Double-quoted strings** support escape sequences and string interpolation, both described below. **Single-quoted strings are raw**: their content is taken exactly as written, with no interpolation and no escape processing. This makes single quotes ideal for regular expressions and Windows paths, where backslashes and braces should be left untouched:
+
+.. code:: phon
+
+    var pattern = '\b[aeiou]+\b'
+    var dir = 'C:\Users\me\Documents'
 
 A single-quoted or double-quoted string must be terminated on the same line where it begins: a literal line break inside such a string is reported as a syntax error. For multi-line strings, use a *triple-quoted* string, which is enclosed between three double quotes (``"""``) or three single quotes (``'''``):
 
 .. code:: phon
 
-    let message = """Dear participant,
+    var message = """Dear participant,
 
     Please read the following sentences aloud,
     at a comfortable speaking rate.
 
     Thank you."""
-    print message
+    print(message)
 
-Inside a triple-quoted string, line breaks and isolated occurrences of the delimiter character are part of the content; the string ends only when three delimiter characters appear in a row. This is convenient for embedding longer pieces of text (instructions, prompts, formatted reports) without having to concatenate strings line by line.
+Inside a triple-quoted string, line breaks and isolated occurrences of the delimiter character are part of the content; the string ends only when three delimiter characters appear in a row. This is convenient for embedding longer pieces of text (instructions, prompts, formatted reports) without having to concatenate strings line by line. Triple double-quoted strings behave like double-quoted strings (escapes and interpolation are processed); triple single-quoted strings are raw.
 
-You can include special characters in a string with *escape sequences*. An escape sequence starts with a backslash (``\``) followed by a single character, and is interpreted as shown below:
+You can include special characters in a double-quoted string with *escape sequences*. An escape sequence starts with a backslash (``\``) followed by a single character, and is interpreted as shown below:
 
 .. list-table::
    :header-rows: 1
@@ -178,56 +186,56 @@ You can include special characters in a string with *escape sequences*. An escap
      - form feed
    * - ``\a``
      - bell
-   * - ``\$``
-     - literal dollar sign (suppresses ``${...}`` interpolation)
+   * - ``\{``
+     - literal opening brace (suppresses ``{...}`` interpolation)
 
-Escape sequences are processed inside both single-line and triple-quoted strings. A backslash followed by any other character is left untouched in the string.
+A backslash followed by any other character is a syntax error, so mistyped escape sequences are caught immediately. (Remember that single-quoted strings are raw: a backslash inside them is just a backslash.)
 
-You can use the concatenation operator ``&`` to concatenate two or more values. If they are not strings, they will automatically 
+You can use the concatenation operator ``&`` to concatenate two or more values. If they are not strings, they will automatically
  be converted to strings, if possible.
 
 .. code:: phon
 
-    pi = 3.14
-    print "The value of pi is " & pi
+    var pi = 3.14
+    print("The value of pi is " & pi)
 
-For diagnostic messages and constructing file paths, building strings out of repeated ``&`` calls quickly becomes hard to read. As a more concise alternative, you can use **string interpolation**: any expression enclosed in ``${...}`` inside a string literal is evaluated and converted to a string at the place it appears. The conversion is the same one that ``&`` performs, so you do not need to call ``str(...)`` explicitly. Compare:
+For diagnostic messages and constructing file paths, building strings out of repeated ``&`` calls quickly becomes hard to read. As a more concise alternative, you can use **string interpolation**: any expression enclosed in ``{...}`` inside a double-quoted string is evaluated and converted to a string at the place it appears. The conversion is the same one that ``&`` performs, so you do not need to call ``to_string(...)`` explicitly. Compare:
 
 .. code:: phon
 
     # without interpolation
-    print "Speaker " & speaker & ": F1=" & f1 & " F2=" & f2
+    print("Speaker " & speaker & ": F1=" & f1 & " F2=" & f2)
 
     # with interpolation
-    print "Speaker ${speaker}: F1=${f1} F2=${f2}"
+    print("Speaker {speaker}: F1={f1} F2={f2}")
 
-Both lines produce the same output. The expression inside ``${...}`` can be any valid expression — a variable, an arithmetic expression, a function call, a table lookup:
-
-.. code:: phon
-
-    let n = 7
-    print "n squared is ${n * n}"          # n squared is 49
-    print "rounded: ${round(3.7)}"         # rounded: 4
-    let info = {"name": "Lobanov"}
-    print "method: ${info["name"]}"        # method: Lobanov
-
-Interpolation is available inside both single-line strings (``"..."`` and ``'...'``) and triple-quoted strings (``"""..."""`` and ``'''...'''``). Inside a triple-quoted string, the embedded expression may span several source lines.
-
-If you need a literal dollar sign followed by an opening brace — which arises occasionally when working with notations that use ``{...}`` for their own purposes, such as some IPA transcription conventions — write ``\$`` to suppress interpolation:
+Both lines produce the same output. The expression inside ``{...}`` can be any valid expression — a variable, an arithmetic expression, a function call, a table lookup:
 
 .. code:: phon
 
-    print "the variable \${x} stands for the speaker's F0"
+    var n = 7
+    print("n squared is {n * n}")          # n squared is 49
+    print("rounded: {round(3.7)}")         # rounded: 4
+    var info = {"name": "Lobanov"}
+    print("method: {info["name"]}")        # method: Lobanov
 
-A bare ``$`` that is not followed by ``{`` is always a literal dollar sign, so ``"price: $100"`` does not require any escaping.
+Interpolation is available inside double-quoted strings (``"..."`` and ``"""..."""``). Single-quoted strings are raw and never interpolate, which is precisely what you want when the braces belong to the text itself, as in regular expressions.
+
+If you need a literal opening brace in a double-quoted string, escape it as ``\{``:
+
+.. code:: phon
+
+    print("the sequence \{x} is printed verbatim")
 
 Unlike most scripting languages, strings in Phonometrica are *mutable*, which means that some functions can modify them directly:
 
 .. code:: phon
 
-    s = "hello"
+    var s = "hello"
     append(s, " world!")
-    print s # prints "hello world!"
+    print(s) # prints "hello world!"
+
+Functions such as ``append`` and ``trim`` modify their argument in place because their first parameter is declared as a reference (``ref``); they do not return a new string. See :ref:`the page on values and references <clonability>` for details.
 
 
 List
@@ -237,17 +245,17 @@ A ``List`` is an ordered collection of items. Like strings, lists can be modifie
 
 .. code:: phon
 
-    lst = [ "a", "b", "c", 3.14 ]
+    var lst = [ "a", "b", "c", 3.14 ]
 
 
 The variable ``lst`` contains four elements, three strings and one number. To access elements in the list, we use array indexing by using the name of the variable followed by square brackets containing the index, as follows:
 
 .. code:: phon
-    
-    print lst[2] # prints "b"
+
+    print(lst[2]) # prints "b"
 
 
-We can also assign a new value at a given index, like so: 
+We can also assign a new value at a given index, like so:
 
 .. code:: phon
 
@@ -262,71 +270,67 @@ Array
 
 An ``Array`` is a one or two dimension numeric array. Elements along each dimension start at 1 and can be negative.
 (Negative indices start from the end of the dimension.) Two-dimensional arrays are accessed with a pair of indices noted *(i, j)*,
-where *i* represents the *i*\ th row and *j* represents the *j*\ th column. To get or set an element in an array, use the index ``[]`` operator. 
+where *i* represents the *i*\ th row and *j* represents the *j*\ th column. To get or set an element in an array, use the index ``[]`` operator.
 
-You can create a new array by passing the size of each dimension to the constructor. For instance, here is how to create an array containing 3 rows and 5 columns:
+You can create a new array filled with zeros by passing the size of each dimension to the function ``zeros``. For instance, here is how to create an array containing 3 rows and 5 columns:
 
 .. code:: phon
 
-    array = Array(3, 5)
-    
-    for i = 1 to array.nrow do
-        for j = 1 to array.ncol do
-            array[i,j] = i + j
+    var array = zeros(3, 5)
+
+    for i = 1 to nrow(array) do
+        for j = 1 to ncol(array) do
+            array[i, j] = i + j
         end
     end
 
-    print array
+    print(array)
 
 This code will produce the following output:
 
 
 .. code:: phon
 
-    @[2.0000000000, 3.0000000000, 4.0000000000, 5.0000000000, 6.0000000000
-      3.0000000000, 4.0000000000, 5.0000000000, 6.0000000000, 7.0000000000
-      4.0000000000, 5.0000000000, 6.0000000000, 7.0000000000, 8.0000000000]
+    [2, 3, 4, 5, 6; 3, 4, 5, 6, 7; 4, 5, 6, 7, 8]
 
 
-Another way to produce the same output would be to use an array literal, which is indicated with the ``@[]`` operator. Inside the brackets, rows are separated by commas and 
-columns are separated by semicolons. Therefore, our array could be written as follows:
+Another way to produce the same output would be to use an array literal, which is indicated with the ``@[]`` operator. Inside the brackets, rows are separated by semicolons and
+columns are separated by commas. Therefore, our array could be written as follows:
 
 .. code:: phon
 
-    array = @[2, 3, 4, 5, 6; 3, 4, 5, 6, 7; 4, 5, 6, 7, 8]
+    var array = @[2, 3, 4, 5, 6; 3, 4, 5, 6, 7; 4, 5, 6, 7, 8]
 
 
 Table
 ~~~~~
 
-A ``Table`` (also known as map, hash map, hash table, associative array or dictionary) is an unordered mapping of key/value pairs. Each key/value pair represents a *field*. Keys can be any clonable value (except ``null``), whereas values can be anything. 
+A ``Table`` (also known as map, hash map, hash table, associative array or dictionary) is an unordered mapping of key/value pairs. Each key/value pair represents a *field*. Keys can be any clonable value (except ``null``), whereas values can be anything.
 Tables can be declared with a table literal:
 
 .. code:: phon
 
-    person = { "name" : "john", "surname" : "smith", "age" : 38 }
+    var person = { "name": "john", "surname": "smith", "age": 38 }
 
-In this example, ``person`` is declared with three pairs separated by commas: the key and the value are separated by the symbol ``:`` (colon). This table could correspond to mappings from names (keys) to ages (values) for instance. Note that there is no need for the keys and/or values to be homogeneous: any valid Value (even null!) may appear in an object. 
+In this example, ``person`` is declared with three pairs separated by commas: the key and the value are separated by the symbol ``:`` (colon). This table could correspond to mappings from names (keys) to ages (values) for instance. Note that there is no need for the keys and/or values to be homogeneous: any valid Value (even null!) may appear in an object.
 Note that even though we declared key/value pairs in a specific order in our example, there is no guarantee that they will be stored in this particular order. You should consider the order of the elements as random.
 
-To create an empty table, you can either use an empty table literal or call call ``Table``'s constructor without any argument:
+To create an empty table, use an empty table literal:
 
 .. code:: phon
 
-    tab1 = {}
-    tab2 = Table()
-    assert is_empty(tab1)
-    assert is_empty(tab2)
+    var tab = {}
+    assert(is_empty(tab))
 
 
 To access any element of a table, you can use the index operator ``[]``:
 
 .. code:: phon
 
-    person = { "name" : "john", "surname" : "smith", "age" : 38 }
-    print person["name"]
+    var person = { "name": "john", "surname": "smith", "age": 38 }
+    print(person["name"])
     person["age"] += 1
-    print person
+    print(person)
 
 
 
@@ -334,10 +338,10 @@ If you need to process the table in sorted order, you can do as follows (assumin
 
 .. code:: phon
 
-    keys = tab.keys
-    sort(keys)
-    foreach key in keys do
-        value = tab[key]
+    var ks = keys(tab)
+    sort(ks)
+    for key in ks do
+        var value = tab[key]
         # do something with the key and the value
     end
 
@@ -345,23 +349,15 @@ If you need to process the table in sorted order, you can do as follows (assumin
 Set
 ~~~
 
-A ``Set`` represents an ordered collection of unique values. Sets can be declared using a *set literal*:
+A ``Set`` represents an unordered collection of unique values. Sets can be declared using a *set literal*:
 
 .. code:: phon
 
-    names = { "john", "peter", "anna", "patricia" }
+    var names = { "john", "peter", "anna", "patricia" }
 
-The declaration of a set is similar to that of a table, except there are only values, no keys. Printing the set in the 
-above example will yield the following output:
+The declaration of a set is similar to that of a table, except there are only values, no keys. (Note that ``{}`` denotes an empty *table*, not an empty set.) A value can appear in a set only once: inserting a value that is already present has no effect. Like tables, sets are unordered: the order in which elements are stored and iterated over is unspecified and may differ from the order in which they were declared. If you need to process the elements of a set in a well-defined order, copy them to a list and sort it explicitly.
 
-.. code:: phon
-
-    {"anna", "john", "patricia", "peter"}
-
-As we can see, elements are not ordered according to the way they were declared, but instead appear in lexicographic order. This is because the values
-in a set are always *ordered in ascending order*. This means that values in a set must have compatible types and must be comparable.
-
-Sets are useful to keep track of a collection of (unique) values. 
+Sets are useful to keep track of a collection of (unique) values.
 
 
 Function
@@ -369,12 +365,12 @@ Function
 
 A ``Function`` is a special construct that represents a reusable block of code. Functions are created using the
 keyword ``function``. Here is an example of a function that prints the area of a rectangle.
-It expects two arguments (``x`` and ``y``), which correspond to the rectangle's height and width. 
+It expects two arguments (``x`` and ``y``), which correspond to the rectangle's height and width.
 
 .. code:: phon
-    
-    function area(x, y)
-        print "The area of the rectangle is ",  x * y
+
+    function area(x as Number, y as Number)
+        print("The area of the rectangle is {x * y}")
     end
 
 
@@ -382,20 +378,22 @@ We can then *call* the function with specific values for ``x`` and ``y``:
 
 .. code:: phon
 
-    area(100, 30) # prints 3000
+    area(100, 30) # prints "The area of the rectangle is 3000"
 
 
-In addition to executing statements, functions can also send a value back to the caller. This is achieved with the keyword ``return`` 
-followed by the expression we want to send back to the caller. The following example illustrates how this can be done. First, we create the 
-function ``fibonacci`` to calculate the *n*\ th Fibonacci number. Next, create a list in which we store the first 10 Fibonacci numbers, and 
-finally we print the list. 
+The annotations ``as Number`` declare the type of each parameter; they are optional (an unannotated parameter accepts any value), but they document the function's intent and allow Phonometrica to check the arguments at each call.
+
+In addition to executing statements, functions can also send a value back to the caller. This is achieved with the keyword ``return``
+followed by the expression we want to send back to the caller. The following example illustrates how this can be done. First, we create the
+function ``fibonacci`` to calculate the *n*\ th Fibonacci number. Next, create a list in which we store the first 10 Fibonacci numbers, and
+finally we print the list.
 
 .. code:: phon
 
-    function fibonacci(num)
-        let a = 1
-        let b = 0
-        let temp
+    function fibonacci(num as Integer)
+        var a = 1
+        var b = 0
+        var temp = 0
 
         while num >= 0 do
             temp = a
@@ -407,80 +405,59 @@ finally we print the list.
         return b
     end
 
-    result = []
+    var result = []
     for i = 1 to 10 do
         append(result, fibonacci(i))
     end
 
-    print result # prints [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
+    print(result) # prints [1, 2, 3, 5, 8, 13, 21, 34, 55, 89]
 
 
 Object
 ~~~~~~
 
-``Object`` is an abstract type: it is the base type for all types in Phonometrica. This means that all types inherit from ``Object``, directly or indirectly. ``Object`` 
+``Object`` is an abstract type: it is the base type for all types in Phonometrica. This means that all types inherit from ``Object``, directly or indirectly. ``Object``
 is the default :ref:`parameter type <funcparam>` for functions.
 
 Class
 ~~~~~
 
-A ``Class`` represents a type. Every type has a corresponding class, and every class describes a type. You can get the type of a value with
-the function ``type``:
+A ``Class`` represents a type. Every value is an instance of a class, and every class describes a type. You can test the dynamic type of a value with
+the ``is`` operator, which checks whether its left operand is an instance of the class named on the right (or of one of its subclasses):
 
 .. code:: phon
 
-    s = "hello"
-    i = 10
-    f = 10.0
+    var s = "hello"
 
-    print type(s) # prints <class String>
-    print type(i) # prints <class Integer>
-    print type(f) # prints <class Float>
+    print(s is String)  # prints "true"
+    print(s is Object)  # prints "true", since all types inherit from Object
+    print(10 is Float)  # prints "false", since 10 is an Integer
+    print(10 is Number) # prints "true"
 
 
-Because classes are also values, you can pass them as arguments to functions, return them from functions, or query their type:
+Because classes are also values, you can print them, pass them as arguments to functions or store them in variables:
 
 
 .. code:: phon
 
-    print type(Integer) # prints <class Class>
-    print type(Class)   # prints <class Class> 
+    print(String) # prints "String"
+    var t = Integer
+    print(1 is t) # prints "true"
 
 
 Module
 ~~~~~~
 
-A ``Module`` is an object that can be used to store unordered key/value pairs. Each pair represents a *field*. Conceptually, it is similar to a ``Table``, 
-except that all its keys must be strings. There are two ways to access fields in a module. We can use array indexing like for tables:
+Every script file is a *module*. Modules let you split a larger project into reusable files: the top-level variables, functions and classes that a script declares are visible to any other script that imports it with the ``import`` statement. For example, if you have a script ``mytools.phon`` on the module search path, you can write:
 
 .. code:: phon
 
-    m = Module("My first module")
-    m["version"] = "0.1"
-    print m["version"]
+    import mytools
 
-But we can also use the *dot operator*:
+    print(mytools.version)   # access a variable declared in mytools
+    greet("world")           # call a function declared in mytools
 
-.. code:: phon
-
-    print m.version
-    m.greet = function() print "hello" end
-    m.greet()     # call module function using the dot operator
-    m["greet"]()  # call module function using the index operator
-
-
-As you can see in the above example, the dot operator and the index operator are equivalent: the dot operator is shorter and more legible, but the index operator
-is more flexible since it allows you to create keys dynamically:
-
-.. code:: phon
-
-    keys = ["a", "b", "c"]
-    foreach key in keys do
-        m[key] = to_upper(key)
-    end
-
-    print m.a         # prints "A"
-    print m[keys[-1]] # prints "C"
+``import`` is a compile-time statement: it is resolved by module *name* on the module search path, and a missing module is reported as an error before your script starts running. A module's variables are accessed with the dot operator, qualified by the module's name (``mytools.version``), whereas its public functions become directly visible.
 
 Modules are particularly useful if you intend to redistribute scripts or create plugins. See the :ref:`dedicated page <modules>`.
 
@@ -497,78 +474,78 @@ It is often necessary to execute a code block only if a certain condition is sat
 .. code:: phon
 
     if extension == ".txt" then
-        print "This is a text file"
+        print("This is a text file")
     elsif extension == ".xml" then
-        print "This is an XML file"
+        print("This is an XML file")
     else
-        print "extension '", extension, "' not recognized"
+        print("extension '{extension}' not recognized")
     end
 
 
 This block of code tries to execute the block following the ``if`` branch if its condition is true, otherwise it tries to execute the first
-elsif branch (if any), and if all else fails, it executes the ``else`` branch. The ``elsif`` and ``else`` branches are optional, and there 
+elsif branch (if any), and if all else fails, it executes the ``else`` branch. The ``elsif`` and ``else`` branches are optional, and there
 is no limit on the number of ``elsif`` branches. The ``else`` branch, if it exists, but always come last.
 
 
-There is a short version of the ``if`` statement which takes the following form:
+There is also an expression form of ``if``, which takes the following form:
 
 .. code:: phon
 
-    expression1 if condition else expression2
+    if condition then expression1 else expression2 end
 
 
-This expression is called *conditional expression*, and it evaluates to ``expression1`` if ``condition`` is true, and to ``expression2`` otherwise. Consider the
-following example: 
+This *if expression* evaluates to ``expression1`` if ``condition`` is true, and to ``expression2`` otherwise. Consider the
+following example:
 
 .. code:: phon
 
-    x = 7 % 2
-    y = "odd" if x == 1 else "even"
-    print y
+    var x = 7 mod 2
+    var y = if x == 1 then "odd" else "even" end
+    print(y)
 
-We define ``x`` as the remainder of the division of 7 by 2, which is 1. We then assign the result of the conditional expression that evaluates ``x == 1`` to ``y``. Since 
-``x`` is indeed equal to 1, the string that will be printed is ``odd``. 
+We define ``x`` as the remainder of the division of 7 by 2, which is 1. We then assign the result of the if expression that evaluates ``x == 1`` to ``y``. Since
+``x`` is indeed equal to 1, the string that will be printed is ``odd``.
 
 
 While loop
 ~~~~~~~~~~
 
-The ``while`` loop allows you to execute a block of code while some condition is true. 
+The ``while`` loop allows you to execute a block of code while some condition is true.
 
 .. code:: phon
 
-    x = 1
+    var x = 1
     # Print numbers from 1 to 10
     while x <= 10 do
-        print x
+        print(x)
         x += 1
-    end 
+    end
 
 If you need to exit a loop early, use the keyword ``break``:
 
 .. code:: phon
 
-    x = 0
+    var x = 0
     while true do
         if x > 10 then
             break
         end
-        print x
+        print(x)
         x += 1
     end
 
-If you only want to break the current iteration of the loop and move to the next iteration, use the keyword ``continue``: 
+If you only want to break the current iteration of the loop and move to the next iteration, use the keyword ``continue``:
 
 .. code:: phon
 
     # Print odd numbers up to 10
-    x = 0
+    var x = 0
     while x < 10 do
         x += 1
-        if x % 2 == 0 then
+        if x mod 2 == 0 then
             continue
         end
-        print x
+        print(x)
 
     end
 
@@ -577,34 +554,34 @@ If you only want to break the current iteration of the loop and move to the next
 Repeat loop
 ~~~~~~~~~~~
 
-The ``repeat`` loop is similar to the ``while`` loop but there are two key differences: the block of code is executed *until* some condition is 
-satisfied, and it is executed at least once since it precedes the evaluation of the condition. 
+The ``repeat`` loop is similar to the ``while`` loop but there are two key differences: the block of code is executed *until* some condition is
+satisfied, and it is executed at least once since it precedes the evaluation of the condition.
 
 .. code:: phon
 
-    x = 1
+    var x = 1
     # Print numbers from 1 to 10
     repeat
-        print x
+        print(x)
         x += 1
-    until x > 10 
+    until x > 10
 
 
 
 For loop
 ~~~~~~~~
 
-The ``for`` loop, as in other programming languages, is used to iterate through a block of instructions, incrementing (or decrementing) a counter at each iteration. The ``for`` loop must always have a ``start`` condition and an ``end`` condition, and may optionally have a ``step`` condition, which indicates by how much the counter should be incremented/decremented (if no ``step`` is specified, the default is 1). 
+The ``for`` loop, as in other programming languages, is used to iterate through a block of instructions, incrementing (or decrementing) a counter at each iteration. The counted ``for`` loop must always have a ``start`` condition and an ``end`` condition, and may optionally have a ``step`` condition, which indicates by how much the counter should be incremented/decremented (if no ``step`` is specified, the default is 1). Both bounds are inclusive.
 Here is a simple example, which prints the numbers from 1 to 10 (inclusive):
 
 .. code:: phon
 
     for i = 1 to 10 do
-        print i
+        print(i)
     end
 
 
-Note that in this case, we didn't need to declare the variable ``i``: Phonometrica will automatically declare it make it local to the ``for`` loop (i.e. it will only be visible inside the ``for`` loop). 
+Note that in this case, we didn't need to declare the variable ``i``: Phonometrica will automatically declare it make it local to the ``for`` loop (i.e. it will only be visible inside the ``for`` loop).
 
 
 To print all the odd digits between 1 and 10, we can use the following loop:
@@ -612,55 +589,47 @@ To print all the odd digits between 1 and 10, we can use the following loop:
 .. code:: phon
 
     for i = 1 to 10 step 2 do
-        print i
+        print(i)
     end
 
 
 
-To iterate in decreasing order, ``downto`` must be used instead of ``to``:
+To iterate in decreasing order, use a negative ``step``:
 
 .. code:: phon
 
-    for i = 10 downto 1 do
-        print x
+    for i = 10 to 1 step -1 do
+        print(i)
     end
 
-You can also use a ``step`` with ``downto``:
+A loop whose direction contradicts its step — for instance ``for i = 1 to 10 step -1`` — simply runs zero times.
 
 
-.. code:: phon
+Iterating over collections
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-    for i = 10 downto 1 step 2 do
-        print i
-    end
-
-
-
-Foreach loop
-~~~~~~~~~~~~
-
-The ``foreach`` loop is similar to the ``for`` loop, but offers a simpler way to iterate over the content of an iterable object. 
+The second form of the ``for`` loop, ``for ... in``, offers a simple way to iterate over the content of an iterable object.
 
 .. code:: phon
 
     # Iterate over a list
-    lst = ["a", "b", "c"]
+    var lst = ["a", "b", "c"]
 
-    foreach value in lst do
-        print value
+    for value in lst do
+        print(value)
     end
 
 
-If there is a single loop variable (``value`` in this example), Phonometrica will iterate over the values in the collection. You can add another loop variable 
+If there is a single loop variable (``value`` in this example), Phonometrica will iterate over the values in the collection. You can add another loop variable
 if you would like to iterate over the indexes (or keys) as well as the values:
 
 .. code:: phon
 
     # Iterate over a list
-    lst = ["a", "b", "c"]
+    var lst = ["a", "b", "c"]
 
-    foreach i, value in lst do
-        print i, " -> ", value
+    for i, value in lst do
+        print("{i} -> {value}")
     end
 
 
@@ -668,176 +637,100 @@ Here is another example where we iterate over the keys and values in a table:
 
 .. code:: phon
 
-    person =  { "name" : "John", "surname" : "Smith", "age" : 38 }
+    var person = { "name": "John", "surname": "Smith", "age": 38 }
 
-    foreach key, value in person do
-        print key, " -> ", value
+    for key, value in person do
+        print("{key} -> {value}")
     end
 
 
-As for the ``for`` loop, the loop variable(s) is/are automatically declared and are made local to the loop.
+As for the counted ``for`` loop, the loop variable(s) is/are automatically declared and are made local to the loop.
 
 
 
-Here are the builtin types that support iteration with the ``foreach`` loop:
+Here are the builtin types that support iteration with the ``for ... in`` loop:
 
-.. list-table:: 
+.. list-table::
     :widths: 25 25 50
     :header-rows: 1
 
     * - Type
       - key (optional)
       - value
-    * - File
-      - line number
-      - line 
     * - List
       - index
       - value
-    * - Regex
-      - index
-      - capture  
     * - Set
       - index
-      - value  
+      - value
     * - String
       - index
-      - character  
+      - character
     * - Table
       - key
       - value
 
+Remember that tables and sets are unordered: the order in which their elements are visited is unspecified.
 
-
-
-List comprehensions
-~~~~~~~~~~~~~~~~~~~
-
-When the purpose of a ``foreach`` loop is simply to build a new list from another iterable — applying a transformation to each element, keeping only some
-elements, or selecting between two values per element — a *list comprehension* offers a more concise expression-level form. The syntax mirrors that of
-``foreach`` but sits inside square brackets and produces a list as its value:
+A common use of the ``for ... in`` loop is to build a new list from an existing collection, keeping or transforming some of its elements. Simply start from an empty list and ``append`` to it:
 
 .. code:: phon
 
-    let nums = [1, 2, 3, 4]
-    let doubled = [n * 2 foreach n in nums]
-    print doubled   # prints [2, 4, 6, 8]
+    var nums = [1, 2, 3, 4, 5, 6]
+    var evens = []
 
+    for n in nums do
+        if n mod 2 == 0 then
+            append(evens, n)
+        end
+    end
 
-An ``if`` clause can be added after the collection to filter the results. Only elements for which the condition is true are included:
-
-.. code:: phon
-
-    let nums = [1, 2, 3, 4, 5, 6]
-    let evens = [n foreach n in nums if n % 2 == 0]
-    print evens   # prints [2, 4, 6]
-
-
-If the ``if`` clause is followed by an ``else`` clause, the comprehension switches to a *conditional* form. The yield expression is appended when the condition is
-true and the ``else`` expression otherwise. Nothing is filtered out, so the resulting list has the same length as the input:
-
-.. code:: phon
-
-    let nums = [1, 2, 3, 4, 5]
-    let tags = ["even" foreach n in nums if n % 2 == 0 else "odd"]
-    print tags   # prints ["odd", "even", "odd", "even", "odd"]
-
-
-As with ``foreach``, a second loop variable iterates over keys (or indexes) together with values. This is especially useful for tables, whose entries are
-accessed as key/value pairs:
-
-.. code:: phon
-
-    let person = { "name": "John", "surname": "Smith" }
-    let pairs = [k & "=" & v foreach k, v in person]
-
-
-The yield expression, the filter and the ``else`` expression may all refer to names from the enclosing scope. The loop variable, on the other hand, is local to
-the comprehension and does not leak out: it exists only while the comprehension is evaluated.
-
-.. code:: phon
-
-    let factor = 3
-    let xs = [1, 2, 4]
-    let scaled = [x * factor foreach x in xs]
-    # `x` is not in scope here.
-
-
-.. note::
-
-    Unlike ``foreach``, list comprehensions iterate **by value only**: the form ``foreach ref x in lst``, which a regular ``foreach`` loop accepts to grab each
-    element by reference, has no comprehension equivalent. The loop variable in a comprehension is a read-only source for the yield expression — the comprehension
-    cannot mutate the elements of the collection it iterates over. If you need to modify elements in place, use a regular ``foreach`` loop with ``ref``.
-
-
-One last note about precedence. Phonometrica also accepts the postfix form ``e if cond else other`` as a regular expression (a conditional expression). To keep
-the comprehension grammar unambiguous, the collection in a comprehension is parsed at a precedence level just below this postfix conditional. If you need a
-conditional expression as the collection itself, simply parenthesise it:
-
-.. code:: phon
-
-    let xs = [1, 2]
-    let ys = [10, 20]
-    let cond = true
-    let result = [n foreach n in (xs if cond else ys)]
-
-
+    print(evens) # prints [2, 4, 6]
 
 
 Scope of variables
 ~~~~~~~~~~~~~~~~~~
 
-The scope of a variable is the region of code where it is visible (and accessible). There are three types of scope in Phonometrica: *global*, *local* and *non-local*. 
+The scope of a variable is the region of code where it is visible (and accessible). Where a declaration appears determines its scope.
 
-By default, variables are global: they are visible everywhere. Local variables, on the other hand, are only visible within the block in which they are declared, from the point of
-declaration until the end of the block. To declare a variable as local, add the keyword ``let`` before the first assignment to this variable. Consider the following example:
+Inside a function, ``var`` and ``const`` declare *local* variables: they are visible from the point of declaration until the end of the block in which they are declared. Any new block created by an ``if`` statement, a ``for`` loop, etc. defines a new scope, and a variable declared in an inner block temporarily hides a variable with the same name declared in an outer one. Such scoping rules are sometimes refered to as *lexical scoping*. Consider the following example:
 
 .. code:: phon
 
-    x = "global"
-
-    # Create a new scope
-    do
-        print x # prints "global"
-        let x = "local"
-        print x # prints "local"
+    function demo()
+        var x = "outer"
+        if true then
+            var x = "inner"
+            print(x) # prints "inner"
+        end
+        print(x) # prints "outer"
     end
 
-    print x # prints "global"
+    demo()
 
 
-As you can see, the ``do ... end``` block creates a new scope: the ``x`` variable declared in this block temporarily hides the global variable with the same name. After the ``do ... end`` block ends,
-the global variable becomes visible again. 
-
-Any new block created by an ``if`` statement, a ``for`` loop, a function, etc. defines a new scope. Such scoping rules are sometimes refered to as *lexical scoping*.
-
-
-Global variables live for as long as Phonometrica is running once they have been defined. In order to avoid "polluting" the global 
-namespace, you should use the keyword ``let`` before the declaration of the variable:
+At the top level of a script, ``var``, ``const``, ``function`` and ``class`` declare *module* variables, which live for as long as the module (for a regular script, until the end of the run). Module variables are public by default: they are visible to any script that imports the module, as we saw in the section on modules. If a top-level variable or helper function is an implementation detail that should *not* be visible to other modules, declare it with the ``local`` modifier:
 
 .. code:: phon
 
-    let x = "some value"
+    local var cache = {}
 
-
-A top-level variable declared in this way will no longer be visible after the script has been executed. You can also define local functions, which will only be available in the current scope and all embedded scopes, by adding the keyword ``local`` before the function declaration:
-
-
-.. code:: phon
-
-    local function test()
-        print "this is a local function"
+    local function helper()
+        print("this function is private to this module")
     end
 
+If you intend to redistribute a script or plugin, we strongly encourage you to declare all top-level variables and helper functions as ``local``, unless they are part of the interface you want to expose, of course.
 
-If you intend to redistribute a script or plugin, we strongly encourage you to declare all variables as local, unless you need them to be global, of course.
+Finally, ``global var`` (at the top level only) declares a *global* variable, which is shared by all scripts and lives for as long as Phonometrica is running. Globals should be used sparingly, to avoid "polluting" the global namespace.
 
-Global and local variables are the two most common types of variables, but there is a third type: non-local variables. Consider the following example:
+Remember that assignment never declares a variable: an assignment such as ``total += x`` inside a function first looks for ``total`` among the local variables, then in enclosing functions, then among the module's variables, and finally among the globals. This means that a function can update a top-level variable directly, without any special declaration. If the name is not found anywhere, the script does not compile.
+
+Global, module and local variables are the most common kinds of variables, but there is a fourth kind: non-local variables. Consider the following example:
 
 .. code:: phon
 
     function outer()
-        let s = "hello"
+        var s = "hello"
         function inner()
             return s
         end
@@ -845,65 +738,15 @@ Global and local variables are the two most common types of variables, but there
         return inner
     end
 
-    let f = outer()
-    print f() # prints "hello"
+    var f = outer()
+    print(f()) # prints "hello"
 
 
-From the point of view of function ``outer``, the variable ``s`` is local since it is defined in the scope created by that function. But what about function ``inner``? This function creates 
-a new scope embedded in ``outer``'s scope, so from ``inner``'s perspective, ``s`` is neither local, since it is not defined in the function's own body, nor global, since it is not visible outside of ``outer``'s scope. 
-What is it, then? In this case, ``s`` is regarded as a *non-local* variable in the scope defined by ``inner``. When we declare the variable ``f``, we execute the function ``outer``, 
-which first creates a variable named ``s`` and then creates a function named ``inner``, which  *captures* ``outer``'s local variable ``s``. Finally, ``outer`` returns the function ``inner``. 
+From the point of view of function ``outer``, the variable ``s`` is local since it is defined in the scope created by that function. But what about function ``inner``? This function creates
+a new scope embedded in ``outer``'s scope, so from ``inner``'s perspective, ``s`` is neither local, since it is not defined in the function's own body, nor global, since it is not visible outside of ``outer``'s scope.
+What is it, then? In this case, ``s`` is regarded as a *non-local* variable in the scope defined by ``inner``. When we declare the variable ``f``, we execute the function ``outer``,
+which first creates a variable named ``s`` and then creates a function named ``inner``, which  *captures* ``outer``'s local variable ``s``. Finally, ``outer`` returns the function ``inner``.
 This means that ``f`` is now a function (the function ``inner``). When we call it, it returns the value of the variable ``s``. Functions that capture non-local variables are called :ref:`closures <closures>`.
-
-
-Multiple declarations and list destructuring
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Phonometrica lets you declare multiple variables at once, with or without a value:
-
-.. code:: phon
-
-    let a, b
-    let c, d = 1, 2
-
-    print a # prints "null"
-    print b # prints "null"
-    print c # prints "1"
-    print d # prints "2"
-
-
-In the example above ``a`` and ``b`` are declared but not assigned a value, and default to the value ``null``. Variables ``c`` and ``d`` are declared and assigned a value: Phonometrica matches each variable on the left hand side
-to an expression on the right hand side, in order. The number of variables on the left must match the number of expressions on the right, both being separated by commas. Multiple assignment also works for global variables; however,
-it is not possible to declare several global variables without assigning them a value:
-
-.. code:: phon
-
-    x, y # this is illegal
-    x = null; y = null # use this instead
-
-
-It is possible to declare several variables
-on the left hand side and assign a single expression on the right. In this case, Phonometrica assumes the right hand side expression is a list whose length matches the number of declared variables, and "destructures" the list
-by assigning each value in turn to one of the declared variables:
-
-.. code:: phon
-
-    let lst = [1, 2, 3]
-    let x, y, z = lst
-    print x # prints "1"
-    print y # prints "2"
-    print z # prints "3"
-
-
-Note that list destructuring also works with global variables and previously declared variables.
-
-.. code:: phon
-
-    let x = "hello"
-    let lst = [1, 2]
-    x, y = lst # x is an existing local, y is a newly created global
-    print x # prints "1"
-    print y # prints "2"
 
 
 Errors
@@ -913,22 +756,21 @@ Throwing errors
 ~~~~~~~~~~~~~~~
 
 It is sometimes necessary to interrupt a script because it can no longer proceed further. To signal an error, use the keyword ``throw``
-followed by a value that describes the error. The value is most often a string, but you can throw any value (a number, a list, a table, an
-instance of a user-defined class) — whatever is most convenient for the caller to inspect. Here is a typical example:
+followed by an ``Error`` value that describes the problem. An ``Error`` is constructed from a message string. Here is a typical example:
 
 .. code:: phon
 
-    function area(x, y)
+    function area(x as Number, y as Number)
         if x <= 0 or y <= 0 then
-            throw "x and y must be positive"
+            throw Error("x and y must be positive")
         end
 
         return x * y
     end
 
 
-When a ``throw`` is not handled by an enclosing ``try`` block (see below), it terminates the script and prints an error message
-that includes the thrown value's textual form and the line where the error was raised.
+Only ``Error`` values (and instances of its subclasses) can be thrown. When a ``throw`` is not handled by an enclosing ``try`` block (see below), it terminates the script and prints an error message
+that includes the error's message and a trace of the function calls that led to the error.
 
 
 Catching errors
@@ -945,32 +787,33 @@ The general form is::
     end
 
 If everything in the body of ``try`` succeeds, the ``catch`` clause is skipped. If anything in the body raises an error, control jumps
-immediately to the ``catch`` clause and the variable named after ``catch`` is bound to a value describing the error. The bound name
+immediately to the ``catch`` clause and the variable named after ``catch`` is bound to an ``Error`` object describing the error. The bound name
 is local to the ``catch`` clause: it is not visible outside it. Execution then resumes after ``end``.
 
-The value bound by ``catch`` depends on where the error came from:
+All errors are ``Error`` objects, whether they were raised by an explicit ``throw`` or by the language itself (an invalid index, a
+missing field, a failed type check). An ``Error`` carries the following fields:
 
-- For an error raised by ``throw``, ``catch`` binds the value that was thrown, with its original type preserved.
-- For a runtime error raised by the language itself (an invalid index, a missing field, a failed type check), ``catch`` binds a
-  ``String`` describing the error.
+- ``message``: the error message, as a ``String``;
+- ``trace``: a formatted backtrace string showing the function calls that led to the error;
+- ``frames``: the same backtrace as a list of tables, each with the fields ``function``, ``line`` and ``file``.
 
-The following example illustrates both cases:
+The following example illustrates both a user-defined error and a built-in one:
 
 .. code:: phon
 
-    # User-defined throw: e is bound to the integer 42.
+    # User-defined throw.
     try
-        throw 42
+        throw Error("bad input")
     catch e
-        print "caught code", e   # prints: caught code 42
+        print("caught: {e.message}")   # prints: caught: bad input
     end
 
-    # Built-in error: e is bound to a string describing the failure.
-    let xs = [10, 20, 30]
+    # Built-in error: an invalid index raises an Error as well.
+    var xs = [10, 20, 30]
     try
-        let bad = xs[100]
+        var bad = xs[100]
     catch e
-        print "caught:", e
+        print("caught: {e.message}")
     end
 
 
@@ -981,24 +824,39 @@ If you do not need the bound value, you can omit the identifier entirely:
     try
         risky_operation()
     catch
-        print "something went wrong, ignoring"
+        print("something went wrong, ignoring")
     end
 
 
+A ``catch`` clause may also select errors by type, using ``as`` followed by an ``Error`` subclass: the clause only handles errors of that
+type, and other errors propagate to the next matching clause (or outward). An optional ``finally`` clause runs whether or not an error
+occurred, which makes it the right place for cleanup code::
+
+    try
+        <statements that may fail>
+    catch e as IOError
+        <handle input/output errors>
+    catch e as Error
+        <handle any other error>
+    finally
+        <cleanup code, always executed>
+    end
+
 ``try`` blocks may be nested. When an error is raised, the most recently entered ``try`` is given the chance to handle it; if its
-``catch`` clause itself raises (for example by re-throwing the value), the next enclosing ``try`` takes over.
+``catch`` clause itself raises (for example by re-throwing the error), the next enclosing ``try`` takes over. Note that ``throw e``
+inside a ``catch`` clause preserves the original error's backtrace, so no separate "rethrow" construct is needed.
 
 .. code:: phon
 
     try
         try
-            throw "first"
+            throw Error("first")
         catch e
-            print "inner caught", e
-            throw "second"   # re-thrown, handled by the outer catch
+            print("inner caught: {e.message}")
+            throw Error("second")   # handled by the outer catch
         end
     catch e
-        print "outer caught", e
+        print("outer caught: {e.message}")
     end
 
 
@@ -1029,14 +887,14 @@ Assertions
 ----------
 
 
-Another way to trigger errors is to use the keyword ``assert`` followed by a Boolean expression that must be true, and an optional error 
-message. It will trigger an error with the error message if the condition is false. 
+Another way to trigger errors is to use the function ``assert``, which takes a Boolean expression that must be true, and an optional error
+message. It will trigger an error with the error message if the condition is false.
 
 .. code:: phon
 
-    function area(x, y)
-        assert x > 0, "x must be positive"
-        assert y > 0, "y must be positive"
+    function area(x as Number, y as Number)
+        assert(x > 0, "x must be positive")
+        assert(y > 0, "y must be positive")
         return x * y
     end
 
@@ -1044,46 +902,17 @@ message. It will trigger an error with the error message if the condition is fal
 Debugging
 ---------
 
-It is sometimes necessary to include debugging information to check the state of the program at any given point. A common way to achieve this
-is to include ``print`` statements, to comment them out once the program has been debugged, and to uncomment them if we need to debug the 
-program again. This approach is fine for small programs, but it can be tedious and unreliable for larger programs. 
+It is sometimes necessary to check the state of the program at a given point. The simplest tools for this are the ones you have already
+seen: ``print`` calls to inspect values, and ``assert`` calls to state conditions that must hold. Assertions are usually preferable to
+temporary ``print`` statements: they document the assumption they check, they cost nothing as long as the assumption holds, and they fail
+loudly — with a message and a backtrace — as soon as it is violated.
 
-Phononometrica's scripting language offers a nicer alternative: you can use the keyword ``debug`` followed by a statement. The statement will only
-be executed in debug mode:
+When a script fails, running it from a terminal can help pinpoint the problem::
 
-.. code:: phon
+    phonometrica -r my_script.phon
 
-    function area(x, y)
-        debug assert x > 0
-        debug assert y > 0
-        return x * y
-    end
-
-
-Alternatively, you can create ``debug`` blocks, which can be more convenient if you have a lot of debugging code:
-
-.. code:: phon
-
-    function area(x, y)
-        debug 
-            assert x > 0
-            assert y > 0
-            # The following line will only be printed if both assertions succeed.
-            print "x and y are both positive"
-        end
-        return x * y
-    end
-
-
-You can control wether debuggin is on (default) or off using an ``option`` statement, which must be at the beginning of your script 
-before any other statements. It can take one of the following three forms:
-
-.. code:: phon
-
-    option debug           # turns debugging on (which is the default)
-    option debug = true    # turns debugging on (equivalent to the line above, but more explicit)
-    option debug = false   # turns debugging off
-
+Compile-time errors point at the offending line; runtime errors print the full call-stack trace. The same trace appears in the console
+inside Phonometrica, and the script editor highlights the failing line.
 
 
 Operators
@@ -1092,28 +921,31 @@ Operators
 Mathematical operators
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Phonometrica supports the following mathematical operators: ``+`` (addition), ``-`` (subtraction), 
-``*`` (multiplication) and ``/`` (division), ``^`` (power) and ``%`` (modulus). The power operator has highest precedence,
-followed by the multiplication, division and modulus operators. Addition and subtraction have lowest precedence. You can use 
+Phonometrica supports the following mathematical operators: ``+`` (addition), ``-`` (subtraction),
+``*`` (multiplication), ``/`` (division), ``^`` (power), ``div`` (integer division) and ``mod`` (remainder). The division operator ``/`` always yields a ``Float``, even between two integers. The power operator has highest precedence,
+followed by the multiplication, division and remainder operators. Addition and subtraction have lowest precedence. You can use
 grouping parentheses ``()`` to alter the precedence of operators:
 
 .. code:: phon
 
-    print 3 + 5 * 10   # prints 53
-    print (3 + 5) * 10 # prints 80
+    print(3 + 5 * 10)   # prints 53
+    print((3 + 5) * 10) # prints 80
+    print(7 / 2)        # prints 3.5
+    print(7 div 2)      # prints 3
+    print(7 mod 2)      # prints 1
 
 
 Boolean operators
 ~~~~~~~~~~~~~~~~~
 
-Phonometrica supports the 3 standard Boolean operators ``and``, ``or`` and ``not``. ``and`` and ``or`` are binary operators: ``x and y`` is 
+Phonometrica supports the 3 standard Boolean operators ``and``, ``or`` and ``not``. ``and`` and ``or`` are binary operators: ``x and y`` is
 true if both ``x`` and ``y`` are true, whereas ``x or y`` if ``x`` is true or ``y`` is true (or both are true). ``not`` is a unary operator:
-``not x`` is true if ``x`` is false, and vice versa. 
+``not x`` is true if ``x`` is false, and vice versa.
 
 Note that in the case of ``and`` and ``or``, Phonometrica will not necessary evaluate the second operand. For instance, in the expression
-``x and y``, ``y`` will not be evaluated if ``x`` is false, since ``x and y`` will always be false whatever the truth condition of ``y`` is; 
+``x and y``, ``y`` will not be evaluated if ``x`` is false, since ``x and y`` will always be false whatever the truth condition of ``y`` is;
 likewise, ``y`` will not be evaluated in ``x or y`` if ``x`` is true since this is enough to determine that the whole expression is true.
-Therefore, you shouldn't rely on the second operand being evaluated. 
+Therefore, you shouldn't rely on the second operand being evaluated.
 
 Comparison operators
 ~~~~~~~~~~~~~~~~~~~~
@@ -1127,13 +959,6 @@ Like most programming languages, Phonometrica's scripting language allows you to
 - ``x > y`` is true if ``x`` is greater than ``y``
 - ``x >= y`` is true if ``x`` is greater than or equal to ``y``
 
-In addtion, the operator ``<=>`` (sometimes called the "spaceship operator") can be used to compare values. The expression 
-``x <=> y`` evaluates to:
-
-- ``-1`` if ``x`` is less than ``y``
-- ``0`` if ``x`` is equal to ``y``
-- ``1`` if ``x`` is greater than ``y``
-
 
 Concatenation operator
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1143,6 +968,8 @@ The concatenation operator ``&`` allows to concatenate two or more strings. It i
 
 .. code:: phon
 
-    pi = 3.14
-    s = "The value of pi is" & pi
-    print s
+    var pi = 3.14
+    var s = "The value of pi is " & pi
+    print(s)
+
+``&`` is the only operator that performs implicit conversions. In particular, ``+`` never converts its operands: ``"3" + 1`` is a type error. (Between two lists, ``+`` concatenates them.)

@@ -7,133 +7,134 @@ Overview
 --------
 
 
-When you start writing scripts that are relatively long and complex and/or that you would like to redistribute, you might want to break them down into smaller, 
-reusable components. Modules offer a way to achieve that. A ``Module`` is an object that can be used to store unordered key/value pairs. Each pair represents a *field*. Conceptually, it is similar to a ``Table``, 
-except that all its keys must be strings. To create a module, we can call the ``Module`` type's constructor, passing it as an argument the name we want to give to the 
-module. (This name will be used in error messages.) We can then create and retrieve values with the index operator, just like for tables:
+When you start writing scripts that are relatively long and complex and/or that you would like to redistribute, you might want to break them down into smaller,
+reusable components. Modules offer a way to achieve that. In Phonometrica, **every script file is a module**: the variables, constants, functions and classes
+declared at the top level of a script form the module's *namespace*. Another script can *import* your module by name and use what it declares, without any
+special packaging on your part — a plain analysis script "just works" as an importable library.
+
+Top-level declarations are **public by default**: they are visible to any script that imports the module. Declarations that are implementation details can be
+kept module-private with the ``local`` modifier, which applies to ``var`` and ``const`` as well as to top-level ``function`` and ``class`` declarations:
 
 .. code:: phon
 
-    let m = Module("My first module")
-    m["version"] = "0.1"
-    print m["version"]
+    var threshold = 0.025    # public: importers can read this as my_module.threshold
+    local var cache = {}     # private: only visible inside this script
 
-Alternatively, we can also use the *dot operator*:
-
-.. code:: phon
-
-    print m.version
-    m.greet = function() print "hello" end
-    m.greet()     # call module function using the dot operator
-    m["greet"]()  # call module function using the index operator
-
-
-As you can see in the above example, the dot operator and the index operator are equivalent: the dot operator is shorter and more legible, whereas the index operator
-is more flexible since it allows you to create keys dynamically:
-
-.. code:: phon
-
-    keys = ["a", "b", "c"]
-    foreach key in keys do
-        m[key] = to_upper(key)
-    end
-
-    print m.a         # prints "A"
-    print m[keys[-1]] # prints "C"
-
-
-Modules are mostly used to create *namespaces*: instead of creating variables and functions in the global scope, you can pack them into a module. This makes your code
-easier to redistribute and reuse, since other users will be able to *import* your module. It also avoids "polluting" the global scope with your own variables.
+Modules are mostly used to create *namespaces*: instead of putting all your variables in the global scope, each script keeps its own, and importers refer to
+your variables *qualified* by the module name (e.g. ``utils.version``). This makes your code easier to redistribute and reuse, and it avoids "polluting" the
+global scope.
 
 
 Creating modules
 ----------------
 
-Let's create a module called ``utils`` in which we will put some utility functions. We will create a file named ``utils.phon`` for this purpose. Remember that whenever
-you create a script, all variables, functions and classes that are at the top level and that are not declared as local (with ``let`` for variables and ``local`` for functions and classes) are global. If a user were to import our file that
-contains global variables, some of our variables might conflict with the user's, which might lead to errors (in the best case) or to very subtle bugs (in the worst case). 
-To prevent that, we declare all our variables as local, and only *export* a single module. Our users will then be able to safely *import* this module and only use the 
-modules they want, without any name conflict. Let's first create the module:
+Let's create a module called ``utils`` in which we will put some utility functions. We will create a file named ``utils.phon`` for this purpose — the name of a
+module is simply the name of its file, without the ``.phon`` extension. There is nothing else to do: no registration, no export list, and no special return
+value at the end of the file. We only need to remember that everything at the top level is public unless it is declared ``local``:
 
 .. code:: phon
 
     # utils.phon
-    let m = Module("utils")
-    m.version = "0.1"
-    m.author = "John Smith"
+    const version = "0.1"
+    const author = "John Smith"
 
     # Calculate the perimeter of a rectangle
-    m.perimeter = function(length as Number, width as Number)
+    function perimeter(length as Number, width as Number)
         return 2 * length + 2 * width
     end
 
     # Calculate the area of a rectangle
-    m.area = function(length as Number, width as Number)
+    function area(length as Number, width as Number)
         return length * width
     end
 
-    # Export the module
-    return m
+    # A private helper: invisible to scripts that import utils
+    local function is_valid(x as Number)
+        return x >= 0
+    end
 
-In this example, we first create an empty module and assign it to the *local* variable ``m``, next we populate our module with a couple of variables and functions, 
-and finally we return the module ``m``. You might be surprised by this ``return`` statement at the end of the file, since it is outside of any function definition. 
-However, when Phonometrica loads a script, it will put all the top-level code in an implicitly defined function, and will then execute it. Therefore, a script *is*
-a function, and all scripts return a value (``null`` by default). When a user imports our script, the value that will be returned to them will be our module. 
+In this example, the module exposes two constants (``version`` and ``author``) and two functions (``perimeter`` and ``area``). The helper ``is_valid`` is
+declared ``local``, so it can only be called from within ``utils.phon`` itself.
 
 
 Importing modules
 -----------------
 
-We will now create a script called ``main.phon`` in the same directory as ``utils.phon``, and we will now import and use the module we created earlier. This is done with the function 
-``import``, which takes the name of the file to be imported, without the ``.phon`` extension.
+We will now create a script called ``main.phon`` in the same directory as ``utils.phon``, and we will import and use the module we created earlier. This is
+done with the ``import`` statement, which takes the name of the module (note: the *name*, a plain identifier — not a path and not a string):
 
 .. code:: phon
 
     # main.phon
-    utils = import("utils")
-    let l = 100
-    let w = 20
-    print "The perimeter of a rectangle with length = ", l, " and width = ", w, " is ", utils.perimeter(l, w)
-    print "The area of a rectangle with length = ", l, " and width = ", w, " is ", utils.area(l, w)
+    import utils
 
+    var l = 100
+    var w = 20
+    print("The perimeter of a rectangle with length = {l} and width = {w} is", perimeter(l, w))
+    print("The area of a rectangle with length = {l} and width = {w} is", area(l, w))
+    print("(computed with utils version {utils.version})")
 
-The function ``import`` does several things. First, it looks for a Phonometrica script with the name that was passed as its argument in the same directory as the 
-current script and, if this fails, it tries to find it in one of its standard *import paths*. If it finds such a file, it checks whether this file has already
-been loaded: if so, it simply returns the script's return value, otherwise it loads the script and then returns its value. This ensures that the script is only 
-executed once even if it is imported several times from different places. 
+Several things are worth noting here:
 
-In our main script, we assign the result of ``import`` to a global variable named ``utils``, which now stores the module. We then call the functions ``perimeter`` and 
-``area`` from this module. There is no obligation to give the variable the same name as the module: if we wanted to save some typing, we could have called the variable ``u``,
-for instance. In addition, note that we defined ``utils`` as a local variable: this is fine since this is our main script, but we could have also defined it as a
-local variable: this would be good practice if this file was also meant to be imported by other users.
+- ``import`` is a *compile-time statement*, not a function. The module is located and compiled before your script starts executing, and a missing module is a
+  compile error (you cannot wrap ``import`` in ``try``/``catch``). The imported module's own top-level code runs *before* the importing script's first
+  statement.
+- To locate the module, Phonometrica looks for a file named ``utils.phon`` (or a directory module ``utils/initialize.phon``) first in the same directory as the
+  importing script, and then in each directory on the module *search path* (which includes the ``Scripts`` directory of every installed plugin; see below).
+- A module is loaded and executed only *once* per run, no matter how many scripts import it.
+- The module's public **functions and classes** become visible as if they had been declared in your own script: we call ``perimeter(l, w)`` directly,
+  unqualified. Public functions join the corresponding *generic function*, so they can add overloads to functions of the same name declared elsewhere
+  (see :ref:`function overloading <function-overloading>`).
+- The module's public **variables and constants**, on the other hand, are accessed *qualified* with the module name and the dot operator: ``utils.version``.
+  Reading a private binding (e.g. ``utils.cache``) is an error: ``[Name error] module 'utils' has no public member 'cache'``.
+
+Import variants
+~~~~~~~~~~~~~~~
+
+The ``import`` statement has a few convenient variants. You can give the module a shorter alias with ``as``:
+
+.. code:: phon
+
+    import utils as u
+    print(u.version)
+
+You can bring specific variables or constants into scope unqualified with ``for`` (optionally renaming them with ``as``):
+
+.. code:: phon
+
+    import utils for version
+    print(version)
+
+    import utils for author as who
+    print(who)
+
+``import utils for *`` brings in *all* of the module's public bindings unqualified, and several imports can be chained on one line with commas:
+``import utils, mytools as mt``.
+
 
 Reloading modules
 -----------------
 
-As mentioned above, ``import`` checks whether a script has already been loaded to avoid re-executing its code every time it is imported. In general, this is what you 
-want, but sometimes you might want to ensure that the module *is* reloaded. The most common scenerio is when you make some changes to a module and you want to import it from the 
-console: in that case, you want to ensure that Phonometrica uses the latest version of your module, even if it has already been imported. The function ``import`` accepts
-a Boolean as a second argument: if the value is ``true``, it will force reloading the module even if it has already been imported:
-
-.. code:: phon
-
-    # ensure that our version of utils is not stale
-    let utils = import("utils", true)
+Since a module is only executed once per run, you may wonder what happens when you *edit* a module and want to see your changes take effect. In practice, this
+takes care of itself: whenever you run a script from Phonometrica's script editor, the script and all the modules it imports are recompiled and re-executed
+from scratch, so you always see the latest version of every file. There is therefore no "force reload" mechanism (and no need for one): simply re-run your
+script after editing a module it depends on.
 
 
 Distributing modules as plugins
 -------------------------------
 
-When Phonometrica loads a plugin, its ``Scripts`` directory is automatically added to the the search path for modules. This means that you can 
-put your own modules in this directory and access them from your own scripts, but it also means that other users will be able to load your module 
-using its base name (without the ``.phon`` extension). 
+When Phonometrica loads a plugin, its ``Scripts`` directory is automatically added to the search path for modules. This means that you can
+put your own modules in this directory and access them from your own scripts, but it also means that other users will be able to import your module
+using its base name (without the ``.phon`` extension).
 
-In order to avoid conflicts with other modules, it is recommended to give them a unique name. You could for instance use a prefix which is 
-specific to your plugin. As an example, a utility module for a project named PFC could be named ``pfc-utils.phon``, and a user could load as follows:
+In order to avoid conflicts with other modules, it is recommended to give them a unique name. Since a module name must be a valid identifier (``import`` takes
+a name, not a file path), use an underscore-separated prefix which is specific to your plugin. As an example, a utility module for a project named PFC could be
+stored in a file named ``pfc_utils.phon``, and a user could load it as follows:
 
 .. code:: phon
 
-    let utils = import("pfc-utils")
+    import pfc_utils
 
 
 
@@ -142,10 +143,13 @@ Redistributing scripts
 
 If you intend to redistribute a script or module, we strongly recommend that you adhere to the following guidelines:
 
-- unless you really need to define global variables, declarea all top-level variables as local so as not to pollute the global namespace
-- if your script is intended to be imported as a module, pack all the symbols you want to export in a ``Module`` object and return it at the end of your script
-- for all exported variables and fields, use ``snake_case`` rather than ``camelCase`` or ``PascalCase``; for example, use ``validate_item`` instead of ``validateItem`` or ``ValidateItem``
-- provide an explicit type for function parameters
+- remember that all top-level declarations are public by default: declare everything that is an implementation detail (helper functions, caches, temporary
+  variables) with ``local``, so that your module's public interface contains only what you actually want to expose
+- avoid ``global`` variables unless you really need them: public module bindings are accessed qualified by the module name, so they cannot clash with other
+  modules, whereas globals live in a single shared namespace
+- for all public functions, variables and fields, use ``snake_case`` rather than ``camelCase`` or ``PascalCase``; for example, use ``validate_item`` instead of ``validateItem`` or ``ValidateItem``
+- provide an explicit type for function parameters: this makes your functions self-documenting, and it lets them coexist as overloads with same-named
+  functions from other modules
 - prefer names that are explicit, even if they are a bit longer, to names that are short but possibly difficult to understand; for example, ``list_directory`` is clearer than ``listdir`` or (worse) ``lsdir``
 
-Following these rules will ensure that your code is easy to understand and works in a consistent and predictable way. 
+Following these rules will ensure that your code is easy to understand and works in a consistent and predictable way.

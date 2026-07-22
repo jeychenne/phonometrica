@@ -16,17 +16,18 @@ Functions
 .. function:: load(path as String)
 
 Imports the file at ``path`` into the current project (if not already present) and returns it as a ``Document``.
-The returned object can be used as an ``Annotation``, ``Sound``, ``Dataset``, etc. depending on the file type.
+The return is polymorphic: the object can be used as an ``Annotation``, ``Sound``, ``Dataset``, etc. depending on
+the file type. A relative ``path`` is resolved against the project's directory.
 
 Example::
 
-   let ds = load("my_data.csv")
-   print ds.nrow
+   var ds = load("my_data.csv")
+   print(ds.nrow)
 
 
 ------------
 
-.. function:: add_property(file as Document, category as String, value as Object)
+.. function:: add_property(file as Document, category as String, value)
 
 Adds a property to the document. ``category`` must be a string and ``value`` can be a string, a number or a Boolean.
 If the file already has a property with the same category, the value will be replaced with the new one.

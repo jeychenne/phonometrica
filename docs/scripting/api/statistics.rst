@@ -1,3 +1,5 @@
+.. _statistics-type:
+
 Statistical functions
 =====================
 
@@ -35,11 +37,9 @@ over rows. If it is equal to 2, summation is performed over columns.
 
 ------------
 
-.. function:: vrc(x [, dim])
+.. function:: vrc(x)
 
-Returns the sample variance of the array ``x``. If ``dim`` is specified, returns an ``Array`` in which each element
-represents the variance over the given dimension in a two-dimensional array. If ``dim`` is equal to 1, the calculation is performed
-over rows. If it is equal to 2, it is performed over columns.
+Returns the sample variance of the array ``x``.
 
 See also: :func:`std`
 
@@ -76,18 +76,18 @@ Returns a ``Model`` object (see Model fields below).
 
 Example::
 
-   let ds = load("my_data.csv")
-   let m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   var ds = load("my_data.csv")
+   var m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
    summarize(m)
-   print "AIC = " & m.aic
+   print("AIC = {m.aic}")
 
-   let m2 = fit("voicing ~ consonant + position + (1|speaker)", ds, "beta")
+   var m2 = fit("voicing ~ consonant + position + (1|speaker)", ds, "beta")
    summarize(m2)
 
-   let m3 = fit("f1 ~ vowel + gender + (1|speaker)", ds, "student")
+   var m3 = fit("f1 ~ vowel + gender + (1|speaker)", ds, "student")
    summarize(m3)
-   print "sigma = " & m3.sigma
-   print "nu    = " & m3.nu
+   print("sigma = {m3.sigma}")
+   print("nu    = {m3.nu}")
 
 ------------
 
@@ -97,10 +97,8 @@ Fits a frequentist model with additional fitting options supplied as a ``Table``
 This overload is the way to opt into **REML** (restricted maximum likelihood) for Gaussian
 linear mixed models, and the API entry point for any future fit-time option.
 
-``options`` is a ``Table`` of key/value pairs. The Table can either be written as a literal
-(``{ "fit_method": "REML" }``) or built up with the named-argument syntax
-(``fit_method = "REML"`` as the final positional argument, which the parser packs into a
-Table with the same shape). Both forms are accepted and equivalent.
+``options`` is a ``Table`` of key/value pairs, written as a table literal such as
+``{ "fit_method": "REML" }``.
 
 Currently supported options:
 
@@ -121,27 +119,25 @@ documentation for the rationale.
 
 Example::
 
-   let ds = load("my_data.csv")
+   var ds = load("my_data.csv")
 
-   // Same model fitted with both methods
-   let m_ml   = fit("f1 ~ gender + (1|speaker)", ds)
-   let m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
+   # Same model fitted with both methods
+   var m_ml   = fit("f1 ~ gender + (1|speaker)", ds)
+   var m_reml = fit("f1 ~ gender + (1|speaker)", ds, { "fit_method": "REML" })
 
-   // Equivalent named-argument form
-   let m_reml2 = fit("f1 ~ gender + (1|speaker)", ds, fit_method = "REML")
+   # With an explicit family
+   var m_reml2 = fit("y ~ x + (1|g)", ds, "gaussian", { "fit_method": "REML" })
 
-   // With an explicit family
-   let m_reml3 = fit("y ~ x + (1|g)", ds, "gaussian", { "fit_method": "REML" })
-
-   summarize(m_reml)   // shows a "Method: REML" line in the header
+   summarize(m_reml)   # shows a "Method: REML" line in the header
 
 ------------
 
-.. function:: fit(formula, data, prior[, prior])
+.. function:: fit(formula, data, prior)
+              fit(formula, data, family, prior)
 
 Fits a **Bayesian** model using approximate Bayesian inference (INLA-style). The ``prior``
-argument is a ``Prior`` object (see `Prior specification`_ below) that controls the
-prior distributions on all model parameters.
+argument is a prior specification created with :func:`Prior` (see `Prior specification`_
+below) that controls the prior distributions on all model parameters.
 
 When ``family`` is omitted, ``"gaussian"`` is used. The function returns a ``Model`` object
 with ``estimation`` set to ``"Bayesian"`` and the posterior summary fields populated
@@ -152,18 +148,18 @@ data-dependent weakly informative priors (see `Prior specification`_).
 
 Example::
 
-   let ds = load("my_data.csv")
+   var ds = load("my_data.csv")
 
-   // Bayesian fit with default priors
-   let prior = Prior()
-   let m = fit("f1 ~ vowel + (1|speaker)", ds, prior)
+   # Bayesian fit with default priors
+   var prior = Prior()
+   var m = fit("f1 ~ vowel + (1|speaker)", ds, prior)
    summarize(m)
-   print "pd for vowel[i] = " & m.pd[2]
+   print("pd for vowel[i] = {m.pd[2]}")
 
-   // Bayesian fit with custom fixed-effects prior
-   let prior2 = Prior()
-   set_fixed(prior2, 0, 5)   // N(0, 5) for all slopes
-   let m2 = fit("count ~ group + (1|subject)", ds, "poisson", prior2)
+   # Bayesian fit with custom fixed-effects prior
+   var prior2 = Prior()
+   set_fixed(prior2, 0, 5)   # N(0, 5) for all slopes
+   var m2 = fit("count ~ group + (1|subject)", ds, "poisson", prior2)
    summarize(m2)
 
 ------------
@@ -184,20 +180,26 @@ diagnostics, LPPD, log-marginal likelihood).
 
 Example::
 
-   let m = fit("f1 ~ vowel + (1|speaker)", ds)
+   var m = fit("f1 ~ vowel + (1|speaker)", ds)
    summarize(m)
 
-   // Bayesian
-   let prior = Prior()
-   let mb = fit("f1 ~ vowel + (1|speaker)", ds, prior)
+   # Bayesian
+   var prior = Prior()
+   var mb = fit("f1 ~ vowel + (1|speaker)", ds, prior)
    summarize(mb)
 
 ------------
 
 .. function:: get_coef(model)
 
-Prints a formatted table of the estimated fixed-effects coefficients and returns the coefficient
-array from a fitted model.
+Returns the estimated fixed-effects coefficients of a fitted model as an ``Array``. The
+corresponding coefficient names are available in the model's ``coef_names`` field.
+
+Example::
+
+   var m = fit("f1 ~ vowel + gender", ds)
+   var beta = get_coef(m)
+   print(m.coef_names[1], "=", beta[1])
 
 ------------
 
@@ -225,14 +227,14 @@ all candidate models with ML).
 
 Example::
 
-   let m1 = fit("f1 ~ vowel + (1|speaker)", ds)
-   let m2 = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   var m1 = fit("f1 ~ vowel + (1|speaker)", ds)
+   var m2 = fit("f1 ~ vowel + gender + (1|speaker)", ds)
    compare(m1, m2)
 
-   // REML comparison restricted to same fixed effects:
-   let m3 = fit("f1 ~ vowel + (1|speaker)", ds, { "fit_method": "REML" })
-   let m4 = fit("f1 ~ vowel + (1|speaker) + (1|word)", ds, { "fit_method": "REML" })
-   compare(m3, m4)   // OK: same fixed effects, different RE structure
+   # REML comparison restricted to same fixed effects:
+   var m3 = fit("f1 ~ vowel + (1|speaker)", ds, { "fit_method": "REML" })
+   var m4 = fit("f1 ~ vowel + (1|speaker) + (1|word)", ds, { "fit_method": "REML" })
+   compare(m3, m4)   # OK: same fixed effects, different RE structure
 
 ------------
 
@@ -243,8 +245,8 @@ If ``label`` is provided, the resulting dataset will have the given label.
 
 Example::
 
-   let ds = load("data.csv")
-   let females = filter(ds, "gender == 'F'")
+   var ds = load("data.csv")
+   var females = filter(ds, "gender == 'F'")
 
 
 Post-hoc analysis
@@ -266,7 +268,7 @@ argument is ignored.
 
 Example::
 
-   let m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
+   var m = fit("f1 ~ vowel + gender + (1|speaker)", ds)
    emmeans(m, "vowel", "holm")
 
 ------------
@@ -282,7 +284,7 @@ of the slopes across factor levels are computed and printed.
 
 Example::
 
-   let m = fit("f2 ~ frequency * group + (1|speaker)", ds)
+   var m = fit("f2 ~ frequency * group + (1|speaker)", ds)
    emtrends(m, "group", "frequency", "holm")
 
 
@@ -292,7 +294,8 @@ Prediction
 .. function:: predict(model as Model)
 
 Returns a ``Dataset`` of model predictions at the training rows used to fit ``model``.
-Equivalent in spirit to ``predict(model)`` in R for a freshly fit model.
+Equivalent in spirit to ``predict(model)`` in R for a freshly fit model. The resulting
+dataset is registered in the project's Data folder.
 
 The result has one row per observation in the original data and four columns:
 
@@ -311,11 +314,11 @@ the next overload.
 
 Example::
 
-   let ds = load("vowel_data.csv")
-   let m = fit("f1 ~ vowel + gender", ds)
-   let p = predict(m)
-   print get_header(p, 1)        # "Fit"
-   print get_column(p, "Fit")[1] # predicted F1 for the first row
+   var ds = load("vowel_data.csv")
+   var m = fit("f1 ~ vowel + gender", ds)
+   var p = predict(m)
+   print(get_header(p, 1))          # "Fit"
+   print(get_column(p, "Fit")[1])   # predicted F1 for the first row
 
 ------------
 
@@ -339,9 +342,9 @@ from ``newdata``, an unparseable formula, or a model type that is not yet suppor
 
 Example::
 
-   let ds = load("vowel_data.csv")
-   let m = fit("f1 ~ vowel + gender", ds)
-   let p = predict(m, ds)
+   var ds = load("vowel_data.csv")
+   var m = fit("f1 ~ vowel + gender", ds)
+   var p = predict(m, ds)
    # p has all of ds's columns plus Fit, SE fit, CI lower, CI upper
 
 ------------
@@ -382,28 +385,28 @@ As above, but with an ``options`` table that controls the output. All fields are
 
 Example::
 
-   let ds = load("vowel_data.csv")
-   let m = fit("schwa ~ position + gender", ds, "binomial")
+   var ds = load("vowel_data.csv")
+   var m = fit("schwa ~ position + gender", ds, "binomial")
 
    # Prediction on the link (logit) scale, 99% CI, no echoed columns
-   let opts = {}
+   var opts = {}
    opts["scale"] = "link"
    opts["ci_level"] = 0.99
    opts["bare"] = true
-   let p = predict(m, ds, opts)
+   var p = predict(m, ds, opts)
 
 Example (conditional prediction)::
 
-   let ds = load("schwa.csv")
-   let m = fit("realized ~ position + (1|speaker)", ds, "binomial")
+   var ds = load("schwa.csv")
+   var m = fit("realized ~ position + (1|speaker)", ds, "binomial")
 
    # Population-level: predicted probability for an "average" speaker
-   let p_pop = predict(m, ds)
+   var p_pop = predict(m, ds)
 
    # Conditional on speaker: per-speaker BLUPs added to η
-   let opts = {}
+   var opts = {}
    opts["re_form"] = "speaker"
-   let p_cond = predict(m, ds, opts)
+   var p_cond = predict(m, ds, opts)
 
    # For training rows, p_cond["Fit"] matches m.fitted exactly.
    # The same call on a held-out dataset gives per-speaker predicted
@@ -442,10 +445,10 @@ conditional per-group prediction.
 Diagnostics
 -----------
 
-.. function:: test_residuals(model)
+.. function:: dharma(model)
 
-Computes simulation-based residual diagnostics similar to the DHARMa package in R [HAR2022]_ and prints the results. Three tests
-are performed:
+Computes simulation-based residual diagnostics similar to the DHARMa package in R [HAR2022]_ and prints the results.
+(This function was named ``test_residuals`` in the old engine.) Three tests are performed:
 
 * **Uniformity test** (Kolmogorov-Smirnov): tests whether the scaled residuals follow a uniform
   distribution, as expected if the model is correctly specified.
@@ -464,14 +467,59 @@ interpretation is the same as for frequentist fits.
 
 Example::
 
-   let m = fit("count ~ condition + (1|subject)", ds, "poisson")
-   test_residuals(m)
+   var m = fit("count ~ condition + (1|subject)", ds, "poisson")
+   dharma(m)
+
+
+Advanced diagnostics
+--------------------
+
+The following functions expose the internals of the fitting engine. They are mainly useful
+for validating a fit or investigating convergence issues; everyday analyses do not need them.
+
+.. function:: evaluate(model)
+              evaluate(model, overrides as Table)
+
+Re-evaluates the model's (Laplace-approximated) log-likelihood, either at the fitted
+parameter values or at a user-supplied point. The optional ``overrides`` table may contain
+any of the following keys: ``beta`` (a ``List`` of fixed-effect coefficients), ``Sigma``
+(a ``List`` of numeric matrices, one per random-effects group), ``sigma``, ``nu``,
+``theta_nb``, ``phi`` (scalar dispersion parameters), ``u`` (a ``List`` of random-effect
+values) and ``refit_u`` (a ``Boolean``; if true, the random effects are re-optimized at the
+supplied parameters).
+
+Returns a ``Table`` with the keys ``loglik``, ``laplace_nll``, ``cond_nll``, ``prior_nll``,
+``log_det_Huu``, ``const_term``, ``u_refit``, ``laplace_method`` and ``u``.
+
+Example::
+
+   var m = fit("f1 ~ vowel + (1|speaker)", ds)
+   var ev = evaluate(m)
+   print(ev["loglik"])   # matches m.loglik
+
+------------
+
+.. function:: polish(model)
+
+Re-runs the Student-*t* outer optimization from the model's converged σ and ν with tighter
+tolerances. Only meaningful for Student-*t* models. Returns a ``Table`` with the keys
+``ok`` (whether the polish step succeeded), ``delta`` (log-likelihood improvement),
+``loglik`` and ``message``.
+
+------------
+
+.. function:: try_phase2(model)
+
+Re-fits the same Student-*t* model with Phase 2 (joint β + θ + σ + ν optimization) enabled
+and reports whether the joint optimization improves on the profiled fit. Only meaningful
+for Student-*t* models, and only for models fitted in the current session. Returns a
+``Table`` with the keys ``ok``, ``delta``, ``loglik`` and ``message``.
 
 
 Model fields
 ------------
 
-A ``Model`` object returned by :func:`fit` has the following fields:
+A ``Model`` object returned by :func:`fit` has the following read-only fields:
 
 .. attribute:: formula
 
@@ -553,6 +601,25 @@ Boolean indicating whether the optimizer converged.
 
 Number of iterations (0 for OLS).
 
+.. attribute:: optimizer
+
+Name of the optimizer that produced the fit (e.g. ``"newton"``).
+
+.. attribute:: well_identified
+
+Boolean indicating whether the fit is well identified (no degenerate variance components
+or boundary estimates were detected).
+
+.. attribute:: warning
+
+A warning string describing potential problems detected during fitting, or an empty
+string if there were none.
+
+.. attribute:: prior_warning
+
+A warning string emitted when a custom prior looks misconfigured relative to the data
+scale (see :ref:`prior-scale-awareness`); empty otherwise.
+
 .. attribute:: fitted
 
 Array of fitted values from the model.
@@ -560,6 +627,32 @@ Array of fitted values from the model.
 .. attribute:: residuals
 
 Array of response residuals (observed − fitted) from the model.
+
+.. attribute:: coef_names
+
+List of fixed-effect coefficient names (e.g. ``"Intercept"``, ``"vowel[i]"``), in the same
+order as the arrays returned by :func:`get_coef` and the ``se``, ``stat`` and ``p`` fields.
+
+.. attribute:: se
+
+Array of standard errors of the fixed-effect coefficients.
+
+.. attribute:: stat
+
+Array of test statistics (z or t values) of the fixed-effect coefficients.
+
+.. attribute:: p
+
+Array of *p*-values of the fixed-effect coefficients.
+
+.. attribute:: ranef_names
+
+List of random-effect standard-deviation labels (e.g. ``"sd(Intercept|speaker)"``,
+``"sd(residual)"``). Empty for fixed-effects-only models.
+
+.. attribute:: ranef_sd
+
+Array of random-effect standard deviations, in the same order as ``ranef_names``.
 
 .. attribute:: estimation
 
@@ -598,6 +691,10 @@ Standard error of WAIC. NaN for frequentist models.
 
 Standard error of LOO-IC. NaN for frequentist models.
 
+.. attribute:: lppd
+
+Log pointwise predictive density. NaN for frequentist models.
+
 .. attribute:: pareto_k
 
 Array of per-observation Pareto *k* diagnostics from PSIS-LOO. Empty for frequentist
@@ -608,15 +705,41 @@ that the LOO approximation may be poor for those observations.
 
 Log-marginal likelihood (Laplace approximation). NaN for frequentist models.
 
+Models that contain smooth terms (GAMs, e.g. ``f0 ~ s(time)``) additionally expose:
+
+.. attribute:: n_smooth
+
+Number of smooth terms in the model (0 if none).
+
+.. attribute:: smooth_names
+
+List of smooth-term labels (e.g. ``"s(time)"``).
+
+.. attribute:: smooth_edf
+
+Array of effective degrees of freedom, one per smooth term.
+
+.. attribute:: smooth_F
+
+Array of F statistics, one per smooth term.
+
+.. attribute:: smooth_p
+
+Array of approximate *p*-values, one per smooth term.
+
+.. attribute:: smooth_log_lambda
+
+Array of log smoothing parameters, one per smooth term.
+
 
 .. _prior-specification:
 
 Prior specification
 -------------------
 
-A ``Prior`` object controls the prior distributions used for Bayesian model fitting. Create
-one by calling the ``Prior`` constructor, then optionally configure individual priors before
-passing it to :func:`fit`.
+A prior specification (a ``PriorSpec`` object) controls the prior distributions used for
+Bayesian model fitting. Create one by calling the :func:`Prior` factory function, then
+optionally configure individual priors before passing it to :func:`fit`.
 
 When a prior field is left at its default, Phonometrica replaces it at fit time with a
 data-dependent weakly informative prior scaled to the response variable (following the
@@ -641,13 +764,15 @@ approach of brms). Setting a prior explicitly disables auto-scaling for that com
    usually use moderate scales without issue.
 
    When in doubt, omit the ``set_fixed`` call and let the auto-scaled defaults apply
-   (the constructor default is to auto-scale every field).  Phonometrica will emit a
+   (the factory default is to auto-scale every field).  Phonometrica will emit a
    ``prior_warning`` on the fitted model when the residual scale of an identity-link
    fit exceeds 1.5 × sd(*y*), which reliably flags this class of misconfiguration.
 
 .. function:: Prior()
 
-Creates a new prior specification with all fields set to auto-scaled defaults:
+Creates a new prior specification with all fields set to auto-scaled defaults. (``Prior``
+is a factory function returning a ``PriorSpec`` value; classes are not constructible
+directly in the new engine.) The defaults are:
 
 * Fixed effects (slopes): Normal(0, 2.5 × sd(*y*))
 * Intercept: Normal(mean(*y*), 2.5 × sd(*y*))
@@ -658,7 +783,7 @@ Creates a new prior specification with all fields set to auto-scaled defaults:
 
 Example::
 
-   let prior = Prior()
+   var prior = Prior()
 
 ------------
 
@@ -677,8 +802,8 @@ handled automatically). Disables auto-scaling for fixed effects.
 
 Example::
 
-   let prior = Prior()
-   set_fixed(prior, 0, 5)   // N(0, 5) for all slopes
+   var prior = Prior()
+   set_fixed(prior, 0, 5)   # N(0, 5) for all slopes
 
 ------------
 
@@ -690,8 +815,8 @@ coefficient only.
 
 Example::
 
-   let prior = Prior()
-   set_fixed(prior, "Intercept", 500, 100)  // informative prior for intercept (e.g. F1 in Hz)
+   var prior = Prior()
+   set_fixed(prior, "Intercept", 500, 100)  # informative prior for intercept (e.g. F1 in Hz)
 
 ------------
 
@@ -708,9 +833,9 @@ is the tail probability α, such that P(σ > *u*) = α. For ``"half_cauchy"`` an
 
 Example::
 
-   let prior = Prior()
-   set_variance(prior, "pc", 50, 0.05)         // PC prior: P(σ > 50) = 0.05
-   set_variance(prior, "half_cauchy", 25)       // Half-Cauchy(25)
+   var prior = Prior()
+   set_variance(prior, "pc", 50, 0.05)          # PC prior: P(σ > 50) = 0.05
+   set_variance(prior, "half_cauchy", 25)       # Half-Cauchy(25)
 
 ------------
 
@@ -722,7 +847,7 @@ Sets the prior for the residual standard deviation (Gaussian family only). Same 
 
 Example::
 
-   let prior = Prior()
+   var prior = Prior()
    set_residual(prior, "pc", 100, 0.05)
 
 ------------
@@ -733,8 +858,8 @@ Sets a Gamma(``shape``, ``rate``) prior for the negative binomial overdispersion
 
 Example::
 
-   let prior = Prior()
-   set_negbin_theta(prior, 2, 0.1)  // Gamma(2, 0.1) — more informative than default
+   var prior = Prior()
+   set_negbin_theta(prior, 2, 0.1)  # Gamma(2, 0.1) — more informative than default
 
 ------------
 
@@ -744,7 +869,7 @@ Sets a Gamma(``shape``, ``rate``) prior for the beta regression precision parame
 
 Example::
 
-   let prior = Prior()
+   var prior = Prior()
    set_beta_phi(prior, 1, 0.01)
 
 ------------
@@ -775,8 +900,8 @@ Reference: Lewandowski, Kurowicka & Joe (2009), *J. Multivariate Anal.*
 
 Example::
 
-   let prior = Prior()
-   set_lkj(prior, 2)   // LKJ(2): mildly regularising
+   var prior = Prior()
+   set_lkj(prior, 2)   # LKJ(2): mildly regularising
 
 
 .. _bayesian-model-fields:
@@ -784,13 +909,9 @@ Example::
 Bayesian model fields
 ---------------------
 
-When a model is fitted with Bayesian estimation (by passing a ``Prior`` to :func:`fit`),
-the following additional fields are available on the ``Model`` object. These fields are
-empty arrays for frequentist models.
-
-.. attribute:: estimation
-
-A string indicating the estimation method: ``"Frequentist"`` or ``"Bayesian"``.
+When a model is fitted with Bayesian estimation (by passing a prior specification to
+:func:`fit`), the following additional fields are available on the ``Model`` object.
+These fields are empty arrays for frequentist models.
 
 .. attribute:: posterior_mean
 
@@ -827,18 +948,38 @@ Array of probability-of-direction values for each fixed-effect coefficient. The 
 defined as max(P(β > 0), P(β < 0)) and ranges from 0.5 (no evidence for either direction)
 to 1.0 (certainty). It is the Bayesian counterpart to a two-sided *p*-value.
 
+.. attribute:: hyper_names
+
+List of hyperparameter labels (e.g. ``"sd(Intercept|speaker)"``, ``"sd(residual)"``).
+
+.. attribute:: hyper_posterior_mean
+
+Array of hyperparameter posterior means, in the same order as ``hyper_names``.
+
+.. attribute:: hyper_posterior_sd
+
+Array of hyperparameter posterior standard deviations.
+
+.. attribute:: hyper_ci_lower
+
+Array of lower bounds of the 95% credible intervals for the hyperparameters.
+
+.. attribute:: hyper_ci_upper
+
+Array of upper bounds of the 95% credible intervals for the hyperparameters.
+
 Example::
 
-   let prior = Prior()
-   let m = fit("f1 ~ vowel + gender + (1|speaker)", ds, prior)
+   var prior = Prior()
+   var m = fit("f1 ~ vowel + gender + (1|speaker)", ds, prior)
 
-   print "Estimation: " & m.estimation           // "Bayesian"
-   print "Intercept posterior mean: " & m.posterior_mean[1]
-   print "Intercept 95% CrI: [" & m.ci_lower[1] & ", " & m.ci_upper[1] & "]"
-   print "Intercept pd: " & m.pd[1]
+   print("Estimation: {m.estimation}")           # "Bayesian"
+   print("Intercept posterior mean: {m.posterior_mean[1]}")
+   print("Intercept 95% CrI: [{m.ci_lower[1]}, {m.ci_upper[1]}]")
+   print("Intercept pd: {m.pd[1]}")
 
-   // Frequentist fields (AIC, BIC, loglik) remain available
-   print "AIC = " & m.aic
+   # Frequentist fields (AIC, BIC, loglik) remain available
+   print("AIC = {m.aic}")
 
 .. note::
 

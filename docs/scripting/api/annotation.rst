@@ -18,6 +18,23 @@ Return a list of all the annotations in the current project.
 ------------
 
 
+.. function:: new_annotation()
+
+Create and return a fresh empty ``Annotation`` (native format, no path, no layers). Layers and events are then
+added with the regular API (``create_layer``, ``add_interval``, ``add_instant``), and the result can be written to
+disk with ``write_as_native`` or ``write_as_textgrid``. This is useful to generate annotations from scratch in a
+script.
+
+Example::
+
+   var annot = new_annotation()
+   create_layer(annot, 1, "words", false)
+   add_interval(annot, 1, 0.0, 0.5, "hello")
+   write_as_textgrid(annot, "/tmp/hello.TextGrid")
+
+------------
+
+
 .. function:: get_annotation(path as String)
 
 Return the ``Annotation`` object from the current project whose path is ``path``, or ``null`` if there is no such
@@ -134,7 +151,7 @@ contains point events (instants); otherwise, it contains intervals.
 
 Example::
 
-   let annot = get_annotations()[1]
+   var annot = get_annotations()[1]
    # Add a new interval layer at the end
    create_layer(annot, get_layer_count(annot) + 1, "syllables", false)
 
@@ -148,7 +165,8 @@ Removes the annotation layer at the given index.
 
 .. function:: clear_layer(annot as Annotation, index as Integer)
 
-Removes all events from the layer at the given index, without removing the layer itself.
+Clears the text of all the events on the layer at the given index. The events themselves (and the layer) are kept;
+use ``remove_events`` to delete the events instead.
 
 ------------
 
@@ -191,7 +209,7 @@ Structural transformations
 
 These functions produce a **new** annotation file on disk and return a fresh ``Annotation`` handle.
 They do not modify the source, and they do not add the result to the current project — call
-``import_file(path)`` if you want the new file in the project. Properties, description, and (where
+``phon.project.add_file(path)`` if you want the new file in the project. Properties, description, and (where
 the operation preserves it) sound binding are inherited from the source; for multi-source
 operations, property collisions are resolved by last-input-wins.
 
@@ -214,7 +232,7 @@ the order of ``indices``. The sound binding is preserved (duration is unchanged)
 
 For example, to extract only the first and third layers::
 
-    let small = extract_layers(annot, [1, 3], "/tmp/small.phon-annot")
+    var small = extract_layers(annot, [1, 3], "/tmp/small.phon-annot")
 
 ------------
 
