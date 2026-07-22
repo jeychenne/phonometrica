@@ -15,21 +15,88 @@
  *                                                                                                                     *
  * Created: 28/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: see header.                                                                                                *
+ * Purpose: see header. The dialog is built from a script Table specification (the new engine's Table/List values;    *
+ * the pre-cutover implementation consumed the old engine's Json DOM). All values are read through the small           *
+ * accessors below: Table::get is lenient (null when absent), so "required" keys check is_null and throw the same     *
+ * user-facing errors as before.                                                                                       *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
 #include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
+#include <phon/error.hpp>
 #include <phon/gui/file_dialog.hpp>
 #include <phon/gui/user_dialog.hpp>
 
-#ifdef PHON_TODO_A3 // rebuilt on new-engine Table specs at roadmap A4
-
 namespace phonometrica {
+
+// ---------------------------------------------------------
+//  Table access helpers
+// ---------------------------------------------------------
+
+static Variant tkey(const char *s)
+{
+	return Variant::make(String(s));
+}
+
+// Lenient fetch: null Variant when the key is absent.
+static Variant getv(const Table &t, const char *k)
+{
+	return t.get(tkey(k));
+}
+
+static String require_string(const Table &t, const char *k, const char *what)
+{
+	auto v = getv(t, k);
+	if (v.is_null()) {
+		throw error("User dialog % has no \"%\" attribute", what, k);
+	}
+	return v.to<String>();
+}
+
+static String opt_string(const Table &t, const char *k)
+{
+	auto v = getv(t, k);
+	return v.is_null() ? String() : v.to<String>();
+}
+
+static intptr_t opt_int(const Table &t, const char *k, intptr_t def)
+{
+	auto v = getv(t, k);
+	return v.is_null() ? def : (intptr_t) v.to<int64_t>();
+}
+
+static bool opt_bool(const Table &t, const char *k, bool def)
+{
+	auto v = getv(t, k);
+	return v.is_null() ? def : v.to<bool>();
+}
+
+static List require_list(const Table &t, const char *k, const char *what)
+{
+	auto v = getv(t, k);
+	if (v.is_null()) {
+		throw error("User dialog % has no \"%\" attribute", what, k);
+	}
+	if (!v.is<List>()) {
+		throw error("\"%\" must be a list in user dialog %", k, what);
+	}
+	return v.to<List>();
+}
+
+// Evaluate a script string to a dialog specification.
+static Table eval_spec(Runtime &rt, const String &str)
+{
+	auto v = rt.do_string(str);
+	if (!v.is<Table>()) {
+		throw error("create_dialog() expects a table specification");
+	}
+	return v.to<Table>();
+}
 
 // ---------------------------------------------------------
 //  FilePicker
@@ -67,20 +134,20 @@ void FilePicker::setPath(const QString &p) { m_edit->setText(p); }
 //  UserDialog
 // ---------------------------------------------------------
 
-UserDialog::UserDialog(QWidget *parent, Runtime &rt, const Json &js) :
+UserDialog::UserDialog(QWidget *parent, Runtime &rt, const Table &spec) :
 	QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint),
 	m_runtime(rt)
 {
 	m_current_layout = new QVBoxLayout(this);
 	m_current_layout->setContentsMargins(10, 10, 10, 10);
-	bool yes_no = parse(js);
+	bool yes_no = parse(spec);
 	m_current_layout->addStretch();
 	m_current_layout->addSpacing(10);
 	addButtons(yes_no);
 }
 
 UserDialog::UserDialog(QWidget *parent, Runtime &rt, const String &str) :
-	UserDialog(parent, rt, rt.do_string(str))
+	UserDialog(parent, rt, eval_spec(rt, str))
 {
 }
 
@@ -105,41 +172,40 @@ void UserDialog::addButtons(bool yes_no)
 
 Variant UserDialog::getResult() const
 {
-	Json::Object js;
+	Table js;
 
 	for (auto &[name, cb] : m_checkboxes) {
-		js[name] = cb->isChecked();
+		js.set(Variant::make(name), Variant::make(cb->isChecked()));
 	}
 
 	for (auto &[name, box] : m_comboboxes) {
-		js[name] = (intptr_t)(box->currentIndex() + 1);
+		js.set(Variant::make(name), Variant::make<int64_t>(box->currentIndex() + 1));
 	}
 
 	for (auto &[name, line] : m_fields) {
-		js[name] = String(line->text().toUtf8().constData());
+		js.set(Variant::make(name), Variant::make(String(line->text())));
 	}
 
 	for (auto &[name, list] : m_checklists) {
-		Array<Variant> values;
+		List values;
 		for (int i = 0; i < list->count(); i++) {
 			if (list->item(i)->checkState() == Qt::Checked) {
-				auto val = list->item(i)->data(Qt::UserRole).toString();
-				values.append(String(val.toUtf8().constData()));
+				values.append(Variant::make(String(list->item(i)->data(Qt::UserRole).toString())));
 			}
 		}
-		js[name] = Handle<List>::make(const_cast<Runtime *>(&m_runtime), std::move(values));
+		js.set(Variant::make(name), Variant::make(values));
 	}
 
 	for (auto &[name, group] : m_radiogroups) {
 		int checked = group->checkedId();
-		js[name] = (intptr_t)(checked >= 0 ? checked + 1 : 0);
+		js.set(Variant::make(name), Variant::make<int64_t>(checked >= 0 ? checked + 1 : 0));
 	}
 
 	for (auto &[name, picker] : m_filepickers) {
-		js[name] = String(picker->path().toUtf8().constData());
+		js.set(Variant::make(name), Variant::make(String(picker->path())));
 	}
 
-	return Variant(Handle<Table>::make(const_cast<Runtime *>(&m_runtime), std::move(js)));
+	return Variant::make(js);
 }
 
 
@@ -147,57 +213,48 @@ Variant UserDialog::getResult() const
 //  Parsing
 // ---------------------------------------------------------
 
-bool UserDialog::parse(const Json &js)
+bool UserDialog::parse(const Table &spec)
 {
-	if (!js.is_object()) {
-		throw error("Invalid JSON object passed to create_dialog()");
-	}
-	bool yes_no = false;
-
-	auto it = js.find("title");
-	if (it != js.end()) {
-		setWindowTitle(QString::fromUtf8(it.get_string().data(), (int) it.get_string().size()));
+	auto title = opt_string(spec, "title");
+	if (!title.empty()) {
+		setWindowTitle(title);
 	}
 
-	int width = -1, height = -1;
-	it = js.find("width");
-	if (it != js.end()) {
-		width = (int) it.get_integer();
-	}
-	it = js.find("height");
-	if (it != js.end()) {
-		height = (int) it.get_integer();
-	}
+	int width = (int) opt_int(spec, "width", -1);
+	int height = (int) opt_int(spec, "height", -1);
 	if (width > 0 || height > 0) {
 		resize(width > 0 ? width : this->width(), height > 0 ? height : this->height());
 	}
 
-	it = js.find("yes_no");
-	if (it != js.end()) {
-		yes_no = it.get_boolean();
-	}
+	bool yes_no = opt_bool(spec, "yes_no", false);
 
-	it = js.find("items");
-	if (it != js.end()) {
-		for (auto &item : it.get_array()) {
-			parseItem(item);
+	auto items_v = getv(spec, "items");
+	if (!items_v.is_null())
+	{
+		if (!items_v.is<List>()) {
+			throw error("\"items\" must be a list in user dialog");
+		}
+		auto items = items_v.to<List>();
+		for (intptr_t i = 1; i <= items.size(); i++)
+		{
+			auto item = items.get(i);
+			if (!item.is<Table>()) {
+				throw error("User dialog items must be tables");
+			}
+			parseItem(item.to<Table>());
 		}
 	}
 
 	return yes_no;
 }
 
-void UserDialog::parseItem(Json item)
+void UserDialog::parseItem(const Table &item)
 {
-	if (!item.is_object()) {
-		throw error("User dialog items must be tables");
-	}
-
-	auto it = item.find("type");
-	if (it == item.end()) {
+	auto type_v = getv(item, "type");
+	if (type_v.is_null()) {
 		throw error("User dialog item has no \"type\" key");
 	}
-	auto type = it.get_string();
+	auto type = type_v.to<String>();
 
 	if (type == "label") {
 		addLabel(item);
@@ -226,13 +283,13 @@ void UserDialog::parseItem(Json item)
 	}
 }
 
-String UserDialog::getName(const Json &item)
+String UserDialog::getName(const Table &item)
 {
-	auto it = item.find("name");
-	if (it == item.end()) {
+	auto v = getv(item, "name");
+	if (v.is_null()) {
 		throw error("User dialog item has no \"name\" attribute");
 	}
-	return it.get_string();
+	return v.to<String>();
 }
 
 void UserDialog::add(QWidget *widget)
@@ -245,39 +302,30 @@ void UserDialog::add(QWidget *widget)
 //  Widget builders
 // ---------------------------------------------------------
 
-void UserDialog::addLabel(const Json &item)
+void UserDialog::addLabel(const Table &item)
 {
-	auto it = item.find("text");
-	if (it == item.end()) {
-		throw error("User dialog label has no \"text\" attribute");
-	}
-	auto text = it.get_string();
-	add(new QLabel(QString::fromUtf8(text.data(), (int) text.size())));
+	add(new QLabel(QString(require_string(item, "text", "label"))));
 }
 
-void UserDialog::addButton(const Json &item)
+void UserDialog::addButton(const Table &item)
 {
-	auto it = item.find("label");
-	if (it == item.end()) {
-		throw error("User dialog button has no \"label\" attribute");
-	}
-	auto label = it.get_string();
-	auto *btn = new QPushButton(QString::fromUtf8(label.data(), (int) label.size()));
+	auto *btn = new QPushButton(QString(require_string(item, "label", "button")));
 
-	it = item.find("action");
-	if (it != item.end())
+	auto action = opt_string(item, "action");
+	if (!action.empty())
 	{
-		String action = it.get_string();
 		connect(btn, &QPushButton::clicked, this, [this, action]() {
-			m_runtime.do_string(action);
+			// A script error must not escape into the Qt event loop.
+			try {
+				m_runtime.do_string(action);
+			}
+			catch (std::exception &e) {
+				QMessageBox::warning(this, tr("Script error"), QString::fromUtf8(e.what()));
+			}
 		});
 	}
 
-	String pos;
-	it = item.find("position");
-	if (it != item.end()) {
-		pos = it.get_string();
-	}
+	auto pos = opt_string(item, "position");
 
 	auto *hl = new QHBoxLayout;
 	if (pos == "right" || pos == "center") {
@@ -290,103 +338,72 @@ void UserDialog::addButton(const Json &item)
 	m_current_layout->addLayout(hl);
 }
 
-void UserDialog::addCheckBox(const Json &item)
+void UserDialog::addCheckBox(const Table &item)
 {
 	auto name = getName(item);
-	String text;
-	auto it = item.find("text");
-	if (it != item.end()) {
-		text = it.get_string();
-	}
 
-	auto *cb = new QCheckBox(QString::fromUtf8(text.data(), (int) text.size()));
+	auto *cb = new QCheckBox(QString(opt_string(item, "text")));
 	m_checkboxes[name] = cb;
-
-	it = item.find("default");
-	if (it != item.end()) {
-		cb->setChecked(it.get_boolean());
-	}
+	cb->setChecked(opt_bool(item, "default", false));
 
 	add(cb);
 }
 
-void UserDialog::addComboBox(const Json &item)
+void UserDialog::addComboBox(const Table &item)
 {
 	auto name = getName(item);
-
-	auto it = item.find("values");
-	if (it == item.end()) {
-		throw error("User dialog combo box has no \"values\" attribute");
-	}
-	auto values = it.value();
-	if (!values.is_array()) {
-		throw error("Values should be a list");
-	}
+	auto values = require_list(item, "values", "combo box");
 
 	auto *box = new QComboBox;
-	for (auto &value : values.get_array()) {
-		auto s = cast<String>(value);
-		box->addItem(QString::fromUtf8(s.data(), (int) s.size()));
+	for (intptr_t i = 1; i <= values.size(); i++) {
+		box->addItem(QString(values.get(i).to<String>()));
 	}
 
-	it = item.find("default");
-	if (it != item.end()) {
-		int idx = (int)(it.get_integer() - 1);
-		if (idx >= 0 && idx < box->count()) {
-			box->setCurrentIndex(idx);
-		}
+	int idx = (int) opt_int(item, "default", 0) - 1;
+	if (idx >= 0 && idx < box->count()) {
+		box->setCurrentIndex(idx);
 	}
 
 	m_comboboxes[name] = box;
 	add(box);
 }
 
-void UserDialog::addLineEdit(const Json &item)
+void UserDialog::addLineEdit(const Table &item)
 {
 	auto name = getName(item);
 	auto *line = new QLineEdit;
 
-	auto it = item.find("default");
-	if (it != item.end()) {
-		auto s = it.get_string();
-		line->setText(QString::fromUtf8(s.data(), (int) s.size()));
+	auto text = opt_string(item, "default");
+	if (!text.empty()) {
+		line->setText(QString(text));
 	}
 
 	m_fields[name] = line;
 	add(line);
 }
 
-void UserDialog::addCheckList(const Json &item)
+void UserDialog::addCheckList(const Table &item)
 {
 	auto name = getName(item);
-
-	auto it = item.find("values");
-	if (it == item.end()) {
-		throw error("User dialog check list has no \"values\" attribute");
-	}
-	auto values = it.value();
-	if (!values.is_array()) {
-		throw error("\"values\" in checklist must be a list");
-	}
+	auto values = require_list(item, "values", "check list");
 
 	// Collect values (used as the return data for checked items).
 	QStringList value_strings;
-	for (auto &v : values.get_array()) {
-		auto s = cast<String>(v);
-		value_strings << QString::fromUtf8(s.data(), (int) s.size());
+	for (intptr_t i = 1; i <= values.size(); i++) {
+		value_strings << QString(values.get(i).to<String>());
 	}
 
 	// Labels are optional; if absent, values are used as labels.
 	QStringList label_strings;
-	it = item.find("labels");
-	if (it != item.end())
+	auto labels_v = getv(item, "labels");
+	if (!labels_v.is_null())
 	{
-		if (!it.value().is_array()) {
-			throw error("\"labels\" in checklist must be a list");
+		if (!labels_v.is<List>()) {
+			throw error("\"labels\" must be a list in user dialog check list");
 		}
-		for (auto &lbl : it.get_array()) {
-			auto s = cast<String>(lbl);
-			label_strings << QString::fromUtf8(s.data(), (int) s.size());
+		auto labels = labels_v.to<List>();
+		for (intptr_t i = 1; i <= labels.size(); i++) {
+			label_strings << QString(labels.get(i).to<String>());
 		}
 	}
 	else
@@ -416,79 +433,40 @@ void UserDialog::addCheckList(const Json &item)
 	add(list);
 }
 
-void UserDialog::addRadioButtons(const Json &item)
+void UserDialog::addRadioButtons(const Table &item)
 {
 	auto name = getName(item);
+	auto values = require_list(item, "values", "radio button group");
 
-	String title;
-	auto it = item.find("title");
-	if (it != item.end()) {
-		title = it.get_string();
-	}
+	int sel = (int) opt_int(item, "default", 1) - 1;
 
-	auto values_it = item.find("values");
-	if (values_it == item.end()) {
-		throw error("User dialog radio button group has no \"values\" attribute");
-	}
-	if (!values_it.value().is_array()) {
-		throw error("\"values\" must be a list in radio buttons");
-	}
-
-	int sel = 0;
-	it = item.find("default");
-	if (it != item.end()) {
-		sel = (int)(it.get_integer() - 1);
-	}
-
-	auto *group_box = new QGroupBox(QString::fromUtf8(title.data(), (int) title.size()));
+	auto *group_box = new QGroupBox(QString(opt_string(item, "title")));
 	auto *layout = new QVBoxLayout(group_box);
 	auto *button_group = new QButtonGroup(this);
 
-	int idx = 0;
-	for (auto &v : values_it.get_array())
+	for (intptr_t i = 1; i <= values.size(); i++)
 	{
-		auto s = cast<String>(v);
-		auto *rb = new QRadioButton(QString::fromUtf8(s.data(), (int) s.size()));
+		int idx = (int) i - 1;
+		auto *rb = new QRadioButton(QString(values.get(i).to<String>()));
 		button_group->addButton(rb, idx);
 		layout->addWidget(rb);
 		if (idx == sel) {
 			rb->setChecked(true);
 		}
-		idx++;
 	}
 
 	m_radiogroups[name] = button_group;
 	add(group_box);
 }
 
-void UserDialog::addFileSelector(const Json &item)
+void UserDialog::addFileSelector(const Table &item)
 {
 	auto name = getName(item);
+	auto qtitle = QString(require_string(item, "title", "file selector"));
 
-	auto it = item.find("title");
-	if (it == item.end()) {
-		throw error("User dialog file selector has no \"title\" attribute");
-	}
-	auto title = it.get_string();
-	auto qtitle = QString::fromUtf8(title.data(), (int) title.size());
-
-	QString text, filter;
-	it = item.find("default");
-	if (it != item.end()) {
-		auto s = it.get_string();
-		text = QString::fromUtf8(s.data(), (int) s.size());
-	}
-	it = item.find("filter");
-	if (it != item.end()) {
-		auto s = it.get_string();
-		filter = QString::fromUtf8(s.data(), (int) s.size());
-	}
-
-	bool save = false;
-	it = item.find("save");
-	if (it != item.end()) {
-		save = it.get_boolean();
-	}
+	auto text = QString(opt_string(item, "default"));
+	auto filter = QString(opt_string(item, "filter"));
+	bool save = opt_bool(item, "save", false);
 
 	auto *picker = new FilePicker(qtitle, filter, save);
 	if (!text.isEmpty()) {
@@ -499,24 +477,25 @@ void UserDialog::addFileSelector(const Json &item)
 	add(picker);
 }
 
-void UserDialog::addContainer(const Json &item)
+void UserDialog::addContainer(const Table &item)
 {
 	auto *previous_layout = m_current_layout;
 
-	auto it = item.find("orientation");
-	if (it != item.end() && it.get_string() == "vertical") {
+	if (opt_string(item, "orientation") == "vertical") {
 		m_current_layout = new QVBoxLayout;
 	} else {
 		m_current_layout = new QHBoxLayout;
 	}
 	m_current_layout->setContentsMargins(0, 0, 0, 0);
 
-	it = item.find("items");
-	if (it == item.end()) {
-		throw error("User dialog container has no \"items\" attribute");
-	}
-	for (auto &itm : it.get_array()) {
-		parseItem(std::move(itm));
+	auto items = require_list(item, "items", "container");
+	for (intptr_t i = 1; i <= items.size(); i++)
+	{
+		auto itm = items.get(i);
+		if (!itm.is<Table>()) {
+			throw error("User dialog items must be tables");
+		}
+		parseItem(itm.to<Table>());
 	}
 
 	auto *nested = m_current_layout;
@@ -524,14 +503,13 @@ void UserDialog::addContainer(const Json &item)
 	m_current_layout->addLayout(nested);
 }
 
-void UserDialog::addSpacing(const Json &item)
+void UserDialog::addSpacing(const Table &item)
 {
-	auto it = item.find("size");
-	if (it == item.end()) {
+	auto v = getv(item, "size");
+	if (v.is_null()) {
 		throw error("User dialog spacing has no \"size\" attribute");
 	}
-	m_current_layout->addSpacing((int) it.get_integer());
+	m_current_layout->addSpacing((int) v.to<int64_t>());
 }
 
 } // namespace phonometrica
-#endif // PHON_TODO_A3

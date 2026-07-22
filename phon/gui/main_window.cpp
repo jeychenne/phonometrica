@@ -3188,18 +3188,35 @@ void MainWindow::setShellFunctions()
 
 	// ── User dialog ──
 	//
-	// TODO(A4): UserDialog is being rebuilt on new-engine Table specs
-	// (phon/gui/user_dialog.*). Until then create_dialog raises a clear error
-	// instead of leaving the name unresolved (which would be a compile error
-	// for any script mentioning it).
+	// Returns a Table of the named widget values if the user accepted, null
+	// otherwise. The String overload evaluates the script string to a Table
+	// specification first (legacy JSON-string call style).
 
-	rt.add_function("create_dialog", [](Isolate &iso, const String &) -> Variant {
-		iso.raise(String("[Not implemented] create_dialog() is being rebuilt for the new engine "
-		                 "and is not available yet"), 0);
+	rt.add_function("create_dialog", [this](Isolate &iso, const String &spec) -> Variant {
+		return guarded(iso, [&]() -> Variant {
+			UserDialog dlg(this, m_runtime, spec);
+			// Smoke mode: accept immediately with the defaults — a modal
+			// event loop cannot be driven (or broken) offscreen.
+			if (std::getenv("PHON_GUI_SMOKE")) {
+				return dlg.getResult();
+			}
+			if (dlg.exec() == QDialog::Accepted) {
+				return dlg.getResult();
+			}
+			return Variant();
+		});
 	});
-	rt.add_function("create_dialog", [](Isolate &iso, const Table &) -> Variant {
-		iso.raise(String("[Not implemented] create_dialog() is being rebuilt for the new engine "
-		                 "and is not available yet"), 0);
+	rt.add_function("create_dialog", [this](Isolate &iso, const Table &spec) -> Variant {
+		return guarded(iso, [&]() -> Variant {
+			UserDialog dlg(this, m_runtime, spec);
+			if (std::getenv("PHON_GUI_SMOKE")) {
+				return dlg.getResult();
+			}
+			if (dlg.exec() == QDialog::Accepted) {
+				return dlg.getResult();
+			}
+			return Variant();
+		});
 	});
 
 	// ── phon members ──

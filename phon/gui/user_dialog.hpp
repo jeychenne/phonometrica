@@ -15,7 +15,7 @@
  *                                                                                                                     *
  * Created: 28/03/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: Create a dialog based on a user-provided JSON/Table specification. Used by the create_dialog() scripting   *
+ * Purpose: Create a dialog based on a user-provided Table specification. Used by the create_dialog() scripting        *
  *          function to let plugin scripts build custom GUI forms.                                                     *
  *                                                                                                                     *
  ***********************************************************************************************************************/
@@ -33,10 +33,6 @@
 #include <QBoxLayout>
 #include <phon/dictionary.hpp>
 #include <phon/runtime.hpp>
-
-// The dialog builder consumed the OLD engine's Json DOM; it is rebuilt on the new
-// engine's Table values at roadmap A4 (create_dialog receives a script Table).
-#ifdef PHON_TODO_A3
 
 namespace phonometrica {
 
@@ -64,7 +60,7 @@ class UserDialog final : public QDialog
 public:
 
 	// Construct from a Table (passed by the scripting engine).
-	UserDialog(QWidget *parent, Runtime &rt, const Json &js);
+	UserDialog(QWidget *parent, Runtime &rt, const Table &spec);
 
 	// Construct from a script string that evaluates to a Table.
 	UserDialog(QWidget *parent, Runtime &rt, const String &str);
@@ -76,24 +72,24 @@ private:
 
 	void addButtons(bool yes_no);
 
-	bool parse(const Json &js);
+	bool parse(const Table &spec);
 
-	void parseItem(Json item);
+	void parseItem(const Table &item);
 
-	String getName(const Json &item);
+	String getName(const Table &item);
 
 	void add(QWidget *widget);
 
-	void addLabel(const Json &item);
-	void addButton(const Json &item);
-	void addCheckBox(const Json &item);
-	void addComboBox(const Json &item);
-	void addLineEdit(const Json &item);
-	void addCheckList(const Json &item);
-	void addRadioButtons(const Json &item);
-	void addFileSelector(const Json &item);
-	void addContainer(const Json &item);
-	void addSpacing(const Json &item);
+	void addLabel(const Table &item);
+	void addButton(const Table &item);
+	void addCheckBox(const Table &item);
+	void addComboBox(const Table &item);
+	void addLineEdit(const Table &item);
+	void addCheckList(const Table &item);
+	void addRadioButtons(const Table &item);
+	void addFileSelector(const Table &item);
+	void addContainer(const Table &item);
+	void addSpacing(const Table &item);
 
 	QBoxLayout *m_current_layout;
 
@@ -108,7 +104,5 @@ private:
 };
 
 } // namespace phonometrica
-
-#endif // PHON_TODO_A3
 
 #endif // PHONOMETRICA_USER_DIALOG_HPP
