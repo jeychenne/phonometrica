@@ -22,8 +22,8 @@ or an individual test:
 ```
 
 The engine's own script runner (`phon_repl`, built from
-`examples/repl.cpp` in the engine repository) runs them just as well —
-it simply lacks the application natives, which these tests do not use.
+`phon/engine/examples/repl.cpp`) runs them just as well — it simply
+lacks the application natives, which these tests do not use.
 
 ## Tests
 

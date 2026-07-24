@@ -27,27 +27,21 @@ option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
 # --- PCRE2 (vendored, static, 8-bit code units) ----------------------------------------------------
-# Backs the engine's Regex type. This must be configured BEFORE the engine subdirectory: the engine
-# looks PCRE2 up with find_library/find_path, and pre-seeding those cache entries makes it bind to
-# the vendored target (the alias pcre2-8 -> pcre2-8-static, which propagates both the PCRE2_STATIC
-# definition and its generated interface/ include directory) instead of a system copy. Standalone
-# engine builds are unaffected — they keep finding the system library.
+# Backs the engine's Regex type. Added before the engine subdirectory so that the target exists
+# when phon/engine/CMakeLists.txt links it (it falls back to find_library when built standalone).
 set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
 set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
-set(PCRE2_LIBRARY pcre2-8 CACHE STRING "PCRE2 library the engine links (vendored target)" FORCE)
-set(PCRE2_INCLUDE_DIR "${CMAKE_BINARY_DIR}/phon/third_party/pcre2/interface"
-    CACHE PATH "PCRE2 headers the engine includes (vendored, generated)" FORCE)
 
-# --- Scripting engine -----------------------------------------------------------------------------
-# The engine lives in a sibling repository. The application targets link phon_engine and include
-# its headers via the phon/*.hpp forwarders. The old in-tree engine (phon/runtime, phon/base) was
-# removed at A6; build a pre-A6 commit in a scratch worktree if a legacy binary is ever needed.
-set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to the scripting engine repository")
-if(NOT EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "Scripting engine not found at ${PHON_ENGINE_DIR} (set PHON_ENGINE_DIR); the application cannot be built without it")
-endif()
-add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
+# --- Scripting engine (phon/engine) ----------------------------------------------------------------
+# The engine lived in a sibling repository until roadmap A8; it is now part of this repository, with
+# its history preserved (git subtree). Application targets link phon_engine and reach its headers as
+# <phon/engine/...> through the phon/*.hpp forwarders. The engine subdirectory owns its own targets
+# (phon_engine, phon_flags, phon_repl, phon_bench, phon_unit_tests) and its tests, golden corpora and
+# Unicode data live beside it. EXCLUDE_FROM_ALL keeps the auxiliary targets out of a plain `make`;
+# phon_engine is still built because the application links it.
+enable_testing()
+add_subdirectory(phon/engine EXCLUDE_FROM_ALL)
 # Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the engine,
 # no GUI or application-layer dependency. Target: phon_stats.
 add_subdirectory(stats_host)
@@ -143,10 +137,11 @@ if(WITH_GUI)
     find_package(Qt6 REQUIRED COMPONENTS Core)
 endif()
 
-# App root first so the app's phon/*.hpp forwarders (and its self-contained
-# phon/error.hpp) win; the engine's headers resolve underneath via <phon/engine/...>.
+# One include root for the whole tree: the app's phon/*.hpp forwarders and the engine's
+# <phon/engine/...> headers now live under the same root, so the A1-era two-root ordering
+# (app before engine, to decide which phon/error.hpp won) is gone — A8 resolved those
+# duplicates by deleting the engine's copies outright.
 include_directories(${CMAKE_SOURCE_DIR})
-include_directories(${PHON_ENGINE_DIR})
 
 # --- Utility sources shared by the app targets ---
 # Compiled into phon-app since the A1 flip (they lived in the old phon-runtime before).
@@ -575,11 +570,10 @@ endif()
 ##  UNIT TESTS    ##
 ####################
 
-# There is no C++ unit-test suite in this repository: the old BUILD_UNIT_TEST option globbed a
-# unit_test/ directory that has never existed here (so turning it on failed at configure time with
-# an empty add_executable). The engine's suite lives in the engine repository and is built with
-# `cmake --build <build-dir> --target phon_unit_tests`; the script-level suite is test/engine
-# (`phonometrica -r test/engine/run_all.phon`).
+# The C++ unit suite is the engine's, defined in phon/engine/CMakeLists.txt and built with
+# `cmake --build <build-dir> --target phon_unit_tests` (sources in phon/engine/test/unit). The
+# script-level suite is test/engine (`phonometrica -r test/engine/run_all.phon`). The old
+# BUILD_UNIT_TEST option was dropped: it globbed a unit_test/ directory that never existed here.
 
 ####################
 ##  CALIBRATION   ##

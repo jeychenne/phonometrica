@@ -3,15 +3,15 @@
 # headless test runner for test/statistics (Debug fits through the GUI binary take hours).
 #
 # Include-order contract (load-bearing):
-#   1. shim/               — shadows <phon/application/data_table.hpp> with the headless table
-#   2. repository root     — the app's phon/*.hpp forwarders (phon/error.hpp's error(...) helper
-#                            in particular), <phon/analysis/...>, <phon/utils/matrix.hpp>,
-#                            vendored Eigen/LBFGSpp
-#   3. ${PHON_ENGINE_DIR}  — the engine headers the forwarders resolve onto
-# Same order as the application targets (see the root CMakeLists), so the analysis sources
-# see exactly the headers they see inside phon-app. The one remaining shim is the headless
-# DataTable: the real one derives from Document/Element and would drag the entire VFS,
-# project and audio layer into this target (MIGRATION_NOTES "A6").
+#   1. shim/            — shadows <phon/application/data_table.hpp> with the headless table
+#   2. repository root  — the app's phon/*.hpp forwarders (phon/error.hpp's error(...) helper
+#                         in particular), the engine's <phon/engine/...> headers they resolve
+#                         onto, <phon/analysis/...>, <phon/utils/matrix.hpp>, vendored
+#                         Eigen/LBFGSpp
+# Since A8 the engine lives under the repository root too, so this is one root, not two.
+# The one remaining shim is the headless DataTable: the real one derives from
+# Document/Element and would drag the entire VFS, project and audio layer into this target
+# (MIGRATION_NOTES "A6").
 
 add_executable(phon_stats
     main.cpp
@@ -33,7 +33,6 @@ add_executable(phon_stats
 target_include_directories(phon_stats BEFORE PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/shim
     ${CMAKE_SOURCE_DIR}
-    ${PHON_ENGINE_DIR}
     ${CMAKE_SOURCE_DIR}/phon/third_party # bare <Eigen/Dense> includes in the analysis layer
 )
 

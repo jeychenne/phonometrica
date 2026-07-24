@@ -14,7 +14,7 @@
 
 #include <phon/engine/runtime/runtime.hpp>
 #include <phon/engine/types/string.hpp>
-#include <phon/error.hpp>
+#include <phon/engine/compile/diagnostic.hpp> // SyntaxError
 
 #include <algorithm>
 #include <chrono>

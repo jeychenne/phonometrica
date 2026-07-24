@@ -1723,3 +1723,105 @@ is not re-driven here — the scripted smokes are what runs unattended.
 
 **A7 is closed. The gate list stays live**: re-run it at every future step
 boundary, starting with A8 (see the roadmap).
+
+# A8 — the engine absorbed into this repository (2026-07-24)
+
+`~/Devel/engine` is no longer a dependency: the engine lives at `phon/engine/`
+and is built as `add_subdirectory(phon/engine)` from the root CMakeLists.
+
+## The move
+
+`git subtree add --prefix=phon/engine /home/julien/Devel/engine main` —
+**history preserved**, all 57 engine commits reachable from this repository
+(`git log 55ee38a` resolves; so do the 14f0205 / 4b93703 / 55ee38a hashes that
+DEVIATIONS.md and these notes cite). Repository history went 401 → 458 commits.
+
+The subtree lands the engine repo *root* at `phon/engine/`, so its sources
+arrived one level too deep (`phon/engine/phon/engine/base/...`). Flattened with
+`git mv` in the same branch, which git records as renames — the per-file history
+survives the flatten.
+
+Final layout: the engine is **self-contained in one directory**. `phon/engine/`
+holds the sources (base, compile, concurrency, core, lib, object, runtime,
+types, vm) *and* its own `CMakeLists.txt`, `test/{unit,golden,scripts}`,
+`tools/unicode`, `examples/`, `bench/`, `design/`, `DEVIATIONS.md`, `README.md`.
+Deliberately NOT merged into the app's `test/` — the app already has
+`test/engine/` (the .phon script suite) and the engine has `test/scripts/`
+(also .phon); one directory each keeps the two suites from reading as one.
+
+## The facade collision (roadmap A8 step 2 — it bit exactly as predicted)
+
+Eight headers existed in both trees and were disambiguated only by include
+order. The engine's copies are deleted and the app's win; three engine-only
+facades (`list.hpp`, `set.hpp`, `table.hpp`) moved to the app root, where
+`phon/application/{plugin,protocol,settings}` were already including them.
+
+**What broke:** the engine's `phon/error.hpp` was exactly
+`isolate.hpp + diagnostic.hpp`, whereas the app's carries the formatted
+`error(...)` helpers and deliberately stays light. So `SyntaxError` lost its
+declaration for anything that had been getting it from `<phon/error.hpp>`.
+Five engine-side files include the deleted facades — all in
+examples/bench/test, never in the library itself, which uses `<phon/engine/...>`
+internally. Three of the five compiled fine (they only wanted the throw helper);
+`examples/repl.cpp` and `bench/bench.cpp` did not.
+
+**Fix, at the right level:** `phon/runtime.hpp` — the app's documented
+"embedding umbrella", whose own comment already promised "the Isolate/
+RuntimeError types an embedder catches" — now also pulls
+`compile/diagnostic.hpp`, so BOTH script-error types arrive from the one header
+the app tells embedders to include. repl.cpp drops its now-misleading
+`<phon/error.hpp>`; bench.cpp, which includes engine headers directly anyway,
+takes `<phon/engine/compile/diagnostic.hpp>` directly.
+
+**Note for whoever reads the gate log:** the main build stayed green through
+all of this, because `add_subdirectory(phon/engine EXCLUDE_FROM_ALL)` means a
+plain `make` never touches phon_repl or phon_bench. Both were only caught by
+building them by name. Build every engine target explicitly, not just the app.
+
+## CMake
+
+- `phon/engine/CMakeLists.txt` keeps its own targets (phon_engine, phon_flags,
+  phon_repl, phon_bench, phon_unit_tests) and its `PHON_SANITIZE`/`PHON_TSAN`/
+  `PHON_WERROR` options. Two substantive edits: the include root became
+  `${CMAKE_SOURCE_DIR}` (the repository root — `<phon/engine/...>` resolves from
+  there, NOT from the engine directory), and PCRE2 now prefers the vendored
+  `pcre2-8` target when it exists, falling back to `find_library` so the file
+  still works if the engine is ever built alone. Everything else stayed relative
+  to the engine directory and needed no change.
+- Root: `PHON_ENGINE_DIR` and its FATAL_ERROR guard are gone, the second
+  `include_directories` is gone (one include root now), the PCRE2 cache
+  pre-seeding is gone (the target is simply linked by name), and
+  `enable_testing()` moved to the top level where it belongs.
+- stats_host: the `${PHON_ENGINE_DIR}` entry dropped; its include-order contract
+  is now shim → repository root, two entries instead of three.
+
+## Gates (all green)
+
+1. **Builds**: Debug (`-g -O2`) and Release, both configured and built FROM
+   SCRATCH; plus every engine target by name (phon_engine, phon_unit_tests,
+   phon_repl, phon_bench).
+2. **Engine unit suite ×3, built from THIS repository**: 407 cases / 0 failed,
+   2 213 309 checks / 0 failed in normal, ASan and TSan — no sanitizer report.
+3. **Engine builds in isolation**: `-DWITH_APPLICATION=OFF -DWITH_GUI=OFF
+   -DPHON_BUILD_DOCS=OFF` configures and builds `phon_unit_tests` with **no Qt
+   and no sndfile** in the configure log. The sanitizer configurations use the
+   same switch, so ASan/TSan never reach Qt/whisper/sndfile/REAPER — the
+   affordability requirement the roadmap set for this step.
+4. **phon_repl acceptance**: `--workers` and `examples/demo.phon` both exit 0.
+5. **test/engine/run_all.phon** green through the Debug and Release binaries.
+6. **Statistics**: frequentist 552/552 through the Release app binary and
+   through `phon_stats`.
+7. **Offscreen GUI smokes**: project open from argv (clean exit, settings
+   written) and run_smoke_formants.sh (ALL OK).
+8. **Project-XML byte-compatibility**: saves still byte-identical to the
+   **pre-A6** binary in text AND GUI mode. This is the gate that would have
+   caught a wrong-header resolution surviving compilation, which is why the
+   roadmap put it on this step.
+
+## Left for the owner
+
+- `~/Devel/engine` is untouched and still exists. Deleting it is a decision, not
+  a build step — nothing in this repository refers to it any more.
+- `phon/engine/CLAUDE.md` was copied across but is **untracked**: the engine
+  repo gitignored it, so the subtree could not carry it, and that prior choice
+  is preserved rather than reversed. `git add` it if it should be tracked now.

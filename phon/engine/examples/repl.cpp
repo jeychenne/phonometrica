@@ -16,9 +16,8 @@
 //   phon_repl --workers    run the worker-thread demo
 
 // Embed through the public forwarding surface (phon/*.hpp) where one exists.
-#include <phon/runtime.hpp>
+#include <phon/runtime.hpp> // Runtime + the SyntaxError/RuntimeError an embedder catches
 #include <phon/string.hpp>
-#include <phon/error.hpp> // SyntaxError + RuntimeError
 // No public forwarder for these yet — reach into the engine directly.
 #include <phon/engine/concurrency/channel.hpp>
 #include <phon/engine/core/cell.hpp>

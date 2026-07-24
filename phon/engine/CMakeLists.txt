@@ -1,22 +1,16 @@
 # Phonometrica engine — build system.
 # Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 #
-# Standalone, embeddable library with no third-party runtime dependencies
-# (design/architecture.md §0). Milestone M0: base layer + core containers.
-
-cmake_minimum_required(VERSION 3.16)
-project(phonometrica_engine LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-# Export compile_commands.json for clangd / tooling.
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-    set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build type" FORCE)
-endif()
+# The engine is an embeddable library with no third-party runtime dependencies
+# beyond PCRE2 and a thread library (design/architecture.md §0). It lived in a
+# separate repository until roadmap A8; it is now a subdirectory of the
+# application build (add_subdirectory(phon/engine) from the root CMakeLists),
+# and its history is preserved here via git subtree.
+#
+# Header paths are unchanged by the move: the engine's public headers are
+# included as <phon/engine/...>, so the include root is the REPOSITORY root,
+# not this directory. Everything else below (sources, tests, golden corpora,
+# Unicode data, examples, benchmarks) stays relative to this directory.
 
 # ---------------------------------------------------------------------------
 # Options
@@ -63,65 +57,73 @@ endif()
 # ---------------------------------------------------------------------------
 
 add_library(phon_engine STATIC
-    phon/engine/base/alloc.cpp
-    phon/engine/base/heap.cpp
-    phon/engine/base/unicode.cpp
-    phon/engine/base/unicode_tables.cpp
-    phon/engine/base/file_system.cpp
-    phon/engine/object/class.cpp
-    phon/engine/object/instance.cpp
-    phon/engine/object/value_ops.cpp
-    phon/engine/object/generic.cpp
-    phon/engine/core/cell_memory.cpp
-    phon/engine/core/cycle_collector.cpp
-    phon/engine/types/atom.cpp
-    phon/engine/types/string.cpp
-    phon/engine/types/list.cpp
-    phon/engine/types/table.cpp
-    phon/engine/types/array.cpp
-    phon/engine/types/file.cpp
-    phon/engine/types/regex.cpp
-    phon/engine/lib/array_kernels.cpp
-    phon/engine/lib/array.cpp
-    phon/engine/lib/file.cpp
-    phon/engine/lib/json.cpp
-    phon/engine/lib/list.cpp
-    phon/engine/lib/math.cpp
-    phon/engine/lib/regex.cpp
-    phon/engine/lib/string.cpp
-    phon/engine/lib/system.cpp
-    phon/engine/lib/table.cpp
-    phon/engine/concurrency/transfer.cpp
-    phon/engine/concurrency/parallel.cpp
-    phon/engine/concurrency/channel.cpp
-    phon/engine/concurrency/spawn.cpp
-    phon/engine/concurrency/thread_pool.cpp
-    phon/engine/compile/token.cpp
-    phon/engine/compile/source.cpp
-    phon/engine/compile/scanner.cpp
-    phon/engine/compile/ast.cpp
-    phon/engine/compile/parser.cpp
-    phon/engine/compile/ast_printer.cpp
-    phon/engine/compile/disassembler.cpp
-    phon/engine/compile/lower.cpp
-    phon/engine/vm/opcode.cpp
-    phon/engine/vm/function.cpp
-    phon/engine/vm/isolate.cpp
-    phon/engine/vm/interpreter.cpp
-    phon/engine/runtime/bootstrap.cpp
-    phon/engine/runtime/runtime.cpp
+    base/alloc.cpp
+    base/heap.cpp
+    base/unicode.cpp
+    base/unicode_tables.cpp
+    base/file_system.cpp
+    object/class.cpp
+    object/instance.cpp
+    object/value_ops.cpp
+    object/generic.cpp
+    core/cell_memory.cpp
+    core/cycle_collector.cpp
+    types/atom.cpp
+    types/string.cpp
+    types/list.cpp
+    types/table.cpp
+    types/array.cpp
+    types/file.cpp
+    types/regex.cpp
+    lib/array_kernels.cpp
+    lib/array.cpp
+    lib/file.cpp
+    lib/json.cpp
+    lib/list.cpp
+    lib/math.cpp
+    lib/regex.cpp
+    lib/string.cpp
+    lib/system.cpp
+    lib/table.cpp
+    concurrency/transfer.cpp
+    concurrency/parallel.cpp
+    concurrency/channel.cpp
+    concurrency/spawn.cpp
+    concurrency/thread_pool.cpp
+    compile/token.cpp
+    compile/source.cpp
+    compile/scanner.cpp
+    compile/ast.cpp
+    compile/parser.cpp
+    compile/ast_printer.cpp
+    compile/disassembler.cpp
+    compile/lower.cpp
+    vm/opcode.cpp
+    vm/function.cpp
+    vm/isolate.cpp
+    vm/interpreter.cpp
+    runtime/bootstrap.cpp
+    runtime/runtime.cpp
 )
-target_include_directories(phon_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# <phon/engine/...> resolves from the repository root (see the header note above).
+target_include_directories(phon_engine PUBLIC ${CMAKE_SOURCE_DIR})
 target_link_libraries(phon_engine PUBLIC phon_flags)
 
 find_package(Threads REQUIRED)
 target_link_libraries(phon_engine PUBLIC Threads::Threads)
 
-# PCRE2 (8-bit code units) backs the Regex engine, JIT enabled.
-find_library(PCRE2_LIBRARY NAMES pcre2-8 REQUIRED)
-find_path(PCRE2_INCLUDE_DIR NAMES pcre2.h REQUIRED)
-target_include_directories(phon_engine PUBLIC ${PCRE2_INCLUDE_DIR})
-target_link_libraries(phon_engine PUBLIC ${PCRE2_LIBRARY})
+# PCRE2 (8-bit code units) backs the Regex engine, JIT enabled. The repository
+# vendors it (phon/third_party/pcre2) and the root CMakeLists adds that
+# subdirectory before this one, so the target is already defined; the
+# find_library fallback keeps this file usable on its own.
+if(TARGET pcre2-8)
+    target_link_libraries(phon_engine PUBLIC pcre2-8)
+else()
+    find_library(PCRE2_LIBRARY NAMES pcre2-8 REQUIRED)
+    find_path(PCRE2_INCLUDE_DIR NAMES pcre2.h REQUIRED)
+    target_include_directories(phon_engine PUBLIC ${PCRE2_INCLUDE_DIR})
+    target_link_libraries(phon_engine PUBLIC ${PCRE2_LIBRARY})
+endif()
 
 # ---------------------------------------------------------------------------
 # Example host application (architecture §15 — M8 acceptance deliverable)
@@ -142,8 +144,6 @@ target_compile_definitions(phon_bench PRIVATE
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
-enable_testing()
 
 add_executable(phon_unit_tests
     test/unit/main.cpp
@@ -181,7 +181,7 @@ add_executable(phon_unit_tests
     test/unit/test_embed.cpp
     test/unit/test_file_encoding.cpp
 )
-target_include_directories(phon_unit_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} test/unit)
+target_include_directories(phon_unit_tests PRIVATE ${CMAKE_SOURCE_DIR} test/unit)
 target_link_libraries(phon_unit_tests PRIVATE phon_engine phon_flags)
 # Path to the vendored Unicode data, for the UAX #29 conformance test.
 target_compile_definitions(phon_unit_tests PRIVATE

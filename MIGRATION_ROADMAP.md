@@ -418,7 +418,27 @@ starting with A8.
    run a plugin script, settings round-trip. Before A4 the GUI aborts at
    startup by design; use baseline comparison instead.
 
-### A8 — absorb the engine into this repository (planned 2026-07-24)
+### A8 — absorb the engine into this repository — DONE (2026-07-24)
+
+**Landed.** The engine lives at `phon/engine/`, built as
+`add_subdirectory(phon/engine)`, with all 57 engine commits preserved via
+`git subtree`. `~/Devel/engine` is no longer referenced by anything here
+(deleting the directory itself is the owner's call). Full account and gate log
+in MIGRATION_NOTES "A8". Two things worth carrying forward from the execution:
+
+- The facade collision (step 2 below) **did** bite, exactly where predicted and
+  in the predicted way: the engine's `phon/error.hpp` was
+  `isolate.hpp + diagnostic.hpp`, the app's is the formatted `error(...)`
+  helper, so `SyntaxError` lost its declaration in `examples/repl.cpp` and
+  `bench/bench.cpp`. Fixed by making `phon/runtime.hpp` — the app's documented
+  embedding umbrella — deliver both script-error types, as its own comment
+  already claimed it did.
+- **`EXCLUDE_FROM_ALL` hides breakage**: the app build stayed green while
+  phon_repl and phon_bench were broken, because a plain `make` never builds
+  them. Any future step that touches the engine's include surface must build
+  every engine target *by name*, not just the application.
+
+*Original plan, kept for the record:*
 
 *Beyond the original scope of this roadmap (which ended at old-engine removal).
 Goal: `~/Devel/engine` ceases to exist as a separate project; the engine lives
