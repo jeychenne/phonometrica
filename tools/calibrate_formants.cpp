@@ -24,7 +24,7 @@
  * t_start/t_end are the vowel boundaries in seconds; gold formants in Hz (0 = missing); class in {man,woman,boy,girl} *
  * (picks a per-class ceiling range and nominal formant spacing). Formants are measured at the vowel midpoint.         *
  *                                                                                                                     *
- * Build (headless):                                                                                                   *
+ * Build (headless; PHON_ENGINE_DIR points at the scripting-engine repository, default ../engine):                     *
  *   cmake -B build-cal -DWITH_GUI=OFF -DWITH_APPLICATION=ON -DWITH_WHISPER=OFF -DPHON_BUILD_DOCS=OFF \                 *
  *         -DBUILD_CALIBRATION=ON -DCMAKE_BUILD_TYPE=Release .                                                          *
  *   cmake --build build-cal --target calibrate_formants                                                               *
@@ -156,7 +156,7 @@ static bool measure_formants(Sound &snd, double t1, double t2, double nyq, int o
 		Array<double> fm;
 		try { fm = snd.get_formants(CHANNEL, t, NFORMANT, nyq, WIN_SIZE, order); }
 		catch (...) { continue; }
-		for (int k=0;k<3;++k) { double v = fm(k+1,1); if(!std::isnan(v)){ sum[k]+=v; cnt[k]++; } }
+		for (int k=0;k<3;++k) { double v = fm(k,0); if(!std::isnan(v)){ sum[k]+=v; cnt[k]++; } }
 	}
 	bool any=false;
 	for (int k=0;k<3;++k) if (cnt[k]>0){ out[k]=sum[k]/cnt[k]; any=true; }
@@ -193,7 +193,7 @@ static bool build_token_cache(CachedToken &ct)
 				Array<double> ff;
 				try { ff = snd.get_formants(CHANNEL, t, NFORMANT, nyq, WIN_SIZE, order); }
 				catch (...) { edge = true; break; } // window ran off the file edge
-				for (intptr_t j = 0; j < NFORMANT; ++j) { F(i, j) = ff(j+1, 1); B(i, j) = ff(j+1, 2); }
+				for (intptr_t j = 0; j < NFORMANT; ++j) { F(i, j) = ff(j, 0); B(i, j) = ff(j, 1); }
 				++i;
 			}
 			if (edge) continue;
@@ -250,7 +250,7 @@ static bool build_token_cache(CachedToken &ct)
 			try {
 				double tm = 0.5 * (tk.t1 + tk.t2);
 				auto pp = snd.get_formants(CHANNEL, tm, 8, nyq, WIN_SIZE, order);
-				for (intptr_t j = 1; j <= 8; ++j) { double f = pp(j, 1); if (!std::isnan(f) && f > 0) cc.poles.push_back(f); }
+				for (intptr_t j = 0; j < 8; ++j) { double f = pp(j, 0); if (!std::isnan(f) && f > 0) cc.poles.push_back(f); }
 			} catch (...) {}
 			ct.cands.push_back(cc);
 		}
@@ -263,7 +263,7 @@ static bool build_token_cache(CachedToken &ct)
 		                                     cfg.c_lo, cfg.c_hi, g_freq_step, g_order_lo, g_order_hi);
 		if (p.first > 0) {
 			auto fm = snd.get_formants(CHANNEL, t_mid, NFORMANT, p.first, WIN_SIZE, (int) p.second);
-			for (int k = 0; k < 3; ++k) ct.weenink_f[k] = fm(k+1, 1);
+			for (int k = 0; k < 3; ++k) ct.weenink_f[k] = fm(k, 0);
 		}
 	} catch (...) {}
 
@@ -271,7 +271,7 @@ static bool build_token_cache(CachedToken &ct)
 	try {
 		double c = (tk.cls == "man") ? 5000.0 : 5500.0;
 		auto fm = snd.get_formants(CHANNEL, t_mid, NFORMANT, c, WIN_SIZE, 10);
-		for (int k = 0; k < 3; ++k) ct.base_f[k] = fm(k+1, 1);
+		for (int k = 0; k < 3; ++k) ct.base_f[k] = fm(k, 0);
 	} catch (...) {}
 
 	return true;
@@ -455,12 +455,21 @@ static void run_f3select(const std::vector<CachedToken> &cache, const speech::In
 	// (5) REALISTIC fixed prior: H95 population F3 mean per (class x vowel) -- no per-token/per-speaker truth. Tests
 	// whether a rough population-level prior recovers the assignment gain (it only has to pick the right POLE; the
 	// value is then the pole's own measured frequency).
-	static const std::map<std::string,double> H95_F3 = {
-	  {"man\x1fiy", 2994}, {"man\x1fih", 2641}, {"man\x1fei", 2727}, {"man\x1feh", 2602}, {"man\x1fae", 2566}, {"man\x1fah", 2523}, {"man\x1faw", 2509}, {"man\x1foa", 2479}, {"man\x1foo", 2438}, {"man\x1fuw", 2359}, {"man\x1fuh", 2549}, {"man\x1fer", 1704},
-	  {"woman\x1fiy", 3368}, {"woman\x1fih", 3020}, {"woman\x1fei", 3043}, {"woman\x1feh", 2956}, {"woman\x1fae", 2903}, {"woman\x1fah", 2840}, {"woman\x1faw", 2836}, {"woman\x1foa", 2853}, {"woman\x1foo", 2822}, {"woman\x1fuw", 2747}, {"woman\x1fuh", 2913}, {"woman\x1fer", 1933},
-	  {"boy\x1fiy", 3577}, {"boy\x1fih", 3304}, {"boy\x1fei", 3280}, {"boy\x1feh", 3221}, {"boy\x1fae", 3110}, {"boy\x1fah", 2865}, {"boy\x1faw", 2868}, {"boy\x1foa", 2943}, {"boy\x1foo", 2999}, {"boy\x1fuw", 2938}, {"boy\x1fuh", 3039}, {"boy\x1fer", 2065},
-	  {"girl\x1fiy", 3797}, {"girl\x1fih", 3477}, {"girl\x1fei", 3369}, {"girl\x1feh", 3374}, {"girl\x1fae", 3254}, {"girl\x1fah", 3022}, {"girl\x1faw", 3056}, {"girl\x1foa", 3121}, {"girl\x1foo", 3162}, {"girl\x1fuw", 3047}, {"girl\x1fuh", 3211}, {"girl\x1fer", 2222},
+	// (class, vowel, F3) triples; the cell key is joined at build time, exactly like cell_key/prior_of. Do NOT
+	// inline the separator into one literal: "man\x1fei" parses \x1fe as a single (out-of-range) hex escape and
+	// swallows the 'e', so every vowel starting with a hex digit (ei/eh/ae/ah/aw/er) would silently miss.
+	struct H95Row { const char *cls, *vowel; double f3; };
+	static const H95Row H95_ROWS[] = {
+	  {"man","iy",2994}, {"man","ih",2641}, {"man","ei",2727}, {"man","eh",2602}, {"man","ae",2566}, {"man","ah",2523}, {"man","aw",2509}, {"man","oa",2479}, {"man","oo",2438}, {"man","uw",2359}, {"man","uh",2549}, {"man","er",1704},
+	  {"woman","iy",3368}, {"woman","ih",3020}, {"woman","ei",3043}, {"woman","eh",2956}, {"woman","ae",2903}, {"woman","ah",2840}, {"woman","aw",2836}, {"woman","oa",2853}, {"woman","oo",2822}, {"woman","uw",2747}, {"woman","uh",2913}, {"woman","er",1933},
+	  {"boy","iy",3577}, {"boy","ih",3304}, {"boy","ei",3280}, {"boy","eh",3221}, {"boy","ae",3110}, {"boy","ah",2865}, {"boy","aw",2868}, {"boy","oa",2943}, {"boy","oo",2999}, {"boy","uw",2938}, {"boy","uh",3039}, {"boy","er",2065},
+	  {"girl","iy",3797}, {"girl","ih",3477}, {"girl","ei",3369}, {"girl","eh",3374}, {"girl","ae",3254}, {"girl","ah",3022}, {"girl","aw",3056}, {"girl","oa",3121}, {"girl","oo",3162}, {"girl","uw",3047}, {"girl","uh",3211}, {"girl","er",2222},
 	};
+	static const std::map<std::string,double> H95_F3 = []{
+		std::map<std::string,double> m;
+		for (auto &r : H95_ROWS) m[std::string(r.cls) + "\x1f" + r.vowel] = r.f3;
+		return m;
+	}();
 	auto prior_of = [&](const Token &t) -> double {
 		auto it = H95_F3.find(t.cls + "\x1f" + t.vowel);
 		return it == H95_F3.end() ? std::nan("") : it->second;
@@ -899,7 +908,7 @@ static void measure_at(Sound &snd, double t, double nyq, int order, double out[3
 {
 	for (int k=0;k<3;++k) out[k] = std::nan("");
 	try { auto fm = snd.get_formants(CHANNEL, t, NFORMANT, nyq, WIN_SIZE, order);
-	      for (int k=0;k<3;++k) out[k] = fm(k+1,1); } catch (...) {}
+	      for (int k=0;k<3;++k) out[k] = fm(k,0); } catch (...) {}
 }
 
 static bool build_diph_cache(DiphCached &dc)
@@ -924,7 +933,7 @@ static bool build_diph_cache(DiphCached &dc)
 				Array<double> ff;
 				try { ff = snd.get_formants(CHANNEL, t, NFORMANT, nyq, WIN_SIZE, order); }
 				catch (...) { edge = true; break; }
-				for (intptr_t j = 0; j < NFORMANT; ++j) { F(i,j)=ff(j+1,1); B(i,j)=ff(j+1,2); }
+				for (intptr_t j = 0; j < NFORMANT; ++j) { F(i,j)=ff(j,0); B(i,j)=ff(j,1); }
 				++i;
 			}
 			if (edge) continue;
@@ -1080,7 +1089,8 @@ int main(int argc, char **argv)
 		else if (!std::strcmp(argv[i], "--sample") && i + 1 < argc) sample = std::atoi(argv[++i]);
 	}
 
-	Runtime rt(argv[0]);
+	// New engine (roadmap A1): the Runtime is default-constructed; it no longer takes argv[0].
+	Runtime rt;
 
 	if (do_diph) { run_diph(manifest, external_file, do_consensus); return 0; }
 	Project::preinitialize(rt);

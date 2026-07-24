@@ -22,7 +22,6 @@ option(EMBED_SCRIPTS      "Embed scripts as strings"            ON)
 option(ENABLE_LOGGING     "Enable logging (always on in debug)" OFF)
 option(WITH_APPLICATION   "Build the application layer"         ON)
 option(WITH_GUI           "Build the user interface"            ON)
-option(BUILD_UNIT_TEST    "Build unit tests"                    OFF)
 option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool" OFF)
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
@@ -609,15 +608,11 @@ endif()
 ##  UNIT TESTS    ##
 ####################
 
-if(BUILD_UNIT_TEST)
-    file(GLOB TEST_SOURCES unit_test/*.cpp)
-    add_executable(test_phon ${TEST_SOURCES})
-    target_link_libraries(test_phon PRIVATE phon_engine)
-
-    if(WITH_APPLICATION)
-        target_link_libraries(test_phon PRIVATE phon-app)
-    endif()
-endif()
+# There is no C++ unit-test suite in this repository: the old BUILD_UNIT_TEST option globbed a
+# unit_test/ directory that has never existed here (so turning it on failed at configure time with
+# an empty add_executable). The engine's suite lives in the engine repository and is built with
+# `cmake --build <build-dir> --target phon_unit_tests`; the script-level suite is test/engine
+# (`phonometrica -r test/engine/run_all.phon`).
 
 ####################
 ##  CALIBRATION   ##

@@ -1496,3 +1496,42 @@ through a ref parameter (engine), action "shortcut" key unimplemented.
 Gates: engine 407×3 (ASan/TSan); test/engine Debug+Release; frequentist
 552/552 Release (re-run after the collector fix); offscreen smokes incl.
 plugin+protocols+project+E1 probe, plus a full ASan smoke (0 errors).
+
+# A6 straggler — tools/calibrate_formants.cpp ported (2026-07-24)
+
+The optional `calibrate_formants` target (`-DBUILD_CALIBRATION=ON`, OFF by
+default, so no acceptance gate covered it) still spoke the OLD engine. It was
+last touched on 2026-07-10, before the A1 base-type flip, and A6 only made the
+breakage visible. Two independent breaks, one of which the compiler cannot see:
+
+- **Runtime**: `Runtime rt(argv[0])` → `Runtime rt` (new engine's ctor takes no
+  arguments). This is the whole compile-level port — the tool touches no other
+  engine API (`Project::preinitialize(rt)` + `Sound::set_sound_formats()` were
+  already correct).
+- **Array is 0-based now** (silent at compile time, `PHON_ASSERT` at run time):
+  `Sound::get_formants` returns an nformant×2 Array whose `operator()` was
+  1-based in the old engine and is 0-based in the new one. Every read had to
+  drop the +1 and shift the column: `ff(j+1,1)/ff(j+1,2)` → `ff(j,0)/ff(j,1)`
+  (7 sites, incl. the diphthong path and the 8-pole persistence probe, whose
+  loop bounds went from `1..8` to `0..7`). Anything else ported by eye and not
+  actually RUN is worth re-checking for this.
+
+Also fixed while here: the H95 F3 prior table keys were written as single
+literals (`"man\x1fei"`), so `\x1fe` parsed as one out-of-range hex escape and
+swallowed the vowel's first letter — the lookup silently missed for every vowel
+starting with a hex digit (ei/eh/ae/ah/aw/er, half the inventory) in `--f3`
+modes 5 and 6. Keys are now joined at build time from (class, vowel) triples,
+the same way `cell_key`/`prior_of` join them at lookup.
+
+`BUILD_UNIT_TEST` dropped: it globbed a `unit_test/` directory that has never
+existed in this repository's history, so turning it on failed at configure time
+with an empty `add_executable`. The C++ unit suite is the engine's
+(`--target phon_unit_tests`); the script-level suite is `test/engine`.
+
+Gates: `cmake -B build-cal -DBUILD_CALIBRATION=ON -DPHON_ENGINE_DIR=…` +
+`--build --target calibrate_formants` clean (no warnings from this file);
+tool run end to end on a 6-token synthetic manifest (impulse train through 3
+resonators, known formants) — all modes exercised (default report, --oracle,
+--performant, --f3, --heur, --persist, --consensus, --tune, --diph, --external).
+Measured formants track the synthesized ones (Weenink MAE 30 Hz), and
+--external reproduces injected offsets exactly (+30/-25/+40 → 30.0/25.0/40.0).
