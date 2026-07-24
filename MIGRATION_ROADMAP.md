@@ -336,7 +336,7 @@ smoke). Details in MIGRATION_NOTES "A5 COMPLETE". Original spec below.
   on new syntax (visible in any full build log) — update the lexer or the
   snippets while here.
 
-### A6 — demolition — DONE (2026-07-24, app commit ffffffff — see below)
+### A6 — demolition — DONE (2026-07-24, app commit a59bc0c)
 The old engine is deleted; see MIGRATION_NOTES "A6 — demolition" for what went,
 what deliberately stayed (index_conversion.hpp, the phon/*.hpp forwarders, the
 class_name() virtuals, one stats_host shim header), the stats_host include-order
