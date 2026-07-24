@@ -1,0 +1,48 @@
+# Upvalue capture across nested function definitions (M4).
+# A closure must see and propagate mutations to a captured enclosing local, and
+# sibling closures capturing the same variable must share it.
+
+# 1. A counter closing over an enclosing local, mutated in place.
+function make_counter()
+    var count = 0
+    function inc()
+        count += 1
+        return count
+    end
+    return inc
+end
+
+var c = make_counter()
+assert(c() == 1, "first call")
+assert(c() == 2, "second call")
+assert(c() == 3, "third call")
+
+# 2. Two closures sharing one upvalue.
+function make_account()
+    var balance = 0
+    function deposit(n)
+        balance += n
+    end
+    function total()
+        return balance
+    end
+    return [deposit, total]
+end
+
+var acct = make_account()
+var deposit = acct[1]
+var total = acct[2]
+deposit(100)
+deposit(50)
+assert(total() == 150, "shared upvalue")
+
+# 3. Each returned counter is independent (fresh upvalue per activation).
+var c1 = make_counter()
+var c2 = make_counter()
+c1()
+c1()
+c2()
+assert(c1() == 3, "counter 1 independent")
+assert(c2() == 2, "counter 2 independent")
+
+print("upvalue tests passed")

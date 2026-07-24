@@ -1,0 +1,19 @@
+proto #0 <anon>  params=0 regs=7 upvals=0 consts=0
+0000  LOADI      0 0
+0001  SETMODULE  0 0
+0002  LOADI      0 1
+0003  LOADI      1 10
+0004  LOADI      2 1
+0005  FORPREP    0 8             ; -> 0014
+0006  LOADI      6 2
+0007  MOD        5 3 6
+0008  LOADI      6 0
+0009  EQ         4 5 6
+0010  JMPF       4 3             ; -> 0014
+0011  GETMODULE  4 0
+0012  ADD        4 4 3
+0013  SETMODULE  4 0
+0014  FORLOOP    0 -9            ; -> 0006
+0015  GETMODULE  0 0
+0016  HALT       0 1 0
+

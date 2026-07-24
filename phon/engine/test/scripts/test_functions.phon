@@ -1,0 +1,64 @@
+# Functions, recursion, control flow, and aggregates (M4).
+
+# Recursion.
+function fib(n)
+    if n < 2 then
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+assert(fib(10) == 55, "fib(10)")
+assert(fib(15) == 610, "fib(15)")
+
+# Mutual recursion (top-level hoisting makes forward references work).
+function is_even(n)
+    if n == 0 then return true end
+    return is_odd(n - 1)
+end
+function is_odd(n)
+    if n == 0 then return false end
+    return is_even(n - 1)
+end
+assert(is_even(10), "is_even(10)")
+assert(not is_even(7), "not is_even(7)")
+
+# Anonymous functions and lambdas.
+var square = function(x) return x * x end
+assert(square(9) == 81, "anonymous function")
+var double = x -> x * 2
+assert(double(21) == 42, "lambda")
+
+# Loops: while, repeat, for with step and direction.
+var s = 0
+var i = 1
+while i <= 100 do
+    s += i
+    i += 1
+end
+assert(s == 5050, "while sum 1..100")
+
+var down = 0
+for k = 10 to 1 step -1 do
+    down += k
+end
+assert(down == 55, "descending for")
+
+# break / continue.
+var evens = 0
+for k = 1 to 20 do
+    if k mod 2 != 0 then continue end
+    if k > 10 then break end
+    evens += k
+end
+assert(evens == 2 + 4 + 6 + 8 + 10, "break/continue")
+
+# Aggregates and indexing.
+var list = [10, 20, 30]
+assert(list[1] == 10, "list[1]")
+assert(list[-1] == 30, "list[-1]")
+assert(len(list) == 3, "len(list)")
+
+var table = {"a": 1, "b": 2}
+assert(table["b"] == 2, "table[b]")
+
+print("function tests passed")

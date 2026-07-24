@@ -1,0 +1,25 @@
+proto #0 <anon>  params=0 regs=4 upvals=0 consts=1
+0000  CLOSURE    0 0
+0001  DEFMETHOD  0 0             ; add3
+0002  LOADI      2 2
+0003  LOADI      3 3
+0004  NEWLIST    1 2 0
+0005  MOVE       0 1 0
+0006  SETMODULE  0 0
+0007  LOADK      1 0             ; :add3
+0008  NEWLIST    2 0 0
+0009  LOADI      3 1
+0010  LISTAPPEND 2 3 0
+0011  GETMODULE  3 0
+0012  LISTEXTEND 2 3 0
+0013  CALLD      1 2 0
+0014  MOVE       0 1 0
+0015  SETMODULE  0 1
+0016  HALT       0 0 0
+
+proto #0 add3  params=3 regs=5 upvals=0 consts=0
+0000  ADD        4 0 1
+0001  ADD        3 4 2
+0002  RET        3 1 0
+0003  RET        0 0 0
+

@@ -1,0 +1,85 @@
+Module
+  If
+    Case
+      Binary >
+        Var f0
+        Int 0
+      Block
+        Assign +=
+          Var count
+          Int 1
+    Case
+      Var voiced
+      Block
+        ExprStmt
+          Call
+            Var interpolate
+            Var track
+            Var i
+    Else
+      Block
+        Assign =
+          Var count
+          Int 0
+  While
+    Unary not
+      Call
+        Var eof
+        Var file
+    Block
+      ExprStmt
+        Call
+          Var process
+          Call
+            Var read_line
+            Var file
+  Repeat
+    Block
+      Assign =
+        Var line
+        Call
+          Var read_line
+          Var file
+    Binary ==
+      Var line
+      Str ""
+  ForNumeric i
+    Int 1
+    Call
+      Var len
+      Var samples
+    Int 2
+    Block
+      Assign +=
+        Var total
+        Index
+          Var samples
+          Var i
+  ForEach interval
+    Var tier
+    Block
+      ExprStmt
+        Call
+          Var print
+          Field text
+            Var interval
+  ForEach k, v
+    Var codes
+    Block
+      ExprStmt
+        Call
+          Var print
+          Var k
+      Break
+  ForEach ref sample
+    Var samples
+    Block
+      Assign *=
+        Var sample
+        Int 2
+  ForEach i, ref v
+    Var list
+    Block
+      Assign +=
+        Var v
+        Int 1

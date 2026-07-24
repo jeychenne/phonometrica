@@ -1,0 +1,22 @@
+# Error handling, concurrency, and imports.
+import textgrid
+
+try
+    var snd = read_sound(path)
+catch e as IOError
+    print("cannot read {path}: {e.message}")
+catch e as Error
+    rethrow(e)
+finally
+    cleanup()
+end
+
+try
+    risky()
+catch
+    recover()
+end
+
+throw MyError("boom")
+
+spawn worker(jobs, out)

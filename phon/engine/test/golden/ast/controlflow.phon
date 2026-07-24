@@ -1,0 +1,37 @@
+# Control-flow statements.
+if f0 > 0 then
+    count += 1
+elsif voiced then
+    interpolate(track, i)
+else
+    count = 0
+end
+
+while not eof(file) do
+    process(read_line(file))
+end
+
+repeat
+    line = read_line(file)
+until line == ""
+
+for i = 1 to len(samples) step 2 do
+    total += samples[i]
+end
+
+for interval in tier do
+    print(interval.text)
+end
+
+for k, v in codes do
+    print(k)
+    break
+end
+
+for ref sample in samples do          # value taken by reference (aliases the element)
+    sample *= 2
+end
+
+for i, ref v in list do               # index/value iteration, value by reference
+    v += 1
+end

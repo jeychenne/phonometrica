@@ -1,0 +1,4 @@
+# A module exposing state read via `config.name`.
+var version = "1.0"
+const MAX_ITEMS = 100
+local var secret_key = "hunter2"   # private: not reachable as config.secret_key

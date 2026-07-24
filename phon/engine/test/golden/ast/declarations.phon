@@ -1,0 +1,12 @@
+# Declarations, modifiers, and assignment forms.
+var x = 1
+var threshold as Float = 0.025
+const SR as Integer = 16000
+local var cache = {}
+global var session_dir = ""
+x = 1
+s &= ".txt"
+a[i] = 0
+obj.duration = 2
+x[x > 0] *= 2
+total += samples[i]

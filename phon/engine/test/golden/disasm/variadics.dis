@@ -1,0 +1,25 @@
+proto #0 <anon>  params=0 regs=6 upvals=0 consts=3
+0000  CLOSURE    0 0
+0001  DEFMETHOD  0 0             ; collect
+0002  LOADK      1 0             ; :collect
+0003  LOADK      2 1             ; "x"
+0004  LOADI      3 1
+0005  LOADI      4 2
+0006  LOADI      5 3
+0007  CALLG      1 4 0
+0008  EXTRA_ARG  0
+0009  MOVE       0 1 0
+0010  SETMODULE  0 0
+0011  LOADK      1 0             ; :collect
+0012  LOADK      2 2             ; "y"
+0013  CALLG      1 1 0
+0014  EXTRA_ARG  1
+0015  MOVE       0 1 0
+0016  SETMODULE  0 1
+0017  HALT       0 0 0
+
+proto #0 collect  params=1 regs=3 upvals=0 consts=0 vararg
+0000  MOVE       2 1 0
+0001  RET        2 1 0
+0002  RET        0 0 0
+

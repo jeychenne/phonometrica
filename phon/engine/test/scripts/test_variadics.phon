@@ -1,0 +1,59 @@
+# Variadic parameters (design §6): a trailing `name as T...` packs the remaining
+# positional arguments into a List (one allocation, only when the resolved method
+# is variadic). Dispatch: fixed-arity beats variadic; the vararg element type
+# participates in applicability.
+
+# Basic packing: the vararg parameter is a List of the trailing arguments.
+function collect(xs as Object...)
+    return xs
+end
+assert(collect(1, 2, 3) == [1, 2, 3], "packs trailing args")
+assert(collect() == [], "empty vararg is an empty list")
+assert(collect("solo") == ["solo"], "single vararg element")
+
+# Fixed parameters precede the vararg.
+function tagged(tag as String, xs as Object...)
+    return tag & ":" & len(xs)
+end
+assert(tagged("a") == "a:0", "fixed only, empty vararg")
+assert(tagged("a", 10, 20, 30) == "a:3", "fixed + 3 varargs")
+
+# The packed vararg is an ordinary List: indexable and iterable.
+function total(xs as Object...)
+    var s = 0
+    for x in xs do
+        s += x
+    end
+    return s
+end
+assert(total(1, 2, 3, 4) == 10, "iterate the vararg list")
+assert(total() == 0, "iterate an empty vararg")
+
+# argc may exceed the dispatch fast-path buffer (was capped at 8).
+assert(len(collect(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)) == 12, "many args")
+
+# Dispatch: a fixed-arity overload beats the variadic at the same argc.
+function pick(x as Integer)
+    return "one"
+end
+function pick(xs as Integer...)
+    return "many"
+end
+assert(pick(5) == "one", "fixed beats variadic at argc 1")
+assert(pick() == "many", "variadic covers argc 0")
+assert(pick(5, 6) == "many", "variadic covers argc 2")
+assert(pick(5, 6, 7) == "many", "variadic covers argc 3")
+
+# The vararg element type participates in applicability. A more specific fixed
+# overload is chosen for its exact type; other types take the variadic.
+function kind(xs as Integer...)
+    return "ints"
+end
+function kind(x as String, ys as Integer...)
+    return "str-then-ints"
+end
+assert(kind(1, 2, 3) == "ints", "all-integer variadic")
+assert(kind("a", 1, 2) == "str-then-ints", "more fixed params wins")
+assert(kind("a") == "str-then-ints", "fixed String + empty vararg")
+
+print("variadic tests passed")

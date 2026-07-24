@@ -1,0 +1,16 @@
+.claude/
+CLAUDE.md
+
+# Build trees
+/build/
+/build-*/
+/cmake-build-*/
+
+# Tooling
+/compile_commands.json
+/.cache/
+
+# Editor/OS
+*.swp
+.DS_Store
+.idea/

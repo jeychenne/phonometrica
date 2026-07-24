@@ -1,0 +1,137 @@
+# First-class references: `ref` parameters (design/references.md). Whether an
+# argument is passed by reference is determined by the callee's signature, not by a
+# call-site marker; the parameter's `ref` makes the caller's variable writable.
+
+# Mutating a scalar local through a ref.
+function inc(ref x)
+    x = x + 1
+end
+function scalar_demo() as Integer
+    var n = 10
+    inc(n)
+    inc(n)
+    inc(n)
+    return n
+end
+assert(scalar_demo() == 13, "scalar mutation via ref")
+
+# Compound assignment through a ref.
+function halve(ref x)
+    x /= 2.0
+end
+function compound_demo() as Float
+    var v = 9.0
+    halve(v)
+    return v
+end
+assert(compound_demo() == 4.5, "compound assignment via ref")
+
+# Mutating a value-type element in place, with copy-on-write detach of any alias.
+function zero_first(ref a)
+    a[1] = 0
+end
+function list_demo()
+    var xs = [7, 8, 9]
+    var alias = xs
+    zero_first(xs)
+    assert(xs[1] == 0, "list mutated through ref")
+    assert(alias[1] == 7, "alias detached (value semantics)")
+end
+list_demo()
+
+# Mutating a value-class field through a ref (CoW detach applies to the instance).
+class Counter
+    field n as Integer = 0
+end
+function tick(ref c)
+    c.n = c.n + 1
+end
+function field_demo()
+    var c = Counter()
+    var same = c
+    tick(c)
+    tick(c)
+    assert(c.n == 2, "field mutated through ref")
+    assert(same.n == 0, "value-class alias detached")
+end
+field_demo()
+
+# Passing a list *element* by reference (design/references.md §7): the element is
+# boxed, mutation writes back through the box, and promoting it detaches any alias.
+function inc(ref x)
+    x = x + 1
+end
+function element_demo()
+    var xs = [10, 20, 30]
+    var alias = xs
+    inc(xs[2])
+    inc(xs[2])
+    assert(xs[2] == 22, "list element mutated through ref")
+    assert(alias[2] == 20, "alias detached when an element is referenced")
+end
+element_demo()
+
+# Passing an object field by reference.
+function field_ref_demo()
+    var c = Counter()
+    inc(c.n)
+    inc(c.n)
+    assert(c.n == 2, "field passed by reference and mutated")
+end
+field_ref_demo()
+
+# A ref is forwarded through nested calls. Ref-ness is uniform per generic
+# (design/references.md §4), so it is no longer a dispatch dimension.
+function bump(ref x)
+    x = x + 100
+end
+function forward(ref y)
+    bump(y)
+end
+function dispatch_demo()
+    var z = 1
+    forward(z)
+    assert(z == 101, "ref forwarded through a call chain")
+end
+dispatch_demo()
+
+# By-reference iteration (design §12): the value variable aliases each element, so
+# writes propagate back into the collection — the loop-body analogue of a ref param.
+function iterate_demo()
+    var xs = [1, 2, 3, 4]
+    var alias = xs
+    for ref v in xs do
+        v *= 10
+    end
+    assert(xs[1] == 10 and xs[4] == 40, "by-reference iteration mutates in place")
+    assert(alias[1] == 1, "by-reference iteration detaches an alias")
+    # The key/index stays by value; only the value aliases the element.
+    for i, ref v in xs do
+        v = v + i
+    end
+    assert(xs[1] == 11 and xs[2] == 22, "index by value, value by reference")
+end
+iterate_demo()
+
+# References beyond locals: a module (global) variable, a Table value, and
+# by-reference iteration over a Table's values.
+var counter = 0
+function bump_it(ref x)
+    x = x + 1
+end
+bump_it(counter)
+bump_it(counter)
+assert(counter == 2, "module variable passed by reference")
+
+function table_demo()
+    var scores = {"a": 1, "b": 2, "c": 3}
+    bump_it(scores["a"])
+    assert(scores["a"] == 2, "table value passed by reference")
+    for k, ref v in scores do
+        v *= 10
+    end
+    assert(scores["a"] == 20 and scores["c"] == 30, "by-reference iteration over table values")
+end
+table_demo()
+
+print("ref tests passed")

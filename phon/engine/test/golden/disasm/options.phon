@@ -1,0 +1,10 @@
+# Keyword-only options: the callee proto begins with a JMPSET prologue that fills
+# each unsupplied option slot (the missing sentinel) with its default. The call
+# stages options as (Symbol, value) pairs after the positional args; CALLG's C
+# operand carries the option count.
+function pitch(signal as Integer, floor as Integer = 70, ceiling as Integer = 500)
+    return signal + floor + ceiling
+end
+
+var a = pitch(1)
+var b = pitch(1, ceiling = 300)

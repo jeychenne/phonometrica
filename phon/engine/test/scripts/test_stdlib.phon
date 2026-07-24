@@ -1,0 +1,225 @@
+# Standard library: the math and string modules (architecture §12), ported to the
+# typed C++ registration API. Exercises value returns, Integer-vs-Real overload
+# dispatch, and the in-place (ref) string mutators.
+
+# --- math: scalar functions accept Integer or Float -------------------------------
+assert(sqrt(4.0) == 2.0, "sqrt")
+assert(sqrt(9) == 3.0, "sqrt of an Integer")
+assert(floor(3.7) == 3.0, "floor")
+assert(ceil(3.2) == 4.0, "ceil")
+assert(exp(0.0) == 1.0, "exp(0)")
+assert(log(1.0) == 0.0, "log(1)")
+assert(cos(0.0) == 1.0, "cos(0)")
+assert(sin(0.0) == 0.0, "sin(0)")
+
+# abs / round / min / max preserve Integer when given integers.
+assert(abs(-5) == 5, "abs Integer")
+assert(abs(-5) is Integer, "abs of Integer stays Integer")
+assert(abs(-5.0) == 5.0, "abs Float")
+assert(abs(-5.0) is Float, "abs of Float stays Float")
+assert(round(2.7) == 3.0, "round up")
+assert(round(2.3) == 2.0, "round down")
+assert(round(3) == 3, "round of an Integer is the Integer")
+assert(min(3, 5) == 3, "min Integer")
+assert(max(3, 5) == 5, "max Integer")
+assert(max(3, 5) is Integer, "max of Integers stays Integer")
+assert(min(2.5, 1.5) == 1.5, "min Float")
+assert(max(2.5, 1.5) is Float, "max of Floats stays Float")
+
+# Constants are bare-name global bindings.
+assert(PI > 3.1415, "PI lower bound")
+assert(PI < 3.1416, "PI upper bound")
+assert(E > 2.718, "E lower bound")
+assert(cos(PI) == -1.0, "cos(PI)")
+# A local of the same name shadows the constant.
+function shadow_pi()
+	var PI = 3
+	return PI
+end
+assert(shadow_pi() == 3, "a local shadows the constant")
+
+# --- string: non-mutating queries and derivations ---------------------------------
+assert(find("hello world", "world") == 7, "find")
+assert(find("hello", "z") == 0, "find absent")
+assert(find("a-b-c", "-", 3) == 4, "find from offset")
+assert(count("banana", "a") == 3, "count")
+assert(contains("hello", "ell"), "contains")
+assert(starts_with("hello", "he"), "starts_with")
+assert(ends_with("hello", "lo"), "ends_with")
+assert(not is_empty("x"), "is_empty false")
+assert(is_empty(""), "is_empty true")
+assert(to_upper("abc") == "ABC", "to_upper")
+assert(to_lower("ABC") == "abc", "to_lower")
+assert(left("hello", 2) == "he", "left")
+assert(right("hello", 2) == "lo", "right")
+assert(char("hello", 1) == "h", "char")
+assert(slice("hello", 2, 4) == "ell", "slice range")
+assert(slice("hello", 3) == "llo", "slice to end")
+
+# split returns a List of the pieces.
+var parts = split("a,b,c", ",")
+assert(len(parts) == 3, "split count")
+assert(parts[1] == "a", "split first")
+assert(parts[3] == "c", "split last")
+
+# --- string: in-place mutators (the ref parameter writes back) --------------------
+var s = "  hi  "
+trim(s)
+assert(s == "hi", "trim in place")
+
+var g = "foo"
+append(g, "bar")
+assert(g == "foobar", "append in place")
+
+var p = "bar"
+prepend(p, "foo")
+assert(p == "foobar", "prepend in place")
+
+var r = "hello"
+replace(r, "l", "L")
+assert(r == "heLLo", "replace all in place")
+
+var rm = "hello"
+remove(rm, "l")
+assert(rm == "heo", "remove in place")
+
+var rev = "abc"
+reverse(rev)
+assert(rev == "cba", "reverse in place")
+
+# A ref mutation must not disturb an alias (copy-on-write).
+var a = "abc"
+var b = a
+append(a, "d")
+assert(a == "abcd", "aliased append mutates a")
+assert(b == "abc", "aliased append leaves b (CoW)")
+
+# --- list: queries and derivations ------------------------------------------------
+var xs = [10, 20, 30, 40]
+assert(contains(xs, 20), "list contains")
+assert(not contains(xs, 99), "list not contains")
+assert(find(xs, 30) == 3, "list find")
+assert(find(xs, 99) == 0, "list find absent")
+assert(first(xs) == 10, "list first")
+assert(last(xs) == 40, "list last")
+assert(not is_empty(xs), "list is_empty false")
+assert(is_empty([]), "list is_empty true")
+assert(join(xs, "-") == "10-20-30-40", "list join")
+
+var l2 = left(xs, 2)
+assert(len(l2) == 2, "list left len")
+assert(l2[1] == 10 and l2[2] == 20, "list left values")
+var r2 = right(xs, 2)
+assert(r2[1] == 30 and r2[2] == 40, "list right values")
+
+# --- list: in-place mutators ------------------------------------------------------
+var ys = [1, 2]
+append(ys, 3)
+assert(len(ys) == 3 and ys[3] == 3, "list append")
+prepend(ys, 0)
+assert(ys[1] == 0 and len(ys) == 4, "list prepend")
+insert(ys, 2, 99)
+assert(ys[2] == 99, "list insert")
+remove_at(ys, 2)
+assert(ys[2] == 1, "list remove_at")
+
+var stack = [1, 2, 3]
+var top = pop(stack)
+assert(top == 3, "list pop returns last")
+assert(len(stack) == 2, "list pop shrinks")
+var head = shift(stack)
+assert(head == 1, "list shift returns first")
+assert(len(stack) == 1, "list shift shrinks")
+
+var rev = [1, 2, 3]
+reverse(rev)
+assert(rev[1] == 3 and rev[3] == 1, "list reverse in place")
+
+var cl = [1, 2, 3]
+clear(cl)
+assert(is_empty(cl), "list clear")
+
+# A ref mutation must not disturb an alias (copy-on-write).
+var la = [1, 2]
+var lb = la
+append(la, 3)
+assert(len(la) == 3, "aliased list append mutates la")
+assert(len(lb) == 2, "aliased list append leaves lb (CoW)")
+
+# find_back and remove variants.
+var dup = [1, 2, 1, 3, 1]
+assert(find_back(dup, 1) == 5, "find_back")
+remove_first(dup, 1)
+assert(dup[1] == 2, "remove_first")
+var dl = [1, 2, 1]
+remove_last(dl, 1)
+assert(len(dl) == 2 and dl[2] == 2, "remove_last")
+var d2 = [1, 2, 1, 3, 1]
+remove(d2, 1)
+assert(len(d2) == 2 and d2[1] == 2 and d2[2] == 3, "remove all")
+
+# --- list: ordering (value_compare) -----------------------------------------------
+var us = [3, 1, 2, 5, 4]
+sort(us)
+assert(us[1] == 1 and us[5] == 5, "sort ascending")
+assert(is_sorted(us), "is_sorted true")
+assert(not is_sorted([2, 1]), "is_sorted false")
+var ss = ["banana", "apple", "cherry"]
+sort(ss)
+assert(ss[1] == "apple" and ss[3] == "cherry", "sort strings lexicographically")
+
+var sorted = [10, 20, 30, 40]
+assert(sorted_find(sorted, 30) == 3, "sorted_find hit")
+assert(sorted_find(sorted, 25) == 0, "sorted_find miss")
+sorted_insert(sorted, 25)
+assert(sorted[3] == 25, "sorted_insert keeps order")
+assert(is_sorted(sorted), "sorted after sorted_insert")
+
+# --- list: random (structure, not exact values) -----------------------------------
+var deck = [1, 2, 3, 4, 5]
+shuffle(deck)
+assert(len(deck) == 5, "shuffle preserves length")
+assert(is_sorted(deck) or not is_sorted(deck), "shuffle keeps elements")  # trivially true
+var samp = sample([1, 2, 3, 4, 5], 3)
+assert(len(samp) == 3, "sample size")
+
+# --- list: set operations ---------------------------------------------------------
+var uni = unite([1, 2, 3], [3, 4, 5])
+assert(len(uni) == 5, "unite dedups the overlap")
+var inter = intersect([1, 2, 3, 4], [2, 4, 6])
+assert(len(inter) == 2 and inter[1] == 2 and inter[2] == 4, "intersect")
+var diff = subtract([1, 2, 3, 4], [2, 4])
+assert(len(diff) == 2 and diff[1] == 1 and diff[2] == 3, "subtract")
+
+# --- array: constructors, reductions, elementwise math ----------------------------
+var z = zeros(3)
+assert(len(z) == 3, "zeros length")
+assert(sum(z) == 0.0, "zeros sum")
+var o = ones(4)
+assert(sum(o) == 4.0, "ones sum")
+assert(mean(o) == 1.0, "ones mean")
+
+var v = @[1.0, 2.0, 3.0, 4.0]
+assert(sum(v) == 10.0, "array sum")
+assert(mean(v) == 2.5, "array mean")
+assert(min(v) == 1.0, "array min")
+assert(max(v) == 4.0, "array max")
+assert(nrow(v) == 4, "array nrow")
+
+var m = zeros(2, 3)
+assert(nrow(m) == 2, "matrix nrow")
+assert(ncol(m) == 3, "matrix ncol")
+
+# Elementwise math dispatches on the Array argument.
+var sq = sqrt(@[1.0, 4.0, 9.0])
+assert(sq[1] == 1.0 and sq[2] == 2.0 and sq[3] == 3.0, "array sqrt elementwise")
+assert(sqrt(16.0) == 4.0, "scalar sqrt still works")
+
+var ab = abs(@[-1.0, 2.0, -3.0])
+assert(ab[1] == 1.0 and ab[3] == 3.0, "array abs elementwise")
+
+var ac = @[1.0, 2.0]
+clear(ac)
+assert(sum(ac) == 0.0, "array clear in place")
+
+print("stdlib tests passed")

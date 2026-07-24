@@ -1,0 +1,9 @@
+# Splat lowering: a call containing `xs...` builds one positional-argument List
+# (NEWLIST, then LISTAPPEND for singles and LISTEXTEND for splats) and hands it to
+# CALLD, which unpacks it into the callee window with a runtime arity.
+function add3(a as Integer, b as Integer, c as Integer)
+    return a + b + c
+end
+
+var xs = [2, 3]
+var r = add3(1, xs...)

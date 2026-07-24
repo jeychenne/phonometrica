@@ -1,0 +1,299 @@
+// Phonometrica engine — Isolate: per-thread execution state (architecture §10.1).
+// Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
+//
+// One Isolate per script thread owns the register stack, the call-frame vector,
+// the open-upvalue list, the module namespace, and the current error. Compiled
+// Protos are immutable and shared; everything mutable lives here (§10.4). M4 is
+// single-threaded: a process-global "current" Isolate lets upvalue finalizers and
+// native callbacks find their thread without threading a pointer everywhere; the
+// real thread-local wiring lands with concurrency (M7).
+
+#ifndef PHON_VM_ISOLATE_HPP
+#define PHON_VM_ISOLATE_HPP
+
+#include <phon/engine/core/flat_hash_map.hpp>
+#include <phon/engine/core/small_vector.hpp>
+#include <phon/engine/core/value.hpp>
+#include <phon/engine/core/variant.hpp>
+#include <phon/engine/core/vector.hpp>
+#include <phon/engine/core/cycle_collector.hpp>
+#include <phon/engine/types/string.hpp>
+#include <phon/engine/vm/function.hpp>
+#include <phon/engine/vm/opcode.hpp>
+#include <phon/engine/vm/proto.hpp>
+
+#include <atomic>
+#include <exception>
+#include <functional>
+#include <memory>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace phonometrica {
+
+class List; // types/list.hpp (backtrace_frames returns one)
+
+struct Class;
+struct GenericFunction;
+
+// One inline-cache slot for a CALLG site (architecture §10.4). Monomorphic in M4:
+// caches the last argument-class tuple and the method it resolved to, guarded by
+// the type/generic epochs so it self-invalidates when the hierarchy or method set
+// changes. `key == kICEmpty` marks a cold slot.
+struct ICEntry
+{
+	uint64_t key;
+	void *callable; // resolved Callable cell (ClosureCell* / NativeCell*)
+	uint32_t type_epoch;
+	uint32_t generic_epoch;
+	// The resolved GenericFunction for this call site. A site's callee symbol is a
+	// compile-time constant and generics are never deleted, so once populated this is
+	// stable — it lets CALLG skip the by-name registry lookup on every call.
+	GenericFunction *generic = nullptr;
+};
+
+inline constexpr uint64_t kICEmpty = ~uint64_t(0);
+
+// One frame of a script backtrace in plain host data (no engine cells), so an
+// embedder can render a trace from a caught RuntimeError after the engine has
+// dropped the in-flight error value. Innermost frame first. Mirrors one entry of
+// the Error value's `frames` field ({function, line, file} — Isolate::
+// backtrace_frames).
+struct ErrorFrame
+{
+	std::string function; // "<module>" for top-level chunks
+	std::string file;     // empty for in-memory chunks (do_string)
+	int line = 0;
+};
+
+// A script error in flight (architecture §10.5). It carries the thrown `Error`
+// value (an instance of Error or a subclass); `message`/`line` mirror the error's
+// message and its origin line for the embedding boundary and diagnostics. The VM's
+// per-Isolate handler stack catches it at a `try`; if none applies it propagates as
+// this C++ exception to the `do_string` boundary. `error` holds one reference the
+// catcher adopts. At the embedding boundary (State::run / Runtime::call), the
+// engine releases `error` and copies its `frames` field into `frames` below, so
+// the host sees the structured backtrace without touching engine cells.
+struct RuntimeError : std::exception
+{
+	String message;
+	int line = 0;
+	Value error = Value::make_null();
+	std::vector<ErrorFrame> frames;
+
+	// Derives from std::exception (roadmap E5/G6c) so an embedder's catch-all
+	// (`catch (std::exception &)`) catches an uncaught script error instead of letting
+	// it reach std::terminate. `what()` returns the message bytes; the copy is built
+	// here (the error path is rare) so what() stays trivially noexcept and the pointer
+	// stays valid for the exception's lifetime.
+	RuntimeError(String msg, int ln, Value err = Value::make_null())
+	    : message(std::move(msg)), line(ln), error(err),
+	      m_what(message.data(), static_cast<size_t>(message.size()))
+	{
+	}
+
+	const char *what() const noexcept override { return m_what.c_str(); }
+
+private:
+	std::string m_what;
+};
+
+// Create an Error instance carrying `message` (refcount 1). Used by `raise` and the
+// embedding layer to build the thrown value for a builtin error.
+Cell *make_error(const String &message);
+
+// Capture the current backtrace into an Error's `trace` field (slot 1) if it has
+// none yet, so a re-thrown error keeps its original origin (`top_line` is the
+// raise/throw line).
+void capture_error_trace(Isolate &iso, Cell *err, int top_line);
+
+// Read an in-flight error value's `frames` field (slot 2) into plain host data.
+// Empty when the value is not an Error instance or carries no frames. Used by the
+// embedding boundary to populate RuntimeError::frames before releasing the value.
+std::vector<ErrorFrame> extract_error_frames(Value err);
+
+// One journaled generic-method registration (design §11 registration journal).
+// The Isolate holds the +1 reference to the closure supplying the method's code;
+// retracting the journal removes the method and releases the closure, restoring
+// the process-global generics to their pre-run state. This is what keeps reloaded
+// modules — and independent unit-test runs — from polluting each other now that
+// named functions are generic methods rather than module bindings.
+struct MethodRegistration
+{
+	GenericFunction *g = nullptr;
+	SmallVector<Class *, 4> sig;
+	bool is_vararg = false;
+	Cell *closure = nullptr; // owned (+1)
+};
+
+// One activation record. `cl`/`base` drive execution of this frame; `ret_ip`/
+// `ret_slot` say where the caller resumes and receives the result.
+struct CallFrame
+{
+	ClosureCell *cl = nullptr;
+	Value *base = nullptr;
+	const Instruction *ret_ip = nullptr;
+	Value *ret_slot = nullptr;
+};
+
+class Isolate final
+{
+public:
+	Isolate();
+	~Isolate();
+
+	Isolate(const Isolate &) = delete;
+	Isolate &operator=(const Isolate &) = delete;
+
+	Value *stack() noexcept { return m_stack.get(); }
+	intptr_t stack_capacity() const noexcept { return m_stack_cap; }
+
+	// The thread's cycle collector (architecture §8.2). Installed as the current
+	// collector for this Isolate's lifetime; the interpreter pokes it at safepoints.
+	CycleCollector &collector() noexcept { return m_collector; }
+
+	Vector<CallFrame> frames;
+
+	// Active `try` handlers (design §12 / architecture §10.5). `PUSHTRY` records where
+	// to resume — the frame depth to unwind to, the frame base, the catch-dispatch ip,
+	// and the register that receives the thrown error — and a raise walks these to
+	// find the innermost applicable handler.
+	struct Handler
+	{
+		intptr_t frame_depth;         // frames.size() when the try was entered
+		Value *base;                  // the try frame's register base
+		const Instruction *land_ip;   // catch-dispatch code
+		int err_reg;                  // register that receives the error
+	};
+	Vector<Handler> handlers;
+
+	// Module namespace: slot-indexed bindings (design §11). Variant retains cells,
+	// keeping module-level functions/values alive for the module's lifetime.
+	Vector<Variant> module_slots;
+
+	// The file whose code is currently executing, innermost last (host-side paths,
+	// maintained by the Runtime around each chunk/module top-level run). Backs the
+	// get_script_path() builtin; empty entries mark path-less <string> chunks.
+	std::vector<std::string> script_paths;
+
+	// The source line of the script call currently invoking a native, stamped by the
+	// interpreter at each native invocation. `raise(msg, 0)` — the way natives raise,
+	// having no line of their own — substitutes it, so a native error reports the
+	// script call site rather than "line 0".
+	int native_call_line = 0;
+
+	// --- output redirection (embedding, roadmap E3) ------------------------------
+	//
+	// Redirectable sinks for script/host output, mirroring the old Runtime's print /
+	// show_error / clear_output seams the GUI console swaps (phon/gui/console.cpp).
+	// Null by default: write_output goes to stdout and write_error_output to stderr, so
+	// a headless run prints normally. The GUI installs hooks (Runtime::set_output_hook /
+	// set_error_output_hook / set_clear_output_hook) so `print`, error-styled output, and
+	// console-clear land in its panel instead. The `print` builtin and the host-side
+	// Runtime::print/print_error/clear_output all funnel through these, so one set of
+	// hooks covers script and C++ output alike. Text arrives already formatted (print
+	// keeps its trailing newline).
+	std::function<void(std::string_view)> output_hook;
+	std::function<void(std::string_view)> error_output_hook;
+	std::function<void()> clear_output_hook;
+
+	// Route formatted text to the installed sink, or to stdout/stderr when none is set.
+	void write_output(std::string_view s);
+	void write_error_output(std::string_view s);
+	void clear_output();
+
+	// --- open upvalues (shared while their register is live) ---
+
+	UpvalueCell *find_or_make_open_upvalue(Value *slot);
+	void close_upvalues(Value *from); // close every open upvalue at slot >= from
+	void unlink_open_upvalue(UpvalueCell *uv) noexcept; // called by the finalizer
+
+	// --- inline caches (per-Proto, isolate-local; chunks stay immutable §10.4) ---
+
+	// The IC base offset for `p`, assigning a fresh block of p->num_ic slots on
+	// first execution. CALLG at relative slot r uses ics[ic_base(p) + r].
+	int ic_base(Proto *p);
+	Vector<ICEntry> ics;
+
+	// --- registration journal (design §11) ---
+
+	// Record a method this run added to a generic. Takes ownership of the closure's
+	// +1 reference (the caller must not release it).
+	void record_method(GenericFunction *g, SmallVector<Class *, 4> sig, bool is_vararg, Cell *closure);
+
+	// Undo every journaled registration: remove the methods and release the
+	// closures. Called by the destructor; exposed for the editor's reload surface.
+	void retract_journal() noexcept;
+
+	// Take ownership of a cell (its current +1) for the Isolate's lifetime; released
+	// on teardown. Used for accessor closures held only by a Class's field layout.
+	void keep_alive(Cell *c);
+
+	// Adopt a spawned thread handle (its +1): the Isolate owns it so the worker runs
+	// asynchronously past the `spawn` statement, and every spawned worker is joined when
+	// the Isolate is torn down (structured concurrency — architecture §13). Called by the
+	// SPAWN opcode.
+	void adopt_thread(Cell *handle);
+
+	// --- safepoints & cooperative interruption (architecture §9.4) ---
+
+	// Service the periodic obligations the interpreter defers to safepoints (function
+	// entry and loop back-edges): honour a pending interrupt (raising if set), then let
+	// the cycle collector run if its candidate buffer has grown past threshold. `line`
+	// is the current source line, used as the origin of a raised interrupt error.
+	void safepoint(int line);
+
+	// Request cooperative interruption of the script running on this Isolate (the GUI's
+	// "stop script" button, architecture §9.4). Safe to call from another thread: the
+	// poll word is atomic, and the target notices at its next safepoint and raises an
+	// "[Interrupt]" error that unwinds to the embedding boundary. Idempotent.
+	void request_interrupt() noexcept { m_poll.fetch_or(POLL_INTERRUPT, std::memory_order_relaxed); }
+
+	// Clear any pending interrupt. Called before a fresh run so a stale request from a
+	// previous run does not abort the next one.
+	void clear_interrupt() noexcept { m_poll.store(0, std::memory_order_relaxed); }
+
+	// --- errors ---
+
+	[[noreturn]] void raise(String message, int line);
+
+	// A formatted backtrace of the current call stack (`top_line` is the active line
+	// of the innermost frame). Captured into an Error's `trace` field at first raise.
+	String backtrace(int top_line);
+
+	// The same walk as structured data: a List of {function, line, file} Tables,
+	// innermost first. Captured into an Error's `frames` field at first raise.
+	List backtrace_frames(int top_line);
+
+	// Release the live register span and drop all frames after an uncaught error, so
+	// an aborted run leaves no leaked cells (a minimal stand-in until the full
+	// handler-stack unwinding of arch §10.5). Idempotent.
+	void unwind_on_error() noexcept;
+
+	// Safepoint poll word: a bitset of pending obligations, read at every safepoint.
+	// Atomic because request_interrupt() may set it from another thread while this
+	// Isolate runs. Bit0 = interrupt requested; more reasons (registry rendezvous)
+	// can be folded in later without touching the fast path.
+	static constexpr uint32_t POLL_INTERRUPT = 1u << 0;
+
+private:
+	std::unique_ptr<Value[]> m_stack;
+	intptr_t m_stack_cap = 0;
+	std::atomic<uint32_t> m_poll{0};
+	CycleCollector m_collector;
+	UpvalueCell *m_open = nullptr; // head of the open-upvalue list
+	FlatHashMap<uint64_t, int> m_ic_base;
+	Vector<MethodRegistration> m_journal;
+	Vector<Cell *> m_kept;    // cells owned for the Isolate's lifetime (accessor closures)
+	Vector<Cell *> m_threads; // spawned thread handles (+1 each); joined at teardown
+};
+
+// The Isolate executing on this thread (M4: process-global). Set while a run is in
+// progress; used by upvalue finalizers and native callbacks.
+Isolate *current_isolate() noexcept;
+void set_current_isolate(Isolate *iso) noexcept;
+
+} // namespace phonometrica
+
+#endif // PHON_VM_ISOLATE_HPP

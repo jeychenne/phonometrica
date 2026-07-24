@@ -1,0 +1,66 @@
+# The system + file standard library (architecture §12), built on the Unicode-correct
+# path layer (phon/os/file_system). Pure path manipulation, then a round-trip through a
+# real file in a unique temporary directory (created and removed by the test).
+
+# --- pure path manipulation (no I/O) ----------------------------------------------
+assert(get_base_name("/a/b/c.txt") == "c.txt", "base_name")
+assert(get_directory("/a/b/c.txt") == "/a/b", "directory")
+assert(get_extension("file.TXT") == ".TXT", "extension")
+assert(get_extension("file.TXT", true) == ".txt", "extension lowercased")
+assert(get_extension("noext") == "", "extension absent")
+assert(strip_extension("file.txt") == "file", "strip_extension")
+assert(join_path("/a", "b") == "/a/b", "join_path")
+assert(join_path("/a/", "b") == "/a/b", "join_path avoids double separator")
+
+var parts = split_extension("archive.tar")
+assert(parts[1] == "archive" and parts[2] == ".tar", "split_extension")
+
+assert(len(get_path_separator()) == 1, "path separator is one character")
+assert(not is_empty(get_os_name()), "os name is known")
+
+# --- a file round-trip in a fresh temporary directory -----------------------------
+var dir = get_temp_name()
+create_directory(dir)
+assert(is_directory(dir), "temp directory created")
+assert(exists(dir), "temp directory exists")
+
+var path = join_path(dir, "hello.txt")
+var f = open_file(path, "w")
+write_line(f, "line one")
+write_line(f, "line two")
+close(f)
+
+assert(is_document(path), "written file is a document")
+assert(not is_directory(path), "written file is not a directory")
+
+# read line by line
+var g = open_file(path)
+assert(read_line(g) == "line one", "first line reads back")
+assert(read_line(g) == "line two", "second line reads back")
+assert(eof(g), "reached end of file")
+close(g)
+
+# read the whole file, and as a list of lines
+assert(contains(read_file(path), "line one"), "read_file returns the content")
+var lines = read_lines(open_file(path))
+assert(len(lines) == 2, "read_lines line count")
+assert(lines[1] == "line one" and lines[2] == "line two", "read_lines content")
+
+# the directory listing sees the file
+var entries = list_directory(dir)
+assert(contains(entries, "hello.txt"), "list_directory finds the file")
+
+# opening a missing file raises a System error
+var failed = false
+try
+	open_file(join_path(dir, "does_not_exist.txt"))
+catch e
+	failed = true
+end
+assert(failed, "opening a missing file raises")
+
+# clean up: remove the directory and its contents
+remove_path(dir)
+assert(not exists(dir), "temp directory removed")
+
+print("file I/O tests passed")

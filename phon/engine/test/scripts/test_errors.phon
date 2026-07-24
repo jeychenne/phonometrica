@@ -1,0 +1,132 @@
+# Error handling (design §12): the Error hierarchy, throw, try/catch/finally,
+# catch-by-type, cross-frame propagation, rethrow, and catchable builtin errors.
+
+# A user error type derives from the builtin Error and inherits its constructor.
+class IOError is Error
+end
+class ParseError is Error
+end
+
+# throw + catch by type; the message field carries the text.
+var report = ""
+try
+    throw IOError("cannot open 'data.txt'")
+catch e as ParseError
+    report = "parse: " & e.message
+catch e as IOError
+    report = "io: " & e.message
+catch e as Error
+    report = "other"
+end
+assert(report == "io: cannot open 'data.txt'", "caught the right clause")
+
+# `catch e as Error` is a catch-all for the whole hierarchy.
+var n = 0
+try
+    throw ParseError("bad token")
+catch e as Error
+    n = 1
+end
+assert(n == 1, "Error catches any subclass")
+
+# Builtin errors are Error instances, so they are catchable too.
+var divided = false
+try
+    var x = 10 div 0
+catch e as Error
+    divided = true
+end
+assert(divided, "builtin math error is catchable")
+
+# finally runs on the normal path, the caught path, and while propagating.
+var log = ""
+try
+    log = log & "n"
+finally
+    log = log & "1"
+end
+try
+    throw Error("x")
+catch e as Error
+    log = log & "c"
+finally
+    log = log & "2"
+end
+assert(log == "n1c2", "finally on normal and caught paths")
+
+# An unmatched inner catch still runs its finally, then the error propagates out.
+var trace = ""
+try
+    try
+        throw IOError("inner")
+    catch e as ParseError
+        trace = trace & "P"
+    finally
+        trace = trace & "f"
+    end
+catch e as Error
+    trace = trace & "outer:" & e.message
+end
+assert(trace == "fouter:inner", "unmatched inner ran finally then propagated")
+
+# Errors thrown across function calls unwind to the enclosing handler.
+function read_notes(path as String) as String
+    if path == "" then
+        throw IOError("empty path")
+    end
+    return "contents of " & path
+end
+var msg = ""
+try
+    var ok = read_notes("notes.txt")
+    assert(ok == "contents of notes.txt", "call returned normally")
+    var bad = read_notes("")
+catch e as IOError
+    msg = e.message
+end
+assert(msg == "empty path", "cross-frame throw caught")
+
+# Re-raising a caught error is just `throw e`; it reaches an outer handler.
+var forwarded = ""
+try
+    try
+        throw ParseError("unexpected end")
+    catch e as ParseError
+        throw e
+    end
+catch e as Error
+    forwarded = e.message
+end
+assert(forwarded == "unexpected end", "re-raised error reached the outer handler")
+
+# finally runs when a try body returns or breaks (early exit).
+var order = ""
+function guarded() as Integer
+    try
+        order = order & "b"
+        return 1
+    finally
+        order = order & "f"
+    end
+end
+var got = guarded()
+assert(got == 1 and order == "bf", "finally ran on return")
+
+# An error carries a backtrace of where it was first raised (function + line),
+# preserved even when re-raised.
+function level_two()
+    throw Error("kaboom")
+end
+function level_one()
+    level_two()
+end
+var tr = ""
+try
+    level_one()
+catch e as Error
+    tr = e.trace
+end
+assert(tr == "  at level_two (line 118)\n  at level_one (line 121)\n  at <module> (line 125)\n",
+       "backtrace records the call chain")
+
+print("error tests passed")

@@ -1,0 +1,38 @@
+Module
+  Var x
+    Int 1
+  Var threshold as Float
+    Float 0.025
+  Const SR as Integer
+    Int 16000
+  Var local cache
+    Table
+  Var global session_dir
+    Str ""
+  Assign =
+    Var x
+    Int 1
+  Assign &=
+    Var s
+    Str ".txt"
+  Assign =
+    Index
+      Var a
+      Var i
+    Int 0
+  Assign =
+    Field duration
+      Var obj
+    Int 2
+  Assign *=
+    Index
+      Var x
+      Binary >
+        Var x
+        Int 0
+    Int 2
+  Assign +=
+    Var total
+    Index
+      Var samples
+      Var i

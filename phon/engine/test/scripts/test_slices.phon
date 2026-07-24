@@ -1,0 +1,85 @@
+# Slices (design §9): 1-based, inclusive on both ends, negatives from the end,
+# optional step. List slices read to a new List and assign element-wise or by
+# scalar broadcast; String slices read grapheme substrings (read-only).
+
+# --- List reads ---
+var a = [10, 20, 30, 40, 50]
+
+assert(a[2:4] == [20, 30, 40], "basic slice")
+assert(a[1:5] == a, "full explicit slice equals whole")
+assert(a[:] == a, "bare colon = whole list")
+assert(a[3:] == [30, 40, 50], "open stop")
+assert(a[:3] == [10, 20, 30], "open start")
+assert(a[2:2] == [20], "single-element slice")
+
+# Negative indices count from the end.
+assert(a[-3:-1] == [30, 40, 50], "negative bounds")
+assert(a[:-2] == [10, 20, 30, 40], "open start, negative stop")
+assert(a[-1:] == [50], "last element as a slice")
+
+# Step.
+assert(a[1:5 step 2] == [10, 30, 50], "positive step")
+assert(a[2:5 step 2] == [20, 40], "step landing before stop")
+assert(a[5:1 step -1] == [50, 40, 30, 20, 10], "reverse")
+assert(a[:] == [10, 20, 30, 40, 50], "list unchanged by reads")
+
+# Empty ranges are valid and yield an empty list.
+assert(a[3:2] == [], "empty forward range")
+assert(a[2:3 step -1] == [], "empty reverse range")
+assert(len([][:]) == 0, "slice of empty list")
+
+# --- List slice assignment: equal-length list replaces element-wise ---
+var b = [1, 2, 3, 4, 5]
+b[2:4] = [20, 30, 40]
+assert(b == [1, 20, 30, 40, 5], "element-wise replace")
+
+b[1:5 step 2] = [100, 300, 500]
+assert(b == [100, 20, 300, 40, 500], "strided replace")
+
+# Scalar broadcast fills every selected position.
+var c = [1, 2, 3, 4, 5]
+c[2:4] = 0
+assert(c == [1, 0, 0, 0, 5], "scalar broadcast")
+
+c[:] = 7
+assert(c == [7, 7, 7, 7, 7], "broadcast over whole list")
+
+# A length-mismatched list rhs is an error.
+var mismatch = false
+try
+    var d = [1, 2, 3, 4, 5]
+    d[2:4] = [1, 2]          # 3 targets, 2 values
+catch e as Error
+    mismatch = true
+end
+assert(mismatch, "length mismatch raises")
+
+# An out-of-range explicit bound is an error.
+var oor = false
+try
+    var d = [1, 2, 3]
+    var x = d[1:9]
+catch e as Error
+    oor = true
+end
+assert(oor, "out-of-range slice raises")
+
+# --- String slices (grapheme-based, read-only) ---
+var s = "phonetics"
+assert(s[1:5] == "phone", "string slice")
+assert(s[:3] == "pho", "string open start")
+assert(s[4:] == "netics", "string open stop")
+assert(s[-3:-1] == "ics", "string negative bounds")
+assert(s[1:9 step 2] == "poeis", "string strided")
+assert(s[9:1 step -1] == "scitenohp", "string reversed")
+
+var readonly = false
+try
+    var t = "abc"
+    t[1:2] = "xy"
+catch e as Error
+    readonly = true
+end
+assert(readonly, "string slice assignment is read-only")
+
+print("slice tests passed")

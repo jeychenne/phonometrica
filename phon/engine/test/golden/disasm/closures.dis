@@ -1,0 +1,28 @@
+proto #0 <anon>  params=0 regs=3 upvals=0 consts=1
+0000  CLOSURE    0 0
+0001  DEFMETHOD  0 0             ; make_adder
+0002  LOADK      1 0             ; :make_adder
+0003  LOADI      2 5
+0004  CALLG      1 1 0
+0005  EXTRA_ARG  0
+0006  MOVE       0 1 0
+0007  SETMODULE  0 0
+0008  GETMODULE  1 0
+0009  LOADI      2 10
+0010  MAYBEBOX   2 0 1
+0011  CALL       1 1 0
+0012  MOVE       0 1 0
+0013  HALT       0 1 0
+
+proto #0 make_adder  params=1 regs=3 upvals=0 consts=0
+0000  CLOSURE    1 0
+0001  MOVE       2 1 0
+0002  RET        2 1 0
+0003  RET        0 0 0
+
+proto #0 add  params=1 regs=3 upvals=1 consts=0
+0000  GETUPVAL   2 0 0
+0001  ADD        1 0 2
+0002  RET        1 1 0
+0003  RET        0 0 0
+

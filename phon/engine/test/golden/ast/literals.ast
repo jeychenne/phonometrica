@@ -1,0 +1,75 @@
+Module
+  ExprStmt
+    Int 42
+  ExprStmt
+    Int 1000000
+  ExprStmt
+    Float 3.14159
+  ExprStmt
+    Float 0.0015
+  ExprStmt
+    Bool true
+  ExprStmt
+    Bool false
+  ExprStmt
+    Null
+  ExprStmt
+    Str "plain string"
+  ExprStmt
+    Str "raw \\d+ regex"
+  ExprStmt
+    Str "line one\nline two"
+  ExprStmt
+    StringInterp
+      Str "Analyzing "
+      Var path
+      Str ": "
+      Var n
+      Str " found"
+  ExprStmt
+    StringInterp
+      Str "\ntriple\n"
+      Binary +
+        Var a
+        Var b
+      Str "\nlines\n"
+  ExprStmt
+    List
+  ExprStmt
+    List
+      Int 1
+      Int 2
+      Int 3
+  ExprStmt
+    Array rank=1 1x3
+      Int 1
+      Int 2
+      Int 3
+  ExprStmt
+    Array rank=2 2x3
+      Int 1
+      Int 2
+      Int 3
+      Int 4
+      Int 5
+      Int 6
+  ExprStmt
+    Array rank=2 3x1
+      Int 1
+      Int 2
+      Int 3
+  ExprStmt
+    Table
+  ExprStmt
+    Table
+      Entry
+        Str "vowel"
+        Int 1
+      Entry
+        Str "consonant"
+        Int 2
+  ExprStmt
+    Set
+      Var a
+      Var b
+      Var c

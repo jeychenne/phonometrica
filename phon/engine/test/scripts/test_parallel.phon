@@ -1,0 +1,78 @@
+# parallel_map (concurrency §13): apply a function to every element of a list across the
+# runtime thread pool, returning a new list in order. Each worker runs on its own scratch
+# Isolate; inputs/results are transferred, and the function's shared constants are frozen
+# up front so many workers can run it at once safely. The function must be a non-capturing
+# lambda or a top-level function called through one.
+
+# --- basic elementwise map ------------------------------------------------------
+var xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+var sq = parallel_map(xs, x -> x * x)
+assert(len(sq) == 10, "result length matches input")
+for i = 1 to 10 do
+    assert(sq[i] == xs[i] * xs[i], "element squared")
+end
+
+# --- order is preserved ---------------------------------------------------------
+assert(parallel_map([10, 20, 30], function(x) return x + 1 end) == [11, 21, 31], "order preserved")
+
+# --- a larger list exercises real fan-out ---------------------------------------
+var big = []
+for i = 1 to 1000 do
+    append(big, i)
+end
+var doubled = parallel_map(big, x -> x * 2)
+var total = 0
+for i = 1 to 1000 do
+    total += doubled[i]
+end
+assert(total == 1001000, "sum of 2*(1..1000)")   # 2 * (1000*1001/2)
+
+# --- the worker function may use builtins with shared constants ------------------
+# `regex('(\d+)')` builds a shared string constant that every worker touches; freezing
+# it makes the concurrent refcounting safe (this is the crux of the design).
+function first_num(s)
+    var m = match(regex('(\d+)'), s)
+    if m == null then return "none" else return group(m, 1) end
+end
+var labels = ["order-42", "qty-7", "none", "id-1000", "x9y"]
+assert(parallel_map(labels, s -> first_num(s)) == ["42", "7", "none", "1000", "9"],
+       "regex inside a parallel worker")
+
+# --- an empty list maps to an empty list ----------------------------------------
+assert(parallel_map([], x -> x) == [], "empty input")
+
+# --- a capturing lambda is rejected (would share mutable upvalue boxes) ----------
+function make_adder(k)
+    return x -> x + k
+end
+var rejected = false
+try
+    parallel_map([1, 2, 3], make_adder(10))
+catch e as Error
+    rejected = true
+end
+assert(rejected, "a capturing function cannot be run in parallel")
+
+# --- a non-callable second argument is rejected ---------------------------------
+var not_fn = false
+try
+    parallel_map([1, 2, 3], 42)
+catch e as Error
+    not_fn = true
+end
+assert(not_fn, "the second argument must be a function")
+
+# --- an error in a worker propagates to the caller ------------------------------
+function boom(x)
+    if x == 3 then throw Error("boom at 3") end
+    return x
+end
+var propagated = false
+try
+    parallel_map([1, 2, 3, 4], y -> boom(y))
+catch e as Error
+    propagated = true
+end
+assert(propagated, "a worker error re-raises on the caller")
+
+print("parallel_map tests passed")

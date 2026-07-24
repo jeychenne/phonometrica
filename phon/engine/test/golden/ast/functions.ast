@@ -1,0 +1,88 @@
+Module
+  Function duration
+    Param i as Interval
+    Returns Float
+    Block
+      Return
+        Binary -
+          Field xmax
+            Var i
+          Field xmin
+            Var i
+  Function pitch
+    Param s as Sound
+    Param floor as Float
+      Int 70
+    Param ceiling as Float
+      Int 500
+    Block
+      Return
+        Var s
+  Function print
+    Param values as Object ...
+    Param sep as String
+      Str " "
+    Param end_line as String
+      Str "\n"
+    Block
+      Return
+        Null
+  Function normalize
+    Param x as Array ref
+    Block
+      Assign /=
+        Var x
+        Call
+          Var max
+          Call
+            Var abs
+            Var x
+  Function extend open
+    Block
+      Return
+        Int 1
+  Function helper local
+    Param x
+    Block
+      Return
+        Var x
+  Function +
+    Param a as Fraction
+    Param b as Fraction
+    Returns Fraction
+    Block
+      Return
+        Var a
+  Var square
+    Function <anonymous>
+      Param x
+      Block
+        Return
+          Binary ^
+            Var x
+            Int 2
+  Var results
+    Call
+      Var map
+      Function <anonymous>
+        Param x
+        Block
+          Return
+            Binary *
+              Var x
+              Int 2
+      Var values
+  Function classify
+    Param n
+    Block
+      Return
+        IfExpr
+          Case
+            Binary >
+              Var n
+              Int 0
+            Call
+              Var mean
+              Var n
+          Else
+            Int 0

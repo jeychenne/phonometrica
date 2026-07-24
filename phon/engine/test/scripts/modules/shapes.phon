@@ -1,0 +1,17 @@
+# A module that imports another module's class and subclasses it — used to test that
+# constructing the subclass from a *third* module applies each ancestor's field defaults
+# in the ancestor's own module scope (design §11). BigWidget's base, Widget, lives in
+# geometry; its `name` default names geometry's private LABEL, while BigWidget's own
+# `kind` default names shapes' private KIND. A correct build resolves each in its own home.
+import geometry for Widget
+
+const KIND = "big"
+
+class BigWidget is Widget
+    field kind as String = KIND
+    field size as Integer = 100
+end
+
+function make_big() as BigWidget
+    return BigWidget()
+end

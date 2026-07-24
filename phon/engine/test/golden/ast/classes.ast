@@ -1,0 +1,96 @@
+Module
+  Class Interval
+    Field xmin as Float
+    Field xmax as Float
+      Int 0
+    Field text
+    Field label
+      Str ""
+    Function init method
+      Param xmin as Float
+      Param xmax as Float
+      Param text as String
+      Block
+        Assign =
+          Field xmin
+            This
+          Var xmin
+        Assign =
+          Field xmax
+            This
+          Var xmax
+        Assign =
+          Field text
+            This
+          Var text
+    Function to_string method
+      Returns String
+      Block
+        Return
+          StringInterp
+            Str "["
+            Field xmin
+              This
+            Str ", "
+            Field xmax
+              This
+            Str "] "
+            Field text
+              This
+  Class Tier ref
+    Field intervals as List
+      List
+    Function iterate method
+      Block
+        Return
+          Call
+            Var iterate
+            Field intervals
+              This
+  Class PointTier is Tier
+    Field points as List
+      List
+  Class Extensible open
+    Field value as Integer
+      Int 0
+    Field squared as Integer
+      Get
+        Block
+          Return
+            Binary *
+              Field value
+                This
+              Field value
+                This
+    Field scaled as Integer
+      Get
+        Block
+          Return
+            Binary *
+              Field value
+                This
+              Int 10
+      Set v as Integer
+        Block
+          Assign =
+            Field value
+              This
+            Binary /
+              Var v
+              Int 10
+    Field bounded as Integer
+      Int 0
+      Set v as Integer
+        Block
+          Assign =
+            Field bounded
+              This
+            Var v
+  Class Cursor local
+    Field pos as Integer
+      Int 0
+    Field local buffer as String
+      Str ""
+  Class Handle local open ref is Resource
+    Field id as Integer
+      Int 0
