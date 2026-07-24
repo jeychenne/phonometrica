@@ -1496,3 +1496,132 @@ through a ref parameter (engine), action "shortcut" key unimplemented.
 Gates: engine 407×3 (ASan/TSan); test/engine Debug+Release; frequentist
 552/552 Release (re-run after the collector fix); offscreen smokes incl.
 plugin+protocols+project+E1 probe, plus a full ASan smoke (0 errors).
+
+# A6 — demolition (2026-07-24)
+
+The old engine is gone. 79 files / ~24.7k lines deleted; nothing in the tree
+compiles, includes or links anything under `phon/runtime` or `phon/base` any
+more.
+
+## Deleted
+
+- **`phon/runtime/`** (the whole old engine: compiler, VM, object model,
+  builtins, func_*.hpp tables). This takes the **A0 poly-box seam** with it —
+  `PolyObject`/`TPolyObject<T>`/`poly_value`/`poly_box_of`/`poly_payload_offset`
+  in typed_object.hpp, the poly branches in variant.hpp's `cast<>` and
+  runtime.hpp's VTable, and `traits::hierarchy_root`/`is_poly_boxed`/
+  `maybe_cyclic` in traits.hpp. Nothing outside phon/runtime referenced any of
+  them: the vfs.hpp `namespace traits { hierarchy_root ... }` block the roadmap
+  points at had already been replaced by the `rt.add_class<T>` comment when A2
+  landed early in the A1 stage-2 flip, and the `maybe_cyclic`/`is_clonable`
+  specializations went with it.
+- **`phon/base/`** (old shim `Array<T>` and the PCRE2-backed `Regex`).
+- **`phon/utils/alloc.{hpp,cpp}`** and **`phon/utils/file_system.cpp`** —
+  old-engine-only since the A1 flip (not in `UTILS_SOURCES`); their
+  functionality comes from the engine's `base/alloc` and `base/file_system`,
+  which `phon/utils/file_system.hpp` forwards onto.
+- **`test/engine/test_vfs_decell_old_engine.phon`** (old language, unrunnable —
+  it existed to prove step 5 on the old binary; the content lives in git
+  history). Nothing referenced it: not run_all.phon, not validate_tests.
+- **`stats_host/shim/phon/{array,error}.hpp`** — exact duplicates of the app's
+  own forwarders once the include order is fixed (see below).
+
+## Kept, deliberately
+
+- **`phon/index_conversion.hpp`** — since A3 this is the app-side 1-based
+  converter used at the binding boundary of every app native (the original A6
+  bullet predates that move). Its header comment no longer claims it dies with
+  the old engine.
+- **The `phon/*.hpp` forwarders** (string/array/regex/file/runtime/error/
+  hashmap/dictionary/definitions) — they point at the engine and are the app's
+  include surface. Only stale comments naming `phon/runtime/*` or
+  `phon/base/*` were rewritten (array.hpp, definitions.hpp,
+  index_conversion.hpp).
+- **`Element::class_name()` and its overrides** — engine-independent, and the
+  project-XML format depends on the strings they return.
+- **`phon/utils/{ref_count,slice}.hpp`** — still used by property.hpp and
+  sound.hpp respectively.
+- **The vendored `phon/third_party/{pcre2,utf8proc}` trees.** Both are now
+  unreferenced (the engine links the *system* pcre2; utf8proc had only
+  old-engine callers), so their build wiring is gone, but the sources are left
+  on disk: removing them means touching README/docs/debian licensing copy,
+  which is orthogonal to this step. **Follow-up: delete the trees and their
+  acknowledgement entries.**
+
+## vfs.hpp
+
+15 of the 21 forward declarations at the top were dead (`DataTable`, `Dataset`,
+`Concordance`, `Spectrum`, `Script`, `Note`, `Query`, the four `*Query`
+subclasses, `VoiceQualityQuery`, `Bookmark`, `TimeStamp`, `Analysis`) — they
+existed to name the classes in the deleted `hierarchy_root` specializations;
+the surviving hits were the `FileType` enumerators and comment text, not the
+class names. `Element`/`Directory`/`Document`/`Runtime` stay (used by the
+declarations below). The class list is no longer duplicated in a comment:
+`Project::preinitialize` is the authoritative registration order.
+
+## CMake
+
+- `phon-runtime`, `RUNTIME_SOURCES` and `THIRDPARTY_SOURCES` deleted. The
+  engine subproject was already unconditional (`PHON_ENGINE_DIR` + a
+  FATAL_ERROR if missing); no `PHON_WITH_NEW_ENGINE` toggle survived on the app
+  side — the only mentions left were stale comments in stats_host/CMakeLists.txt
+  and test/engine/README.md, both rewritten.
+- The vendored PCRE2 subdirectory, `include_directories` on its interface, and
+  the `-DUTF8PROC_STATIC` / `-DPCRE2_CODE_UNIT_WIDTH=8` / `-DPCRE2_STATIC=1`
+  definitions are gone: nothing includes `pcre2.h` any more, and the engine's
+  `phon/engine/types/regex.hpp` defines `PCRE2_CODE_UNIT_WIDTH` itself.
+  `shlwapi`/`m` were already linked on the top-level target.
+
+## stats_host: the shim fold, and why one header stays
+
+Include order is now **shim → repository root → `${PHON_ENGINE_DIR}`**, the
+same order the application targets use. That single change made two of the
+three shim headers redundant: with the repo root ahead of the engine, the
+analysis sources pick up the app's own `phon/array.hpp` and `phon/error.hpp`
+(the engine's `phon/error.hpp` is a different header — it exposes
+RuntimeError/SyntaxError, not the formatted `error(...)` helper the analysis
+layer throws). The `traits::maybe_cyclic` stub the shim carried had no
+remaining specializations to serve and went with it.
+
+**`stats_host/shim/phon/application/data_table.hpp` stays** (decision recorded
+per the roadmap's "record in MIGRATION_NOTES" escape hatch). Folding it back
+into the real `Dataset` is not a header problem — the real `DataTable` derives
+from `Document` → `Element`, so compiling against it pulls in vfs.cpp,
+project.cpp, dataset.cpp, concordance.cpp, the property model, pugixml, sqlite,
+sndfile and rtaudio: effectively the whole `phon-app` library. That would turn
+the headless statistics runner into "the app minus the GUI" and cost the
+property this target exists for — a small, fast Release build for the
+552-assertion frequentist suite (Debug fits through the app binary take hours).
+The shim is ~90 lines of read-only CSV table and its header documents the exact
+parity contract with `Dataset::get_cell`.
+
+## Gates (all green)
+
+1. **Builds**: Debug (`-g -O2`, mirroring the main tree) and Release, both from
+   the worktree, `phonometrica` + `phon_stats`. Release was a from-scratch
+   configure+build.
+2. **test/engine/run_all.phon** through both binaries.
+3. **Frequentist statistics 552/552** through the Release *app* binary
+   (`PHON_MODULE_PATH=$PWD/test/statistics/lib build-rel/phonometrica -r
+   test/statistics/frequentist/run_all.phon`) and through the Release
+   `phon_stats` (the shim path, same suite).
+4. **Offscreen GUI smokes** (sandboxed `HOME`, `QT_QPA_PLATFORM=offscreen`,
+   `PHON_GUI_SMOKE=8`): validate_tests.phon-project opened from argv — clean
+   exit, settings.phon written; plus `test/gui/run_smoke_formants.sh`
+   (ALL OK, F1/F2/F3 on target, shape checks).
+5. **Project-XML byte-compatibility** vs a pre-A6 Debug binary built from
+   ab6452a: a scripted save of a project with a Script, two Datasets and all
+   three property types (text/numeric/boolean) in text mode, and a second
+   offscreen save covering the **Corpus/Sound** branch (audio formats only
+   register during GUI initialization). Both diffs are **byte-identical** —
+   even `<UUID>`, which the roadmap allows to differ.
+
+## Pre-existing breakage surfaced, NOT fixed here
+
+`tools/calibrate_formants.cpp` (optional target, `BUILD_CALIBRATION=OFF` by
+default, so no gate covers it) still constructs the OLD engine's runtime —
+`Runtime rt(argv[0])` at line 1083; the engine's Runtime takes no arguments.
+The file was last touched on 2026-07-10, i.e. before the A1 flip: it was missed
+by the A1–A5 port, not broken by A6. Left alone deliberately (out of scope);
+tracked as a follow-up. The other optional target, `BUILD_UNIT_TEST`, globs a
+`unit_test/` directory that does not exist in the repository — also pre-existing.
