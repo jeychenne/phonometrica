@@ -1541,12 +1541,10 @@ more.
   project-XML format depends on the strings they return.
 - **`phon/utils/{ref_count,slice}.hpp`** — still used by property.hpp and
   sound.hpp respectively.
-- **The vendored `phon/third_party/{pcre2,utf8proc}` trees.** Both are now
-  unreferenced (the engine links the *system* pcre2; utf8proc had only
-  old-engine callers), so their build wiring is gone, but the sources are left
-  on disk: removing them means touching README/docs/debian licensing copy,
-  which is orthogonal to this step. **Follow-up: delete the trees and their
-  acknowledgement entries.**
+- **The vendored `phon/third_party/pcre2` tree** — see "Vendored PCRE2" below.
+  (`phon/third_party/utf8proc` had only old-engine callers and was deleted, with
+  its README/install.rst/acknowledgements/debian-copyright entries; the engine
+  carries its own Unicode tables, `base/unicode.cpp`.)
 
 ## vfs.hpp
 
@@ -1566,11 +1564,29 @@ declarations below). The class list is no longer duplicated in a comment:
   FATAL_ERROR if missing); no `PHON_WITH_NEW_ENGINE` toggle survived on the app
   side — the only mentions left were stale comments in stats_host/CMakeLists.txt
   and test/engine/README.md, both rewritten.
-- The vendored PCRE2 subdirectory, `include_directories` on its interface, and
-  the `-DUTF8PROC_STATIC` / `-DPCRE2_CODE_UNIT_WIDTH=8` / `-DPCRE2_STATIC=1`
-  definitions are gone: nothing includes `pcre2.h` any more, and the engine's
-  `phon/engine/types/regex.hpp` defines `PCRE2_CODE_UNIT_WIDTH` itself.
-  `shlwapi`/`m` were already linked on the top-level target.
+- The `-DUTF8PROC_STATIC` / `-DPCRE2_CODE_UNIT_WIDTH=8` / `-DPCRE2_STATIC=1`
+  global definitions are gone: no app TU includes `pcre2.h` any more (the
+  engine's `phon/engine/types/regex.hpp` defines the code-unit width itself,
+  and the vendored PCRE2 target propagates `PCRE2_STATIC` through its usage
+  requirements). `shlwapi`/`m` were already linked on the top-level target.
+
+## Vendored PCRE2 (owner decision, 2026-07-24)
+
+Phonometrica keeps using the **vendored** PCRE2 — for the engine as well, not
+just for itself. The engine resolves PCRE2 with
+`find_library(PCRE2_LIBRARY NAMES pcre2-8 REQUIRED)` / `find_path(PCRE2_INCLUDE_DIR ...)`,
+so the app pre-seeds both cache entries **before** `add_subdirectory` on the
+engine: `PCRE2_LIBRARY` becomes the vendored alias target `pcre2-8`
+(→ `pcre2-8-static`, which propagates `PCRE2_STATIC` and its generated
+`interface/` include directory) and `PCRE2_INCLUDE_DIR` the generated header
+directory. **No engine change was needed**, and standalone engine builds still
+find the system library.
+
+Verified on the linked binary: `libpcre2-8.a` is on the link line, `objdump -p`
+shows no direct `NEEDED` entry for any system PCRE2, and `pcre2_compile_8` is
+not undefined. The two `libpcre2-*.so` entries `ldd` reports are transitive —
+glib pulls the 8-bit library, Qt6Core the 16-bit one. Vendored version is
+10.47, ahead of the 10.46 the system provided.
 
 ## stats_host: the shim fold, and why one header stays
 

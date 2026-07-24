@@ -19,10 +19,6 @@ Files: phon/third_party/pcre2/*
 Copyright: University of Cambridge
 License: BSD-3-Clause
 
-Files: phon/third_party/utf8proc/*
-Copyright: utf8proc contributors
-License: MIT
-
 Files: phon/third_party/pugixml/*
 Copyright: Arseny Kapoulkine
 License: MIT

@@ -27,6 +27,19 @@ option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool"
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
+# --- PCRE2 (vendored, static, 8-bit code units) ----------------------------------------------------
+# Backs the engine's Regex type. This must be configured BEFORE the engine subdirectory: the engine
+# looks PCRE2 up with find_library/find_path, and pre-seeding those cache entries makes it bind to
+# the vendored target (the alias pcre2-8 -> pcre2-8-static, which propagates both the PCRE2_STATIC
+# definition and its generated interface/ include directory) instead of a system copy. Standalone
+# engine builds are unaffected — they keep finding the system library.
+set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
+set(PCRE2_LIBRARY pcre2-8 CACHE STRING "PCRE2 library the engine links (vendored target)" FORCE)
+set(PCRE2_INCLUDE_DIR "${CMAKE_BINARY_DIR}/phon/third_party/pcre2/interface"
+    CACHE PATH "PCRE2 headers the engine includes (vendored, generated)" FORCE)
+
 # --- Scripting engine -----------------------------------------------------------------------------
 # The engine lives in a sibling repository. The application targets link phon_engine and include
 # its headers via the phon/*.hpp forwarders. The old in-tree engine (phon/runtime, phon/base) was
