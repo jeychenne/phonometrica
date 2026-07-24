@@ -397,12 +397,97 @@ original spec below):**
    run a plugin script, settings round-trip. Before A4 the GUI aborts at
    startup by design; use baseline comparison instead.
 
+### A8 — absorb the engine into this repository (planned 2026-07-24)
+
+*Beyond the original scope of this roadmap (which ended at old-engine removal).
+Goal: `~/Devel/engine` ceases to exist as a separate project; the engine lives
+in `phonometrica/phon/engine/` and is built as part of this repository.*
+
+**Start from what is already true.** The engine is ALREADY consumed as a CMake
+subdirectory of the app (`add_subdirectory(${PHON_ENGINE_DIR} …)`,
+CMakeLists.txt:50, since A1). Its whole target set is reachable from the app's
+build tree — verified 2026-07-24: `cmake --build build --target phon_unit_tests`
+builds, and the binary at `build/phon_engine_build/phon_unit_tests` reports
+407 cases / 0 failed. So A8 is a **file move plus a de-duplication**, not a
+build restructure. Budget the risk accordingly: the dangerous part is #2 below,
+not the wiring.
+
+**The include paths already line up.** The engine's public headers live at
+`phon/engine/...` in its repo, and every app TU already spells them
+`<phon/engine/...>`. Moving `~/Devel/engine/phon/engine/` (47 .cpp + 59 .hpp
+across base/compile/concurrency/core/lib/object/runtime/types/vm) to
+`phonometrica/phon/engine/` changes **zero includes** on either side.
+
+**1. Move, preserving history.** Use `git subtree add --prefix=phon/engine`
+(or a git-filter-repo rewrite) rather than a plain copy: DEVIATIONS.md cites
+engine commit hashes throughout, and MIGRATION_NOTES cites them too (`55ee38a
+DEVIATIONS 28`, `4b93703 DEVIATIONS 26`, `14f0205 DEVIATIONS 27`). A plain copy
+kills 57 commits of provenance and every one of those citations.
+
+**2. Resolve the facade-header collision — THE load-bearing step.** Eight
+top-level headers exist in both trees at the same path: `array.hpp`,
+`dictionary.hpp`, `error.hpp`, `file.hpp`, `hashmap.hpp`, `regex.hpp`,
+`runtime.hpp`, `string.hpp`. Today the app's copies win by include ORDER
+(CMakeLists.txt:146-149, app root before engine root — the same trick
+stats_host uses, stats_host/CMakeLists.txt:33-37). Once both live in one tree
+that ordering has nothing left to disambiguate, so each name must resolve to
+exactly one file. **Keep the app's**, which are supersets where they differ —
+`phon/error.hpp` in particular carries the formatted `error(...)` helpers that
+the whole analysis layer throws, and the engine's version does not (it exposes
+RuntimeError/SyntaxError instead; the app's forwarder pulls those in). Three
+engine-only facades (`list.hpp`, `set.hpp`, `table.hpp`) simply move in.
+Delete deliberately, one at a time, then force a clean full rebuild of both
+configurations — this is exactly the failure mode where the compiler silently
+sees a different header than you think it does.
+
+**3. Bring the non-source assets across.** `phon_flags` (INTERFACE target
+carrying the warning/sanitizer flags), `phon_unit_tests` + `test/unit`
+(35 files), `test/golden` (ast + disasm), `test/scripts`, `phon_repl` +
+`examples/`, `phon_bench` + `bench/`, `tools/unicode` (generator + the UAX #29
+conformance data referenced by `PHON_UNICODE_DATA_DIR`), plus `DEVIATIONS.md`,
+`design/{architecture,design,references}.md` and the engine's `CLAUDE.md`
+(this repo has none, so it lands at the root uncontested).
+
+**4. Keep the engine buildable in isolation — the gate that A8 endangers.**
+A7 gate 1 is "engine unit suite ×3 (normal/ASan/TSan)", cheap today because the
+engine builds alone. Nested naively it stops being cheap: `PHON_SANITIZE` flows
+through `phon_flags` → `phon_engine` (PUBLIC) → `phon-app`, so an ASan run would
+instrument Qt, whisper, sndfile, REAPER and SPTK to test the VM. Requirement:
+`-DWITH_APPLICATION=OFF -DWITH_GUI=OFF` must configure and build `phon_engine`
++ `phon_unit_tests` alone, with `PHON_SANITIZE`/`PHON_TSAN`/`PHON_WERROR`
+surviving as options. If that regresses, the sanitizer gate becomes too slow to
+run, and a gate too slow to run is a gate that stops being run.
+
+**5. Retire the seam.** Drop `PHON_ENGINE_DIR` and its FATAL_ERROR guard
+(CMakeLists.txt:46-49), the second `include_directories` (CMakeLists.txt:149),
+and the `${PHON_ENGINE_DIR}` entry in stats_host's include list
+(stats_host/CMakeLists.txt:36) — with its include-order comment rewritten,
+since "repository root then engine" collapses to one root. Sweep the stale
+`PHON_ENGINE_DIR` mentions in MIGRATION_NOTES (lines 54, 956, 1563, 1593, 1675)
+and any `-DPHON_ENGINE_DIR=…` in build instructions. Update the vendored-PCRE2
+block (CMakeLists.txt:29-40): with the engine in-tree, the cache pre-seeding
+that makes its `find_library` bind to the vendored target can become a direct
+`target_link_libraries(phon_engine PUBLIC pcre2-8)`, which is what the seeding
+is emulating.
+
+**Gates:** the full A7 list, plus (a) `phon_unit_tests` 407/0 in all three
+configurations built FROM THIS REPOSITORY, (b) an engine-only configure
+(`-DWITH_APPLICATION=OFF -DWITH_GUI=OFF`) that does not require Qt/sndfile,
+(c) `phon_repl` still runs `examples/demo.phon` and `--workers`, and (d) the
+project-XML byte-compat diff against a pre-A8 binary — a header-resolution
+mistake in step 2 is exactly the kind of thing that shows up as changed
+serialization rather than as a compile error.
+
+**Sequencing note:** close A7 BEFORE starting A8. While the engine is still a
+separate repo with its own suite, "engine bug" and "app bug" are separable by
+construction, and A8 is the step most likely to need that separation.
+
 ---
 
 **Suggested sequencing:** P0 (commit engine untracked files) → E4 → A1 → A2 →
 A3 (subsystem by subsystem), with E1/E2/E3 landing anytime before A4 and E5's
 decisions made before A3 starts (they affect native names) → A4 → A5 → A6 →
-A7. E-items are parallel to A1. Run the A7 gates at every step boundary;
+A7 → A8. E-items are parallel to A1. Run the A7 gates at every step boundary;
 anything that can't be gated directly gets a pre-change-baseline comparison
 build (the step-5 pattern: `git worktree add <scratch> <commit>` + build +
 diff behavior).
