@@ -1679,3 +1679,47 @@ resonators, known formants) — all modes exercised (default report, --oracle,
 --performant, --f3, --heur, --persist, --consensus, --tune, --diph, --external).
 Measured formants track the synthesized ones (Weenink MAE 30 Hz), and
 --external reproduces injected offsets exactly (+30/-25/+40 → 30.0/25.0/40.0).
+
+# A7 closure (2026-07-24, on merge commit a54d6c5)
+
+The full acceptance-gate list re-run on the merged post-A6 tree (A6 demolition
++ the calibrate_formants straggler + vendored PCRE2). All five green.
+
+**1. Engine unit suite ×3.** `~/Devel/engine`, all three existing build dirs
+rebuilt and run: `build` (Debug, PHON_WERROR=ON), `build-asan`
+(PHON_SANITIZE=ON), `build-tsan` (RelWithDebInfo, PHON_TSAN=ON). Each reports
+**407 cases (0 failed), 2 213 309 checks (0 failed)**, exit 0, with no ASan or
+TSan diagnostic. The engine tree is unmodified since A5 (55ee38a) — this is a
+re-verification, not a new result. Note `phon_unit_tests` also builds and
+passes from the APP's build tree (`cmake --build build --target
+phon_unit_tests`), which is the fact A8 leans on.
+
+**2. test/engine.** `run_all.phon` green through both the Debug and the
+Release application binary.
+
+**3. Statistics.** Frequentist **552 passed / 0 failed** through the Release
+app binary, and the same through the Release `phon_stats` (the stats_host shim
+path; run pre-merge, and the merge touches nothing under stats_host/).
+Bayesian: gaussian, poisson, binomial, negbin, beta, negbin_owls and
+real_schwa all OK. `student` fails **exactly 10 assertions, every one of them
+`nu(student)`** (M1 mean/sd/hi, M2 mean, M3 mean, M4 mean/hi, M5 mean/sd/hi)
+and nothing else — M1 `hyper.mean` comes out at 19.677134338965 against the
+19.677134339 recorded for the OLD engine in the step-4b notes. That is the
+documented Laplace-vs-HMC ν fundamental, unchanged by the whole migration.
+
+**4. Project-XML byte-compatibility.** Scripted saves diffed against a
+pre-A6 Debug binary (built from ab6452a and kept aside): identical in text
+mode (Script + two Datasets + text/numeric/boolean properties) and in
+offscreen GUI mode (Corpus/Sound branch, which text mode cannot reach because
+audio formats register only during GUI initialization). Byte-identical
+including `<UUID>`, which the gate would have allowed to differ.
+
+**5. GUI smokes.** Sandboxed HOME, `QT_QPA_PLATFORM=offscreen`,
+`PHON_GUI_SMOKE=8`: validate_tests.phon-project opened from argv, clean exit,
+settings.phon written; `test/gui/run_smoke_formants.sh` reports ALL OK with
+F1/F2/F3 on target and the shape checks passing. The gate's fuller manual list
+(sound view, annotation edit, query, plugin script) was exercised at A4/A5 and
+is not re-driven here — the scripted smokes are what runs unattended.
+
+**A7 is closed. The gate list stays live**: re-run it at every future step
+boundary, starting with A8 (see the roadmap).

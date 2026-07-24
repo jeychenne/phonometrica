@@ -382,7 +382,28 @@ original spec below):**
   them.
 - CMake: drop phon-runtime; `PHON_WITH_NEW_ENGINE` becomes unconditional.
 
-### A7 — acceptance gates (run after every A-step; all must hold at the end)
+### A7 — acceptance gates (run after every A-step; all must hold at the end) — CLOSED (2026-07-24, on merge commit a54d6c5)
+
+**Closure run, all five green on the merged post-A6 tree** (evidence in
+MIGRATION_NOTES "A7 closure"):
+1. `phon_unit_tests` **407 cases / 0 failed, 2 213 309 checks / 0 failed** in
+   each of the three configurations (build, build-asan, build-tsan), no ASan
+   or TSan report.
+2. `test/engine/run_all.phon` green through BOTH the Debug and Release app
+   binaries.
+3. Frequentist **552/552** (Release app binary; and through `phon_stats`).
+   Bayesian: 7 of 8 families OK; `student` produces **exactly 10 failures, all
+   `nu(student)`, none elsewhere**, with M1 `hyper.mean` 19.677134338965 —
+   the documented old-engine value (19.677134339). Baseline, not regression.
+4. Project-XML saves byte-identical to a pre-A6 binary in text AND GUI mode
+   (Corpus/Sound + Data/Dataset, all three property types); `<UUID>` matched
+   too, though the gate permits it to differ.
+5. Offscreen GUI smokes: project opened from argv (clean exit, settings.phon
+   written) and `test/gui/run_smoke_formants.sh` (ALL OK).
+
+The gate list itself stands — re-run it at every future step boundary,
+starting with A8.
+
 1. Engine unit suite ×3 builds (normal/ASan/TSan) in ~/Devel/engine.
 2. `test/engine/run_all.phon` through the real app binary (new engine; until
    A4 lands, through `phon_repl` from the engine build as today).
