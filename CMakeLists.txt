@@ -26,19 +26,30 @@ option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool"
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
-# --- New scripting engine (A1 base-type swap: the app now links the NEW engine) -------------------
-# The new engine lives in a sibling repository. Since the A1 flip the application targets link
-# phon_engine and include its headers via the phon/*.hpp forwarders; the old engine
-# (phon/runtime, target phon-runtime) is kept in-tree for archaeology only and is excluded from
-# the default build (the two engines define identically named types in namespace phonometrica and
-# can never meet in one binary or TU).
-set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to the new engine repository")
+# --- PCRE2 (vendored, static, 8-bit code units) ----------------------------------------------------
+# Backs the engine's Regex type. This must be configured BEFORE the engine subdirectory: the engine
+# looks PCRE2 up with find_library/find_path, and pre-seeding those cache entries makes it bind to
+# the vendored target (the alias pcre2-8 -> pcre2-8-static, which propagates both the PCRE2_STATIC
+# definition and its generated interface/ include directory) instead of a system copy. Standalone
+# engine builds are unaffected — they keep finding the system library.
+set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
+set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
+set(PCRE2_LIBRARY pcre2-8 CACHE STRING "PCRE2 library the engine links (vendored target)" FORCE)
+set(PCRE2_INCLUDE_DIR "${CMAKE_BINARY_DIR}/phon/third_party/pcre2/interface"
+    CACHE PATH "PCRE2 headers the engine includes (vendored, generated)" FORCE)
+
+# --- Scripting engine -----------------------------------------------------------------------------
+# The engine lives in a sibling repository. The application targets link phon_engine and include
+# its headers via the phon/*.hpp forwarders. The old in-tree engine (phon/runtime, phon/base) was
+# removed at A6; build a pre-A6 commit in a scratch worktree if a legacy binary is ever needed.
+set(PHON_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../engine" CACHE PATH "Path to the scripting engine repository")
 if(NOT EXISTS "${PHON_ENGINE_DIR}/CMakeLists.txt")
-    message(FATAL_ERROR "New engine not found at ${PHON_ENGINE_DIR} (set PHON_ENGINE_DIR); the application requires it since the A1 base-type swap")
+    message(FATAL_ERROR "Scripting engine not found at ${PHON_ENGINE_DIR} (set PHON_ENGINE_DIR); the application cannot be built without it")
 endif()
 add_subdirectory(${PHON_ENGINE_DIR} ${CMAKE_BINARY_DIR}/phon_engine_build EXCLUDE_FROM_ALL)
-# Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the new
-# engine, no old-engine or GUI dependency. Target: phon_stats.
+# Headless statistics host (MIGRATION_NOTES step 4b): phon/analysis + the engine,
+# no GUI or application-layer dependency. Target: phon_stats.
 add_subdirectory(stats_host)
 
 
@@ -124,20 +135,6 @@ if(CMAKE_COMPILER_IS_GNUCXX)
 endif()
 
 
-########################
-##  THIRD-PARTY LIBS  ##
-########################
-
-# utf8proc (static)
-add_definitions(-DUTF8PROC_STATIC)
-
-# PCRE2 (UTF-8, static)
-add_definitions(-DPCRE2_CODE_UNIT_WIDTH=8 -DPCRE2_STATIC=1)
-set(PCRE2_BUILD_PCRE2GREP OFF CACHE BOOL "" FORCE)
-set(PCRE2_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory(phon/third_party/pcre2 EXCLUDE_FROM_ALL)
-include_directories(${PROJECT_BINARY_DIR}/phon/third_party/pcre2/interface)
-
 ###########################
 ##  SCRIPTING ENGINE LIB ##
 ###########################
@@ -151,40 +148,10 @@ endif()
 include_directories(${CMAKE_SOURCE_DIR})
 include_directories(${PHON_ENGINE_DIR})
 
-# --- Old engine (archaeology only; NOT part of the default build) ---
-# Broken since the A1 flip repointed the shared phon/*.hpp and phon/utils/*.hpp headers
-# onto the new engine; kept until A6 demolition. Build a pristine pre-flip commit in a
-# scratch worktree if a baseline binary is needed.
-file(GLOB_RECURSE RUNTIME_SOURCES
-        phon/base/*.cpp
-        phon/runtime/*.cpp
-        phon/utils/*.cpp
-)
-
-set(THIRDPARTY_SOURCES
-        phon/third_party/utf8proc/utf8proc.c
-        phon/third_party/zip/zip.cpp
-)
-
-add_library(phon-runtime STATIC EXCLUDE_FROM_ALL ${RUNTIME_SOURCES} ${THIRDPARTY_SOURCES})
-set_property(TARGET phon-runtime PROPERTY POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(phon-runtime PRIVATE pcre2-8)
-
-if(WITH_GUI)
-    target_link_libraries(phon-runtime PUBLIC Qt6::Core)
-    target_compile_definitions(phon-runtime PUBLIC PHON_WITH_QT=1)
-endif()
-
-if(WIN32)
-    target_link_libraries(phon-runtime PRIVATE shlwapi)
-else()
-    target_link_libraries(phon-runtime PRIVATE m)
-endif()
-
 # --- Utility sources shared by the app targets ---
-# Compiled into phon-app since the A1 flip (they lived in phon-runtime before).
-# alloc.cpp and file_system.cpp stay out: their functionality now comes from the new
-# engine (base/alloc, base/file_system).
+# Compiled into phon-app since the A1 flip (they lived in the old phon-runtime before).
+# alloc.cpp and file_system.cpp are gone with the old engine (A6): their functionality
+# now comes from the new engine (base/alloc, base/file_system).
 set(UTILS_SOURCES
         phon/utils/helpers.cpp
         phon/utils/matrix.cpp

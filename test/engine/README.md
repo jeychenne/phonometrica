@@ -1,26 +1,29 @@
 # Engine regression tests
 
-Pure-phon tests of the scripting language, ported to the NEW engine
-language (see `MIGRATION_NOTES.md` at the repo root for the old→new
-gap log). Each test exercises one slice of the parser/compiler/runtime
-and aborts on the first failed `assert` with a clear message.
+Pure-phon tests of the scripting language (see `MIGRATION_NOTES.md` at
+the repo root for the old→new engine gap log). Each test exercises one
+slice of the parser/compiler/runtime and aborts on the first failed
+`assert` with a clear message.
 
 ## Running
 
-The suite runs under the new engine's script runner (`phon_repl`,
-built from the engine's `examples/repl.cpp` via the `PHON_WITH_NEW_ENGINE`
-CMake option). Files run through `Runtime::do_file`, so imports resolve
-in the script's own directory:
+The suite runs through the application binary in script mode. Files run
+through `Runtime::do_file`, so imports resolve in the script's own
+directory:
 
 ```
-phon_repl run_all.phon
+<build>/phonometrica -r test/engine/run_all.phon
 ```
 
 or an individual test:
 
 ```
-phon_repl test_compound_assignment.phon
+<build>/phonometrica -r test/engine/test_compound_assignment.phon
 ```
+
+The engine's own script runner (`phon_repl`, built from
+`examples/repl.cpp` in the engine repository) runs them just as well —
+it simply lacks the application natives, which these tests do not use.
 
 ## Tests
 

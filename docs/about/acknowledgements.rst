@@ -24,7 +24,6 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * SPTK, by Keiichi Tokuda, Keiichiro Oura, Takenori Yoshimura, Takato Fujimoto and contributors (Apache License 2.0), see `github.com/sp-nitech/SPTK <https://github.com/sp-nitech/SPTK>`_
 * SWIPE, by Kyle Gorman (MIT), see `github.com/kylebgorman/swipe <https://github.com/kylebgorman/swipe>`_
 * UTF8-CPP, by Nemanja Trifunovic (MIT), see `github.com/nemtrif/utfcpp <https://github.com/nemtrif/utfcpp>`_
-* utf8proc, by JuliaStrings and the Public Software Group (MIT), see `juliastrings.github.io/utf8proc <https://juliastrings.github.io/utf8proc/>`_
 * zip, by Kuba Podgórski, based on miniz, by Rich Geldreich (public domain), see `github.com/kuba--/zip <https://github.com/kuba--/zip>`_
 
 Phonometrica uses `GitHub <https://github.com>`_ to host its source code. The source code is available `here <https://github.com/jeychenne/phonometrica>`_.

@@ -50,7 +50,7 @@ you need:
 - QScintilla built against your Qt 6 installation
 - Boost.Math headers (header-only; install via your system package manager or Boost release)
 
-All other dependencies (Eigen, PCRE2, pocketfft, CppAD, LBFGSpp, utf8proc, etc.) are bundled
+All other dependencies (Eigen, PCRE2, pocketfft, CppAD, LBFGSpp, etc.) are bundled
 in the source tree. See the ``BUILD.md`` file in the repository for detailed instructions.
 
 The source code is available at https://github.com/jeychenne/phonometrica.

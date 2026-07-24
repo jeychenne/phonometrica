@@ -51,30 +51,13 @@ enum class FileType
 class Element;
 class Directory;
 class Document;
-class DataTable;
-class Dataset;
-class Concordance;
-class Annotation;
-class Sound;
-class Spectrum;
-class Script;
-class Note;
-class Query;
-class FormantQuery;
-class PitchQuery;
-class IntensityQuery;
-class SpectralMomentsQuery;
-class VoiceQualityQuery;
-class Bookmark;
-class TimeStamp;
-class Analysis;
 class Runtime;
 
 // The VFS hierarchy consists of plain C++ classes (no engine base). Script exposure goes
-// through the new engine's plain-class boxing: each class is registered with
-// rt.add_class<T> in base-first order (roadmap A2; the registration site mirrors the class
-// list above), Handle<Derived> upcasts implicitly to Handle<Element>, and checked
-// downcasts go through handle_cast<T> (dynamic class via the engine class registry).
+// through the engine's plain-class boxing: each class is registered with rt.add_class<T>
+// in base-first order (Project::preinitialize holds the full, authoritative class list),
+// Handle<Derived> upcasts implicitly to Handle<Element>, and checked downcasts go through
+// handle_cast<T> (dynamic class via the engine class registry).
 
 
 class Element

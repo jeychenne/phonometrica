@@ -336,7 +336,16 @@ smoke). Details in MIGRATION_NOTES "A5 COMPLETE". Original spec below.
   on new syntax (visible in any full build log) — update the lexer or the
   snippets while here.
 
-### A6 — demolition
+### A6 — demolition — DONE (2026-07-24, app commit a59bc0c)
+The old engine is deleted; see MIGRATION_NOTES "A6 — demolition" for what went,
+what deliberately stayed (index_conversion.hpp, the phon/*.hpp forwarders, the
+class_name() virtuals, one stats_host shim header), the stats_host include-order
+fold, and the gate log. Two amendments to the spec below, both recorded there:
+the vfs.hpp `hierarchy_root` block had already been removed when A2 landed early
+in the A1 stage-2 flip, and the headless DataTable shim is kept (folding it back
+into the real Dataset would pull the entire application layer — VFS, project,
+pugixml, sqlite, sndfile, rtaudio — into the headless statistics runner).
+
 **Current-state amendments (2026-07-22, after A5; read together with the
 original spec below):**
 - KEEP `phon/index_conversion.hpp` — since A3 it is the shared 1-based

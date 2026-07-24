@@ -15,9 +15,9 @@
  *                                                                                                                     *
  * Created: 20/07/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: application-wide definitions. This is the application-domain remainder of the old engine's                 *
- * <phon/runtime/definitions.hpp>: the engine-core parts (cell/GC declarations, meta::) now come from the new          *
- * engine's <phon/engine/base/definitions.hpp>.                                                                        *
+ * Purpose: application-wide definitions (logging, thresholds, run_script, likely/unlikely, largest_integer). The     *
+ * engine-core definitions (cell/GC declarations, meta::) come from <phon/engine/base/definitions.hpp>, which this     *
+ * header includes.                                                                                                    *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

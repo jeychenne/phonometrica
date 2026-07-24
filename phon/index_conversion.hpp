@@ -17,13 +17,12 @@
  *                                                                                                                     *
  * Purpose: THE conversion boundary between script indices and native indices. The scripting language is 1-based and   *
  * accepts negative indices (counting from the end); native containers (Array, List storage) are strictly 0-based.     *
- * These two functions are the only place where the conversion may happen: every native function exposed to the        *
- * scripting engine (func_*.hpp, the VM loop, iterators, and any app code registered with Runtime::add_global) must    *
- * route incoming script indices through index_from_script() and outgoing native positions through index_to_script().  *
- * Native C++ code must never add or subtract 1 to convert an index itself.                                            *
+ * These two functions are the only place where the conversion may happen: every app native exposed to the scripting  *
+ * engine must route incoming script indices through index_from_script() and outgoing native positions through         *
+ * index_to_script(). Native C++ code must never add or subtract 1 to convert an index itself.                         *
  *                                                                                                                     *
- * This header is part of the old engine's script/native bridge and will be retired with it: the new engine performs   *
- * the equivalent conversion in its own VM/lib layer.                                                                  *
+ * The engine applies the equivalent conversion to its own builtins; this header is the app-side converter, used at    *
+ * the binding boundary of the natives registered by the application layer (roadmap A3).                               *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 

@@ -30,7 +30,7 @@ Phonometrica is written in C++ (C++20) and uses Qt 6 for its graphical interface
 - [Boost](https://www.boost.org/) (for Boost.Math)
 - [libsndfile](https://libsndfile.github.io/libsndfile/)
 
-All other dependencies (Eigen, PCRE2, pocketfft, CppAD, utf8proc, etc.) are bundled in the source tree. See [BUILD.md](BUILD.md) for detailed instructions.
+All other dependencies (Eigen, PCRE2, pocketfft, CppAD, etc.) are bundled in the source tree. See [BUILD.md](BUILD.md) for detailed instructions.
 
 ```
 git clone https://github.com/jeychenne/phonometrica.git
