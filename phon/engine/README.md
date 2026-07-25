@@ -77,6 +77,11 @@ conformance suite; M2 subtype intervals under renumbering, ref-mask applicabilit
 metaclass dispatch, ambiguity-at-definition, and epoch invalidation. The suite is
 warning-clean (`-Wall -Wextra -Werror`) and leak-clean under ASan+UBSan.
 
+## Conventions
+
+Modern C++ with RAII: a raw pointer is used only when the pointee is not owned *and*
+may be null. Otherwise use a reference or a `unique_ptr`.
+
 ## Building and testing
 
 All commands run from the **repository root**. The engine is a subdirectory of the
