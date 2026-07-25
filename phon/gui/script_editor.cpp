@@ -695,20 +695,35 @@ void ScriptEditor::handleSmartIndent()
 
 	auto trimmed = prevText.trimmed();
 
+	// Declaration modifiers may be combined, in the order 'local'/'global', 'open', 'ref'
+	// (see Parser::parse_modified_declaration). Strip them so the block test below only
+	// has to look at the head keyword, instead of enumerating every combination.
+	auto head = trimmed;
+	for (auto mod : {QStringLiteral("local "), QStringLiteral("global "),
+	                 QStringLiteral("open "), QStringLiteral("ref ")})
+	{
+		if (head.startsWith(mod))
+			head = head.mid(mod.size()).trimmed();
+	}
+
 	bool needsBlock = false;
 	bool needsExtraIndent = false;
 
-	// Patterns that open a block (need "end" / "}" / "]" inserted).
-	if ((trimmed.startsWith("if ") && trimmed.endsWith(" then")) ||
-		trimmed.endsWith(" do") ||
-		trimmed.startsWith("class ") || trimmed.startsWith("local class ") ||
-		trimmed.startsWith("method ") ||
-		trimmed.startsWith("function ") || trimmed.startsWith("local function "))
+	// Patterns that open a block (need "end" / "until" / "}" / "]" inserted).
+	if ((head.startsWith("if ") && head.endsWith(" then")) ||
+		head.endsWith(" do") ||
+		head == "try" || head == "repeat" ||
+		head.startsWith("class ") ||
+		head.startsWith("method ") ||
+		head.startsWith("function "))
 	{
 		needsBlock = true;
 		needsExtraIndent = true;
 	}
-	else if (trimmed == "else" || (trimmed.startsWith("elsif ") && trimmed.endsWith(" then")))
+	// Clauses that continue an open block: they indent, but the block's terminator has
+	// already been inserted by the line that opened it.
+	else if (head == "else" || (head.startsWith("elsif ") && head.endsWith(" then")) ||
+		head == "catch" || head.startsWith("catch ") || head == "finally")
 	{
 		needsExtraIndent = true;
 	}
@@ -743,6 +758,10 @@ void ScriptEditor::handleSmartIndent()
 			closing = "}";
 		else if (trimmed.endsWith("[") || trimmed.endsWith("@["))
 			closing = "]";
+		else if (head == "repeat")
+			// 'repeat' is closed by 'until <condition>', so this one is a scaffold: the
+			// trailing space is where the user types the condition.
+			closing = "until ";
 		else
 			closing = "end";
 

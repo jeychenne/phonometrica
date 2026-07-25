@@ -42,16 +42,33 @@ PhonLexer::PhonLexer(QObject *parent) :
 
 const char *PhonLexer::keywords(int set) const
 {
+	// Set 1 mirrors the engine's reserved words exactly. The authoritative list is the
+	// Lexeme range FIRST_KEYWORD..LAST_KEYWORD in phon/engine/compile/token.hpp, spelled
+	// by lexeme_name() in token.cpp; the scanner builds its keyword table from that same
+	// range, so any word added there must be added here (and to the docs' Pygments lexer
+	// in docs/phon_lexer/phon/lexer.py, which carries the same list).
 	if (set == 1)
 	{
-		return "and as assert break catch class continue debug do downto else elsif end false field for foreach function "
-		       "if in inherits let local method nan not null option or pass print ref repeat return step super then this throw "
-		       "to true try until while";
+		return "and as break cast catch class const continue div do else elsif end false field finally for function "
+		       "global if import in is local method mod not null open or ref repeat return spawn step then this throw "
+		       "to true try until var while";
 	}
 
+	// Set 2 is HighlightedIdentifier: type names, i.e. anything usable after `is`/`as` or
+	// in a type annotation, plus the `phon` global table. Builtin engine classes come from
+	// runtime/bootstrap.cpp and the register_*_class hooks; the application classes from
+	// application/project.cpp. Purely internal classes (NativeEnv, Upvalue) are omitted,
+	// as is Counter, which only exists in the engine's REPL example.
 	if (set == 2)
 	{
-		return "Array Boolean File Float Function Integer json List Module Number Object phon Regex Set String Table";
+		return "Array Boolean Class Error File Float Function Integer List Match Null Number Object Real Regex Set "
+		       "String Symbol Table "
+		       "Channel Thread "
+		       "Analysis Annotation Bookmark Concordance Dataset DataTable Directory Document Element Note Query "
+		       "Script Sound Spectrum TimeStamp "
+		       "FormantQuery IntensityQuery PitchQuery SpectralMomentsQuery VoiceQualityQuery "
+		       "Model PriorSpec "
+		       "phon";
 	}
 
 	return nullptr;
