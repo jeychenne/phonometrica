@@ -288,6 +288,9 @@ void register_builtins()
 	register_native("print", builtin_print, 0, 8);
 	register_native("len", builtin_len, 1, 1);
 	register_native("assert", builtin_assert, 1, 2);
+	// Load-bearing despite looking unreachable: `cast` is a reserved word, so no script
+	// can call it by name. It is reached only from the compiler, which lowers
+	// `cast x as T` to a CALLG of this global (Lowerer::compile_cast, lower.cpp).
 	register_native("cast", builtin_cast, 2, 2);
 	register_native("to_string", builtin_to_string, 1, 1);
 	register_native("collect_garbage", builtin_collect_garbage, 0, 0);
