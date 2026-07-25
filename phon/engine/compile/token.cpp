@@ -30,6 +30,7 @@ const char *lexeme_name(Lexeme l) noexcept
 	case Lexeme::Field: return "field";
 	case Lexeme::Finally: return "finally";
 	case Lexeme::For: return "for";
+	case Lexeme::Foreach: return "foreach";
 	case Lexeme::Function: return "function";
 	case Lexeme::Global: return "global";
 	case Lexeme::If: return "if";

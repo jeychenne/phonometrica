@@ -61,8 +61,16 @@ Counted loops (``for i = a to b [step s]``) have inclusive bounds; a loop whose
 direction contradicts its step runs zero times. ``for k, v in table`` iterates
 key/value pairs.
 
-**List comprehensions are not available** in the current engine. Rewrite
-``[y foreach x in xs if cond]`` as an explicit loop that appends to a list.
+**List comprehensions** keep the syntax they had in the old engine:
+``[y foreach x in xs]``, optionally with an ``if cond`` filter, an
+``if cond else other`` conditional (which yields on every iteration, so the
+result keeps the length of the collection), and the two-variable form
+``foreach k, v in coll`` for key/value pairs over a table or index/value pairs
+over a list. One difference: the collection accepts any expression without
+parentheses. The old engine required ``[y foreach x in (xs if c else zs)]``
+because its conditional was a postfix ``if``, which would otherwise have
+swallowed the comprehension's own filter; this engine's conditional is the
+prefix ``if c then a else b end``, so the ambiguity does not arise.
 
 **Truthiness**: ``null`` is the only non-boolean value that counts as false.
 ``0``, ``""`` and ``[]`` are all true. The common idiom ``if sound then`` for

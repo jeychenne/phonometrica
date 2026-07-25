@@ -33,7 +33,8 @@ enum class NodeKind
 {
 	// expressions
 	NullLiteral, BoolLiteral, IntegerLiteral, FloatLiteral, StringLiteral,
-	StringInterpolation, ListLiteral, ArrayLiteral, TableLiteral, SetLiteral, Variable,
+	StringInterpolation, ListLiteral, ListComprehension, ArrayLiteral, TableLiteral,
+	SetLiteral, Variable,
 	ThisExpression, UnaryExpression, BinaryExpression, ConcatExpression,
 	IsExpression, CastExpression, IndexExpression, SliceExpression, FieldAccess,
 	CallExpression, SplatExpression, RefExpression, NamedArgument,
@@ -136,6 +137,32 @@ struct ListLiteral final : Ast
 	ListLiteral(int line, int col, AstList items) : Ast(KIND, line, col), items(std::move(items)) {}
 	PHON_AST_NODE(ListLiteral, ListLiteral)
 	AstList items;
+};
+
+// `[ yield foreach value in coll ]` — a list comprehension, an expression building a
+// List. `key` is NO_SYMBOL for the single-variable form; the two-variable form
+// `foreach k, v in coll` binds (key, value) over a Table and (index, value) over a List,
+// exactly like the `for k, v in` statement it shares its lowering shape with.
+//
+// The optional `filter`/`else_expr` pair selects one of three shapes:
+//   filter null                     — yield on every iteration
+//   filter set, else_expr null      — `if cond`: yield only when cond holds (a filter)
+//   both set                        — `if cond else e`: yield when cond holds, else `e`,
+//                                     so the result length equals the iteration count
+//
+// Loop variables are always by value: a comprehension accepts no `ref`, because the
+// variable only feeds the yield expression and is never a write target.
+struct ListComprehension final : Ast
+{
+	ListComprehension(int line, int col, AutoAst yield_expr, Symbol key, Symbol value,
+	                  AutoAst collection, AutoAst filter, AutoAst else_expr)
+	    : Ast(KIND, line, col), yield_expr(std::move(yield_expr)), key(key), value(value),
+	      collection(std::move(collection)), filter(std::move(filter)),
+	      else_expr(std::move(else_expr)) {}
+	PHON_AST_NODE(ListComprehension, ListComprehension)
+	AutoAst yield_expr;
+	Symbol key, value;
+	AutoAst collection, filter, else_expr;
 };
 
 // `@[a, b, c]` (1-D) or `@[a, b; c, d]` (2-D, `;` separates rows) — a numeric NumArray
@@ -585,6 +612,7 @@ public:
 	virtual void visit_string_literal(StringLiteral *node) = 0;
 	virtual void visit_string_interpolation(StringInterpolation *node) = 0;
 	virtual void visit_list_literal(ListLiteral *node) = 0;
+	virtual void visit_list_comprehension(ListComprehension *node) = 0;
 	virtual void visit_array_literal(ArrayLiteral *node) = 0;
 	virtual void visit_table_literal(TableLiteral *node) = 0;
 	virtual void visit_set_literal(SetLiteral *node) = 0;

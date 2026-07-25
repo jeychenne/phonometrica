@@ -2214,3 +2214,41 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     "host-side release of a buffered cycle candidate parks it" (verified to
     produce the UAF under ASan with the old fallback). Suite: 407 cases ×3
     builds (normal/ASan/TSan).
+
+29. **List comprehensions — a language addition, absent from the design docs
+    (2026-07-25).** `[ Y foreach V in C ]`, restoring the old Phonometrica
+    engine's syntax for old-script parity (the feature was carried as migration
+    gap L2, not as a removed feature). `foreach` becomes a reserved word again,
+    taking the keyword count from 44 to 45; no `.phon` in the tree used it as an
+    identifier, so nothing broke. Three shapes, selected by the optional
+    `if`/`else` tail:
+      - `[Y foreach V in C]` — yield on every iteration (map).
+      - `[Y foreach V in C if F]` — yield only when `F` holds; `Y` is not
+        evaluated on a rejected iteration (filter).
+      - `[Y foreach V in C if F else E]` — yield `Y` or `E`, so the result
+        length equals the iteration count (conditional).
+    The two-variable form `foreach k, v in C` binds (key, value) over a Table and
+    (index, value) over a List, exactly as `for k, v in` does. Unlike `for`, no
+    `ref` is accepted: the variable only feeds the yield expression, so there is
+    nothing to write back through (a dedicated parse error, not a generic one).
+    Lowering (`Lowerer::compile_list_comprehension`) reuses `compile_for_each`'s
+    register layout and ITER_INIT/ITER_NEXT protocol verbatim; the body appends
+    to a hidden accumulator List (NEWLIST + LISTAPPEND) that is allocated outside
+    the loop's block, so `exit_block` cannot reclaim its register before the
+    value is moved to the destination. It is emitted inline rather than as a
+    synthesized closure, so reads of enclosing locals from the yield/filter/else
+    expressions stay plain register reads instead of becoming per-iteration
+    upvalue accesses.
+    The parser needs only one token of lookahead — `foreach` cannot continue an
+    expression — so no backtracking. The collection takes a full
+    `parse_expression`: the old engine had to stop below the conditional there,
+    because its conditional was the postfix `e if c else e2` and would have
+    swallowed the comprehension's own `if`; this language's conditional is the
+    prefix `if c then a else b end`, so the ambiguity does not exist.
+    The loop variable is one reused slot, so closures created in the yield
+    expression observe its final value — identical to `for`, and pinned as such
+    by the test rather than asserted as a fixed value. Tests:
+    `test/engine/test_list_comprehension.phon` (16 case groups, including
+    filter-before-yield evaluation counts, conditional-mode length preservation,
+    non-leaking loop variables, nesting, Table/Set/String sources, and agreement
+    with the explicit loops the comprehensions replace). Suite: 407 cases green.

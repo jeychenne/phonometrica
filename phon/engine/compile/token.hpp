@@ -24,7 +24,7 @@ enum class Lexeme : uint8_t
 
 	// --- keywords (design §12) ---
 	And, As, Break, Cast, Catch, Class, Const, Continue, Div, Do, Else, Elsif,
-	End, False, Field, Finally, For, Function, Global, If, Import, In, Is, Local,
+	End, False, Field, Finally, For, Foreach, Function, Global, If, Import, In, Is, Local,
 	Method, Mod, Not, Null, Open, Or, Ref, Repeat, Return, Spawn, Step, Then,
 	This, Throw, To, True, Try, Until, Var, While,
 

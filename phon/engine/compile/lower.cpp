@@ -401,6 +401,7 @@ private:
 	// --- classes (design §5.6/§6) ---
 	static Symbol this_symbol(); // the reserved `this` local name (a keyword, never a user id)
 	void compile_cast(CastExpression *c, int dest);
+	void compile_list_comprehension(ListComprehension *c, int dest);
 	int compile_method(FunctionDefinition *m, bool is_init, ClassDeclaration *cls);
 	// Compile the `@defaults(this)` thunk that applies this class's OWN field-default
 	// initializers to the instance (raw, in place) and returns it. Compiled as a child
@@ -775,6 +776,9 @@ void Lowerer::expr_to(Ast *node, int dest)
 			emit_ABC(Opcode::MOVE, dest, base, 0, ln(node));
 		break;
 	}
+	case NodeKind::ListComprehension:
+		compile_list_comprehension(node->as<ListComprehension>(), dest);
+		break;
 	case NodeKind::ArrayLiteral:
 	{
 		// Stage every element (row-major source order) then NEWARRAY. C carries nrow
@@ -1878,6 +1882,107 @@ void Lowerer::compile_for_each(ForEach *s)
 		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
 	m_loops.pop_back();
 	exit_block(static_cast<uint32_t>(s->line));
+}
+
+void Lowerer::compile_list_comprehension(ListComprehension *c, int dest)
+{
+	// `[ Y foreach K?, V in C if F else E ]`. This reuses compile_for_each's register
+	// layout and iteration protocol exactly; the only difference is that the body is an
+	// expression appended to a hidden accumulator List rather than a statement, and the
+	// accumulator is the value the whole expression produces.
+	//
+	// Lowered inline rather than as a synthesized closure: a closure would turn every
+	// read of an enclosing local from Y/F/E into an upvalue access, paying that cost on
+	// each iteration. Inline keeps them plain register reads.
+	int save = fs->free_reg;
+
+	// The accumulator is allocated *outside* the loop's block, so that exit_block does
+	// not reclaim its register before the value is moved to `dest`.
+	int acc = reg_alloc(c);
+	emit_ABC(Opcode::NEWLIST, acc, 0, 0, ln(c));
+
+	enter_block();
+	int base = reg_alloc(c);
+	expr_to(c->collection.get(), base); // base+0 source
+	reg_alloc(c);                       // base+1 cursor
+	reg_alloc(c);                       // base+2 aux (table keys)
+	int valreg = reg_alloc(c);          // base+3 value
+	fs->locals.push_back({c->value, valreg, false, false});
+	bool pair = (c->key != NO_SYMBOL);
+	if (pair)
+	{
+		int keyreg = reg_alloc(c); // base+4 key
+		fs->locals.push_back({c->key, keyreg, false, false});
+	}
+	int done = reg_alloc(c); // ITER_NEXT's exhausted flag
+
+	emit_ABC(Opcode::ITER_INIT, base, 0, 0, ln(c));
+
+	// `break`/`continue` cannot appear here — they are statements, and every part of a
+	// comprehension is an expression — but pushing a loop context keeps this structurally
+	// identical to compile_for_each, and stops a stray jump from ever being patched to an
+	// enclosing loop.
+	m_loops.emplace_back();
+	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
+	intptr_t top = P().code.size();
+	emit_ABC(Opcode::ITER_NEXT, base, done, pair ? 2 : 1, ln(c));
+	intptr_t exit = emit_jump(Opcode::JMPT, done, ln(c)); // exhausted -> leave
+
+	// Stage a value in a scratch register and append it to the accumulator.
+	auto append = [&](Ast *e) {
+		int body_save = fs->free_reg;
+		int r = reg_alloc(c);
+		expr_to(e, r);
+		emit_ABC(Opcode::LISTAPPEND, acc, r, 0, ln(c));
+		reg_free_to(body_save);
+	};
+
+	if (!c->filter)
+	{
+		// Plain map: yield on every iteration.
+		append(c->yield_expr.get());
+	}
+	else if (!c->else_expr)
+	{
+		// Filter: the yield expression is not even evaluated when the filter is false.
+		int body_save = fs->free_reg;
+		int cr = expr_any(c->filter.get());
+		intptr_t skip = emit_jump(Opcode::JMPF, cr, ln(c));
+		reg_free_to(body_save);
+		append(c->yield_expr.get());
+		patch_jump(skip);
+	}
+	else
+	{
+		// Conditional: exactly one of the two branches appends, so the result length
+		// equals the number of iterations.
+		int body_save = fs->free_reg;
+		int cr = expr_any(c->filter.get());
+		intptr_t to_else = emit_jump(Opcode::JMPF, cr, ln(c));
+		reg_free_to(body_save);
+		append(c->yield_expr.get());
+		intptr_t past = emit_jump(Opcode::JMP, 0, ln(c));
+		patch_jump(to_else);
+		append(c->else_expr.get());
+		patch_jump(past);
+	}
+
+	emit_AsBx(Opcode::JMP, 0, static_cast<int>(top - (P().code.size() + 1)), ln(c));
+	patch_jump(exit);
+
+	LoopCtx &lc = m_loops.back();
+	for (intptr_t b : lc.breaks)
+		patch_jump(b);
+	for (intptr_t k : lc.continues)
+		P().code[k] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (k + 1)));
+	m_loops.pop_back();
+	exit_block(static_cast<uint32_t>(c->line));
+
+	// The accumulator is the expression's value. Its register survives exit_block (which
+	// only lowers the watermark), exactly as in compile_cast.
+	if (dest != acc)
+		emit_ABC(Opcode::MOVE, dest, acc, 0, ln(c));
+	reg_free_to(save);
 }
 
 void Lowerer::compile_for_each_ref(ForEach *s)

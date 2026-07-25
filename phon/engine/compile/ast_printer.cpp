@@ -108,6 +108,23 @@ public:
 			child(it.get());
 	}
 
+	void visit_list_comprehension(ListComprehension *n) override
+	{
+		std::string h = "ListComprehension ";
+		if (n->key != NO_SYMBOL)
+			h += sym(n->key) + ", ";
+		h += sym(n->value);
+		if (n->filter)
+			h += n->else_expr ? " (conditional)" : " (filter)";
+		emit(h);
+		child(n->yield_expr.get());
+		child(n->collection.get());
+		if (n->filter)
+			child(n->filter.get());
+		if (n->else_expr)
+			child(n->else_expr.get());
+	}
+
 	void visit_array_literal(ArrayLiteral *n) override
 	{
 		char buf[48];

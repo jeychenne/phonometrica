@@ -9,7 +9,7 @@ static const char *autocompletion_list =
 	"DataTable dharma Directory div do Document duplicate_annotation duplicate_layer E "
 	"Element else elsif emmeans emtrends encoding end ends_with eof erb_to_hertz Error "
 	"evaluate exists exp extract_annotation_slice extract_layers extract_sound_slice "
-	"false field File filter finally find find_back first fit Float floor for "
+	"false field File filter finally find find_back first fit Float floor for foreach "
 	"FormantQuery freeze from_json Function function genericize get_annotation "
 	"get_annotations get_base_name get_cell get_coef get_column get_column_type "
 	"get_concordance get_concordances get_config_path get_current_annotation "

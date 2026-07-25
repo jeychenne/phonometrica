@@ -1152,7 +1152,15 @@ AutoAst Parser::parse_list_literal()
 	AstList items;
 	if (!m_tok.is(Lexeme::RSquare))
 	{
-		items.push_back(parse_expression());
+		AutoAst first = parse_expression();
+
+		// `[ yield foreach ... ]` is a comprehension rather than a literal. `foreach`
+		// is a keyword and cannot continue an expression, so one token of lookahead
+		// settles which it is — no backtracking.
+		if (m_tok.is(Lexeme::Foreach))
+			return parse_list_comprehension_tail(line, col, std::move(first));
+
+		items.push_back(std::move(first));
 		while (accept(Lexeme::Comma))
 		{
 			if (m_tok.is(Lexeme::RSquare))
@@ -1162,6 +1170,48 @@ AutoAst Parser::parse_list_literal()
 	}
 	expect(Lexeme::RSquare, "']' to close the list");
 	return make<ListLiteral>(line, col, std::move(items));
+}
+
+AutoAst Parser::parse_list_comprehension_tail(int line, int col, AutoAst yield_expr)
+{
+	constexpr const char *hint = "in a list comprehension";
+	expect(Lexeme::Foreach, hint);
+
+	// Loop variables: `v`, or `k, v` for the pair form. A comprehension takes no `ref`:
+	// the variable only feeds the yield expression, so there is nothing to write back.
+	if (m_tok.is(Lexeme::Ref))
+		error("a comprehension loop variable cannot be taken by reference");
+	Symbol key = NO_SYMBOL;
+	Symbol value = expect_identifier("a comprehension loop variable");
+	if (accept(Lexeme::Comma))
+	{
+		key = value;
+		if (m_tok.is(Lexeme::Ref))
+			error("a comprehension loop variable cannot be taken by reference");
+		value = expect_identifier("a second comprehension loop variable");
+	}
+
+	expect(Lexeme::In, hint);
+	// The collection takes a full expression. The old engine had to stop below the
+	// conditional here, because its conditional was the postfix `e if c else e2` and
+	// would have swallowed the comprehension's own `if`. This language's conditional is
+	// the prefix `if c then a else b end`, so no such ambiguity exists.
+	AutoAst coll = parse_expression();
+
+	AutoAst filter, else_expr;
+	if (accept(Lexeme::If))
+	{
+		filter = parse_expression();
+		// `if cond` alone filters. `if cond else e` yields `e` on the false branch
+		// instead of dropping the iteration, so the result length equals the iteration
+		// count. `else` cannot continue an expression, so peeking here is enough.
+		if (accept(Lexeme::Else))
+			else_expr = parse_expression();
+	}
+
+	expect(Lexeme::RSquare, "']' to close the list comprehension");
+	return make<ListComprehension>(line, col, std::move(yield_expr), key, value,
+	                               std::move(coll), std::move(filter), std::move(else_expr));
 }
 
 AutoAst Parser::parse_array_literal()
