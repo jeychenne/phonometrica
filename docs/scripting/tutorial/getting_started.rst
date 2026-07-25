@@ -960,10 +960,18 @@ means a variable created in one debug block is still available later, which is w
         print("elapsed: " & started)
     end
 
-The setting is per file: a script that switches debug off does not switch it off for the modules it imports, and each file decides for
-itself. Phonometrica itself can also disable debug code for a whole session, which takes precedence — a file cannot switch its debug
-code back on once the application has turned it off. This is what lets a finished plugin ship with the certainty that no diagnostic code
-will run, whatever its individual files say.
+The directive is per file: a script that switches debug off does not switch it off for the modules it imports, and each file decides for
+itself. If you are distributing a plugin and do not want your diagnostic code running on someone else's machine, put
+``option debug = false`` at the top of the files you ship — that is the setting you control as the author.
+
+There is also a global switch, for the reader rather than the author: **Preferences → General → "Run debug statements in scripts"**,
+which is on by default. Unchecking it strips debug code from *every* script, including any that asks for ``option debug = true`` — a
+file can narrow the global setting but never widen it. That is the one to reach for when a plugin you did not write is noisy, or when
+you want a run free of diagnostic overhead without editing anyone's files.
+
+Because ``debug`` is resolved when a script is compiled, changing that preference applies to scripts compiled from then on. Code that
+has already been compiled — including modules the session has cached from an earlier ``import`` — keeps whatever setting it was built
+with, so restart Phonometrica if you want the change to apply to everything.
 
 
 Operators

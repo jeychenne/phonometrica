@@ -57,6 +57,7 @@ private:
 	QCheckBox *m_restore_views = nullptr;
 	QCheckBox *m_autosave = nullptr;
 	QCheckBox *m_autohints = nullptr;
+	QCheckBox *m_script_debug = nullptr;
 	QCheckBox *m_discard_empty = nullptr;
 	QCheckBox *m_whisper_log = nullptr;
 	QCheckBox *m_check_for_updates = nullptr;

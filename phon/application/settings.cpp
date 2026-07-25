@@ -441,6 +441,9 @@ void Settings::post_initialize()
 	}
 
 	// --- Top-level scalar preferences ------------------------------------
+	if (!contains("script_debug")) {
+		reset_script_debug();
+	}
 	if (!contains("autohints")) {
 		reset_autohints();
 	}
@@ -545,6 +548,7 @@ void Settings::reset()
 	reset_recent_projects();
 	reset_mono_font();
 	reset_autohints();
+	reset_script_debug();
 	reset_autoload();
 	reset_autosave();
 	reset_last_directory();
@@ -591,6 +595,14 @@ void Settings::reset_mono_font()
 void Settings::reset_autohints()
 {
 	Settings::set_value("autohints", Variant::make(true));
+}
+
+void Settings::reset_script_debug()
+{
+	// Whether `debug` statements in scripts are compiled. On by default: a `debug`
+	// line you have just written should run without further ceremony. Turning it off
+	// strips debug code from every script compiled afterwards.
+	Settings::set_value("script_debug", Variant::make(true));
 }
 
 void Settings::reset_whisper_log()

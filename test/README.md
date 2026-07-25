@@ -18,7 +18,15 @@ throwaway profile and checks the probe's result file:
 
 ```
 test/gui/run_smoke_formants.sh build/phonometrica
+test/gui/run_smoke_script_debug.sh build/phonometrica
 ```
+
+`run_smoke_script_debug.sh` covers the other reason a check has to
+drive the real app: the `debug` statement is compiled away using a flag
+the *application* sets from a preference, so the engine suite can test
+the language but not the wiring. It runs the app twice, with the
+preference on and off, and checks whether a startup script's `debug`
+line executed.
 
 The engine suite is pure phon — every test is self-contained and
 aborts on the first failure via the built-in `assert` statement.

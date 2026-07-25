@@ -2290,6 +2290,18 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     hard guarantee no debug code compiles, whatever the individual files say.
     Otherwise the setting is per file: a script switching debug off does not
     affect the modules it imports.
+    In Phonometrica that host switch is the `script_debug` preference (Preferences
+    > General, "Run debug statements in scripts", default on), applied to the
+    Runtime at startup in `phonometrica.cpp` after `Settings::read()` — before any
+    bundled script compiles — and again from `MainWindow::onEditPreferences` when
+    the dialog is accepted. Because `debug` is compile-time, a mid-session change
+    only affects code compiled afterwards; already-compiled chunks and cached
+    modules keep what they were built with, which the checkbox's tooltip and the
+    tutorial both say. `Settings::post_initialize` supplies the key for configs
+    written before it existed. This wiring is not observable from the engine
+    tests, so it has its own driver: `test/gui/run_smoke_script_debug.sh` runs the
+    real app offscreen twice, preference on and off, and checks whether a startup
+    script's `debug` line executed.
     **Directives are applied before any lowering** — a dedicated pass in
     `compile_module` ahead of pass 0, not when the statement walk reaches them.
     This is load-bearing and was a real bug first time round: pass 2a compiles

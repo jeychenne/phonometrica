@@ -48,6 +48,8 @@ phon.settings = {
 
 	"autohints": true,
 
+	"script_debug": true,
+
 	"enable_mouse_tracking": true,
 
 	"praat_path": "",

@@ -128,6 +128,8 @@ public:
 
     static void reset_autohints();
 
+    static void reset_script_debug();
+
     static void reset_autoload();
 
     static void reset_autosave();

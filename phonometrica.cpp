@@ -126,6 +126,16 @@ static void initialize(Runtime &rt)
 	Settings::initialize(&rt);
 	Settings::read();
 
+	// Apply the user's script-debug preference before any script is compiled. `debug`
+	// is compile-time, so this has to happen ahead of the bundled scripts below and
+	// anything the session loads later. Settings::post_initialize() supplies the key
+	// for configs written before it existed; guard anyway, since read() runs before it.
+	try {
+		rt.set_debug(Settings::get_boolean("script_debug"));
+	} catch (...) {
+		rt.set_debug(true); // absent key: debug on, matching the shipped default
+	}
+
 	Sound::set_sound_formats();
 
 	run_script(rt, initialize);

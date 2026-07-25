@@ -1077,7 +1077,17 @@ void MainWindow::onExportAnnotations()
 void MainWindow::onEditPreferences()
 {
 	PreferencesDialog dlg(this);
-	if (dlg.exec() == QDialog::Accepted && dlg.praatPathChanged())
+	if (dlg.exec() != QDialog::Accepted)
+		return;
+
+	// `debug` is resolved at compile time, so this takes effect for scripts compiled
+	// from now on; anything already compiled — including modules cached by the session
+	// — keeps whatever it was built with. The dialog's tooltip says so.
+	try {
+		m_runtime.set_debug(Settings::get_boolean("script_debug"));
+	} catch (...) { }
+
+	if (dlg.praatPathChanged())
 		setupPraat();
 }
 

@@ -83,6 +83,17 @@ QWidget *PreferencesDialog::createGeneralPage()
 	m_autohints = new QCheckBox(tr("Activate syntax hints in script views by default"));
 	m_autohints->setChecked(Settings::get_boolean("autohints"));
 
+	m_script_debug = new QCheckBox(tr("Run \"debug\" statements in scripts"));
+	m_script_debug->setChecked(Settings::get_boolean("script_debug"));
+	// `debug` is resolved when a script is compiled, not when it runs, so this cannot
+	// affect code that has already been compiled — including modules the session has
+	// cached. Say so, rather than leave the user wondering why a running script is
+	// unaffected.
+	m_script_debug->setToolTip(tr("Applies to scripts compiled after this change. "
+	                              "A script can also switch its own debug code off with "
+	                              "\"option debug = false\"; unchecking this overrides "
+	                              "every script."));
+
 	m_discard_empty = new QCheckBox(tr("Discard empty queries"));
 	m_discard_empty->setChecked(Settings::get_boolean("concordance", "discard_empty"));
 
@@ -96,6 +107,7 @@ QWidget *PreferencesDialog::createGeneralPage()
 	layout->addWidget(m_restore_views);
 	layout->addWidget(m_autosave);
 	layout->addWidget(m_autohints);
+	layout->addWidget(m_script_debug);
 	layout->addWidget(m_discard_empty);
 	layout->addWidget(m_whisper_log);
 	layout->addWidget(m_check_for_updates);
@@ -283,6 +295,7 @@ void PreferencesDialog::accept()
 	Settings::set_value("autoload", m_autoload->isChecked());
 	Settings::set_value("autosave", m_autosave->isChecked());
 	Settings::set_value("autohints", m_autohints->isChecked());
+	Settings::set_value("script_debug", m_script_debug->isChecked());
 	Settings::set_value("restore_views", m_restore_views->isChecked());
 	Settings::set_value("concordance", "discard_empty", m_discard_empty->isChecked());
 	Settings::set_value("whisper_log", m_whisper_log->isChecked());
@@ -343,6 +356,7 @@ void PreferencesDialog::reset()
 	m_restore_views->setChecked(false);
 	m_autosave->setChecked(false);
 	m_autohints->setChecked(true);
+	m_script_debug->setChecked(true);
 	m_discard_empty->setChecked(true);
 	m_check_for_updates->setChecked(true);
 	m_praat_path->clear();
