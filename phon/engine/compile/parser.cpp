@@ -195,12 +195,78 @@ AutoAst Parser::parse()
 	advance(); // load the first token
 	AstList stmts;
 	skip_separators();
+
+	// Compile-time directives come first, before any statement, so that a chunk's
+	// options are known before anything they govern is parsed.
+	while (m_tok.is(Lexeme::Option))
+	{
+		stmts.push_back(parse_option_statement());
+		expect_end_of_statement();
+		skip_separators();
+	}
+
 	while (!m_tok.is(Lexeme::Eot))
 	{
+		if (m_tok.is(Lexeme::Option))
+			error("'option' must appear at the top of the file, before any statement");
 		stmts.push_back(parse_statement());
 		expect_end_of_statement();
 	}
 	return make<StatementList>(1, 0, std::move(stmts), /*scope*/ false);
+}
+
+AutoAst Parser::parse_option_statement()
+{
+	int line = m_tok.line, col = m_tok.column;
+	advance(); // 'option'
+
+	// `debug` is the only option so far; the statement is shaped to take more.
+	if (!m_tok.is(Lexeme::Debug))
+		error("unknown option " + std::string(m_tok.describe().data()) +
+		      " (the only option is 'debug')");
+	Lexeme name = m_tok.id;
+	advance();
+
+	// A bare `option debug` means `= true`.
+	bool value = true;
+	if (accept(Lexeme::Assign))
+	{
+		if (accept(Lexeme::True))
+			value = true;
+		else if (accept(Lexeme::False))
+			value = false;
+		else
+			error("an option's value must be 'true' or 'false'");
+	}
+	return make<OptionStatement>(line, col, name, value);
+}
+
+AutoAst Parser::parse_debug_statement()
+{
+	int line = m_tok.line, col = m_tok.column;
+	advance(); // 'debug'
+
+	// Two forms: `debug <statement>` on one line, or a `debug` ... `end` block. The
+	// separator after `debug` is what tells them apart.
+	//
+	// The block opens no scope of its own (`scope` false), so `debug` is transparent:
+	// including it behaves exactly as if the `debug` and `end` lines were deleted. That
+	// keeps the two forms consistent — the one-line form cannot introduce a scope — and
+	// lets a binding made in one debug block be used by a later one, as in the common
+	//     debug
+	//         var t0 = clock()
+	//     end
+	//     ...
+	//     debug
+	//         print(clock() - t0)
+	//     end
+	if (m_tok.is_separator())
+	{
+		AutoAst body = parse_block(/*scope*/ false);
+		expect(Lexeme::End, "'end' to close the 'debug' block");
+		return make<DebugStatement>(line, col, std::move(body));
+	}
+	return make<DebugStatement>(line, col, parse_statement());
 }
 
 // ---------------------------------------------------------------------------
@@ -216,6 +282,8 @@ AutoAst Parser::parse_statement()
 	case Lexeme::Open:
 	case Lexeme::Ref:
 		return parse_modified_declaration();
+	case Lexeme::Debug:
+		return parse_debug_statement();
 	case Lexeme::Var:
 	case Lexeme::Const:
 		return parse_declaration(DeclModifier::None);

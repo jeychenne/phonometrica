@@ -1,0 +1,83 @@
+# =====================================================================
+# test_debug.phon
+# =====================================================================
+# The `debug` statement with debug ENABLED (this file has no `option`
+# directive, and debug is on by default).
+#
+#     debug <statement>          one-line form
+#     debug ... end              block form
+#
+# `debug` is compile-time inclusion, not a runtime test: when it is off
+# the body is never lowered at all. The complementary file
+# test_debug_off.phon pins the off state.
+# =====================================================================
+
+print("==== debug statement (enabled) ====")
+
+print("--- 1. one-line form ---")
+var ran1 = 0
+debug ran1 = 1
+assert(ran1 == 1, "T1: one-line debug statement did not run")
+
+print("--- 2. block form ---")
+var ran2 = 0
+debug
+    ran2 = ran2 + 1
+    ran2 = ran2 + 1
+end
+assert(ran2 == 2, "T2: debug block should have run both statements, got " & ran2)
+
+print("--- 3. the block is transparent (opens no scope) ---")
+# A binding made inside a debug block outlives it, so a later debug block
+# can use it. This is the usual timing idiom.
+debug
+    var marker3 = "set inside a debug block"
+end
+debug
+    assert(marker3 == "set inside a debug block", "T3a: binding did not survive the block")
+end
+assert(marker3 == "set inside a debug block", "T3b: binding not visible after the block")
+
+print("--- 4. inside a function ---")
+local function traced(n)
+    var extra = 0
+    debug extra = 100
+    return n + extra
+end
+assert(traced(1) == 101, "T4: debug statement inside a function did not run")
+
+print("--- 5. inside a loop, once per iteration ---")
+var count5 = 0
+for i = 1 to 3 do
+    debug count5 = count5 + 1
+end
+assert(count5 == 3, "T5: expected 3, got " & count5)
+
+print("--- 6. nested debug ---")
+var ran6 = 0
+debug
+    debug ran6 = 1
+end
+assert(ran6 == 1, "T6: nested debug did not run")
+
+print("--- 7. control flow inside a debug block ---")
+var ran7 = 0
+debug
+    if true then
+        ran7 = 1
+    end
+end
+assert(ran7 == 1, "T7: control flow inside a debug block did not run")
+
+print("--- 8. a debug block may hold several kinds of statement ---")
+var ran8 = []
+debug
+    var local8 = 3
+    for i = 1 to local8 do
+        append(ran8, i)
+    end
+end
+assert(len(ran8) == 3, "T8: expected 3 appends, got " & len(ran8))
+
+print("")
+print("==== ALL debug (enabled) tests passed ====")

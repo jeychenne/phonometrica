@@ -164,9 +164,11 @@ milestone (M8).
    the *new* language, so its lexeme set diverges from Phonometrica's
    `token.hpp`: added `var/const/local/global`, `is`, `cast`, `div/mod`,
    `method/field`, `spawn`, `import`, `finally`, `open`; dropped `foreach`,
-   `let`, `downto`, `option`, `print` (now an ordinary function), `assert`,
-   `debug`, `pass`, `super`, `inherits`, `nan`, and the `%`/`~`/`|`/`@` operators
-   (bitwise ops are library functions per design §12). `->` is the lambda arrow.
+   `let`, `downto`, `print` (now an ordinary function), `assert`,
+   `pass`, `super`, `inherits`, `nan`, and the `%`/`~`/`|`/`@` operators
+   (bitwise ops are library functions per design §12). `debug` and `option` were
+   also dropped here, and were later restored on purpose — see entry 30.
+   `->` is the lambda arrow.
    `break`/`continue` are kept as keywords though design §12 does not list them
    (every loop construct needs an exit; the reference AST has `LoopExitStatement`).
 
@@ -2257,3 +2259,47 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     filter-before-yield evaluation counts, conditional-mode length preservation,
     non-leaking loop variables, nesting, Table/Set/String sources, and agreement
     with the explicit loops the comprehensions replace). Suite: 407 cases green.
+
+30. **`debug` statement + `option debug` directive — restored on purpose
+    (2026-07-25).** Both words were dropped by entry 2 as part of following
+    design/design.md; the design docs describe no conditional-compilation
+    mechanism at all. Restored at the owner's request, since the feature is
+    genuinely useful and has no equivalent: the keyword set goes 44 -> 46.
+    Unlike the comprehension spelling (entry 29), there is no existing construct
+    to reuse here — `debug` marks code for *compile-time* inclusion, which no
+    runtime `if` can express.
+      - `debug <statement>` (one line) or `debug` ... `end` (block).
+      - `option debug [= true|false]` at the very top of a file, before any
+        statement; a bare `option debug` means `= true`. Options are the only
+        thing allowed to precede statements, and one appearing later is a parse
+        error naming the rule.
+    **Compile-time, not runtime.** With debug off the body is never lowered: it
+    emits no code, allocates no constants, and — the part worth knowing — is
+    never name-resolved, so a switched-off body may refer to names that do not
+    exist. That is the old engine's behaviour too (its `visit_debug_statement`
+    simply skipped the block).
+    **A `debug` block opens no scope** (`parse_block(scope=false)`), so including
+    it behaves exactly as if the two marker lines were deleted, and a binding
+    made in one debug block is usable from a later one (the timing idiom). This
+    also keeps the two forms consistent, since the one-line form cannot introduce
+    a scope.
+    **Scope of the switch.** `CompileEnv::debug` carries a session default, set by
+    `Runtime::set_debug` and mirrored onto the module loader so imported modules
+    honour it too. A file's directive **narrows** it (`m_debug = m_debug && value`)
+    and can never widen it, so an embedder that disables debug session-wide gets a
+    hard guarantee no debug code compiles, whatever the individual files say.
+    Otherwise the setting is per file: a script switching debug off does not
+    affect the modules it imports.
+    **Directives are applied before any lowering** — a dedicated pass in
+    `compile_module` ahead of pass 0, not when the statement walk reaches them.
+    This is load-bearing and was a real bug first time round: pass 2a compiles
+    class methods and top-level function *bodies* before pass 2b walks the
+    statements, so applying the option at its statement position left every
+    `debug` inside a function compiled with the previous setting. The parser
+    guarantees directives are a prefix of the statement list, so the pass stops
+    at the first non-directive. Regression pinned by test_debug_off.phon case 3
+    ("inside a function"), which is what caught it.
+    Tests: `test/engine/test_debug.phon` (8 groups, debug on) and
+    `test/engine/test_debug_off.phon` (6 groups, `option debug = false`, incl. the
+    never-name-resolved property), plus three `test_embed.cpp` cases for
+    `Runtime::set_debug` and the narrowing rule. Suite: 410 cases green.

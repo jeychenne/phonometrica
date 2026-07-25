@@ -81,7 +81,10 @@ struct LoopCtx
 class Lowerer
 {
 public:
-	explicit Lowerer(ModuleNamespace &ns, CompileEnv *env = nullptr) : m_ns(ns), m_env(env) {}
+	explicit Lowerer(ModuleNamespace &ns, CompileEnv *env = nullptr)
+	    : m_ns(ns), m_env(env), m_debug(env ? env->debug : true)
+	{
+	}
 	void compile_module(Ast *module_ast, CompiledModule &out);
 
 private:
@@ -449,6 +452,7 @@ private:
 	Vector<LoopCtx> m_loops;
 	ModuleNamespace &m_ns; // persistent module namespace (owned by the caller)
 	CompileEnv *m_env;     // import loader + slot allocator (null: imports forbidden)
+	bool m_debug;          // whether `debug` statements are lowered in this chunk
 	// Import alias -> the module it names, so `M.x` resolves to a GET_MODULE of x's
 	// session-global slot in M's namespace (design §11). Keyed by the bound name (the
 	// `as` alias if given, else the module name).
@@ -1340,6 +1344,16 @@ void Lowerer::compile_stmt(Ast *node)
 	case NodeKind::ImportStatement:
 		// Top-level imports are consumed in pass 0; reaching here means a nested one.
 		error(node, "[Compile error] 'import' is only allowed at the top level of a module");
+	case NodeKind::DebugStatement:
+		// Compile-time inclusion: with debug off the body is never lowered, so it emits
+		// no code and its names are never resolved.
+		if (m_debug)
+			compile_stmt(node->as<DebugStatement>()->body.get());
+		break;
+	case NodeKind::OptionStatement:
+		// Already applied in compile_module's directive pass, before any lowering; the
+		// statement walk reaches it again and emits nothing.
+		break;
 	default:
 		error(node, "[Compile error] unsupported statement");
 	}
@@ -2696,6 +2710,23 @@ void Lowerer::compile_module(Ast *module_ast, CompiledModule &out)
 	FuncState mfs(main, nullptr, true);
 	fs = &mfs;
 	mfs.finally_base = static_cast<int>(m_finally_stack.size());
+
+	// Pass -1: apply the chunk's compile-time directives. These must be in effect before
+	// ANY lowering: class methods and top-level function bodies are compiled in pass 2a,
+	// ahead of the statement walk in pass 2b, so applying an `option` when the statement
+	// walk reaches it would come too late for code inside a function. The parser
+	// guarantees directives are a prefix of the statement list, so stopping at the first
+	// non-directive is exact.
+	for (auto &s : list->statements)
+	{
+		auto *o = s->as<OptionStatement>();
+		if (!o)
+			break;
+		// `&&`, not `=`: a file may switch its own debug code off, but cannot switch it
+		// back on when the host has disabled it session-wide.
+		if (o->name == Lexeme::Debug)
+			m_debug = m_debug && o->value;
+	}
 
 	// Pass 0: resolve imports first (design §11), so an imported module's public function
 	// names are known generics before any code — including forward references — is lowered.

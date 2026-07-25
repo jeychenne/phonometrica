@@ -104,6 +104,9 @@ struct CompileEnv
 	std::string dir;                    // importing module's directory ("" for <string>)
 	bool interactive = false;           // REPL leniencies (design §11): bare assignment
 	                                    // to an unresolved name auto-declares a binding
+	bool debug = true;                  // session default for `debug` statements. A file's
+	                                    // `option debug = ...` can only narrow it, so a
+	                                    // host that sets false strips debug code outright
 	Vector<LoadedModule *> imports;     // out: modules imported (in encounter order)
 	Vector<uint32_t> public_functions;  // out: this module's public generic names
 	Vector<uint32_t> public_classes;    // out: this module's public class names

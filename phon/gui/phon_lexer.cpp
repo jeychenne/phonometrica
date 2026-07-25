@@ -49,9 +49,9 @@ const char *PhonLexer::keywords(int set) const
 	// in docs/phon_lexer/phon/lexer.py, which carries the same list).
 	if (set == 1)
 	{
-		return "and as break cast catch class const continue div do else elsif end false field finally for function "
-		       "global if import in is local method mod not null open or ref repeat return spawn step then this throw "
-		       "to true try until var while";
+		return "and as break cast catch class const continue debug div do else elsif end false field finally for "
+		       "function global if import in is local method mod not null open option or ref repeat return spawn step "
+		       "then this throw to true try until var while";
 	}
 
 	// Set 2 is HighlightedIdentifier: type names, i.e. anything usable after `is`/`as` or

@@ -86,6 +86,9 @@ private:
 	AutoAst parse_power();
 	AutoAst parse_postfix();
 	AutoAst parse_primary();
+	// `debug <stmt>` / `debug ... end`, and the chunk-head `option name [= bool]`.
+	AutoAst parse_debug_statement();
+	AutoAst parse_option_statement();
 	AutoAst parse_list_literal();
 	// Called from parse_list_literal once `for` is seen, with the already-parsed
 	// yield expression and the `[`'s position.

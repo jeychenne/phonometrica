@@ -23,10 +23,10 @@ enum class Lexeme : uint8_t
 	Unknown = 0,
 
 	// --- keywords (design §12) ---
-	And, As, Break, Cast, Catch, Class, Const, Continue, Div, Do, Else, Elsif,
-	End, False, Field, Finally, For, Function, Global, If, Import, In, Is, Local,
-	Method, Mod, Not, Null, Open, Or, Ref, Repeat, Return, Spawn, Step, Then,
-	This, Throw, To, True, Try, Until, Var, While,
+	And, As, Break, Cast, Catch, Class, Const, Continue, Debug, Div, Do, Else,
+	Elsif, End, False, Field, Finally, For, Function, Global, If, Import, In, Is,
+	Local, Method, Mod, Not, Null, Open, Option, Or, Ref, Repeat, Return, Spawn,
+	Step, Then, This, Throw, To, True, Try, Until, Var, While,
 
 	// --- operators ---
 	Plus, Minus, Star, Slash, Caret,        // + - * / ^

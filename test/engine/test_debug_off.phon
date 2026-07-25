@@ -1,0 +1,61 @@
+option debug = false
+# =====================================================================
+# test_debug_off.phon
+# =====================================================================
+# The complement of test_debug.phon: the same constructs with
+# `option debug = false` at the top of the file, so every debug body is
+# stripped at compile time.
+#
+# `option` must be the first thing in the file, before any statement —
+# hence the directive above this banner. Because the directive is
+# per-file, this module being compiled with debug off does not affect
+# any other test file in the suite.
+# =====================================================================
+
+print("==== debug statement (disabled) ====")
+
+print("--- 1. one-line form is stripped ---")
+var ran1 = 0
+debug ran1 = 1
+assert(ran1 == 0, "T1: one-line debug statement ran despite 'option debug = false'")
+
+print("--- 2. block form is stripped ---")
+var ran2 = 0
+debug
+    ran2 = ran2 + 1
+    ran2 = ran2 + 1
+end
+assert(ran2 == 0, "T2: debug block ran despite 'option debug = false'")
+
+print("--- 3. inside a function ---")
+local function traced(n)
+    var extra = 0
+    debug extra = 100
+    return n + extra
+end
+assert(traced(1) == 1, "T3: debug statement inside a function ran")
+
+print("--- 4. inside a loop ---")
+var count4 = 0
+for i = 1 to 3 do
+    debug count4 = count4 + 1
+end
+assert(count4 == 0, "T4: debug statement inside a loop ran")
+
+print("--- 5. a stripped body is never name-resolved ---")
+# The body below references a name that does not exist anywhere. Because
+# the body is never lowered, this file still compiles — which is the
+# whole point of compile-time inclusion, and would be a [Name error] if
+# `debug` were merely a runtime test.
+debug print(a_name_that_does_not_exist_anywhere)
+print("     (this file compiled, so the stripped body was never resolved)")
+
+print("--- 6. nested debug is stripped as a whole ---")
+var ran6 = 0
+debug
+    debug ran6 = 1
+end
+assert(ran6 == 0, "T6: nested debug ran")
+
+print("")
+print("==== ALL debug (disabled) tests passed ====")

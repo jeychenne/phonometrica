@@ -915,6 +915,57 @@ Compile-time errors point at the offending line; runtime errors print the full c
 inside Phonometrica, and the script editor highlights the failing line.
 
 
+The ``debug`` statement
+~~~~~~~~~~~~~~~~~~~~~~~
+
+Diagnostic code often needs to stay in a script while you work on it, but not run when the script is used for real. Deleting and
+retyping it each time is tedious, and commenting it out leaves it to rot. The ``debug`` statement marks code as diagnostic so that you
+can switch it off in one place.
+
+It has two forms. It can precede a single statement on the same line::
+
+    var formants = get_formants(sound, t)
+    debug print("formants at {t}: {formants}")
+
+or it can mark a whole block, closed by ``end``::
+
+    debug
+        print("layer count: " & get_layer_count(annot))
+        print("duration: " & get_duration(sound))
+    end
+
+Debug code is included by default, so both examples above run as written. To switch it off, put an ``option`` directive at the very top
+of the file — before any other statement::
+
+    option debug = false
+
+Every ``debug`` statement in that file is then **removed at compile time**. This is not a runtime test that happens to be false: the code
+is never compiled at all, so it costs nothing, not even the check. A consequence worth knowing is that a switched-off ``debug`` body is
+never checked for undefined names either, so it can refer to a helper that no longer exists without the file failing to compile. The
+flip side is that a typo in debug code stays hidden until you switch it back on.
+
+The directive accepts ``= true`` as well, and a bare ``option debug`` means the same thing. Since debug code is on by default,
+``option debug = false`` is the form you will normally write.
+
+A ``debug`` block opens no scope of its own — including it behaves exactly as if the ``debug`` and ``end`` lines were deleted. That
+means a variable created in one debug block is still available later, which is what makes the common timing pattern work::
+
+    debug
+        var started = 0
+    end
+
+    # ... the work being measured ...
+
+    debug
+        print("elapsed: " & started)
+    end
+
+The setting is per file: a script that switches debug off does not switch it off for the modules it imports, and each file decides for
+itself. Phonometrica itself can also disable debug code for a whole session, which takes precedence — a file cannot switch its debug
+code back on once the application has turned it off. This is what lets a finished plugin ship with the certainty that no diagnostic code
+will run, whatever its individual files say.
+
+
 Operators
 ---------
 

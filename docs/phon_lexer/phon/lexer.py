@@ -31,9 +31,9 @@ class PhonLexer(RegexLexer):
             (r'\b(true|false|null)\b', Keyword.Constant),
             (words((
                 'and', 'as', 'break', 'cast', 'catch', 'class', 'const',
-                'continue', 'div', 'do', 'else', 'elsif', 'end', 'field',
+                'continue', 'debug', 'div', 'do', 'else', 'elsif', 'end', 'field',
                 'finally', 'for', 'function', 'global', 'if', 'import', 'in',
-                'is', 'local', 'method', 'mod', 'not', 'open', 'or', 'ref',
+                'is', 'local', 'method', 'mod', 'not', 'open', 'option', 'or', 'ref',
                 'repeat', 'return', 'spawn', 'step', 'then', 'this', 'throw',
                 'to', 'try', 'until', 'var', 'while'), prefix=r'\b', suffix=r'\b'),
              Keyword.Reserved),

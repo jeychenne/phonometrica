@@ -479,6 +479,17 @@ public:
 		child(n->call.get());
 	}
 
+	void visit_debug_statement(DebugStatement *n) override
+	{
+		emit("Debug");
+		child(n->body.get());
+	}
+
+	void visit_option_statement(OptionStatement *n) override
+	{
+		emit(std::string("Option ") + lexeme_name(n->name) + (n->value ? " = true" : " = false"));
+	}
+
 	void visit_import_statement(ImportStatement *n) override
 	{
 		std::string s = "Import";

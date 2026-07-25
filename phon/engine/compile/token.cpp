@@ -21,6 +21,7 @@ const char *lexeme_name(Lexeme l) noexcept
 	case Lexeme::Class: return "class";
 	case Lexeme::Const: return "const";
 	case Lexeme::Continue: return "continue";
+	case Lexeme::Debug: return "debug";
 	case Lexeme::Div: return "div";
 	case Lexeme::Do: return "do";
 	case Lexeme::Else: return "else";
@@ -42,6 +43,7 @@ const char *lexeme_name(Lexeme l) noexcept
 	case Lexeme::Not: return "not";
 	case Lexeme::Null: return "null";
 	case Lexeme::Open: return "open";
+	case Lexeme::Option: return "option";
 	case Lexeme::Or: return "or";
 	case Lexeme::Ref: return "ref";
 	case Lexeme::Repeat: return "repeat";

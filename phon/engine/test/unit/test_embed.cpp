@@ -836,3 +836,56 @@ TEST_CASE("embed: host-side release of a buffered cycle candidate parks it")
 	// line (cleanly under ASan) is the regression check.
 	CHECK(true);
 }
+
+// --- the `debug` switch (Runtime::set_debug + the `option debug` directive) ---------
+
+TEST_CASE("debug: statements are included by default, stripped by the host switch")
+{
+	{
+		Runtime rt;
+		CHECK(rt.debug()); // on by default
+		Variant v = rt.do_string("var n = 0\ndebug n = 1\nn");
+		CHECK(v.as_int() == 1);
+	}
+	{
+		Runtime rt;
+		rt.set_debug(false);
+		CHECK(!rt.debug());
+		Variant v = rt.do_string("var n = 0\ndebug n = 1\nn");
+		CHECK(v.as_int() == 0);
+	}
+}
+
+TEST_CASE("debug: a file's option narrows the host setting but never widens it")
+{
+	{
+		// A file may switch its own debug code off.
+		Runtime rt;
+		Variant v = rt.do_string("option debug = false\nvar n = 0\ndebug n = 1\nn");
+		CHECK(v.as_int() == 0);
+	}
+	{
+		// But it cannot switch it back on once the host has disabled it: that is the
+		// guarantee an embedder shipping scripts relies on.
+		Runtime rt;
+		rt.set_debug(false);
+		Variant v = rt.do_string("option debug = true\nvar n = 0\ndebug n = 1\nn");
+		CHECK(v.as_int() == 0);
+	}
+	{
+		// A bare `option debug` means `= true`, so it is a no-op under a debug host.
+		Runtime rt;
+		Variant v = rt.do_string("option debug\nvar n = 0\ndebug n = 1\nn");
+		CHECK(v.as_int() == 1);
+	}
+}
+
+TEST_CASE("debug: a stripped body is never lowered, so its names are never resolved")
+{
+	// `no_such_name` does not exist. With debug off the body is not compiled at all,
+	// so this must compile and run rather than raising a name error.
+	Runtime rt;
+	rt.set_debug(false);
+	Variant v = rt.do_string("var n = 7\ndebug print(no_such_name)\nn");
+	CHECK(v.as_int() == 7);
+}

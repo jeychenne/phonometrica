@@ -43,7 +43,8 @@ enum class NodeKind
 	StatementList, Declaration, Assignment, ExpressionStatement, IfStatement,
 	WhileStatement, RepeatStatement, ForNumeric, ForEach, LoopControl,
 	ReturnStatement, Parameter, ClassDeclaration, FieldDeclaration,
-	TryStatement, CatchClause, ThrowStatement, SpawnStatement, ImportStatement
+	TryStatement, CatchClause, ThrowStatement, SpawnStatement, ImportStatement,
+	DebugStatement, OptionStatement
 };
 
 // Syntactic visibility modifier on a top-level declaration (§11). Which storage
@@ -596,6 +597,29 @@ struct ImportStatement final : Ast
 	std::vector<ImportClause> clauses;
 };
 
+// `debug <statement>`, or `debug` <newline> ... `end` — code kept only when debug is
+// enabled for this chunk. This is compile-time inclusion, not a runtime test: with
+// debug off the body is never lowered, so it costs nothing and its names are never
+// resolved. `body` is the single statement, or the block's StatementList.
+struct DebugStatement final : Ast
+{
+	DebugStatement(int line, int col, AutoAst body) : Ast(KIND, line, col), body(std::move(body)) {}
+	PHON_AST_NODE(DebugStatement, DebugStatement)
+	AutoAst body;
+};
+
+// `option <name> [= true|false]` — a compile-time directive, valid only at the very
+// top of a chunk, before any statement. `debug` is currently the only option name.
+// A bare `option debug` means `= true`.
+struct OptionStatement final : Ast
+{
+	OptionStatement(int line, int col, Lexeme name, bool value)
+	    : Ast(KIND, line, col), name(name), value(value) {}
+	PHON_AST_NODE(OptionStatement, OptionStatement)
+	Lexeme name;
+	bool value;
+};
+
 // ---------------------------------------------------------------------------
 // Visitor
 // ---------------------------------------------------------------------------
@@ -653,6 +677,8 @@ public:
 	virtual void visit_throw_statement(ThrowStatement *node) = 0;
 	virtual void visit_spawn_statement(SpawnStatement *node) = 0;
 	virtual void visit_import_statement(ImportStatement *node) = 0;
+	virtual void visit_debug_statement(DebugStatement *node) = 0;
+	virtual void visit_option_statement(OptionStatement *node) = 0;
 };
 
 } // namespace phonometrica

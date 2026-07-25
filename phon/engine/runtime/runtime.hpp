@@ -76,6 +76,15 @@ public:
 	// binding. Off by default; never applies to do_file.
 	void set_interactive(bool on) noexcept;
 
+	// Session-wide switch for `debug` statements, on by default. `debug` is
+	// compile-time inclusion: with this off, a `debug` body is never lowered, so it
+	// emits no code at all. A file's own `option debug = ...` can only narrow this,
+	// never widen it — so an embedder shipping scripts can set false here and be sure
+	// no debug code runs, whatever the individual files say. Applies to chunks and
+	// modules compiled after the call.
+	void set_debug(bool on) noexcept;
+	bool debug() const noexcept;
+
 	// Inject a value into this session's isolate-global namespace (design §11): the
 	// embedder's channel for app state (`phon`, the current selection, …). The name
 	// resolves from every chunk and module compiled after the call, like a

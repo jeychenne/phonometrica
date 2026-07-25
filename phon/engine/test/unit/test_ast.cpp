@@ -76,6 +76,8 @@ struct KindRecorder final : AstVisitor
 	void visit_throw_statement(ThrowStatement *n) override { rec(n); }
 	void visit_spawn_statement(SpawnStatement *n) override { rec(n); }
 	void visit_import_statement(ImportStatement *n) override { rec(n); }
+	void visit_debug_statement(DebugStatement *n) override { rec(n); }
+	void visit_option_statement(OptionStatement *n) override { rec(n); }
 };
 
 } // namespace

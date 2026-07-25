@@ -60,6 +60,8 @@ PHON_AST_VISIT(CatchClause, visit_catch_clause)
 PHON_AST_VISIT(ThrowStatement, visit_throw_statement)
 PHON_AST_VISIT(SpawnStatement, visit_spawn_statement)
 PHON_AST_VISIT(ImportStatement, visit_import_statement)
+PHON_AST_VISIT(DebugStatement, visit_debug_statement)
+PHON_AST_VISIT(OptionStatement, visit_option_statement)
 
 #undef PHON_AST_VISIT
 

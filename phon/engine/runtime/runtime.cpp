@@ -352,6 +352,11 @@ namespace fs = std::filesystem;
 class ModuleManager final : public ModuleLoader
 {
 public:
+	// Session default for `debug` statements, mirrored from Runtime::set_debug so that
+	// imported modules honour the host's setting too (they are compiled here, with
+	// their own CompileEnv, so they do not otherwise see the chunk's env).
+	bool debug = true;
+
 	void add_import_path(const std::string &dir) { m_paths.push_back(dir); }
 	void remove_import_path(const std::string &dir)
 	{
@@ -406,6 +411,7 @@ public:
 		CompileEnv env;
 		env.loader = this;
 		env.dir = lm->dir;
+		env.debug = debug; // the host's session-wide setting reaches imported modules too
 		CompiledModule cm;
 		compile_module(ast.get(), lm->ns, cm, &env); // recursively loads this module's imports
 		lm->functions = std::move(env.public_functions);
@@ -518,6 +524,7 @@ struct Runtime::State
 	ModuleNamespace shell;
 	ModuleManager modules;
 	bool interactive = false;
+	bool debug = true;
 	Isolate isolate;
 
 	// Compile `source` against the persistent namespace and run it: the common body
@@ -556,6 +563,7 @@ std::string Runtime::disassemble(const String &code)
 	env.loader = &st.modules;
 	env.dir = "";
 	env.interactive = st.interactive;
+	env.debug = st.debug;
 	compile_source_parsed(std::move(source), st.shell, *cm, &env);
 	return phonometrica::disassemble(*cm->main);
 }
@@ -573,6 +581,17 @@ Variant Runtime::do_file(const String &path)
 void Runtime::set_interactive(bool on) noexcept
 {
 	m_state->interactive = on;
+}
+
+void Runtime::set_debug(bool on) noexcept
+{
+	m_state->debug = on;
+	m_state->modules.debug = on; // imported modules are compiled by the loader, not here
+}
+
+bool Runtime::debug() const noexcept
+{
+	return m_state->debug;
 }
 
 void Runtime::add_global(const char *name, const Variant &value)
@@ -593,6 +612,7 @@ Variant Runtime::State::run(Source source, const std::string &dir, const std::st
 	env.loader = &st.modules; // resolves `import`, allocates session-global slots
 	env.dir = dir;            // "" for a <string> chunk: no file directory
 	env.interactive = st.interactive;
+	env.debug = st.debug;
 	compile_source_parsed(std::move(source), st.shell, *cm, &env);
 
 	// Grow the Isolate's module-slot vector to cover every module's session-global slots
