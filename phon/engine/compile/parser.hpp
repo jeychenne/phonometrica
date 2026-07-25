@@ -57,6 +57,7 @@ private:
 	AutoAst parse_class(DeclModifier modifier, bool is_ref, bool is_open);
 	AutoAst parse_field();
 	AutoAst parse_method();
+	AutoAst parse_condition(const char *kw);
 	AutoAst parse_if_statement();
 	AutoAst parse_while_statement();
 	AutoAst parse_repeat_statement();

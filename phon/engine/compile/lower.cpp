@@ -384,6 +384,7 @@ private:
 	void emit_option_prologue(AstList &params);
 	void compile_if(IfStatement *s);
 	void compile_while(WhileStatement *s);
+	int declare_condition_local(Declaration *d);
 	void compile_repeat(RepeatStatement *s);
 	void compile_for_numeric(ForNumeric *s);
 	void compile_for_each(ForEach *s);
@@ -1777,16 +1778,48 @@ void Lowerer::compile_assignment(Assignment *a)
 	error(a->target.get(), "[Compile error] invalid compound-assignment target");
 }
 
+// A condition binding (`if var m = …`, `while var line = …`) reserves the register its
+// initializer will be tested in. Always a plain local, even at module top level, where
+// an ordinary `var` would take a module slot instead: the name is scoped to the branch
+// it guards and must not outlive it. Emits no code — the caller decides where the
+// initializer runs, which is what lets `while` re-evaluate it every iteration.
+int Lowerer::declare_condition_local(Declaration *d)
+{
+	return declare_local(d->name, /*is_const*/ false, d);
+}
+
 void Lowerer::compile_if(IfStatement *s)
 {
 	Vector<intptr_t> end_jumps;
 	for (intptr_t i = 0; i < static_cast<intptr_t>(s->conds.size()); ++i)
 	{
+		// `if var m = e then`: the name is visible in the body it guards and nowhere
+		// else — not in `else` (where it is known null, so every use is a null deref),
+		// and not in a later `elsif` condition. The block opened here closes before the
+		// next branch is compiled.
+		auto *decl = s->conds[i]->as<Declaration>();
 		int save = fs->free_reg;
-		int cr = expr_any(s->conds[i].get());
-		intptr_t jf = emit_jump(Opcode::JMPF, cr, ln(s));
-		reg_free_to(save);
+		intptr_t jf;
+		if (decl)
+		{
+			enter_block();
+			int L = declare_condition_local(decl);
+			expr_to(decl->init.get(), L);
+			jf = emit_jump(Opcode::JMPF, L, ln(s));
+			// Deliberately no reg_free_to here: L holds the binding the body reads.
+			// exit_block below reclaims it, after the body has been compiled.
+		}
+		else
+		{
+			int cr = expr_any(s->conds[i].get());
+			jf = emit_jump(Opcode::JMPF, cr, ln(s));
+			reg_free_to(save);
+		}
 		compile_stmt(s->bodies[i].get());
+		// Closing before the branch's exit jump keeps any CLOSE on the taken path only;
+		// the false path never created a closure over the binding, so it can skip it.
+		if (decl)
+			exit_block(static_cast<uint32_t>(s->line));
 		if (i + 1 < static_cast<intptr_t>(s->conds.size()) || s->else_body)
 			end_jumps.push_back(emit_jump(Opcode::JMP, 0, ln(s)));
 		patch_jump(jf);
@@ -1799,13 +1832,33 @@ void Lowerer::compile_if(IfStatement *s)
 
 void Lowerer::compile_while(WhileStatement *s)
 {
+	// `while var task = next_task() do`: one register for the whole loop, declared
+	// before the loop top and re-initialised on every pass — including after `continue`,
+	// which targets the top. Closures therefore capture the shared slot, exactly as they
+	// do for a `for` variable, and a single CLOSE at the end covers the loop.
+	auto *decl = s->cond->as<Declaration>();
+	int cond_reg = -1;
+	if (decl)
+	{
+		enter_block();
+		cond_reg = declare_condition_local(decl);
+	}
 	m_loops.emplace_back();
 	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
 	intptr_t top = P().code.size();
-	int save = fs->free_reg;
-	int cr = expr_any(s->cond.get());
-	intptr_t exit = emit_jump(Opcode::JMPF, cr, ln(s));
-	reg_free_to(save);
+	intptr_t exit;
+	if (decl)
+	{
+		expr_to(decl->init.get(), cond_reg);
+		exit = emit_jump(Opcode::JMPF, cond_reg, ln(s));
+	}
+	else
+	{
+		int save = fs->free_reg;
+		int cr = expr_any(s->cond.get());
+		exit = emit_jump(Opcode::JMPF, cr, ln(s));
+		reg_free_to(save);
+	}
 	compile_stmt(s->body.get());
 	emit_AsBx(Opcode::JMP, 0, static_cast<int>(top - (P().code.size() + 1)), ln(s));
 	patch_jump(exit);
@@ -1816,6 +1869,9 @@ void Lowerer::compile_while(WhileStatement *s)
 	for (intptr_t c : lc.continues)
 		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
 	m_loops.pop_back();
+	// After every jump target, so `break` lands on the CLOSE rather than skipping it.
+	if (decl)
+		exit_block(static_cast<uint32_t>(s->line));
 }
 
 void Lowerer::compile_repeat(RepeatStatement *s)

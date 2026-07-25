@@ -35,3 +35,13 @@ end
 for i, ref v in list do               # index/value iteration, value by reference
     v += 1
 end
+
+if var m = match(pattern, line) then   # a condition that binds the tested value
+    print(group(m, 0))
+elsif var n = match(fallback, line) then
+    print(group(n, 0))
+end
+
+while var chunk = read_line(file) do   # re-evaluated on every iteration
+    process(chunk)
+end

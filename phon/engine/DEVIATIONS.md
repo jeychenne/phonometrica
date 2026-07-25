@@ -2351,3 +2351,52 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     or `Boolean`. The app's document classes (`Annotation`, `Sound`, `Dataset`,
     `Concordance`, the `*Query` types) stay non-constructible by policy — they come
     from the project, and they only gain the improved error.
+
+32. **Declarations in `if` / `elsif` / `while` conditions — a language addition,
+    absent from the design docs (2026-07-25).** `if var m = match(re, s) then`,
+    and the same in `elsif` and `while`. Like entry 29 (list comprehensions) this
+    is an addition rather than a restoration: the old engine had no equivalent,
+    and design/design.md describes only expression conditions. Entry 2 still
+    governs — **the keyword set is unchanged at 46**. `var` is already a keyword
+    and cannot begin an expression, so one token of lookahead decides between the
+    two condition forms with no backtracking, exactly as for the comprehension.
+    **No new AST node.** `IfStatement::conds[i]` and `WhileStatement::cond` may
+    hold a `Declaration`, which is already an `Ast`; the lowerer tests
+    `->as<Declaration>()`, matching the idiom it uses everywhere else. This costs
+    no NodeKind, no visitor method and no `test_ast.cpp` change. The one visible
+    consequence is in the AST dump, where a `Declaration` and a `Variable` both
+    render as `Var <name>`: the enclosing arm is labelled `Case binding` /
+    `While binding` so the two are still told apart.
+    **`var` only.** `const`, `local`, `global`, `ref` and `open` are parse errors
+    anchored at the offending keyword. A condition binding is scoped to the branch
+    it guards, so it is never a module or isolate binding and never a write
+    target, and `const` buys nothing for a name that lives for one branch. An
+    initializer is required, since the whole point is to bind the tested value.
+    **Scoping: the guarded body, and nothing else** — not `else`, and not a later
+    `elsif` condition. In `else` the variable is known null, so exposing it would
+    only invite `if var m = … then … else print(group(m, 0)) end`, a guaranteed
+    null dereference; carrying it across the chain would leak an earlier arm's
+    name into a later condition. This matches `for` and `catch`, which already
+    bind statement-scoped names. Note that the binding is a plain local even at
+    module top level, where an ordinary `var` takes a module slot instead.
+    For `while` the name is declared once, outside the loop, and the initializer
+    is re-evaluated at the loop top on every pass — `continue` already targets the
+    top, so it re-runs too. One shared register, so closures made in the body all
+    observe the final value, exactly as they do for a `for` variable (entry 29 /
+    `test_list_comprehension.phon` case 16). `exit_block` runs after every jump
+    target so `break` lands on the `CLOSE` rather than skipping it.
+    An `if` binding does **not** share a slot that way, and the asymmetry is
+    intended rather than an oversight: its block opens and closes once per branch,
+    so a closure made inside keeps that branch's value. There is simply no shared
+    slot to observe, because the binding never outlives the branch. Pinned by
+    `test_condition_decl.phon` case 10 (T10d/T10e against T10b).
+    **No truthiness change was needed.** `match` returns `null` on failure and
+    `null` is the only falsy non-boolean, so the motivating idiom works with the
+    language as it already was. The corollary is that a source signalling
+    exhaustion with `""` or `0` does *not* compose: `read_line` returns `""` at end
+    of file, so `while var line = read_line(f) do` would never stop. The tutorial
+    and `test_condition_decl.phon` case 3 both say so.
+    Tests: `test/engine/test_condition_decl.phon` (11 groups), two `test_parser.cpp`
+    cases (AST shape, and the rejections with their anchor columns), two
+    `test_vm.cpp` cases (scope, and `while` re-initialisation), and the
+    `controlflow` golden AST corpus. Suite: 417 cases green.

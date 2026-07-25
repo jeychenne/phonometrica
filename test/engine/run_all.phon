@@ -42,6 +42,7 @@ import test_try_catch_loops
 import test_nested_error_lines
 import test_error_trace
 import test_list_comprehension
+import test_condition_decl
 import test_debug
 import test_debug_off
 import test_class_ref

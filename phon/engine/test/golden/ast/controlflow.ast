@@ -83,3 +83,42 @@ Module
       Assign +=
         Var v
         Int 1
+  If
+    Case binding
+      Var m
+        Call
+          Var match
+          Var pattern
+          Var line
+      Block
+        ExprStmt
+          Call
+            Var print
+            Call
+              Var group
+              Var m
+              Int 0
+    Case binding
+      Var n
+        Call
+          Var match
+          Var fallback
+          Var line
+      Block
+        ExprStmt
+          Call
+            Var print
+            Call
+              Var group
+              Var n
+              Int 0
+  While binding
+    Var chunk
+      Call
+        Var read_line
+        Var file
+    Block
+      ExprStmt
+        Call
+          Var process
+          Var chunk

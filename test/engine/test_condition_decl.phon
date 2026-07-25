@@ -1,0 +1,274 @@
+# =====================================================================
+# test_condition_decl.phon
+# =====================================================================
+# Declarations in `if` / `elsif` / `while` conditions:
+#
+#     if var m = match(re, s) then ... end
+#     elsif var n = match(re2, s) then ... end
+#     while var task = next_task() do ... end
+#
+# The initializer's value is what gets tested, and the name is bound for
+# the branch it guards — nothing else. Only `var` may declare here;
+# `const`, `local`, `global`, `ref` and `open` are parse errors, since a
+# condition binding is never a module binding and never a write target.
+#
+# No truthiness rule was added for this. `match` returns `null` on
+# failure and `null` is the only falsy non-boolean, so the idiom works
+# with the language exactly as it already was — note case 4, where a
+# condition binding of `0` or `""` takes the branch like any other
+# non-null value.
+# =====================================================================
+
+print("==== declarations in conditions ====")
+
+# --- helpers ----------------------------------------------------------
+# Yields 1, 2, 3 and then `null`, so it drives a `while` binding to its
+# end the way `read_line` or `match` would.
+function next_countdown(i as Integer)
+    if i < 3 then
+        return i + 1
+    end
+    return null
+end
+
+# `n / 2` for an even n, `null` otherwise: a `match`-shaped helper for a
+# declaring `if`.
+function even_half(n as Integer)
+    if n mod 2 == 0 then
+        return n / 2
+    end
+    return null
+end
+
+function classify11(x)
+    if var v = x then
+        return "int " & to_string(v)
+    end
+    return "nothing"
+end
+
+# --- 1. the `if` form -------------------------------------------------
+print("--- 1. if ---")
+var re1 = Regex('(\d+)')
+var taken1 = false
+if var m1 = match(re1, "order 42 shipped") then
+    taken1 = true
+    assert(group(m1, 1) == "42", "T1a: the binding is visible in the body")
+end
+assert(taken1, "T1b: a matching condition takes the branch")
+
+var taken1b = false
+if var m1b = match(re1, "no digits here") then
+    taken1b = true
+end
+assert(not taken1b, "T1c: a null initializer skips the branch")
+
+# --- 2. the `elsif` form ----------------------------------------------
+print("--- 2. elsif ---")
+var which2 = "none"
+if var a2 = match(Regex("^cat"), "dogfish") then
+    which2 = "cat: " & group(a2, 0)
+elsif var b2 = match(Regex("fish$"), "dogfish") then
+    which2 = "fish: " & group(b2, 0)
+else
+    which2 = "neither"
+end
+assert(which2 == "fish: fish", "T2a: the second branch bound and ran")
+
+# An `elsif` chain where every arm declares, and none matches.
+var which2b = "none"
+if var c2 = match(Regex("^x"), "abc") then
+    which2b = "first"
+elsif var d2 = match(Regex("^y"), "abc") then
+    which2b = "second"
+else
+    which2b = "else"
+end
+assert(which2b == "else", "T2b: an all-declaring chain falls through to else")
+
+# --- 3. the `while` form ----------------------------------------------
+print("--- 3. while ---")
+var path3 = get_temp_name()
+var w3 = File(path3, "w")
+write_line(w3, "alpha")
+write_line(w3, "beta")
+write_line(w3, "gamma")
+close(w3)
+
+var read3 = []
+var fh3 = File(path3)
+# `read_line` returns "" at end of file, not null, and "" is truthy — so this loop
+# needs the explicit break. The pure form (case 8) uses a source that yields null.
+while var line3 = read_line(fh3) do
+    if line3 == "" then
+        break
+    end
+    append(read3, line3)
+end
+close(fh3)
+remove_file(path3)
+assert(len(read3) == 3, "T3a: expected 3 lines, got " & len(read3))
+assert(read3[1] == "alpha" and read3[3] == "gamma", "T3b: line contents")
+
+# --- 4. only `null` is falsy ------------------------------------------
+print("--- 4. the falsiness rule is unchanged ---")
+# The binding is tested exactly like any other condition expression: `0`
+# and `""` are truthy here, which is why no `has_match` predicate was
+# needed for case 1 — `match` returns `null`, not a false-y sentinel.
+var zero4 = false
+if var z4 = 0 then
+    zero4 = true
+    assert(z4 == 0, "T4a: the bound value is the initializer's")
+end
+assert(zero4, "T4b: 0 is truthy, so the branch is taken")
+
+var empty4 = false
+if var e4 = "" then
+    empty4 = true
+end
+assert(empty4, "T4c: an empty string is truthy")
+
+var null4 = false
+if var n4 = null then
+    null4 = true
+end
+assert(not null4, "T4d: null is falsy")
+
+# --- 5. the name does not escape the statement ------------------------
+print("--- 5. scope ---")
+# `m5` below is bound only inside the `then` block. Nothing outside the
+# statement can see it, which is checked by compiling a reference to it
+# in a separate chunk (a bare mention here would be a compile error and
+# would abort the file).
+var probe5 = "unset"
+if var m5 = "bound" then
+    probe5 = m5
+end
+assert(probe5 == "bound", "T5a: visible inside the body it guards")
+
+# --- 6. not visible in `else`, nor in a later `elsif` condition --------
+print("--- 6. the binding is confined to its own branch ---")
+# In `else` the variable is known null, so exposing it would only invite
+# a guaranteed null dereference; a later `elsif` condition would likewise
+# be reading an earlier branch's name. Both are name errors, pinned in
+# test_class.cpp (the engine unit suite) since a compile error cannot be
+# caught from a script.
+var reached6 = false
+if var m6 = null then
+    reached6 = false
+else
+    reached6 = true
+end
+assert(reached6, "T6a: the else branch still runs")
+
+# --- 7. shadowing leaves the outer binding intact ---------------------
+print("--- 7. shadowing ---")
+var name7 = "outer"
+if var name7 = "inner" then
+    assert(name7 == "inner", "T7a: the inner binding wins inside the body")
+end
+assert(name7 == "outer", "T7b: the outer binding is untouched afterwards")
+
+var label7 = "outer"
+var step7 = 0
+while var label7 = next_countdown(step7) do
+    step7 += 1
+    assert(label7 == 1, "T7c: the while binding shadows inside the body")
+    break
+end
+assert(label7 == "outer", "T7d: a shadowing while binding does not write the outer name")
+
+# --- 8. `while` re-evaluates the initializer every iteration ----------
+print("--- 8. re-initialisation ---")
+var calls8 = 0
+var total8 = 0
+while var v8 = next_countdown(calls8) do
+    calls8 += 1
+    total8 += v8
+end
+# next_countdown yields 1, 2, 3 then null: four calls in all, the last
+# ending the loop.
+assert(calls8 == 3, "T8a: expected 3 iterations, got " & calls8)
+assert(total8 == 6, "T8b: expected 1+2+3, got " & total8)
+
+# --- 9. break and continue inside a declaring `while` -----------------
+print("--- 9. break / continue ---")
+var seen9 = 0
+var k9 = 0
+while var v9 = next_countdown(k9) do
+    k9 += 1
+    if v9 == 2 then
+        continue
+    end
+    seen9 += v9
+end
+assert(seen9 == 4, "T9a: continue re-runs the initializer; expected 1+3, got " & seen9)
+
+var iters9 = 0
+var j9 = 0
+while var v9b = next_countdown(j9) do
+    j9 += 1
+    iters9 += 1
+    if v9b == 2 then
+        break
+    end
+end
+assert(iters9 == 2, "T9b: break leaves the loop; expected 2, got " & iters9)
+
+# --- 10. closures follow the same capture rule as `for` ---------------
+print("--- 10. capture ---")
+# The `while` binding is one reused slot, exactly like a `for` variable,
+# so closures made in the body all observe its final value. As in
+# test_list_comprehension case 16, the assertion pins that the two forms
+# agree rather than endorsing a particular value.
+var from_for10 = []
+for v in [1, 2, 3] do
+    append(from_for10, function() return v end)
+end
+var from_while10 = []
+var i10 = 0
+while var v10 = next_countdown(i10) do
+    i10 += 1
+    append(from_while10, function() return v10 end)
+end
+assert(len(from_while10) == 3, "T10a: expected 3 closures")
+assert(from_while10[1]() == from_while10[3](), "T10b: closures share one slot")
+assert(from_for10[1]() == from_for10[3](), "T10c: 'for' shares one slot too")
+
+# An `if` binding is different, and deliberately so: its block opens and closes
+# once per branch, so a closure made inside it keeps that branch's value. There
+# is no shared slot to observe, because the binding does not outlive the branch.
+var from_if10 = []
+for n in [1, 2, 3] do
+    if var d10 = n * 10 then
+        append(from_if10, function() return d10 end)
+    end
+end
+assert(from_if10[1]() == 10, "T10d: an if binding is captured per branch")
+assert(from_if10[3]() == 30, "T10e: an if binding is captured per branch")
+
+# --- 11. inside functions, loops and nested branches ------------------
+print("--- 11. nesting ---")
+assert(classify11(42) == "int 42", "T11a: declaring if inside a function")
+assert(classify11(null) == "nothing", "T11b: the else path")
+
+var nested11 = ""
+if var outer11 = "a" then
+    if var inner11 = "b" then
+        nested11 = outer11 & inner11
+    end
+end
+assert(nested11 == "ab", "T11c: nested declaring ifs")
+
+# A declaring `if` inside a loop body must not leak registers across
+# iterations — the binding is reclaimed when its branch ends.
+var sum11 = 0
+for n in [1, 2, 3, 4] do
+    if var half11 = even_half(n) then
+        sum11 += half11
+    end
+end
+assert(sum11 == 3, "T11d: expected 1+2 from the even members, got " & sum11)
+
+print("")
+print("==== ALL condition-declaration tests passed ====")

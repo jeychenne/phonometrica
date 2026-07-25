@@ -487,6 +487,35 @@ elsif branch (if any), and if all else fails, it executes the ``else`` branch. T
 is no limit on the number of ``elsif`` branches. The ``else`` branch, if it exists, but always come last.
 
 
+A condition may also *declare* the value it tests. This is useful whenever a function
+returns either a result or ``null``, since it saves you from naming the result on one
+line and testing it on the next:
+
+.. code:: phon
+
+    if var m = match(Regex('(\d+)'), line) then
+        print("found the number {group(m, 1)}")
+    end
+
+The variable exists only inside the branch it guards. It is not visible after the
+statement, not in the ``else`` branch — where it would always be ``null``, so every use
+would be an error waiting to happen — and not in a later ``elsif`` condition. Each
+branch may declare its own:
+
+.. code:: phon
+
+    if var sound = get_selected_sound() then
+        analyse(sound)
+    elsif var annot = get_selected_annotation() then
+        analyse(annot)
+    else
+        print("nothing selected")
+    end
+
+Only ``var`` may be used here. ``const``, ``local``, ``global`` and ``ref`` are
+rejected: the name lives for one branch, so it is never a module binding and never
+something you assign through.
+
 There is also an expression form of ``if``, which takes the following form:
 
 .. code:: phon
@@ -520,6 +549,24 @@ The ``while`` loop allows you to execute a block of code while some condition is
         print(x)
         x += 1
     end
+
+A ``while`` condition may declare its variable too, which is the natural way to consume
+a source that signals exhaustion by returning ``null``:
+
+.. code:: phon
+
+    while var task = next_task() do
+        handle(task)
+    end
+
+The initializer is re-evaluated on every pass — including after a ``continue``, which
+jumps back to it — and the variable is scoped to the loop body. The loop ends as soon
+as the initializer yields ``null``.
+
+.. note:: This idiom relies on the source returning ``null`` when it is exhausted.
+   :func:`read_line` is not such a source: at the end of a file it returns an empty
+   string, which is *truthy*, so ``while var line = read_line(f) do`` would never
+   stop. Test ``eof(f)`` or compare against ``""`` and ``break``.
 
 If you need to exit a loop early, use the keyword ``break``:
 

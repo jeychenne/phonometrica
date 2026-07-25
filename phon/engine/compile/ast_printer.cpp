@@ -317,7 +317,10 @@ public:
 		for (size_t i = 0; i < n->conds.size(); ++i)
 		{
 			++m_depth;
-			emit("Case");
+			// A condition may be a `var` declaration whose initializer is the tested
+			// value. Say so on the arm: a Declaration and a Variable both render as
+			// "Var <name>", so the label is what tells the two apart here.
+			emit(n->conds[i]->is<Declaration>() ? "Case binding" : "Case");
 			child(n->conds[i].get());
 			child(n->bodies[i].get());
 			--m_depth;
@@ -333,7 +336,8 @@ public:
 
 	void visit_while_statement(WhileStatement *n) override
 	{
-		emit("While");
+		// As in visit_if_statement: the label distinguishes a condition that binds.
+		emit(n->cond->is<Declaration>() ? "While binding" : "While");
 		child(n->cond.get());
 		child(n->body.get());
 	}

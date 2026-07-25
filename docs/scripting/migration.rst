@@ -86,6 +86,27 @@ prefix ``if c then a else b end``, so the ambiguity does not arise.
 ``0``, ``""`` and ``[]`` are all true. The common idiom ``if sound then`` for
 functions that return an object or ``null`` keeps working.
 
+**A condition may declare the value it tests**, which is new in this engine —
+the old one had no equivalent:
+
+.. code:: phon
+
+    if var m = match(re, line) then       # instead of naming it on the line above
+        print(group(m, 0))
+    end
+
+    while var task = next_task() do
+        handle(task)
+    end
+
+Available in ``if``, ``elsif`` and ``while``, and only with ``var``. The name is
+scoped to the branch it guards: it is not visible after the statement, in the
+``else`` branch, or in a later ``elsif`` condition. In a ``while`` the
+initializer is re-evaluated on every iteration, ``continue`` included. Because
+the rule above makes ``null`` the only falsy non-boolean, this composes with any
+function that returns a result or ``null`` — but not with one that signals
+exhaustion with ``""`` or ``0``, which are true.
+
 
 Strings
 -------

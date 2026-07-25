@@ -984,3 +984,61 @@ TEST_CASE("vm: compile errors for undeclared names")
 	}
 	CHECK(threw);
 }
+
+// --- scope of a condition declaration (DEVIATIONS 32) ------------------------
+
+namespace {
+
+// Compiling `code` must fail with a SyntaxError whose message mentions `needle`.
+bool cond_scope_error(const char *code, const char *needle)
+{
+	try
+	{
+		do_string(code);
+	}
+	catch (const SyntaxError &e)
+	{
+		return std::string(e.what()).find(needle) != std::string::npos;
+	}
+	catch (...)
+	{
+		return false;
+	}
+	return false;
+}
+
+} // namespace
+
+TEST_CASE("vm: a condition binding is confined to the branch it guards")
+{
+	// Visible in the body...
+	CHECK(run_int("var t = 0\nif var m = 5 then\nt = m\nend\nt") == 5);
+	CHECK(run_int("var t = 0\nif var m = null then\nt = 1\nelse\nt = 2\nend\nt") == 2);
+
+	// ...and nowhere else. At module top level this also pins that the binding is a
+	// plain local: an ordinary `var` there would take a module slot and stay visible.
+	CHECK(cond_scope_error("if var m = 1 then\nend\nprint(m)", "'m'"));
+	CHECK(cond_scope_error("while var m = null do\nend\nprint(m)", "'m'"));
+	// Not in `else`, where the name is known null and every use is a null deref.
+	CHECK(cond_scope_error("if var m = null then\nelse\nprint(m)\nend", "'m'"));
+	// Not in a later `elsif` condition, which would be reading an earlier arm's name.
+	CHECK(cond_scope_error("if var m = null then\nelsif m == null then\nend", "'m'"));
+}
+
+TEST_CASE("vm: a declaring `while` re-runs its initializer each iteration")
+{
+	const char *src = "function advance(i as Integer)\n"
+	                  "    if i < 3 then\n"
+	                  "        return i + 1\n"
+	                  "    end\n"
+	                  "    return null\n"
+	                  "end\n"
+	                  "var i = 0\n"
+	                  "var total = 0\n"
+	                  "while var v = advance(i) do\n"
+	                  "    i += 1\n"
+	                  "    total += v\n"
+	                  "end\n"
+	                  "total";
+	CHECK(run_int(src) == 6); // 1 + 2 + 3
+}

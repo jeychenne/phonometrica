@@ -559,3 +559,69 @@ TEST_CASE("parser: fuzz — token salad never crashes or hangs")
 	}
 	CHECK(true);
 }
+
+// --- declarations in `if` / `elsif` / `while` conditions ----------------------
+//
+// The condition slot holds either an expression or a `Declaration`, with no new
+// node kind and no parallel list: `var` is a keyword and cannot begin an
+// expression, so one token of lookahead settles which without backtracking.
+
+TEST_CASE("parser: a condition may be a `var` declaration")
+{
+	auto m1 = parse("if var m = f() then\n g(m)\nend");
+	auto *iff = stmt(m1, 0)->as<IfStatement>();
+	REQUIRE(iff != nullptr);
+	auto *d = iff->conds[0]->as<Declaration>();
+	REQUIRE(d != nullptr);
+	CHECK(sym_is(d->name, "m"));
+	CHECK(d->init != nullptr);
+	CHECK(!d->is_const);
+	CHECK(d->modifier == DeclModifier::None);
+
+	// Every arm decides for itself; an `elsif` may declare where the `if` did not.
+	auto m2 = parse("if a then\n x = 1\nelsif var n = f() then\n x = n\nend");
+	auto *iff2 = stmt(m2, 0)->as<IfStatement>();
+	REQUIRE(iff2->conds.size() == 2);
+	CHECK(!iff2->conds[0]->is<Declaration>());
+	CHECK(iff2->conds[1]->is<Declaration>());
+
+	auto m3 = parse("while var line = read_line(f) do\n g(line)\nend");
+	auto *wh = stmt(m3, 0)->as<WhileStatement>();
+	REQUIRE(wh != nullptr);
+	CHECK(sym_is(wh->cond->as<Declaration>()->name, "line"));
+
+	// An `as` annotation rides along, exactly as on a statement declaration.
+	auto m4 = parse("if var m as Match = f() then\nend");
+	CHECK(stmt(m4, 0)->as<IfStatement>()->conds[0]->as<Declaration>()->type != nullptr);
+
+	// A plain expression condition is untouched.
+	auto m5 = parse("if x < 10 then\nend");
+	CHECK(stmt(m5, 0)->as<IfStatement>()->conds[0]->is<BinaryExpression>());
+}
+
+TEST_CASE("parser: only `var` may declare in a condition")
+{
+	auto bad = [](const std::string &code, intptr_t line, intptr_t col) {
+		try
+		{
+			parse(code);
+			CHECK_MESSAGE(false, "expected a SyntaxError");
+		}
+		catch (const SyntaxError &e)
+		{
+			CHECK(e.line == line);
+			CHECK(e.column == col);
+		}
+	};
+	// A condition binding is scoped to the branch it guards, so it is never a module
+	// or isolate binding, and never a write target.
+	bad("if const m = 1 then\nend", 1, 3);
+	bad("if local m = 1 then\nend", 1, 3);
+	bad("if global m = 1 then\nend", 1, 3);
+	bad("if ref m = 1 then\nend", 1, 3);
+	bad("while const m = 1 do\nend", 1, 6);
+	bad("if a then\nelsif ref m = 1 then\nend", 2, 6);
+	// The declaration exists to bind the tested value, so it needs an initializer.
+	bad("if var m then\nend", 1, 3);
+	bad("while var m do\nend", 1, 6);
+}

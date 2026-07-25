@@ -542,20 +542,55 @@ AutoAst Parser::parse_method()
 	                                std::move(body), DeclModifier::None, /*method*/ true, /*open*/ false);
 }
 
+// The condition of an `if`, `elsif` or `while`: an ordinary expression, or a `var`
+// declaration whose initializer is the value tested. `var` is a keyword and can never
+// begin an expression, so one token of lookahead decides with no backtracking.
+//
+// Only `var`. The other binding keywords are rejected here rather than left to fail
+// further along: a condition binding is scoped to the branch it guards, so it is never
+// a module or isolate binding (`local`, `global`), never a write target (`ref`), and
+// `const` buys nothing for a name that lives for one branch. `kw` names the enclosing
+// statement so the diagnostic can point at it.
+AutoAst Parser::parse_condition(const char *kw)
+{
+	switch (m_tok.id)
+	{
+	case Lexeme::Var:
+	{
+		AutoAst d = parse_declaration(DeclModifier::None);
+		if (!d->as<Declaration>()->init)
+			error_at(d->line, d->column, 3,
+			         std::string("the condition of '") + kw +
+			             "' declares a variable to test, so it needs an initializer: "
+			             "'var name = expression'");
+		return d;
+	}
+	case Lexeme::Const:
+	case Lexeme::Local:
+	case Lexeme::Global:
+	case Lexeme::Ref:
+	case Lexeme::Open:
+		error(std::string("only 'var' can declare a variable in the condition of '") + kw +
+		      "' (the name is scoped to the branch it guards)");
+	default:
+		return parse_expression();
+	}
+}
+
 AutoAst Parser::parse_if_statement()
 {
 	int line = m_tok.line, col = m_tok.column;
 	advance(); // 'if'
 
 	AstList conds, bodies;
-	AutoAst cond = parse_expression();
+	AutoAst cond = parse_condition("if");
 	expect(Lexeme::Then, "'then'");
 	conds.push_back(std::move(cond));
 	bodies.push_back(parse_block(/*scope*/ true));
 
 	while (accept(Lexeme::Elsif))
 	{
-		conds.push_back(parse_expression());
+		conds.push_back(parse_condition("elsif"));
 		expect(Lexeme::Then, "'then'");
 		bodies.push_back(parse_block(/*scope*/ true));
 	}
@@ -572,7 +607,7 @@ AutoAst Parser::parse_while_statement()
 {
 	int line = m_tok.line, col = m_tok.column;
 	advance(); // 'while'
-	AutoAst cond = parse_expression();
+	AutoAst cond = parse_condition("while");
 	expect(Lexeme::Do, "'do'");
 	++m_loop_depth;
 	AutoAst body = parse_block(/*scope*/ true);
