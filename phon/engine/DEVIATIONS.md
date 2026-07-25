@@ -2315,3 +2315,39 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     `test/engine/test_debug_off.phon` (6 groups, `option debug = false`, incl. the
     never-name-resolved property), plus three `test_embed.cpp` cases for
     `Runtime::set_debug` and the narrowing rule. Suite: 410 cases green.
+
+31. **`ClassName(args)` on a builtin class calls the factory generic of the same
+    name (2026-07-25).** design §6 says constructing an instance is calling the
+    class — `Interval(1, 2, "x")` — but only user classes, imported classes and the
+    `Error` subtree went through `Lowerer::construct()`; every class registered by
+    `add_class<T>` resolved to `NameKind::ClassObject`, whose arm in `compile_call`
+    was an unimplemented stub. That is why the regex factory was spelled `regex`
+    and the file opener `open_file`: lowercase workarounds for a missing compiler
+    path, not naming decisions.
+    The `ClassObject` arm now falls through to an ordinary generic call whenever a
+    generic of that name exists with at least one method (`is_generic_name`, shared
+    with `resolve`). `NEW` is deliberately **not** used: it allocates a plain
+    instance via `make_instance` and would never run a foreign class's C++
+    constructor, so the VM guard rejecting `CLASS_BUILTIN` in `NEW` stays exactly
+    as it was. When no such generic exists the arm errors, distinguishing
+    `CLASS_FOREIGN` ("no constructor is registered for class 'Annotation'" — a
+    factory *could* be added) from a core type ("class 'List' cannot be constructed
+    from a script" — its values come from literals and conversions).
+    Consequences:
+    - `regex(pattern[, flags])` is **renamed** to `Regex(...)`, with no deprecated
+      alias; nothing outside the docs and tests called it. This supersedes the
+      spelling recorded in migration note S2.
+    - `open_file(path[, mode[, encoding]])` gains `File(...)` as the primary
+      spelling; `open_file` stays registered as an alias, since `std/` uses it and
+      it reads well at a call site. Supersedes migration note S4.
+    - `Channel` gets `CLASS_BUILTIN` back. It had been hidden from the name
+      resolver precisely to route `Channel(...)` to its generic, and the cost was a
+      real bug: `Channel() is Channel` was **false**, and `: Channel` annotations
+      did not resolve. Redirecting at the call site instead of hiding the class
+      fixes both.
+    The fall-through cannot silently turn a conversion into a construction: the
+    only capitalized generic in the tree before this change was `Channel`, and no
+    generic is named `Float`, `List`, `String`, `Table`, `Set`, `Array`, `Integer`
+    or `Boolean`. The app's document classes (`Annotation`, `Sound`, `Dataset`,
+    `Concordance`, the `*Query` types) stay non-constructible by policy — they come
+    from the project, and they only gain the improved error.

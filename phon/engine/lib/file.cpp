@@ -3,8 +3,10 @@
 //
 // The script `File` type and its operations, ported from the old engine's
 // func_file.hpp. `File` is registered as a reference class (add_class<File>) whose
-// finalizer closes the handle; instances come from `open(path[, mode])` (a factory —
-// the class is not script-constructible). Paths are opened Unicode-correctly through
+// finalizer closes the handle; instances come from the `File(path[, mode])` factory
+// generic, also registered as `open_file` — a foreign class is never allocated by NEW,
+// so a call on the class object is redirected to the generic of the same name.
+// Paths are opened Unicode-correctly through
 // os_open_file (phon/os/file.*); content is UTF-8.
 
 #include <phon/engine/lib/lib.hpp>
@@ -71,35 +73,41 @@ void register_file_lib()
 	if (!class_of<File>())
 		add_class<File>("File", get_class(CID_OBJECT));
 
-	// open_file(path): read, encoding auto-detected from the BOM (UTF-8 default).
-	// open_file(path, mode): explicit mode, same auto-detection on read.
-	// open_file(path, mode, encoding): force an encoding (for BOM-less UTF-16/32 files).
-	// (`open` is a reserved class/function modifier keyword, so the opener is `open_file`.)
-	register_function("open_file", [](Isolate &iso, const String &path) {
-		return do_open(iso, path, "rb", false, /*detect=*/true);
-	});
-	register_function("open_file", [](Isolate &iso, const String &path, const String &mode) {
-		std::string c_mode;
-		bool writable, at_start;
-		if (!decode_mode(mode, c_mode, writable, at_start))
-			iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
-		// Auto-detect the encoding only when the cursor genuinely starts at byte 0 of a
-		// readable file.
-		bool detect = at_start && (mode.data()[0] == 'r');
-		return do_open(iso, path, c_mode.c_str(), writable, detect);
-	});
-	register_function("open_file",
-	                  [](Isolate &iso, const String &path, const String &mode, const String &enc) {
-		std::string c_mode;
-		bool writable, at_start;
-		if (!decode_mode(mode, c_mode, writable, at_start))
-			iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
-		Encoding forced;
-		if (!encoding_from_name(enc, forced))
-			iso.raise(String("[Argument error] unknown file encoding '") + enc.view() + "'", 0);
-		bool detect = at_start && (mode.data()[0] == 'r');
-		return do_open(iso, path, c_mode.c_str(), writable, detect, &forced);
-	});
+	// File(path): read, encoding auto-detected from the BOM (UTF-8 default).
+	// File(path, mode): explicit mode, same auto-detection on read.
+	// File(path, mode, encoding): force an encoding (for BOM-less UTF-16/32 files).
+	// A factory generic under the class's own name: `File(…)` resolves to the class
+	// object, and the lowerer redirects the call here (design §6). `open_file` is kept
+	// as an alias — it predates constructor calls and reads well at a call site.
+	// (`open` is a reserved class/function modifier keyword, so the alias is `open_file`.)
+	for (const char *name : {"File", "open_file"})
+	{
+		register_function(name, [](Isolate &iso, const String &path) {
+			return do_open(iso, path, "rb", false, /*detect=*/true);
+		});
+		register_function(name, [](Isolate &iso, const String &path, const String &mode) {
+			std::string c_mode;
+			bool writable, at_start;
+			if (!decode_mode(mode, c_mode, writable, at_start))
+				iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
+			// Auto-detect the encoding only when the cursor genuinely starts at byte 0 of a
+			// readable file.
+			bool detect = at_start && (mode.data()[0] == 'r');
+			return do_open(iso, path, c_mode.c_str(), writable, detect);
+		});
+		register_function(name,
+		                  [](Isolate &iso, const String &path, const String &mode, const String &enc) {
+			std::string c_mode;
+			bool writable, at_start;
+			if (!decode_mode(mode, c_mode, writable, at_start))
+				iso.raise(String("[Argument error] invalid file mode '") + mode.view() + "'", 0);
+			Encoding forced;
+			if (!encoding_from_name(enc, forced))
+				iso.raise(String("[Argument error] unknown file encoding '") + enc.view() + "'", 0);
+			bool detect = at_start && (mode.data()[0] == 'r');
+			return do_open(iso, path, c_mode.c_str(), writable, detect, &forced);
+		});
+	}
 
 	// --- reading ---
 	register_function("read", [](Isolate &iso, Handle<File> f) { return checked(iso, f)->read_all(); });

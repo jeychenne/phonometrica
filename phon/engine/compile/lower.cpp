@@ -309,21 +309,26 @@ private:
 			r.cls = c;
 			return r;
 		}
-		// A top-level `function` defined anywhere in this module (pass 1), or an
-		// already-registered generic with at least one method (builtins, or a
-		// function from an earlier REPL chunk). A generic emptied by journal
-		// retraction is treated as undefined, so a name resolves to `None` again.
-		if (m_module_generics.contains(name.id))
-		{
-			r.kind = NameKind::Generic;
-			return r;
-		}
-		if (GenericFunction *g = find_generic(name); g && g->methods.size() > 0)
+		if (is_generic_name(name))
 		{
 			r.kind = NameKind::Generic;
 			return r;
 		}
 		return r;
+	}
+
+	// A top-level `function` defined anywhere in this module (pass 1), or an
+	// already-registered generic with at least one method (builtins, or a function
+	// from an earlier REPL chunk). A generic emptied by journal retraction is treated
+	// as undefined, so a name resolves to `None` again. Also consulted by
+	// `compile_call` for `ClassName(args)`, which resolves to the class object first
+	// but calls the factory generic of the same name when there is one.
+	bool is_generic_name(Symbol name) const
+	{
+		if (m_module_generics.contains(name.id))
+			return true;
+		GenericFunction *g = find_generic(name);
+		return g && g->methods.size() > 0;
 	}
 
 	// --- constants ---
@@ -1125,7 +1130,27 @@ void Lowerer::compile_call(CallExpression *c, int dest)
 			emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(v->name)), ln(c));
 			break;
 		case NameKind::ClassObject:
-			error(c, "[Compile error] constructor calls arrive in M5 (classes)");
+		{
+			// `X(args)` on a builtin class calls the factory generic of the same name
+			// when one is registered (`Regex("a")`, `File(path, "r")`). The class keeps
+			// CLASS_BUILTIN, so `is X` and `: X` annotations still see it; only the call
+			// is redirected. NEW + `:init` is deliberately not used here — it allocates a
+			// plain instance and would never run the C++ constructor.
+			if (is_generic_name(v->name))
+			{
+				generic = true;
+				ref_mask = generic_ref_mask(v->name);
+				emit_ABx(Opcode::LOADK, base, static_cast<uint32_t>(k_symbol(v->name)),
+				         ln(c));
+				break;
+			}
+			std::string cn(symbol_name(v->name));
+			// A registered C++ class could get a factory; a core type never will, since
+			// its values come from literals and conversions, not construction.
+			if (nr.cls->flags & CLASS_FOREIGN)
+				error(c, "[Compile error] no constructor is registered for class '" + cn + "'");
+			error(c, "[Compile error] class '" + cn + "' cannot be constructed from a script");
+		}
 		case NameKind::None:
 			error(c, "[Name error] call to undeclared function '" +
 			             std::string(symbol_name(v->name)) + "'");

@@ -1,9 +1,13 @@
 // Phonometrica engine — class system tests (intervals, renumbering, metaclasses).
 // Copyright (C) 2019-2026 Julien Eychenne. GPLv3 (see LICENSE).
 
+#include <phon/engine/compile/diagnostic.hpp>
 #include <phon/engine/object/class.hpp>
+#include <phon/engine/runtime/runtime.hpp>
 #include <phon/engine/types/string.hpp>
 #include "test_framework.hpp"
+
+#include <string>
 
 using namespace phonometrica;
 
@@ -148,4 +152,65 @@ TEST_CASE("metaclasses and class objects")
 	CHECK(class_of(float_obj) == metaclass_of(flt)->id);
 	// The metaclass is a subtype of the root metaclass Class.
 	CHECK(is_a(metaclass_of(flt), get_class(CID_CLASS)));
+}
+
+// --- `ClassName(args)` on a builtin class (DEVIATIONS 31) ---------------------
+//
+// A builtin class stays visible to the name resolver (CLASS_BUILTIN), so `is` and
+// type annotations work; a *call* on that name is redirected to the factory generic
+// of the same name, when the library registers one. NEW is never involved — it would
+// allocate a plain instance and skip the C++ constructor entirely.
+
+namespace {
+
+// Compiling `code` must fail with a SyntaxError whose message contains `needle`.
+bool compile_error_contains(const char *code, const char *needle)
+{
+	Runtime rt;
+	try
+	{
+		rt.do_string(code);
+	}
+	catch (const SyntaxError &e)
+	{
+		return std::string(e.what()).find(needle) != std::string::npos;
+	}
+	catch (...)
+	{
+		return false;
+	}
+	return false;
+}
+
+} // namespace
+
+TEST_CASE("construction: Regex(pattern) reaches the factory and is a Regex")
+{
+	Runtime rt;
+	CHECK(rt.do_string("var re = Regex('^a(..)')\nre is Regex").value().as_bool());
+	CHECK(String::from_value(rt.do_string("pattern(Regex('^b'))").value()) == "^b");
+	// The two-argument overload dispatches too.
+	CHECK(rt.do_string("group(match(Regex('foo', 'caseless'), 'FOOBAR'), 0) == 'FOO'")
+	          .value()
+	          .as_bool());
+}
+
+TEST_CASE("construction: Channel() is a Channel")
+{
+	// Channel used to be hidden from the resolver so that `Channel(...)` would reach
+	// its generic; the price was that `is Channel` answered false. Redirecting the
+	// call instead of hiding the class fixes both at once.
+	Runtime rt;
+	CHECK(rt.do_string("var c = Channel()\nc is Channel").value().as_bool());
+	CHECK(rt.do_string("var c = Channel(4)\nc is Channel").value().as_bool());
+}
+
+TEST_CASE("construction: a class with no factory gets a diagnostic, not a stub error")
+{
+	// A registered C++ class could plausibly gain a factory...
+	CHECK(compile_error_contains("Match('x')", "no constructor is registered for class 'Match'"));
+	// ...a core type never will: its values come from literals and conversions.
+	CHECK(compile_error_contains("List(1)", "class 'List' cannot be constructed from a script"));
+	CHECK(compile_error_contains("Float(1)", "class 'Float' cannot be constructed from a script"));
+	CHECK(compile_error_contains("String(1)", "class 'String' cannot be constructed from a script"));
 }

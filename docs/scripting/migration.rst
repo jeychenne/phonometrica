@@ -236,8 +236,8 @@ Old                              New
 ===============================  ====================================================================
 ``dump_json(v)``                 ``to_json(v)``
 ``load_json(path)``              ``from_json(read_file(path))`` — parses JSON; never evaluates code
-``File(path, mode)``             ``open_file(path, mode)`` (``File`` is not constructible; ``open``
-                                 is a reserved keyword)
+``File(path, mode)``             ``File(path, mode)`` — unchanged; ``open_file(path, mode)`` is an
+                                 alias (``open`` alone is a reserved keyword)
 ``str(x)``                       ``to_string(x)``
 ``int(s)``                       ``to_int(s)``
 ``type(x) == SomeClass``         ``x is SomeClass``
@@ -251,7 +251,7 @@ Old                              New
 
 Behavioural changes to keep in mind:
 
-- **Regular expressions** use a stateless API: ``regex(pattern[, flags])``
+- **Regular expressions** use a stateless API: ``Regex(pattern[, flags])``
   builds a pattern, ``match(re, subject)`` returns a ``Match`` object or
   ``null``, and ``group(m, i)``, ``group_start``, ``group_end`` and
   ``group_count`` inspect it. ``group_count`` **includes group 0** (the whole

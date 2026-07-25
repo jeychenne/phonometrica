@@ -7,9 +7,10 @@ This page documents the ``File`` type, which can be used to read and write text 
 General concepts
 ----------------
 
-A ``File`` is a handle to an open text file. Handles are created with :func:`open_file` — the ``File`` class itself is
-not constructible from a script, and ``open`` is a reserved keyword in the new language, which is why the opener is
-named ``open_file``. The default encoding is UTF-8; UTF-16 and UTF-32 files are detected automatically from their
+A ``File`` is a handle to an open text file. Handles are created by calling the class, :func:`File`. The same opener
+is also registered as ``open_file``, which is a plain alias: ``open_file(path, "w")`` and ``File(path, "w")`` do
+exactly the same thing. (``open`` on its own is a reserved keyword, which is why the alias is not called ``open``.)
+The default encoding is UTF-8; UTF-16 and UTF-32 files are detected automatically from their
 byte-order mark when read, and can be forced explicitly for BOM-less files. Writing always uses UTF-8.
 
 A file is closed automatically as soon as the last reference to the handle is released, so calling :func:`close`
@@ -28,14 +29,14 @@ everything and closes it. The encoding is detected from the BOM, so a UTF-16/32 
 Opening files
 -------------
 
-.. function:: open_file(path as String)
+.. function:: File(path as String)
 
 Opens the file named ``path`` for reading and returns a ``File`` handle. Phonometrica will try to guess the encoding
 from the file's byte-order mark, and will default to UTF-8 otherwise.
 
 ------------
 
-.. function:: open_file(path as String, mode as String)
+.. function:: File(path as String, mode as String)
 
 Opens the file named ``path`` and returns a ``File`` handle. The option ``mode`` must be one of the following strings:
 
@@ -51,14 +52,14 @@ Phonometrica will always use UTF-8.
 
 ------------
 
-.. function:: open_file(path as String, mode as String, encoding as String)
+.. function:: File(path as String, mode as String, encoding as String)
 
 Like the two-argument form, but forces the text ``encoding`` instead of relying on BOM detection. This is intended
 for BOM-less UTF-16/32 files. An unknown encoding name raises an error.
 
 Example::
 
-   var f = open_file("/tmp/out.txt", "w")
+   var f = File("/tmp/out.txt", "w")
    write_line(f, "hello")
    close(f)
    print(read_file("/tmp/out.txt"))

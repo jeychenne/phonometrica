@@ -321,10 +321,15 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	}},
 
 	// ── File I/O ────────────────────────────────────────────────
+	{ "File",  {
+		"File(path as String)\nOpens the file named `path` for reading and returns a File handle.\002",
+		"File(path as String, mode as String)\nOpens the file with the specified mode (\"r\", \"w\", \"a\", ...).\001\002",
+		"File(path as String, mode as String, encoding as String)\nOpens the file with the specified mode and text encoding.\001"
+	}},
 	{ "open_file",  {
-		"open_file(path as String)\nOpens the file named `path` for reading and returns a File handle.\002",
-		"open_file(path as String, mode as String)\nOpens the file with the specified mode (\"r\", \"w\", \"a\", ...).\001\002",
-		"open_file(path as String, mode as String, encoding as String)\nOpens the file with the specified mode and text encoding.\001"
+		"open_file(path as String)\nAlias for `File(path)`: opens the file for reading and returns a File handle.\002",
+		"open_file(path as String, mode as String)\nAlias for `File(path, mode)`.\001\002",
+		"open_file(path as String, mode as String, encoding as String)\nAlias for `File(path, mode, encoding)`.\001"
 	}},
 	{ "close",  {
 		"close(file as File)\nCloses the file."
@@ -367,9 +372,9 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 	}},
 
 	// ── Regular expressions ─────────────────────────────────────
-	{ "regex",  {
-		"regex(pattern as String)\nCompiles `pattern` and returns a Regex object.\002",
-		"regex(pattern as String, flags as String)\nCompiles `pattern` with the given flags (e.g. \"i\" for case-insensitive).\001"
+	{ "Regex",  {
+		"Regex(pattern as String)\nCompiles `pattern` and returns a Regex object.\002",
+		"Regex(pattern as String, flags as String)\nCompiles `pattern` with the given flags (e.g. \"i\" for case-insensitive).\001"
 	}},
 	{ "match",  {
 		"match(re as Regex, subject as String)\nMatches `re` against `subject`; returns a Match object, or `null` if there is no match.\002",

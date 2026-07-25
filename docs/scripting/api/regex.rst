@@ -77,7 +77,7 @@ A typical matching sequence looks like this:
 
 .. code:: phon
 
-    var re = regex('^a(...)(..)(..)')
+    var re = Regex('^a(...)(..)(..)')
     var m = match(re, "abracadabra")
 
     if m then
@@ -91,7 +91,7 @@ A typical matching sequence looks like this:
 Construction
 ------------
 
-.. function:: regex(pattern as String)
+.. function:: Regex(pattern as String)
 
 Creates a new regular expression from a string pattern, with default options.
 The regex can then be matched against any string with :func:`match`.
@@ -99,13 +99,13 @@ An invalid pattern raises an error.
 
 .. code:: phon
 
-    var re = regex('^(..)')
+    var re = Regex('^(..)')
     # Do something with re...
 
 See also: :func:`pattern`
 
 
-.. function:: regex(pattern as String, flags as String)
+.. function:: Regex(pattern as String, flags as String)
 
 Creates a new regular expression from a string pattern. The ``flags`` argument
 can contain any of the following options, separated by the character ``|``:
@@ -120,7 +120,7 @@ can contain any of the following options, separated by the character ``|``:
 
 .. code:: phon
 
-    var re = regex('^(..)', "caseless|multiline")
+    var re = Regex('^(..)', "caseless|multiline")
     # Do something with re...
 
 See also: :func:`pattern`
@@ -138,7 +138,7 @@ with ``if``:
 
 .. code:: phon
 
-    var re = regex('\d+')
+    var re = Regex('\d+')
     var m = match(re, "abc 123 xyz")
 
     if m then
@@ -171,7 +171,7 @@ an error.
 
 .. code:: phon
 
-    var re = regex('^a(...)(..)(..)')
+    var re = Regex('^a(...)(..)(..)')
     var m = match(re, "abracadabra")
 
     print(group(m, 0)) # prints "abracada"
@@ -188,7 +188,7 @@ match). A pattern with three capturing groups therefore yields 4.
 
 .. code:: phon
 
-    var re = regex('^a(...)(..)(..)')
+    var re = Regex('^a(...)(..)(..)')
     var m = match(re, "abracadabra")
     assert(group_count(m) == 4)
 
@@ -218,7 +218,7 @@ participate in the match.
 .. code:: phon
 
     var subject = "abracadabra"
-    var m = match(regex('(...)$'), subject)
+    var m = match(Regex('(...)$'), subject)
     var text = slice(subject, group_start(m, 1), group_end(m, 1) - 1)
     assert(text == "bra")
 
@@ -234,7 +234,7 @@ participate in the match contributes ``null``.
 
 .. code:: phon
 
-    var m = match(regex('^a(...)(..)(..)'), "abracadabra")
+    var m = match(Regex('^a(...)(..)(..)'), "abracadabra")
     print(groups(m)) # prints "[bra, ca, da]"
 
 
@@ -248,5 +248,5 @@ expression was constructed.
 
 .. code:: phon
 
-    var re = regex('\d+')
+    var re = Regex('\d+')
     assert(pattern(re) == '\d+')

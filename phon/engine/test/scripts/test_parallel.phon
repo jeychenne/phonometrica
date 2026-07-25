@@ -28,10 +28,10 @@ end
 assert(total == 1001000, "sum of 2*(1..1000)")   # 2 * (1000*1001/2)
 
 # --- the worker function may use builtins with shared constants ------------------
-# `regex('(\d+)')` builds a shared string constant that every worker touches; freezing
+# `Regex('(\d+)')` builds a shared string constant that every worker touches; freezing
 # it makes the concurrent refcounting safe (this is the crux of the design).
 function first_num(s)
-    var m = match(regex('(\d+)'), s)
+    var m = match(Regex('(\d+)'), s)
     if m == null then return "none" else return group(m, 1) end
 end
 var labels = ["order-42", "qty-7", "none", "id-1000", "x9y"]

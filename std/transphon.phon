@@ -16,9 +16,9 @@
 #                                                                                                                      #
 # Purpose: Save annotations in a text file.        				                                                       #
 #                                                                                                                      #
-# PORT NOTE (old -> new engine): `File(path, "w")` -> `open_file(path, "w")`; `xs.length` -> len(xs); `foreach` ->     #
-# `for ... in`; `int(s)` -> the builtin `to_int(s)`. The annotation objects, dialogs and viewers come from the         #
-# application. See MIGRATION_NOTES.md.                                                                                 #
+# PORT NOTE (old -> new engine): `xs.length` -> len(xs); `foreach` -> `for ... in`; `int(s)` -> the builtin            #
+# `to_int(s)`. `File(path, "w")` works as before (`open_file` is a registered alias). The annotation objects,          #
+# dialogs and viewers come from the application. See MIGRATION_NOTES.md.                                               #
 ########################################################################################################################
 
 # Parse a layer number out of a possibly space-padded field.

@@ -87,11 +87,13 @@ void register_channel_class()
 {
 	if (g_channel)
 		return;
-	// Not CLASS_BUILTIN: kept invisible to the compiler's name resolver so `Channel(...)`
-	// dispatches to the builtin generic rather than the class-object constructor path.
+	// CLASS_BUILTIN, so the name resolver sees the class and `c is Channel` and `: Channel`
+	// annotations work; `Channel(...)` still reaches the builtin factory generic, because
+	// the lowerer redirects a call on a class object to a generic of the same name.
 	// Acyclic: a channel never participates in a reference cycle (values are transferred
 	// copies, and channels are not yet sendable through channels).
-	g_channel = add_class("Channel", get_class(CID_OBJECT), CLASS_REF | CLASS_ACYCLIC);
+	g_channel = add_class("Channel", get_class(CID_OBJECT),
+	                      CLASS_BUILTIN | CLASS_REF | CLASS_ACYCLIC);
 	g_channel->finalize = &channel_finalize;
 }
 

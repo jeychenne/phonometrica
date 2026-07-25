@@ -195,7 +195,7 @@ assert(caught, "A20: 2-D out of range throws")
 
 print("==== base migration: regex ====")
 
-var re = regex('(\d+)-(\d+)')
+var re = Regex('(\d+)-(\d+)')
 var m = match(re, "42-58")
 assert(m != null, "R1: match")
 assert(m is Match, "R2: match yields a Match value")
@@ -218,7 +218,7 @@ assert(gs[1] == "42" and gs[2] == "58", "R12: capture values")
 assert(match(re, "no digits here") == null, "R13: no match is null")
 
 # Match with a start position (1-based)
-var re2 = regex("b+")
+var re2 = Regex("b+")
 var m2 = match(re2, "abba", 3)
 assert(m2 != null, "R16: match from position")
 assert(group(m2, 0) == "b", "R17: only the second run is seen")
@@ -227,14 +227,14 @@ assert(group(m2, 0) == "b", "R17: only the second run is seen")
 assert(match(re2, "") == null, "R18: empty subject")
 
 # Case-insensitive flag
-var re3 = regex("hello", "caseless")
+var re3 = Regex("hello", "caseless")
 assert(match(re3, "HELLO world") != null, "R19: caseless flag")
 
 # Matches from the same or different Regex objects are independent
 # values (the old test pinned per-object mutable state; there is no
 # state left to interfere).
-var ra = regex("(a+)")
-var rb = regex("(b+)")
+var ra = Regex("(a+)")
+var rb = Regex("(b+)")
 var mra = match(ra, "aaa")
 var mrb = match(rb, "bb")
 assert(group(mra, 1) == "aaa", "R22: first match intact")

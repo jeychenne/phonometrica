@@ -3,7 +3,8 @@
 //
 // Exposes the immutable `Regex` and its `Match` results to scripts. Both are registered
 // as Value classes (add_class<…>(…, ClassKind::Value)); a Regex is built through the
-// `regex(pattern[, flags])` factory (a foreign class is not script-constructible), and
+// `Regex(pattern[, flags])` factory generic — a foreign class is never allocated by
+// NEW, so a call on the class object is redirected to the generic of the same name, and
 // matching produces a fresh `Match` — so a Regex carries no mutable state and can be
 // shared across threads. `match` returns `null` on no match; `group` returns `null` for
 // a non-participating group. Group positions are 1-based grapheme indices.
@@ -81,13 +82,15 @@ void register_regex_lib()
 	if (!class_of<Match>())
 		add_class<Match>("Match", get_class(CID_OBJECT), ClassKind::Value);
 
-	// --- construction (factory: the class is not script-constructible) ---
-	// regex(pattern): default options. regex(pattern, flags): a PCRE2 flags string such
+	// --- construction ---
+	// Regex(pattern): default options. Regex(pattern, flags): a PCRE2 flags string such
 	// as "caseless|multiline|dotall|extended|anchored|dollar_endonly|ungreedy".
-	register_function("regex", [](Isolate &iso, const String &pattern) {
+	// A factory generic under the class's own name: `Regex(…)` resolves to the class
+	// object, and the lowerer redirects the call here (design §6).
+	register_function("Regex", [](Isolate &iso, const String &pattern) {
 		return make_regex(iso, pattern, Regex::None);
 	});
-	register_function("regex", [](Isolate &iso, const String &pattern, const String &flags) {
+	register_function("Regex", [](Isolate &iso, const String &pattern, const String &flags) {
 		return make_regex(iso, pattern, Regex::parse_flags(flags));
 	});
 

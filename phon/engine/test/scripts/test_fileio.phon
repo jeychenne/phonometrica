@@ -25,7 +25,10 @@ assert(is_directory(dir), "temp directory created")
 assert(exists(dir), "temp directory exists")
 
 var path = join_path(dir, "hello.txt")
-var f = open_file(path, "w")
+# A handle comes from calling the class; `open_file` is an alias for the same factory,
+# still exercised below by the read_lines and missing-file cases.
+var f = File(path, "w")
+assert(f is File, "the constructor returns a File")
 write_line(f, "line one")
 write_line(f, "line two")
 close(f)
@@ -34,7 +37,7 @@ assert(is_document(path), "written file is a document")
 assert(not is_directory(path), "written file is not a directory")
 
 # read line by line
-var g = open_file(path)
+var g = File(path)
 assert(read_line(g) == "line one", "first line reads back")
 assert(read_line(g) == "line two", "second line reads back")
 assert(eof(g), "reached end of file")

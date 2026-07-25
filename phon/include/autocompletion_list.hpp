@@ -31,7 +31,7 @@ static const char *autocompletion_list =
 	"nrow null Number Object ones open open_directory_dialog open_file open_file_dialog "
 	"open_files_dialog or parallel_map pattern phon PI PitchQuery polish pop predict "
 	"prepend print Prior PriorSpec Query random read read_file read_line read_lines "
-	"receive ref Regex regex remove remove_at remove_directory remove_events "
+	"receive ref Regex remove remove_at remove_directory remove_events "
 	"remove_file remove_first remove_interval remove_last remove_layer remove_path "
 	"remove_property rename repeat replace return reverse rewind right round rtrim "
 	"sample save save_file_dialog Script seek semitones_to_hertz send Set set_beta_phi "

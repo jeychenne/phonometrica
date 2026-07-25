@@ -382,15 +382,17 @@ the "OK with defaults" result).
   the old first-class Module values (`Module("name")` is gone).
 - **S1. `sorted_find` returns 0 for an absent value** (old: its 1-based lower-bound
   slot). Pinned in the ported base-migration test.
-- **S2. Regex API is the stateless design:** `regex(pat[, flags])` constructor
-  (lowercase), `match(re, subject[, from])` → Match or null, `group/group_start/
+- **S2. Regex API is the stateless design:** `Regex(pat[, flags])` constructor
+  (renamed from lowercase `regex` — see DEVIATIONS 31),
+  `match(re, subject[, from])` → Match or null, `group/group_start/
   group_end/group_count(m, …)`; `group_count` INCLUDES group 0 (old `count()` did
   not); no per-object match state left to pin.
 - **S3. String mutators are in-place ref natives** (`trim(s)`, `rtrim(s)`, `append(s,
   x)`…) returning nothing — old call sites that used their return value must
   restructure.
-- **S4. dump_json → to_json, File(path, mode) → open_file(path, mode)** (File is not
-  script-constructible; `open` is reserved).
+- **S4. dump_json → to_json.** `File(path, mode)` works again (DEVIATIONS 31); the
+  `open_file(path, mode)` spelling it was migrated to stays as an alias, since
+  `open` is reserved and reads better than nothing at a call site.
 - **S5. Class syntax:** `field x = 0` (old bare `x = 0`), constructor `init` (old
   `initialize`).
 - **S6. No structural equality for class instances**: `==` is identity/sharing-based
@@ -627,7 +629,7 @@ natives (print/len/assert/to_string) in its runtime.cpp:265-269.
 | has_match | builtins.cpp:284 | COVERED | test `match(...) != null` | subsumed |
 | count | builtins.cpp:285 | COVERED | group_count(Match) | **off-by-one: new INCLUDES group 0** (old excluded it); takes the Match, not the Regex |
 | group, get_start, get_end | builtins.cpp:286-288 | COVERED | group/group_start/group_end(Match, n) | renamed; new returns null for a non-participating group; adds groups(m), pattern(re) |
-| (Regex ctor) | builtins.cpp:279-280 | COVERED | regex(pattern[, flags]) factory | |
+| (Regex ctor) | builtins.cpp:279-280 | COVERED | Regex(pattern[, flags]) factory | same spelling as the old engine (DEVIATIONS 31) |
 
 ### Set
 
@@ -650,9 +652,12 @@ Defer until Set gets script-level construction.
 Old engine injects each builtin Class object as a global (enables
 `type(x) == String` and constructor calls). New engine: builtin class names
 resolve at **compile time only** (`class_by_name`) for `is`/annotations; they
-are not runtime values and not script-constructible. Constructor migration:
+are not runtime values. `C(args)` on such a name compiles to a call to the
+factory generic of the same name when one is registered (DEVIATIONS 31), so a
+class is script-constructible exactly when the library registers a factory for
+it. Constructor migration:
 `String(x)` → to_string, `Integer/Float/Number(s)` → to_int/to_float,
-`Regex(p)` → regex(p), `Array(...)` → zeros/ones, `File(p)` → open_file,
+`Array(...)` → zeros/ones, `Regex(p)` and `File(p)` **unchanged**,
 `Module(name)` → **no equivalent** (record-builder uses in
 test/statistics/lib/{assert,bayes_assert}.phon and
 test_compound_assignment.phon need a Table/class idiom), `Table()`/`List()` →

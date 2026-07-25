@@ -35,3 +35,8 @@ freeze(f)
 send(ch, f)
 var g = receive(ch)
 assert(g[1] == 1 and g[4] == 4, "frozen array sent through a channel")
+
+# A Channel is visible to `is` — it is a CLASS_BUILTIN class like any other, and
+# `Channel(...)` reaches its factory through the class-object call path.
+assert(ch is Channel, "a channel is a Channel")
+assert(Channel(4) is Channel, "the capacity overload too")
