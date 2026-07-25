@@ -13,6 +13,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Export compile_commands.json for clangd / tooling. This used to come from the engine's
+# standalone project scaffolding, which A8 replaced; it belongs to the top-level project now.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 
 ###########################
 ##  COMPILATION OPTIONS  ##

@@ -1,15 +1,27 @@
 # Phonometrica Engine
 
-A high-performance, embeddable scripting engine in C++20, replacing the runtime in
-[Phonometrica](https://github.com/jeychenne/phonometrica). Standalone library, no
-Qt/GUI dependency, no third-party runtime dependencies.
+A high-performance, embeddable scripting engine in C++20 — the scripting runtime of
+Phonometrica. No Qt/GUI dependency and no third-party runtime dependencies beyond
+PCRE2 (vendored at `phon/third_party/pcre2`) and a thread library, so it still
+configures and tests on its own.
+
+Developed in a separate repository until roadmap step **A8**, which absorbed it here
+with its history intact (see `MIGRATION_NOTES.md` at the repository root). The
+directory is self-contained: sources, `CMakeLists.txt`, tests, golden corpora, Unicode
+data, examples and benchmarks all live under it. Public headers are included as
+`<phon/engine/...>`, resolved from the **repository root**, not from this directory.
 
 See [`design/design.md`](design/design.md) (language semantics) and
 [`design/architecture.md`](design/architecture.md) (C++ architecture and milestone
 plan). Deviations from those documents are tracked in
-[`DEVIATIONS.md`](DEVIATIONS.md).
+[`DEVIATIONS.md`](DEVIATIONS.md) — the authoritative record of what the engine
+actually does where it departs from the design docs.
 
-## Status: M2 — Type system + dispatch (complete)
+## Milestone notes (historical — see DEVIATIONS.md for current behaviour)
+
+The per-milestone summaries below were written as M0–M2 landed and were never
+updated as the engine grew through modules, concurrency, arrays and the embedding
+API. They describe real components but are **not** a current status report.
 
 **M0 — Foundations**
 
@@ -65,20 +77,39 @@ conformance suite; M2 subtype intervals under renumbering, ref-mask applicabilit
 metaclass dispatch, ambiguity-at-definition, and epoch invalidation. The suite is
 warning-clean (`-Wall -Wextra -Werror`) and leak-clean under ASan+UBSan.
 
-## Building
+## Building and testing
+
+All commands run from the **repository root**. The engine is a subdirectory of the
+application build, so building the application builds `phon_engine` automatically.
+Its other targets are `EXCLUDE_FROM_ALL` and must be named explicitly — a plain
+build will NOT reveal breakage in `phon_repl` or `phon_bench`:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j
-ctest --test-dir build --output-on-failure
+cmake --build <build-dir> --target phon_unit_tests phon_repl phon_bench
+<build-dir>/phon/engine/phon_unit_tests
+ctest --test-dir <build-dir> --output-on-failure   # unit + the two phon_repl acceptance runs
 ```
 
-Options:
+To work on the engine alone, configure without the application layer — this needs
+neither Qt nor libsndfile, which is what keeps the sanitizer runs affordable:
+
+```sh
+cmake -S . -B build-engine -DWITH_APPLICATION=OFF -DWITH_GUI=OFF -DPHON_BUILD_DOCS=OFF
+cmake --build build-engine --target phon_unit_tests
+```
+
+Options (defined in this directory's `CMakeLists.txt`, so they apply to any of the
+configurations above):
 
 - `-DPHON_SANITIZE=ON` — AddressSanitizer + UndefinedBehaviorSanitizer (the CI bar
   for unit and script tests, §16.3). The suite is leak-clean under ASan.
+- `-DPHON_TSAN=ON` — ThreadSanitizer (the concurrency acceptance bar). Mutually
+  exclusive with `PHON_SANITIZE`.
 - `-DPHON_WERROR=ON` — treat warnings as errors. The tree builds warning-clean
   under `-Wall -Wextra`.
+
+The standing acceptance bar is the unit suite green in all three configurations
+(normal, ASan, TSan).
 
 ## Layout
 

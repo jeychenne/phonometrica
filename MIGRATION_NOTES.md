@@ -1825,3 +1825,42 @@ building them by name. Build every engine target explicitly, not just the app.
 - `phon/engine/CLAUDE.md` was copied across but is **untracked**: the engine
   repo gitignored it, so the subtree could not carry it, and that prior choice
   is preserved rather than reversed. `git add` it if it should be tracked now.
+
+## A8 follow-up audit (2026-07-24)
+
+Post-merge sweep for outstanding items. One real regression, three doc-currency
+fixes; the integration itself needed nothing.
+
+- **REGRESSION, fixed: `compile_commands.json` stopped being generated.** The
+  engine's standalone project scaffolding carried
+  `set(CMAKE_EXPORT_COMPILE_COMMANDS ON)`, and A8 replaced that scaffolding
+  wholesale. Existing build directories kept working (the cache retained
+  `CMAKE_EXPORT_COMPILE_COMMANDS:UNINITIALIZED=ON`), which is exactly why this
+  was invisible — a *fresh* configure produced no compile database, so clangd
+  would have quietly died repo-wide, engine and application alike. The setting
+  now lives in the root CMakeLists, where the top-level project belongs.
+  Verified on a fresh build dir: 130 entries, 83 of them engine TUs.
+- `phon/engine/README.md` rewritten where the move made it wrong: it billed
+  itself as an external project "replacing the runtime in Phonometrica" (linking
+  out to the repository it now sits in), its build section's `cmake -S . -B build`
+  no longer means "build the engine", and its "Status: M2" heading was years of
+  milestones out of date. Now: absorbed-at-A8 framing, repository-root commands,
+  the `WITH_APPLICATION=OFF` recipe, all three sanitizer options, and the M0–M2
+  summaries explicitly marked historical with DEVIATIONS.md named as the current
+  record.
+- **Roadmap ground rules carried a now-harmful instruction** — "engine changes are
+  made directly in ~/Devel/engine" — which matters precisely because the owner is
+  keeping that directory as a safety copy. A superseded-by-A8 notice now sits
+  above it naming `phon/engine/` as canonical and `~/Devel/engine` as frozen.
+  A `FROZEN.md` was also written into `~/Devel/engine` itself (left UNTRACKED —
+  that repository is deliberately not being modified).
+- `BUILD.md` gained a Tests section: it documented no way to run either suite.
+  It now covers the unit suite, ctest, the script suite, the statistics run, and
+  the EXCLUDE_FROM_ALL warning.
+
+Checked and found already correct: no stale `PHON_ENGINE_DIR` /
+`phon_engine_build` / `../engine` references in any build, packaging or doc file;
+`ctest` from the app build dir registers all 3 engine tests; the root
+`.gitignore` covers `phon/engine/build*/`; `debian/copyright`'s `Files: *`
+GPL-3+ stanza already covers the engine (same author, same licence), so no new
+licensing entry is needed.

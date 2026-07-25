@@ -22,7 +22,18 @@ DEVIATIONS 26-29), so A2's flip is a handle swap, not a redesign. Serialization
 class names come from a plain `virtual Element::class_name()` (vfs.hpp:112) —
 engine-independent, keep it.
 
-**Ground rules (unchanged since phase 1):**
+> **SUPERSEDED BY A8 (2026-07-24) — read this before following the rules below.**
+> They describe the world in which the engine was a separate repository at
+> `~/Devel/engine`. The engine now lives at `phon/engine/` in THIS repository, and
+> `~/Devel/engine` — kept by the owner as a safety copy — is **frozen and no longer
+> canonical**. Engine changes go in `phon/engine/`, are recorded in
+> `phon/engine/DEVIATIONS.md`, and must stay green under the normal/ASan/TSan unit
+> builds (`cmake --build <build-dir> --target phon_unit_tests`, *plus* `phon_repl`
+> and `phon_bench` by name — they are EXCLUDE_FROM_ALL and a plain build hides
+> breakage in them, as A8 discovered). **Editing `~/Devel/engine` changes nothing
+> that ships.**
+
+**Ground rules (as of phase 1; see the notice above for what A8 changed):**
 - The two engines share type names in `namespace phonometrica` — they can never
   be linked into one binary or included into one TU (MIGRATION_NOTES
   "Coexistence").
