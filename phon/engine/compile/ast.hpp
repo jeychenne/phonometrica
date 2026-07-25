@@ -139,9 +139,10 @@ struct ListLiteral final : Ast
 	AstList items;
 };
 
-// `[ yield foreach value in coll ]` — a list comprehension, an expression building a
-// List. `key` is NO_SYMBOL for the single-variable form; the two-variable form
-// `foreach k, v in coll` binds (key, value) over a Table and (index, value) over a List,
+// `[ yield for value in coll ]` — a list comprehension, an expression building a List.
+// It reuses the `for ... in` statement's spelling rather than introducing a keyword of
+// its own; `key` is NO_SYMBOL for the single-variable form, and the two-variable form
+// `for k, v in coll` binds (key, value) over a Table and (index, value) over a List,
 // exactly like the `for k, v in` statement it shares its lowering shape with.
 //
 // The optional `filter`/`else_expr` pair selects one of three shapes:

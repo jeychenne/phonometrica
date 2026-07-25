@@ -87,7 +87,7 @@ private:
 	AutoAst parse_postfix();
 	AutoAst parse_primary();
 	AutoAst parse_list_literal();
-	// Called from parse_list_literal once `foreach` is seen, with the already-parsed
+	// Called from parse_list_literal once `for` is seen, with the already-parsed
 	// yield expression and the `[`'s position.
 	AutoAst parse_list_comprehension_tail(int line, int col, AutoAst yield_expr);
 	AutoAst parse_array_literal();

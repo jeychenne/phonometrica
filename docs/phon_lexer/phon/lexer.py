@@ -32,7 +32,7 @@ class PhonLexer(RegexLexer):
             (words((
                 'and', 'as', 'break', 'cast', 'catch', 'class', 'const',
                 'continue', 'div', 'do', 'else', 'elsif', 'end', 'field',
-                'finally', 'for', 'foreach', 'function', 'global', 'if', 'import', 'in',
+                'finally', 'for', 'function', 'global', 'if', 'import', 'in',
                 'is', 'local', 'method', 'mod', 'not', 'open', 'or', 'ref',
                 'repeat', 'return', 'spawn', 'step', 'then', 'this', 'throw',
                 'to', 'try', 'until', 'var', 'while'), prefix=r'\b', suffix=r'\b'),

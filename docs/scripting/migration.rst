@@ -61,12 +61,22 @@ Counted loops (``for i = a to b [step s]``) have inclusive bounds; a loop whose
 direction contradicts its step runs zero times. ``for k, v in table`` iterates
 key/value pairs.
 
-**List comprehensions** keep the syntax they had in the old engine:
-``[y foreach x in xs]``, optionally with an ``if cond`` filter, an
-``if cond else other`` conditional (which yields on every iteration, so the
-result keeps the length of the collection), and the two-variable form
-``foreach k, v in coll`` for key/value pairs over a table or index/value pairs
-over a list. One difference: the collection accepts any expression without
+**List comprehensions** follow the same rule — they are written with ``for``,
+not ``foreach``, so they read like the loop statement they replace:
+
+.. code:: phon
+
+    # Old                                # New
+    [y foreach x in xs]                  [y for x in xs]
+    [y foreach x in xs if c]             [y for x in xs if c]
+    [k & v foreach k, v in t]            [k & v for k, v in t]
+
+An ``if cond`` clause filters, so the yield expression is not evaluated on a
+rejected iteration. ``if cond else other`` yields on every iteration instead,
+so the result keeps the length of the collection. The two-variable form gives
+key/value pairs over a table and index/value pairs over a list.
+
+One further difference: the collection accepts any expression without
 parentheses. The old engine required ``[y foreach x in (xs if c else zs)]``
 because its conditional was a postfix ``if``, which would otherwise have
 swallowed the comprehension's own filter; this engine's conditional is the

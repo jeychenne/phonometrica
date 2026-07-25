@@ -1886,7 +1886,7 @@ void Lowerer::compile_for_each(ForEach *s)
 
 void Lowerer::compile_list_comprehension(ListComprehension *c, int dest)
 {
-	// `[ Y foreach K?, V in C if F else E ]`. This reuses compile_for_each's register
+	// `[ Y for K?, V in C if F else E ]`. This reuses compile_for_each's register
 	// layout and iteration protocol exactly; the only difference is that the body is an
 	// expression appended to a hidden accumulator List rather than a statement, and the
 	// accumulator is the value the whole expression produces.

@@ -2216,18 +2216,22 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     builds (normal/ASan/TSan).
 
 29. **List comprehensions — a language addition, absent from the design docs
-    (2026-07-25).** `[ Y foreach V in C ]`, restoring the old Phonometrica
-    engine's syntax for old-script parity (the feature was carried as migration
-    gap L2, not as a removed feature). `foreach` becomes a reserved word again,
-    taking the keyword count from 44 to 45; no `.phon` in the tree used it as an
-    identifier, so nothing broke. Three shapes, selected by the optional
-    `if`/`else` tail:
-      - `[Y foreach V in C]` — yield on every iteration (map).
-      - `[Y foreach V in C if F]` — yield only when `F` holds; `Y` is not
+    (2026-07-25).** `[ Y for V in C ]`. The feature was carried as migration gap
+    L2 (missing, never removed), but it is spelled with `for`, **not** the old
+    engine's `foreach`: entry 2 above governs — the grammar follows
+    design/design.md rather than old Phonometrica, `foreach` is on its list of
+    dropped lexemes, and design §12 makes `for … in` the one iteration form. The
+    keyword set is therefore unchanged at 44; the comprehension reuses the loop
+    statement's spelling instead of reintroducing a keyword that would exist only
+    inside brackets. (Ported old scripts replace `foreach` with `for`, exactly as
+    they already do for the loop statement.) Three shapes, selected by the
+    optional `if`/`else` tail:
+      - `[Y for V in C]` — yield on every iteration (map).
+      - `[Y for V in C if F]` — yield only when `F` holds; `Y` is not
         evaluated on a rejected iteration (filter).
-      - `[Y foreach V in C if F else E]` — yield `Y` or `E`, so the result
+      - `[Y for V in C if F else E]` — yield `Y` or `E`, so the result
         length equals the iteration count (conditional).
-    The two-variable form `foreach k, v in C` binds (key, value) over a Table and
+    The two-variable form `for k, v in C` binds (key, value) over a Table and
     (index, value) over a List, exactly as `for k, v in` does. Unlike `for`, no
     `ref` is accepted: the variable only feeds the yield expression, so there is
     nothing to write back through (a dedicated parse error, not a generic one).
@@ -2239,8 +2243,9 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     synthesized closure, so reads of enclosing locals from the yield/filter/else
     expressions stay plain register reads instead of becoming per-iteration
     upvalue accesses.
-    The parser needs only one token of lookahead — `foreach` cannot continue an
-    expression — so no backtracking. The collection takes a full
+    The parser needs only one token of lookahead — `for` is a keyword and cannot
+    continue an expression, so `[a, b]` and `[Y for v in C]` are told apart after
+    the first element with no backtracking. The collection takes a full
     `parse_expression`: the old engine had to stop below the conditional there,
     because its conditional was the postfix `e if c else e2` and would have
     swallowed the comprehension's own `if`; this language's conditional is the

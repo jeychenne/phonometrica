@@ -339,15 +339,17 @@ the "OK with defaults" result).
   `var`/assignment only; `for k, v in` is the sole multi-binding). Old
   test_base_migration L37 destructuring pin replaced by explicit reads.
 - **L2. List comprehensions — CLOSED (2026-07-25).** Were not implemented in the
-  new engine (no `foreach` keyword, no `[y foreach x in xs if c]` syntax) — *not*
-  a removed feature (owner correction, 2026-07-18); the ports used explicit loops
-  or library functions in the meantime, and the comprehension test file pinned
-  those equivalents. The feature has now landed with the old engine's syntax
-  intact (`foreach` is a reserved word again, so the three keyword lists —
-  `phon_lexer.cpp`, the docs' Pygments lexer, `autocompletion_list.hpp` — carry
-  it), and `test/engine/test_list_comprehension.phon` tests the real thing while
-  still asserting agreement with the explicit loops it replaced. See DEVIATIONS
-  entry 29 for the semantics and the lowering.
+  new engine — *not* a removed feature (owner correction, 2026-07-18); the ports
+  used explicit loops or library functions in the meantime, and the comprehension
+  test file pinned those equivalents. Now landed, spelled `[y for x in xs if c]`:
+  the comprehension reuses the loop statement's `for ... in`, since this engine
+  dropped `foreach` along with the `foreach` statement (DEVIATIONS entry 2 — the
+  grammar follows design/design.md, not old Phonometrica). The keyword set is
+  unchanged at 44. Porting an old comprehension is the same one-word substitution
+  as porting an old loop: `foreach` -> `for`.
+  `test/engine/test_list_comprehension.phon` tests the real thing while still
+  asserting agreement with the explicit loops it replaced. See DEVIATIONS entry
+  29 for the semantics and the lowering.
 - **L3. In FILES, assignment never declares** — undefined names, including the old
   runtime `[Symbol error]` test cases, are COMPILE errors. In the REPL the design
   §11 leniency applies: bare assignment to an unresolved name auto-declares a

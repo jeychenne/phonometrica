@@ -1154,10 +1154,10 @@ AutoAst Parser::parse_list_literal()
 	{
 		AutoAst first = parse_expression();
 
-		// `[ yield foreach ... ]` is a comprehension rather than a literal. `foreach`
-		// is a keyword and cannot continue an expression, so one token of lookahead
-		// settles which it is — no backtracking.
-		if (m_tok.is(Lexeme::Foreach))
+		// `[ yield for ... ]` is a comprehension rather than a literal. `for` is a
+		// keyword and cannot continue an expression, so one token of lookahead settles
+		// which it is — no backtracking.
+		if (m_tok.is(Lexeme::For))
 			return parse_list_comprehension_tail(line, col, std::move(first));
 
 		items.push_back(std::move(first));
@@ -1175,7 +1175,7 @@ AutoAst Parser::parse_list_literal()
 AutoAst Parser::parse_list_comprehension_tail(int line, int col, AutoAst yield_expr)
 {
 	constexpr const char *hint = "in a list comprehension";
-	expect(Lexeme::Foreach, hint);
+	expect(Lexeme::For, hint);
 
 	// Loop variables: `v`, or `k, v` for the pair form. A comprehension takes no `ref`:
 	// the variable only feeds the yield expression, so there is nothing to write back.

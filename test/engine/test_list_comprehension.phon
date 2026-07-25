@@ -2,13 +2,18 @@
 # test_list_comprehension.phon
 # =====================================================================
 # List comprehensions:
-#     [ <yield> foreach <var> [, <var>] in <coll> [if <cond> [else <e>]] ]
+#     [ <yield> for <var> [, <var>] in <coll> [if <cond> [else <e>]] ]
 #
 # Three shapes:
 #   no `if`            -> yield on every iteration (map)
 #   `if cond`          -> yield only when cond holds (filter)
 #   `if cond else e`   -> yield when cond holds, else `e`; the result length
 #                         equals the iteration count (conditional)
+#
+# The comprehension reuses the `for ... in` spelling of the loop statement
+# rather than having a keyword of its own. The old engine wrote this as
+# `[y foreach x in xs]`, back when its loop statement was also `foreach`;
+# porting one is a matter of replacing `foreach` with `for`.
 #
 # Cases 1-12 mirror the shapes the old engine's suite covered; the file
 # previously pinned explicit-loop equivalents for them while the feature
@@ -21,7 +26,7 @@ print("==== list comprehensions ====")
 # --- Shape 1: map -----------------------------------------------------
 print("--- 1. map over a list ---")
 var nums1 = [1, 2, 3, 4]
-var doubled1 = [n * 2 foreach n in nums1]
+var doubled1 = [n * 2 for n in nums1]
 assert(len(doubled1) == 4, "T1a: expected length 4, got " & len(doubled1))
 assert(doubled1[1] == 2 and doubled1[4] == 8, "T1b: mapped values")
 
@@ -34,62 +39,62 @@ assert(doubled1 == manual1, "T1c: comprehension differs from the explicit loop")
 
 print("--- 2. source list not mutated, result is independent ---")
 var src2 = [10, 20, 30]
-var copy2 = [n foreach n in src2]
+var copy2 = [n for n in src2]
 append(copy2, 999)
 assert(len(src2) == 3, "T2a: source mutated through aliasing")
 assert(len(copy2) == 4, "T2b: result should be a fresh list")
 
 print("--- 3. over an empty list ---")
-var result3 = [n * 2 foreach n in []]
+var result3 = [n * 2 for n in []]
 assert(len(result3) == 0, "T3: expected empty result")
 
 # --- Shape 2: filter --------------------------------------------------
 print("--- 4. filter ---")
-var evens4 = [n foreach n in [1, 2, 3, 4, 5, 6] if n mod 2 == 0]
+var evens4 = [n for n in [1, 2, 3, 4, 5, 6] if n mod 2 == 0]
 assert(len(evens4) == 3, "T4a: expected 3 evens, got " & len(evens4))
 assert(evens4[1] == 2 and evens4[3] == 6, "T4b: filtered values")
 
 # A filter that rejects everything yields the empty list.
-var none4 = [n foreach n in [1, 2, 3] if n > 100]
+var none4 = [n for n in [1, 2, 3] if n > 100]
 assert(len(none4) == 0, "T4c: expected empty result")
 
 print("--- 5. strings iterate by grapheme ---")
-var upper5 = [to_upper(c) foreach c in "abc"]
+var upper5 = [to_upper(c) for c in "abc"]
 assert(len(upper5) == 3, "T5a: expected 3 graphemes")
 assert(upper5[1] == "A" and upper5[3] == "C", "T5b")
 
 # --- Shape 3: conditional --------------------------------------------
 print("--- 6. conditional mode preserves length ---")
-var tags6 = ["even" foreach n in [1, 2, 3, 4, 5] if n mod 2 == 0 else "odd"]
+var tags6 = ["even" for n in [1, 2, 3, 4, 5] if n mod 2 == 0 else "odd"]
 assert(len(tags6) == 5, "T6a: expected length 5, got " & len(tags6))
 assert(tags6[1] == "odd" and tags6[2] == "even" and tags6[5] == "odd", "T6b")
 
 # The `if ... then ... else ... end` conditional EXPRESSION is a different
 # construct and must keep working inside a yield expression.
-var tags6b = [if n mod 2 == 0 then "even" else "odd" end foreach n in [1, 2, 3, 4, 5]]
+var tags6b = [if n mod 2 == 0 then "even" else "odd" end for n in [1, 2, 3, 4, 5]]
 assert(tags6b == tags6, "T6c: conditional expression and conditional comprehension disagree")
 
 # --- Two-variable form ------------------------------------------------
 print("--- 7. pairs over a table ---")
 var person7 = {"name": "John", "surname": "Smith"}
-var pairs7 = [k & "=" & v foreach k, v in person7]
+var pairs7 = [k & "=" & v for k, v in person7]
 assert(len(pairs7) == 2, "T7a: expected 2 pairs")
 # Order is hash-determined, so verify by membership.
 assert(contains(pairs7, "name=John"), "T7b: missing name=John")
 assert(contains(pairs7, "surname=Smith"), "T7c: missing surname=Smith")
 
 print("--- 8. (index, value) form over a list ---")
-var labelled8 = [i & ":" & w foreach i, w in ["alpha", "beta", "gamma"]]
+var labelled8 = [i & ":" & w for i, w in ["alpha", "beta", "gamma"]]
 assert(labelled8[1] == "1:alpha" and labelled8[3] == "3:gamma", "T8")
 
 print("--- 9. outer variable in the yield expression ---")
 var multiplier9 = 10
-var result9 = [n * multiplier9 foreach n in [1, 2, 3]]
+var result9 = [n * multiplier9 for n in [1, 2, 3]]
 assert(result9[1] == 10 and result9[3] == 30, "T9")
 
 print("--- 10. loop variable does not leak or clobber ---")
 var n10 = 999
-var copy10 = [n10 foreach n10 in [1, 2, 3]]
+var copy10 = [n10 for n10 in [1, 2, 3]]
 assert(n10 == 999, "T10a: outer binding clobbered by the loop variable")
 assert(copy10[2] == 2, "T10b")
 # The loop variable is not visible after the comprehension either: `n10`
@@ -97,12 +102,12 @@ assert(copy10[2] == 2, "T10b")
 
 print("--- 11. nested comprehensions ---")
 var rows11 = [[1, 2], [3, 4], [5, 6]]
-var sums11 = [[2 * x foreach x in row] foreach row in rows11]
+var sums11 = [[2 * x for x in row] for row in rows11]
 assert(len(sums11) == 3, "T11a")
 assert(sums11[1][1] == 2 and sums11[3][2] == 12, "T11b")
 
 # Nested with a filter on the inner comprehension.
-var nested11 = [[x foreach x in row if x mod 2 == 0] foreach row in rows11]
+var nested11 = [[x for x in row if x mod 2 == 0] for row in rows11]
 assert(len(nested11[1]) == 1 and nested11[1][1] == 2, "T11c")
 
 print("--- 12. filter runs before yield ---")
@@ -116,7 +121,7 @@ local function transform12(n)
     yield_calls12 += 1
     return n
 end
-var result12 = [transform12(n) foreach n in [1, 2, 3, 4] if pred12(n)]
+var result12 = [transform12(n) for n in [1, 2, 3, 4] if pred12(n)]
 assert(filter_calls12 == 4, "T12a: pred should run 4x, got " & filter_calls12)
 assert(yield_calls12 == 2, "T12b: transform should run 2x, got " & yield_calls12)
 assert(len(result12) == 2, "T12c")
@@ -133,26 +138,26 @@ local function hit_no(n)
     no13 += 1
     return n
 end
-var result13 = [hit_yes(n) foreach n in [1, 2, 3, 4] if n > 2 else hit_no(n)]
+var result13 = [hit_yes(n) for n in [1, 2, 3, 4] if n > 2 else hit_no(n)]
 assert(yes13 == 2, "T13a: yield branch should run 2x, got " & yes13)
 assert(no13 == 2, "T13b: else branch should run 2x, got " & no13)
 assert(len(result13) == 4, "T13c: conditional mode must preserve length")
 
 # --- Collections other than List --------------------------------------
 print("--- 14. other collection types ---")
-var set14 = [v foreach v in {1, 2, 3}]
+var set14 = [v for v in {1, 2, 3}]
 assert(len(set14) == 3, "T14a: expected 3 elements from a Set")
-var keys14 = [k foreach k, v in {"a": 1, "b": 2}]
+var keys14 = [k for k, v in {"a": 1, "b": 2}]
 assert(len(keys14) == 2, "T14b: expected 2 keys from a Table")
 
 # --- Syntax details ---------------------------------------------------
 print("--- 15. a comprehension is an ordinary expression ---")
 # Directly as a call argument.
-assert(len([n foreach n in [1, 2, 3, 4]]) == 4, "T15a")
+assert(len([n for n in [1, 2, 3, 4]]) == 4, "T15a")
 # Newlines inside the brackets are suppressed, so it may span lines.
 var spread15 = [
     n * 3
-    foreach n in [1, 2]
+    for n in [1, 2]
     if n > 0
 ]
 assert(spread15[1] == 3 and spread15[2] == 6, "T15b: multi-line comprehension")
@@ -166,7 +171,7 @@ var from_loop16 = []
 for v in [1, 2, 3] do
     append(from_loop16, function() return v * 2 end)
 end
-var from_compr16 = [function() return v * 2 end foreach v in [1, 2, 3]]
+var from_compr16 = [function() return v * 2 end for v in [1, 2, 3]]
 assert(from_compr16[1]() == from_loop16[1](), "T16a: capture differs from 'for'")
 assert(from_compr16[3]() == from_loop16[3](), "T16b: capture differs from 'for'")
 
