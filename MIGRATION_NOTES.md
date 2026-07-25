@@ -348,7 +348,11 @@ the "OK with defaults" result).
   §11 leniency applies: bare assignment to an unresolved name auto-declares a
   session binding. (Correction + fix, 2026-07-18: the leniency had never been
   implemented — the REPL rejected `x = 5` — and now works via
-  `Runtime::set_interactive`.)
+  `Runtime::set_interactive`. Follow-up, 2026-07-25: that fix only ever reached
+  the engine's example REPL — Phonometrica's own console never called
+  `set_interactive`, so `y = 10` still errored at the prompt. `Console::runCode`
+  now enables it around its own `do_string`; the script editor, `runScript` and
+  the CLI stay strict.)
 - **L4. Only `Error` values can be thrown**; a non-Error `throw` is itself a catchable
   `[Type error]`. A caught error is an instance (`e.message`, `e.trace`), not a bare
   String. No `rethrow` — `throw e` preserves the original trace.

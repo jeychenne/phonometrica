@@ -258,6 +258,19 @@ void Console::runCode(const QString &code)
 
 	try
 	{
+		// The console is a REPL, so design §11's interactive leniency applies: a bare
+		// `y = 10` at the prompt auto-declares a session global instead of erroring.
+		// The flag lives on the Runtime, which is shared with the editor and the CLI,
+		// so it is enabled only around this compile — a script must keep erroring on an
+		// assignment to an undeclared name. Imports are unaffected either way: the
+		// module loader compiles each imported module with its own CompileEnv.
+		struct InteractiveGuard
+		{
+			Runtime &rt;
+			explicit InteractiveGuard(Runtime &r) : rt(r) { rt.set_interactive(true); }
+			~InteractiveGuard() { rt.set_interactive(false); }
+		} lenient{m_runtime};
+
 		auto result = m_runtime.do_string(code);
 
 		if (!result.is_null())

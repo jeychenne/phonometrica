@@ -1815,10 +1815,16 @@ under the normal, ASan, and TSan builds (394 unit cases each).
    demonstrated by repl.cpp's `host_version`).
 
 8. **The REPL's interactive leniency #1 (design §11) is implemented.**
-   `Runtime::set_interactive(true)` (set by the example REPL) makes bare
-   assignment to an unresolved name auto-declare a session binding — previously
-   `x = 5` errored even interactively. Reads of unknown names still error, and
-   file runs are never lenient.
+   `Runtime::set_interactive(true)` makes bare assignment to an unresolved name
+   auto-declare a session binding — previously `x = 5` errored even
+   interactively. Reads of unknown names still error. It is set by the example
+   REPL and, in Phonometrica, by `Console::runCode`.
+   The flag is consumed at compile time (`CompileEnv::interactive`, read only by
+   the assignment arm in `lower.cpp`), and `State::run` copies it for `do_string`
+   and `do_file` alike — so "file runs are never lenient" is a property of how
+   callers scope the flag, not a check inside `do_file`. Both callers therefore
+   enable it only around their own compile. Imported modules are lenient under no
+   circumstances: the loader compiles each one with its own `CompileEnv`.
 
 9. **Stdlib additions.** `lib/table.cpp` (new): `contains`/`is_empty`/`keys`/
    `values` and in-place `remove`/`clear` for Table — `contains` is the only way to
