@@ -48,6 +48,28 @@ struct BlockInfo
 	bool has_capture; // any local declared in this block was captured
 };
 
+// How a by-reference loop puts the mutated collection back where it came from. The
+// loop iterates a register of its own, so the binding it was read from is stale until
+// this runs (compile_for_each_ref).
+enum class RefWb
+{
+	None,   // not an lvalue: the mutated copy is discarded
+	Local,  // a plain local, moved out for the loop and moved back
+	Ref,    // a `ref` parameter or an enclosing by-ref loop's value: SETREF
+	Module, // a module-level binding
+	Upvalue // captured by this closure
+};
+
+// A by-ref loop whose write-back has not been emitted yet. `return` inside the loop
+// must run it or the mutations are lost — break and continue need nothing, since they
+// land on the loop's own write-back. Innermost last.
+struct PendingWb
+{
+	RefWb kind;
+	int index; // local register, module slot or upvalue index, per `kind`
+	int base;  // register holding the collection the loop is mutating
+};
+
 // Per-function compilation state. `proto` is the (non-owning) Proto being built —
 // owned by its parent's `children` (or by CompiledModule for the module). `prev`
 // is the enclosing function's state, or null at the module top level.
@@ -62,6 +84,7 @@ struct FuncState
 	FuncState *prev;
 	Vector<Local> locals;
 	Vector<BlockInfo> blocks;
+	Vector<PendingWb> ref_writebacks; // enclosing by-ref loops, for `return`
 	int free_reg = 0;
 	int max_reg = 0;
 	int finally_base = 0; // m_finally_stack size at function entry (return unwinds to here)
@@ -453,6 +476,9 @@ private:
 	};
 	Vector<FinallyCtx> m_finally_stack;
 	void emit_finally_unwind(int down_to);
+
+	// Put a by-ref loop's mutated collection back into the binding it was read from.
+	void emit_ref_writeback(const PendingWb &w, uint32_t line);
 
 	FuncState *fs = nullptr;
 	Vector<LoopCtx> m_loops;
@@ -2085,20 +2111,15 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 	// By-reference iteration (design §12): the value variable aliases each List element,
 	// so writes propagate back into the collection. The collection is loaded into the
 	// loop's source register and, if it names a mutable binding, written back after the
-	// loop. A non-lvalue collection still iterates, mutating a copy that is discarded.
+	// loop — and before any `return` out of the loop, which would otherwise drop the
+	// mutations on the floor. A non-lvalue collection still iterates, mutating a copy
+	// that is discarded.
 	enter_block();
 	int base = reg_alloc(s);
 
 	// How to restore the (mutated) collection to its binding after the loop. A local is
 	// *moved* into `base` (and its slot nulled) so a uniquely-owned list is not cloned.
-	enum Wb
-	{
-		WB_NONE,
-		WB_LOCAL,
-		WB_MODULE,
-		WB_UPVALUE
-	};
-	Wb wb = WB_NONE;
+	RefWb wb = RefWb::None;
 	int wbidx = 0;
 	if (auto *cv = s->collection->as<Variable>())
 	{
@@ -2107,19 +2128,30 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 		{
 			emit_ABC(Opcode::MOVE, base, nr.index, 0, ln(s));
 			emit_ABC(Opcode::LOADNULL, nr.index, 0, 0, ln(s)); // source emptied for the loop
-			wb = WB_LOCAL;
+			wb = RefWb::Local;
+			wbidx = nr.index;
+		}
+		else if (nr.kind == NameKind::Local && nr.is_ref)
+		{
+			// A `ref` parameter, or an enclosing by-ref loop's value variable: deref to
+			// `base`, mutate that, and write it back through the reference — the same
+			// shape as an index or field mutation through a ref (§7). The slot is *not*
+			// emptied the way a plain local's is: it aliases storage another frame can
+			// read, which must not see a null while the loop runs.
+			emit_ABC(Opcode::DEREF, base, nr.index, 0, ln(s));
+			wb = RefWb::Ref;
 			wbidx = nr.index;
 		}
 		else if (nr.kind == NameKind::Module)
 		{
 			emit_ABx(Opcode::GETMODULE, base, static_cast<uint32_t>(nr.index), ln(s));
-			wb = WB_MODULE;
+			wb = RefWb::Module;
 			wbidx = nr.index;
 		}
 		else if (nr.kind == NameKind::Upvalue)
 		{
 			emit_ABC(Opcode::GETUPVAL, base, nr.index, 0, ln(s));
-			wb = WB_UPVALUE;
+			wb = RefWb::Upvalue;
 			wbidx = nr.index;
 		}
 		else
@@ -2144,6 +2176,9 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 
 	m_loops.emplace_back();
 	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
+	// A `return` in the body jumps straight past the write-back below, so it emits its
+	// own copy of it first (compile_return). Nested loops write back innermost first.
+	fs->ref_writebacks.push_back(PendingWb{wb, wbidx, base});
 	intptr_t top = P().code.size();
 	emit_ABC(Opcode::ITER_NEXTREF, base, done, pair ? 2 : 1, ln(s));
 	intptr_t exit = emit_jump(Opcode::JMPT, done, ln(s));
@@ -2157,23 +2192,46 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 	for (intptr_t c : lc.continues)
 		P().code[c] = encode_AsBx(Opcode::JMP, 0, static_cast<int>(top - (c + 1)));
 	m_loops.pop_back();
+	fs->ref_writebacks.pop_back();
 
 	// Write the mutated collection back to its binding (the loop registers, incl. `base`,
-	// are still live until exit_block below).
-	if (wb == WB_LOCAL)
-		emit_ABC(Opcode::MOVE, wbidx, base, 0, ln(s));
-	else if (wb == WB_MODULE)
-		emit_ABx(Opcode::SETMODULE, base, static_cast<uint32_t>(wbidx), ln(s));
-	else if (wb == WB_UPVALUE)
-		emit_ABC(Opcode::SETUPVAL, base, wbidx, 0, ln(s));
+	// are still live until exit_block below). Break and continue land here; return does
+	// not, which is why it emits this itself.
+	emit_ref_writeback(PendingWb{wb, wbidx, base}, ln(s));
 
 	exit_block(static_cast<uint32_t>(s->line));
 }
 
+void Lowerer::emit_ref_writeback(const PendingWb &w, uint32_t line)
+{
+	switch (w.kind)
+	{
+	case RefWb::None:
+		break;
+	case RefWb::Local:
+		emit_ABC(Opcode::MOVE, w.index, w.base, 0, line);
+		break;
+	case RefWb::Ref:
+		emit_ABC(Opcode::SETREF, w.index, w.base, 0, line);
+		break;
+	case RefWb::Module:
+		emit_ABx(Opcode::SETMODULE, w.base, static_cast<uint32_t>(w.index), line);
+		break;
+	case RefWb::Upvalue:
+		emit_ABC(Opcode::SETUPVAL, w.base, w.index, 0, line);
+		break;
+	}
+}
+
 void Lowerer::compile_return(ReturnStatement *s)
 {
-	// The return value is evaluated first, then the finally blocks of every enclosing
-	// `try` run (design §12), then the frame returns.
+	// Any enclosing by-ref loop puts its collection back first, so the mutations reach
+	// the caller (and the returned expression sees them) instead of dying with the
+	// frame; then the return value is evaluated, then the finally blocks of every
+	// enclosing `try` run (design §12), then the frame returns.
+	for (intptr_t i = static_cast<intptr_t>(fs->ref_writebacks.size()) - 1; i >= 0; --i)
+		emit_ref_writeback(fs->ref_writebacks[i], ln(s));
+
 	if (s->expr)
 	{
 		int save = fs->free_reg;

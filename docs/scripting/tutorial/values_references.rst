@@ -176,6 +176,24 @@ You can nevertheless modify the values:
 
     print(tab["name"], tab["surname"]) # prints "JOHN SMITH"
 
+The two features combine as you would expect: iterating by reference over a collection that the function received as a ``ref``
+parameter modifies the caller's collection.
+
+.. code:: phon
+
+    function double_all(ref numbers)
+        for ref n in numbers do
+            n = n * 2
+        end
+    end
+
+    var values = [1, 2, 3]
+    double_all(values)
+    print(values) # prints [2, 4, 6]
+
+Leaving such a loop early with ``break`` or ``return`` keeps the modifications made up to that point. An error thrown out of the
+loop, on the other hand, discards them: the collection is only updated when the loop is left normally.
+
 
 References to non-clonable types
 --------------------------------

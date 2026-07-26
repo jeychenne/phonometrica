@@ -2427,3 +2427,60 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     Tests: four new assertions in `test_fileio.phon` (exhaustion, the blank-line
     distinction, an unterminated last line, an empty file), plus case 3 of
     `test_condition_decl.phon`, which now needs no sentinel.
+
+34. **By-reference iteration writes back through a `ref` parameter, and before a
+    `return` (2026-07-26).** Two holes in the same lowering, both fixed in
+    `compile_for_each_ref` / `compile_return`. Neither is a design change:
+    design §12 already says a by-ref loop's writes "propagate back into the
+    collection", and neither hole was a deliberate limit.
+    A by-ref loop does not mutate the collection in place. It loads the
+    collection into a loop register, makes it uniquely owned (`ITER_INITREF`, so
+    boxing an element cannot disturb an alias), and puts it back afterwards. The
+    write-back was emitted for a plain local, a module binding and an upvalue —
+    but the `Local && is_ref` case fell through to the generic expression path,
+    which dereferences into the loop register and never writes back. So
+    `function f(ref xs) for ref x in xs do x *= 2 end end` silently discarded
+    every write, while `xs[1] = 2` through the same parameter propagated. It now
+    takes the shape already used for an index or field mutation through a ref
+    (`load_object_for_write`): `DEREF` to the loop register, mutate, `SETREF`
+    back. This also covers a *nested* by-ref loop, whose value variable is itself
+    a reference, and a ref bound to a List or Table slot.
+    Unlike a plain local, the parameter's slot is **not** emptied for the
+    duration of the loop. Emptying it is what lets a uniquely-owned local skip a
+    clone, and it is invisible for a local — nobody else can read that register.
+    A `ref` parameter aliases another frame's storage, which must stay readable,
+    so the ref case pays the clone instead, exactly as the module and upvalue
+    cases already do. Reading the collection inside the loop therefore shows the
+    pre-loop values (a consequence of the copy, shared with module/upvalue, not
+    something new here).
+    **`return` now runs the pending write-backs first.** It jumps past the loop's
+    own write-back, so mutations made before it were lost — for the ref, module
+    and upvalue cases alike, and a `return xs` out of a loop over a local `xs`
+    returned **null**, the emptied slot. `FuncState` now carries the enclosing
+    by-ref loops (`ref_writebacks`), and `compile_return` emits them innermost
+    first, before evaluating the returned expression (so it sees the mutation)
+    and before the finally unwind (so a `finally` sees it too). The stack is
+    per-function, so a closure declared in the loop returns without touching the
+    enclosing loop's write-back. `break` and `continue` need nothing: they land
+    on the loop's own write-back.
+    **Unchanged: the collection must be named by a bare variable.** Iterating
+    `for ref x in t["k"]` or `for ref x in this.items` still mutates a copy that is
+    dropped, because the write-back would have to store into a container the loop
+    read from — the same one-level-deep limit that makes `t["a"]["b"] = 9` and
+    `this.items[1] = 9` no-ops (references.md §7, item 20's CoW caveat). That limit
+    is pre-existing and general; lifting it for loops alone would leave the odd
+    situation where iterating a field writes back but assigning to one does not.
+    **Still lost when an exception unwinds out of the loop**, and deliberately so
+    for now: the write-back is lowered code, and unwinding does not run it.
+    `throw`ing out of `for ref x in xs` discards the mutations. This is the same
+    exception-safety property the whole copy-and-write-back idiom has — an index
+    or field mutation through a `ref` loses its write-back the same way, which is
+    also why the `emit_index_unshare` in-place-store fast path stays disabled.
+    Closing it means a runtime journal of pending write-backs applied by the
+    unwinder, which is the same machinery that fast path needs; it is a VM change,
+    not a lowering change, and is left for that work.
+    Tests: `test_refs.phon` grows two groups — write-back through a ref parameter
+    (readable inside the loop, alias untouched, nested loops, Table by ref, ref to
+    a Table slot) and early exit (`return` from ref/module/local/nested loops, the
+    returned collection carrying the mutation, a `finally` observing it, and
+    `break` still working). Suite: 417 cases green, ASan clean.

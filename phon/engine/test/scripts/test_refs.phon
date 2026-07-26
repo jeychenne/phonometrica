@@ -134,4 +134,143 @@ function table_demo()
 end
 table_demo()
 
+# The two features compose: iterating by reference over a collection that arrived
+# through a `ref` parameter writes back to the caller, exactly as an index write
+# through the same parameter does.
+function double_all(ref xs)
+    for ref x in xs do
+        x *= 2
+    end
+end
+
+function ref_param_iteration_demo()
+    var xs = [1, 2, 3]
+    double_all(xs)
+    assert(xs[1] == 2 and xs[3] == 6, "by-reference iteration over a ref parameter writes back")
+
+    # Unlike a plain local, the parameter is not emptied while the loop runs: it
+    # aliases the caller's variable, which stays readable.
+    var seen = 0
+    function count_visible(ref ys)
+        for ref y in ys do
+            seen += len(ys)
+        end
+    end
+    count_visible(xs)
+    assert(seen == 9, "a ref parameter stays readable inside a by-reference loop")
+
+    # An alias taken before the call keeps the old values (copy on write).
+    var zs = [1, 2, 3]
+    var alias = zs
+    double_all(zs)
+    assert(zs[1] == 2 and alias[1] == 1, "the caller's alias is left alone")
+
+    # Nested: the outer loop's value variable is itself a reference, so the inner
+    # loop writes back through it.
+    var rows = [[1, 2], [3, 4]]
+    for ref row in rows do
+        for ref cell in row do
+            cell += 1
+        end
+    end
+    assert(rows[1][1] == 2 and rows[2][2] == 5, "nested by-reference iteration writes back")
+
+    # A Table reached through a ref parameter, and a ref bound to a Table slot.
+    var scores = {"a": 1, "b": 2}
+    function scale(ref t)
+        for k, ref v in t do
+            v *= 10
+        end
+    end
+    scale(scores)
+    assert(scores["a"] == 10 and scores["b"] == 20, "a Table through a ref parameter writes back")
+
+    var holder = {"k": [1, 2]}
+    double_all(holder["k"])
+    assert(holder["k"][2] == 4, "a ref bound to a Table slot writes back")
+end
+ref_param_iteration_demo()
+
+# Leaving a by-reference loop early must not lose the mutations. `break` and
+# `continue` land on the loop's own write-back; `return` jumps past it, so it
+# runs the write-back itself, innermost loop first.
+var early_module = [1, 2, 3]
+
+function return_demo()
+    # A ref parameter, left through a return.
+    function stop_early(ref xs)
+        for ref x in xs do
+            x = 9
+            return
+        end
+    end
+    var xs = [1, 2, 3]
+    stop_early(xs)
+    assert(xs[1] == 9 and xs[2] == 2, "return out of a by-reference loop writes back")
+
+    # A module binding, and a local returned as the value of the enclosing call:
+    # the returned expression sees the write-back, not the emptied slot.
+    function mutate_module()
+        for ref x in early_module do
+            x = 9
+            return
+        end
+    end
+    mutate_module()
+    assert(early_module[1] == 9, "return writes a module binding back")
+
+    function return_the_collection()
+        var ys = [1, 2, 3]
+        for ref y in ys do
+            y = 9
+            return ys
+        end
+    end
+    var got = return_the_collection()
+    assert(got[1] == 9 and got[3] == 3, "a returned collection carries the mutation")
+
+    # Nested loops: both levels are written back, innermost first.
+    function nested_return(ref rows)
+        for ref row in rows do
+            for ref cell in row do
+                cell = 9
+                return
+            end
+        end
+    end
+    var rows = [[1, 2], [3, 4]]
+    nested_return(rows)
+    assert(rows[1][1] == 9 and rows[1][2] == 2, "nested return writes both levels back")
+
+    # A `finally` on the way out observes the written-back collection.
+    var seen_in_finally = null
+    function with_finally(ref zs)
+        for ref z in zs do
+            try
+                z = 9
+                return
+            finally
+                seen_in_finally = zs[1]
+            end
+        end
+    end
+    var zs = [1, 2]
+    with_finally(zs)
+    assert(seen_in_finally == 9, "a finally on the way out sees the write-back")
+
+    # break and continue keep working through the loop's own write-back.
+    function stop_at_two(ref ws)
+        for ref w in ws do
+            if w == 2 then
+                break
+            end
+            w = 100
+        end
+    end
+    var ws = [1, 2, 3]
+    stop_at_two(ws)
+    assert(ws[1] == 100 and ws[2] == 2 and ws[3] == 3, "break keeps the write-back")
+end
+return_demo()
+
 print("ref tests passed")
