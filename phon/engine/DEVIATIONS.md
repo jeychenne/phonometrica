@@ -2034,7 +2034,9 @@ and the G6a ratification below were decided in the same pass.
       verified: `phon.settings = {...}` works). But (a) a **nested** write
       `a.b.c = x` does NOT persist — the inner table detaches and writes back to a temp,
       not the outer container; this is the SAME pre-existing limitation as nested INDEX
-      writes `a["b"]["c"] = x` (references.md §7), not new to dot-sugar. And (b) any field
+      writes `a["b"]["c"] = x` (references.md §7), not new to dot-sugar.
+      **(a) NO LONGER HOLDS as of item 35 (2026-07-26): nested writes persist.** The rest
+      of this caveat stands. And (b) any field
       write to `phon` detaches it (its refcount is ≥2 via the global slot + the transient
       GETGLOBAL register), so C++ must **re-fetch `phon` via get_global rather than cache a
       Handle** across script runs — the injected namespace does not stay pointer-stable
@@ -2484,3 +2486,75 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     a Table slot) and early exit (`return` from ref/module/local/nested loops, the
     returned collection carrying the mutation, a `finally` observing it, and
     `break` still working). Suite: 417 cases green, ASan clean.
+
+35. **A write to a target inside another container now reaches it (2026-07-26).**
+    `a[i][j] = v`, `a.b.c = v`, `t["k"].f = v`, `boxes[1].rows = […]` and every
+    deeper combination silently did nothing: the store mutated a detached copy of
+    the inner container and the copy was dropped. So did a `ref` argument naming a
+    nested element (`f(ref a[i][j])`) and by-reference iteration over a nested
+    collection (`for ref x in t["k"]`, `for ref x in this.rows`). No error, no
+    warning — the script simply had no effect. This was recorded as a limitation
+    (item 20's CoW caveat, "the SAME pre-existing limitation as nested INDEX
+    writes"), never as a decision; nothing in design.md restricts assignment to
+    one level deep.
+    **Why it happened.** Values are copy-on-write, so a store cannot reach into a
+    container from a register that merely shares it: `SETINDEX` detaches, mutates
+    the detached copy and leaves it in the object register. That is why the
+    compiler already emitted a *write-back* — `SETMODULE`/`SETUPVAL`/`SETREF` —
+    after a store whose object came from a module binding, an upvalue or a `ref`.
+    `load_object_for_write` knew those three cases plus "a local register IS the
+    storage"; anything else, including an index or field expression, fell through
+    to "evaluate into a temporary", and the write-back was simply omitted.
+    **The fix is one level of recursion.** `load_object_for_write` now handles an
+    `IndexExpression` or `FieldAccess` object by loading *its* container the same
+    way (recursively, so the chain bottoms out in a binding), reading this level
+    out of it with `GETINDEX`/`GETFIELD`, and appending a step that stores the
+    mutated copy back into the slot it came from. `WbStep`/`WbChain` replace the
+    old `wb`/`wbidx` pair; `emit_writeback` replays the chain outermost first, so
+    each level is put back into a container that is itself put back, down to the
+    binding. `src` is a register read at run time, not a value captured at compile
+    time, because an indexed or field store replaces its object register with the
+    detached container.
+    **Value semantics are unchanged**, which is the point of routing every level
+    through the ordinary stores: each `SETINDEX`/`SETFIELD` detaches if its target
+    is shared, so `var alias = rows; rows[1][1] = 9` leaves `alias` alone, at every
+    depth. The index and key expressions are evaluated once, into registers the
+    chain reuses.
+    **Cost.** A nested store copies each intermediate container once (the read
+    shares it, the store detaches it). `a[i][j] = v` in a loop over a list of lists
+    is therefore O(row length) per element rather than O(1) — the same price the
+    module/upvalue write-back has always paid, and for the same reason: the
+    exception-safe alternative to `emit_index_unshare`, which stays disabled. If
+    nested stores ever show up in a profile, the fix is the pending-write-back
+    journal that would also re-enable that fast path, not a special case here.
+    **Two forms became compile errors** instead of silent no-ops, because no
+    write-back can exist for them: a multi-dimensional index as the *object* of an
+    assignment (`m[1,2][1] = v` — a NumArray element is a number, not a container)
+    and a slice as the object (`a[1:2][1] = v` — a slice is a fresh list). A
+    non-lvalue object (`f()[1][2] = v`) still mutates a temporary silently; it has
+    no home to be written back to, exactly like `f()[1] = v` before it.
+    **Exception safety is preserved**: a failing store aborts before its
+    write-back, so the container keeps the value it had. Mutations already made in
+    the same statement are lost, which is the same trade item 34 records for a
+    throw out of a by-ref loop.
+    **An index the write-back re-reads must be its own register.** `expr_any`
+    borrows a local's register rather than copying it, which is right for an
+    operand consumed immediately, but a store and its write-back read the index at
+    two different times — with the assigned value's side effects, or a whole loop
+    body, in between. `m[i][1] = f()` where `f` assigns `2` to `i` read row 1 and
+    wrote the result back into row 2. New `expr_owned` copies a borrowed register
+    into a private one (one `MOVE`, only when the operand is a bare local) and is
+    used for every index a write-back revisits. It also fixes the same hazard one
+    level up, which predates this item: `m[i] = f()` stored into the *new* `i`,
+    contradicting the left-to-right evaluation the emitted code otherwise follows.
+    The by-ref loop (item 34) now shares this machinery: its write-back *is* a
+    `WbChain`, which is what extends it to a collection reached through an index or
+    a field. The loop's register block is reserved up front so the collection's
+    temporaries land above it, and the loop's own names are still declared after
+    the collection is compiled, so `for ref xs in xs` keeps resolving the outer one.
+    Tests: `test_nested_write.phon` (new, 9 groups: every base binding, three
+    levels of list and of table, dot sugar, fields mixed with elements, value
+    semantics at depth, compound assignment, slice stores, single evaluation of the
+    index expression, references to nested elements, by-ref iteration over nested
+    collections, and a failed store leaving the container intact). Suite: 417 cases
+    green, ASan clean.

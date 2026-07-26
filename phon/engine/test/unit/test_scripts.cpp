@@ -31,6 +31,7 @@ const char *SCRIPTS[] = {
     "test_stdlib",              "test_fileio",
     "test_regex",               "test_parallel",
     "test_json",                "test_cow_binding",
+    "test_nested_write",
 };
 
 std::string read_file(const std::string &path, bool &ok)

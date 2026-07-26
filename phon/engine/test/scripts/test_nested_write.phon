@@ -1,0 +1,244 @@
+# Writes to a target that lives inside another container: `a[i][j] = v`, `a.b.c = v`,
+# `t["k"].f = v`, and so on. Values are copy-on-write, so such a store mutates a
+# detached copy of the inner container, which the compiler then puts back into the one
+# it came from — level by level, down to the binding. These assertions pin that the
+# write lands, and that it lands *without* breaking value semantics: an independent
+# binding that shares the outer container must keep the old contents.
+
+# ---- the binding the chain bottoms out in ----
+
+var mod_rows = [[1, 2], [3, 4]]
+mod_rows[1][2] = 9
+assert(mod_rows[1][2] == 9, "module binding, two levels")
+assert(mod_rows[2][1] == 3, "the untouched row is intact")
+
+function local_base()
+    var rows = [[1, 2], [3, 4]]
+    rows[1][2] = 9
+    assert(rows[1][2] == 9, "local binding, two levels")
+end
+local_base()
+
+function ref_base(ref rows)
+    rows[1][2] = 9
+end
+
+function upvalue_base()
+    var rows = [[1, 2], [3, 4]]
+    var poke = function()
+        rows[1][2] = 9
+    end
+    poke()
+    assert(rows[1][2] == 9, "upvalue binding, two levels")
+end
+upvalue_base()
+
+function base_bindings()
+    var rows = [[1, 2], [3, 4]]
+    ref_base(rows)
+    assert(rows[1][2] == 9, "ref parameter, two levels")
+end
+base_bindings()
+
+# ---- depth ----
+
+var deep = [[[1, 2], [3, 4]], [[5, 6]]]
+deep[1][2][1] = 99
+assert(deep[1][2][1] == 99, "three levels of list")
+assert(deep[1][1][1] == 1, "sibling untouched")
+
+var deept = {"a": {"b": {"c": 1}}}
+deept["a"]["b"]["c"] = 9
+assert(deept["a"]["b"]["c"] == 9, "three levels of table")
+
+# Dot sugar on tables goes through the same path.
+var dotted = {"a": {"b": 1}}
+dotted.a.b = 9
+assert(dotted.a.b == 9, "nested dot-sugar write")
+
+# ---- fields and elements mixed ----
+
+class Holder
+    field rows as List = []
+    field meta as Table = {}
+end
+
+function fields_and_elements()
+    var h = Holder()
+    h.rows = [[1, 2], [3, 4]]
+    h.rows[1][2] = 9
+    assert(h.rows[1][2] == 9, "field, then two indexes")
+
+    h.meta = {"k": {"n": 1}}
+    h.meta["k"]["n"] = 7
+    assert(h.meta["k"]["n"] == 7, "field, then two keys")
+
+    # A field of an object held in a list.
+    var boxes = [Holder(), Holder()]
+    boxes[1].rows = [5, 6]
+    assert(boxes[1].rows[1] == 5, "field of a list element")
+    assert(len(boxes[2].rows) == 0, "the other element is untouched")
+end
+fields_and_elements()
+
+# ---- value semantics survive ----
+
+function value_semantics()
+    var rows = [[1, 2], [3, 4]]
+    var alias = rows
+    rows[1][1] = 9
+    assert(rows[1][1] == 9, "nested write applied")
+    assert(alias[1][1] == 1, "an alias of the outer list keeps the old value")
+
+    var inner = [1, 2]
+    var outer = [inner]
+    outer[1][1] = 9
+    assert(outer[1][1] == 9, "nested write applied through a shared inner list")
+    assert(inner[1] == 1, "the inner list's own binding keeps the old value")
+
+    var t = {"a": {"b": 1}}
+    var talias = t
+    t["a"]["b"] = 9
+    assert(t["a"]["b"] == 9, "nested table write applied")
+    assert(talias["a"]["b"] == 1, "table alias keeps the old value")
+end
+value_semantics()
+
+# ---- compound assignment, slices, and single evaluation ----
+
+function other_stores()
+    var rows = [[1, 2], [3, 4]]
+    rows[1][2] += 10
+    assert(rows[1][2] == 12, "compound assignment to a nested element")
+
+    var sl = [[1, 2, 3, 4]]
+    sl[1][2:3] = [7, 8]
+    assert(sl[1][2] == 7 and sl[1][3] == 8 and sl[1][4] == 4, "slice store inside a nested list")
+end
+other_stores()
+
+var eval_count = 0
+
+function first_row()
+    eval_count += 1
+    return 1
+end
+
+function single_evaluation()
+    var rows = [[1, 2]]
+    rows[first_row()][1] = 9
+    assert(rows[1][1] == 9, "the store landed")
+    assert(eval_count == 1, "the container's index expression is evaluated once")
+end
+single_evaluation()
+
+# ---- a reference to a nested element ----
+
+function bump(ref x)
+    x = x + 100
+end
+
+function nested_reference()
+    var rows = [[1, 2], [3, 4]]
+    bump(rows[1][2])
+    assert(rows[1][2] == 102, "a nested element passed by reference")
+
+    var t = {"a": {"b": 1}}
+    bump(t["a"]["b"])
+    assert(t["a"]["b"] == 101, "a nested table value passed by reference")
+end
+nested_reference()
+
+# ---- by-reference iteration over a nested collection ----
+
+function iterate_nested()
+    var t = {"k": [1, 2, 3]}
+    for ref x in t["k"] do
+        x = x * 2
+    end
+    assert(t["k"][1] == 2 and t["k"][3] == 6, "by-reference iteration over a table slot")
+
+    var rows = [[1, 2], [3, 4]]
+    for ref x in rows[1] do
+        x = 9
+    end
+    assert(rows[1][1] == 9 and rows[2][1] == 3, "by-reference iteration over a list element")
+
+    var g = {"rows": [[1, 2], [3, 4]]}
+    for ref row in g["rows"] do
+        for ref cell in row do
+            cell = cell * 10
+        end
+    end
+    assert(g["rows"][1][1] == 10 and g["rows"][2][2] == 40, "nested by-reference loops")
+
+    var h = Holder()
+    h.rows = [1, 2, 3]
+    for i, ref x in h.rows do
+        x = x + i
+    end
+    assert(h.rows[1] == 2 and h.rows[3] == 6, "by-reference iteration over a field")
+end
+iterate_nested()
+
+# ---- the store and its write-back agree on which slot they are working on ----
+# The index is read once, into a register of its own: code that runs between the read
+# and the write-back — the assigned value's side effects, or a whole loop body — may
+# assign to the variable that named the index without moving the store.
+
+function stable_index()
+    var m = [[1, 1], [2, 2]]
+    var i = 1
+    var bump_i = function()
+        i = 2
+        return 7
+    end
+    m[i][1] = bump_i()
+    assert(m[1][1] == 7, "the value's side effect does not move a nested store")
+    assert(m[2][1] == 2, "the other row is untouched")
+
+    var n = [[1, 1], [2, 2]]
+    var j = 1
+    var bump_j = function()
+        j = 2
+        return 7
+    end
+    n[j] = bump_j()
+    assert(n[1] == 7, "the value's side effect does not move a one-level store")
+
+    var t = {"a": [1, 1], "b": [2, 2]}
+    var k = "a"
+    for ref x in t[k] do
+        k = "b"
+        x = 9
+    end
+    assert(t["a"][1] == 9, "the loop body cannot redirect the collection's write-back")
+    assert(t["b"][1] == 2, "the other entry is untouched")
+end
+stable_index()
+
+# ---- a failed store leaves the container alone ----
+
+function failed_store()
+    var rows = [[1, 2], [3, 4]]
+    var caught = false
+    try
+        rows[1][99] = 9
+    catch e
+        caught = true
+    end
+    assert(caught, "an out-of-range nested store raises")
+    assert(len(rows) == 2 and rows[1][1] == 1, "the container survives a failed nested store")
+
+    caught = false
+    try
+        rows[99][1] = 9
+    catch e
+        caught = true
+    end
+    assert(caught, "an out-of-range outer index raises")
+    assert(len(rows) == 2, "the container survives a failed outer read")
+end
+failed_store()
+
+print("test_nested_write: all assertions passed")

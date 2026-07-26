@@ -48,27 +48,44 @@ struct BlockInfo
 	bool has_capture; // any local declared in this block was captured
 };
 
-// How a by-reference loop puts the mutated collection back where it came from. The
-// loop iterates a register of its own, so the binding it was read from is stale until
-// this runs (compile_for_each_ref).
-enum class RefWb
+// One level of "put the mutated container back where it was read from". A store like
+// `a.b[i] = v` cannot reach into `a` directly: values are copy-on-write, so the store
+// mutates a detached copy of `a.b` and that copy has to be stored into `a`, which may
+// itself have detached and need storing into its binding. `load_object_for_write`
+// builds one step per level, innermost (the binding) first, and `emit_writeback`
+// replays them in reverse.
+//
+// `src` is the register holding the value that step puts back. It is read at emission
+// time rather than captured earlier because an indexed or field store may replace its
+// object register with the detached container (the interpreter writes the new cell
+// back into R[A]).
+struct WbStep
 {
-	None,   // not an lvalue: the mutated copy is discarded
-	Local,  // a plain local, moved out for the loop and moved back
-	Ref,    // a `ref` parameter or an enclosing by-ref loop's value: SETREF
-	Module, // a module-level binding
-	Upvalue // captured by this closure
+	enum Kind
+	{
+		Local,   // a local whose register was emptied for the mutation: MOVE reg <- src
+		Module,  // a module-level binding: SETMODULE src -> slot
+		Upvalue, // captured by this closure: SETUPVAL src -> index
+		Ref,     // through a `ref`: SETREF box, src
+		Index,   // a container element: SETINDEX cont, key, src
+		Field,   // an object field: SETFIELD cont, key, src
+		FieldRaw // ditto, bypassing accessor routing (`this.f` on a private/own field)
+	};
+	Kind kind;
+	int src;  // register holding the mutated value
+	int a;    // local/module slot | upvalue index | ref register | container register
+	int key;  // Index: the index register; Field: the key-constant register
 };
 
-// A by-ref loop whose write-back has not been emitted yet. `return` inside the loop
-// must run it or the mutations are lost — break and continue need nothing, since they
-// land on the loop's own write-back. Innermost last.
-struct PendingWb
-{
-	RefWb kind;
-	int index; // local register, module slot or upvalue index, per `kind`
-	int base;  // register holding the collection the loop is mutating
-};
+// Innermost first; empty when the target mutates a register in place (a plain local)
+// or a temporary nothing can be written back to (`f()[i] = v`).
+using WbChain = Vector<WbStep>;
+
+// A by-ref loop's write-back, not yet emitted. The loop iterates a register of its
+// own, so the collection's home is stale until the chain runs; a `return` inside the
+// body must run it or the mutations are lost. Break and continue need nothing — they
+// land on the loop's own write-back. Innermost loop last.
+using PendingWb = WbChain;
 
 // Per-function compilation state. `proto` is the (non-owning) Proto being built —
 // owned by its parent's `children` (or by CompiledModule for the module). `prev`
@@ -364,6 +381,9 @@ private:
 	// --- expression compilation ---
 	void expr_to(Ast *node, int dest);
 	int expr_any(Ast *node);
+	// expr_any into a register nothing else can overwrite (see the definition): for an
+	// index or key that a store and its later write-back must agree on.
+	int expr_owned(Ast *node);
 
 	void compile_binary(BinaryExpression *b, int dest);
 	void compile_logical(BinaryExpression *b, int dest); // and/or
@@ -384,21 +404,23 @@ private:
 	void compile_declaration(Declaration *d);
 	void compile_assignment(Assignment *a);
 	void assign_plain(Ast *target, Ast *value);
-	// Load an index target's object into a register for in-place mutation. `wb`
-	// selects the write-back (0 none / 1 module / 2 upvalue) needed after SETINDEX
-	// so a mutated value class propagates to its binding; `wbidx` is the slot/index.
-	int load_index_object(IndexExpression *ix, int &wb, int &wbidx);
-	void emit_index_writeback(int o, int wb, int wbidx, uint32_t line);
+	// Load an index target's object into a register for in-place mutation, collecting
+	// into `chain` what it takes to propagate the mutation back (see WbStep).
+	int load_index_object(IndexExpression *ix, WbChain &chain);
+	// Replay a chain, outermost step first. Emitted after the store that mutated the
+	// object, and before the caller frees its temporaries — every register the chain
+	// names must still be live.
+	void emit_writeback(const WbChain &chain, uint32_t line);
 	// Drop a module/upvalue binding's own reference to the aggregate it holds, so the
 	// following in-place mutation (SETINDEX/SETIDXN/SETSLICE/SETFIELD) sees a unique
 	// owner and mutates without a copy-on-write clone — turning repeated element writes
 	// to a module/upvalue-held container from O(n) each (full clone) into O(1). The
-	// binding is restored by the matching emit_index_writeback. This is emitted *after*
+	// binding is restored by the matching emit_writeback. This is emitted *after*
 	// the index and value subexpressions are evaluated (they may read the binding) and
 	// is reentrancy-safe because a builtin indexed/field store never calls back into
 	// script. Value semantics are preserved: a genuine second owner keeps the refcount
 	// above 1, so the clone still fires when another binding aliases the container.
-	void emit_index_unshare(int wb, int wbidx, Ast *node);
+	void emit_index_unshare(Ast *node);
 	// Emit a slice's start/stop/step into the three consecutive registers base,
 	// base+1, base+2 (an absent part becomes null → the runtime default).
 	void emit_slice_parts(SliceExpression *sl, int base);
@@ -459,9 +481,11 @@ private:
 		return (m_accessor_field != NO_SYMBOL && field == m_accessor_field) ||
 		       m_local_fields.contains(field.id);
 	}
-	// Load an object expression for in-place field mutation, mirroring
-	// load_index_object (wb/wbidx select the write-back).
-	int load_object_for_write(Ast *obj, int &wb, int &wbidx);
+	// Load an object expression so a field or element of it can be mutated, appending
+	// to `chain` whatever it takes to put the result back (nothing, when the object is
+	// a local whose register IS the storage). Nested lvalues recurse: each level reads
+	// its container out of the one below and adds a step.
+	int load_object_for_write(Ast *obj, WbChain &chain);
 
 	static Opcode arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare);
 
@@ -476,9 +500,6 @@ private:
 	};
 	Vector<FinallyCtx> m_finally_stack;
 	void emit_finally_unwind(int down_to);
-
-	// Put a by-ref loop's mutated collection back into the binding it was read from.
-	void emit_ref_writeback(const PendingWb &w, uint32_t line);
 
 	FuncState *fs = nullptr;
 	Vector<LoopCtx> m_loops;
@@ -583,6 +604,22 @@ Opcode Lowerer::arith_opcode(Lexeme op, bool &swap_operands, bool &is_compare)
 }
 
 // --- expressions --------------------------------------------------------------
+
+int Lowerer::expr_owned(Ast *node)
+{
+	// expr_any, but the register is this expression's own. An index or key that a store
+	// reads now and its write-back re-reads later must not be borrowed from a local: the
+	// code in between — the assigned value's own side effects, or a whole loop body —
+	// may assign to that local, and the write-back would then store into a different
+	// slot than the one it read from.
+	int before = fs->free_reg;
+	int r = expr_any(node);
+	if (r >= before)
+		return r; // freshly allocated: nothing else can write it
+	int t = reg_alloc(node);
+	emit_ABC(Opcode::MOVE, t, r, 0, ln(node));
+	return t;
+}
 
 int Lowerer::expr_any(Ast *node)
 {
@@ -1042,11 +1079,11 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 		if (ix->indices.size() != 1 || ix->indices[0]->is<SliceExpression>())
 			error(arg, "[Index error] only a single-element reference is supported");
 		int save = fs->free_reg;
-		int wb, wbidx;
-		int cont = load_index_object(ix, wb, wbidx);
+		WbChain chain;
+		int cont = load_index_object(ix, chain);
 		int idxr = expr_any(ix->indices[0].get());
 		emit_ABC(Opcode::PROMOTEINDEX, r, cont, idxr, ln(arg));
-		emit_index_writeback(cont, wb, wbidx, ln(arg));
+		emit_writeback(chain, ln(arg));
 		reg_free_to(save);
 		return;
 	}
@@ -1054,12 +1091,12 @@ void Lowerer::emit_promote_arg(Ast *arg, int r)
 	if (auto *fa = arg->as<FieldAccess>())
 	{
 		int save = fs->free_reg;
-		int wb, wbidx;
-		int obj = load_object_for_write(fa->object.get(), wb, wbidx);
+		WbChain chain;
+		int obj = load_object_for_write(fa->object.get(), chain);
 		int sreg = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, sreg, static_cast<uint32_t>(k_symbol(fa->name)), ln(arg));
 		emit_ABC(Opcode::PROMOTEFIELD, r, obj, sreg, ln(arg));
-		emit_index_writeback(obj, wb, wbidx, ln(arg));
+		emit_writeback(chain, ln(arg));
 		reg_free_to(save);
 		return;
 	}
@@ -1508,8 +1545,8 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 				if (ixx->is<SliceExpression>())
 					error(target, "[Index error] assignment to a multi-dimensional Array slice is not yet supported");
 		int save = fs->free_reg;
-		int wb, wbidx;
-		int o = load_index_object(ix, wb, wbidx);
+		WbChain chain;
+		int o = load_index_object(ix, chain);
 		if (ix->indices.size() == 1 && ix->indices[0]->is<SliceExpression>())
 		{
 			int c = reg_alloc(target); // slice base: start, stop, step
@@ -1517,9 +1554,9 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			reg_alloc(target);
 			emit_slice_parts(ix->indices[0]->as<SliceExpression>(), c);
 			int val = expr_any(value);
-			emit_index_unshare(wb, wbidx, target);
+			emit_index_unshare(target);
 			emit_ABC(Opcode::SETSLICE, o, c, val, ln(target));
-			emit_index_writeback(o, wb, wbidx, ln(target));
+			emit_writeback(chain, ln(target));
 			reg_free_to(save);
 			return;
 		}
@@ -1534,18 +1571,18 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 			for (int k = 0; k < rank; ++k)
 				expr_to(ix->indices[k].get(), ibase + k);
 			int val = expr_any(value);
-			emit_index_unshare(wb, wbidx, target);
+			emit_index_unshare(target);
 			emit_ABC(Opcode::SETIDXN, o, ibase, val, ln(target));
 			emit(encode_Ax(Opcode::EXTRA_ARG, static_cast<uint32_t>(rank)), ln(target));
-			emit_index_writeback(o, wb, wbidx, ln(target));
+			emit_writeback(chain, ln(target));
 			reg_free_to(save);
 			return;
 		}
-		int i = expr_any(ix->indices[0].get());
+		int i = expr_owned(ix->indices[0].get());
 		int val = expr_any(value);
-		emit_index_unshare(wb, wbidx, target);
+		emit_index_unshare(target);
 		emit_ABC(Opcode::SETINDEX, o, i, val, ln(target));
-		emit_index_writeback(o, wb, wbidx, ln(target));
+		emit_writeback(chain, ln(target));
 		reg_free_to(save);
 		return;
 	}
@@ -1554,25 +1591,23 @@ void Lowerer::assign_plain(Ast *target, Ast *value)
 		// obj.field = value: load obj (with write-back for a value class that
 		// detaches under SETFIELD), set the field, then propagate the object back.
 		int save = fs->free_reg;
-		int wb, wbidx;
-		int o = load_object_for_write(fa->object.get(), wb, wbidx);
+		WbChain chain;
+		int o = load_object_for_write(fa->object.get(), chain);
 		int s = reg_alloc(fa);
 		emit_ABx(Opcode::LOADK, s, static_cast<uint32_t>(k_symbol(fa->name)), ln(target));
 		int val = expr_any(value);
 		Opcode set = this_raw_field(fa->object.get(), fa->name) ? Opcode::SETFIELDRAW
 		                                                        : Opcode::SETFIELD;
 		emit_ABC(set, o, s, val, ln(target));
-		emit_index_writeback(o, wb, wbidx, ln(target));
+		emit_writeback(chain, ln(target));
 		reg_free_to(save);
 		return;
 	}
 	error(target, "[Compile error] invalid assignment target");
 }
 
-int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
+int Lowerer::load_object_for_write(Ast *obj, WbChain &chain)
 {
-	wb = 0;
-	wbidx = 0;
 	// `this.f = v` mutates the receiver's own register directly (no write-back);
 	// nested-closure `this` is an upvalue and is written back like any upvalue.
 	if (obj->is<ThisExpression>())
@@ -1584,8 +1619,7 @@ int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
 		{
 			int o = reg_alloc(obj);
 			emit_ABC(Opcode::GETUPVAL, o, nr.index, 0, ln(obj));
-			wb = 2;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Upvalue, o, nr.index, 0});
 			return o;
 		}
 		error(obj, "[Name error] 'this' is only valid inside a method");
@@ -1600,8 +1634,7 @@ int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
 				// Deref to a temp; a detaching mutation writes the copy back through the ref.
 				int o = reg_alloc(obj);
 				emit_ABC(Opcode::DEREF, o, nr.index, 0, ln(obj));
-				wb = 3;
-				wbidx = nr.index;
+				chain.push_back(WbStep{WbStep::Ref, o, nr.index, 0});
 				return o;
 			}
 			return nr.index; // the local register IS the storage; mutate it in place
@@ -1610,39 +1643,94 @@ int Lowerer::load_object_for_write(Ast *obj, int &wb, int &wbidx)
 		{
 			int o = reg_alloc(obj);
 			emit_ABx(Opcode::GETMODULE, o, static_cast<uint32_t>(nr.index), ln(obj));
-			wb = 1;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Module, o, nr.index, 0});
 			return o;
 		}
 		if (nr.kind == NameKind::Upvalue)
 		{
 			int o = reg_alloc(obj);
 			emit_ABC(Opcode::GETUPVAL, o, nr.index, 0, ln(obj));
-			wb = 2;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Upvalue, o, nr.index, 0});
 			return o;
 		}
+	}
+	// A nested lvalue (`a[i][j] = v`, `a.b.c = v`, `a.b[i] = v`, …). Load the container
+	// this one lives in — recursively, so the chain reaches all the way down to a
+	// binding — then read this level out of it. The read shares the value with the slot
+	// it came from, so the store that follows detaches a copy; the step added here puts
+	// that copy back into the slot. Everything the step needs (the container register,
+	// the index or key register) stays allocated until the caller frees its temporaries,
+	// which it does only after emit_writeback.
+	if (auto *ix = obj->as<IndexExpression>())
+	{
+		if (ix->indices.size() != 1)
+			error(obj, "[Index error] a multi-dimensional index cannot be the object of an "
+			           "assignment (its elements are numbers, not containers)");
+		if (ix->indices[0]->is<SliceExpression>())
+			error(obj, "[Index error] a slice cannot be the object of an assignment");
+		int cont = load_object_for_write(ix->object.get(), chain);
+		int key = expr_owned(ix->indices[0].get());
+		int o = reg_alloc(obj);
+		emit_ABC(Opcode::GETINDEX, o, cont, key, ln(obj));
+		chain.push_back(WbStep{WbStep::Index, o, cont, key});
+		return o;
+	}
+	if (auto *fa = obj->as<FieldAccess>())
+	{
+		bool raw = this_raw_field(fa->object.get(), fa->name);
+		int cont = load_object_for_write(fa->object.get(), chain);
+		int key = reg_alloc(obj);
+		emit_ABx(Opcode::LOADK, key, static_cast<uint32_t>(k_symbol(fa->name)), ln(obj));
+		int o = reg_alloc(obj);
+		emit_ABC(raw ? Opcode::GETFIELDRAW : Opcode::GETFIELD, o, cont, key, ln(obj));
+		chain.push_back(WbStep{raw ? WbStep::FieldRaw : WbStep::Field, o, cont, key});
+		return o;
 	}
 	// A general expression object (e.g. f()[i] = v): mutation targets a temporary.
 	return expr_any(obj);
 }
 
-int Lowerer::load_index_object(IndexExpression *ix, int &wb, int &wbidx)
+int Lowerer::load_index_object(IndexExpression *ix, WbChain &chain)
 {
-	return load_object_for_write(ix->object.get(), wb, wbidx);
+	return load_object_for_write(ix->object.get(), chain);
 }
 
-void Lowerer::emit_index_writeback(int o, int wb, int wbidx, uint32_t line)
+void Lowerer::emit_writeback(const WbChain &chain, uint32_t line)
 {
-	if (wb == 1)
-		emit_ABx(Opcode::SETMODULE, o, static_cast<uint32_t>(wbidx), line);
-	else if (wb == 2)
-		emit_ABC(Opcode::SETUPVAL, o, wbidx, 0, line);
-	else if (wb == 3)
-		emit_ABC(Opcode::SETREF, wbidx, o, 0, line); // *ref = o (the mutated object)
+	// Outermost first: the copy this level mutated goes back into its container, which
+	// may itself have detached under that store, so the container goes back into its own
+	// container, and so on down to the binding.
+	for (intptr_t i = static_cast<intptr_t>(chain.size()) - 1; i >= 0; --i)
+	{
+		const WbStep &w = chain[i];
+		switch (w.kind)
+		{
+		case WbStep::Local:
+			emit_ABC(Opcode::MOVE, w.a, w.src, 0, line);
+			break;
+		case WbStep::Module:
+			emit_ABx(Opcode::SETMODULE, w.src, static_cast<uint32_t>(w.a), line);
+			break;
+		case WbStep::Upvalue:
+			emit_ABC(Opcode::SETUPVAL, w.src, w.a, 0, line);
+			break;
+		case WbStep::Ref:
+			emit_ABC(Opcode::SETREF, w.a, w.src, 0, line); // *ref = the mutated object
+			break;
+		case WbStep::Index:
+			emit_ABC(Opcode::SETINDEX, w.a, w.key, w.src, line);
+			break;
+		case WbStep::Field:
+			emit_ABC(Opcode::SETFIELD, w.a, w.key, w.src, line);
+			break;
+		case WbStep::FieldRaw:
+			emit_ABC(Opcode::SETFIELDRAW, w.a, w.key, w.src, line);
+			break;
+		}
+	}
 }
 
-void Lowerer::emit_index_unshare(int wb, int wbidx, Ast *node)
+void Lowerer::emit_index_unshare(Ast *node)
 {
 	// DISABLED (correctness over speed). This used to null the module/upvalue slot so
 	// the loaded temp was uniquely owned and the following indexed/field store mutated
@@ -1654,8 +1742,6 @@ void Lowerer::emit_index_unshare(int wb, int wbidx, Ast *node)
 	// keeps its reference: the store detaches a clone and the write-back stores it,
 	// which is slower (O(n) per element store to a module/upvalue-held container) but
 	// leaves the binding untouched when the store throws. See DEVIATIONS.
-	(void) wb;
-	(void) wbidx;
 	(void) node;
 }
 
@@ -1789,15 +1875,15 @@ void Lowerer::compile_assignment(Assignment *a)
 		if (ix->indices[0]->is<SliceExpression>())
 			error(a->target.get(), "[Index error] compound assignment to a slice is not supported");
 		int save = fs->free_reg;
-		int wb, wbidx;
-		int o = load_index_object(ix, wb, wbidx);
-		int i = expr_any(ix->indices[0].get());
+		WbChain chain;
+		int o = load_index_object(ix, chain);
+		int i = expr_owned(ix->indices[0].get());
 		int t = reg_alloc(a);
 		emit_ABC(Opcode::GETINDEX, t, o, i, ln(a));
 		emit_combine(t, t, a->value.get());
-		emit_index_unshare(wb, wbidx, a->target.get());
+		emit_index_unshare(a->target.get());
 		emit_ABC(Opcode::SETINDEX, o, i, t, ln(a));
-		emit_index_writeback(o, wb, wbidx, ln(a));
+		emit_writeback(chain, ln(a));
 		reg_free_to(save);
 		return;
 	}
@@ -2110,26 +2196,34 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 {
 	// By-reference iteration (design §12): the value variable aliases each List element,
 	// so writes propagate back into the collection. The collection is loaded into the
-	// loop's source register and, if it names a mutable binding, written back after the
-	// loop — and before any `return` out of the loop, which would otherwise drop the
-	// mutations on the floor. A non-lvalue collection still iterates, mutating a copy
-	// that is discarded.
+	// loop's source register and, if it names something that can be assigned to, written
+	// back after the loop — and before any `return` out of the loop, which would
+	// otherwise drop the mutations on the floor. A collection with nowhere to go back to
+	// (`for ref x in f()`) still iterates, mutating a copy that is discarded.
 	enter_block();
+	// The iteration protocol reads its state from consecutive registers, so the whole
+	// block is reserved before anything is compiled into it; the collection's own
+	// temporaries then land above `done` and stay live for the loop's duration.
 	int base = reg_alloc(s);
+	reg_alloc(s);              // base+1 cursor
+	reg_alloc(s);              // base+2 aux
+	int valreg = reg_alloc(s); // base+3 value — bound by reference
+	bool pair = (s->key != NO_SYMBOL);
+	int keyreg = pair ? reg_alloc(s) : 0; // base+4 key/index — always by value
+	int done = reg_alloc(s);
 
-	// How to restore the (mutated) collection to its binding after the loop. A local is
-	// *moved* into `base` (and its slot nulled) so a uniquely-owned list is not cloned.
-	RefWb wb = RefWb::None;
-	int wbidx = 0;
+	WbChain chain;
 	if (auto *cv = s->collection->as<Variable>())
 	{
 		NameRef nr = resolve(cv->name);
 		if (nr.kind == NameKind::Local && !nr.is_ref)
 		{
+			// The local is *moved* into `base` (and its slot nulled) so a uniquely-owned
+			// list is not cloned. Nobody else can read that register, so the hole is
+			// invisible — which is why only a plain local gets this treatment.
 			emit_ABC(Opcode::MOVE, base, nr.index, 0, ln(s));
 			emit_ABC(Opcode::LOADNULL, nr.index, 0, 0, ln(s)); // source emptied for the loop
-			wb = RefWb::Local;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Local, base, nr.index, 0});
 		}
 		else if (nr.kind == NameKind::Local && nr.is_ref)
 		{
@@ -2139,38 +2233,41 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 			// emptied the way a plain local's is: it aliases storage another frame can
 			// read, which must not see a null while the loop runs.
 			emit_ABC(Opcode::DEREF, base, nr.index, 0, ln(s));
-			wb = RefWb::Ref;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Ref, base, nr.index, 0});
 		}
 		else if (nr.kind == NameKind::Module)
 		{
 			emit_ABx(Opcode::GETMODULE, base, static_cast<uint32_t>(nr.index), ln(s));
-			wb = RefWb::Module;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Module, base, nr.index, 0});
 		}
 		else if (nr.kind == NameKind::Upvalue)
 		{
 			emit_ABC(Opcode::GETUPVAL, base, nr.index, 0, ln(s));
-			wb = RefWb::Upvalue;
-			wbidx = nr.index;
+			chain.push_back(WbStep{WbStep::Upvalue, base, nr.index, 0});
 		}
 		else
 			expr_to(s->collection.get(), base);
 	}
+	else if (s->collection->is<IndexExpression>() || s->collection->is<FieldAccess>())
+	{
+		// `for ref x in t["k"]` / `for ref x in this.rows`: the collection lives inside
+		// another one, so it is loaded the same way a nested assignment target is and put
+		// back through the same chain. The loop mutates `base`, so the step that stores
+		// this level takes its value from there rather than from the register it was read
+		// into.
+		int o = load_object_for_write(s->collection.get(), chain);
+		emit_ABC(Opcode::MOVE, base, o, 0, ln(s));
+		if (!chain.empty())
+			chain.back().src = base;
+	}
 	else
 		expr_to(s->collection.get(), base);
 
-	reg_alloc(s);              // base+1 cursor
-	reg_alloc(s);              // base+2 aux
-	int valreg = reg_alloc(s); // base+3 value — bound by reference
+	// The loop's own names are declared only now: `for ref x in x` must resolve its
+	// collection in the enclosing scope.
 	fs->locals.push_back({s->value, valreg, false, false, /*is_ref=*/true});
-	bool pair = (s->key != NO_SYMBOL);
 	if (pair)
-	{
-		int keyreg = reg_alloc(s); // base+4 key/index — always by value
 		fs->locals.push_back({s->key, keyreg, false, false});
-	}
-	int done = reg_alloc(s);
 
 	emit_ABC(Opcode::ITER_INITREF, base, 0, 0, ln(s));
 
@@ -2178,7 +2275,7 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 	m_loops.back().finally_base = static_cast<int>(m_finally_stack.size());
 	// A `return` in the body jumps straight past the write-back below, so it emits its
 	// own copy of it first (compile_return). Nested loops write back innermost first.
-	fs->ref_writebacks.push_back(PendingWb{wb, wbidx, base});
+	fs->ref_writebacks.push_back(chain);
 	intptr_t top = P().code.size();
 	emit_ABC(Opcode::ITER_NEXTREF, base, done, pair ? 2 : 1, ln(s));
 	intptr_t exit = emit_jump(Opcode::JMPT, done, ln(s));
@@ -2194,33 +2291,12 @@ void Lowerer::compile_for_each_ref(ForEach *s)
 	m_loops.pop_back();
 	fs->ref_writebacks.pop_back();
 
-	// Write the mutated collection back to its binding (the loop registers, incl. `base`,
-	// are still live until exit_block below). Break and continue land here; return does
-	// not, which is why it emits this itself.
-	emit_ref_writeback(PendingWb{wb, wbidx, base}, ln(s));
+	// Write the mutated collection back where it came from (the loop registers, incl.
+	// `base`, are still live until exit_block below). Break and continue land here;
+	// return does not, which is why it emits this itself.
+	emit_writeback(chain, ln(s));
 
 	exit_block(static_cast<uint32_t>(s->line));
-}
-
-void Lowerer::emit_ref_writeback(const PendingWb &w, uint32_t line)
-{
-	switch (w.kind)
-	{
-	case RefWb::None:
-		break;
-	case RefWb::Local:
-		emit_ABC(Opcode::MOVE, w.index, w.base, 0, line);
-		break;
-	case RefWb::Ref:
-		emit_ABC(Opcode::SETREF, w.index, w.base, 0, line);
-		break;
-	case RefWb::Module:
-		emit_ABx(Opcode::SETMODULE, w.base, static_cast<uint32_t>(w.index), line);
-		break;
-	case RefWb::Upvalue:
-		emit_ABC(Opcode::SETUPVAL, w.base, w.index, 0, line);
-		break;
-	}
 }
 
 void Lowerer::compile_return(ReturnStatement *s)
@@ -2230,7 +2306,7 @@ void Lowerer::compile_return(ReturnStatement *s)
 	// frame; then the return value is evaluated, then the finally blocks of every
 	// enclosing `try` run (design §12), then the frame returns.
 	for (intptr_t i = static_cast<intptr_t>(fs->ref_writebacks.size()) - 1; i >= 0; --i)
-		emit_ref_writeback(fs->ref_writebacks[i], ln(s));
+		emit_writeback(fs->ref_writebacks[i], ln(s));
 
 	if (s->expr)
 	{
