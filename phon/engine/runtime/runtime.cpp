@@ -803,6 +803,57 @@ Variant Runtime::get_global(const char *name) const
 	return st.isolate.module_slots[slot];
 }
 
+Variant Runtime::from_json(const String &text)
+{
+	// The parse allocates cells, so it needs the isolate/collector context — which it
+	// owns only when no script is running on this session (same rule as call()). It
+	// never re-enters the VM, so there are no frames to unwind on failure; all the
+	// error path has to do is release the Error value raise() built and restore the
+	// context, leaving the embedder a plain RuntimeError carrying the message.
+	Isolate &iso = m_state->isolate;
+	const bool owns_run = iso.frames.size() == 0;
+	Isolate *prev = nullptr;
+	CycleCollector *prev_cc = nullptr;
+	if (owns_run)
+	{
+		prev = current_isolate();
+		prev_cc = current_collector();
+		set_current_isolate(&iso);
+		set_current_collector(&iso.collector());
+	}
+	try
+	{
+		Variant out = json_parse(iso, text);
+		if (owns_run)
+		{
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		return out;
+	}
+	catch (RuntimeError &e)
+	{
+		if (owns_run)
+		{
+			if (e.error.is_cell())
+				release(e.error.as_cell());
+			e.error = Value::make_null();
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		throw;
+	}
+	catch (...)
+	{
+		if (owns_run)
+		{
+			set_current_isolate(prev);
+			set_current_collector(prev_cc);
+		}
+		throw;
+	}
+}
+
 // --- output redirection (roadmap E3) ------------------------------------------
 
 void Runtime::set_output_hook(std::function<void(std::string_view)> hook)

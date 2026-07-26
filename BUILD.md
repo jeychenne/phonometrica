@@ -60,6 +60,16 @@ The engine's targets are `EXCLUDE_FROM_ALL`, so if you change anything on its
 include surface, build `phon_unit_tests`, `phon_repl` and `phon_bench` **by name** —
 a plain application build will not reveal breakage in the latter two.
 
+Offscreen GUI smokes, for behaviour that only exists once the window is up. Each
+builds a throwaway profile, runs the app under `QT_QPA_PLATFORM=offscreen`, and
+gates on a probe's result file:
+
+```bash
+test/gui/run_smoke_formants.sh build/phonometrica      # formant natives, 2-D shapes
+test/gui/run_smoke_script_debug.sh build/phonometrica  # the debug preference
+test/gui/run_smoke_settings.sh build/phonometrica      # settings write/read round trip
+```
+
 Statistics validation (slow; needs a Release build — Debug model fits take hours):
 
 ```bash

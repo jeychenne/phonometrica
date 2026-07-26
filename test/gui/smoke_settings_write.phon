@@ -1,0 +1,22 @@
+# =====================================================================
+# smoke_settings_write.phon — first half of the settings round-trip
+# smoke (see run_smoke_settings.sh).
+# =====================================================================
+# Stores values that the settings file has to survive: a path holding
+# what looks like an interpolation, one holding an unbalanced brace,
+# and a backslash. The app writes the settings file when it quits; the
+# second half of the smoke reads them back in a fresh run.
+#
+# The driver substitutes __BASE__ below.
+# =====================================================================
+
+var base = "__BASE__"
+
+phon.settings["last_directory"] = base & "/corpus \{2024\}"
+phon.settings["praat_path"] = "/opt/praat \{unclosed"
+phon.settings["smoke_backslash"] = "C:\\Users\\test"
+
+var f = open_file(base & "/write_result.txt", "w")
+write_line(f, "wrote: " & phon.settings["last_directory"])
+write_line(f, "ALL OK")
+close(f)

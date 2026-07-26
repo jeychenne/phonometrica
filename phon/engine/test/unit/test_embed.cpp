@@ -889,3 +889,65 @@ TEST_CASE("debug: a stripped body is never lowered, so its names are never resol
 	Variant v = rt.do_string("var n = 7\ndebug print(no_such_name)\nn");
 	CHECK(v.as_int() == 7);
 }
+
+TEST_CASE("embed: Runtime::from_json parses data without running it as a script")
+{
+	Runtime rt;
+	{
+		// The values a data file needs, read back exactly. The braces are the point:
+		// as a script this text would interpolate `{2}` into "2" — which is why an
+		// embedder storing JSON must parse it rather than run it.
+		Variant v = rt.from_json(String(R"({"pattern": "[aeiou]{2}", "n": 3,
+		                                    "xs": [1, 2], "ok": true, "nil": null})"));
+		Table t = v.to<Table>();
+		CHECK(t.get(Variant::make(String("pattern"))).to<String>() == String("[aeiou]{2}"));
+		CHECK(t.get(Variant::make(String("n"))).as_int() == 3);
+		CHECK(t.get(Variant::make(String("xs"))).to<List>().size() == 2);
+		CHECK(t.get(Variant::make(String("ok"))).as_bool());
+		CHECK(t.get(Variant::make(String("nil"))).is_null());
+	}
+	{
+		// A lone brace is a syntax error to the compiler but ordinary data here.
+		Variant v = rt.from_json(String(R"({"brace": "{"})"));
+		CHECK(v.to<Table>().get(Variant::make(String("brace"))).to<String>() == String("{"));
+	}
+	{
+		// Round trip through the serializer the embedder writes with.
+		rt.add_global("payload", rt.from_json(String(R"({"path": "/tmp/corpus {2024}"})")));
+		Variant text = rt.do_string("to_json(payload)");
+		Variant back = rt.from_json(text.to<String>());
+		CHECK(back.to<Table>().get(Variant::make(String("path"))).to<String>()
+		      == String("/tmp/corpus {2024}"));
+	}
+	{
+		// Malformed input raises rather than returning something plausible, and the
+		// error is catchable as an ordinary exception.
+		bool caught = false;
+		try
+		{
+			rt.from_json(String("{\"unterminated\": "));
+		}
+		catch (std::exception &e)
+		{
+			caught = true;
+			CHECK(std::string(e.what()).find("JSON error") != std::string::npos);
+		}
+		CHECK(caught);
+		// The session is still usable afterwards.
+		CHECK(rt.do_string("1 + 1").as_int() == 2);
+	}
+	{
+		// Nothing is executed: a document that would be a valid script with side
+		// effects is just text.
+		bool caught = false;
+		try
+		{
+			rt.from_json(String("var x = 1"));
+		}
+		catch (std::exception &)
+		{
+			caught = true;
+		}
+		CHECK(caught);
+	}
+}

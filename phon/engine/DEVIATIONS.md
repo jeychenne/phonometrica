@@ -2558,3 +2558,30 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     index expression, references to nested elements, by-ref iteration over nested
     collections, and a failed store leaving the container intact). Suite: 417 cases
     green, ASan clean.
+
+36. **`Runtime::from_json` — the JSON parser reachable from C++ (2026-07-26).**
+    An embedder that stores data as JSON had no way to read it back except by
+    running the text through `do_string`, which is wrong twice over: it executes
+    whatever the file contains, and it reads the file's string literals as
+    *script* literals, where `{` opens an interpolation and JSON's `\uXXXX` is not
+    an escape at all. Phonometrica's own settings file was doing exactly this, so
+    a preference holding a brace — `last_directory` is whatever directory the user
+    last opened a file from — either changed silently ("…/corpus {2024}" read back
+    as "…/corpus 2024") or made the file unparsable, on which every preference was
+    reset without a word.
+    `lib/json.cpp` gains `json_parse(Isolate &, const String &)` (the body the
+    `from_json` builtin already used, lifted out of the anonymous namespace and
+    declared in `lib/lib.hpp`), and `Runtime::from_json` wraps it with the
+    host-boundary bookkeeping: it takes the isolate/collector context when no
+    script is running — the same `owns_run` rule as `Runtime::call` — and on
+    failure releases the `Error` value `raise` built before letting the
+    `RuntimeError` out, so the embedder receives a plain `std::exception` carrying
+    the message. There are no frames to unwind: a parse never re-enters the VM.
+    Going through the script generic (`get_function("from_json")` + `call`) would
+    have worked without any engine change, but a generic can be extended from
+    script, and a data-reading path should not be overridable by the data's own
+    session.
+    Tests: `test_embed.cpp` — values (including a brace-laden pattern and a lone
+    `{`), a `to_json`/`from_json` round trip, a malformed document raising a
+    catchable error and leaving the session usable, and a valid *script* being
+    rejected because nothing is executed. Suite: 418 cases green.

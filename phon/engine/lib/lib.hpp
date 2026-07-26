@@ -12,6 +12,10 @@
 
 namespace phonometrica {
 
+class Isolate;
+class String;
+class Variant;
+
 void register_math_lib();   // sin/cos/…, abs/round/min/max, PI/E
 void register_string_lib(); // find/count/contains/…, in-place trim/append/replace/…
 void register_list_lib();   // contains/find/join/…, in-place append/pop/reverse/…
@@ -21,6 +25,12 @@ void register_file_lib();   // the File type + open/read/write/… (phon/os/file
 void register_table_lib();  // contains/keys/values/…, in-place remove/clear
 void register_regex_lib();  // the Regex + Match types + regex/match/group/… (phon/regex)
 void register_json_lib();   // to_json / from_json (List/Table <-> JSON text)
+
+// The `from_json` builtin's parser, callable without a script: an embedder that stores
+// data as JSON reads it back with this instead of running the file (Runtime::from_json
+// wraps it with the host-boundary bookkeeping). Raises a script error, i.e. throws
+// RuntimeError, if the text is not a JSON document.
+Variant json_parse(Isolate &iso, const String &text);
 
 } // namespace phonometrica
 

@@ -23,6 +23,7 @@
  ***********************************************************************************************************************/
 
 #include <cctype>
+#include <cstring>
 #include <phon/application/constants.hpp>
 #include <phon/application/settings.hpp>
 #include <phon/definitions.hpp>
@@ -331,53 +332,104 @@ static String normalize_legacy_floats(const String &content)
 	return String(out);
 }
 
+// The settings file is data — a JSON object written by write_settings.phon — but every
+// version so far wrapped it in enough script to make it executable: a comment banner,
+// and (before this) a leading `phon.settings =` so that running the file installed the
+// table by itself. Strip that wrapper so what is left is a JSON document.
+//
+// This matters beyond tidiness: the file used to be *run* by the scripting engine, which
+// reads its string literals as script literals. A setting whose value contained a brace —
+// `last_directory` is whatever directory the user last opened a file from — was either
+// silently changed ("…/corpus {2024}" came back as "…/corpus 2024", a path that does not
+// exist) or turned the whole file into a syntax error, on which read() below quietly
+// reinitialized every preference the user had.
+static String strip_legacy_wrapper(const String &content)
+{
+	const char *s = content.data();
+	intptr_t n = content.size();
+	intptr_t i = 0;
+
+	for (;;)
+	{
+		while (i < n && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r'))
+			i++;
+		if (i < n && s[i] == '#') // a whole comment line, banner or hand-written
+		{
+			while (i < n && s[i] != '\n')
+				i++;
+			continue;
+		}
+		break;
+	}
+
+	// `phon.settings =` (any spacing), written by versions up to and including 0.8.
+	static const char prefix[] = "phon.settings";
+	intptr_t plen = static_cast<intptr_t>(sizeof(prefix) - 1);
+	if (n - i >= plen && std::memcmp(s + i, prefix, static_cast<size_t>(plen)) == 0)
+	{
+		intptr_t j = i + plen;
+		while (j < n && (s[j] == ' ' || s[j] == '\t'))
+			j++;
+		if (j < n && s[j] == '=')
+			i = j + 1;
+	}
+
+	return String(std::string_view(s + i, static_cast<size_t>(n - i)));
+}
+
 void Settings::read()
 {
-	// `read_settings_script` must always be embedded because we need the resources directory
-	// to be set before we can load a script from disk.
-	String content;
+	// The defaults are a script (ours, with comments), and must always be embedded
+	// because we need the resources directory to be set before we can load a script from
+	// disk. The user's file, in contrast, is parsed as the JSON it is: it holds the
+	// user's own strings, and running those through the compiler is what corrupted them.
 	auto path = config_path();
+	Variant settings; // null until we have a table to install
 
 	if (filesystem::exists(path))
 	{
-		content = normalize_legacy_floats(File::read_all(path));
-		if (content.trim().empty())
+		String content = strip_legacy_wrapper(normalize_legacy_floats(File::read_all(path)));
+		if (!content.trim().empty())
 		{
-            content = load_script("read_settings");
+			try
+			{
+				settings = runtime->from_json(content);
+				if (!settings.is<Table>()) {
+					// A JSON document, but not the object we store. Treat it as
+					// unreadable rather than installing something the rest of the
+					// application would fail on much later.
+					settings = Variant();
+					throw error("the file does not contain a settings table");
+				}
+			}
+			catch (std::exception &e)
+			{
+				// TODO: notify the user in the GUI. There is no window yet at this point
+				// in startup, so the console hooks are not installed either; stderr is
+				// the only sink that exists.
+				auto msg = utils::format("Could not read the settings file '%': %\n"
+				                         "Preferences have been reset to their defaults.\n",
+				                         path, String(e.what()));
+				runtime->print_error(std::string_view(msg.data(), (size_t) msg.size()));
+			}
 		}
 	}
-	else
-	{
-        content = load_script("read_settings");
-	}
-	Variant result;
 
-	try
+	if (settings.is_null())
 	{
-		result = runtime->do_string(content);
-	}
-	catch (std::exception &)
-	{
-		// TODO: notify user that settings are invalid and have been reinitialized.
-		result = runtime->do_string(load_script("read_settings"));
-	}
-	// Versions of Phonometrica prior to 0.8 created phon.settings in settings.phon.
-	// We now simply store a table in this file, and create settings.phon ourselves to
-	// hide it from users.
-	if (result.is_null())
-	{
-		// Sanity check: the script must have installed phon.settings itself.
+		// Fall back to (or start from) the defaults, which install phon.settings
+		// themselves rather than evaluating to it.
+		runtime->do_string(load_script("read_settings"));
 		auto phon = runtime->get_global("phon");
 		if (phon.is_null() || phon.to<Table>().get(str_key(settings_key)).is_null()) {
 			throw error("Settings could not be initialized properly: check the file '%'", config_path());
 		}
+		return;
 	}
-	else
-	{
-		auto phon = runtime->get_global("phon").to<Table>();
-		phon.set(str_key(settings_key), std::move(result));
-		runtime->add_global("phon", Variant::make(phon));
-	}
+
+	auto phon = runtime->get_global("phon").to<Table>();
+	phon.set(str_key(settings_key), std::move(settings));
+	runtime->add_global("phon", Variant::make(phon));
 }
 
 void Settings::write()

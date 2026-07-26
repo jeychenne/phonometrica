@@ -27,7 +27,11 @@ var f = open_file(get_config_path(), "w")
 
 write_line(f, "# This file was generated automatically.")
 write_line(f, "# Do not edit it unless you know what you are doing.")
-# This line is for compatibility with Phonometrica < 0.8. It is no longer needed
-write(f, "phon.settings = ")
+# Everything after the banner is a JSON object, and Settings::read parses it as one:
+# it is data, not a script. Versions up to 0.8 prefixed it with `phon.settings = ` so
+# that running the file installed the table; that made a setting containing a brace
+# (a directory named "corpus \{2024\}", say) either change under the user or break the
+# whole file, since a script's string literals interpolate. The reader still accepts
+# the old prefix, so a file written by an earlier version is read as it always was.
 write(f, settings)
 close(f)

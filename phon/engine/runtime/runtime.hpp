@@ -176,6 +176,14 @@ public:
 	// Variant if the name is not a global.
 	Variant get_global(const char *name) const;
 
+	// Parse a JSON document into a value (the `from_json` builtin, reachable from C++).
+	// This is how an embedder reads back data it stored as JSON. Prefer it to running
+	// the file with do_string: a data file is not a script, and treating it as one both
+	// executes whatever it contains and reads its string literals as *script* literals —
+	// where `{` opens an interpolation and JSON's `\uXXXX` is not an escape at all.
+	// Throws RuntimeError (a std::exception) if the text is not a JSON document.
+	Variant from_json(const String &text);
+
 	// --- output redirection (roadmap E3) -----------------------------------------
 	//
 	// Install sinks for script/host output, mirroring the old Runtime's print /

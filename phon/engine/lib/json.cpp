@@ -447,6 +447,12 @@ struct Parser
 
 } // namespace
 
+Variant json_parse(Isolate &iso, const String &text)
+{
+	Parser parser(iso, text);
+	return parser.parse_document();
+}
+
 void register_json_lib()
 {
 	register_function("to_json", [](Isolate &iso, const Variant &v) {

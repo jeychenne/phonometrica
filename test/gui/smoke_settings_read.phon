@@ -1,0 +1,47 @@
+# =====================================================================
+# smoke_settings_read.phon — second half of the settings round-trip
+# smoke (see run_smoke_settings.sh).
+# =====================================================================
+# Runs in a second launch, against the settings file the first one
+# wrote, and checks that every value came back exactly as it was
+# stored. Before the settings file was parsed as JSON rather than run
+# as a script, the brace in "corpus {2024}" was read as an
+# interpolation: the path silently became "corpus 2024", and the
+# unbalanced one made the whole file unparsable, which reset every
+# preference without telling anyone.
+#
+# The driver substitutes __BASE__ below and greps for "ALL OK".
+# =====================================================================
+
+var base = "__BASE__"
+var f = open_file(base & "/read_result.txt", "w")
+var failures = 0
+
+function check(label as String, got as String, expected as String)
+    if got == expected then
+        write_line(f, "PASS " & label)
+    else
+        write_line(f, "FAIL " & label & ": expected <" & expected & "> got <" & got & ">")
+        failures = failures + 1
+    end
+end
+
+check("interpolation-shaped path", phon.settings["last_directory"], base & "/corpus \{2024\}")
+check("unbalanced brace", phon.settings["praat_path"], "/opt/praat \{unclosed")
+check("backslashes", phon.settings["smoke_backslash"], "C:\\Users\\test")
+
+# A preference the first run never touched must still be at its default,
+# which is how we know the file was read rather than thrown away.
+if phon.settings["autohints"] == null then
+    write_line(f, "FAIL untouched preference is missing")
+    failures = failures + 1
+else
+    write_line(f, "PASS untouched preference survived")
+end
+
+if failures == 0 then
+    write_line(f, "ALL OK")
+else
+    write_line(f, "FAILURES: " & failures)
+end
+close(f)
