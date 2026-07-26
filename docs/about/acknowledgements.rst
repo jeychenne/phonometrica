@@ -20,10 +20,8 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * RTAudio, by Gary P. Scavone (MIT), see `www.music.mcgill.ca/~gary/rtaudio <http://www.music.mcgill.ca/~gary/rtaudio/>`_
 * sigslot, by Pierre-Antoine Lacaze (MIT) `github.com/palacaze/sigslot <https://github.com/palacaze/sigslot>`_
 * Snack, by Jonas Beskow and Kåre Sjölander (BSD), see `www.speech.kth.se/snack/ <http://www.speech.kth.se/snack/>`_
-* sol2, by Rapptz, ThePhD, and contributors, see `github.com/ThePhd/sol2 <https://github.com/ThePhd/sol2>`_
 * SPTK, by Keiichi Tokuda, Keiichiro Oura, Takenori Yoshimura, Takato Fujimoto and contributors (Apache License 2.0), see `github.com/sp-nitech/SPTK <https://github.com/sp-nitech/SPTK>`_
 * SWIPE, by Kyle Gorman (MIT), see `github.com/kylebgorman/swipe <https://github.com/kylebgorman/swipe>`_
-* UTF8-CPP, by Nemanja Trifunovic (MIT), see `github.com/nemtrif/utfcpp <https://github.com/nemtrif/utfcpp>`_
 * zip, by Kuba Podgórski, based on miniz, by Rich Geldreich (public domain), see `github.com/kuba--/zip <https://github.com/kuba--/zip>`_
 
 Phonometrica uses `GitHub <https://github.com>`_ to host its source code. The source code is available `here <https://github.com/jeychenne/phonometrica>`_.

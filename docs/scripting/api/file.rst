@@ -76,8 +76,18 @@ Reads the file from the current position to the end and returns the content as a
 
 .. function:: read_line(file as File)
 
-Reads a line from ``file`` and returns it without the trailing line separator. If the cursor is at the end of the
-file, it returns an empty string.
+Reads a line from ``file`` and returns it without the trailing line separator. Once the file is exhausted it
+returns ``null``, so a read loop needs no sentinel test of its own:
+
+.. code:: phon
+
+   var f = File(path)
+   while var line = read_line(f) do
+       print(line)
+   end
+
+A blank line inside the file is an empty string, not ``null`` — only the end of the file is ``null``. A last line
+with no terminator is still returned before the ``null``.
 
 ------------
 

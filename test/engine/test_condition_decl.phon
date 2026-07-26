@@ -16,7 +16,8 @@
 # failure and `null` is the only falsy non-boolean, so the idiom works
 # with the language exactly as it already was — note case 4, where a
 # condition binding of `0` or `""` takes the branch like any other
-# non-null value.
+# non-null value. `read_line` returns null at end of file for the same
+# reason (an empty string would be truthy, and is a real blank line).
 # =====================================================================
 
 print("==== declarations in conditions ====")
@@ -97,12 +98,9 @@ close(w3)
 
 var read3 = []
 var fh3 = File(path3)
-# `read_line` returns "" at end of file, not null, and "" is truthy — so this loop
-# needs the explicit break. The pure form (case 8) uses a source that yields null.
+# `read_line` returns null once the file is exhausted, so the loop needs no
+# sentinel test of its own.
 while var line3 = read_line(fh3) do
-    if line3 == "" then
-        break
-    end
     append(read3, line3)
 end
 close(fh3)

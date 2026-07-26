@@ -341,7 +341,7 @@ static std::vector<std::pair<const char*, std::vector<QString>>> function_declar
 		"read_file(path as String)\nReturn the content of the file named `path` as a string (the encoding is auto-detected)."
 	}},
 	{ "read_line",  {
-		"read_line(file as File)\nReads a line from `file`."
+		"read_line(file as File)\nReads a line from `file`, or returns `null` once the file is exhausted."
 	}},
 	{ "read_lines",  {
 		"read_lines(file as File)\nReturns the content of the file as a list whose elements are the lines of the file."

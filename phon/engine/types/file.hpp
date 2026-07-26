@@ -125,6 +125,10 @@ struct File
 	void detect_encoding();
 
 	String read_all();
+	// Reads to the next '\n' (stripping a trailing '\r'). At end of file this returns
+	// an empty string, indistinguishable from a blank line — test `at_end()` first if
+	// the difference matters. The script-facing `read_line` wraps exactly that check
+	// and returns `null` instead, so scripts can loop on it.
 	String read_line();
 	List read_lines();
 	// Read a whole file in one call (old Phonometrica parity).

@@ -602,7 +602,7 @@ natives (print/len/assert/to_string) in its runtime.cpp:265-269.
 | name | old sites | bucket | new-engine mapping | notes |
 |---|---|---|---|---|
 | open(path[, mode]) | builtins.cpp:220-221 | COVERED | open_file (lib/file.cpp:78/81) | renamed (`open` is reserved); doubled as the `File(...)` ctor (builtins.cpp:236) — `File(` used in std/write_settings.phon + std/transphon.phon (already migrated in step 3, S4); new adds (path,mode,encoding) + encoding(f) |
-| read_line, read_lines, write_line, write_lines, write, close, read, read_file, rewind, tell, seek, eof | builtins.cpp:222-233 | COVERED | lib/file.cpp | old `read` reads from CURRENT POSITION to EOF — verify new read_all position semantics at cutover |
+| read_line, read_lines, write_line, write_lines, write, close, read, read_file, rewind, tell, seek, eof | builtins.cpp:222-233 | COVERED | lib/file.cpp | old `read` reads from CURRENT POSITION to EOF — verify new read_all position semantics at cutover; **`read_line` now returns `null` at end of file, not `""`** (DEVIATIONS 33) |
 
 ### Table
 

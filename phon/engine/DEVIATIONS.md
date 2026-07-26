@@ -2393,10 +2393,37 @@ internally, wins). Three app-parity changes so the app's call sites compile unch
     **No truthiness change was needed.** `match` returns `null` on failure and
     `null` is the only falsy non-boolean, so the motivating idiom works with the
     language as it already was. The corollary is that a source signalling
-    exhaustion with `""` or `0` does *not* compose: `read_line` returns `""` at end
-    of file, so `while var line = read_line(f) do` would never stop. The tutorial
-    and `test_condition_decl.phon` case 3 both say so.
+    exhaustion with `""` or `0` does *not* compose, since both are truthy. That
+    caught `read_line`, which returned `""` at end of file and so would have looped
+    forever; entry 33 below changes it to return `null`.
     Tests: `test/engine/test_condition_decl.phon` (11 groups), two `test_parser.cpp`
     cases (AST shape, and the rejections with their anchor columns), two
     `test_vm.cpp` cases (scope, and `while` re-initialisation), and the
     `controlflow` golden AST corpus. Suite: 417 cases green.
+
+33. **`read_line` returns `null` at end of file, not `""` (2026-07-25).** The old
+    engine and this one both returned an empty string when the cursor had reached
+    the end, which made the natural read loop unwritable: `""` is truthy (entry 2's
+    truthiness rule — `null` is the only falsy non-boolean), so
+    `while var line = read_line(f) do` spun forever, and even a plain loop needed a
+    sentinel test that could not tell exhaustion from a blank line. It now returns
+    `null`, and the loop terminates on its own.
+    The check is a **peek before reading**, not a test of the result, which is what
+    keeps a genuine blank line distinct from the end: `"a\n\nb\n"` reads `"a"`,
+    `""`, `"b"`, `null`. A last line with no terminator is still returned before the
+    `null`, and an empty file reads `null` immediately.
+    Only the **script** binding changed. `File::read_line()` still returns a `String`
+    and still gives `""` at the end: its C++ callers (`praat.cpp`,
+    `annotation_data.cpp`, `utils/text.cpp`) drive their own `at_end()` loops and
+    would gain nothing from an optional. The header says so at the declaration, and
+    the script binding is exactly that method plus the `at_end()` guard.
+    `read_lines` is unaffected — it already looped on `at_end()`.
+    This is a **behaviour break** for any script that compared `read_line(f)` to
+    `""` to detect the end. Such a comparison now silently never fires; the loop
+    ends anyway if it was written as a `while`, and a `repeat … until line == ""`
+    would not. Nothing in `std/` or `test/` did this except
+    `test_condition_decl.phon` case 3, written two commits ago against the old
+    behaviour and simplified here.
+    Tests: four new assertions in `test_fileio.phon` (exhaustion, the blank-line
+    distinction, an unterminated last line, an empty file), plus case 3 of
+    `test_condition_decl.phon`, which now needs no sentinel.

@@ -111,8 +111,16 @@ void register_file_lib()
 
 	// --- reading ---
 	register_function("read", [](Isolate &iso, Handle<File> f) { return checked(iso, f)->read_all(); });
-	register_function("read_line",
-	                  [](Isolate &iso, Handle<File> f) { return checked(iso, f)->read_line(); });
+	// read_line(file) -> String?  — `null` once the file is exhausted, so the reader
+	// composes with `while var line = read_line(f) do`. The check is a peek *before*
+	// reading, which is what keeps a genuine blank line in the middle of a file
+	// distinct from the end: "a\n\nb\n" reads "a", "", "b", null.
+	register_function("read_line", [](Isolate &iso, Handle<File> f) -> Variant {
+		File *file = checked(iso, f);
+		if (file->at_end())
+			return Variant::null();
+		return Variant::make(file->read_line());
+	});
 	register_function("read_lines",
 	                  [](Isolate &iso, Handle<File> f) { return checked(iso, f)->read_lines(); });
 	register_function("eof", [](Handle<File> f) { return f->at_end(); });

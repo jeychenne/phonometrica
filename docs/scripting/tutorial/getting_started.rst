@@ -555,18 +555,18 @@ a source that signals exhaustion by returning ``null``:
 
 .. code:: phon
 
-    while var task = next_task() do
-        handle(task)
+    var f = File(path)
+    while var line = read_line(f) do
+        print(line)
     end
 
 The initializer is re-evaluated on every pass — including after a ``continue``, which
 jumps back to it — and the variable is scoped to the loop body. The loop ends as soon
 as the initializer yields ``null``.
 
-.. note:: This idiom relies on the source returning ``null`` when it is exhausted.
-   :func:`read_line` is not such a source: at the end of a file it returns an empty
-   string, which is *truthy*, so ``while var line = read_line(f) do`` would never
-   stop. Test ``eof(f)`` or compare against ``""`` and ``break``.
+.. note:: This idiom relies on the source returning ``null`` when it is exhausted, as
+   :func:`read_line` and :func:`match` both do. A function that signals exhaustion with
+   ``""`` or ``0`` will not work here, since both are *truthy*.
 
 If you need to exit a loop early, use the keyword ``break``:
 

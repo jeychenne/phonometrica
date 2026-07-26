@@ -41,7 +41,45 @@ var g = File(path)
 assert(read_line(g) == "line one", "first line reads back")
 assert(read_line(g) == "line two", "second line reads back")
 assert(eof(g), "reached end of file")
+assert(read_line(g) == null, "read_line returns null once the file is exhausted")
 close(g)
+
+# A blank line inside the file is an empty string; only exhaustion is null. This is
+# what lets `while var line = read_line(f) do` terminate without a sentinel test.
+var blank_path = join_path(dir, "blank.txt")
+var bw = File(blank_path, "w")
+write(bw, "a\n\nb\n")
+close(bw)
+var collected = []
+var br = File(blank_path)
+while var line = read_line(br) do
+    append(collected, line)
+end
+close(br)
+assert(len(collected) == 3, "blank line counted; expected 3 lines, got " & len(collected))
+assert(collected[2] == "", "the middle blank line is an empty string, not null")
+assert(collected[3] == "b", "reading resumed after the blank line")
+
+# A file whose last line has no terminator still yields that line, then null.
+var bw2 = File(blank_path, "w")
+write(bw2, "x\ny")
+close(bw2)
+var unterminated = []
+var br2 = File(blank_path)
+while var line = read_line(br2) do
+    append(unterminated, line)
+end
+close(br2)
+assert(len(unterminated) == 2, "unterminated last line is still read")
+assert(unterminated[2] == "y", "unterminated last line content")
+
+# An empty file is exhausted from the start.
+var bw3 = File(blank_path, "w")
+close(bw3)
+var br3 = File(blank_path)
+assert(read_line(br3) == null, "an empty file reads null immediately")
+close(br3)
+remove_file(blank_path)
 
 # read the whole file, and as a list of lines
 assert(contains(read_file(path), "line one"), "read_file returns the content")
