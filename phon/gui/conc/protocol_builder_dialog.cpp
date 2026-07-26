@@ -43,11 +43,27 @@
 
 namespace phonometrica {
 
-// ── Utility: JSON string escaping ─────────────────────────────────────────
-// Produces a valid JSON string literal from an arbitrary UTF-8 String. We escape the mandatory
-// JSON metacharacters plus ASCII control bytes; everything else (including multi-byte UTF-8
-// sequences) passes through unchanged because JSON allows UTF-8 in string literals.
-static String escape_json_string(const String &s)
+// ── Utility: string escaping ──────────────────────────────────────────────
+// A coding protocol is JSON-shaped, but it is *read back by the scripting engine*, which
+// runs the file and takes the value of its last expression (see Protocol::parse and the
+// plugins documentation). What we write must therefore be a valid **Phonometrica string
+// literal**, not a JSON one — the two differ in exactly the two ways that matter here:
+//
+//  - `{` opens an interpolation in a double-quoted string, so a literal brace must be
+//    written `\{`. Without this, a field matching `[aeiou]{2}` came back as `[aeiou]2`,
+//    and a lone brace made the whole protocol unparsable — silently, since a protocol
+//    that fails to load is simply not offered in the query editor. A closing brace needs
+//    no escape once the opening one is escaped, so it is left alone for readability.
+//  - There is no `\uXXXX` escape. The control bytes the language does spell (`\0`, `\a`,
+//    `\b`, `\f`, `\n`, `\r`, `\t`, `\v`) are written as such; any other one is emitted
+//    verbatim, which round-trips exactly because a string literal may contain any byte
+//    but a newline.
+//
+// A protocol containing a brace is therefore no longer valid JSON, despite the `.json`
+// name this dialog saves under. That is the price of the file being a script: no single
+// spelling of `[aeiou]{2}` satisfies both readers, and the engine is the one that counts.
+// Everything else, including multi-byte UTF-8, passes through unchanged.
+static String escape_script_string(const String &s)
 {
 	String out;
 	out.append('"');
@@ -58,20 +74,17 @@ static String escape_json_string(const String &s)
 		{
 			case '"':  out.append("\\\""); break;
 			case '\\': out.append("\\\\"); break;
+			case '{':  out.append("\\{");  break;
+			case '\0': out.append("\\0");  break;
+			case '\a': out.append("\\a");  break;
 			case '\b': out.append("\\b");  break;
 			case '\f': out.append("\\f");  break;
 			case '\n': out.append("\\n");  break;
 			case '\r': out.append("\\r");  break;
 			case '\t': out.append("\\t");  break;
+			case '\v': out.append("\\v");  break;
 			default:
-				if ((unsigned char) c < 0x20) {
-					char buf[8];
-					std::snprintf(buf, sizeof(buf), "\\u%04x", (unsigned char) c);
-					out.append(buf);
-				}
-				else {
-					out.push_back(c);
-				}
+				out.push_back(c);
 				break;
 		}
 	}
@@ -493,7 +506,7 @@ void ProtocolBuilderDialog::runPreview()
 
 void ProtocolBuilderDialog::doPreview()
 {
-	// Flush outstanding editor-widget state into m_field_data before reading it. buildJson()
+	// Flush outstanding editor-widget state into m_field_data before reading it. buildSource()
 	// is a pure reader; all committing happens here and in onSave().
 	commitSelectedField();
 
@@ -524,11 +537,11 @@ void ProtocolBuilderDialog::doPreview()
 
 	// Serialize the widget state and parse it into a Protocol. A malformed regex in a
 	// match_all field propagates out of the Protocol constructor (the regex is compiled lazily
-	// inside apply_protocol(), but JSON-level errors surface here).
-	String json = buildJson();
+	// inside apply_protocol(), but syntax and structure errors surface here).
+	String source = buildSource();
 	std::shared_ptr<Protocol> protocol;
 	try {
-		protocol = std::make_shared<Protocol>(m_runtime, json, Protocol::FromString{});
+		protocol = std::make_shared<Protocol>(m_runtime, source, Protocol::FromString{});
 	}
 	catch (std::exception &e) {
 		m_preview_status->setStyleSheet(QStringLiteral("color: #aa0000;"));
@@ -761,10 +774,10 @@ void ProtocolBuilderDialog::onSave()
 		qpath += QStringLiteral(".json");
 	}
 
-	String json = buildJson();
+	String source = buildSource();
 	try {
 		File out(String(qpath.toUtf8().constData()), File::Write);
-		out.write(json);
+		out.write(source);
 	}
 	catch (std::exception &e) {
 		QMessageBox::critical(this, tr("Save coding protocol"),
@@ -787,10 +800,10 @@ void ProtocolBuilderDialog::onApply()
 	}
 
 	// Build the protocol from current widget state (no file written; apply directly).
-	String json = buildJson();
+	String source = buildSource();
 	std::shared_ptr<Protocol> protocol;
 	try {
-		protocol = std::make_shared<Protocol>(m_runtime, json, Protocol::FromString{});
+		protocol = std::make_shared<Protocol>(m_runtime, source, Protocol::FromString{});
 	}
 	catch (std::exception &e) {
 		QMessageBox::critical(this, tr("Apply coding protocol"),
@@ -828,13 +841,13 @@ void ProtocolBuilderDialog::onApply()
 	accept();
 }
 
-// ── JSON serialization ────────────────────────────────────────────────────
+// ── Serialization ─────────────────────────────────────────────────────────
 
-String ProtocolBuilderDialog::buildJson() const
+String ProtocolBuilderDialog::buildSource() const
 {
 	// Snapshot top-level widget state. Note that the currently-selected field's widget state is
 	// *not* committed back into m_field_data here — doPreview() does a const_cast commit before
-	// calling this, and onSave() does an explicit commit. buildJson() is a pure reader.
+	// calling this, and onSave() does an explicit commit. buildSource() is a pure reader.
 	String name(m_name_edit->text().toUtf8().constData());
 	String separator(m_separator_edit->text().toUtf8().constData());
 	bool case_sensitive = m_case_sensitive->isChecked();
@@ -843,10 +856,10 @@ String ProtocolBuilderDialog::buildJson() const
 	out.append("{\n");
 	out.append("  \"type\": \"coding_protocol\",\n");
 	out.append("  \"name\": ");
-	out.append(escape_json_string(name));
+	out.append(escape_script_string(name));
 	out.append(",\n");
 	out.append("  \"separator\": ");
-	out.append(escape_json_string(separator));
+	out.append(escape_script_string(separator));
 	out.append(",\n");
 	if (case_sensitive) {
 		out.append("  \"case_sensitive\": true,\n");
@@ -858,19 +871,19 @@ String ProtocolBuilderDialog::buildJson() const
 		const auto &fd = m_field_data[i];
 		out.append("    {\n");
 		out.append("      \"name\": ");
-		out.append(escape_json_string(fd.name));
+		out.append(escape_script_string(fd.name));
 		out.append(",\n");
 		out.append("      \"match_all\": ");
-		out.append(escape_json_string(fd.match_all));
+		out.append(escape_script_string(fd.match_all));
 		out.append(",\n");
 		out.append("      \"values\": [\n");
 		for (intptr_t j = 0; j < fd.values.size(); j++)
 		{
 			const auto &p = fd.values[j];
 			out.append("        { \"match\": ");
-			out.append(escape_json_string(p.first));
+			out.append(escape_script_string(p.first));
 			out.append(", \"text\": ");
-			out.append(escape_json_string(p.second));
+			out.append(escape_script_string(p.second));
 			out.append(" }");
 			if (j + 1 < fd.values.size()) out.append(",");
 			out.append("\n");

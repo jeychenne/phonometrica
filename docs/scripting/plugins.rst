@@ -197,7 +197,9 @@ through the scripting engine when the plugin is loaded. Here is a simple yet rea
     ``Protocols/`` directory. Hand-editing remains useful when you need features that the builder does not expose
     (for instance the ``layer_index``, ``layer_field``, or ``fields_per_row`` attributes described below), or when
     you want to version-control the protocol source directly. See :ref:`applying-coding-protocols` for more on
-    using the builder.
+    using the builder. The builder escapes braces for you, so a quantifier such as ``[aeiou]{2}`` typed into a
+    field is written to the file as ``"[aeiou]\{2\}"`` and read back unchanged; when writing a protocol by hand,
+    the escaping is yours to do (or use single-quoted strings, which are raw).
 
 .. code:: phon
 

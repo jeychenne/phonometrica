@@ -109,9 +109,11 @@ private:
 	// Load a protocol file into the dialog (replaces current widget state).
 	void loadFromPath(const String &path);
 
-	// Serialize current widget state to JSON. Returns an empty string if the protocol is
+	// Serialize the current widget state to a protocol file: JSON-shaped, but written with
+	// scripting-language string literals, since the engine is what reads it back (see
+	// escape_script_string in the .cpp). Returns an empty string if the protocol is
 	// structurally incomplete (no fields, etc.); the preview treats that as "nothing to do".
-	String buildJson() const;
+	String buildSource() const;
 
 	// Flush the currently-selected field's editor widgets back into its FieldData payload.
 	// Called before switching rows or before any operation that reads field data.
@@ -128,7 +130,7 @@ private:
 	// pairs so the Load menu can group them.
 	Array<std::pair<String, String>> enumeratePluginProtocols() const;
 
-	// Run the preview pipeline end-to-end: buildJson -> Protocol(FromString) -> apply_protocol
+	// Run the preview pipeline end-to-end: buildSource -> Protocol(FromString) -> apply_protocol
 	// on the sample lines -> populate the preview table. Errors populate the status label.
 	void doPreview();
 

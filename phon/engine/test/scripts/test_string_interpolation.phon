@@ -20,4 +20,23 @@ var a = 5
 var b = 7
 assert("{a} + {b} = {a + b}" == "5 + 7 = 12", "multiple holes")
 
+# Escaping out of interpolation. This is the contract every generator of script source
+# depends on — the coding-protocol builder writes regular expressions this way, and a
+# quantifier read back as a hole would silently change what the protocol matches.
+assert("\{" == '{', "an escaped opening brace is a brace")
+assert("[aeiou]\{2\}" == '[aeiou]{2}', "a quantifier survives escaping")
+assert("a}b" == 'a}b', "a closing brace needs no escape")
+assert("\{name\}" == '{name}', "an escaped hole is not interpolated")
+
+# The other escapes a generator may have to emit for a control byte: the language has
+# these eight and no numeric form, so anything else must be written literally.
+assert(len("\0") == 1, "NUL is one character")
+assert(len("\a") == 1, "bell is one character")
+assert(len("\b") == 1, "backspace is one character")
+assert(len("\t") == 1, "tab is one character")
+assert(len("\n") == 1, "newline is one character")
+assert(len("\v") == 1, "vertical tab is one character")
+assert(len("\f") == 1, "form feed is one character")
+assert(len("\r") == 1, "carriage return is one character")
+
 print("string-interpolation tests passed")
