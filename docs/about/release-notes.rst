@@ -1,6 +1,15 @@
 Release notes
 -------------
 
+Unreleased
+~~~~~~~~~~
+
+**Fixes**
+
+- **Pitch measurements were read 5 ms too early.** ``Sound::get_pitch`` interpolates the pitch contour returned by the tracker to obtain a value at the requested time; the index arithmetic was off by one, so it evaluated the contour half an analysis frame before the requested time (a full frame for time points near the start or end of a file). Because it is a shift in time rather than a scaling, the size of the correction depends on how fast F0 is moving: measurements on steady pitch move by a fraction of a hertz, while measurements taken during a rapid rise or fall move by a few hertz, in the direction of the movement. Verified against a synthetic F0 sweep, where the corrected code now recovers the true value exactly for the default Praat tracker. **Pitch values will differ slightly from previous releases**; measurements on moving pitch are the ones that change appreciably.
+- The same arithmetic read outside the pitch contour for time points at the very start or end of a file, which aborted debug builds and read unallocated memory in release builds.
+
+
 0.9.7 (30/05/2026)
 ~~~~~~~~~~~~~~~~~~
 

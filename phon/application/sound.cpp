@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 #if PHON_WINDOWS
@@ -454,7 +455,14 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 	double half_window = 0.025; // We use a 50 ms window
 	auto start_time = std::max<double>(time - half_window, 0.0);
 	auto end_time = std::min<double>(time + half_window, duration());
-	double prop = (time - start_time) / (end_time - start_time);
+	// Where `time` falls inside the analysis window, as a fraction. The window is centred on
+	// `time` except when it is clipped against either end of the file, so this is 0.5 in the
+	// ordinary case. Clamped because a caller may ask for a time outside the file, and guarded
+	// against a zero-length window (a file whose duration rounds to nothing).
+	double span = end_time - start_time;
+	double prop = (span > 0) ? (time - start_time) / span : 0.0;
+	prop = std::clamp(prop, 0.0, 1.0);
+
 	auto first_sample = time_to_frame(start_time);
 	auto last_sample = time_to_frame(end_time);
 	auto input = get_channel(channel, first_sample, last_sample);
@@ -464,15 +472,21 @@ double Sound::get_pitch(int channel, speech::PitchTracker method, double time, d
 
 	if (f0.size() > 1)
 	{
-		double rindex = prop*f0.size();
-		auto index = std::floor(rindex);
-		double frac = rindex - index;
-		assert(index < f0.size() - 1);
-		auto i = size_t(index - 1);
-		auto v1 = f0[i];
-		auto v2 = f0[++i];
+		// The tracker's frames span the window, so `prop` maps onto the closed index range
+		// [0, size-1] — not [0, size], which would run one frame past the end. Getting this wrong
+		// is what the previous version did: it evaluated the contour at `prop*size - 1`, i.e.
+		// (1 - prop) frames too early — half a frame, 5 ms, for a window that is not clipped — and
+		// indexed out of bounds at both ends.
+		double rindex = prop * double(f0.size() - 1);
+		auto i = size_t(std::floor(rindex));
 
-		return v1 + (v2-v1) * frac;
+		// At (or past) the last frame there is no pair to interpolate between.
+		if (i + 1 >= f0.size()) {
+			return f0.back();
+		}
+		double frac = rindex - double(i);
+
+		return f0[i] + (f0[i + 1] - f0[i]) * frac;
 	}
 	else if (f0.size() == 1)
 	{
