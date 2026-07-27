@@ -109,7 +109,7 @@ void VoiceQualityQuery::clear()
 	m_out_shimmer_apq5     = false;
 	m_out_shimmer_apq11    = false;
 	m_out_hnr              = true;
-	m_instant_target_count = 0;
+	m_instant_target_count.store(0, std::memory_order_relaxed);
 	m_override_category.clear();
 	m_override_levels.clear();
 	m_show_params = true;
@@ -117,7 +117,7 @@ void VoiceQualityQuery::clear()
 
 Handle<Concordance> VoiceQualityQuery::execute()
 {
-	m_instant_target_count = 0;
+	m_instant_target_count.store(0, std::memory_order_relaxed);
 
 	// Optional: warn about parameter-override coverage before doing any measurement.
 	// Messages are routed through the runtime's error callback so they render in
@@ -164,21 +164,16 @@ Handle<Concordance> VoiceQualityQuery::execute()
 	auto matches = search();
 	int count = (int)matches.size();
 
-	for (int i = 0; i < count; i++)
-	{
-		query_progress(i, count);
-		if (m_cancel_requested) break;
-
+	measure_matches(matches, [this](QueryMatch &m) {
 		try
 		{
-			measure_match(*matches[i]);
+			measure_match(m);
 		}
 		catch (std::exception &)
 		{
-			auto &m = *matches[i];
 			m.measurements.assign(field_count(), std::nan(""));
 		}
-	}
+	});
 
 	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
@@ -219,8 +214,10 @@ void VoiceQualityQuery::measure_match(QueryMatch &match) const
 	int total = field_count();
 	match.measurements.assign(total, std::nan(""));
 
-	auto annot = match.annotation();
-	auto sound = annot->sound();
+	// Bound by reference, not by value: several matches from one annotation are measured at the
+	// same time, and copying either Handle would update a refcount that is not atomic.
+	auto &annot = match.annotation();
+	auto &sound = annot->sound();
 	if (!sound) {
 		throw error("Cannot measure voice quality in annotation \"%\" because it is not bound to any sound file",
 		            annot->path());
@@ -239,7 +236,7 @@ void VoiceQualityQuery::measure_match(QueryMatch &match) const
 	// samples to detect pulses. We flag these but don't throw, so the rest
 	// of the concordance still measures correctly.
 	if (!(t2 > t1)) {
-		++m_instant_target_count;
+		m_instant_target_count.fetch_add(1, std::memory_order_relaxed);
 		return;
 	}
 

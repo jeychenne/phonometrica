@@ -31,7 +31,7 @@
 #include <QSignalBlocker>
 #include <phon/gui/file_dialog.hpp>
 #include <QSplitter>
-#include <QProgressDialog>
+#include <phon/gui/conc/query_progress_dialog.hpp>
 #include <QToolButton>
 #include <phon/gui/conc/formant_query_editor.hpp>
 #include <phon/gui/help_browser.hpp>
@@ -1223,27 +1223,12 @@ void FormantQueryEditor::onExecute()
 		return;
 	}
 
-	// Progress dialog
-	auto *progress = new QProgressDialog(tr("Measuring formants..."), tr("Cancel"), 0, 100, this);
-	progress->setWindowModality(Qt::WindowModal);
-	progress->setMinimumDuration(500);
-
-	auto conn = m_query->query_progress.connect([progress](int current, int total) {
-		if (total > 0) {
-			progress->setMaximum(total);
-			progress->setValue(current);
-		}
-	});
-
-	connect(progress, &QProgressDialog::canceled, this, [this]() {
-		m_query->request_cancel();
-	});
+	QueryProgressDialog progress(*m_query, tr("Measuring formants..."), this);
 
 	try
 	{
 		m_concordance = m_query->execute();
-		conn.disconnect();
-		progress->close();
+		progress.close();
 
 		if (m_query->modified()) {
 			Project::updated();
@@ -1253,8 +1238,7 @@ void FormantQueryEditor::onExecute()
 	}
 	catch (std::exception &e)
 	{
-		conn.disconnect();
-		progress->close();
+		progress.close();
 		QMessageBox::critical(this, tr("Query error"), QString::fromUtf8(e.what()));
 	}
 }

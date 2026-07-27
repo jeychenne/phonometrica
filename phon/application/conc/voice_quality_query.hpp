@@ -26,6 +26,7 @@
 #ifndef PHONOMETRICA_VOICE_QUALITY_QUERY_HPP
 #define PHONOMETRICA_VOICE_QUALITY_QUERY_HPP
 
+#include <atomic>
 #include <phon/application/conc/query.hpp>
 #include <phon/hashmap.hpp>
 
@@ -156,7 +157,7 @@ public:
 	// Transient — reset at the start of execute(), incremented by measure_match()
 	// for every match whose reference target is an instant. The GUI reads it once
 	// after execute() to issue a single warning rather than per-row diagnostics.
-	intptr_t instant_target_count() const { return m_instant_target_count; }
+	intptr_t instant_target_count() const { return m_instant_target_count.load(std::memory_order_relaxed); }
 
 protected:
 
@@ -189,8 +190,11 @@ private:
 	bool m_out_shimmer_apq11    = false;
 	bool m_out_hnr              = true;
 
-	// Counter populated during execute() — mutable because measure_match() is const.
-	mutable intptr_t m_instant_target_count = 0;
+	// Counter populated during execute() — mutable because measure_match() is const, and atomic
+	// because matches are measured concurrently: this is the one piece of shared state the
+	// measurement writes, so it is the one that has to be a read-modify-write rather than a bare
+	// increment. Only the total is ever read, so relaxed ordering is enough.
+	mutable std::atomic<intptr_t> m_instant_target_count{0};
 
 	// Per-file F0-range override (empty category = disabled)
 	String m_override_category;

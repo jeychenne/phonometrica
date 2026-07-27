@@ -411,6 +411,13 @@ String Document::get_property_value(const String &category) const
 	return String();
 }
 
+void Document::freeze_properties() const
+{
+	for (auto &p : m_properties) {
+		p.freeze();
+	}
+}
+
 Property Document::get_property(const String &category) const
 {
 	for (auto &p : m_properties)

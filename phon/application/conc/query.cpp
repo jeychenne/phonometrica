@@ -19,9 +19,13 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <unordered_set>
+#include <vector>
 #include <phon/runtime.hpp>
 #include <phon/application/conc/query.hpp>
+#include <phon/application/conc/query_pool.hpp>
 #include <phon/application/project.hpp>
+#include <phon/application/settings.hpp>
 #include <phon/utils/xml.hpp>
 #include <phon/utils/file_system.hpp>
 
@@ -552,15 +556,255 @@ Handle<Concordance> Query::execute()
 
 Array<AutoMatch> Query::search()
 {
-	Array<AutoMatch> result;
-	auto tmp = selected_annotations.empty() ? Project::get()->get_annotations() : selected_annotations;
-	auto annotations = filter_annotations(std::move(tmp));
+	// A query object outlives a run and can be executed again, so a cancellation from a
+	// previous run must not abort this one before it starts.
+	m_cancel_requested.store(false, std::memory_order_relaxed);
 
+	auto annotations = resolve_annotations();
+
+	if (!load_annotations(annotations)) {
+		return Array<AutoMatch>();
+	}
+
+	auto matches = search_annotations(annotations);
+
+	// A query that measures audio needs the sound files behind its matches. Loading them is
+	// part of the front half of the run rather than of the measurement loop, so that all file
+	// reading happens here, on the calling thread.
+	if (!is_text_query()) {
+		load_sounds(matches);
+	}
+
+	return matches;
+}
+
+Array<Handle<Annotation>> Query::resolve_annotations() const
+{
+	auto tmp = selected_annotations.empty() ? Project::get()->get_annotations() : selected_annotations;
+
+	return filter_annotations(std::move(tmp));
+}
+
+bool Query::load_annotations(const Array<Handle<Annotation>> &annotations)
+{
+	// Progress is reported before each file rather than after it. The query holds the GUI thread
+	// for its whole run, so this callback is the only chance the interface gets to repaint and to
+	// notice a click on Cancel; reporting first means that chance comes before the slow part of
+	// the iteration, not after it.
+	int count = (int) annotations.size(), t = 0;
+
+	for (auto &annot : annotations)
+	{
+		query_progress(Stage::LoadingAnnotations, t++, count);
+		if (m_cancel_requested.load(std::memory_order_relaxed)) {
+			return false;
+		}
+		try
+		{
+			annot->open();
+		}
+		catch (std::exception &e)
+		{
+			throw error("error in annotation %: %", annot->path(), e.what());
+		}
+	}
+	query_progress(Stage::LoadingAnnotations, count, count);
+
+	return true;
+}
+
+bool Query::load_sounds(const Array<AutoMatch> &matches)
+{
+	// Collect the distinct sounds first, so the progress bar has a meaningful total. Matches
+	// arrive grouped by annotation, but a set is used anyway: two annotations may be bound to
+	// the same sound file. An annotation with no sound is skipped — measuring it will fail and
+	// fill the row with NaN, which is the behaviour it already had.
+	Array<Handle<Sound>> sounds;
+	std::unordered_set<const Sound *> seen;
+
+	for (auto &m : matches)
+	{
+		auto &sound = m->annotation()->sound();
+		if (sound && seen.insert(sound.get()).second) {
+			sounds.append(sound);
+		}
+	}
+
+	int count = (int) sounds.size(), t = 0;
+
+	for (auto &sound : sounds)
+	{
+		query_progress(Stage::LoadingSounds, t++, count);
+		if (m_cancel_requested.load(std::memory_order_relaxed)) {
+			return false;
+		}
+		try
+		{
+			sound->open();
+		}
+		catch (std::exception &e)
+		{
+			throw error("error in sound file %: %", sound->path(), e.what());
+		}
+	}
+	query_progress(Stage::LoadingSounds, count, count);
+
+	return true;
+}
+
+Array<AutoMatch> Query::search_annotations(const Array<Handle<Annotation>> &annotations)
+{
+	// Compiling also freezes the constraints' pattern strings, which is what makes them safe to
+	// share with the workers below, so it must happen before either scan starts.
 	for (auto &c : m_constraints) {
 		c.compile();
 	}
 
-	int count = (int)annotations.size(), t = 0;
+	if (use_parallel(annotations.size())) {
+		return search_annotations_in_parallel(annotations);
+	}
+
+	return search_annotations_serially(annotations);
+}
+
+void Query::freeze_match_metadata(const Array<AutoMatch> &matches)
+{
+	// Measurement reads each annotation's metadata (the per-property parameter overrides), and
+	// reading a property copies Strings out of it — both the value and the category. Freeze them
+	// here, once, while this is still the only thread: several matches from one annotation are
+	// measured at the same time and would otherwise race on the same cells. Idempotent, and
+	// properties do not change during a run.
+	std::unordered_set<const Document *> seen;
+
+	for (auto &m : matches)
+	{
+		auto *annot = m->annotation().get();
+		if (seen.insert(annot).second) {
+			annot->freeze_properties();
+		}
+	}
+}
+
+void Query::measure_matches(Array<AutoMatch> &matches, const std::function<void(QueryMatch &)> &measure_one)
+{
+	intptr_t n = matches.size();
+
+	if (!use_parallel(n))
+	{
+		for (intptr_t i = 0; i < n; i++)
+		{
+			query_progress(Stage::Measuring, (int) i, (int) n);
+			if (m_cancel_requested.load(std::memory_order_relaxed)) {
+				return;
+			}
+			measure_one(*matches[i]);
+		}
+		query_progress(Stage::Measuring, (int) n, (int) n);
+		return;
+	}
+
+	freeze_match_metadata(matches);
+
+	// No buckets here, unlike the scan: each match already owns the row it writes, so the results
+	// stay in order however the work is scheduled.
+	QueryPool::get().run(n,
+		[&](intptr_t i) {
+			if (m_cancel_requested.load(std::memory_order_relaxed)) {
+				return;
+			}
+			measure_one(*matches[i]);
+		},
+		// Reported from the submitting thread only — see the note in the parallel scan about
+		// what a front end may do from here.
+		[&](intptr_t finished) {
+			query_progress(Stage::Measuring, (int) finished, (int) n);
+		});
+}
+
+bool Query::use_parallel(intptr_t count)
+{
+	bool enabled = true;
+	intptr_t threshold = 8;
+	try
+	{
+		enabled = Settings::get_boolean("query", "parallel");
+		threshold = Settings::get_int("query", "parallel_threshold");
+	}
+	catch (...)
+	{
+		// No settings (a headless tool, or an older profile): keep the defaults above.
+	}
+
+	if (!enabled || count < threshold) {
+		return false;
+	}
+
+	QueryPool::get().apply_settings();
+
+	return QueryPool::get().worker_count() > 0;
+}
+
+Array<AutoMatch> Query::search_annotations_in_parallel(const Array<Handle<Annotation>> &annotations)
+{
+	intptr_t n = annotations.size();
+
+	// One bucket per annotation. Workers finish in whatever order the scheduler produces, but the
+	// buckets are concatenated by index below, so the concordance is byte-for-byte what the serial
+	// scan would have built.
+	std::vector<Array<AutoMatch>> buckets((size_t) n);
+
+	QueryPool::get().run(n,
+		[&](intptr_t i) {
+			if (m_cancel_requested.load(std::memory_order_relaxed)) {
+				return;
+			}
+			try
+			{
+				buckets[(size_t) i] = search_annotation(annotations[i]);
+			}
+			catch (std::exception &e)
+			{
+				// Wrapped here, on the worker, exactly as the serial scan wraps it. The pool keeps
+				// the lowest-indexed failure and rethrows it on the calling thread.
+				throw error("error in annotation %: %", annotations[i]->path(), e.what());
+			}
+		},
+		// Reported from the submitting thread, never from a worker, so a Qt front end can repaint
+		// from here.
+		//
+		// What that front end may do from this callback is limited, and the limit is not obvious.
+		// Refcounts on this engine are non-atomic unless a cell has been frozen, so while the
+		// workers run, the submitting thread must not copy a Handle to anything they touch — above
+		// all the annotations themselves, which each match retains. Repainting the file manager is
+		// fine as things stand, because the project model addresses elements through raw pointers
+		// and only ever copies their label strings, which no worker reads. Anything that took a
+		// Handle<Annotation> on a paint path would break that, quietly.
+		[&](intptr_t finished) {
+			query_progress(Stage::Searching, (int) finished, (int) n);
+		});
+
+	intptr_t total = 0;
+	for (auto &bucket : buckets) {
+		total += bucket.size();
+	}
+
+	Array<AutoMatch> result;
+	result.reserve(total);
+	for (auto &bucket : buckets)
+	{
+		for (auto &m : bucket) {
+			result.append(std::move(m));
+		}
+	}
+
+	return result;
+}
+
+Array<AutoMatch> Query::search_annotations_serially(const Array<Handle<Annotation>> &annotations)
+{
+	Array<AutoMatch> result;
+
+	int count = (int) annotations.size(), t = 0;
 
 #ifdef PHON_TIMING
 	auto first_time = clock();
@@ -568,13 +812,12 @@ Array<AutoMatch> Query::search()
 
 	for (auto &annot : annotations)
 	{
-        query_progress(t++, count);
-        if (m_cancel_requested) {
+		query_progress(Stage::Searching, t++, count);
+		if (m_cancel_requested.load(std::memory_order_relaxed)) {
 			return result;
 		}
 		try
 		{
-			annot->open();
 			auto matches = search_annotation(annot);
 
 			result.reserve(result.size() + matches.size());
@@ -587,18 +830,19 @@ Array<AutoMatch> Query::search()
 			throw error("error in annotation %: %", annot->path(), e.what());
 		}
 	}
+	query_progress(Stage::Searching, count, count);
 
 #ifdef PHON_TIMING
 	auto last_time = clock();
 	auto total = double(last_time-first_time) * 1000 / CLOCKS_PER_SEC;
-	std::cerr << "Total loading time for " << annotations.size() << " annotations: " << total << " ms\n";
+	std::cerr << "Total search time for " << annotations.size() << " annotations: " << total << " ms\n";
 	std::cerr << "Average per annotation: " << (total/annotations.size()) << " ms\n";
 #endif
 
 	return result;
 }
 
-Array<AutoMatch> Query::search_annotation(const Handle<Annotation> &annot)
+Array<AutoMatch> Query::search_annotation(const Handle<Annotation> &annot) const
 {
 	// We maintain a list of the layer indices we have already seen, so that we don't scan the same layer twice
 	Array<int> seen;

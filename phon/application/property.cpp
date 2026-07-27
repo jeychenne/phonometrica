@@ -274,6 +274,19 @@ const String &Property::text_value() const
 	return std::any_cast<const String &>(impl->value);
 }
 
+void Property::freeze() const
+{
+	if (!impl) {
+		return;
+	}
+	const_cast<String &>(impl->category).make_frozen();
+	// Only a text property holds a String value; numeric and boolean ones are stored as
+	// double/bool and are copied by value, with no cell behind them.
+	if (impl->value.type() == typeid(String)) {
+		const_cast<String &>(std::any_cast<const String &>(impl->value)).make_frozen();
+	}
+}
+
 bool Property::is_boolean() const
 {
 	return this->type() == typeid(bool);

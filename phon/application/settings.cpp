@@ -577,6 +577,10 @@ void Settings::post_initialize()
 	if (!contains("statistics")) {
 		reset_statistics();
 	}
+	// New in 0.9.6: parallel query execution.
+	if (!contains("query")) {
+		reset_query();
+	}
 	if (!contains("whisper_log")) {
 		reset_whisper_log();
 	}
@@ -614,6 +618,7 @@ void Settings::reset()
 	reset_concordance();
 	reset_display();
 	reset_statistics();
+	reset_query();
 	reset_whisper_log();
 	reset_check_for_updates();
 	reset_recording();
@@ -726,6 +731,20 @@ void Settings::reset_statistics()
 	table.set(str_key("estimation"), Variant::make(String("frequentist")));
 	table.set(str_key("max_iterations"), Variant::make<int64_t>(200));
 	Settings::set_value("statistics", Variant::make(table));
+}
+
+void Settings::reset_query()
+{
+	Table table;
+	// Whether to scan annotations on several threads at once.
+	table.set(str_key("parallel"), Variant::make(true));
+	// Number of scanning threads; 0 means "decide from the machine" (hardware concurrency - 1,
+	// leaving the submitting thread a core to keep the interface responsive on).
+	table.set(str_key("threads"), Variant::make<int64_t>(0));
+	// Below this many annotations a query stays on one thread: handing a handful of small files
+	// to a pool costs more in coordination than it saves.
+	table.set(str_key("parallel_threshold"), Variant::make<int64_t>(8));
+	Settings::set_value("query", Variant::make(table));
 }
 
 void Settings::reset_mouse_tracking()

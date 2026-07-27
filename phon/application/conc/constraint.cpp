@@ -154,6 +154,16 @@ void Constraint::swap(Constraint &other) noexcept
 
 void Constraint::compile()
 {
+	// Freeze the pattern strings before anything scans with them. A compiled constraint is shared
+	// by every thread of a parallel search, and both of these strings are read from all of them:
+	// `target` is copied into the matches it produces (a refcount update, which is non-atomic on
+	// an unfrozen cell) and is asked for its grapheme count (which fills a lazy cache field, a
+	// plain write). Freezing materializes those caches and moves the cell to the atomic-refcount
+	// regime, making it genuinely read-only. Constraints do not change during a run, so this
+	// costs nothing; a later edit copies on write as usual.
+	target.make_frozen();
+	layer_pattern.make_frozen();
+
 	if (this->op == Operator::Matches && !regex)
 	{
 		if (case_sensitive) {

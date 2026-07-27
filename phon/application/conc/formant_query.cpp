@@ -24,6 +24,7 @@
 #include <map>
 #include <string>
 #include <phon/application/conc/formant_query.hpp>
+#include <phon/application/conc/query_pool.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/property.hpp>
 #include <phon/application/sound.hpp>
@@ -227,8 +228,6 @@ Handle<Concordance> FormantQuery::execute()
 	auto matches = search();
 
 	// Phase 2: formant measurement on each match
-	int count = (int)matches.size();
-
 	if (m_automatic && m_auto_method == AutoMethod::Intrinsic && m_consensus)
 	{
 		// Corpus-level two-pass selection (cells + EM) before filling.
@@ -236,23 +235,18 @@ Handle<Concordance> FormantQuery::execute()
 	}
 	else
 	{
-		for (int i = 0; i < count; i++)
-		{
-			query_progress(i, count);
-			if (m_cancel_requested) break;
-
+		measure_matches(matches, [this](QueryMatch &m) {
 			try
 			{
-				measure_match(*matches[i]);
+				measure_match(m);
 			}
-			catch (std::exception &e)
+			catch (std::exception &)
 			{
 				// If measurement fails for a single match (e.g. sound file not bound),
 				// fill with NaN and continue rather than aborting the whole query.
-				auto &m = *matches[i];
 				m.measurements.assign(field_count(), std::nan(""));
 			}
-		}
+		});
 	}
 
 	// Build concordance with formant metadata
@@ -302,8 +296,10 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 {
 	using namespace speech;
 
-	auto annot = match.annotation();
-	auto sound = annot->sound();
+	// Bound by reference, not by value: several matches from one annotation are measured at the
+	// same time, and copying either Handle would update a refcount that is not atomic.
+	auto &annot = match.annotation();
+	auto &sound = annot->sound();
 	if (!sound)
 	{
 		throw error("Cannot measure formants in annotation \"%\" because it is not bound to any sound file", annot->path());
@@ -490,18 +486,45 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	std::vector<Entry> entries(count);
 	IntrinsicWeights w; // shipping defaults (lambdas = 1)
 
+	// Consensus measurement walks the matches twice (pass 0, then the final fill), with a cheap
+	// EM in between, so progress is reported over a bar of 2*count: pass 0 fills the first half,
+	// the final fill the second.
+	const int progress_total = 2 * count;
+
+	freeze_match_metadata(matches);
+
+	// Pass 0 and the final fill both write one entry per match, so both run on the pool; the EM
+	// between them is a corpus-level reduction and stays on this thread. `run` reports through
+	// on_tick, which is why the two passes offset their progress into one 2*count bar.
+	auto pass = [&](int offset, const std::function<void(intptr_t)> &body) {
+		if (!use_parallel(count))
+		{
+			for (int i = 0; i < count; i++)
+			{
+				query_progress(Stage::Measuring, offset + i, progress_total);
+				if (m_cancel_requested.load(std::memory_order_relaxed)) return;
+				body(i);
+			}
+			return;
+		}
+		QueryPool::get().run(count,
+			[&](intptr_t i) {
+				if (m_cancel_requested.load(std::memory_order_relaxed)) return;
+				body(i);
+			},
+			[&](intptr_t done) { query_progress(Stage::Measuring, offset + (int) done, progress_total); });
+	};
+
 	// ---- Pass 0: build caches + provisional intrinsic selection + resolve cells ----
-	for (int i = 0; i < count; i++)
-	{
-		query_progress(i, count);
-		if (m_cancel_requested) return;
+	pass(0, [&](intptr_t i) {
 		auto &match = *matches[i];
 		auto &e = entries[i];
 		try
 		{
-			auto annot = match.annotation();
-			auto sound = annot->sound();
-			if (!sound) continue;
+			// Bound by reference: matches from one annotation run at the same time here too.
+			auto &annot = match.annotation();
+			auto &sound = annot->sound();
+			if (!sound) return;
 
 			auto *target = match.reference_target();
 			if (!target) target = match.get(1);
@@ -525,7 +548,7 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 			e.cands = build_intrinsic_candidates(sound.get(), channel(), m_nformant, m_win_size,
 			                                     t1, t2, tmid, c_lo, c_hi, m_freq_step,
 			                                     m_lpc_order1, m_lpc_order2, w);
-			if (e.cands.empty()) continue;
+			if (e.cands.empty()) return;
 
 			double best = (std::numeric_limits<double>::max)();
 			for (int k = 0; k < (int)e.cands.size(); ++k)
@@ -546,7 +569,7 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 			e.ok = (e.sel >= 0);
 		}
 		catch (...) { e.ok = false; }
-	}
+	});
 
 	// ---- EM: pooled cell centres, re-selection ----
 	const int em_iters = 3;
@@ -613,18 +636,19 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	}
 
 	// ---- Final fill: measure each match with its selected parameters ----
-	for (int i = 0; i < count; i++)
-	{
+	pass(count, [&](intptr_t i) {
 		auto &match = *matches[i];
 		auto &e = entries[i];
-		if (!e.ok) { match.measurements.assign(field_count(), std::nan("")); continue; }
+		if (!e.ok) { match.measurements.assign(field_count(), std::nan("")); return; }
 		try
 		{
 			const auto &win = e.cands[e.sel];
 			measure_match(match, win.ceiling, win.lpc_order);
 		}
 		catch (...) { match.measurements.assign(field_count(), std::nan("")); }
-	}
+	});
+
+	query_progress(Stage::Measuring, progress_total, progress_total);
 }
 
 Handle<Query> FormantQuery::copy() const

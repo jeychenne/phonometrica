@@ -23,6 +23,8 @@
 #ifndef PHONOMETRICA_QUERY_HPP
 #define PHONOMETRICA_QUERY_HPP
 
+#include <atomic>
+#include <functional>
 #include <phon/application/annotation.hpp>
 #include <phon/application/conc/metaconstraint.hpp>
 #include <phon/application/conc/constraint.hpp>
@@ -47,6 +49,18 @@ public:
 		SpectralMoments = 32,
 		VoiceQuality = 64,
 		Acoustic  = Formant|Pitch|Intensity|Duration|SpectralMoments|VoiceQuality
+	};
+
+	// The successive stages a run goes through, reported through query_progress. The two
+	// Loading stages read files from disk; the other two compute. A front end can therefore
+	// show I/O and computation on separate progress bars without knowing what kind of query
+	// it is running. A text query only ever reports the first two.
+	enum class Stage
+	{
+		LoadingAnnotations,
+		Searching,
+		LoadingSounds,
+		Measuring
 	};
 
 	using Context = Concordance::Context;
@@ -118,11 +132,15 @@ public:
 
 	bool empty();
 
-    void request_cancel() { m_cancel_requested = true; }
+	// Ask the running query to stop at the next item boundary. Called from the GUI thread
+	// while the query runs; atomic because the search and measurement loops that read the
+	// flag are about to move onto worker threads.
+	void request_cancel() { m_cancel_requested.store(true, std::memory_order_relaxed); }
 
 	static void initialize(Runtime &rt);
 
-    Signal<int, int> query_progress;  // current, total, cancel
+	// stage, current, total. `current` counts items finished, so it runs from 0 to `total`.
+	Signal<Stage, int, int> query_progress;
 
 protected:
 
@@ -143,9 +161,73 @@ protected:
 
 	bool filter_metadata(const Document *file) const;
 
+	// Run the front half of the query: resolve the annotation set, read it from disk, scan it,
+	// and (for a query that measures audio) read the sound files the matches will need. Every
+	// subclass calls this as the first step of execute().
 	Array<AutoMatch> search();
 
-	Array<AutoMatch> search_annotation(const Handle<Annotation> &annot);
+	// The annotations this query will scan: the explicit selection if there is one, otherwise
+	// every annotation in the project, filtered through the metaconstraints. Metadata is known
+	// from project load time, so this needs no file to be open.
+	Array<Handle<Annotation>> resolve_annotations() const;
+
+	// Open every annotation, reporting Stage::LoadingAnnotations. Returns false if the user
+	// cancelled part way through.
+	//
+	// Loading is deliberately separated from scanning. Parsing an annotation registers its
+	// properties in Property's global tables, which are plain statics with no locking, and it
+	// fires the file-loading signals the GUI is wired to. Neither is safe once the scan runs on
+	// worker threads, so the whole set is read here, on the calling thread, before any scanning
+	// begins. search_annotations() may then assume every annotation it is given is open.
+	bool load_annotations(const Array<Handle<Annotation>> &annotations);
+
+	// Open the sound bound to each annotation that produced at least one match, reporting
+	// Stage::LoadingSounds. Returns false if the user cancelled part way through.
+	//
+	// Only matched annotations are loaded: Sound::load() reads the whole file into memory, so a
+	// query that matches three files out of five hundred must not read five hundred sound files.
+	// This is why sounds are loaded after the scan rather than alongside the annotations.
+	bool load_sounds(const Array<AutoMatch> &matches);
+
+	// Scan every annotation for matches, reporting Stage::Searching. Every annotation must
+	// already be open (see load_annotations). Dispatches to one of the two below.
+	Array<AutoMatch> search_annotations(const Array<Handle<Annotation>> &annotations);
+
+	// Whether `count` work items are worth spreading over the query pool. False when the user
+	// turned parallel queries off, when the pool has no workers, or when there are too few items
+	// for the coordination to pay for itself. Used for both phases: an item is an annotation
+	// while scanning, a match while measuring.
+	static bool use_parallel(intptr_t count);
+
+	// Measure every match, reporting Stage::Measuring, on the query pool when it pays. This is
+	// the whole second half of an acoustic query, shared by all five subclasses.
+	//
+	// `measure_one` runs concurrently on several matches at once. What it may touch:
+	//   - the match it is given (each one belongs to a single worker), and
+	//   - anything on the query that is read-only for the duration.
+	// What it may not touch, because these are shared across workers:
+	//   - any counter or cache on the query — make it atomic or accumulate it per match;
+	//   - the Handle in `match.annotation()` or the Sound behind it. Bind those by reference
+	//     (`auto &`), never by value: copying a Handle updates a refcount that is non-atomic,
+	//     and two matches from one annotation share both cells.
+	// It must not throw: a measurement that fails fills its row with NaN, which is what the
+	// serial version always did.
+	void measure_matches(Array<AutoMatch> &matches, const std::function<void(QueryMatch &)> &measure_one);
+
+	// Freeze the metadata behind `matches` so measurement workers may read it concurrently. Called
+	// by measure_matches; a subclass that measures on its own schedule must call it itself.
+	void freeze_match_metadata(const Array<AutoMatch> &matches);
+
+	Array<AutoMatch> search_annotations_serially(const Array<Handle<Annotation>> &annotations);
+
+	// Scan on the query pool. Produces exactly the same matches, in the same order, as the serial
+	// version: each annotation's hits go into its own bucket and the buckets are concatenated in
+	// annotation order afterwards, so the result does not depend on how the work was scheduled.
+	Array<AutoMatch> search_annotations_in_parallel(const Array<Handle<Annotation>> &annotations);
+
+	// Scanning one annotation touches nothing shared and mutates no part of the query, which is
+	// what lets several of these run at once. Keep it const so that stays true.
+	Array<AutoMatch> search_annotation(const Handle<Annotation> &annot) const;
 
 	Array <AutoMatch> find_matches(const Handle<Annotation> &annot, const Constraint &constraint, Array <AutoMatch> matches,
 	                               Array<int> &blacklist, Constraint::Relation op, bool is_ref) const;
@@ -185,8 +267,8 @@ protected:
 	// Whether durations are in milliseconds (true) or seconds (false)
 	bool m_duration_in_ms = false;
 
-    // Let the user cancel a query that takes too much time
-    bool m_cancel_requested = false;
+	// Let the user cancel a query that takes too much time
+	std::atomic<bool> m_cancel_requested{false};
 };
 
 

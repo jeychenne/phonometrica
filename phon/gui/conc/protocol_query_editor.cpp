@@ -26,7 +26,7 @@
 #include <QMessageBox>
 #include <phon/gui/file_dialog.hpp>
 #include <QSplitter>
-#include <QProgressDialog>
+#include <phon/gui/conc/query_progress_dialog.hpp>
 #include <QToolButton>
 #include <QCheckBox>
 #include <QStringList>
@@ -461,26 +461,13 @@ void ProtocolQueryEditor::onExecute()
 {
 	parseQuery();
 
-	auto *progress = new QProgressDialog(tr("Searching..."), tr("Cancel"), 0, 100, this);
-	progress->setWindowModality(Qt::WindowModal);
-	progress->setMinimumDuration(500);
-
-	auto conn = m_query->query_progress.connect([progress](int current, int total) {
-		if (total > 0) {
-			progress->setMaximum(total);
-			progress->setValue(current);
-		}
-	});
-
-	connect(progress, &QProgressDialog::canceled, this, [this]() {
-		m_query->request_cancel();
-	});
+	// A protocol query is a text query: it never measures anything.
+	QueryProgressDialog progress(*m_query, QString(), this);
 
 	try
 	{
 		m_concordance = m_query->execute();
-		conn.disconnect();
-		progress->close();
+		progress.close();
 
 		if (m_query->modified())
 			Project::updated();
@@ -539,8 +526,7 @@ void ProtocolQueryEditor::onExecute()
 	}
 	catch (std::exception &e)
 	{
-		conn.disconnect();
-		progress->close();
+		progress.close();
 		QMessageBox::critical(this, tr("Query error"), QString::fromUtf8(e.what()));
 	}
 }

@@ -148,6 +148,8 @@ public:
 
     static void reset_statistics();
 
+    static void reset_query();
+
     static void reset_whisper_log();
 
     static void reset_check_for_updates();

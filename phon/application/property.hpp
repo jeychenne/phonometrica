@@ -61,6 +61,16 @@ public:
 
 	String category() const;
 
+	// Freeze this property's strings so several threads may read them at once.
+	//
+	// Reading a property copies Strings out of it — category() and value() both return by value —
+	// and a String copy updates a refcount that is only atomic on a frozen cell. Matches from one
+	// annotation are measured concurrently and all read the same property, so without this the
+	// lookup races. Freezing also materializes the strings' lazy caches, which are plain fields a
+	// concurrent reader would otherwise write. Idempotent; property values never change in place,
+	// so it costs nothing.
+	void freeze() const;
+
 	String value() const;
 
 	bool boolean_value() const;

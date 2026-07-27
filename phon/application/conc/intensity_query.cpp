@@ -101,23 +101,19 @@ void IntensityQuery::clear()
 Handle<Concordance> IntensityQuery::execute()
 {
 	auto matches = search();
-	int count = (int)matches.size();
 
-	for (int i = 0; i < count; i++)
-	{
-		query_progress(i, count);
-		if (m_cancel_requested) break;
-
+	measure_matches(matches, [this](QueryMatch &m) {
 		try
 		{
-			measure_match(*matches[i]);
+			measure_match(m);
 		}
-		catch (std::exception &e)
+		catch (std::exception &)
 		{
-			auto &m = *matches[i];
+			// If measurement fails for a single match (e.g. sound file not bound),
+			// fill with NaN and continue rather than aborting the whole query.
 			m.measurements.assign(field_count(), std::nan(""));
 		}
-	}
+	});
 
 	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
@@ -153,8 +149,10 @@ Handle<Concordance> IntensityQuery::execute()
 
 void IntensityQuery::measure_match(QueryMatch &match) const
 {
-	auto annot = match.annotation();
-	auto sound = annot->sound();
+	// Bound by reference, not by value: several matches from one annotation are measured at the
+	// same time, and copying either Handle would update a refcount that is not atomic.
+	auto &annot = match.annotation();
+	auto &sound = annot->sound();
 	if (!sound)
 	{
 		throw error("Cannot measure intensity in annotation \"%\" because it is not bound to any sound file", annot->path());

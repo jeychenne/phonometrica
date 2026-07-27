@@ -592,3 +592,15 @@ if(BUILD_CALIBRATION)
     add_executable(calibrate_formants tools/calibrate_formants.cpp)
     target_link_libraries(calibrate_formants PRIVATE phon-app phon_engine)
 endif()
+
+####################
+##  QUERY TEST    ##
+####################
+
+# Headless acceptance test for the query pipeline (see tools/test_query.cpp). It drives real
+# Query/FormantQuery objects over throwaway TextGrids, so it needs the application layer but no GUI.
+if(WITH_APPLICATION)
+    add_executable(test_query tools/test_query.cpp)
+    target_link_libraries(test_query PRIVATE phon-app phon_engine)
+    add_test(NAME query COMMAND test_query ${CMAKE_CURRENT_SOURCE_DIR}/test/data)
+endif()

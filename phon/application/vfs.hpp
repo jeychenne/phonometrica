@@ -233,6 +233,10 @@ public:
 
 	bool remove_property(const String &category);
 
+	// Freeze every property this document carries, so concurrent readers may look them up
+	// safely. See Property::freeze.
+	void freeze_properties() const;
+
 	String get_property_value(const String &category) const;
 
 	Property get_property(const String &category) const;
