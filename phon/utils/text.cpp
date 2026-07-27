@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <cassert>
 #include <phon/file.hpp>
 #include <phon/error.hpp>
 #include <phon/utils/text.hpp>
