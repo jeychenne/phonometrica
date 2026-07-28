@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <iostream>
 #include <phon/file.hpp>
 
 #ifdef PHON_GUI
@@ -36,6 +37,7 @@
 #include <phon/application/constants.hpp>
 #else
 #include <phon/runtime.hpp>
+#include <phon/utils/print.hpp>
 #endif
 
 using namespace phonometrica;
