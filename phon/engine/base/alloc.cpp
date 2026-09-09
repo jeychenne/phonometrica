@@ -8,6 +8,10 @@
 #include <mutex>
 #include <new>
 
+#if defined(_WIN32)
+#	include <malloc.h>
+#endif
+
 #if defined(__unix__) || defined(__APPLE__)
 #	include <sys/mman.h>
 #	include <unistd.h>
@@ -25,6 +29,30 @@ void out_of_memory(intptr_t requested)
 	std::fflush(stderr);
 	std::abort();
 }
+
+namespace {
+
+// The Windows CRT does not provide C11 aligned_alloc: its free() cannot release
+// an over-aligned block, so the aligned pair has its own spelling there.
+void *aligned_alloc_impl(size_t align, size_t size)
+{
+#if defined(_WIN32)
+	return ::_aligned_malloc(size, align);
+#else
+	return std::aligned_alloc(align, size);
+#endif
+}
+
+void aligned_free_impl(void *ptr)
+{
+#if defined(_WIN32)
+	::_aligned_free(ptr);
+#else
+	std::free(ptr);
+#endif
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Byte allocation
@@ -64,7 +92,7 @@ void *raw_alloc(intptr_t size, intptr_t align)
 
 	// Over-aligned: std::aligned_alloc requires size to be a multiple of align.
 	intptr_t rounded = align_up(size == 0 ? align : size, align);
-	void *p = std::aligned_alloc(static_cast<size_t>(align), static_cast<size_t>(rounded));
+	void *p = aligned_alloc_impl(static_cast<size_t>(align), static_cast<size_t>(rounded));
 	if (PHON_UNLIKELY(p == nullptr))
 		out_of_memory(size);
 	return p;
@@ -72,15 +100,18 @@ void *raw_alloc(intptr_t size, intptr_t align)
 
 void raw_free(void *ptr, intptr_t align)
 {
-	PHON_UNUSED(align);
-	// Both malloc and aligned_alloc results are released with std::free.
-	std::free(ptr);
+	// Mirror raw_alloc: the small-alignment path came from malloc, the
+	// over-aligned one from the aligned allocator (a distinct pair on Windows).
+	if (align <= static_cast<intptr_t>(alignof(std::max_align_t)))
+		std::free(ptr);
+	else
+		aligned_free_impl(ptr);
 }
 
 void *aligned_alloc64(intptr_t size)
 {
 	intptr_t rounded = align_up(size == 0 ? PHON_CACHELINE : size, PHON_CACHELINE);
-	void *p = std::aligned_alloc(static_cast<size_t>(PHON_CACHELINE),
+	void *p = aligned_alloc_impl(static_cast<size_t>(PHON_CACHELINE),
 	                             static_cast<size_t>(rounded));
 	if (PHON_UNLIKELY(p == nullptr))
 		out_of_memory(size);
@@ -89,7 +120,7 @@ void *aligned_alloc64(intptr_t size)
 
 void aligned_free64(void *ptr)
 {
-	std::free(ptr);
+	aligned_free_impl(ptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -126,7 +157,7 @@ void *os_map_block()
 	return p;
 #else
 	// Portable fallback: block-aligned allocation.
-	void *p = std::aligned_alloc(static_cast<size_t>(PHON_BLOCK_SIZE),
+	void *p = aligned_alloc_impl(static_cast<size_t>(PHON_BLOCK_SIZE),
 	                             static_cast<size_t>(PHON_BLOCK_SIZE));
 	if (p == nullptr)
 		out_of_memory(PHON_BLOCK_SIZE);
@@ -139,7 +170,7 @@ void os_unmap_block(void *block)
 #if PHON_HAVE_MMAP
 	::munmap(block, static_cast<size_t>(PHON_BLOCK_SIZE));
 #else
-	std::free(block);
+	aligned_free_impl(block);
 #endif
 }
 

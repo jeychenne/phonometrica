@@ -61,7 +61,7 @@ std::string sys_error_message()
 
 void check_end(String &path)
 {
-	if (path.empty() || path.data()[path.size() - 1] != PHON_SEP_CHAR)
+	if (path.empty() || !is_separator(path.data()[path.size() - 1]))
 		path.push_back(PHON_SEP_CHAR);
 }
 
@@ -219,18 +219,22 @@ String temp_filename()
 
 String base_name(std::string_view path)
 {
-	auto pos = path.rfind(PHON_SEP_CHAR);
-	if (pos == std::string_view::npos)
-		return String(path.data(), static_cast<intptr_t>(path.size()));
-	++pos; // skip the separator
-	return String(path.data() + pos, static_cast<intptr_t>(path.size() - pos));
+	for (size_t i = path.size(); i-- > 0;)
+	{
+		if (is_separator(path[i]))
+		{
+			++i; // skip the separator
+			return String(path.data() + i, static_cast<intptr_t>(path.size() - i));
+		}
+	}
+	return String(path.data(), static_cast<intptr_t>(path.size()));
 }
 
 String directory_name(const String &path)
 {
 	const char *str = path.data();
 	for (intptr_t i = path.size(); i-- > 0;)
-		if (str[i] == PHON_SEP_CHAR)
+		if (is_separator(str[i]))
 			return String(path.data(), i);
 	return String();
 }
@@ -414,7 +418,7 @@ std::pair<String, String> split_ext(const String &path)
 	intptr_t i;
 	for (i = path.size(); i-- > 0;)
 	{
-		if (data[i] == PHON_SEP_CHAR)
+		if (is_separator(data[i]))
 			return {path, String()}; // separator before any dot: no extension
 		if (data[i] == '.')
 			break;
@@ -435,7 +439,7 @@ String ext(const String &path, bool lower, bool strip_dot)
 	intptr_t i;
 	for (i = path.size(); i-- > 0;)
 	{
-		if (data[i] == PHON_SEP_CHAR)
+		if (is_separator(data[i]))
 			return String();
 		if (data[i] == '.')
 		{

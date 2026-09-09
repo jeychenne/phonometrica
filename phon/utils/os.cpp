@@ -39,7 +39,7 @@ String error_message()
 	   NULL);
 
 	if (msg != NULL) {
-		auto result = String(msg, intptr_t(wcslen(msg)));
+		auto result = String(std::wstring(msg, wcslen(msg)));
 		LocalFree((HLOCAL)msg);
 
 		return result;

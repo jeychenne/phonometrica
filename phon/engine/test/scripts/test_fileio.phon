@@ -9,7 +9,11 @@ assert(get_extension("file.TXT") == ".TXT", "extension")
 assert(get_extension("file.TXT", true) == ".txt", "extension lowercased")
 assert(get_extension("noext") == "", "extension absent")
 assert(strip_extension("file.txt") == "file", "strip_extension")
-assert(join_path("/a", "b") == "/a/b", "join_path")
+# join_path uses the *native* separator, so spell the expectation with it. The
+# second case has a trailing '/' rather than the native one on purpose: path
+# parsing accepts either separator everywhere, so no second one is added.
+var sep = get_path_separator()
+assert(join_path("/a", "b") == "/a" & sep & "b", "join_path")
 assert(join_path("/a/", "b") == "/a/b", "join_path avoids double separator")
 
 var parts = split_extension("archive.tar")

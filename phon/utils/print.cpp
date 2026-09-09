@@ -37,13 +37,14 @@ std::optional<String> read_line()
 #if PHON_WINDOWS
 	static wchar_t line[500], *p;
 
-	p = fgetws(line, sizeof line, stdin);
+	// fgetws counts wide characters, not bytes.
+	p = fgetws(line, int(sizeof line / sizeof *line), stdin);
 	if (p)
 	{
 		auto n = std::char_traits<wchar_t>::length(line);
 		if (n > 0 && line[n - 1] == '\n')
 			line[--n] = 0;
-		return String(line, n);
+		return String(std::wstring(line, n));
 
 	}
 #else

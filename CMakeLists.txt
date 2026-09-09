@@ -30,6 +30,43 @@ option(BUILD_CALIBRATION  "Build the headless formant-selector calibration tool"
 option(PHON_BUILD_DOCS    "Build and embed documentation (requires sphinx-build)" ON)
 option(WITH_WHISPER       "Enable audio transcription via whisper.cpp" ON)
 
+########################
+##  OPERATING SYSTEM  ##
+########################
+
+# This block comes before the add_subdirectory() calls below on purpose: add_definitions()
+# and include_directories() only reach subdirectories added after them, and stats_host
+# compiles the same phon/analysis sources as the application (they need _USE_MATH_DEFINES
+# and BOOST_ROOT on Windows).
+
+if(WIN32)
+    add_definitions(-DUNICODE -D_UNICODE -D_USE_MATH_DEFINES)
+    add_definitions(-DPHON_WINDOWS=1 -DPHON_MACOS=0 -DPHON_LINUX=0 -DPHON_UNIX=0)
+    # Set this variable before calling cmake on Windows
+    include_directories(${BOOST_ROOT})
+    # Undefine macros for std::min and std::max
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+
+    add_compile_options(/bigobj)
+
+    if(MINGW)
+        add_definitions(-DPHON_POSIX=1 -DPHON_MINGW=1)
+    else()
+        add_definitions(-DPHON_POSIX=0 -DPHON_MINGW=0)
+    endif()
+    if(MSVC)
+        add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    endif()
+else()
+    add_definitions(-DPHON_POSIX=1 -DPHON_UNIX=1 -DPHON_WINDOWS=0 -DPHON_MINGW=0)
+    if(APPLE)
+        add_definitions(-DPHON_MACOS=1 -DPHON_LINUX=0)
+    else()
+        add_definitions(-DPHON_MACOS=0 -DPHON_LINUX=1)
+    endif()
+endif()
+
+
 # --- PCRE2 (vendored, static, 8-bit code units) ----------------------------------------------------
 # Backs the engine's Regex type. Added before the engine subdirectory so that the target exists
 # when phon/engine/CMakeLists.txt links it (it falls back to find_library when built standalone).
@@ -82,36 +119,6 @@ add_definitions(
 #add_definitions(-DPHON_INLA_DEBUG=1)
 #add_definitions(-DPHON_INLA_BAYES_DIAG=1)
 
-########################
-##  OPERATING SYSTEM  ##
-########################
-
-if(WIN32)
-    add_definitions(-DUNICODE -D_UNICODE -D_USE_MATH_DEFINES)
-    add_definitions(-DPHON_WINDOWS=1 -DPHON_MACOS=0 -DPHON_LINUX=0 -DPHON_UNIX=0)
-    # Set this variable before calling cmake on Windows
-    include_directories(${BOOST_ROOT})
-    # Undefine macros for std::min and std::max
-    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
-
-    add_compile_options(/bigobj)
-
-    if(MINGW)
-        add_definitions(-DPHON_POSIX=1 -DPHON_MINGW=1)
-    else()
-        add_definitions(-DPHON_POSIX=0 -DPHON_MINGW=0)
-    endif()
-    if(MSVC)
-        add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    endif()
-else()
-    add_definitions(-DPHON_POSIX=1 -DPHON_UNIX=1 -DPHON_WINDOWS=0 -DPHON_MINGW=0)
-    if(APPLE)
-        add_definitions(-DPHON_MACOS=1 -DPHON_LINUX=0)
-    else()
-        add_definitions(-DPHON_MACOS=0 -DPHON_LINUX=1)
-    endif()
-endif()
 
 
 ###########################

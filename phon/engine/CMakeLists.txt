@@ -112,6 +112,13 @@ target_link_libraries(phon_engine PUBLIC phon_flags)
 find_package(Threads REQUIRED)
 target_link_libraries(phon_engine PUBLIC Threads::Threads)
 
+# base/file_system.cpp calls PathFileExistsW/PathIsDirectoryW on Windows. PUBLIC so
+# that every host of the engine (phon_repl, phon_unit_tests, phon_stats, the tools)
+# gets it, not just the application.
+if(WIN32)
+    target_link_libraries(phon_engine PUBLIC shlwapi)
+endif()
+
 # PCRE2 (8-bit code units) backs the Regex engine, JIT enabled. The repository
 # vendors it (phon/third_party/pcre2) and the root CMakeLists adds that
 # subdirectory before this one, so the target is already defined; the

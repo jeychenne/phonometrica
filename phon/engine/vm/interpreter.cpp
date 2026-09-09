@@ -3,6 +3,7 @@
 
 #include <phon/engine/vm/interpreter.hpp>
 
+#include <phon/engine/base/bits.hpp>
 #include <phon/engine/base/script_error.hpp>
 #include <phon/engine/object/generic.hpp>
 #include <phon/engine/object/class.hpp>
@@ -713,7 +714,7 @@ Value run(Isolate &iso)
 			if (x.is_int() && y.is_int())
 			{
 				int64_t r;
-				if (__builtin_add_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
+				if (add_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
 				    r > Value::INT_MAX_VALUE)
 					iso.raise(String("[Math error] integer overflow"), cur_line());
 				reg_move(base, a, Value::make_int(r));
@@ -734,7 +735,7 @@ Value run(Isolate &iso)
 			if (x.is_int() && y.is_int())
 			{
 				int64_t r;
-				if (__builtin_sub_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
+				if (sub_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
 				    r > Value::INT_MAX_VALUE)
 					iso.raise(String("[Math error] integer overflow"), cur_line());
 				reg_move(base, a, Value::make_int(r));
@@ -753,7 +754,7 @@ Value run(Isolate &iso)
 			if (x.is_int() && y.is_int())
 			{
 				int64_t r;
-				if (__builtin_mul_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
+				if (mul_overflow(x.as_int(), y.as_int(), &r) || r < Value::INT_MIN_VALUE ||
 				    r > Value::INT_MAX_VALUE)
 					iso.raise(String("[Math error] integer overflow"), cur_line());
 				reg_move(base, a, Value::make_int(r));
@@ -915,7 +916,7 @@ Value run(Isolate &iso)
 			if (idx.is_int() && step.is_int())
 			{
 				int64_t ni;
-				if (__builtin_add_overflow(idx.as_int(), step.as_int(), &ni))
+				if (add_overflow(idx.as_int(), step.as_int(), &ni))
 					cont = false, next = idx;
 				else
 				{
