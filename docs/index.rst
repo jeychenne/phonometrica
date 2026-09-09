@@ -49,8 +49,10 @@ Phonometrica |release|
 
 -  Windows:
    `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.8/setup_phonometrica.exe>`__
--  macOS:
+-  macOS (ARM):
    `Phonometrica-0.9.8.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.8/Phonometrica-0.9.8.dmg>`__
+-  macOS (Intel):
+   `Phonometrica-0.9.8-intel.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.8/Phonometrica-0.9.8-intel.dmg>`__
 -  Linux (Debian/Ubuntu):
    `phonometrica-0.9.8.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.8/phonometrica_0.9.8_amd64.deb>`__
 -  source code: `phonometrica-0.9.8.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.8.zip>`__ | `phonometrica-0.9.8.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.8.tar.gz>`__

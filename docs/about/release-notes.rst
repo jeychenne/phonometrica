@@ -4,34 +4,11 @@ Release notes
 0.9.8 (09/09/2026)
 ~~~~~~~~~~~~~~~~~~
 
-**Scripting: a new engine**
+**Changes/new features**
 
-- **Phonometrica's scripting engine has been rewritten from the ground up, and the language has changed.** This is by far the largest change in this release, and it is a **breaking** one: scripts, plugins and coding protocols written for earlier versions will not run unmodified. The new language keeps the look and feel of the old one — newline-terminated statements, ``end``-delimited blocks, 1-based indexing — but a number of constructs have changed, some of them silently. :ref:`page-migration` lists every change with its old and new form, and is the page to read before porting anything.
-
-  The single most important difference is that **names are now resolved when a script is compiled, rather than when it runs**. Calling an unknown function or reading an undeclared variable is an error *before* the first statement executes, so a script with a typo in a rarely-taken branch now fails immediately instead of halfway through an analysis.
-
-  The most common changes you will hit: ``var`` replaces ``let`` and assignment no longer declares; ``for ... in`` replaces ``foreach``; string interpolation is ``{expr}`` rather than ``${expr}``; ``print`` is an ordinary function; only ``Error`` values can be thrown; ``import`` is a compile-time statement rather than a function; and class bodies use ``field`` and ``method init`` instead of bare assignments and ``initialize``.
-
-- **New in the language.** Generic functions with overloads selected by argument type; modules with qualified access and selective imports; value classes and reference classes (``ref class``) with single inheritance; an ``is`` operator for dynamic type tests; first-class named functions and lambdas (``x -> x * 2``); by-reference parameters (``ref``); list comprehensions (``[y for x in xs if c]``); declarations inside ``if``/``elsif``/``while`` conditions (``if var m = match(re, line) then``); a distinction between ``Integer`` and ``Float``, with ``_`` digit separators and scientific notation; ``Table`` and ``Set`` types; and a ``debug`` statement whose code can be compiled out.
-
-- **Errors now come with a backtrace.** A runtime error prints the full call stack in the console, in the script editor, and on the command line, and the failing line is highlighted in the editor. Caught errors are objects carrying ``message``, ``trace`` and ``frames`` rather than plain strings.
-
-- **Concurrency.** Scripts can spawn threads, exchange values through channels, and run array kernels over a thread pool.
-
-- **Known limitation in the script editor.** Autocompletion of built-in functions and call tips work as before, but completion of names *declared in the script you are editing* and live error underlining are temporarily unavailable; they were built on the old engine's parser and have not yet been rebuilt on the new one. Errors are still reported, with their line highlighted, when the script is run.
-
-- **Filling a large container element by element is currently slow** when the container is held in a top-level variable, in a captured variable, or in an object field: each store copies the whole container, so a loop that fills *n* elements costs ``O(n²)``. Filling a container held in a plain local variable inside a function, or appending with ``append``, is unaffected and fast. This is a deliberate trade for correctness that will be lifted in a later release; for now, wrap bulk-filling loops in a function.
-
-**Queries**
-
+- **Phonometrica's scripting engine has been rewritten from the ground up, and the language has changed.** This is by far the largest change in this release, and it is a **breaking** one: scripts written for earlier versions may not run unmodified.
 - **Queries now run on several threads.** Both the text scan and the acoustic measurement of matches are distributed over a pool of worker threads. Parallel execution is on by default. The thread count and the number of files below which a query stays serial live in the ``query`` settings category; they are not exposed in the Preferences dialog in this release.
-
-  Reading the annotation and sound files is still done one file at a time. On the **first** query of a session the files have to be parsed, and that parsing — not the scan — is where most of the time goes, so running the scan in parallel makes the most difference on the queries that follow, once the files are open. Parallel loading is planned for a later release.
-- The query editors now share a **single progress dialog with two progress bars**, one for reading files and one for the work done on them, instead of averaging two very differently-priced stages into one uninformative number.
-
-
-**General**
-
+- The query editors now share a **single progress dialog with two progress bars**, one for reading files and one for the work done on them.
 - **Phonometrica can check for a new version**, on startup and on demand from **Help ▸ Check for Updates...**. The automatic check can be disabled in **Preferences**.
 
 **Fixes**

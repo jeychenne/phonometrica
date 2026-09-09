@@ -15,7 +15,7 @@ a **top bar** for entering formulas, a **left panel** with column and model list
    Phonometrica's statistical modeling is offered as a **preview**. It is not experimental
    in the sense of being untested — it is validated continuously against reference
    implementations in R, and the frequentist suite matches its oracle on every model it
-   covers — but it is a young implementation of a large and intricate body of numerical
+   covers. However, it is a young implementation of a large and intricate body of numerical
    methods, and it has not yet had the years of use across many hands that a mature
    statistical package has had.
 
@@ -27,14 +27,13 @@ a **top bar** for entering formulas, a **left panel** with column and model list
      reads directly, and the analysis view shows the formula it fitted.
    * **Expect small numerical differences.** Optimizers, convergence criteria and
      parameterizations differ between implementations. Coefficients and standard errors
-     should agree to several digits; quantities at the end of long numerical chains —
-     Bayesian posterior summaries, smoothing parameters, EDFs — may differ more.
+     should agree to several digits; quantities at the end of long numerical chains (e.g.
+     Bayesian posterior summaries, smoothing parameters) may differ more.
    * **Some cases are known not to match**, and are documented where they arise: GAM
      smooths use a different basis parameterization from ``mgcv`` (see the note below),
-     and binomial GAMs may fail to converge on near-saturated data.
-   * **Please report discrepancies.** A dataset, a formula, and the two sets of numbers
-     is exactly what is needed to fix them, and reports are what will move these features
-     out of preview.
+     and binomial GAMs may fail to converge on some datasets.
+   * **Please report discrepancies.** A reproducible example with a dataset and model formula is
+     very helpful to investigate and address any discrepancy you may encounter.
 
    Nothing here is restricted or disabled: the label describes the maturity of the
    implementation, not a limitation on what you can do with it.
