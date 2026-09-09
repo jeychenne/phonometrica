@@ -20,7 +20,7 @@
 #include <phon/definitions.hpp>
 
 /* Use byte swapping primitives if available, otherwise default to generic versions */
-#if defined(_WIN32) && !defined(PHON_MINGW)
+#if defined(_WIN32) && !PHON_MINGW
 #include <intrin.h>
 #   define PHON_BYTESWAP16(x) _byteswap_ushort(x)
 #   define PHON_BYTESWAP32(x) _byteswap_ulong(x)
@@ -31,7 +31,7 @@
 #   define PHON_BYTESWAP32(x) OSSwapInt32(x)
 #   define PHON_HAS_BYTESWAP
 #   define PHON_ENDIANNES_KNOWN
-#elif (defined(__GNUC__) || defined(__GNUG__)) && !defined(PHON_MINGW)
+#elif (defined(__GNUC__) || defined(__GNUG__)) && !PHON_MINGW
 #    include <byteswap.h>
 
 #   define PHON_BYTESWAP16(x) __bswap_16(x)

@@ -266,7 +266,7 @@ int main(int argc, char **argv)
 	QApplication::setOrganizationName("Phonometrica");
 	QGuiApplication::setDesktopFileName("Phonometrica");
 
-#ifdef PHON_WINDOWS
+#if PHON_WINDOWS
 	app.setStyleSheet(
 		"QMainWindow::separator { "
 		"    background: palette(mid); "
@@ -279,7 +279,7 @@ int main(int argc, char **argv)
 	);
 #endif
 
-#ifndef PHON_MACOS
+#if !PHON_MACOS
 	app.setWindowIcon(QIcon(":/icons/phonometrica.svg"));
 #endif
 
