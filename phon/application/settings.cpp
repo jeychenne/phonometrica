@@ -70,16 +70,21 @@ static void store_settings(Runtime *rt, const Table &settings)
 	rt->add_global("phon", Variant::make(phon));
 }
 
-void Settings::initialize(Runtime *rt)
+void Settings::initialize(Runtime *rt, const String &program_path)
 {
 	runtime = rt;
 	using namespace filesystem;
 
 #if PHON_WINDOWS
-	std_resource_path = directory_name(rt->program_path());
+	// The executable sits next to the resources it ships with.
+	std_resource_path = directory_name(program_path);
 #elif PHON_MACOS
-	std_resource_path = directory_name(directory_name(directory_name(rt->program_path())));
+	// Phonometrica.app/Contents/MacOS/phonometrica -> Phonometrica.app: three levels
+	// up from the executable, which is where macdeployqt leaves the bundled tree.
+	std_resource_path = directory_name(directory_name(directory_name(program_path)));
 #else
+	// Installed to a fixed prefix; program_path is unused.
+	(void) program_path;
 	std_resource_path = "/usr/local/share/phonometrica";
 #endif
 

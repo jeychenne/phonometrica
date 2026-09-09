@@ -221,7 +221,8 @@ int main(int argc, char **argv)
 		phon_namespace.set(Variant::make(String("settings")), Variant::make(Table()));
 		rt.add_global("phon", Variant::make(phon_namespace));
 	}
-	Settings::initialize(&rt);
+	// argv[0] only matters on Windows/macOS, where it locates the bundled resources.
+	Settings::initialize(&rt, String(argv[0]));
 	Settings::reset_query();
 
 	String dir = filesystem::join(filesystem::temp_directory(), "phon_test_query");

@@ -109,7 +109,7 @@ static void register_script_api(Runtime &rt)
 #endif
 }
 
-static void initialize(Runtime &rt)
+static void initialize(Runtime &rt, const String &program_path)
 {
 #ifdef PHON_GUI
     // Set up the script loader from Qt resources.
@@ -125,7 +125,7 @@ static void initialize(Runtime &rt)
     };
 
 	register_script_api(rt);
-	Settings::initialize(&rt);
+	Settings::initialize(&rt, program_path);
 	Settings::read();
 
 	// Apply the user's script-debug preference before any script is compiled. `debug`
@@ -169,9 +169,9 @@ int main(int argc, char **argv)
 
 	if (text_mode)
 	{
-		// Note: the old Runtime took argv[0] to derive the resources directory on
-		// Windows/macOS (Settings uses it there); the new engine has no program_path.
-		// TODO(A7): restore a program-path channel for the Windows/macOS builds.
+		// No program path is needed here: text mode never calls Settings::initialize
+		// (see register_script_api below), so it never resolves the resources
+		// directory on any platform.
 		Runtime runtime;
 
 		// Register the scripting API (data/stats/document) so scripts run
@@ -301,8 +301,11 @@ int main(int argc, char **argv)
 		argv_paths.append(p);
 	}
 
-	Runtime runtime; // see the text-mode note about argv[0]/program_path
-	initialize(runtime);
+	Runtime runtime;
+	// argv[0] is how Windows and macOS locate their bundled resources. POSIX permits
+	// a null argv[0]; the empty string keeps the failure mode a missing resources
+	// directory rather than a crash before the window exists.
+	initialize(runtime, String((argc > 0 && argv[0]) ? argv[0] : ""));
 
 	int result;
 	{

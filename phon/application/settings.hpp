@@ -33,7 +33,13 @@ class Settings final
 {
 public:
 
-	static void initialize(Runtime *rt);
+	// `program_path` is the host executable's path (argv[0]). Windows and macOS
+	// derive the bundled-resources directory from it; Linux uses a fixed prefix and
+	// ignores it. It is a parameter rather than app-wide state so that the platforms
+	// that need it cannot be left without it — the old engine's Runtime took argv[0]
+	// in its constructor and offered program_path(); the new engine, being a
+	// general-purpose embeddable language, has no business knowing either.
+	static void initialize(Runtime *rt, const String &program_path);
 
 	static void post_initialize();
 
