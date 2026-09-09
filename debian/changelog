@@ -1,3 +1,41 @@
+phonometrica (0.9.8) unstable; urgency=medium
+
+  * the scripting engine has been rewritten from the ground up; this is a
+    breaking change, and scripts, plugins and coding protocols written for
+    earlier versions must be updated (see the "Migrating old scripts" page
+    in the documentation for the full list of changes)
+  * names in scripts are now resolved at compile time, so unknown functions
+    and undeclared variables are reported before the first statement runs
+  * new in the language: generic functions with overloads, modules, value
+    and reference classes, the "is" operator, lambdas, by-reference
+    parameters, list comprehensions, declarations in if/while conditions,
+    separate Integer and Float types, Table and Set, and a "debug" statement
+  * runtime errors now print a full backtrace in the console, the script
+    editor and on the command line
+  * scripts can spawn threads and exchange values through channels
+  * queries now run on several threads: about 8x faster text scans and
+    acoustic measurement on a 16-thread machine, with identical results;
+    on by default, with the thread count and the serial threshold stored in
+    the settings file (not yet exposed in the preferences dialog)
+  * annotation and sound files are still read one at a time, so the first
+    query of a session, which has to parse them, benefits least
+  * the query editors share a single progress dialog with separate bars for
+    reading files and for the work done on them
+  * the statistical modeling features are now labelled as a preview
+  * Phonometrica can check for a new version on startup and from the Help
+    menu; the automatic check can be disabled in the preferences
+  * fixed pitch measurements being read 5 ms too early; pitch values differ
+    slightly from previous releases, appreciably so on moving pitch
+  * fixed the same arithmetic reading outside the pitch contour for time
+    points at the very start or end of a file
+  * fixed preferences being silently reset when a setting contained a brace:
+    the settings file is now parsed as data instead of executed as a script
+  * known limitation: in the script editor, completion of names declared in
+    the script being edited and live error underlining are unavailable in
+    this release; built-in completion and call tips are unaffected
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Wed, 09 Sep 2026 12:00:00 +0000
+
 phonometrica (0.9.7) unstable; urgency=medium
 
   * new "Within event" context option in all query editors: extract the
