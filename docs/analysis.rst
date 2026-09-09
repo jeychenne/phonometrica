@@ -9,16 +9,45 @@ or open an existing ``.phon-analysis`` file. The analysis view is divided into t
 a **top bar** for entering formulas, a **left panel** with column and model lists, and a
 **right panel** with tabs for results, post-hoc tests, diagnostics, and exploratory plots.
 
+.. admonition:: Preview feature
+   :class: important
+
+   Phonometrica's statistical modeling is offered as a **preview**. It is not experimental
+   in the sense of being untested — it is validated continuously against reference
+   implementations in R, and the frequentist suite matches its oracle on every model it
+   covers — but it is a young implementation of a large and intricate body of numerical
+   methods, and it has not yet had the years of use across many hands that a mature
+   statistical package has had.
+
+   What that means in practice:
+
+   * **Check anything you publish.** For results that will appear in a paper or a thesis,
+     refit the final model in R (``lm``/``glm``, ``lme4``, ``glmmTMB``, ``brms``, ``mgcv``)
+     and confirm the numbers agree. Datasets are stored as plain CSV/TSV files, which R
+     reads directly, and the analysis view shows the formula it fitted.
+   * **Expect small numerical differences.** Optimizers, convergence criteria and
+     parameterizations differ between implementations. Coefficients and standard errors
+     should agree to several digits; quantities at the end of long numerical chains —
+     Bayesian posterior summaries, smoothing parameters, EDFs — may differ more.
+   * **Some cases are known not to match**, and are documented where they arise: GAM
+     smooths use a different basis parameterization from ``mgcv`` (see the note below),
+     and binomial GAMs may fail to converge on near-saturated data.
+   * **Please report discrepancies.** A dataset, a formula, and the two sets of numbers
+     is exactly what is needed to fix them, and reports are what will move these features
+     out of preview.
+
+   Nothing here is restricted or disabled: the label describes the maturity of the
+   implementation, not a limitation on what you can do with it.
+
 Support for statistical modeling was introduced in version 0.9. The core estimation
 engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented manually by the lead author.
 More specialized modules, including Negative Binomial regression, Mixed-Effects models, and Bayesian inference, along with post-hoc tests 
 and residual diagnostics, were developed with the assistance of Claude Opus 4.6 (as of April 2026) using algorithmic guidance 
 from established literature and reference implementations in R.
 
-While our internal benchmarking shows an excellent match across a diverse suite of datasets when compared to reference R packages 
-(such as lme4, glmmTMB and brms), these features are provided without a guarantee of absolute numerical parity. Users may encounter minor
-discrepancies due to differences in optimization algorithms, convergence criteria, or numerical stability in edge cases. We welcome community feedback and detailed bug
-reports.
+Our internal benchmarking shows an excellent match across a diverse suite of datasets when
+compared to reference R packages such as lme4, glmmTMB and brms. The preview caveats above
+describe the discrepancies that can nonetheless arise, and how to report them.
 
 .. note::
    **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
