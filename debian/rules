@@ -8,4 +8,12 @@ override_dh_auto_configure:
 		-DCMAKE_INSTALL_PREFIX=/usr/local \
 		-DPHON_BUILD_DOCS=ON
 
+# The engine is added with EXCLUDE_FROM_ALL (see CMakeLists.txt), so a plain `make`
+# does not build phon_unit_tests or phon_repl -- but they are registered with CTest,
+# and dh_auto_test would report them as "Not Run" and fail the package build. Build
+# them by name first, so the package is actually tested rather than silently untested.
+override_dh_auto_test:
+	dh_auto_build -- phon_unit_tests phon_repl
+	dh_auto_test
+
 override_dh_usrlocal:

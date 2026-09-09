@@ -49,7 +49,9 @@ Two suites, neither built by a plain `cmake --build`:
 cmake --build build --target phon_unit_tests
 ./build/phon/engine/phon_unit_tests
 
-# ctest also runs the two phon_repl acceptance cases
+# ctest also runs the two phon_repl acceptance cases, so build phon_repl as well --
+# otherwise ctest reports them as "Not Run" and fails
+cmake --build build --target phon_repl
 ctest --test-dir build --output-on-failure
 
 # Script-level suite, through the application binary
