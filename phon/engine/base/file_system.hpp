@@ -21,12 +21,37 @@
 
 // Platform detection (the engine had none before — Linux-only in practice). POSIX
 // covers Linux and macOS; everything wide-API goes through PHON_WINDOWS.
-#if defined(_WIN32)
-	#define PHON_WINDOWS 1
-	#define PHON_POSIX 0
-#else
-	#define PHON_WINDOWS 0
-	#define PHON_POSIX 1
+//
+// Each macro is defined only when nothing has defined it already. Phonometrica's
+// build system puts both on the command line; the engine also builds standalone
+// (WITH_APPLICATION=OFF), where nothing does, hence the fallback. Defining them
+// unconditionally would silently override the build system for translation units
+// that include this header while leaving the rest with the command-line value —
+// one macro meaning two things in one binary. That is not hypothetical: MinGW is
+// configured as PHON_WINDOWS=1 *and* PHON_POSIX=1 (the wide APIs plus the POSIX
+// headers it provides), which this header used to overwrite with PHON_POSIX=0.
+// So the two are not mutually exclusive, and nothing here may assume they are.
+#ifndef PHON_WINDOWS
+	#if defined(_WIN32)
+		#define PHON_WINDOWS 1
+	#else
+		#define PHON_WINDOWS 0
+	#endif
+#endif
+
+#ifndef PHON_POSIX
+	#if PHON_WINDOWS
+		#define PHON_POSIX 0
+	#else
+		#define PHON_POSIX 1
+	#endif
+#endif
+
+// A build system that disagrees with the compiler about the platform is a
+// configuration error, and a silent one: it would send file_system.cpp down the
+// wrong branch for every path operation in the process.
+#if defined(_WIN32) != (PHON_WINDOWS != 0)
+	#error "PHON_WINDOWS contradicts the compiler's _WIN32 -- check the platform definitions in CMakeLists.txt"
 #endif
 
 namespace phonometrica {
