@@ -4,6 +4,7 @@
 #include <phon/engine/core/hash.hpp>
 #include "test_framework.hpp"
 
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <set>
@@ -57,7 +58,7 @@ TEST_CASE("hash_bytes avalanche: one input bit flips ~half the output bits")
 			std::string x = base;
 			x[byte] = static_cast<char>(x[byte] ^ (1 << bit));
 			uint64_t hx = h(x);
-			total += __builtin_popcountll(h0 ^ hx);
+			total += std::popcount(h0 ^ hx);
 			++trials;
 		}
 	}

@@ -90,6 +90,56 @@ PHON_FORCE_INLINE int floor_log2(uint64_t n) noexcept
 	return 63 - std::countl_zero(n);
 }
 
+// ---------------------------------------------------------------------------
+// Checked arithmetic
+// ---------------------------------------------------------------------------
+//
+// Wrapping add/sub/mul on int64_t that report overflow. GCC and Clang lower the
+// builtins to a single flag test; MSVC has no equivalent, so the portable
+// branch does the two's-complement sign checks by hand (well defined in C++20).
+
+PHON_FORCE_INLINE bool add_overflow(int64_t a, int64_t b, int64_t *result) noexcept
+{
+#if defined(__GNUC__) || defined(__clang__)
+	return __builtin_add_overflow(a, b, result);
+#else
+	const int64_t r = static_cast<int64_t>(static_cast<uint64_t>(a) + static_cast<uint64_t>(b));
+	*result = r;
+	// Overflow iff both operands differ in sign from the result.
+	return ((a ^ r) & (b ^ r)) < 0;
+#endif
+}
+
+PHON_FORCE_INLINE bool sub_overflow(int64_t a, int64_t b, int64_t *result) noexcept
+{
+#if defined(__GNUC__) || defined(__clang__)
+	return __builtin_sub_overflow(a, b, result);
+#else
+	const int64_t r = static_cast<int64_t>(static_cast<uint64_t>(a) - static_cast<uint64_t>(b));
+	*result = r;
+	// Overflow iff the operands differ in sign and the result differs from a.
+	return ((a ^ b) & (a ^ r)) < 0;
+#endif
+}
+
+PHON_FORCE_INLINE bool mul_overflow(int64_t a, int64_t b, int64_t *result) noexcept
+{
+#if defined(__GNUC__) || defined(__clang__)
+	return __builtin_mul_overflow(a, b, result);
+#else
+	const int64_t r = static_cast<int64_t>(static_cast<uint64_t>(a) * static_cast<uint64_t>(b));
+	*result = r;
+	if (a == 0)
+		return false;
+	// INT64_MIN negated is the only case the division check below cannot see.
+	if (a == -1)
+		return b == INT64_MIN;
+	if (b == -1)
+		return a == INT64_MIN;
+	return r / a != b;
+#endif
+}
+
 } // namespace phonometrica
 
 #endif // PHON_BASE_BITS_HPP

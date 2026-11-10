@@ -84,6 +84,19 @@ void set_current_directory(const String &path);
 // The native path separator ("/" or "\\").
 String separator();
 
+// True for any character that separates path components. Windows accepts '/' as
+// well as '\\' throughout the Win32 API, and Phonometrica scripts are written with
+// forward slashes on every platform, so path parsing must recognise both there;
+// only join/append produce a separator, and those keep using the native one.
+inline constexpr bool is_separator(char c) noexcept
+{
+#if PHON_WINDOWS
+	return c == '\\' || c == '/';
+#else
+	return c == '/';
+#endif
+}
+
 // Join two path components with exactly one separator between them.
 String join(std::string_view s1, std::string_view s2);
 // In-place join: append a path component to s1 with exactly one separator between them.
