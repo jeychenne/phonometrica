@@ -1,0 +1,77 @@
+########################################################################################################################
+# Copyright (C) 2019 Julien Eychenne <julien.eychenne@usherbrooke.ca>                                                  #
+#                                                                                                                      #
+# License: GPL3+                                                                                                       #
+#                                                                                                                      #
+# Created: 13/03/2019 (modified: 30/05/2026)                                                                           #
+#                                                                                                                      #
+# Purpose: Add PFC metadata to annotations in a project.                                                               #
+#                                                                                                                      #
+########################################################################################################################
+
+
+# PFC files annotations follow the following naming convention: xxxyyyz.TextGrid, where xxx is the survey code, yyy is
+# the speaker code, and z is the task code (the last letter: "g", "l", "t", "m", and optionally "mx" for a supplementary
+# word list). The corresponding sound file shares the annotation's base name, with a sound extension instead of
+# ".TextGrid" (e.g. "cqead1g.flac" for "cqead1g.TextGrid"). This script extracts these metadata from an annotation's
+# file name, and tries to bind it to the corresponding sound file if it exists. For convenience, we allow other common
+# sound extensions such as FLAC and MP3.
+
+
+# Add your own extensions here if you use something more exotic
+var sound_extensions = [".wav", ".flac", ".mp3"]
+
+# Pattern to find metadata in a TextGrid file. The 3rd group captures the task code: a single letter, optionally
+# followed by "x" (so "mx" is captured as the supplementary word list).
+var re = Regex("^(...)(...)(.x?)\\.[tT]ext[gG]rid$")
+
+# PFC tasks
+var tasks = {
+	"g": "Guided conversation",
+	"l":"Free conversation",
+	"t": "Text",
+	"m": "Word list",
+	"mx": "Supplementary word list"
+}
+
+# Add metadata to a single annotation
+function add_metadata(annot)
+	print("adding metadata to '" & annot.path & "'")
+
+	var file = get_base_name(annot.path)
+	# The new engine's Regex is stateless: match() returns a Match object (or null), and group() reads from that
+	# Match, not from the pattern.
+	var m = match(re, file)
+	if m then
+		# Set properties
+		var survey = to_upper(group(m, 1))
+		var speaker = survey & to_upper(group(m, 2))
+		var task = tasks[group(m, 3)]
+
+		add_property(annot, "Survey", survey)
+		add_property(annot, "Task", task)
+		add_property(annot, "Speaker", speaker)
+
+		# Try to bind the annotation to its sound file. The sound shares the annotation's base name, only the
+		# extension differs (e.g. cqead1g.TextGrid -> cqead1g.flac).
+		var base = strip_extension(annot.path)
+		for ext in sound_extensions do
+			var sound = base & ext
+			if exists(sound) then
+				bind_to_sound(annot, sound)
+				break
+			end
+		end
+	end
+end
+
+# Process all the annotations in the current project
+function tag_annotations()
+	var annots = get_annotations()
+	for annot in annots do
+		add_metadata(annot)
+	end
+	phon.project.refresh()
+end
+
+tag_annotations()
