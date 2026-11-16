@@ -19,9 +19,11 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QStyle>
 #include <phon/gui/conc/property_widget.hpp>
 
 namespace phonometrica {
@@ -48,13 +50,31 @@ void PropertyWidget::setupTextUi()
 	auto values = Property::get_values(m_category);
 	for (auto &v : values)
 	{
-		auto *item = new QListWidgetItem(QString::fromUtf8(v.data(), (int) v.size()));
+		auto label = QString::fromUtf8(v.data(), (int) v.size());
+		auto *item = new QListWidgetItem(label);
 		item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
 		item->setCheckState(Qt::Unchecked);
+		// Full value on hover, as a fallback for values too long to fit.
+		item->setToolTip(label);
 		m_checklist->addItem(item);
 	}
 
 	layout->addWidget(m_checklist);
+
+	// Grow the list so the longest value is shown in full instead of being
+	// elided. The property grid lives in a horizontally scrollable area, so a
+	// wide property adds a scrollbar rather than squeezing its neighbours. The
+	// width is capped so a pathologically long value cannot stretch the editor
+	// without bound; such values stay fully readable through the tooltip.
+	if (m_checklist->count() > 0)
+	{
+		int content = m_checklist->sizeHintForColumn(0);
+		int chrome = 2 * m_checklist->frameWidth()
+		           + m_checklist->style()->pixelMetric(QStyle::PM_ScrollBarExtent)
+		           + m_checklist->style()->pixelMetric(QStyle::PM_IndicatorWidth)
+		           + 12;
+		m_checklist->setMinimumWidth(std::min(content + chrome, 400));
+	}
 
 	connect(m_checklist, &QListWidget::itemChanged, this, &PropertyWidget::modified);
 }
