@@ -1172,11 +1172,23 @@ void AnnotationView::doRemoveAnchor(intptr_t layer_index, double time)
 void AnnotationView::doMoveAnchor(intptr_t layer_index, double from, double to)
 {
 	auto &layer = m_annot->mutable_layer(layer_index);
+	bool has_instants = m_annot->layer_has_instants(layer_index);
 
 	for (intptr_t i = 0; i < layer.count(); i++)
 	{
 		auto &ev = layer.events[i];
-		if (ev.start == from && from != 0)
+		if (has_instants)
+		{
+			// Moving an instant: update both endpoints so it stays an instant,
+			// and leave neighbours untouched.
+			if (ev.start == from)
+			{
+				ev.start = to;
+				ev.end = to;
+				break;
+			}
+		}
+		else if (ev.start == from && from != 0)
 		{
 			ev.start = to;
 			if (i > 0)

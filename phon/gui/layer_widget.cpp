@@ -1177,7 +1177,22 @@ void LayerWidget::mouseReleaseEvent(QMouseEvent *e)
 		auto &layer = m_annot->mutable_layer(m_layer_index);
 		bool ok = false;
 
-		if (m_event_start_selected)
+		if (hasInstants())
+		{
+			// Moving an instant: both start and end must be updated so the
+			// event stays an instant, and neighbours must be left untouched.
+			for (intptr_t i = 0; i < layer.count(); i++)
+			{
+				if (layer.events[i].start == from)
+				{
+					layer.events[i].start = m_dropped_anchor_time;
+					layer.events[i].end = m_dropped_anchor_time;
+					ok = true;
+					break;
+				}
+			}
+		}
+		else if (m_event_start_selected)
 		{
 			for (intptr_t i = 0; i < layer.count(); i++)
 			{
