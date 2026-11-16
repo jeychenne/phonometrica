@@ -2084,6 +2084,9 @@ void ConcordanceView::playMatch(int row)
 		sound->open(); // Ensure audio data is loaded from disk.
 		m_player = std::make_unique<AudioPlayer>(sound);
 		m_player->play(start, end);
+		// play() records device/open failures rather than throwing; surface them.
+		if (m_player->has_error())
+			m_player->raise_error();
 	}
 	catch (std::exception &e)
 	{

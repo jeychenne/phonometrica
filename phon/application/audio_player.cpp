@@ -20,6 +20,8 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <algorithm>
+#include <stdexcept>
 #include <phon/application/audio_player.hpp>
 #include <phon/application/settings.hpp>
 
@@ -59,15 +61,11 @@ AudioPlayer::AudioPlayer(const Handle<Sound> &snd)
 		  m_finished_naturally(false)
 {
 	prepare();
-	initialize_resampling(m_output_sample_rate);
 
-	// Prepare buffers for resampling - Sound object already has data in memory
-	double ratio = static_cast<double>(m_sound_data->sample_rate()) / m_output_sample_rate;
-	size_t max_source_frames = static_cast<size_t>(std::ceil(FRAME_COUNT * ratio)) + 256; // margin for resampler
-
-	m_left_channel_buffer.resize(max_source_frames);
-	m_right_channel_buffer.resize(max_source_frames);
-	m_resampler_output_buffer.resize(FRAME_COUNT * 2); // enough for stereo
+	// Build the resamplers/buffers for an initial guess of the output rate.
+	// play() re-negotiates against the actual output device and reconfigures
+	// if the chosen rate differs.
+	configure_for_output_rate(m_output_sample_rate);
 }
 
 AudioPlayer::~AudioPlayer() {
@@ -115,6 +113,9 @@ int AudioPlayer::playback(void *out, void *, unsigned int nframe, double stream_
 
 	sf_count_t frames_to_read = static_cast<sf_count_t>(std::ceil(nframe * ratio));
 	frames_to_read = std::min(frames_to_read, remaining_frames);
+	// Never read more than the working buffers (and the resampler) can hold,
+	// even if RtAudio hands us a larger block than requested.
+	frames_to_read = std::min(frames_to_read, (sf_count_t) player->m_left_channel_buffer.size());
 
 	if (frames_to_read <= 0) {
 		return KEEP_PLAYING; // Keep silence
@@ -253,26 +254,54 @@ void AudioPlayer::play(double from, double to) {
 		stop();
 	}
 
+	// Clear any error recorded by a previous playback attempt.
+	m_error = nullptr;
+
 	// Configure playback range
 	m_playback_start_frame.store(m_sound_data->time_to_frame(from), std::memory_order_relaxed);
 	m_playback_end_frame.store(m_sound_data->time_to_frame(to), std::memory_order_relaxed);
 	m_current_source_position.store(m_playback_start_frame.load(std::memory_order_relaxed), std::memory_order_relaxed);
 	m_finished_naturally.store(false, std::memory_order_relaxed);
 
-	// Open RtAudio stream
-	unsigned int frame_count = FRAME_COUNT;
+	// Re-query the current default output device so a device connected after
+	// the view was opened (e.g. Bluetooth headphones) is used, rather than one
+	// captured when the player was constructed.
+	m_params.deviceId = m_stream.getDefaultOutputDevice();
 
-	RtAudioErrorType error = m_stream.openStream(&m_params,
-												 nullptr,
-												 RTAUDIO_FLOAT64,
-												 m_output_sample_rate,
-												 &frame_count,
-												 &AudioPlayer::playback,
-												 this,
-												 &m_options);
+	// Try the candidate output rates in order until the device accepts one.
+	// openStream() does not invoke the callback, so a failed attempt leaves
+	// nothing to clean up before the next one.
+	RtAudioErrorType error = RTAUDIO_NO_ERROR;
+	bool opened = false;
 
-	if (error != RTAUDIO_NO_ERROR) {
+	for (unsigned int rate : candidate_output_rates()) {
+		unsigned int frame_count = FRAME_COUNT;
+		error = m_stream.openStream(&m_params,
+									nullptr,
+									RTAUDIO_FLOAT64,
+									rate,
+									&frame_count,
+									&AudioPlayer::playback,
+									this,
+									&m_options);
+
+		if (error == RTAUDIO_NO_ERROR) {
+			// Match the resamplers/buffers to the rate the device accepted.
+			configure_for_output_rate(rate);
+			opened = true;
+			break;
+		}
+
+		PHON_LOG("RtAudio: output device rejected %u Hz (error %d)\n", rate, (int)error);
+	}
+
+	if (!opened) {
 		PHON_LOG("RtAudio Error during stream setup: %d\n", (int)error);
+		m_error = std::make_exception_ptr(std::runtime_error(
+			"Could not play the sound: no sample rate supported by the current "
+			"audio output device was accepted. If you are using Bluetooth "
+			"headphones, try reconnecting them or selecting a different output "
+			"device in your system settings."));
 		return;
 	}
 
@@ -282,6 +311,8 @@ void AudioPlayer::play(double from, double to) {
 	if (error != RTAUDIO_NO_ERROR) {
 		PHON_LOG("RtAudio Error starting stream: %d\n", (int)error);
 		m_stream.closeStream();
+		m_error = std::make_exception_ptr(std::runtime_error(
+			"Could not start audio playback on the current output device."));
 		return;
 	}
 
@@ -289,13 +320,75 @@ void AudioPlayer::play(double from, double to) {
 	m_paused.store(false, std::memory_order_relaxed);
 }
 
-void AudioPlayer::initialize_resampling(uint32_t output_rate) {
-	if (m_left_resampler == nullptr) {
-		auto input_rate = (uint32_t) m_sound_data->sample_rate();
-		// r8brain CDSPResampler24: input_rate, output_rate, max_input_frames
-		m_left_resampler = std::make_unique<Resampler>(input_rate, output_rate, FRAME_COUNT * 2);
-		m_right_resampler = std::make_unique<Resampler>(input_rate, output_rate, FRAME_COUNT * 2);
+void AudioPlayer::configure_for_output_rate(unsigned int output_rate) {
+	if (output_rate == 0)
+		output_rate = (unsigned int) m_sound_data->sample_rate();
+
+	m_output_sample_rate = output_rate;
+
+	// Only rebuild when the rate actually changed: constructing an r8brain
+	// resampler designs its filters, so we avoid doing it on every playback.
+	if (output_rate == m_resampler_output_rate && m_left_resampler && m_right_resampler)
+		return;
+
+	auto input_rate = (uint32_t) m_sound_data->sample_rate();
+
+	// Size for the worst-case number of source frames consumed per callback.
+	// A lower output rate than the file's rate means more source frames per
+	// callback, and RtAudio may hand us a larger block than requested, so we
+	// budget for twice the nominal block times the resampling ratio. The
+	// resampler's max-input-length must match the buffers it is fed.
+	double ratio = static_cast<double>(input_rate) / output_rate;
+	size_t max_source_frames = static_cast<size_t>(std::ceil(FRAME_COUNT * 2 * ratio)) + 256;
+
+	// r8brain CDSPResampler24: input_rate, output_rate, max_input_frames
+	m_left_resampler = std::make_unique<Resampler>(input_rate, output_rate, (int) max_source_frames);
+	m_right_resampler = std::make_unique<Resampler>(input_rate, output_rate, (int) max_source_frames);
+	m_resampler_output_rate = output_rate;
+
+	m_left_channel_buffer.resize(max_source_frames);
+	m_right_channel_buffer.resize(max_source_frames);
+	m_resampler_output_buffer.resize(FRAME_COUNT * 2); // enough for stereo
+}
+
+std::vector<unsigned int> AudioPlayer::candidate_output_rates() {
+	std::vector<unsigned int> candidates;
+	auto add = [&candidates](unsigned int r) {
+		if (r == 0) return;
+		if (std::find(candidates.begin(), candidates.end(), r) == candidates.end())
+			candidates.push_back(r);
+	};
+
+	const unsigned int file_rate = (unsigned int) m_sound_data->sample_rate();
+
+	// Ask the device what it supports. Bluetooth headphones commonly accept
+	// only 48 kHz (or drop to 16/8 kHz in headset mode) and reject the file's
+	// or the platform's assumed rate, so we negotiate instead of assuming.
+	auto info = m_stream.getDeviceInfo(m_params.deviceId);
+
+	if (!info.sampleRates.empty()) {
+		auto supports = [&info](unsigned int r) {
+			return std::find(info.sampleRates.begin(), info.sampleRates.end(), r) != info.sampleRates.end();
+		};
+		// Preferred rate opens most reliably; then rates that avoid or minimise
+		// resampling artefacts, restricted to what the device advertises.
+		add(info.preferredSampleRate);
+		if (supports(file_rate)) add(file_rate);
+		if (supports(48000))     add(48000);
+		if (supports(44100))     add(44100);
+		for (auto r : info.sampleRates) add(r);
 	}
+	else {
+		// Some drivers advertise no explicit list; trust the preferred rate.
+		add(info.preferredSampleRate);
+	}
+
+	// Generic fallbacks in case the device reported nothing usable.
+	add(file_rate);
+	add(48000);
+	add(44100);
+
+	return candidates;
 }
 
 bool AudioPlayer::paused() const {

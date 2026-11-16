@@ -2010,6 +2010,21 @@ void SoundView::startPlayback(QAction *source, double from, double to)
 
 	m_active_play_action = source;
 	m_player->play(from, to);
+
+	// If the output device could not be opened (e.g. Bluetooth headphones that
+	// reject the requested sample rate), report it instead of silently doing
+	// nothing.
+	if (m_player->has_error())
+	{
+		try { m_player->raise_error(); }
+		catch (std::exception &e) {
+			QMessageBox::warning(this, tr("Playback error"), QString::fromUtf8(e.what()));
+		}
+		m_active_play_action = nullptr;
+		m_was_playing = false;
+		return;
+	}
+
 	m_was_playing = true;
 
 	if (source == m_play_action)

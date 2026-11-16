@@ -69,7 +69,17 @@ private:
 						double stream_time, RtAudioStreamStatus status, void *data);
 
 	void prepare();
-	void initialize_resampling(uint32_t output_rate);
+
+	// (Re)build the resamplers and working buffers for the given output sample
+	// rate. A no-op when the rate is unchanged, so it is cheap to call on every
+	// playback.
+	void configure_for_output_rate(unsigned int output_rate);
+
+	// Ordered list of output sample rates to try when opening the stream,
+	// preferring what the current output device actually supports. This is what
+	// lets playback work on devices (notably Bluetooth headphones) that reject
+	// the file's or the platform's assumed rate.
+	std::vector<unsigned int> candidate_output_rates();
 
 	static void play_silence(double *data, size_t size);
 	static void error_callback(RtAudioErrorType type, const std::string &msg);
@@ -92,6 +102,7 @@ private:
 	RtAudio::StreamOptions m_options;
 	RtAudio m_stream;
 	unsigned int m_output_sample_rate = 0;
+	unsigned int m_resampler_output_rate = 0; // rate the resamplers were built for
 
 	// Audio data
 	Handle<Sound> m_sound_data;
