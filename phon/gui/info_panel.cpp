@@ -360,13 +360,25 @@ void InfoPanel::showSingleFilePage(Document *doc)
 
 	if (auto *snd = dynamic_cast<Sound *>(doc))
 	{
-		snd->open();
-		addHeading(tr("Duration:"));
-		addValue(tr("%1 seconds").arg(snd->duration(), 0, 'f', 4));
-		addHeading(tr("Sample rate:"));
-		addValue(tr("%1 Hz").arg(snd->sample_rate()));
-		addHeading(tr("Number of channels:"));
-		addValue(QString::number(snd->nchannel()));
+		// Opening reads the audio file, which can fail if it is missing or
+		// corrupt (e.g. a cloud-synced file that is not available locally).
+		// Report it in the panel rather than letting the exception escape the
+		// selection handler and terminate the application.
+		try
+		{
+			snd->open();
+			addHeading(tr("Duration:"));
+			addValue(tr("%1 seconds").arg(snd->duration(), 0, 'f', 4));
+			addHeading(tr("Sample rate:"));
+			addValue(tr("%1 Hz").arg(snd->sample_rate()));
+			addHeading(tr("Number of channels:"));
+			addValue(QString::number(snd->nchannel()));
+		}
+		catch (std::exception &e)
+		{
+			addHeading(tr("Status:"));
+			addValue(tr("File unavailable"), QString::fromUtf8(e.what()));
+		}
 	}
 	else if (auto *annot = dynamic_cast<Annotation *>(doc))
 	{
