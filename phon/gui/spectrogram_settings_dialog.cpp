@@ -31,7 +31,7 @@ namespace phonometrica {
 // Default values. Must match Settings::reset_spectrogram() in settings.cpp.
 namespace {
 constexpr double DEFAULT_WINDOW_SIZE  = 0.005;   // wide-band
-constexpr int    DEFAULT_FREQ_RANGE   = 5500;    // Hz
+constexpr int    DEFAULT_FREQ_RANGE   = 5000;    // Hz
 constexpr int    DEFAULT_DYN_RANGE    = 70;      // dB
 constexpr int    DEFAULT_PREEMPH      = 1000;    // Hz
 const QString    DEFAULT_WINDOW_TYPE  = QStringLiteral("Gaussian");

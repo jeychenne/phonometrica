@@ -534,11 +534,40 @@ void Settings::post_initialize()
 	if (!contains("waveform")) {
 		reset_waveform();
 	}
+	// The Praat tracker became the default and added several sub-keys
+	// (voicing_cost, octave_cost, use_gaussian, …) that older configs
+	// predate. Those older configs also carry the previous default method
+	// ("reaper"), so probe a Praat-only key and reset the whole table when it
+	// is absent: upgrading users then get the Praat defaults instead of a
+	// stale method. Configs already on the new engine keep their choices.
 	if (!contains("pitch_tracking")) {
 		reset_pitch_tracking();
 	}
+	else {
+		try {
+			Settings::get_boolean("pitch_tracking", "use_gaussian");
+		}
+		catch (...) {
+			reset_pitch_tracking();
+		}
+	}
+
+	// The default spectrogram frequency range was corrected from 5500 Hz to
+	// 5000 Hz. Older configs that still carry the old default are updated once
+	// (guarded by a one-shot flag so a deliberate 5500 Hz choice made later is
+	// not repeatedly overwritten).
 	if (!contains("spectrogram")) {
 		reset_spectrogram();
+	}
+	if (!contains("spectrogram_range_corrected")) {
+		try {
+			if (Settings::get_int("spectrogram", "frequency_range") == 5500)
+				Settings::set_value("spectrogram", "frequency_range", Variant::make<int64_t>(5000));
+		}
+		catch (...) {
+			reset_spectrogram();
+		}
+		Settings::set_value("spectrogram_range_corrected", Variant::make(true));
 	}
 	if (!contains("intensity")) {
 		reset_intensity();
@@ -807,7 +836,7 @@ void Settings::reset_spectrogram()
 {
 	Table table;
 	table.set(str_key("window_size"), Variant::make(0.005));
-	table.set(str_key("frequency_range"), Variant::make<int64_t>(5500));
+	table.set(str_key("frequency_range"), Variant::make<int64_t>(5000));
 	table.set(str_key("window_type"), Variant::make(String("Gaussian")));
 	table.set(str_key("dynamic_range"), Variant::make<int64_t>(70));
 	table.set(str_key("preemphasis_threshold"), Variant::make<int64_t>(1000));
