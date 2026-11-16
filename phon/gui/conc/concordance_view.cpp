@@ -1233,9 +1233,32 @@ void ConcordanceView::onExportCsv()
 		defaultSaveName(m_conc->label(), QStringLiteral(".csv")));
 	if (path.isEmpty()) return;
 
+	// Let the user pick the field separator. Annotation text may contain a
+	// comma used as punctuation, which would otherwise leak from the match
+	// into the neighbouring context column of a comma-separated file. The
+	// last choice is remembered.
+	static const char *separators[] = { ",", ";", "\t" };
+	QStringList labels = { tr("Comma (,)"), tr("Semicolon (;)"), tr("Tab") };
+
+	int current = 0;
+	try {
+		current = Settings::get_int("concordance", "csv_separator");
+	} catch (...) { /* key absent: fall back to comma */ }
+	if (current < 0 || current >= labels.size())
+		current = 0;
+
+	bool ok = false;
+	auto choice = QInputDialog::getItem(this, tr("Export to CSV"),
+		tr("Field separator:"), labels, current, false, &ok);
+	if (!ok) return;
+
+	int index = labels.indexOf(choice);
+	if (index < 0) index = 0;
+	Settings::set_value("concordance", "csv_separator", (int64_t) index);
+
 	try
 	{
-		m_conc->to_csv(String(path.toUtf8().constData()), ",");
+		m_conc->to_csv(String(path.toUtf8().constData()), separators[index]);
 		QMessageBox::information(this, tr("Export"), tr("Concordance exported successfully."));
 	}
 	catch (std::exception &e)
