@@ -27,6 +27,8 @@
 #include <QKeyEvent>
 #include <QApplication>
 #include <QClipboard>
+#include <QToolButton>
+#include <QHBoxLayout>
 #include <phon/gui/file_manager.hpp>
 #include <phon/gui/project_model.hpp>
 #include <phon/gui/extract_layers_dialog.hpp>
@@ -283,6 +285,31 @@ void FileManager::setupUi()
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(0);
 
+	// Toolbar row: always-visible expand/collapse actions for the whole tree.
+	// These mirror the per-folder "Expand all" / "Collapse all" context-menu
+	// entries but are discoverable without right-clicking.
+	auto *toolbar = new QHBoxLayout;
+	toolbar->setContentsMargins(4, 2, 4, 2);
+	toolbar->setSpacing(2);
+
+	auto make_tool_button = [this](const QString &icon, const QString &tip) {
+		auto *btn = new QToolButton(this);
+		btn->setIcon(QIcon(icon));
+		btn->setToolTip(tip);
+		btn->setAutoRaise(true);
+		btn->setFocusPolicy(Qt::NoFocus);
+		return btn;
+	};
+
+	auto *expand_btn = make_tool_button(":/icons/chevrons-up-down.svg", tr("Expand all"));
+	auto *collapse_btn = make_tool_button(":/icons/chevrons-down-up.svg", tr("Collapse all"));
+	connect(expand_btn, &QToolButton::clicked, this, [this]() { m_tree->expandAll(); });
+	connect(collapse_btn, &QToolButton::clicked, this, [this]() { m_tree->collapseAll(); });
+
+	toolbar->addStretch();
+	toolbar->addWidget(expand_btn);
+	toolbar->addWidget(collapse_btn);
+	layout->addLayout(toolbar);
 
 	// Tree view
 	m_tree = new QTreeView(this);
@@ -452,6 +479,23 @@ void FileManager::expandRoots()
 void FileManager::expandAll()
 {
 	m_tree->expandAll();
+}
+
+void FileManager::collapseRecursively(const QModelIndex &proxyIndex)
+{
+	// QTreeView has expandRecursively() but no collapse counterpart, and
+	// collapse() only collapses the node itself: the view keeps the stored
+	// expansion state of the descendants, so re-expanding the node would show
+	// the whole subtree expanded again. Collapse every descendant first, then
+	// the node, so the subtree is genuinely folded.
+	int rows = m_proxy->rowCount(proxyIndex);
+	for (int i = 0; i < rows; i++)
+	{
+		QModelIndex child = m_proxy->index(i, 0, proxyIndex);
+		if (m_proxy->hasChildren(child))
+			collapseRecursively(child);
+	}
+	m_tree->collapse(proxyIndex);
 }
 
 void FileManager::saveExpandedState(const QModelIndex &proxyParent)
@@ -879,7 +923,7 @@ void FileManager::buildRootContextMenu(QMenu &menu, const QModelIndex &sourceInd
 		});
 
 		menu.addAction(tr("Collapse all"), [this, proxyIndex]() {
-			m_tree->collapse(proxyIndex);
+			collapseRecursively(proxyIndex);
 		});
 
 		menu.addSeparator();

@@ -2717,11 +2717,16 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 		if (split)
 		{
 			// ── Split view: open annotation beside the concordance ──
+			// The panel holds at most two views: the concordance (primary, on
+			// the left) and a single annotation (on the right). Opening a match
+			// updates the annotation on the right instead of ever adding a
+			// third panel, even when the match comes from a different file.
 			auto *panel = findPanelForView(view);
 			if (!panel)
 				return;
 
-			// Check if this annotation is already in the same panel.
+			// If the requested annotation is already the one shown on the
+			// right, just navigate to the match.
 			AnnotationView *av = nullptr;
 			for (auto *v : panel->views())
 			{
@@ -2735,7 +2740,17 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 
 			if (!av)
 			{
-				// Check if this annotation is open in another tab.
+				// A different annotation (or none) is on the right. Close any
+				// secondary view(s) first so we never exceed two panels,
+				// honouring unsaved-changes prompts. Abort if the user cancels.
+				while (panel->isSplit())
+				{
+					if (!panel->closeSecondaryView())
+						return;
+				}
+
+				// Reuse the annotation if it is already open in another tab,
+				// moving it into the concordance panel.
 				for (int i = 0; i < m_viewer->count(); i++)
 				{
 					auto *other = qobject_cast<ViewPanel *>(m_viewer->widget(i));
@@ -2756,16 +2771,16 @@ void MainWindow::openConcordance(Handle<Concordance> conc)
 					}
 					if (av) break;
 				}
-			}
 
-			if (!av)
-			{
-				// Create a new AnnotationView and add it to the concordance's panel.
-				av = createAnnotationView(annot);
-				if (av)
+				if (!av)
 				{
-					connect(av, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
-					panel->addView(av, Qt::Horizontal);
+					// Otherwise create a new AnnotationView on the right.
+					av = createAnnotationView(annot);
+					if (av)
+					{
+						connect(av, &View::undoRedoChanged, this, &MainWindow::updateUndoRedoState);
+						panel->addView(av, Qt::Horizontal);
+					}
 				}
 			}
 

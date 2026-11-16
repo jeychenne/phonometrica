@@ -86,6 +86,10 @@ public:
 	// Expand all visible items (used when filtering).
 	void expandAll();
 
+	// Collapse a subtree fully: collapses every descendant as well as the
+	// node itself (QTreeView::collapse() only folds the node).
+	void collapseRecursively(const QModelIndex &proxyIndex);
+
 	// Access the underlying model for external use.
 	ProjectModel *model() const { return m_model; }
 

@@ -460,6 +460,8 @@ if(WITH_GUI)
         icons/settings.svg
         icons/refresh-cw.svg
         icons/voice.svg
+        icons/chevrons-up-down.svg
+        icons/chevrons-down-up.svg
     )
 
     qt6_add_resources(${PROJECT_NAME} "std" FILES
