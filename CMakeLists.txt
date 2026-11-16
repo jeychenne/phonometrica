@@ -485,65 +485,119 @@ if(WITH_GUI)
     # sidebar navigation.
 
     if(PHON_BUILD_DOCS)
-        find_program(SPHINX_BUILD sphinx-build)
+        # --- Locate Sphinx, robustly ---------------------------------------
+        # IDEs such as CLion do not inherit the login shell PATH, and a
+        # `pip install --user` sphinx-build lives in a per-user bin directory
+        # that is rarely exported. Search those directories explicitly, then
+        # fall back to running Sphinx as a Python module, so any importable
+        # Sphinx is used regardless of PATH.
+        find_program(SPHINX_BUILD sphinx-build
+            PATHS
+                "$ENV{HOME}/Library/Python/3.14/bin"
+                "$ENV{HOME}/Library/Python/3.13/bin"
+                "$ENV{HOME}/Library/Python/3.12/bin"
+                "$ENV{HOME}/Library/Python/3.11/bin"
+                "$ENV{HOME}/Library/Python/3.10/bin"
+                "$ENV{HOME}/Library/Python/3.9/bin"
+                "$ENV{HOME}/.local/bin"
+        )
+
+        set(SPHINX_COMMAND "")
+        set(SPHINX_DESC "")
         if(SPHINX_BUILD)
-            set(DOC_HTML_DIR "${CMAKE_BINARY_DIR}/docs_html")
-            set(DOC_STAMP    "${DOC_HTML_DIR}/.stamp")
-
-            file(GLOB_RECURSE DOC_SOURCES
-                "${CMAKE_SOURCE_DIR}/docs/*.rst"
-                "${CMAKE_SOURCE_DIR}/docs/conf.py"
-                "${CMAKE_SOURCE_DIR}/docs/phon_lexer/phon/lexer.py"
-            )
-
-            # Run Sphinx with the standard html builder so the default theme,
-            # JS search index and sidebar TOC all work in a real browser.
-            add_custom_command(
-                OUTPUT  "${DOC_STAMP}"
-                COMMAND "${SPHINX_BUILD}" -q -b html
-                        "${CMAKE_SOURCE_DIR}/docs" "${DOC_HTML_DIR}"
-                COMMAND ${CMAKE_COMMAND} -E touch "${DOC_STAMP}"
-                DEPENDS ${DOC_SOURCES}
-                COMMENT "Building documentation with Sphinx..."
-            )
-
-            add_custom_target(phon-docs ALL DEPENDS "${DOC_STAMP}")
-            add_dependencies(${PROJECT_NAME} phon-docs)
-
-            # Place the docs where HelpBrowser::resolveDocsRoot() will find
-            # them when run from the build tree, and where the Inno Setup
-            # deploy workflow / macOS bundle can pick them up.
-            if(APPLE)
-                # Inside the .app bundle: Contents/Resources/docs/
-                add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory
-                        "${DOC_HTML_DIR}"
-                        "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Resources/docs"
-                    COMMENT "Copying documentation into .app bundle...")
-            else()
-                # Linux build dir / Windows build dir: <binary>/docs/
-                add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                    COMMAND ${CMAKE_COMMAND} -E copy_directory
-                        "${DOC_HTML_DIR}"
-                        "$<TARGET_FILE_DIR:${PROJECT_NAME}>/docs"
-                    COMMENT "Copying documentation alongside the binary...")
-            endif()
-
-            # Linux install: ship docs to <prefix>/share/phonometrica/docs/
-            # so HelpBrowser finds them via ../share/phonometrica/docs.
-            if(UNIX AND NOT APPLE)
-                include(GNUInstallDirs)
-                install(DIRECTORY "${DOC_HTML_DIR}/"
-                        DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/phonometrica/docs"
-                        PATTERN ".stamp" EXCLUDE
-                        PATTERN ".buildinfo" EXCLUDE)
-            endif()
-
-            message(STATUS "Documentation will be built and bundled (sphinx-build found at ${SPHINX_BUILD})")
+            set(SPHINX_COMMAND "${SPHINX_BUILD}")
+            set(SPHINX_DESC    "${SPHINX_BUILD}")
         else()
-            message(STATUS "sphinx-build not found -- documentation will not be embedded. "
-                           "Install Sphinx (pip install sphinx) or set PHON_BUILD_DOCS=OFF to silence this.")
+            find_package(Python3 COMPONENTS Interpreter QUIET)
+            if(Python3_Interpreter_FOUND)
+                execute_process(
+                    COMMAND "${Python3_EXECUTABLE}" -c "import sphinx"
+                    RESULT_VARIABLE PHON_SPHINX_IMPORT_RESULT
+                    OUTPUT_QUIET ERROR_QUIET)
+                if(PHON_SPHINX_IMPORT_RESULT EQUAL 0)
+                    set(SPHINX_COMMAND "${Python3_EXECUTABLE}" -m sphinx)
+                    set(SPHINX_DESC    "${Python3_EXECUTABLE} -m sphinx")
+                endif()
+            endif()
         endif()
+
+        # Hard failure: never let a build (and therefore a release bundle) be
+        # produced without documentation while PHON_BUILD_DOCS is ON. Building
+        # without docs must be a deliberate, visible choice.
+        if(NOT SPHINX_COMMAND)
+            message(FATAL_ERROR
+                "PHON_BUILD_DOCS is ON but Sphinx was not found, so the help "
+                "would be missing from the application. Fix one of the following "
+                "and reconfigure:\n"
+                "  * install Sphinx (pip install sphinx), with its sphinx-build on "
+                "PATH or in ~/.local/bin or ~/Library/Python/<ver>/bin;\n"
+                "  * point CMake at it with -DSPHINX_BUILD=/full/path/to/sphinx-build "
+                "(in CLion: Settings > Build, Execution, Deployment > CMake, "
+                "'CMake options');\n"
+                "  * or set -DPHON_BUILD_DOCS=OFF to build without documentation "
+                "on purpose.")
+        endif()
+
+        set(DOC_HTML_DIR "${CMAKE_BINARY_DIR}/docs_html")
+        set(DOC_STAMP    "${DOC_HTML_DIR}/.stamp")
+
+        file(GLOB_RECURSE DOC_SOURCES
+            "${CMAKE_SOURCE_DIR}/docs/*.rst"
+            "${CMAKE_SOURCE_DIR}/docs/conf.py"
+            "${CMAKE_SOURCE_DIR}/docs/phon_lexer/phon/lexer.py"
+        )
+
+        # Run Sphinx with the standard html builder so the default theme,
+        # JS search index and sidebar TOC all work in a real browser.
+        add_custom_command(
+            OUTPUT  "${DOC_STAMP}"
+            COMMAND ${SPHINX_COMMAND} -q -b html
+                    "${CMAKE_SOURCE_DIR}/docs" "${DOC_HTML_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E touch "${DOC_STAMP}"
+            DEPENDS ${DOC_SOURCES}
+            COMMENT "Building documentation with Sphinx..."
+            VERBATIM
+        )
+
+        add_custom_target(phon-docs ALL DEPENDS "${DOC_STAMP}")
+        add_dependencies(${PROJECT_NAME} phon-docs)
+
+        # Place the docs where HelpBrowser::resolveDocsRoot() will find them
+        # when run from the build tree, and where the macOS bundle / Inno Setup
+        # deploy workflow can pick them up.
+        if(APPLE)
+            # Inside the .app bundle: Contents/Resources/docs/
+            set(DOC_DEPLOY_DIR "$<TARGET_BUNDLE_CONTENT_DIR:${PROJECT_NAME}>/Resources/docs")
+            set(DOC_DEPLOY_COMMENT "Copying documentation into .app bundle...")
+        else()
+            # Linux build dir / Windows build dir: <binary>/docs/
+            set(DOC_DEPLOY_DIR "$<TARGET_FILE_DIR:${PROJECT_NAME}>/docs")
+            set(DOC_DEPLOY_COMMENT "Copying documentation alongside the binary...")
+        endif()
+
+        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${DOC_HTML_DIR}" "${DOC_DEPLOY_DIR}"
+            # Fail the build if the docs did not actually land where the app
+            # looks for them, so a bundle can never be shipped without help.
+            COMMAND ${CMAKE_COMMAND}
+                    "-DDOCS_INDEX=${DOC_DEPLOY_DIR}/index.html"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/verify_docs.cmake"
+            COMMENT "${DOC_DEPLOY_COMMENT}"
+            VERBATIM
+        )
+
+        # Linux install: ship docs to <prefix>/share/phonometrica/docs/
+        # so HelpBrowser finds them via ../share/phonometrica/docs.
+        if(UNIX AND NOT APPLE)
+            include(GNUInstallDirs)
+            install(DIRECTORY "${DOC_HTML_DIR}/"
+                    DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/phonometrica/docs"
+                    PATTERN ".stamp" EXCLUDE
+                    PATTERN ".buildinfo" EXCLUDE)
+        endif()
+
+        message(STATUS "Documentation will be built and bundled (using ${SPHINX_DESC})")
     endif()
 
 endif()
