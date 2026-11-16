@@ -1,6 +1,24 @@
 Release notes
 -------------
 
+0.9.9 (16/11/2026)
+~~~~~~~~~~~~~~~~~~
+
+**Fixes**
+
+- Playback now works with **Bluetooth headphones** and other output devices: Phonometrica negotiates a sample rate the device accepts instead of assuming one, and reports an error if none is available.
+- Moving an anchor on an **instant layer** no longer turns the instant into an interval.
+- Selecting a sound file that is **missing or unreadable** no longer crashes the application; it is reported instead.
+- The spectrogram frequency range now **defaults to 5000 Hz**, and pitch tracking now **defaults to the Praat algorithm**.
+- In concordance views, opening a match in split view keeps **at most two panes**: the annotation on the right is updated in place instead of adding more panes.
+- CSV export of a concordance now lets you **choose the field separator** (comma, semicolon or tab), so a comma inside an annotation no longer spills into the neighbouring context column.
+
+**Interface**
+
+- The file manager now has **Expand all / Collapse all** buttons, and *Collapse all* folds the whole tree rather than only the top level.
+- Property value lists in the query editors **widen to fit the longest value**, with the full value shown on hover.
+
+
 0.9.8 (09/09/2026)
 ~~~~~~~~~~~~~~~~~~
 

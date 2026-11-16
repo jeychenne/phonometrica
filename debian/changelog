@@ -1,3 +1,23 @@
+phonometrica (0.9.9) unstable; urgency=medium
+
+  * audio playback now works with Bluetooth headphones and other output
+    devices: a sample rate the device accepts is negotiated instead of
+    assumed, and an error is reported if none is available
+  * fixed moving an anchor on an instant layer turning the instant into an
+    interval
+  * fixed a crash when selecting a sound file that is missing or unreadable
+  * the spectrogram frequency range now defaults to 5000 Hz and pitch
+    tracking now defaults to the Praat algorithm
+  * concordance split view now keeps at most two panes, updating the
+    annotation on the right in place instead of opening more
+  * CSV export of a concordance lets the user choose the field separator
+    (comma, semicolon or tab)
+  * the file manager has expand all / collapse all buttons, and collapse all
+    now folds the whole tree
+  * property value lists in the query editors widen to fit the longest value
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Mon, 16 Nov 2026 12:00:00 +0000
+
 phonometrica (0.9.8) unstable; urgency=medium
 
   * the scripting engine has been rewritten from the ground up; this is a
