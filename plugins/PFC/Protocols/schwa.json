@@ -33,7 +33,7 @@
             ]
         },
 
-        {"name": "Left context", "match_all": "[1-5]",
+        {"name": "Left", "match_all": "[1-5]",
             "values": [
                 {"match": "1", 	"text": "vowel"},
                 {"match": "2", 	"text": "consonant"},
@@ -43,7 +43,7 @@
             ]		
         },
         
-        {"name": "Right context", "match_all": "[1-4]",
+        {"name": "Right", "match_all": "[1-4]",
             "values": [
                 {"match": "1", "text": "vowel"},
                 {"match": "2", "text": "consonant"},
