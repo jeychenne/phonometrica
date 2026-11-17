@@ -46,14 +46,17 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <phon/runtime.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/sound.hpp>
 #include <phon/analysis/formant_selection.hpp>
+#include <phon/analysis/formant_spectral.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/weenink.hpp>
+#include <phon/application/conc/query_pool.hpp>
 
 using namespace phonometrica;
 
@@ -87,6 +90,13 @@ constexpr int    CHANNEL   = 1;
 #define MAX_SELECT_POINTS 16
 int g_select_points = MAX_SELECT_POINTS; // selection sampling cap; override with --select-points
 int g_measure_pts   = 1;                 // frames averaged for the measurement; override with --measure-pts
+double g_lifter_hz  = 300.0;             // cepstral lifter cutoff (Hz);        override with --lifter
+double g_peak_prom  = 2.0;               // envelope peak prominence floor (dB); override with --peak-prom
+double g_claim_tol  = 0.75;              // peak claim tolerance (ERB);          override with --claim-tol
+double g_lambda_Dm  = 0.0;               // spectral domination weight;         override with --lam-dm
+double g_lambda_Pk  = 0.0;               // spectral peak-support weight; override with --lam-pk
+double g_lambda_Ux  = 0.0;               // unexplained-peak weight;      override with --lam-ux
+int g_jobs          = 0;                 // cache-build worker threads (0 = hardware concurrency); override with --jobs
 
 // One cached candidate: its scaled term breakdown (independent of the lambdas) and its midpoint formants.
 struct CachedCand {
@@ -94,6 +104,9 @@ struct CachedCand {
 	double f[3] = {std::nan(""), std::nan(""), std::nan("")};
 	double local[3] = {std::nan(""), std::nan(""), std::nan("")}; // per-formant local badness (roughness + bandwidth)
 	double heur = 0.0; // Fast Track-style coarse plausibility-heuristic violations (count)
+	double Pk = 0.0;   // spectral peak support (scaled)
+	double Ux = 0.0;   // unexplained-peak prominence (scaled)
+	double Dm = 0.0;   // domination deficit (scaled)
 	std::vector<double> poles; // ALL pole frequencies at the measurement point (for the persistence probe)
 };
 
@@ -103,6 +116,7 @@ struct CachedToken {
 	std::vector<CachedCand> cands;   // intrinsic candidates over the <ceiling, order> grid
 	double weenink_f[3] = {std::nan(""), std::nan(""), std::nan("")};
 	double base_f[3]    = {std::nan(""), std::nan(""), std::nan("")};
+	speech::SpectralEnvelope env;    // cepstrally smoothed envelope peaks, computed once per token
 };
 
 struct ErrAcc {
@@ -127,6 +141,14 @@ static inline double intrinsic_badness(const speech::CandidateScore &s, const sp
 	     + w.lambda_D * s.D + w.lambda_Bd * s.Bd + w.lambda_Cln * s.Cln + s.O;
 }
 
+// Full badness of a cached candidate: the intrinsic ladder plus the spectral evidence terms, whose weights live in
+// globals so a sweep can move them without rebuilding. Weights default to 0, so with no --lam-* flag the selector is
+// bit-identical to the shipping one.
+static inline double cand_badness(const CachedCand &c, const speech::IntrinsicWeights &w)
+{
+	return intrinsic_badness(c.sc, w) + g_lambda_Pk * c.Pk + g_lambda_Ux * c.Ux + g_lambda_Dm * c.Dm;
+}
+
 // Pick the best cached intrinsic candidate under the given weights and return its midpoint formants.
 static const double *
 select_cached(const CachedToken &ct, const speech::IntrinsicWeights &w)
@@ -134,7 +156,7 @@ select_cached(const CachedToken &ct, const speech::IntrinsicWeights &w)
 	const CachedCand *best = nullptr;
 	double best_b = (std::numeric_limits<double>::max)();
 	for (auto &c : ct.cands) {
-		double b = intrinsic_badness(c.sc, w);
+		double b = cand_badness(c, w);
 		if (b < best_b) { best_b = b; best = &c; }
 	}
 	return best ? best->f : nullptr;
@@ -183,6 +205,24 @@ static bool build_token_cache(CachedToken &ct)
 	w.nominal_spacing = cfg.spacing;
 
 	Matrix<double> F(npoint, NFORMANT), B(npoint, NFORMANT);
+
+	// Spectral evidence, computed once per token and shared by every candidate. The window matches the one the
+	// measurement itself uses (get_formants doubles win_size for its Gaussian taper), centred on the measurement
+	// point, so the peak list describes the same stretch of signal the formants are read from.
+	{
+		snd.open(); // get_formants() opens lazily, and the grid loop below has not run yet
+		double t_meas = 0.5 * (tk.t1 + tk.t2);
+		auto first = snd.time_to_frame(t_meas - WIN_SIZE);
+		auto last  = snd.time_to_frame(t_meas + WIN_SIZE);
+		if (first >= 1 && last <= snd.channel_size() && last > first) {
+			try {
+				auto frame = snd.get_channel(CHANNEL, first, last);
+				speech::SpectralWeights sw; sw.lifter_hz = g_lifter_hz; sw.peak_min_prominence = g_peak_prom; sw.claim_tol_erb = g_claim_tol;
+				ct.env = speech::compute_spectral_envelope(frame.data(), (long) frame.size(),
+				                                          snd.sample_rate(), cfg.c_hi, sw);
+			} catch (...) { }
+		}
+	}
 
 	for (double nyq = cfg.c_lo; nyq <= cfg.c_hi; nyq += g_freq_step) {
 		for (int order = g_order_lo; order <= g_order_hi; ++order) {
@@ -246,6 +286,13 @@ static bool build_token_cache(CachedToken &ct)
 				}
 			}
 			if (!measure_formants(snd, tk.t1, tk.t2, nyq, order, cc.f)) continue;
+			// Spectral evidence for this candidate: whether its formants sit on the token's own envelope peaks, and
+			// whether it skipped one. Scored on cc.f, so the term judges exactly what the candidate would report.
+			{
+				speech::SpectralWeights sw; sw.lifter_hz = g_lifter_hz; sw.peak_min_prominence = g_peak_prom; sw.claim_tol_erb = g_claim_tol;
+				auto ss = speech::score_spectral(ct.env, cc.f, 3, nyq, sw);
+				if (ss.valid) { cc.Pk = ss.Pk; cc.Ux = ss.Ux; cc.Dm = ss.Dm; }
+			}
 			// full pole set at the midpoint (request many formants; keep the ones the model resolves below the ceiling)
 			try {
 				double tm = 0.5 * (tk.t1 + tk.t2);
@@ -300,6 +347,204 @@ evaluate(const std::vector<CachedToken> &cache, Ref ref, const speech::Intrinsic
 static double score_intrinsic(const std::vector<CachedToken> &cache, const speech::IntrinsicWeights &w)
 {
 	ErrAcc o; evaluate(cache, Ref::Intrinsic, w, o, nullptr, nullptr); return o.mae_all();
+}
+
+// Spectral-envelope diagnostic. Before asking whether the spectral terms select well, ask whether the evidence they
+// rest on is there at all: for every token, how far is each GOLD formant from the nearest envelope peak? If the true
+// formants are peaks, the envelope carries the signal and any failure is in the scoring; if they are not, the envelope
+// itself is wrong and no weighting will rescue it.
+static void run_spec_diag(const std::vector<CachedToken> &cache)
+{
+	long npeaks = 0, ntok = 0;
+	std::vector<double> dist[3];
+	long within100[3] = {0,0,0}, within50[3] = {0,0,0}, ngold[3] = {0,0,0};
+
+	for (auto &ct : cache) {
+		if (!ct.env.valid) continue;
+		++ntok; npeaks += (long) ct.env.peaks.size();
+		for (int k = 0; k < 3; ++k) {
+			double g = ct.tk->gold[k];
+			if (!(g > 0)) continue;
+			++ngold[k];
+			double best = (std::numeric_limits<double>::max)();
+			for (auto &pk : ct.env.peaks) best = (std::min)(best, std::abs(pk.freq - g));
+			if (best < (std::numeric_limits<double>::max)()) {
+				dist[k].push_back(best);
+				if (best <= 100.0) ++within100[k];
+				if (best <= 50.0)  ++within50[k];
+			}
+		}
+	}
+
+	std::printf("\n===== Spectral envelope diagnostic =====\n");
+	std::printf("tokens with a valid envelope: %ld   mean peaks/token: %.2f\n",
+	            ntok, ntok ? double(npeaks) / double(ntok) : 0.0);
+	std::printf("%-6s %12s %12s %12s %12s\n", "gold", "median d(Hz)", "mean d(Hz)", "within 50Hz", "within 100Hz");
+	for (int k = 0; k < 3; ++k) {
+		double med = finite_median(dist[k]);
+		double mean = 0; for (double d : dist[k]) mean += d;
+		if (!dist[k].empty()) mean /= double(dist[k].size());
+		std::printf("F%-5d %12.1f %12.1f %11.1f%% %11.1f%%\n", k + 1, med, mean,
+		            ngold[k] ? 100.0 * within50[k] / ngold[k] : 0.0,
+		            ngold[k] ? 100.0 * within100[k] / ngold[k] : 0.0);
+	}
+
+	// A few worked examples: gold, what we select, and the peak list, so the failure mode is visible rather than
+	// inferred from summary statistics.
+	std::printf("\nexamples (gold | selected | envelope peaks as freq:prominence):\n");
+	int shown = 0;
+	for (auto &ct : cache) {
+		if (!ct.env.valid || shown >= 12) continue;
+		if (shown % 3 != 0) { ++shown; continue; }
+		const double *g = ct.tk->gold;
+		std::printf("  %-4s gold %5.0f %5.0f %5.0f | peaks:", ct.tk->vowel.c_str(), g[0], g[1], g[2]);
+		for (auto &pk : ct.env.peaks) std::printf(" %.0f:%.1f", pk.freq, pk.prominence);
+		std::printf("\n");
+		++shown;
+	}
+	std::fflush(stdout);
+}
+
+// Targeted failure diagnostic. The summary statistics say the envelope finds F1 and F2 well and F3 poorly, but what
+// decides whether the unexplained-peak term can work is narrower: on the tokens where the selector gets F3 badly
+// wrong, is the TRUE F3 present in the peak list and left unclaimed? If it is, the term has something to fire on and
+// the problem is the weighting; if it is not -- because F2/F3 compression merged them into one envelope peak -- then
+// no amount of spectral scoring recovers those tokens and the idea is refuted for exactly the vowels that matter.
+static void run_spec_fail(const std::vector<CachedToken> &cache, const speech::IntrinsicWeights &w)
+{
+	std::map<std::string, long> nbad, has_peak, fires, merged;
+	long tot_bad = 0, tot_haspeak = 0, tot_fires = 0, tot_merged = 0;
+	speech::SpectralWeights sw; sw.lifter_hz = g_lifter_hz; sw.peak_min_prominence = g_peak_prom; sw.claim_tol_erb = g_claim_tol;
+
+	std::printf("\n===== F3 failure anatomy (|selected F3 - gold F3| > 200 Hz) =====\n");
+	int shown = 0;
+	for (auto &ct : cache) {
+		const double *f = select_cached(ct, w);
+		if (!f || !ct.env.valid) continue;
+		double g3 = ct.tk->gold[2];
+		if (!(g3 > 0) || std::isnan(f[2])) continue;
+		if (std::abs(f[2] - g3) <= 200.0) continue;
+
+		++tot_bad; ++nbad[ct.tk->vowel];
+
+		// Is the true F3 an envelope peak?
+		double dpk = (std::numeric_limits<double>::max)(); double prom_at = 0;
+		for (auto &pk : ct.env.peaks)
+			if (std::abs(pk.freq - g3) < dpk) { dpk = std::abs(pk.freq - g3); prom_at = pk.prominence; }
+		bool present = (dpk <= 150.0 && prom_at >= sw.min_prominence);
+		if (present) { ++tot_haspeak; ++has_peak[ct.tk->vowel]; }
+
+		// Would the term fire: is that peak below our selected F3 and unclaimed by F1/F2/F3?
+		auto erbf = [](double x){ return 21.4 * std::log10(0.00437 * x + 1.0); };
+		bool unclaimed = true;
+		for (int k = 0; k < 3; ++k)
+			if (!std::isnan(f[k]) && std::abs(erbf(f[k]) - erbf(g3)) <= sw.claim_tol_erb) unclaimed = false;
+		if (present && unclaimed && g3 < f[2]) { ++tot_fires; ++fires[ct.tk->vowel]; }
+
+		// Merged with F2: the true F3 sits within one claim tolerance of the true F2, so they cannot be two peaks.
+		double g2 = ct.tk->gold[1];
+		if (g2 > 0 && std::abs(erbf(g3) - erbf(g2)) <= sw.claim_tol_erb) { ++tot_merged; ++merged[ct.tk->vowel]; }
+
+		if (shown < 10 && (ct.tk->vowel == "er" || ct.tk->vowel == "oa" || ct.tk->vowel == "uw")) {
+			std::printf("  %-3s gold %5.0f %5.0f %5.0f | sel %5.0f %5.0f %5.0f | d(goldF3,peak)=%5.0f prom=%4.1f | peaks:",
+			            ct.tk->vowel.c_str(), ct.tk->gold[0], ct.tk->gold[1], g3, f[0], f[1], f[2], dpk, prom_at);
+			for (auto &pk : ct.env.peaks) std::printf(" %.0f:%.1f", pk.freq, pk.prominence);
+			std::printf("\n");
+			++shown;
+		}
+	}
+
+	std::printf("\n%-6s %8s %14s %14s %14s\n", "vowel", "bad F3", "true F3 is pk", "term fires", "F2/F3 merged");
+	for (auto &kv : nbad) {
+		const std::string &v = kv.first;
+		std::printf("%-6s %8ld %13.0f%% %13.0f%% %13.0f%%\n", v.c_str(), kv.second,
+		            100.0 * has_peak[v] / kv.second, 100.0 * fires[v] / kv.second, 100.0 * merged[v] / kv.second);
+	}
+	std::printf("%-6s %8ld %13.0f%% %13.0f%% %13.0f%%\n", "ALL", tot_bad,
+	            tot_bad ? 100.0 * tot_haspeak / tot_bad : 0.0,
+	            tot_bad ? 100.0 * tot_fires / tot_bad : 0.0,
+	            tot_bad ? 100.0 * tot_merged / tot_bad : 0.0);
+	std::fflush(stdout);
+}
+
+// Does the spectral evidence point the right way at all? For every token, compare the candidate the ladder selects
+// with the candidate the oracle would pick, and ask whether each spectral term is lower (better) on the oracle one.
+// A term that points the right way on well over half the tokens but fails to change the outcome is being swamped and
+// needs rescaling; a term sitting at ~50% carries no information about this choice and no weighting can rescue it.
+static void run_spec_rank(const std::vector<CachedToken> &cache, const speech::IntrinsicWeights &w)
+{
+	long n = 0, right[3] = {0,0,0}, tie[3] = {0,0,0};
+	double gap[3] = {0,0,0}, bad_gap[3] = {0,0,0};
+	long nbad = 0, bad_right[3] = {0,0,0};
+	double intr_gap = 0, bad_intr_gap = 0;
+
+	for (auto &ct : cache) {
+		const CachedCand *sel = nullptr, *orc = nullptr;
+		double best_b = (std::numeric_limits<double>::max)();
+		double best_e = (std::numeric_limits<double>::max)();
+		for (auto &c : ct.cands) {
+			double b = cand_badness(c, w);
+			if (b < best_b) { best_b = b; sel = &c; }
+			double e = 0; int nn = 0;
+			for (int k = 0; k < 3; ++k)
+				if (ct.tk->gold[k] > 0 && !std::isnan(c.f[k])) { e += std::abs(c.f[k] - ct.tk->gold[k]); ++nn; }
+			if (nn > 0) { e /= nn; if (e < best_e) { best_e = e; orc = &c; } }
+		}
+		if (!sel || !orc || sel == orc) continue;
+		++n;
+
+		const double sv[3] = { sel->Pk, sel->Ux, sel->Dm };
+		const double ov[3] = { orc->Pk, orc->Ux, orc->Dm };
+		bool bad = !std::isnan(sel->f[2]) && ct.tk->gold[2] > 0 && std::abs(sel->f[2] - ct.tk->gold[2]) > 200.0;
+		if (bad) ++nbad;
+		for (int t = 0; t < 3; ++t) {
+			if (ov[t] < sv[t]) { ++right[t]; if (bad) ++bad_right[t]; }
+			else if (ov[t] == sv[t]) ++tie[t];
+			gap[t] += sv[t] - ov[t];
+			if (bad) bad_gap[t] += sv[t] - ov[t];
+		}
+		double si = intrinsic_badness(sel->sc, w), oi = intrinsic_badness(orc->sc, w);
+		intr_gap += oi - si;
+		if (bad) bad_intr_gap += oi - si;
+	}
+
+	std::printf("\n===== Does the spectral evidence rank the oracle candidate better? =====\n");
+	std::printf("tokens where the selected and oracle candidates differ: %ld (of which F3 is badly wrong: %ld)\n", n, nbad);
+	std::printf("%-6s %14s %10s %16s %18s\n", "term", "oracle better", "ties", "mean(sel-orc)", "on bad-F3 tokens");
+	const char *nm[3] = { "Pk", "Ux", "Dm" };
+	for (int t = 0; t < 3; ++t)
+		std::printf("%-6s %13.1f%% %9.1f%% %16.3f %13.1f%% (%+.3f)\n", nm[t],
+		            n ? 100.0 * right[t] / n : 0.0, n ? 100.0 * tie[t] / n : 0.0, n ? gap[t] / n : 0.0,
+		            nbad ? 100.0 * bad_right[t] / nbad : 0.0, nbad ? bad_gap[t] / nbad : 0.0);
+	std::printf("\nintrinsic ladder penalty the spectral terms would have to overcome:\n");
+	std::printf("  mean(badness_oracle - badness_selected) = %+.3f   (on bad-F3 tokens: %+.3f)\n",
+	            n ? intr_gap / n : 0.0, nbad ? bad_intr_gap / nbad : 0.0);
+	std::fflush(stdout);
+}
+
+// Spectral-weight sweep. The cache build dominates a run, and it does not depend on the weights, so one build
+// serves the whole grid: this is what makes it practical to look at a dozen weightings instead of two.
+static void run_spec_sweep(const std::vector<CachedToken> &cache, const speech::IntrinsicWeights &w)
+{
+	const double dms[] = { 0.0, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0 };
+	const double uxs[] = { 0.0, 0.25, 0.5, 1.0, 2.0 };
+	const double save_dm = g_lambda_Dm, save_ux = g_lambda_Ux;
+
+	std::printf("\n===== Spectral weight sweep (MAE Hz / F3 MAE Hz) =====\n");
+	std::printf("%-10s", "Dm \\ Ux");
+	for (double ux : uxs) std::printf("%14.2f", ux);
+	std::printf("\n");
+	for (double dm : dms) {
+		std::printf("%-10.2f", dm);
+		for (double ux : uxs) {
+			g_lambda_Dm = dm; g_lambda_Ux = ux;
+			ErrAcc o; evaluate(cache, Ref::Intrinsic, w, o, nullptr, nullptr);
+			std::printf("%8.1f /%5.1f", o.mae_all(), o.mae(2));
+		}
+		std::printf("\n");
+	}
+	g_lambda_Dm = save_dm; g_lambda_Ux = save_ux;
+	std::fflush(stdout);
 }
 
 // Oracle diagnostic: best MAE achievable over the candidate grid, to separate selection from generation failures.
@@ -1067,9 +1312,9 @@ static void run_diph(const std::string &manifest, const std::string &external_fi
 
 int main(int argc, char **argv)
 {
-	if (argc < 2) { std::fprintf(stderr, "usage: %s manifest.tsv [--tune] [--consensus] [--oracle] [--performant] [--f3] [--heur] [--persist] [--order-lo N] [--order-hi N] [--freq-step HZ] [--select-points N] [--measure-pts N] [--sample N]\n", argv[0]); return 1; }
+	if (argc < 2) { std::fprintf(stderr, "usage: %s manifest.tsv [--tune] [--consensus] [--oracle] [--performant] [--f3] [--heur] [--persist] [--order-lo N] [--order-hi N] [--freq-step HZ] [--select-points N] [--measure-pts N] [--sample N] [--jobs N]\n", argv[0]); return 1; }
 	std::string manifest = argv[1];
-	bool do_tune = false; int sample = 0; bool do_consensus = false; std::string external_file, external_label = "external"; bool do_oracle = false; bool do_perf = false; bool do_f3 = false; bool do_heur = false; bool do_diph = false; bool do_persist = false;
+	bool do_tune = false; int sample = 0; bool do_consensus = false; std::string external_file, external_label = "external"; bool do_oracle = false; bool do_perf = false; bool do_f3 = false; bool do_heur = false; bool do_diph = false; bool do_persist = false; bool do_spec_sweep = false; bool do_spec_diag = false; bool do_spec_fail = false; bool do_spec_rank = false;
 	for (int i = 2; i < argc; ++i) {
 		if (!std::strcmp(argv[i], "--tune")) do_tune = true;
 		else if (!std::strcmp(argv[i], "--consensus")) do_consensus = true;
@@ -1086,6 +1331,17 @@ int main(int argc, char **argv)
 		else if (!std::strcmp(argv[i], "--freq-step") && i + 1 < argc) g_freq_step = std::atof(argv[++i]);
 		else if (!std::strcmp(argv[i], "--select-points") && i + 1 < argc) g_select_points = std::atoi(argv[++i]);
 		else if (!std::strcmp(argv[i], "--measure-pts") && i + 1 < argc) g_measure_pts = std::atoi(argv[++i]);
+		else if (!std::strcmp(argv[i], "--jobs") && i + 1 < argc) g_jobs = std::atoi(argv[++i]);
+		else if (!std::strcmp(argv[i], "--lam-pk") && i + 1 < argc) g_lambda_Pk = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--lam-ux") && i + 1 < argc) g_lambda_Ux = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--lam-dm") && i + 1 < argc) g_lambda_Dm = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--claim-tol") && i + 1 < argc) g_claim_tol = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--spec-sweep")) do_spec_sweep = true;
+		else if (!std::strcmp(argv[i], "--spec-diag")) do_spec_diag = true;
+		else if (!std::strcmp(argv[i], "--spec-fail")) do_spec_fail = true;
+		else if (!std::strcmp(argv[i], "--spec-rank")) do_spec_rank = true;
+		else if (!std::strcmp(argv[i], "--lifter") && i + 1 < argc) g_lifter_hz = std::atof(argv[++i]);
+		else if (!std::strcmp(argv[i], "--peak-prom") && i + 1 < argc) g_peak_prom = std::atof(argv[++i]);
 		else if (!std::strcmp(argv[i], "--sample") && i + 1 < argc) sample = std::atoi(argv[++i]);
 	}
 
@@ -1102,16 +1358,34 @@ int main(int argc, char **argv)
 	if (sample > 0) subsample(tokens, sample);
 	std::printf("loaded %zu tokens from %s\n", tokens.size(), manifest.c_str());
 
-	// One-time cache build (the only LPC-heavy phase).
+	// One-time cache build (the only LPC-heavy phase). Embarrassingly parallel: build_token_cache opens its own
+	// Sound and writes only into its own slot, so each index is independent. Results are collected into a
+	// pre-sized vector and compacted afterwards, which keeps the cache order identical to the serial build (the
+	// consensus/EM passes group by cell, but the oracle and ablation reports iterate in order, so a stable order
+	// keeps runs byte-comparable).
 	std::vector<CachedToken> cache;
-	cache.reserve(tokens.size());
 	long failed = 0;
-	for (auto &t : tokens) {
-		CachedToken ct; ct.tk = &t;
-		try {
-			if (build_token_cache(ct)) cache.push_back(std::move(ct));
+	{
+		const intptr_t n = (intptr_t) tokens.size();
+		std::vector<CachedToken> built((size_t) n);
+		std::vector<char> ok((size_t) n, 0);
+		int workers = g_jobs > 0 ? g_jobs : (int) std::thread::hardware_concurrency();
+		if (workers < 1) workers = 1;
+		std::printf("building cache on %d threads...\n", workers);
+		std::fflush(stdout);
+		QueryPool pool(workers);
+		pool.run(n,
+		         [&](intptr_t i) {
+			         CachedToken ct; ct.tk = &tokens[(size_t) i];
+			         try { if (build_token_cache(ct)) { built[(size_t) i] = std::move(ct); ok[(size_t) i] = 1; } }
+			         catch (...) { }
+		         },
+		         [](intptr_t) { });
+		cache.reserve((size_t) n);
+		for (intptr_t i = 0; i < n; ++i) {
+			if (ok[(size_t) i]) cache.push_back(std::move(built[(size_t) i]));
 			else ++failed;
-		} catch (...) { ++failed; }
+		}
 	}
 	std::printf("cached %zu tokens (%ld failed to analyse)\n", cache.size(), failed);
 
@@ -1123,6 +1397,10 @@ int main(int argc, char **argv)
 
 	if (!external_file.empty()) run_external(tokens, external_file, external_label.c_str());
 
+	if (do_spec_diag) run_spec_diag(cache);
+	if (do_spec_fail) run_spec_fail(cache, w);
+	if (do_spec_rank) run_spec_rank(cache, w);
+	if (do_spec_sweep) run_spec_sweep(cache, w);
 	if (do_oracle) run_oracle(cache, w);
 	if (do_perf) run_performant(cache);
 	if (do_f3) run_f3select(cache, w);

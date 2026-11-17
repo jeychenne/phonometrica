@@ -4,6 +4,7 @@
 #include <phon/engine/compile/parser.hpp>
 
 #include <phon/engine/types/atom.hpp>
+#include <phon/third_party/fast_float/fast_float.h>
 
 #include <charconv>
 #include <string>
@@ -1164,7 +1165,7 @@ AutoAst Parser::parse_primary()
 	{
 		std::string digits = strip_underscores(m_tok.spelling.view());
 		double value = 0;
-		auto [ptr, ec] = std::from_chars(digits.data(), digits.data() + digits.size(), value);
+		auto [ptr, ec] = fast_float::from_chars(digits.data(), digits.data() + digits.size(), value);
 		if (ec != std::errc() || ptr != digits.data() + digits.size())
 			error("floating-point literal is malformed");
 		advance();

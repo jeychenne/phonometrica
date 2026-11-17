@@ -7,6 +7,7 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * Boost (Boost license), see `boost.org <https://www.boost.org>`_
 * CppAD, by Brad Bell and contributors (EPL-2.0 / GPL-2+), see `coin-or.github.io/CppAD <https://coin-or.github.io/CppAD/>`_
 * Eigen, by Benoît Jacob, Gaël Guennebaud and contributors (MPL-2), see `eigen.tuxfamily.org <http://eigen.tuxfamily.org>`_
+* fast_float, by the fast_float authors (Apache-2.0), see `github.com/fastfloat/fast_float <https://github.com/fastfloat/fast_float>`
 * FIR filter class, by Mike Perkins (BSD-3-Clause), see `cardinalpeak.com <https://www.cardinalpeak.com/blog/a-c-class-to-implement-low-pass-high-pass-and-band-pass-filters>`_
 * LBFGS++, by Yixuan Qiu, based on work by Naoaki Okazaki (MIT), see `lbfgspp.statr.me <https://lbfgspp.statr.me/>`_
 * Lucide icons, by Lucide icons and contributors (ISC License), see `lucide.dev <https://lucide.dev/>`_
