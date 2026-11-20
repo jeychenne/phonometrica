@@ -38,7 +38,8 @@ public:
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match
-		NPoint      // measure at user-specified percentages
+		NPoint,     // measure at user-specified percentages
+		Step        // measure every `step` seconds across the match (long layout only)
 	};
 
 	// Per-level pitch-range override. Zero in either field = inherit the global
@@ -107,6 +108,12 @@ public:
 
 	const Array<double> &measurement_points() const { return m_points; }
 	void set_measurement_points(Array<double> pts) { m_points = std::move(pts); }
+
+	// ── Fixed step (for the Step method) ─────────────────────────────────
+	// Distance between two measurement points, in seconds. Unrelated to time_step(), which is the analysis hop.
+
+	double measurement_step() const { return m_step; }
+	void set_measurement_step(double s) { m_step = s; }
 
 	// ── Per-file parameter override by property level ────────────────────
 	// Mirrors FormantQuery: when `override_category` is non-empty, the query
@@ -185,6 +192,10 @@ protected:
 	// Run pitch tracking on a single match and fill its measurement vector.
 	void measure_match(QueryMatch &match) const;
 
+	// Fill the measurement vector of a match that could not be measured with NaN, keeping the layout
+	// (number of points, and the time of the first point for the Step method) that measure_match() would produce.
+	void fill_missing(QueryMatch &match) const;
+
 private:
 
 	// Measurement method
@@ -192,6 +203,9 @@ private:
 
 	// Measurement points as percentages (0–100), used when method == NPoint
 	Array<double> m_points;
+
+	// Distance between measurement points in seconds, used when method == Step
+	double m_step = 0.005;
 
 	// Pitch algorithm
 	speech::PitchTracker m_algorithm = speech::PitchTracker::Praat;

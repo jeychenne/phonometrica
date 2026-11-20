@@ -204,18 +204,33 @@ Qt::ItemFlags ConcordanceModel::flags(const QModelIndex &index) const
 	return base;
 }
 
-Concordance::RemovedRow ConcordanceModel::removeMatch(int row)
+Concordance::RemovedRow ConcordanceModel::removeMatch(int match_index)
 {
-	beginRemoveRows(QModelIndex(), row, row);
-	auto data = m_conc->remove_match(row);
+	if (m_conc->is_long_layout())
+	{
+		// In long layout a match spans several display rows.
+		beginResetModel();
+		auto data = m_conc->remove_match(match_index);
+		endResetModel();
+		return data;
+	}
+	beginRemoveRows(QModelIndex(), match_index, match_index);
+	auto data = m_conc->remove_match(match_index);
 	endRemoveRows();
 	return data;
 }
 
-void ConcordanceModel::restoreMatch(int row, Concordance::RemovedRow data)
+void ConcordanceModel::restoreMatch(int match_index, Concordance::RemovedRow data)
 {
-	beginInsertRows(QModelIndex(), row, row);
-	m_conc->restore_match(row, std::move(data));
+	if (m_conc->is_long_layout())
+	{
+		beginResetModel();
+		m_conc->restore_match(match_index, std::move(data));
+		endResetModel();
+		return;
+	}
+	beginInsertRows(QModelIndex(), match_index, match_index);
+	m_conc->restore_match(match_index, std::move(data));
 	endInsertRows();
 }
 

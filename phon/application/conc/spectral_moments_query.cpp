@@ -50,7 +50,7 @@ int SpectralMomentsQuery::moment_count() const
 int SpectralMomentsQuery::field_count() const
 {
 	int fpp = moment_count();
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		return fpp;
 	}
@@ -77,7 +77,7 @@ Array<String> SpectralMomentsQuery::build_headers() const
 		if (m_out_kurtosis) out.append(String::format("Kurtosis%s", suffix));
 	};
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		emit_group(headers, "");
 	}
@@ -114,6 +114,7 @@ void SpectralMomentsQuery::clear()
 {
 	Query::clear();
 	m_points.clear();
+	m_step = 0.005;
 	m_method = Method::Midpoint;
 	m_window_duration = 0.025;
 	m_window_type = speech::WindowType::Gaussian;
@@ -143,7 +144,7 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 		}
 		catch (std::exception &)
 		{
-			m.measurements.assign(field_count(), std::nan(""));
+			fill_missing(m);
 		}
 	});
 
@@ -165,6 +166,11 @@ Handle<Concordance> SpectralMomentsQuery::execute()
 		conc->set_measurement_info(m_points, m_average);
 		conc->set_has_series(m_series);
 		conc->set_layout(m_initial_layout);
+	}
+	else if (m_method == Method::Step)
+	{
+		// Variable number of points per match: long layout only.
+		conc->set_measurement_step(m_step);
 	}
 
 	conc->rebuild_extra_headers();
@@ -211,6 +217,29 @@ void SpectralMomentsQuery::measure_match(QueryMatch &match) const
 		if (m_out_skewness) match.measurements[idx++] = sm.skewness;
 		if (m_out_kurtosis) match.measurements[idx++] = sm.kurtosis;
 	};
+
+	if (m_method == Method::Step)
+	{
+		// [moments at each point] [time of the first point]
+		intptr_t npoints;
+		double t0;
+		step_grid(t1, t2, m_step, npoints, t0);
+		match.measurements.assign(npoints * fpp + 1, std::nan(""));
+		for (intptr_t k = 0; k < npoints; k++)
+		{
+			double t = t0 + double(k) * m_step;
+			try {
+				store_moments(compute_spectral_moments_at(sound, channel(), t,
+					m_window_duration, m_window_type, m_min_freq, m_max_freq, effective_preemph));
+			}
+			catch (...) {
+				// Leave this point's fields as NaN.
+			}
+			idx = int((k + 1) * fpp);
+		}
+		match.measurements.back() = t0;
+		return;
+	}
 
 	if (m_method == Method::Midpoint)
 	{
@@ -276,6 +305,16 @@ void SpectralMomentsQuery::measure_match(QueryMatch &match) const
 	}
 }
 
+void SpectralMomentsQuery::fill_missing(QueryMatch &match) const
+{
+	if (m_method == Method::Step) {
+		fill_missing_step(match, m_step, fields_per_point(), 0);
+	}
+	else {
+		match.measurements.assign(field_count(), std::nan(""));
+	}
+}
+
 Handle<Query> SpectralMomentsQuery::copy() const
 {
 	auto c = Handle<SpectralMomentsQuery>::make(this->parent(), String());
@@ -292,6 +331,7 @@ Handle<Query> SpectralMomentsQuery::copy() const
 
 	c->m_method = m_method;
 	c->m_points = m_points;
+	c->m_step = m_step;
 	c->m_window_duration = m_window_duration;
 	c->m_window_type = m_window_type;
 	c->m_min_freq = m_min_freq;
@@ -390,7 +430,14 @@ void SpectralMomentsQuery::load()
 				if (child.name() == str("Method"))
 				{
 					auto val = str(child.text().get());
-					m_method = (val == "npoint") ? Method::NPoint : Method::Midpoint;
+					if (val == "npoint") m_method = Method::NPoint;
+					else if (val == "step") m_method = Method::Step;
+					else m_method = Method::Midpoint;
+				}
+				else if (child.name() == str("Step"))
+				{
+					m_step = child.text().as_double(0.005);
+					if (m_step <= 0) m_step = 0.005;
 				}
 				else if (child.name() == str("Points"))
 				{
@@ -519,7 +566,15 @@ void SpectralMomentsQuery::write()
 	}
 
 	auto sm_node = root.append_child("SpectralMomentsSettings");
-	add_data_node(sm_node, "Method", m_method == Method::NPoint ? "npoint" : "midpoint");
+	{
+		const char *method_name = "midpoint";
+		if (m_method == Method::NPoint) method_name = "npoint";
+		else if (m_method == Method::Step) method_name = "step";
+		add_data_node(sm_node, "Method", method_name);
+		if (m_method == Method::Step) {
+			add_data_node(sm_node, "Step", String::format("%.6g", m_step));
+		}
+	}
 	add_data_node(sm_node, "WindowDuration", String::format("%.4f", m_window_duration));
 	add_data_node(sm_node, "WindowType", window_type_to_string(m_window_type));
 	add_data_node(sm_node, "MinFrequency", String::format("%.1f", m_min_freq));

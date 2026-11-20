@@ -175,6 +175,9 @@ private:
 	int selectedRow() const;
 	QList<int> selectedRows() const;
 	int mapToSourceRow(int proxyRow) const;
+
+	// Map source (display) rows to sorted, unique 0-based match indices. In long layout several rows map to one match.
+	std::vector<int> rowsToMatches(const QList<int> &source_rows) const;
 	Handle<Concordance> pickConcordance(const QString &title);
 	Handle<DataTable> pickDataTable(const QString &title);
 

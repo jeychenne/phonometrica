@@ -144,6 +144,8 @@ private:
 	QRadioButton *m_midpoint_radio = nullptr;
 	QRadioButton *m_npoint_radio = nullptr;
 	QLineEdit *m_npoint_edit = nullptr;
+	QRadioButton *m_step_radio = nullptr;
+	QLineEdit *m_step_edit = nullptr;   // step in milliseconds
 
 	// N-point output format
 	QRadioButton *m_wide_radio = nullptr;

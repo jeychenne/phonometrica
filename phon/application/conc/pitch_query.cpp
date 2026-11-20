@@ -19,6 +19,8 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
+#include <cmath>
 #include <phon/runtime.hpp>
 #include <phon/application/conc/pitch_query.hpp>
 #include <phon/application/project.hpp>
@@ -41,10 +43,11 @@ PitchQuery::PitchQuery(Directory *parent, String path) :
 
 int PitchQuery::field_count() const
 {
+	// Not meaningful for the Step method, whose number of points varies across matches (see measure_match()).
 	int fpp = 1; // always 1 stored field per point (F0 in Hz)
 	int n = 0;
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		n = fpp;
 	}
@@ -70,7 +73,7 @@ Array<String> PitchQuery::build_headers() const
 		headers.append(String::format("F0%s", suffix));
 	};
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		emit_group("");
 	}
@@ -114,6 +117,7 @@ void PitchQuery::clear()
 {
 	Query::clear();
 	m_points.clear();
+	m_step = 0.005;
 	m_method = Method::Midpoint;
 	m_algorithm = speech::PitchTracker::Praat;
 	m_min_pitch = 75;
@@ -194,7 +198,7 @@ Handle<Concordance> PitchQuery::execute()
 		{
 			// If measurement fails for a single match (e.g. sound file not bound),
 			// fill with NaN and continue rather than aborting the whole query.
-			m.measurements.assign(field_count(), std::nan(""));
+			fill_missing(m);
 		}
 	});
 
@@ -223,6 +227,11 @@ Handle<Concordance> PitchQuery::execute()
 		conc->set_has_series(m_series);
 		conc->set_layout(m_initial_layout);
 	}
+	else if (m_method == Method::Step)
+	{
+		// Variable number of points per match: long layout only.
+		conc->set_measurement_step(m_step);
+	}
 
 	// Build all display headers from the metadata
 	conc->rebuild_extra_headers();
@@ -249,12 +258,7 @@ void PitchQuery::measure_match(QueryMatch &match) const
 	}
 
 	// Get the reference target's time boundaries
-	auto *target = match.reference_target();
-	if (!target) {
-		target = match.get(1);
-	}
-	double t1 = target->start_time;
-	double t2 = target->end_time;
+	auto [t1, t2] = match_interval(match);
 
 	// Per-file parameter override lookup. Local copies of the bounds so the
 	// const member fields stay untouched (and concurrent measurement remains
@@ -275,6 +279,30 @@ void PitchQuery::measure_match(QueryMatch &match) const
 				if (ov.max_pitch > 0) local_max_pitch = ov.max_pitch;
 			}
 		}
+	}
+
+	if (m_method == Method::Step)
+	{
+		// [F0 at each point] [Min pitch, Max pitch if override] [time of the first point]
+		intptr_t npoints;
+		double t0;
+		step_grid(t1, t2, m_step, npoints, t0);
+		auto &meas = match.measurements;
+		meas.clear();
+		meas.reserve(npoints + 3);
+		for (intptr_t k = 0; k < npoints; k++)
+		{
+			double t = t0 + double(k) * m_step;
+			double f0 = sound->get_pitch(channel(), m_algorithm, t, local_min_pitch, local_max_pitch, m_voicing_threshold,
+			                             m_octave_jump_cost, m_voicing_cost, m_silence_threshold, m_octave_cost, m_use_gaussian);
+			meas.push_back((f0 > 0) ? f0 : std::nan(""));
+		}
+		if (override_enabled()) {
+			meas.push_back(local_min_pitch);
+			meas.push_back(local_max_pitch);
+		}
+		meas.push_back(t0);
+		return;
 	}
 
 	int total = field_count();
@@ -337,6 +365,16 @@ void PitchQuery::measure_match(QueryMatch &match) const
 	}
 }
 
+void PitchQuery::fill_missing(QueryMatch &match) const
+{
+	if (m_method == Method::Step) {
+		fill_missing_step(match, m_step, fields_per_point(), override_enabled() ? 2 : 0);
+	}
+	else {
+		match.measurements.assign(field_count(), std::nan(""));
+	}
+}
+
 Handle<Query> PitchQuery::copy() const
 {
 	auto c = Handle<PitchQuery>::make(this->parent(), String());
@@ -355,6 +393,7 @@ Handle<Query> PitchQuery::copy() const
 	// Copy pitch-specific fields
 	c->m_method = m_method;
 	c->m_points = m_points;
+	c->m_step = m_step;
 	c->m_algorithm = m_algorithm;
 	c->m_min_pitch = m_min_pitch;
 	c->m_max_pitch = m_max_pitch;
@@ -454,7 +493,9 @@ void PitchQuery::load()
 				if (child.name() == str("Method"))
 				{
 					auto val = str(child.text().get());
-					m_method = (val == "npoint") ? Method::NPoint : Method::Midpoint;
+					if (val == "npoint") m_method = Method::NPoint;
+					else if (val == "step") m_method = Method::Step;
+					else m_method = Method::Midpoint;
 				}
 				else if (child.name() == str("Points"))
 				{
@@ -467,6 +508,11 @@ void PitchQuery::load()
 						double v = p.to_float(&ok);
 						if (ok) m_points.append(v);
 					}
+				}
+				else if (child.name() == str("Step"))
+				{
+					m_step = child.text().as_double(0.005);
+					if (m_step <= 0) m_step = 0.005;
 				}
 				else if (child.name() == str("Algorithm"))
 				{
@@ -634,7 +680,14 @@ void PitchQuery::write()
 
 	// Pitch settings
 	auto ps_node = root.append_child("PitchSettings");
-	add_data_node(ps_node, "Method", m_method == Method::NPoint ? "npoint" : "midpoint");
+	const char *method_name = "midpoint";
+	if (m_method == Method::NPoint) method_name = "npoint";
+	else if (m_method == Method::Step) method_name = "step";
+	add_data_node(ps_node, "Method", method_name);
+
+	if (m_method == Method::Step) {
+		add_data_node(ps_node, "Step", String::format("%.6g", m_step));
+	}
 
 	if (m_method == Method::NPoint && !m_points.empty())
 	{

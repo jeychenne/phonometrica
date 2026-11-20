@@ -37,7 +37,8 @@ public:
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match
-		NPoint      // measure at user-specified percentages
+		NPoint,     // measure at user-specified percentages
+		Step        // measure every `step` seconds across the match (long layout only)
 	};
 
 	// Automatic (data-driven) LPC parameter selection strategy, used when automatic() is true.
@@ -136,6 +137,10 @@ public:
 	const Array<double> &measurement_points() const { return m_points; }
 	void set_measurement_points(Array<double> pts) { m_points = std::move(pts); }
 
+	// Distance between measurement points in seconds, used when method == Step.
+	double measurement_step() const { return m_step; }
+	void set_measurement_step(double s) { m_step = s; }
+
 	// ── Per-file parameter override by property level ────────────────────
 	// When `override_category` is non-empty, the query looks up that property
 	// on each annotation and, if the value matches an entry in `override_levels`,
@@ -218,6 +223,15 @@ protected:
 	// (used by the consensus pass, which selects parameters corpus-wide before filling).
 	void measure_match(QueryMatch &match, double forced_ceiling = -1.0, int forced_order = -1) const;
 
+	// Fill the measurement vector of a match that could not be measured with NaN, keeping the layout
+	// (number of points, time of the first point for the Step method) that measure_match() would produce.
+	void fill_missing(QueryMatch &match) const;
+
+	// Number of per-match trailing values stored after the point groups: Max freq + LPC order in automatic mode,
+	// Max freq alone in manual mode with a parameter override. Must agree with Concordance::stored_tail_count().
+	int step_tail_count() const { return m_automatic ? 2 : (override_enabled() ? 1 : 0); }
+
+
 	// Two-pass corpus-level measurement: build a candidate cache per match, estimate pooled (speaker x vowel) cell
 	// centres, re-select each match toward its centre (EM), then fill. Preserves the output/concordance format.
 	void measure_matches_with_consensus(Array<AutoMatch> &matches);
@@ -229,6 +243,7 @@ private:
 
 	// Measurement points as percentages (0–100), used when method == NPoint
 	Array<double> m_points;
+	double m_step = 0.005;         // seconds, used when method == Step
 
 	// Shared LPC settings
 	int m_nformant = 3;

@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <algorithm>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
@@ -67,6 +68,8 @@ Concordance::Concordance(const Concordance &other) :
 	m_base_headers = other.m_base_headers;
 	m_has_average = other.m_has_average;
 	m_has_series = other.m_has_series;
+	m_measurement_step = other.m_measurement_step;
+	m_row_offsets = other.m_row_offsets;
 	m_layout = other.m_layout;
 
 	m_nformant = other.m_nformant;
@@ -324,6 +327,9 @@ void Concordance::rebuild_extra_headers()
 	m_extra_headers.clear();
 	m_base_headers.clear();
 
+	// The row index depends on the same metadata as the headers (fields per point, trailing columns).
+	rebuild_row_index();
+
 	if (m_is_spectral_moments)
 	{
 		// ── Spectral moments headers ─────────────────────────────────────
@@ -561,6 +567,73 @@ void Concordance::set_measurement_info(Array<double> points, bool has_average)
 {
 	m_measurement_points = std::move(points);
 	m_has_average = has_average;
+}
+
+void Concordance::set_measurement_step(double step)
+{
+	m_measurement_step = (step > 0) ? step : 0;
+	if (is_step_series())
+	{
+		m_measurement_points.clear();
+		m_has_series = true;
+		m_has_average = false;
+		m_layout = Layout::Long;
+	}
+	rebuild_row_index();
+}
+
+int Concordance::stored_tail_count() const
+{
+	return (m_has_auto_params ? 2 : 0)
+	     + (m_per_match_max_freq_available ? 1 : 0)
+	     + (m_per_match_pitch_range_available ? 2 : 0);
+}
+
+intptr_t Concordance::point_count(intptr_t mi) const
+{
+	if (is_step_series())
+	{
+		// [n * sfpp point fields] [tail] [t0]
+		auto size = (intptr_t) m_matches[mi]->measurements.size();
+		intptr_t sfpp = std::max(stored_fields_per_point(), 1);
+		intptr_t n = (size - stored_tail_count() - 1) / sfpp;
+		return std::max<intptr_t>(n, 0);
+	}
+	if (!m_measurement_points.empty()) {
+		return m_measurement_points.size();
+	}
+	return 1;
+}
+
+void Concordance::rebuild_row_index()
+{
+	m_row_offsets.clear();
+	if (!is_step_series()) return;
+
+	m_row_offsets.reserve(m_matches.size() + 1);
+	intptr_t total = 0;
+	for (intptr_t mi = 0; mi < m_matches.size(); mi++)
+	{
+		m_row_offsets.push_back(total);
+		total += point_count(mi);
+	}
+	m_row_offsets.push_back(total);
+}
+
+double Concordance::point_time(intptr_t mi, intptr_t pi) const
+{
+	auto &match = *m_matches[mi];
+	if (is_step_series())
+	{
+		auto &meas = match.measurements;
+		if (meas.empty()) return std::nan("");
+		return meas.back() + double(pi) * m_measurement_step;
+	}
+	auto *ref = match.reference_target();
+	if (!ref) ref = match.get(1);
+	if (!ref || pi >= m_measurement_points.size()) return std::nan("");
+	double pct = m_measurement_points[pi];
+	return ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
 }
 
 // ── Column aliases ───────────────────────────────────────────────────────────
@@ -983,8 +1056,14 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				if (j >= base_end)
 				{
 					intptr_t tail_idx = j - base_end; // 0-based within tail
-					int series_points = m_has_series ? (int)m_measurement_points.size() : 0;
-					int ngroups = series_points + (m_has_average ? 1 : 0);
+					int ngroups;
+					if (is_step_series()) {
+						ngroups = (int) point_count(mi);
+					}
+					else {
+						int series_points = m_has_series ? (int)m_measurement_points.size() : 0;
+						ngroups = series_points + (m_has_average ? 1 : 0);
+					}
 					int sfpp_local = stored_fields_per_point();
 					intptr_t idx = (intptr_t)ngroups * sfpp_local + tail_idx;
 					if (idx < (intptr_t)meas.size()) {
@@ -1001,15 +1080,19 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 				}
 				if (j == 1) {
 					// Time (normalized): fraction within the event [0,1]
-					return String::format("%.4f", m_measurement_points[pi] / 100.0);
-				}
-				if (m_has_time && j == 2) {
-					// Time (absolute seconds): t1 + pct * (t2 - t1)
+					if (!is_step_series()) {
+						return String::format("%.4f", m_measurement_points[pi] / 100.0);
+					}
 					auto *ref = m_matches[mi]->reference_target();
 					if (!ref) ref = m_matches[mi]->get(1);
-					if (!ref) return String();
-					double pct = m_measurement_points[pi];
-					double t = ref->start_time + (pct / 100.0) * (ref->end_time - ref->start_time);
+					double dur = ref ? (ref->end_time - ref->start_time) : 0.0;
+					if (dur <= 0) return "nan";
+					return String::format("%.4f", (point_time(mi, pi) - ref->start_time) / dur);
+				}
+				if (m_has_time && j == 2) {
+					// Time (absolute seconds)
+					double t = point_time(mi, pi);
+					if (std::isnan(t)) return String();
 					return String::format("%.4f", t);
 				}
 				// j >= 2 (or >= 3 when has_time): measurement within the point
@@ -1390,8 +1473,11 @@ bool Concordance::is_time(intptr_t col) const
 
 intptr_t Concordance::row_count() const
 {
-	if (m_layout == Layout::Long && has_measurement_data())
+	if (is_long_layout())
 	{
+		if (is_step_series()) {
+			return m_row_offsets.empty() ? 0 : m_row_offsets.back();
+		}
 		return m_matches.size() * m_measurement_points.size();
 	}
 	return m_matches.size();
@@ -1501,6 +1587,8 @@ void Concordance::load()
 	m_per_match_pitch_range_available = false;
 	m_has_series = true;
 	m_has_average = false;
+	m_measurement_step = 0;
+	m_row_offsets.clear();
 	m_is_pitch = false;
 	m_has_semitones = false;
 	m_semitone_ref = 100;
@@ -1598,6 +1686,10 @@ void Concordance::load()
 				else if (child.name() == str("HasSeries"))
 				{
 					m_has_series = child.text().as_bool(true);
+				}
+				else if (child.name() == str("Step"))
+				{
+					m_measurement_step = std::max(child.text().as_double(0), 0.0);
 				}
 			}
 		}
@@ -1766,6 +1858,12 @@ void Concordance::load()
 
 void Concordance::normalize_after_load()
 {
+	// Fixed-step series are long-only, whatever the file says.
+	if (is_step_series()) {
+		m_measurement_points.clear();
+		m_layout = Layout::Long;
+	}
+
 	if (m_nformant > 0)
 	{
 		// New format: formant metadata was loaded from XML. Just rebuild display headers.
@@ -2228,14 +2326,22 @@ void Concordance::write()
 	{
 		auto minfo = root.append_child("MeasurementInfo");
 
-		// Measurement points (percentages)
-		String pts;
-		for (intptr_t i = 0; i < m_measurement_points.size(); i++)
+		if (is_step_series())
 		{
-			if (i > 0) pts.append(' ');
-			pts.append(String::format("%.1f", m_measurement_points[i]));
+			// Fixed-step series (seconds). The number of points per match is implied by the measurement vectors.
+			add_data_node(minfo, "Step", String::format("%.6g", m_measurement_step));
 		}
-		add_data_node(minfo, "Points", pts);
+		else
+		{
+			// Measurement points (percentages)
+			String pts;
+			for (intptr_t i = 0; i < m_measurement_points.size(); i++)
+			{
+				if (i > 0) pts.append(' ');
+				pts.append(String::format("%.1f", m_measurement_points[i]));
+			}
+			add_data_node(minfo, "Points", pts);
+		}
 
 		minfo.append_child("HasAverage").append_child(node_pcdata)
 			.set_value(m_has_average ? "true" : "false");
@@ -2562,6 +2668,7 @@ Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 		}
 	}
 
+	rebuild_row_index();
 	modify();
 	file_modified();
 
@@ -2606,6 +2713,7 @@ void Concordance::restore_match(intptr_t row, RemovedRow data)
 		}
 	}
 
+	rebuild_row_index();
 	modify();
 	file_modified();
 }
@@ -2650,7 +2758,10 @@ void Concordance::copy_metadata_to(Concordance &target) const
 			m_vq_shimmer_apq3, m_vq_shimmer_apq5, m_vq_shimmer_apq11,
 			m_vq_hnr);
 	}
-	if (has_measurement_data()) {
+	if (is_step_series()) {
+		target.set_measurement_step(m_measurement_step);
+	}
+	else if (has_measurement_data()) {
 		target.set_measurement_info(m_measurement_points, m_has_average);
 		target.set_has_series(m_has_series);
 		target.set_layout(m_layout);
@@ -3315,7 +3426,12 @@ Concordance::AuxColumnType Concordance::get_measurement_type(intptr_t col) const
 	if (dfpp == 0) return AuxColumnType::Numeric;
 
 	int within_group = 0;
-	if (!has_measurement_data())
+	if (is_long_layout())
+	{
+		// Long: Step, Time (normalized), [Time], then one group.
+		within_group = d0 - 2 - (m_has_time ? 1 : 0);
+	}
+	else if (!has_measurement_data())
 	{
 		// Midpoint: one group, optional leading Time column.
 		within_group = d0 - (m_has_time ? 1 : 0);
@@ -3488,7 +3604,15 @@ intptr_t Concordance::effective_extra_count() const
 
 intptr_t Concordance::match_for_row(intptr_t i) const
 {
-	// i is a 0-based display row. Each match expands to npoints rows.
+	// i is a 0-based display row.
+	if (is_step_series())
+	{
+		// Each match expands to a variable number of rows: find the last match whose first row is <= i.
+		// Matches with no point have an empty range and are skipped by upper_bound.
+		auto it = std::upper_bound(m_row_offsets.begin(), m_row_offsets.end(), i);
+		return intptr_t(it - m_row_offsets.begin()) - 1;
+	}
+	// Each match expands to npoints rows.
 	intptr_t npoints = m_measurement_points.size();
 	return i / npoints; // 0-based match index
 }
@@ -3496,8 +3620,18 @@ intptr_t Concordance::match_for_row(intptr_t i) const
 intptr_t Concordance::point_for_row(intptr_t i) const
 {
 	// i is a 0-based display row. Returns 0-based point index within the match.
+	if (is_step_series()) {
+		return i - m_row_offsets[match_for_row(i)];
+	}
 	intptr_t npoints = m_measurement_points.size();
 	return i % npoints;
+}
+
+intptr_t Concordance::first_row_for_match(intptr_t mi) const
+{
+	if (!is_long_layout()) return mi;
+	if (is_step_series()) return m_row_offsets[mi];
+	return mi * (intptr_t) m_measurement_points.size();
 }
 
 } // namespace phonometrica

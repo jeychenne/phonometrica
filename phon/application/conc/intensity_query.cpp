@@ -39,7 +39,7 @@ IntensityQuery::IntensityQuery(Directory *parent, String path) :
 int IntensityQuery::field_count() const
 {
 	int n = 0;
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		n = 1;
 	}
@@ -57,7 +57,7 @@ Array<String> IntensityQuery::build_headers() const
 {
 	Array<String> headers;
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		headers.append("Intensity(dB)");
 	}
@@ -91,6 +91,7 @@ void IntensityQuery::clear()
 {
 	Query::clear();
 	m_points.clear();
+	m_step = 0.005;
 	m_method = Method::Midpoint;
 	m_series = true;
 	m_average = false;
@@ -111,7 +112,7 @@ Handle<Concordance> IntensityQuery::execute()
 		{
 			// If measurement fails for a single match (e.g. sound file not bound),
 			// fill with NaN and continue rather than aborting the whole query.
-			m.measurements.assign(field_count(), std::nan(""));
+			fill_missing(m);
 		}
 	});
 
@@ -133,6 +134,11 @@ Handle<Concordance> IntensityQuery::execute()
 		conc->set_measurement_info(m_points, m_average);
 		conc->set_has_series(m_series);
 		conc->set_layout(m_initial_layout);
+	}
+	else if (m_method == Method::Step)
+	{
+		// Variable number of points per match: long layout only.
+		conc->set_measurement_step(m_step);
 	}
 
 	conc->rebuild_extra_headers();
@@ -164,6 +170,29 @@ void IntensityQuery::measure_match(QueryMatch &match) const
 	}
 	double t1 = target->start_time;
 	double t2 = target->end_time;
+
+	if (m_method == Method::Step)
+	{
+		// [intensity at each point] [time of the first point]
+		intptr_t npoints;
+		double t0;
+		step_grid(t1, t2, m_step, npoints, t0);
+		auto &meas = match.measurements;
+		meas.clear();
+		meas.reserve(npoints + 1);
+		for (intptr_t k = 0; k < npoints; k++)
+		{
+			double t = t0 + double(k) * m_step;
+			try {
+				meas.push_back(sound->get_intensity(channel(), t));
+			}
+			catch (...) {
+				meas.push_back(std::nan(""));
+			}
+		}
+		meas.push_back(t0);
+		return;
+	}
 
 	int total = field_count();
 	match.measurements.resize(total, std::nan(""));
@@ -221,6 +250,16 @@ void IntensityQuery::measure_match(QueryMatch &match) const
 	}
 }
 
+void IntensityQuery::fill_missing(QueryMatch &match) const
+{
+	if (m_method == Method::Step) {
+		fill_missing_step(match, m_step, fields_per_point(), 0);
+	}
+	else {
+		match.measurements.assign(field_count(), std::nan(""));
+	}
+}
+
 Handle<Query> IntensityQuery::copy() const
 {
 	auto c = Handle<IntensityQuery>::make(this->parent(), String());
@@ -237,6 +276,7 @@ Handle<Query> IntensityQuery::copy() const
 
 	c->m_method = m_method;
 	c->m_points = m_points;
+	c->m_step = m_step;
 	c->m_series = m_series;
 	c->m_average = m_average;
 	c->m_initial_layout = m_initial_layout;
@@ -298,7 +338,14 @@ void IntensityQuery::load()
 				if (child.name() == str("Method"))
 				{
 					auto val = str(child.text().get());
-					m_method = (val == "npoint") ? Method::NPoint : Method::Midpoint;
+					if (val == "npoint") m_method = Method::NPoint;
+					else if (val == "step") m_method = Method::Step;
+					else m_method = Method::Midpoint;
+				}
+				else if (child.name() == str("Step"))
+				{
+					m_step = child.text().as_double(0.005);
+					if (m_step <= 0) m_step = 0.005;
 				}
 				else if (child.name() == str("Points"))
 				{
@@ -388,7 +435,15 @@ void IntensityQuery::write()
 	}
 
 	auto is_node = root.append_child("IntensitySettings");
-	add_data_node(is_node, "Method", m_method == Method::NPoint ? "npoint" : "midpoint");
+	{
+		const char *method_name = "midpoint";
+		if (m_method == Method::NPoint) method_name = "npoint";
+		else if (m_method == Method::Step) method_name = "step";
+		add_data_node(is_node, "Method", method_name);
+		if (m_method == Method::Step) {
+			add_data_node(is_node, "Step", String::format("%.6g", m_step));
+		}
+	}
 
 	if (m_method == Method::NPoint && !m_points.empty())
 	{

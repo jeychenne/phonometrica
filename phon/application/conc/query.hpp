@@ -218,6 +218,23 @@ protected:
 	// by measure_matches; a subclass that measures on its own schedule must call it itself.
 	void freeze_match_metadata(const Array<AutoMatch> &matches);
 
+	// ── Fixed-step measurement (the Step method of acoustic queries) ─────
+	// A match measured every `step` seconds stores
+	//     [point 0 fields] ... [point n-1 fields] [per-match trailing values] [time of point 0 (s)]
+	// in its measurement vector (see Concordance::set_measurement_step()).
+
+	// Measurement grid over [t1, t2]: n = max(1, floor((t2 - t1) / step)) points spaced `step` apart and centred in
+	// the interval, so that the first and last points are at least step/2 from the boundaries. An interval shorter
+	// than one step gets a single point at its midpoint.
+	static void step_grid(double t1, double t2, double step, intptr_t &n, double &t0);
+
+	// Time boundaries of the reference target of a match.
+	static std::pair<double,double> match_interval(const QueryMatch &match);
+
+	// NaN-filled measurement vector for a match that could not be measured with the Step method, keeping the layout
+	// above (the number of points and the time of the first point depend only on the match's boundaries).
+	static void fill_missing_step(QueryMatch &match, double step, int fields_per_point, int tail_count);
+
 	Array<AutoMatch> search_annotations_serially(const Array<Handle<Annotation>> &annotations);
 
 	// Scan on the query pool. Produces exactly the same matches, in the same order, as the serial

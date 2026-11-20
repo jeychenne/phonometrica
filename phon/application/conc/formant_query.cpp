@@ -58,7 +58,7 @@ int FormantQuery::field_count() const
 	int fpp = fields_per_point();
 	int n = 0;
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		n = fpp;
 	}
@@ -93,7 +93,7 @@ Array<String> FormantQuery::build_headers() const
 		}
 	};
 
-	if (m_method == Method::Midpoint)
+	if (m_method == Method::Midpoint || m_method == Method::Step)
 	{
 		emit_group("");
 	}
@@ -151,6 +151,7 @@ void FormantQuery::clear()
 {
 	Query::clear();
 	m_points.clear();
+	m_step = 0.005;
 	m_method = Method::Midpoint;
 	m_nformant = 3;
 	m_win_size = 0.025;
@@ -244,7 +245,7 @@ Handle<Concordance> FormantQuery::execute()
 			{
 				// If measurement fails for a single match (e.g. sound file not bound),
 				// fill with NaN and continue rather than aborting the whole query.
-				m.measurements.assign(field_count(), std::nan(""));
+				fill_missing(m);
 			}
 		});
 	}
@@ -275,6 +276,11 @@ Handle<Concordance> FormantQuery::execute()
 		conc->set_measurement_info(m_points, m_average);
 		conc->set_has_series(m_series);
 		conc->set_layout(m_initial_layout);
+	}
+	else if (m_method == Method::Step)
+	{
+		// Variable number of points per match: long layout only.
+		conc->set_measurement_step(m_step);
 	}
 
 	// Build all display headers from the metadata
@@ -378,6 +384,46 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 	}
 
 	auto nf = m_nformant;
+	if (m_method == Method::Step)
+	{
+		// [F1..Fn, B1..Bn at each point] [Max freq, LPC order | Max freq] [time of the first point]
+		intptr_t npoints;
+		double t0;
+		step_grid(t1, t2, m_step, npoints, t0);
+		int fpp = fields_per_point();
+		auto &meas = match.measurements;
+		meas.assign(npoints * fpp + step_tail_count(), std::nan(""));
+		meas.push_back(t0);
+
+		// If the automatic selection failed, leave everything as NaN (as for the other methods).
+		if (max_freq == 0) {
+			return;
+		}
+
+		int idx = 0;
+		for (intptr_t k = 0; k < npoints; k++)
+		{
+			double t = t0 + double(k) * m_step;
+			auto data = sound->get_formants(channel(), t, nf, max_freq, m_win_size, lpc_order);
+			for (int i = 0; i < nf; i++) {
+				meas[idx++] = data(i, 0);
+			}
+			if (m_bandwidth) {
+				for (int i = 0; i < nf; i++) {
+					meas[idx++] = data(i, 1);
+				}
+			}
+		}
+		if (m_automatic) {
+			meas[idx++] = max_freq;
+			meas[idx++] = (double)lpc_order;
+		}
+		else if (override_enabled()) {
+			meas[idx++] = max_freq;
+		}
+		return;
+	}
+
 	int total = field_count();
 	match.measurements.resize(total, std::nan(""));
 
@@ -639,16 +685,26 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	pass(count, [&](intptr_t i) {
 		auto &match = *matches[i];
 		auto &e = entries[i];
-		if (!e.ok) { match.measurements.assign(field_count(), std::nan("")); return; }
+		if (!e.ok) { fill_missing(match); return; }
 		try
 		{
 			const auto &win = e.cands[e.sel];
 			measure_match(match, win.ceiling, win.lpc_order);
 		}
-		catch (...) { match.measurements.assign(field_count(), std::nan("")); }
+		catch (...) { fill_missing(match); }
 	});
 
 	query_progress(Stage::Measuring, progress_total, progress_total);
+}
+
+void FormantQuery::fill_missing(QueryMatch &match) const
+{
+	if (m_method == Method::Step) {
+		fill_missing_step(match, m_step, fields_per_point(), step_tail_count());
+	}
+	else {
+		match.measurements.assign(field_count(), std::nan(""));
+	}
 }
 
 Handle<Query> FormantQuery::copy() const
@@ -669,6 +725,7 @@ Handle<Query> FormantQuery::copy() const
 	// Copy formant-specific fields
 	c->m_method = m_method;
 	c->m_points = m_points;
+	c->m_step = m_step;
 	c->m_nformant = m_nformant;
 	c->m_win_size = m_win_size;
 	c->m_max_bandwidth = m_max_bandwidth;
@@ -754,7 +811,14 @@ void FormantQuery::load()
 				if (child.name() == str("Method"))
 				{
 					auto val = str(child.text().get());
-					m_method = (val == "npoint") ? Method::NPoint : Method::Midpoint;
+					if (val == "npoint") m_method = Method::NPoint;
+					else if (val == "step") m_method = Method::Step;
+					else m_method = Method::Midpoint;
+				}
+				else if (child.name() == str("Step"))
+				{
+					m_step = child.text().as_double(0.005);
+					if (m_step <= 0) m_step = 0.005;
 				}
 				else if (child.name() == str("Points"))
 				{
@@ -964,7 +1028,15 @@ void FormantQuery::write()
 
 	// Formant settings
 	auto fs_node = root.append_child("FormantSettings");
-	add_data_node(fs_node, "Method", m_method == Method::NPoint ? "npoint" : "midpoint");
+	{
+		const char *method_name = "midpoint";
+		if (m_method == Method::NPoint) method_name = "npoint";
+		else if (m_method == Method::Step) method_name = "step";
+		add_data_node(fs_node, "Method", method_name);
+		if (m_method == Method::Step) {
+			add_data_node(fs_node, "Step", String::format("%.6g", m_step));
+		}
+	}
 
 	if (m_method == Method::NPoint && !m_points.empty())
 	{

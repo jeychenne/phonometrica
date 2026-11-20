@@ -36,7 +36,8 @@ public:
 	enum class Method
 	{
 		Midpoint,   // measure at the temporal midpoint of the match
-		NPoint      // measure at user-specified percentages
+		NPoint,     // measure at user-specified percentages
+		Step        // measure every `step` seconds across the match (long layout only)
 	};
 
 	IntensityQuery(Directory *parent, String path);
@@ -62,6 +63,10 @@ public:
 
 	const Array<double> &measurement_points() const { return m_points; }
 	void set_measurement_points(Array<double> pts) { m_points = std::move(pts); }
+
+	// Distance between measurement points in seconds, used when method == Step.
+	double measurement_step() const { return m_step; }
+	void set_measurement_step(double s) { m_step = s; }
 
 	// ── N-point output mode ──────────────────────────────────────────────
 
@@ -98,10 +103,16 @@ protected:
 
 	void measure_match(QueryMatch &match) const;
 
+	// Fill the measurement vector of a match that could not be measured with NaN, keeping the layout
+	// (number of points, time of the first point for the Step method) that measure_match() would produce.
+	void fill_missing(QueryMatch &match) const;
+
+
 private:
 
 	Method m_method = Method::Midpoint;
 	Array<double> m_points;
+	double m_step = 0.005;         // seconds, used when method == Step
 
 	bool m_series = true;
 	bool m_average = false;

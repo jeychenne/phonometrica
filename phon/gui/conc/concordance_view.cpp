@@ -271,8 +271,11 @@ void ConcordanceView::setupUi()
 		long_action = display_menu->addAction(tr("Long format (one row per time point)"));
 		long_action->setCheckable(true);
 		long_action->setChecked(m_conc->layout() == Concordance::Layout::Long);
-		long_action->setEnabled(m_conc->has_measurement_data());
-		if (m_conc->has_measurement_data())
+		long_action->setEnabled(m_conc->can_toggle_layout());
+		if (m_conc->is_step_series())
+			long_action->setToolTip(tr("Measurements taken at a fixed step can only be shown in long format, "
+			                           "since the number of points varies from one match to the next"));
+		else if (m_conc->has_measurement_data())
 			long_action->setToolTip(tr("Toggle between wide format (one row per match) and long format (one row per time point)"));
 		else
 			long_action->setToolTip(tr("Long format is only available for n-point measurements (not midpoint)"));
@@ -1022,7 +1025,10 @@ void ConcordanceView::onDeleteRows()
 	for (int pr : proxy_rows) {
 		source_rows.append(mapToSourceRow(pr));
 	}
-	std::sort(source_rows.begin(), source_rows.end());
+
+	// Removal works on matches. In long layout a match spans several rows: remove each match once.
+	auto match_indices = rowsToMatches(source_rows);
+	source_rows = QList<int>(match_indices.begin(), match_indices.end());
 
 	// Remove from bottom to top, collecting removed matches for undo.
 	std::vector<DeleteMatchesCommand::RemovedMatch> removed;
@@ -2033,7 +2039,20 @@ void ConcordanceView::updateCountLabel()
 	auto total = m_conc->row_count();
 	auto visible = m_proxy->visibleRowCount();
 
-	if (m_conc->layout() == Concordance::Layout::Long && m_conc->has_measurement_data())
+	if (m_conc->is_long_layout() && m_conc->is_step_series())
+	{
+		auto nmatches = (int) m_conc->match_count();
+		auto step_ms = m_conc->measurement_step() * 1000.0;
+		if (visible < (int) total) {
+			m_count_label->setText(tr("Showing %1 of %2 row(s) (%3 match(es), one point every %4 ms)")
+				.arg(visible).arg((int) total).arg(nmatches).arg(step_ms));
+		}
+		else {
+			m_count_label->setText(tr("%1 match(es), one point every %2 ms = %3 row(s)")
+				.arg(nmatches).arg(step_ms).arg((int) total));
+		}
+	}
+	else if (m_conc->layout() == Concordance::Layout::Long && m_conc->has_measurement_data())
 	{
 		auto npoints = (int) m_conc->measurement_points().size();
 		auto nmatches = total / npoints;
@@ -2122,6 +2141,19 @@ QList<int> ConcordanceView::selectedRows() const
 	return rows;
 }
 
+std::vector<int> ConcordanceView::rowsToMatches(const QList<int> &source_rows) const
+{
+	std::vector<int> result;
+	result.reserve(source_rows.size());
+	bool long_layout = m_conc->is_long_layout();
+	for (int row : source_rows) {
+		result.push_back(long_layout ? (int) m_conc->match_for_row(row) : row);
+	}
+	std::sort(result.begin(), result.end());
+	result.erase(std::unique(result.begin(), result.end()), result.end());
+	return result;
+}
+
 int ConcordanceView::mapToSourceRow(int proxyRow) const
 {
 	auto source_idx = m_proxy->mapToSource(m_proxy->index(proxyRow, 0));
@@ -2199,7 +2231,9 @@ void ConcordanceView::onCreateSubset()
 
 	try
 	{
-		std::vector<int> rows(visible.begin(), visible.end());
+		// subset() works on matches. In long layout, keep every match that has at least one visible row.
+		QList<int> visible_rows(visible.begin(), visible.end());
+		auto rows = rowsToMatches(visible_rows);
 		auto result = m_conc->subset(rows, String(name.toUtf8().constData()));
 		Project::updated();
 		emit concordanceCreated(result);

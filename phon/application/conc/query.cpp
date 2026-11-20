@@ -19,6 +19,8 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
+#include <cmath>
 #include <unordered_set>
 #include <vector>
 #include <phon/runtime.hpp>
@@ -719,6 +721,47 @@ void Query::measure_matches(Array<AutoMatch> &matches, const std::function<void(
 		[&](intptr_t finished) {
 			query_progress(Stage::Measuring, (int) finished, (int) n);
 		});
+}
+
+void Query::step_grid(double t1, double t2, double step, intptr_t &n, double &t0)
+{
+	double dur = t2 - t1;
+	if (step <= 0 || dur <= 0)
+	{
+		n = 1;
+		t0 = (t1 + t2) / 2;
+		return;
+	}
+	// Small tolerance so that e.g. 0.1 / 0.01 gives 10 points rather than 9 because of rounding.
+	n = std::max<intptr_t>(1, intptr_t(std::floor(dur / step + 1e-6)));
+	t0 = t1 + (dur - double(n - 1) * step) / 2;
+}
+
+std::pair<double,double> Query::match_interval(const QueryMatch &match)
+{
+	auto *target = match.reference_target();
+	if (!target) {
+		target = match.get(1);
+	}
+	return { target->start_time, target->end_time };
+}
+
+void Query::fill_missing_step(QueryMatch &match, double step, int fields_per_point, int tail_count)
+{
+	intptr_t npoints = 1;
+	double t0 = std::nan("");
+	try
+	{
+		auto [t1, t2] = match_interval(match);
+		step_grid(t1, t2, step, npoints, t0);
+	}
+	catch (std::exception &)
+	{
+		// Keep a single NaN point.
+	}
+	auto &meas = match.measurements;
+	meas.assign(npoints * fields_per_point + tail_count, std::nan(""));
+	meas.push_back(t0);
 }
 
 bool Query::use_parallel(intptr_t count)

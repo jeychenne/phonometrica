@@ -294,11 +294,22 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 	m_npoint_edit->setEnabled(false);
 	m_npoint_edit->setFixedWidth(120);
 	loc_row->addWidget(m_npoint_edit);
+	loc_row->addSpacing(10);
+	m_step_radio = new QRadioButton(tr("Every (ms)"));
+	m_step_radio->setToolTip(tr("Measure at regular intervals across each match. The number of points varies "
+	                            "with the duration of the match, so the results are always in long format."));
+	loc_row->addWidget(m_step_radio);
+	m_step_edit = new QLineEdit;
+	m_step_edit->setPlaceholderText("5");
+	m_step_edit->setEnabled(false);
+	m_step_edit->setFixedWidth(50);
+	loc_row->addWidget(m_step_edit);
 	loc_row->addStretch();
 	outer->addLayout(loc_row);
 	auto *location_group = new QButtonGroup(this);
 	location_group->addButton(m_midpoint_radio);
 	location_group->addButton(m_npoint_radio);
+	location_group->addButton(m_step_radio);
 
 	// Output format
 	auto *fmt_row = new QHBoxLayout;
@@ -328,6 +339,17 @@ QWidget *PitchQueryEditor::createPitchSettingsPanel()
 		if (on) { m_npoint_edit->setText("25 50 75"); m_npoint_edit->setEnabled(true);
 			m_wide_radio->setEnabled(true); m_long_radio->setEnabled(true);
 			m_average_check->setEnabled(m_wide_radio->isChecked()); }
+		else { m_npoint_edit->clear(); m_npoint_edit->setEnabled(false); }
+	});
+	connect(m_step_radio, &QRadioButton::toggled, this, [this](bool on) {
+		if (on) {
+			if (m_step_edit->text().trimmed().isEmpty()) m_step_edit->setText("5");
+			m_step_edit->setEnabled(true);
+			// The number of points varies across matches: only the long format is possible.
+			m_long_radio->setChecked(true);
+			m_wide_radio->setEnabled(false); m_long_radio->setEnabled(false); m_average_check->setEnabled(false);
+		}
+		else { m_step_edit->setEnabled(false); }
 	});
 	connect(m_wide_radio, &QRadioButton::toggled, this, [this](bool on) {
 		m_average_check->setEnabled(on && m_npoint_radio->isChecked());
@@ -856,6 +878,13 @@ void PitchQueryEditor::parseQuery()
 
 	if (m_midpoint_radio->isChecked()) {
 		m_query->set_method(PitchQuery::Method::Midpoint);
+	} else if (m_step_radio->isChecked()) {
+		double step_ms = m_step_edit->text().toDouble(&ok);
+		if (!ok || step_ms <= 0) throw std::runtime_error("Invalid measurement step (must be a positive number of milliseconds)");
+		m_query->set_method(PitchQuery::Method::Step);
+		m_query->set_measurement_step(step_ms / 1000.0);
+		m_query->set_output_series(true); m_query->set_output_average(false);
+		m_query->set_initial_layout(Concordance::Layout::Long);
 	} else {
 		m_query->set_method(PitchQuery::Method::NPoint);
 		if (m_long_radio->isChecked()) {
@@ -1077,6 +1106,9 @@ void PitchQueryEditor::loadQuery()
 		m_npoint_edit->setText(pts);
 		if (m_query->initial_layout() == Concordance::Layout::Long) m_long_radio->setChecked(true);
 		else { m_wide_radio->setChecked(true); m_average_check->setChecked(m_query->output_average()); }
+	} else if (m_query->method() == PitchQuery::Method::Step) {
+		m_step_edit->setText(QString::number(m_query->measurement_step() * 1000.0));
+		m_step_radio->setChecked(true);
 	} else {
 		m_midpoint_radio->setChecked(true);
 	}

@@ -303,10 +303,40 @@ public:
 
 	Layout layout() const { return m_layout; }
 
-	void set_layout(Layout l) { m_layout = l; }
+	// Fixed-step series can only be displayed in long layout: the number of points varies across matches.
+	void set_layout(Layout l) { m_layout = is_step_series() ? Layout::Long : l; }
 
-	// True if this concordance has n-point measurement data (can toggle wide/long).
-	bool has_measurement_data() const { return !m_measurement_points.empty(); }
+	// True if this concordance has per-point measurement data (n-point or fixed-step), i.e. a long layout exists.
+	bool has_measurement_data() const { return !m_measurement_points.empty() || is_step_series(); }
+
+	// True if the layout can be toggled between wide and long (n-point data only: fixed-step data is long-only).
+	bool can_toggle_layout() const { return !m_measurement_points.empty() && !is_step_series(); }
+
+	// True if the current display is the long layout over per-point data (one row per measurement point).
+	bool is_long_layout() const { return m_layout == Layout::Long && has_measurement_data(); }
+
+	// ── Fixed-step series ────────────────────────────────────────────────
+	// Measurements are taken every `step` seconds across each match, so the number of points varies from one match
+	// to the next. Each match's measurement vector is laid out as
+	//     [point 0 fields] ... [point n-1 fields] [per-match trailing columns] [time of point 0 (s)]
+	// and the number of points n is derived from the vector's size. Point k is at time t0 + k * step.
+
+	bool is_step_series() const { return m_measurement_step > 0; }
+
+	double measurement_step() const { return m_measurement_step; }
+
+	/// Switch this concordance to fixed-step series (step in seconds). Forces the long layout.
+	void set_measurement_step(double step);
+
+	/// Number of matches (independent of the layout; row_count() counts display rows).
+	intptr_t match_count() const { return m_matches.size(); }
+
+	/// Number of measurement points of the match at 0-based index `mi`.
+	intptr_t point_count(intptr_t mi) const;
+
+	/// Recompute the display-row index of a fixed-step series. Must be called whenever matches are added/removed or
+	/// the metadata that determines the measurement vector's layout changes. No-op for other concordances.
+	void rebuild_row_index();
 
 	/// Set measurement points and average flag (called by FormantQuery::execute()).
 	void set_measurement_info(Array<double> points, bool has_average);
@@ -482,9 +512,21 @@ protected:
 	// Number of extra columns in the current layout.
 	intptr_t effective_extra_count() const;
 
+public:
 	// In long mode, map display row i (0-based) to match index and point index.
 	intptr_t match_for_row(intptr_t i) const;  // 0-based match index
 	intptr_t point_for_row(intptr_t i) const;  // 0-based point index
+
+	/// First display row (0-based) of match `mi` in long layout (== mi in wide layout).
+	intptr_t first_row_for_match(intptr_t mi) const;
+
+protected:
+	/// Number of per-match trailing values stored after the point groups (auto params, Max freq, pitch range).
+	int stored_tail_count() const;
+
+	/// Time (s) of point `pi` of match `mi`: fixed-step series read t0 from the match; n-point series interpolate
+	/// within the reference target.
+	double point_time(intptr_t mi, intptr_t pi) const;
 
 	/// Resolve a display column within a measurement group to a double value.
 	/// `meas` is the match's measurement vector; `stored_base` is the offset for this group;
@@ -536,6 +578,8 @@ protected:
 	bool m_per_match_pitch_range_available = false; // data is stored in meas (set at query exec time)
 	bool m_has_series = true;         // NPoint: per-point series data present
 	bool m_has_average = false;       // NPoint: average group present
+	double m_measurement_step = 0;    // fixed-step series: step in seconds (0 = not a fixed-step series)
+	std::vector<intptr_t> m_row_offsets; // fixed-step series: first display row of each match (+ total at the end)
 
 	// ── Pitch metadata ──────────────────────────────────────────────────
 	// Semitones and ERB-rate are computed on the fly. Only F0 in Hz is stored per match.
