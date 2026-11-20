@@ -179,7 +179,14 @@ bool ConcordanceModel::setHeaderData(int section, Qt::Orientation orientation, c
 		m_conc->clear_header_alias(default_hdr);
 	}
 	else {
-		m_conc->set_header_alias(default_hdr, new_name);
+		try {
+			m_conc->set_header_alias(default_hdr, new_name);
+		}
+		catch (std::exception &) {
+			// The name is already used by another column. The view checks this before renaming; an exception must
+			// not escape into Qt's event loop.
+			return false;
+		}
 	}
 
 	// Both alias mutators set m_content_modified on the concordance; broadcast

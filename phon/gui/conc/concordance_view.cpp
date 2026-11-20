@@ -1891,6 +1891,16 @@ void ConcordanceView::onHeaderDoubleClick(int section)
 
 	if (!ok) return;
 
+	// Two columns with the same name would be ambiguous (and renaming one would rename the other).
+	auto new_name_str = String(new_name.toUtf8().constData());
+	auto default_str = String(default_name.toUtf8().constData());
+	if (!new_name_str.empty() && new_name_str != default_str && m_conc->has_column_named(new_name_str, section))
+	{
+		QMessageBox::critical(this, tr("Rename column"),
+			tr("There is already a column named \"%1\" in this concordance.").arg(new_name));
+		return;
+	}
+
 	auto cmd = std::make_unique<RenameConcColumnCommand>(this, section,
 		current_display, new_name);
 	submit(std::move(cmd));
@@ -2645,8 +2655,13 @@ void ConcordanceView::onNormalizeVowels()
 			}
 		}
 
-		// Append result columns.
+		// Append result columns. Check all the names first, so that a clash adds none of them.
 		auto names = dlg.outputColumnNames();
+		Array<String> new_names;
+		for (int f = 0; f < (int) result.size(); f++) {
+			new_names.append(String(names[f].toUtf8().constData()));
+		}
+		m_conc->check_new_column_names(new_names, "Cannot add normalized columns");
 		for (int f = 0; f < (int) result.size(); f++) {
 			m_conc->add_numeric_column(String(names[f].toUtf8().constData()), result[f]);
 			record(std::make_unique<AddConcAuxColumnCommand>(this));

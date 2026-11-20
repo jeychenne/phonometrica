@@ -388,8 +388,17 @@ public:
 	/// The result is a new in-memory Concordance added to the project.
 	Handle<Concordance> subset(const std::vector<int> &rows_0based, const String &label) const;
 
+	/// True if `name` is the name of a column of this concordance: its displayed name (alias) or its default name.
+	/// Measurement columns of the other layout (wide/long) are included, since toggling the layout must not create
+	/// duplicates either. Column `except_col` (0-based, -1 for none) is ignored, for renaming that column.
+	bool has_column_named(const String &name, intptr_t except_col = -1) const;
+
+	/// Throw an error if a name in `names` is empty, is already the name of a column (see has_column_named()), or
+	/// appears more than once in `names`. `context` starts the error message (e.g. "Cannot add column").
+	void check_new_column_names(const Array<String> &names, const char *context) const;
+
 	/// Append a new numeric auxiliary column with the given header and values.
-	/// The values vector must have exactly row_count() elements.
+	/// The values vector must have exactly row_count() elements. Throws if the header is already used.
 	void add_numeric_column(const String &header, const std::vector<double> &values);
 
 	/// Append a new text auxiliary column with the given header and values.

@@ -638,8 +638,69 @@ double Concordance::point_time(intptr_t mi, intptr_t pi) const
 
 // ── Column aliases ───────────────────────────────────────────────────────────
 
+bool Concordance::has_column_named(const String &name, intptr_t except_col) const
+{
+	const intptr_t ncol = column_count();
+	for (intptr_t j = 0; j < ncol; j++)
+	{
+		if (j == except_col) continue;
+		if (get_header(j) == name || get_default_header(j) == name) {
+			return true;
+		}
+	}
+
+	// Measurement columns that only exist in the other layout, known by their default name `h` or its alias. The
+	// column being renamed (`own`) can appear here too and must not clash with itself.
+	if (has_measurement_data())
+	{
+		String own = (except_col >= 0 && except_col < ncol) ? get_default_header(except_col) : String();
+		auto clash = [&](const String &h) {
+			if (h == own) return false;
+			if (h == name) return true;
+			auto it = m_header_aliases.find(h);
+			return it != m_header_aliases.end() && it->second == name;
+		};
+		if (clash("Step") || clash("Time (normalized)")) return true;
+		for (auto &h : m_base_headers) if (clash(h)) return true;
+		for (auto &h : m_extra_headers) if (clash(h)) return true;
+	}
+
+	return false;
+}
+
+void Concordance::check_new_column_names(const Array<String> &names, const char *context) const
+{
+	for (intptr_t i = 0; i < names.size(); i++)
+	{
+		auto &name = names[i];
+		if (name.empty()) {
+			throw error("%: column names cannot be empty", context);
+		}
+		if (has_column_named(name)) {
+			throw error("%: there is already a column named \"%\" in this concordance", context, name);
+		}
+		for (intptr_t k = 0; k < i; k++)
+		{
+			if (names[k] == name) {
+				throw error("%: the name \"%\" is used more than once", context, name);
+			}
+		}
+	}
+}
+
 void Concordance::set_header_alias(const String &default_header, const String &alias)
 {
+	// Find the column being renamed so that it is not compared with itself.
+	intptr_t col = -1;
+	for (intptr_t j = 0; j < column_count(); j++)
+	{
+		if (get_default_header(j) == default_header) { col = j; break; }
+	}
+	if (alias != default_header && has_column_named(alias, col)) {
+		throw error("Cannot rename column \"%\": there is already a column named \"%\" in this concordance",
+		            default_header, alias);
+	}
+
 	m_header_aliases[default_header] = alias;
 	m_content_modified = true;
 }
@@ -3066,6 +3127,7 @@ Handle<Concordance> Concordance::subset(const std::vector<int> &rows_0based, con
 
 void Concordance::add_numeric_column(const String &header, const std::vector<double> &values)
 {
+	check_new_column_names({ header }, "Cannot add column");
 	if ((intptr_t)values.size() != row_count()) {
 		throw error("Cannot add column '%': expected % values, got %",
 		             header, row_count(), (intptr_t)values.size());
@@ -3085,6 +3147,7 @@ void Concordance::add_numeric_column(const String &header, const std::vector<dou
 
 void Concordance::add_text_column(const String &header, const std::vector<String> &values)
 {
+	check_new_column_names({ header }, "Cannot add column");
 	if ((intptr_t)values.size() != row_count()) {
 		throw error("Cannot add column '%': expected % values, got %",
 		             header, row_count(), (intptr_t)values.size());
@@ -3125,6 +3188,10 @@ ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Proto
 	// qualification is required because the member name here hides the free function.
 	ProtocolApplyResult result = phonometrica::apply_protocol(source, protocol, translate);
 
+	// Check every field name before adding anything, so that a clash leaves the concordance unchanged. A field named
+	// like an existing column (e.g. "Left context" when the concordance shows context) would create a duplicate column.
+	check_new_column_names(result.headers, "Cannot apply protocol");
+
 	// Append each output column as a text aux column. add_text_column calls modify() for each,
 	// which is fine — the concordance is dirtied regardless of how many columns we add.
 	for (intptr_t j = 0; j < result.headers.size(); j++)
@@ -3156,6 +3223,12 @@ Handle<Concordance> Concordance::merge(const DataTable &other, const String &lab
 {
 	if (row_count() != other.row_count()) {
 		throw error("Cannot merge: tables have different numbers of rows (% vs %)", row_count(), other.row_count());
+	}
+
+	{
+		Array<String> names;
+		for (auto &entry : columns_to_add) names.append(entry.first);
+		check_new_column_names(names, "Cannot merge");
 	}
 
 	// Start with a copy of this concordance.
