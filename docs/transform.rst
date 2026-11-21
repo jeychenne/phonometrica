@@ -12,7 +12,8 @@ Transform dialog
 The dialog contains the following elements:
 
 - **Formula**: enter a mathematical expression using ``x`` as the variable representing each cell value.
-- **New column name**: automatically generated from the formula (e.g. ``bark(F1)``), but you can edit it.
+- **New column name**: automatically generated from the formula (e.g. ``bark(F1)``), but you can edit it. It must
+  differ from the names of the existing columns.
 - **Preview**: shows the first few values of the column along with the computed result, updated in real time as you type.
 
 The formula is validated as you type. If there is an error, it is displayed in red below the formula field and the **OK** button is disabled.

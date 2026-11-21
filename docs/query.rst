@@ -170,6 +170,42 @@ algorithms. The results are displayed in a concordance view with additional meas
 All acoustic queries require that the annotation files being searched are bound to sound files.
 
 
+.. _measurement-points:
+
+Measurement points
+~~~~~~~~~~~~~~~~~~
+
+Formant, pitch, intensity and spectral moments queries share a **Measurement** setting, which decides where in
+each matched event the measurements are taken:
+
+- **Midpoint**: a single measurement at the temporal midpoint of the event.
+- **N-point (%)**: one measurement at each of the percentages you list, separated by spaces (e.g. ``25 50 75``
+  measures at a quarter, half and three quarters of the event's duration). Every match has the same number of
+  points, so the results can be shown in **wide format** (one row per match, one group of columns per point, with
+  an optional **average** of the points) or in **long format** (one row per point). You choose the format in the
+  query editor and can switch between the two later from the concordance's Display settings menu.
+- **Every (ms)**: measurements at a fixed interval, set in milliseconds (**5 ms** by default). Longer events get
+  more points than shorter ones, so the number of points varies from one match to the next: the results are
+  **always in long format**, and the wide/long toggle is not available for these concordances.
+
+With **Every (ms)**, the points are spaced by exactly the step you set and **centred** in the event: an event of
+duration *d* gets *d* / step points (rounded down), and the first and last points are at least half a step away from the event's
+boundaries. For instance, a 102 ms vowel measured every 10 ms gets 10 points, the first one 6 ms after the start of
+the vowel and the last one 6 ms before its end. An event shorter than one step gets a single point, at its midpoint,
+so that no match disappears from the results. This step is unrelated to the **Time step** setting of pitch and
+intensity analysis, which is the resolution of the analysis itself.
+
+In long format, each row describes one point and starts with three columns:
+
+- **Step**: the number of the point within its match, starting at 1.
+- **Time (normalized)**: the position of the point in the event, from 0 (start) to 1 (end).
+- **Time**: the absolute time of the point in seconds, when **Add measurement time** is checked.
+
+They are followed by the measurements at that point. Values that apply to the whole match, such as the LPC
+parameters chosen by automatic formant analysis or the parameters set by a per-property override, are repeated on
+every row of the match.
+
+
 Formant queries
 ~~~~~~~~~~~~~~~
 
@@ -182,10 +218,9 @@ text query editor with a panel for formant analysis settings:
 - **Window length**: the duration of the LPC analysis window (in seconds).
 - **LPC order**: the number of prediction coefficients. By default, Phonometrica uses 2 × *number of formants* + 2.
 
-Formant values are measured at either the **midpoint** of the matched event or as an **n-point average**
-over equally spaced time points. When n-point averaging is used, the result concordance can be toggled between
-wide format (one row per match, with F1_1, F1_2, ... columns) and long format (one row per time point) using
-the Display settings menu.
+Formant values are measured at the **midpoint** of the matched event, at **n points** given as percentages of
+its duration, or **every n milliseconds** (see :ref:`measurement-points`). In automatic mode, the LPC parameters
+are chosen once for each match, over the whole event, and every point of that match is measured with them.
 
 **Weenink's method**: Phonometrica implements an automatic formant selection method based on
 Weenink (2015), which evaluates multiple LPC analyses with different parameter settings and selects the
@@ -223,8 +258,9 @@ When **Praat** is selected, four additional parameters are revealed, correspondi
 - **Octave-jump cost** (default 0.35): penalty for an octave jump between adjacent frames.
 - **Voiced/unvoiced cost** (default 0.14): penalty for a voiced↔unvoiced transition.
 
-Like formant queries, pitch can be measured at the midpoint or as an n-point average. Pitch values in
-Hertz can be converted to **semitones** (relative to a reference) or to **ERB rate** via the Scales menu.
+Like formant queries, pitch can be measured at the midpoint, at n points, or every n milliseconds (see
+:ref:`measurement-points`). Pitch values in Hertz can be converted to **semitones** (relative to a reference) or
+to **ERB rate** via the Scales menu.
 
 
 Intensity queries
@@ -236,7 +272,7 @@ settings for:
 - **Minimum intensity** and **Maximum intensity**: the expected intensity range.
 - **Time step**: the temporal resolution of the intensity contour.
 
-Intensity can be measured at the midpoint or as an n-point average.
+Intensity can be measured at the midpoint, at n points, or every n milliseconds (see :ref:`measurement-points`).
 
 
 Spectral moments queries
@@ -270,9 +306,8 @@ The spectral moments query editor extends the text query editor with a panel for
 - **Output**: checkboxes let you select which of the four moments to include in the concordance.
   All four are enabled by default.
 
-Like other acoustic queries, spectral moments can be measured at the **midpoint** of the matched event
-or as an **n-point** measurement at user-specified percentages. When n-point measurement is selected,
-the result concordance can be toggled between wide and long format.
+Like other acoustic queries, spectral moments can be measured at the **midpoint** of the matched event,
+at **n points** given as percentages, or **every n milliseconds** (see :ref:`measurement-points`).
 
 
 Voice quality queries
@@ -307,7 +342,7 @@ Two preset buttons sit below the grid:
 - **Select all**: checks all 14 measures.
 
 Unlike formant, pitch, intensity, and spectral moments queries, voice quality is **always measured
-over the entire matched interval** — there is no midpoint or n-point option. Jitter, shimmer, and HNR
+over the entire matched interval** — there is no midpoint, n-point or fixed-step option. Jitter, shimmer, and HNR
 all require a span of samples wide enough to detect multiple glottal pulses; a single time-point makes
 no sense for these measures.
 

@@ -18,7 +18,9 @@ Opening a dataset
 
 To import a CSV file as a dataset, use **File > Add files to project...** and select your CSV file. When
 you add a CSV file, Phonometrica will ask you to specify the column separator (tab, comma, or semicolon) and
-will automatically detect column types (numeric vs. text).
+will automatically detect column types (numeric vs. text). The column names in the file's header must be unique: a
+file with two columns of the same name cannot be opened until the header is fixed. A type suffix does not count as
+part of the name, so ``x.num`` and ``x.text`` both name a column ``x``.
 
 You can also create a dataset from a concordance view by exporting it to CSV and reimporting, or by using
 the scripting engine.
@@ -78,9 +80,14 @@ Right-click on a column header to access column-level operations:
 - **Rename**: give the column a new name.
 - **Recode...** (text columns): create a new column with remapped category labels.
 - **Transform...** (numeric columns): create a new column by applying a mathematical formula (see :ref:`transform`).
-- **Duplicate**: create a copy of the column.
+- **Duplicate**: create a copy of the column. A dialog asks for the name of the copy (``<name> (copy)`` by
+  default) and where to insert it.
 - **Move left** / **Move right**: change the column's position.
 - **Delete**: remove the column.
+
+Column names must be **unique**: renaming a column, duplicating it, adding a column (recoding, transforming,
+normalizing vowels, or from a script) and merging are refused, with an error, if they would give two columns the same
+name. Names cannot be empty either.
 
 
 Tips

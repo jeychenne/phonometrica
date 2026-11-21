@@ -6512,14 +6512,25 @@ void AnalysisView::updateEdaSummary()
 		return;
 
 	auto *dt = m_analysis->data();
+	intptr_t nc = dt->column_count();
+	intptr_t nr = dt->row_count();
+
+	auto find_col = [&](const QString &qname) -> intptr_t {
+		String name(qname.toUtf8().constData());
+		for (intptr_t j = 0; j < nc; j++) {
+			if (dt->get_header(j) == name) return j;
+		}
+		return -1;
+	};
+	auto combo_col = [&](QComboBox *combo) -> intptr_t {
+		return (combo->currentIndex() > 0) ? find_col(combo->currentText()) : -1;
+	};
+	auto qstr = [](const String &s) { return QString::fromUtf8(s.data(), (int) s.size()); };
+
+	// ── X and Y (either may be a virtual column) ──
 	auto x_name_q = m_eda_x_combo->currentText();
 	auto x_name = String(x_name_q.toUtf8().constData());
-
-	intptr_t nc = dt->column_count();
-	intptr_t x_col = -1;
-	for (intptr_t j = 0; j < nc; j++) {
-		if (dt->get_header(j) == x_name) { x_col = j; break; }
-	}
+	intptr_t x_col = find_col(x_name_q);
 	Array<String> x_virtual_cells;
 	bool x_virtual = false;
 	if (x_col < 0)
@@ -6535,694 +6546,502 @@ void AnalysisView::updateEdaSummary()
 		return x_virtual ? x_virtual_cells[r] : dt->get_cell(r, x_col);
 	};
 
-	intptr_t nr = dt->row_count();
 	bool has_y = (m_eda_y_combo->currentIndex() > 0);
 	bool x_numeric = isColumnNumeric(x_name);
-
-	if (!has_y)
-	{
-		if (x_numeric)
-		{
-			// ── Univariate numeric: N, Mean, SD, Min, Q1, Median, Q3, Max, Missing ──
-
-			std::vector<double> vals;
-			vals.reserve(nr);
-			intptr_t missing = 0;
-			for (intptr_t r = 0; r < nr; r++)
-			{
-				auto v = xc(r);
-				if (v.empty()) { missing++; continue; }
-				bool ok;
-				double d = v.to_float(&ok);
-				if (ok && std::isfinite(d)) vals.push_back(d);
-				else missing++;
-			}
-			if (vals.empty()) return;
-
-			std::sort(vals.begin(), vals.end());
-			size_t n = vals.size();
-			double sum = 0;
-			for (double v : vals) sum += v;
-			double mean = sum / n;
-			double ss = 0;
-			for (double v : vals) { double d = v - mean; ss += d * d; }
-			double sd = (n > 1) ? std::sqrt(ss / (n - 1)) : 0.0;
-
-			m_eda_summary->setColumnCount(9);
-			m_eda_summary->setHorizontalHeaderLabels(
-				{tr("N"), tr("Mean"), tr("SD"), tr("Min"), tr("Q1"),
-				 tr("Median"), tr("Q3"), tr("Max"), tr("Missing")});
-			m_eda_summary->setRowCount(1);
-
-			auto set = [&](int col, const QString &text) {
-				auto *item = new QTableWidgetItem(text);
-				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_eda_summary->setItem(0, col, item);
-			};
-
-			set(0, QString::number(n));
-			set(1, QString::number(mean, 'f', 4));
-			set(2, QString::number(sd, 'f', 4));
-			set(3, QString::number(vals.front(), 'f', 4));
-			set(4, QString::number(sorted_q1(vals), 'f', 4));
-			set(5, QString::number(sorted_median(vals), 'f', 4));
-			set(6, QString::number(sorted_q3(vals), 'f', 4));
-			set(7, QString::number(vals.back(), 'f', 4));
-			set(8, QString::number(missing));
-
-			m_eda_summary->resizeColumnsToContents();
-		}
-		else
-		{
-			// ── Univariate categorical: Level, Count ──
-
-			std::vector<QString> order;
-			std::map<QString, int> counts;
-			for (intptr_t r = 0; r < nr; r++)
-			{
-				auto v = xc(r);
-				if (v.empty()) continue;
-				auto qs = QString::fromUtf8(v.data(), (int)v.size());
-				if (counts.find(qs) == counts.end()) order.push_back(qs);
-				counts[qs]++;
-			}
-			if (order.empty()) return;
-
-			m_eda_summary->setColumnCount(2);
-			m_eda_summary->setHorizontalHeaderLabels({x_name_q, tr("Count")});
-			m_eda_summary->setRowCount((int)order.size());
-
-			for (int i = 0; i < (int)order.size(); i++)
-			{
-				m_eda_summary->setItem(i, 0, new QTableWidgetItem(order[i]));
-				auto *cnt = new QTableWidgetItem(QString::number(counts[order[i]]));
-				cnt->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_eda_summary->setItem(i, 1, cnt);
-			}
-			m_eda_summary->resizeColumnsToContents();
-		}
-		return;
-	}
-
-	// ── Bivariate: both X and Y selected ──
-
-	auto y_name_q = m_eda_y_combo->currentText();
-	auto y_name = String(y_name_q.toUtf8().constData());
-
+	QString y_name_q;
 	intptr_t y_col = -1;
-	for (intptr_t j = 0; j < nc; j++) {
-		if (dt->get_header(j) == y_name) { y_col = j; break; }
-	}
 	Array<String> y_virtual_cells;
 	bool y_virtual = false;
-	if (y_col < 0)
+	bool y_numeric = false;
+	if (has_y)
 	{
-		if (isVirtualEdaColumn(y_name_q))
+		y_name_q = m_eda_y_combo->currentText();
+		auto y_name = String(y_name_q.toUtf8().constData());
+		y_col = find_col(y_name_q);
+		if (y_col < 0)
 		{
-			y_virtual_cells = buildVirtualEdaCells(y_name_q);
-			y_virtual = !y_virtual_cells.empty();
+			if (isVirtualEdaColumn(y_name_q))
+			{
+				y_virtual_cells = buildVirtualEdaCells(y_name_q);
+				y_virtual = !y_virtual_cells.empty();
+			}
+			if (!y_virtual) return;
 		}
-		if (!y_virtual) return;
+		y_numeric = isColumnNumeric(y_name);
 	}
 	auto yc = [&](intptr_t r) -> String {
-		return y_virtual ? y_virtual_cells[r] : dt->get_cell(r, y_col);
+		return y_virtual ? y_virtual_cells[r] : (y_col >= 0 ? dt->get_cell(r, y_col) : String());
+	};
+	auto to_num = [](const String &s, double &d) -> bool {
+		if (s.empty()) return false;
+		bool ok;
+		d = s.to_float(&ok);
+		return ok && std::isfinite(d);
 	};
 
-	bool y_numeric = isColumnNumeric(y_name);
-
-	if (x_numeric && y_numeric)
-	{
-		bool has_group = (m_eda_group_combo->currentIndex() > 0);
-
-		if (has_group)
-		{
-			// ── Grouped scatter: per-group N, Mean(X), SD(X), Mean(Y), SD(Y), Missing ──
-
-			auto group_name_q = m_eda_group_combo->currentText();
-			auto group_name = String(group_name_q.toUtf8().constData());
-
-			intptr_t g_col = -1;
-			for (intptr_t j = 0; j < nc; j++) {
-				if (dt->get_header(j) == group_name) { g_col = j; break; }
-			}
-			if (g_col < 0) return;
-
-			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
-			intptr_t p_col = -1;
-			if (has_pool) {
-				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 0; j < nc; j++) {
-					if (dt->get_header(j) == pool_name) { p_col = j; break; }
-				}
-			}
-
-			std::vector<QString> group_order;
-			struct GroupStats { std::vector<double> xv, yv; };
-			std::map<QString, GroupStats> grouped;
-			intptr_t included = 0;
-
-			if (p_col >= 0)
-			{
-				// Pool first: collapse to one mean per (pool, group) cell,
-				// then feed the cell means into the per-group stats.
-				struct PoolCell { double sx = 0, sy = 0; int n = 0; QString group; };
-				std::map<std::pair<QString, QString>, PoolCell> cells;
-				std::vector<std::pair<QString, QString>> cell_order;
-
-				for (intptr_t r = 0; r < nr; r++)
-				{
-					auto vx = xc(r);
-					auto vy = yc(r);
-					auto vg = dt->get_cell(r, g_col);
-					auto vp = dt->get_cell(r, p_col);
-					if (vx.empty() || vy.empty() || vg.empty() || vp.empty()) continue;
-					bool okx, oky;
-					double dx = vx.to_float(&okx);
-					double dy = vy.to_float(&oky);
-					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
-					included++;
-
-					auto key = std::make_pair(
-						QString::fromUtf8(vp.data(), (int)vp.size()),
-						QString::fromUtf8(vg.data(), (int)vg.size()));
-					if (cells.find(key) == cells.end()) cell_order.push_back(key);
-					auto &c = cells[key];
-					c.sx += dx; c.sy += dy; c.n++;
-					c.group = key.second;
-				}
-
-				for (auto &key : cell_order) {
-					auto &c = cells[key];
-					if (c.n == 0) continue;
-					if (grouped.find(c.group) == grouped.end()) group_order.push_back(c.group);
-					grouped[c.group].xv.push_back(c.sx / c.n);
-					grouped[c.group].yv.push_back(c.sy / c.n);
-				}
-			}
-			else
-			{
-				// No pooling: raw data points.
-				for (intptr_t r = 0; r < nr; r++)
-				{
-					auto vx = xc(r);
-					auto vy = yc(r);
-					auto vg = dt->get_cell(r, g_col);
-					if (vx.empty() || vy.empty() || vg.empty()) continue;
-					bool okx, oky;
-					double dx = vx.to_float(&okx);
-					double dy = vy.to_float(&oky);
-					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) continue;
-					auto qs = QString::fromUtf8(vg.data(), (int)vg.size());
-					if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
-					grouped[qs].xv.push_back(dx);
-					grouped[qs].yv.push_back(dy);
-					included++;
-				}
-			}
-			if (group_order.empty()) return;
-
-			intptr_t missing = nr - included;
-			int ncols = missing > 0 ? 7 : 6;
-
-			m_eda_summary->setColumnCount(ncols);
-			QStringList headers = {
-				group_name_q, tr("N"),
-				QStringLiteral("Mean(%1)").arg(x_name_q),
-				QStringLiteral("SD(%1)").arg(x_name_q),
-				QStringLiteral("Mean(%1)").arg(y_name_q),
-				QStringLiteral("SD(%1)").arg(y_name_q)};
-			if (missing > 0) headers.append(tr("Missing"));
-			m_eda_summary->setHorizontalHeaderLabels(headers);
-			m_eda_summary->setRowCount((int)group_order.size());
-
-			for (int g = 0; g < (int)group_order.size(); g++)
-			{
-				auto &gs = grouped[group_order[g]];
-				size_t n = gs.xv.size();
-
-				double sx = 0, sy = 0;
-				for (size_t i = 0; i < n; i++) { sx += gs.xv[i]; sy += gs.yv[i]; }
-				double mx = sx / n;
-				double my = sy / n;
-				double ssx = 0, ssy = 0;
-				for (size_t i = 0; i < n; i++) {
-					double dx = gs.xv[i] - mx;
-					double dy = gs.yv[i] - my;
-					ssx += dx * dx;
-					ssy += dy * dy;
-				}
-				double sd_x = (n > 1) ? std::sqrt(ssx / (n - 1)) : 0.0;
-				double sd_y = (n > 1) ? std::sqrt(ssy / (n - 1)) : 0.0;
-
-				m_eda_summary->setItem(g, 0, new QTableWidgetItem(group_order[g]));
-
-				auto set = [&](int col, const QString &text) {
-					auto *item = new QTableWidgetItem(text);
-					item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-					m_eda_summary->setItem(g, col, item);
-				};
-
-				set(1, QString::number(n));
-				set(2, QString::number(mx, 'f', 4));
-				set(3, QString::number(sd_x, 'f', 4));
-				set(4, QString::number(my, 'f', 4));
-				set(5, QString::number(sd_y, 'f', 4));
-
-				// Show missing only on the first row (it's a global count).
-				if (g == 0 && missing > 0)
-					set(6, QString::number(missing));
-			}
-			m_eda_summary->resizeColumnsToContents();
-		}
-		else
-		{
-			// ── Ungrouped scatter (both continuous): N, r, means, SDs ──
-			// When a pool variable is set, the stats are computed over pool
-			// cell means rather than raw observations — so the user sees
-			// grand means, in keeping with the plot itself (one point per
-			// pool level). N then reports the number of pool cells; the
-			// Missing column still reports raw rows that couldn't make any
-			// cell because of an NA in X, Y, or the pool column.
-
-			bool has_pool = (m_eda_pool_combo->currentIndex() > 0);
-			intptr_t p_col = -1;
-			if (has_pool) {
-				auto pool_name = String(m_eda_pool_combo->currentText().toUtf8().constData());
-				for (intptr_t j = 0; j < nc; j++) {
-					if (dt->get_header(j) == pool_name) { p_col = j; break; }
-				}
-			}
-
-			std::vector<double> xv, yv;
-			xv.reserve(nr);
-			yv.reserve(nr);
-			intptr_t missing = 0;
-
-			if (p_col >= 0)
-			{
-				struct PoolCell { double sx = 0, sy = 0; int n = 0; };
-				std::map<QString, PoolCell> cells;
-				std::vector<QString> cell_order;
-				for (intptr_t r = 0; r < nr; r++)
-				{
-					auto vx = xc(r);
-					auto vy = yc(r);
-					auto vp = dt->get_cell(r, p_col);
-					if (vx.empty() || vy.empty() || vp.empty()) { missing++; continue; }
-					bool okx, oky;
-					double dx = vx.to_float(&okx);
-					double dy = vy.to_float(&oky);
-					if (!okx || !oky || !std::isfinite(dx) || !std::isfinite(dy)) { missing++; continue; }
-					QString key = QString::fromUtf8(vp.data(), (int)vp.size());
-					if (cells.find(key) == cells.end()) cell_order.push_back(key);
-					auto &c = cells[key];
-					c.sx += dx; c.sy += dy; c.n++;
-				}
-				for (auto &key : cell_order) {
-					auto &c = cells[key];
-					if (c.n == 0) continue;
-					xv.push_back(c.sx / c.n);
-					yv.push_back(c.sy / c.n);
-				}
-			}
-			else
-			{
-				for (intptr_t r = 0; r < nr; r++)
-				{
-					auto vx = xc(r);
-					auto vy = yc(r);
-					if (vx.empty() || vy.empty()) { missing++; continue; }
-					bool okx, oky;
-					double dx = vx.to_float(&okx);
-					double dy = vy.to_float(&oky);
-					if (okx && oky && std::isfinite(dx) && std::isfinite(dy)) { xv.push_back(dx); yv.push_back(dy); }
-					else missing++;
-				}
-			}
-			if (xv.empty()) return;
-
-			size_t n = xv.size();
-			double sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0;
-			for (size_t i = 0; i < n; i++) { sx += xv[i]; sy += yv[i]; }
-			double mx = sx / n, my = sy / n;
-			for (size_t i = 0; i < n; i++) {
-				double dx = xv[i] - mx;
-				double dy = yv[i] - my;
-				sxx += dx * dx;
-				syy += dy * dy;
-				sxy += dx * dy;
-			}
-			double sd_x = (n > 1) ? std::sqrt(sxx / (n - 1)) : 0.0;
-			double sd_y = (n > 1) ? std::sqrt(syy / (n - 1)) : 0.0;
-			double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
-
-			int ncols = missing > 0 ? 7 : 6;
-			m_eda_summary->setColumnCount(ncols);
-			QStringList headers = {
-				tr("N"), tr("r"),
-				QStringLiteral("Mean(%1)").arg(x_name_q),
-				QStringLiteral("SD(%1)").arg(x_name_q),
-				QStringLiteral("Mean(%1)").arg(y_name_q),
-				QStringLiteral("SD(%1)").arg(y_name_q)};
-			if (missing > 0) headers.append(tr("Missing"));
-			m_eda_summary->setHorizontalHeaderLabels(headers);
-			m_eda_summary->setRowCount(1);
-
-			auto set = [&](int col, const QString &text) {
-				auto *item = new QTableWidgetItem(text);
-				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_eda_summary->setItem(0, col, item);
-			};
-
-			set(0, QString::number(n));
-			set(1, QString::number(r, 'f', 4));
-			set(2, QString::number(mx, 'f', 4));
-			set(3, QString::number(sd_x, 'f', 4));
-			set(4, QString::number(my, 'f', 4));
-			set(5, QString::number(sd_y, 'f', 4));
-			if (missing > 0) set(6, QString::number(missing));
-
-			m_eda_summary->resizeColumnsToContents();
-		}
+	// ── Which summary, matching the plot ──
+	enum class Mode { Histogram, BarChart, Scatter, Proportion, BoxPlot, Contingency };
+	Mode mode;
+	if (!has_y) {
+		mode = x_numeric ? Mode::Histogram : Mode::BarChart;
+	}
+	else if (x_numeric && y_numeric) {
+		mode = Mode::Scatter;
 	}
 	else if (!x_numeric && y_numeric)
 	{
-		// If the user has explicitly picked Proportion, replace the boxplot-
-		// style summary with per-(X level [, Group level]) counts, observed
-		// proportion, and Wilson 95% interval. Mirrors what the plot shows
-		// so the numbers can be copied / saved as a table.
 		auto ptype_data = m_eda_plot_type_combo->currentData();
-		EdaPlotType ptype = ptype_data.isValid()
-			? static_cast<EdaPlotType>(ptype_data.toInt())
-			: EdaPlotType::Auto;
-		bool proportion_mode = (ptype == EdaPlotType::Proportion);
-		bool has_group = (m_eda_group_combo->currentIndex() > 0);
+		EdaPlotType ptype = ptype_data.isValid() ? static_cast<EdaPlotType>(ptype_data.toInt()) : EdaPlotType::Auto;
+		mode = (ptype == EdaPlotType::Proportion) ? Mode::Proportion : Mode::BoxPlot;
+	}
+	else if (!x_numeric && !y_numeric) {
+		mode = Mode::Contingency;
+	}
+	else {
+		return; // numeric X with categorical Y: no plot, no summary
+	}
 
-		if (proportion_mode)
+	// ── Groupings, exactly as the plot applies them ──
+	// Facet splits the plot into panels and Group splits each panel (overlaid histograms, dodged bars and boxes,
+	// coloured scatter groups and proportion curves; heatmaps have no Group). The statistics are computed for each
+	// panel and group, which appear as the leading columns of the table. Like the plot, rows with no value for the
+	// Facet or Group variable are left out. The plot also drops rows without a Label (scatter), without a Style
+	// (grouped scatter) and without a Pool level (scatter), and pools only when it is not faceted.
+	intptr_t f_col = combo_col(m_eda_facet_combo);
+	intptr_t g_col = (mode == Mode::Contingency) ? -1 : combo_col(m_eda_group_combo);
+	intptr_t l_col = -1, s_col = -1, p_col = -1;
+	if (mode == Mode::Scatter)
+	{
+		l_col = combo_col(m_eda_label_combo);
+		if (f_col < 0) {
+			p_col = combo_col(m_eda_pool_combo);
+			if (g_col >= 0) s_col = combo_col(m_eda_style_combo);
+		}
+	}
+	QString facet_name_q = (f_col >= 0) ? m_eda_facet_combo->currentText() : QString();
+	QString group_name_q = (g_col >= 0) ? m_eda_group_combo->currentText() : QString();
+
+	// Panels (facet levels) and group levels in first-seen order, as in the plot. Without Facet there is one panel
+	// with every row; without Group, one unnamed group.
+	struct Panel { QString label; std::vector<intptr_t> rows; };
+	std::vector<Panel> panels;
+	std::vector<QString> group_levels;
+	std::map<QString, size_t> panel_idx, group_idx;
+	if (f_col < 0) panels.push_back({});
+	if (g_col < 0) group_levels.push_back(QString());
+	for (intptr_t r = 0; r < nr; r++)
+	{
+		bool skip = false;
+		for (intptr_t c : { f_col, g_col, l_col, s_col, p_col }) {
+			if (c >= 0 && dt->get_cell(r, c).empty()) { skip = true; break; }
+		}
+		if (skip) continue;
+
+		size_t pi = 0;
+		if (f_col >= 0)
 		{
-			// Resolve Group column.
-			intptr_t g_col = -1;
-			QString group_name_q;
-			if (has_group) {
-				group_name_q = m_eda_group_combo->currentText();
-				auto group_name = String(group_name_q.toUtf8().constData());
-				for (intptr_t j = 0; j < nc; j++) {
-					if (dt->get_header(j) == group_name) { g_col = j; break; }
-				}
-				if (g_col < 0) has_group = false;
+			auto qf = qstr(dt->get_cell(r, f_col));
+			auto it = panel_idx.find(qf);
+			if (it == panel_idx.end()) {
+				it = panel_idx.emplace(qf, panels.size()).first;
+				panels.push_back({ qf, {} });
 			}
+			pi = it->second;
+		}
+		if (g_col >= 0)
+		{
+			auto qg = qstr(dt->get_cell(r, g_col));
+			if (group_idx.find(qg) == group_idx.end()) {
+				group_idx.emplace(qg, group_levels.size());
+				group_levels.push_back(qg);
+			}
+		}
+		panels[pi].rows.push_back(r);
+	}
+	auto group_of = [&](intptr_t r) -> QString { return (g_col >= 0) ? qstr(dt->get_cell(r, g_col)) : QString(); };
 
-			// Determine the "success" value: larger of the two unique Y
-			// values across the column. Bail if there aren't exactly two.
-			double v0 = std::nan(""), v1 = std::nan("");
-			int n_unique = 0;
-			for (intptr_t r = 0; r < nr; r++)
+	// ── Table assembly ──
+	// Leading key columns (Facet, then the mode's own keys) are left-aligned; statistics are right-aligned.
+	QStringList headers;
+	int n_keys = 0;
+	std::vector<QStringList> out;
+	auto num = [](double v) { return std::isfinite(v) ? QString::number(v, 'f', 4) : QStringLiteral("—"); };
+	auto emit_table = [&]() {
+		if (out.empty()) return;
+		m_eda_summary->setColumnCount(headers.size());
+		m_eda_summary->setHorizontalHeaderLabels(headers);
+		m_eda_summary->setRowCount((int) out.size());
+		for (int i = 0; i < (int) out.size(); i++)
+		{
+			for (int j = 0; j < out[i].size() && j < headers.size(); j++)
 			{
-				auto vy = yc(r);
-				if (vy.empty()) continue;
-				bool ok; double d = vy.to_float(&ok);
-				if (!ok || !std::isfinite(d)) continue;
-				if (n_unique == 0) { v0 = d; n_unique = 1; }
-				else if (n_unique == 1 && d != v0) { v1 = d; n_unique = 2; }
-				else if (n_unique == 2 && d != v0 && d != v1) { n_unique = 3; break; }
+				auto *item = new QTableWidgetItem(out[i][j]);
+				if (j >= n_keys) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+				m_eda_summary->setItem(i, j, item);
 			}
-			if (n_unique != 2) return; // plot already shows the hint
-			double success = std::max(v0, v1);
+		}
+		m_eda_summary->resizeColumnsToContents();
+	};
+	auto start_row = [&](const Panel &p) {
+		QStringList row;
+		if (f_col >= 0) row << p.label;
+		return row;
+	};
+	if (f_col >= 0) { headers << facet_name_q; n_keys++; }
 
-			// Two-pass aggregation matching the plot logic.
-			std::vector<QString> x_levels, g_levels;
-			std::map<QString, int> x_idx, g_idx;
-			std::vector<std::vector<int>> n_cell, k_cell;
-			auto ensure_x = [&](const QString &lvl) -> int {
-				auto it = x_idx.find(lvl);
-				if (it != x_idx.end()) return it->second;
-				int i = (int)x_levels.size();
-				x_idx[lvl] = i;
-				x_levels.push_back(lvl);
-				for (auto &row : n_cell) row.push_back(0);
-				for (auto &row : k_cell) row.push_back(0);
-				return i;
-			};
-			auto ensure_g = [&](const QString &lvl) -> int {
-				auto it = g_idx.find(lvl);
-				if (it != g_idx.end()) return it->second;
-				int i = (int)g_levels.size();
-				g_idx[lvl] = i;
-				g_levels.push_back(lvl);
-				n_cell.emplace_back((int)x_levels.size(), 0);
-				k_cell.emplace_back((int)x_levels.size(), 0);
-				return i;
-			};
-			if (!has_group) ensure_g(QString());
-			for (intptr_t r = 0; r < nr; r++)
+	struct Moments { size_t n = 0; double mean = std::nan(""), sd = std::nan(""); };
+	auto moments = [](const std::vector<double> &v) {
+		Moments m;
+		m.n = v.size();
+		if (m.n == 0) return m;
+		double s = 0;
+		for (double x : v) s += x;
+		m.mean = s / m.n;
+		double ss = 0;
+		for (double x : v) ss += (x - m.mean) * (x - m.mean);
+		m.sd = (m.n > 1) ? std::sqrt(ss / (m.n - 1)) : 0.0;
+		return m;
+	};
+
+	switch (mode)
+	{
+	case Mode::Histogram:
+	{
+		// ── Univariate numeric: N, Mean, SD, Min, Q1, Median, Q3, Max, Missing per panel and group ──
+		if (g_col >= 0) { headers << group_name_q; n_keys++; }
+		headers << tr("N") << tr("Mean") << tr("SD") << tr("Min") << tr("Q1")
+		        << tr("Median") << tr("Q3") << tr("Max") << tr("Missing");
+		for (auto &p : panels)
+		{
+			for (auto &g : group_levels)
+			{
+				std::vector<double> vals;
+				intptr_t missing = 0, seen = 0;
+				for (intptr_t r : p.rows)
+				{
+					if (g_col >= 0 && group_of(r) != g) continue;
+					seen++;
+					double d;
+					if (to_num(xc(r), d)) vals.push_back(d); else missing++;
+				}
+				if (seen == 0) continue;
+				std::sort(vals.begin(), vals.end());
+				auto m = moments(vals);
+				auto row = start_row(p);
+				if (g_col >= 0) row << g;
+				row << QString::number(m.n) << num(m.mean) << num(m.sd);
+				if (vals.empty()) {
+					for (int k = 0; k < 5; k++) row << num(std::nan(""));
+				} else {
+					row << num(vals.front()) << num(sorted_q1(vals)) << num(sorted_median(vals))
+					    << num(sorted_q3(vals)) << num(vals.back());
+				}
+				row << QString::number(missing);
+				out.push_back(row);
+			}
+		}
+		break;
+	}
+	case Mode::BarChart:
+	{
+		// ── Univariate categorical: count per level (and group) in each panel ──
+		headers << x_name_q; n_keys++;
+		if (g_col >= 0) { headers << group_name_q; n_keys++; }
+		headers << tr("Count");
+		for (auto &p : panels)
+		{
+			std::vector<QString> levels;
+			std::map<std::pair<QString, QString>, int> counts;
+			for (intptr_t r : p.rows)
 			{
 				auto vx = xc(r);
-				auto vy = yc(r);
-				if (vx.empty() || vy.empty()) continue;
-				bool ok; double d = vy.to_float(&ok);
-				if (!ok || !std::isfinite(d)) continue;
-				if (has_group && dt->get_cell(r, g_col).empty()) continue;
-				auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
-				int ci = ensure_x(qx);
-				int gi = 0;
-				if (has_group) {
-					auto vg = dt->get_cell(r, g_col);
-					auto qg = QString::fromUtf8(vg.data(), (int)vg.size());
-					gi = ensure_g(qg);
-				}
-				n_cell[gi][ci]++;
-				if (d == success) k_cell[gi][ci]++;
+				if (vx.empty()) continue;
+				auto qx = qstr(vx);
+				if (std::find(levels.begin(), levels.end(), qx) == levels.end()) levels.push_back(qx);
+				counts[{ qx, group_of(r) }]++;
 			}
-			if (x_levels.empty()) return;
-
-			constexpr double z = 1.95996398454005423;
-			auto wilson = [&](int k, int n) -> std::tuple<double, double, double> {
-				if (n <= 0) return {std::nan(""), std::nan(""), std::nan("")};
-				double phat  = (double)k / (double)n;
-				double denom = 1.0 + z*z / n;
-				double center = (phat + z*z / (2.0*n)) / denom;
-				double half   = z * std::sqrt(phat*(1-phat)/n + z*z/(4.0*(double)n*n)) / denom;
-				return {phat, center - half, center + half};
-			};
-
-			QStringList headers;
-			if (has_group) headers << group_name_q;
-			headers << x_name_q << tr("n") << tr("k")
-			        << QStringLiteral("p\u0302") // p-hat
-			        << QStringLiteral("CI\u2082\u2024\u2085")  // CI 2.5%
-			        << QStringLiteral("CI\u2089\u2087\u2024\u2085"); // CI 97.5%
-			int ncols = headers.size();
-
-			int total_rows = (int)g_levels.size() * (int)x_levels.size();
-			m_eda_summary->setColumnCount(ncols);
-			m_eda_summary->setHorizontalHeaderLabels(headers);
-			m_eda_summary->setRowCount(total_rows);
-
-			auto set = [&](int row, int col, const QString &text, bool right=true) {
-				auto *item = new QTableWidgetItem(text);
-				if (right) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_eda_summary->setItem(row, col, item);
-			};
-
-			int row = 0;
-			for (int gi = 0; gi < (int)g_levels.size(); gi++)
+			for (auto &lvl : levels)
 			{
-				for (int ci = 0; ci < (int)x_levels.size(); ci++)
+				for (auto &g : group_levels)
 				{
-					int col = 0;
-					if (has_group) set(row, col++, g_levels[gi], /*right=*/false);
-					set(row, col++, x_levels[ci], /*right=*/false);
-					auto [p, lo, hi] = wilson(k_cell[gi][ci], n_cell[gi][ci]);
-					set(row, col++, QString::number(n_cell[gi][ci]));
-					set(row, col++, QString::number(k_cell[gi][ci]));
-					if (std::isnan(p)) {
-						set(row, col++, QStringLiteral("\u2014")); // em-dash
-						set(row, col++, QStringLiteral("\u2014"));
-						set(row, col++, QStringLiteral("\u2014"));
-					} else {
-						set(row, col++, QString::number(p,  'f', 4));
-						set(row, col++, QString::number(lo, 'f', 4));
-						set(row, col++, QString::number(hi, 'f', 4));
-					}
-					row++;
+					auto it = counts.find({ lvl, g });
+					if (it == counts.end()) continue;
+					auto row = start_row(p);
+					row << lvl;
+					if (g_col >= 0) row << g;
+					row << QString::number(it->second);
+					out.push_back(row);
 				}
 			}
-			m_eda_summary->resizeColumnsToContents();
-			return;
 		}
-
-		// ── Box plot (X categorical, Y continuous): grouped stats ──
-
-		std::vector<QString> group_order;
-		std::map<QString, std::vector<double>> grouped;
-		intptr_t included = 0;
-
-		for (intptr_t r = 0; r < nr; r++)
-		{
-			auto vx = xc(r);
-			auto vy = yc(r);
-			if (vx.empty() || vy.empty()) continue;
-			bool ok;
-			double dy = vy.to_float(&ok);
-			if (!ok || !std::isfinite(dy)) continue;
-			auto qs = QString::fromUtf8(vx.data(), (int)vx.size());
-			if (grouped.find(qs) == grouped.end()) group_order.push_back(qs);
-			grouped[qs].push_back(dy);
-			included++;
-		}
-		if (group_order.empty()) return;
-
-		intptr_t missing = nr - included;
-		int ncols = missing > 0 ? 8 : 7;
-
-		m_eda_summary->setColumnCount(ncols);
-		QStringList headers = {
-			x_name_q, tr("N"), tr("Mean"), tr("SD"),
-			tr("Min"), tr("Median"), tr("Max")};
-		if (missing > 0) headers.append(tr("Missing"));
-		m_eda_summary->setHorizontalHeaderLabels(headers);
-		m_eda_summary->setRowCount((int)group_order.size());
-
-		for (int g = 0; g < (int)group_order.size(); g++)
-		{
-			auto &vals = grouped[group_order[g]];
-			std::sort(vals.begin(), vals.end());
-			size_t n = vals.size();
-
-			double sum = 0;
-			for (double v : vals) sum += v;
-			double mean = sum / n;
-			double ss = 0;
-			for (double v : vals) { double d = v - mean; ss += d * d; }
-			double sd = (n > 1) ? std::sqrt(ss / (n - 1)) : 0.0;
-
-			m_eda_summary->setItem(g, 0, new QTableWidgetItem(group_order[g]));
-
-			auto set = [&](int col, const QString &text) {
-				auto *item = new QTableWidgetItem(text);
-				item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-				m_eda_summary->setItem(g, col, item);
-			};
-
-			set(1, QString::number(n));
-			set(2, QString::number(mean, 'f', 4));
-			set(3, QString::number(sd, 'f', 4));
-			set(4, QString::number(vals.front(), 'f', 4));
-			set(5, QString::number(sorted_median(vals), 'f', 4));
-			set(6, QString::number(vals.back(), 'f', 4));
-
-			// Show missing only on the first row (it's a global count).
-			if (g == 0 && missing > 0)
-				set(7, QString::number(missing));
-		}
-		m_eda_summary->resizeColumnsToContents();
+		break;
 	}
-	else if (!x_numeric && !y_numeric)
+	case Mode::Scatter:
 	{
-		// ── Contingency table (X categorical, Y categorical) ──
-		// Rows = Y levels, columns = X levels, plus a rightmost "Total"
-		// column and a bottom "Total" row. Cells show "count (row%)" —
-		// the most common reading is "of all Y=y_i observations, what %
-		// fall into X=x_j", which is the row percentage. Column and grand
-		// totals stay as raw counts to avoid double-percentage clutter.
+		// ── Two numeric variables: per panel and group N, [r,] means and SDs ──
+		// With Pool (unfaceted plots only), statistics are over pool-cell means rather than raw observations, like the
+		// plotted points: one cell per (pool, group, style) combination. Missing (first row) counts the rows that are
+		// not plotted at all.
+		bool grouped = (g_col >= 0);
+		if (grouped) { headers << group_name_q; n_keys++; }
+		headers << tr("N");
+		if (!grouped) headers << tr("r");
+		headers << QStringLiteral("Mean(%1)").arg(x_name_q) << QStringLiteral("SD(%1)").arg(x_name_q)
+		        << QStringLiteral("Mean(%1)").arg(y_name_q) << QStringLiteral("SD(%1)").arg(y_name_q);
+		intptr_t plotted = 0;
+		for (auto &p : panels)
+		{
+			for (auto &g : group_levels)
+			{
+				std::vector<double> xv, yv;
+				struct Cell { double sx = 0, sy = 0; int n = 0; };
+				std::map<std::pair<QString, QString>, Cell> cells;
+				std::vector<std::pair<QString, QString>> cell_order;
+				for (intptr_t r : p.rows)
+				{
+					if (grouped && group_of(r) != g) continue;
+					double dx, dy;
+					if (!to_num(xc(r), dx) || !to_num(yc(r), dy)) continue;
+					plotted++;
+					if (p_col >= 0)
+					{
+						std::pair<QString, QString> key{ qstr(dt->get_cell(r, p_col)),
+						                                 s_col >= 0 ? qstr(dt->get_cell(r, s_col)) : QString() };
+						if (cells.find(key) == cells.end()) cell_order.push_back(key);
+						auto &c = cells[key];
+						c.sx += dx; c.sy += dy; c.n++;
+					}
+					else
+					{
+						xv.push_back(dx);
+						yv.push_back(dy);
+					}
+				}
+				for (auto &key : cell_order)
+				{
+					auto &c = cells[key];
+					xv.push_back(c.sx / c.n);
+					yv.push_back(c.sy / c.n);
+				}
+				if (xv.empty()) continue;
 
-		std::vector<QString> x_levels, y_levels;
-		std::map<QString, int> x_idx, y_idx;
-		std::vector<std::vector<int>> counts;
-		auto ensure_x = [&](const QString &lvl) -> int {
-			auto it = x_idx.find(lvl);
-			if (it != x_idx.end()) return it->second;
-			int i = (int)x_levels.size();
-			x_idx[lvl] = i; x_levels.push_back(lvl);
-			for (auto &row : counts) row.push_back(0);
-			return i;
-		};
-		auto ensure_y = [&](const QString &lvl) -> int {
-			auto it = y_idx.find(lvl);
-			if (it != y_idx.end()) return it->second;
-			int i = (int)y_levels.size();
-			y_idx[lvl] = i; y_levels.push_back(lvl);
-			counts.emplace_back((int)x_levels.size(), 0);
-			return i;
-		};
-
-		intptr_t included = 0;
+				auto mx = moments(xv), my = moments(yv);
+				auto row = start_row(p);
+				if (grouped) row << g;
+				row << QString::number(mx.n);
+				if (!grouped)
+				{
+					double sxx = 0, syy = 0, sxy = 0;
+					for (size_t i = 0; i < xv.size(); i++) {
+						double dx = xv[i] - mx.mean, dy = yv[i] - my.mean;
+						sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+					}
+					double r = (sxx > 1e-15 && syy > 1e-15) ? sxy / std::sqrt(sxx * syy) : 0.0;
+					row << num(r);
+				}
+				row << num(mx.mean) << num(mx.sd) << num(my.mean) << num(my.sd);
+				out.push_back(row);
+			}
+		}
+		intptr_t missing = nr - plotted;
+		if (missing > 0 && !out.empty())
+		{
+			headers << tr("Missing");
+			out[0] << QString::number(missing);
+		}
+		break;
+	}
+	case Mode::Proportion:
+	{
+		// ── Proportion of the larger of the two Y values per X level, group and panel, with Wilson 95% CI ──
+		// The "success" value is determined over all rows, as in the plot.
+		double v0 = std::nan(""), v1 = std::nan("");
+		int n_unique = 0;
 		for (intptr_t r = 0; r < nr; r++)
 		{
-			auto vx = xc(r);
-			auto vy = yc(r);
-			if (vx.empty() || vy.empty()) continue;
-			auto qx = QString::fromUtf8(vx.data(), (int)vx.size());
-			auto qy = QString::fromUtf8(vy.data(), (int)vy.size());
-			int ci = ensure_x(qx);
-			int ri = ensure_y(qy);
-			counts[ri][ci]++;
-			included++;
+			double d;
+			if (!to_num(yc(r), d)) continue;
+			if (n_unique == 0) { v0 = d; n_unique = 1; }
+			else if (n_unique == 1 && d != v0) { v1 = d; n_unique = 2; }
+			else if (n_unique == 2 && d != v0 && d != v1) { n_unique = 3; break; }
 		}
-		if (x_levels.empty() || y_levels.empty()) return;
+		if (n_unique != 2) return; // the plot already shows the hint
+		double success = std::max(v0, v1);
 
-		int nx = (int)x_levels.size();
-		int ny = (int)y_levels.size();
-		intptr_t missing = nr - included;
-		// Columns: [Y \ X], one per X level, then Total. We embed the
-		// Y-axis label in the (0,0) header cell so the user sees "vowel \
-		// dialect" clearly.
-		int ncols = 1 + nx + 1;
-		m_eda_summary->setColumnCount(ncols);
-		QStringList headers;
-		headers << QStringLiteral("%1 \\ %2").arg(y_name_q, x_name_q);
-		for (int c = 0; c < nx; c++) headers << x_levels[c];
-		headers << tr("Total");
-		m_eda_summary->setHorizontalHeaderLabels(headers);
-		// Rows: one per Y level, plus a Total row, plus a Missing row when
-		// any rows were skipped due to NA in X or Y.
-		int nrows_out = ny + 1 + (missing > 0 ? 1 : 0);
-		m_eda_summary->setRowCount(nrows_out);
-
-		auto set = [&](int row, int col, const QString &text, bool right) {
-			auto *item = new QTableWidgetItem(text);
-			if (right) item->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
-			m_eda_summary->setItem(row, col, item);
+		constexpr double z = 1.95996398454005423;
+		auto wilson = [&](int k, int n) -> std::tuple<double, double, double> {
+			if (n <= 0) return { std::nan(""), std::nan(""), std::nan("") };
+			double phat = (double) k / n;
+			double denom = 1.0 + z * z / n;
+			double center = (phat + z * z / (2.0 * n)) / denom;
+			double half = z * std::sqrt(phat * (1 - phat) / n + z * z / (4.0 * (double) n * n)) / denom;
+			return { phat, center - half, center + half };
 		};
 
-		std::vector<int> col_totals(nx, 0);
-		int grand_total = 0;
-		for (int r = 0; r < ny; r++)
+		if (g_col >= 0) { headers << group_name_q; n_keys++; }
+		headers << x_name_q; n_keys++;
+		headers << tr("n") << tr("k")
+		        << QStringLiteral("p̂")                       // p-hat
+		        << QStringLiteral("CI₂․₅")          // CI 2.5%
+		        << QStringLiteral("CI₉₇․₅");   // CI 97.5%
+		for (auto &p : panels)
 		{
-			int row_total = 0;
-			for (int c = 0; c < nx; c++) {
-				row_total    += counts[r][c];
-				col_totals[c] += counts[r][c];
+			std::vector<QString> x_levels;
+			std::map<std::pair<QString, QString>, std::pair<int, int>> nk; // (group, x) -> (n, k)
+			for (intptr_t r : p.rows)
+			{
+				auto vx = xc(r);
+				double d;
+				if (vx.empty() || !to_num(yc(r), d)) continue;
+				auto qx = qstr(vx);
+				if (std::find(x_levels.begin(), x_levels.end(), qx) == x_levels.end()) x_levels.push_back(qx);
+				auto &cell = nk[{ group_of(r), qx }];
+				cell.first++;
+				if (d == success) cell.second++;
 			}
-			grand_total += row_total;
-			set(r, 0, y_levels[r], /*right=*/false);
-			for (int c = 0; c < nx; c++) {
-				int n = counts[r][c];
-				QString txt = (row_total > 0)
-					? QStringLiteral("%1 (%2%)")
-					      .arg(n)
-					      .arg(100.0 * n / row_total, 0, 'f', 1)
-					: QString::number(n);
-				set(r, 1 + c, txt, /*right=*/true);
+			for (auto &g : group_levels)
+			{
+				for (auto &lvl : x_levels)
+				{
+					auto it = nk.find({ g, lvl });
+					int n = (it != nk.end()) ? it->second.first : 0;
+					int k = (it != nk.end()) ? it->second.second : 0;
+					auto [ph, lo, hi] = wilson(k, n);
+					auto row = start_row(p);
+					if (g_col >= 0) row << g;
+					row << lvl << QString::number(n) << QString::number(k) << num(ph) << num(lo) << num(hi);
+					out.push_back(row);
+				}
 			}
-			set(r, 1 + nx, QString::number(row_total), /*right=*/true);
 		}
-
-		// Totals row.
-		set(ny, 0, tr("Total"), /*right=*/false);
-		for (int c = 0; c < nx; c++)
-			set(ny, 1 + c, QString::number(col_totals[c]), /*right=*/true);
-		set(ny, 1 + nx, QString::number(grand_total), /*right=*/true);
-
-		// Missing row, when applicable.
-		if (missing > 0) {
-			set(ny + 1, 0, tr("Missing"), /*right=*/false);
-			set(ny + 1, 1 + nx, QString::number((int)missing), /*right=*/true);
-		}
-
-		m_eda_summary->resizeColumnsToContents();
+		break;
 	}
-	// else: unsupported combination — table stays empty.
+	case Mode::BoxPlot:
+	{
+		// ── Box plot: one row per box (X level, then Group level) in each panel ──
+		headers << x_name_q; n_keys++;
+		if (g_col >= 0) { headers << group_name_q; n_keys++; }
+		headers << tr("N") << tr("Mean") << tr("SD") << tr("Min") << tr("Q1") << tr("Median") << tr("Q3") << tr("Max");
+		intptr_t plotted = 0;
+		for (auto &p : panels)
+		{
+			std::vector<QString> x_levels;
+			std::map<std::pair<QString, QString>, std::vector<double>> boxes;
+			for (intptr_t r : p.rows)
+			{
+				auto vx = xc(r);
+				double d;
+				if (vx.empty() || !to_num(yc(r), d)) continue;
+				plotted++;
+				auto qx = qstr(vx);
+				if (std::find(x_levels.begin(), x_levels.end(), qx) == x_levels.end()) x_levels.push_back(qx);
+				boxes[{ qx, group_of(r) }].push_back(d);
+			}
+			for (auto &lvl : x_levels)
+			{
+				for (auto &g : group_levels)
+				{
+					auto it = boxes.find({ lvl, g });
+					if (it == boxes.end()) continue;
+					auto &vals = it->second;
+					std::sort(vals.begin(), vals.end());
+					auto m = moments(vals);
+					auto row = start_row(p);
+					row << lvl;
+					if (g_col >= 0) row << g;
+					row << QString::number(m.n) << num(m.mean) << num(m.sd)
+					    << num(vals.front()) << num(sorted_q1(vals)) << num(sorted_median(vals))
+					    << num(sorted_q3(vals)) << num(vals.back());
+					out.push_back(row);
+				}
+			}
+		}
+		intptr_t missing = nr - plotted;
+		if (missing > 0 && !out.empty())
+		{
+			headers << tr("Missing");
+			out[0] << QString::number(missing);
+		}
+		break;
+	}
+	case Mode::Contingency:
+	{
+		// ── Contingency table per panel ──
+		// Rows = Y levels (plus a Total row per panel), columns = X levels (shared by all panels) plus Total. Cells
+		// show "count (row%)". A final Missing row counts the rows left out of every panel.
+		std::vector<QString> x_levels;
+		struct Block { std::vector<QString> y_levels; std::map<std::pair<QString, QString>, int> counts; };
+		std::vector<Block> blocks(panels.size());
+		intptr_t included = 0;
+		for (size_t pi = 0; pi < panels.size(); pi++)
+		{
+			for (intptr_t r : panels[pi].rows)
+			{
+				auto vx = xc(r), vy = yc(r);
+				if (vx.empty() || vy.empty()) continue;
+				auto qx = qstr(vx), qy = qstr(vy);
+				if (std::find(x_levels.begin(), x_levels.end(), qx) == x_levels.end()) x_levels.push_back(qx);
+				auto &b = blocks[pi];
+				if (std::find(b.y_levels.begin(), b.y_levels.end(), qy) == b.y_levels.end()) b.y_levels.push_back(qy);
+				b.counts[{ qy, qx }]++;
+				included++;
+			}
+		}
+		if (x_levels.empty()) return;
+
+		headers << QStringLiteral("%1 \\ %2").arg(y_name_q, x_name_q); n_keys++;
+		for (auto &lvl : x_levels) headers << lvl;
+		headers << tr("Total");
+		for (size_t pi = 0; pi < panels.size(); pi++)
+		{
+			auto &b = blocks[pi];
+			if (b.y_levels.empty()) continue;
+			std::vector<int> col_totals(x_levels.size(), 0);
+			int grand_total = 0;
+			for (auto &ylvl : b.y_levels)
+			{
+				int row_total = 0;
+				for (size_t c = 0; c < x_levels.size(); c++)
+				{
+					auto it = b.counts.find({ ylvl, x_levels[c] });
+					int n = (it != b.counts.end()) ? it->second : 0;
+					row_total += n;
+					col_totals[c] += n;
+				}
+				grand_total += row_total;
+				auto row = start_row(panels[pi]);
+				row << ylvl;
+				for (auto &xlvl : x_levels)
+				{
+					auto it = b.counts.find({ ylvl, xlvl });
+					int n = (it != b.counts.end()) ? it->second : 0;
+					row << ((row_total > 0) ? QStringLiteral("%1 (%2%)").arg(n).arg(100.0 * n / row_total, 0, 'f', 1)
+					                        : QString::number(n));
+				}
+				row << QString::number(row_total);
+				out.push_back(row);
+			}
+			auto total = start_row(panels[pi]);
+			total << tr("Total");
+			for (int t : col_totals) total << QString::number(t);
+			total << QString::number(grand_total);
+			out.push_back(total);
+		}
+		intptr_t missing = nr - included;
+		if (missing > 0)
+		{
+			QStringList row;
+			if (f_col >= 0) row << QString();
+			row << tr("Missing");
+			for (size_t c = 0; c < x_levels.size(); c++) row << QString();
+			row << QString::number(missing);
+			out.push_back(row);
+		}
+		break;
+	}
+	}
+
+	emit_table();
 }
 
 

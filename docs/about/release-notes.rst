@@ -1,6 +1,34 @@
 Release notes
 -------------
 
+Unreleased
+~~~~~~~~~~
+
+**Acoustic queries**
+
+- Formant, pitch, intensity and spectral moments queries can now measure **at a fixed step** (*Every (ms)*, 5 ms by default) in addition to the midpoint and n points. The points are centred in each event, so their number depends on the event's duration; the results are always shown in long format, with the position of each point in the event and, optionally, its absolute time. See :ref:`measurement-points`.
+
+**Concordances and datasets**
+
+- **Column names must now be unique.** Renaming, adding (recode, transform, vowel normalization, coding protocols, scripts), duplicating and merging columns are refused with an error when they would create a second column with the same name. For instance, a coding protocol with a field named *Left context* can no longer be applied to a concordance that shows the left context. The fields of the PFC schwa protocol have been renamed *Left* and *Right* accordingly. A CSV file whose header repeats a column name cannot be opened as a dataset.
+- Concordances only show columns for the **properties that their files actually use**, instead of one column per property in the project. The columns follow changes to the files' properties and to the matches, and the same columns are exported.
+- **Duplicating a dataset column** now asks for the name of the copy.
+
+**Sound and annotation views**
+
+- New **Move cursor to nearest zero crossing** button (``Ctrl+0``), which moves the cursor, or both edges of the selection, to the nearest point where the waveform crosses zero. Combined with the dashed cursor line shown on annotation layers, it lets you place boundaries exactly at zero crossings.
+
+**Analysis**
+
+- The summary table below exploratory plots now follows the plot's **Facet** and **Group** variables, with one row per panel and group (each box of a box plot, each overlaid histogram, each scatter group...). The box plot summary also reports the **quartiles** (Q1 and Q3).
+
+**Fixes**
+
+- **Opening a match in Praat** failed with *No Sound #-1 selected*: the script sent to Praat opened the recording as a LongSound but then looked for a Sound.
+- In the long format of a concordance, **Delete row(s)** and **Create subset** acted on the wrong matches.
+- Improved compatibility with older versions of macOS.
+
+
 0.9.9 (16/11/2026)
 ~~~~~~~~~~~~~~~~~~
 

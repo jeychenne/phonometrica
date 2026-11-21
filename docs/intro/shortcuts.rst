@@ -90,6 +90,8 @@ Sound and annotation views
      - Stop playback
    * - ``Middle click`` (scroll wheel)
      - Zoom to the current selection
+   * - ``Ctrl+0``
+     - Move the cursor to the nearest zero crossing (or both edges of the selection to theirs)
    * - ``Scroll wheel`` (over wave bar, plots or layers)
      - Pan the visible window left (scroll up) or right (scroll down)
    * - ``Ctrl+Scroll wheel`` (over plots or layers; ``Cmd+Scroll`` on macOS)

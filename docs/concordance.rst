@@ -46,7 +46,8 @@ Merge
 
 The |merge| **Merge** button performs a *horizontal merge*: it adds columns from another concordance or dataset to the current
 concordance, matching rows by position. This is useful, for instance, to combine formant measurements with pitch data for
-the same set of tokens.
+the same set of tokens. When both tables have a column with the same name but different values, Phonometrica offers to add
+the other table's column with a ``(B)`` suffix, since two columns cannot share a name (see :ref:`column names <unique-column-names>`).
 
 Filtering
 ~~~~~~~~~
@@ -116,11 +117,16 @@ The |display| **Display settings** menu controls which column groups are visible
 
 - **Match info**: file name, layer index, start time, and end time.
 - **Context**: left and right context (for text concordances using the KWIC model).
-- **Metadata**: file description and properties.
+- **Metadata**: file description and properties. A property only has a column if at least one of the files
+  behind the concordance's matches has a value for it: properties that are defined in the project but unused by
+  these files are left out. The property columns are updated when you edit a file's properties or remove matches,
+  and the same columns are used when the concordance is exported or accessed from a script.
 - **Long format** (acoustic queries with n-point data): toggle between wide format (one row per match, with
-  columns F1_1, F1_2, ... for each measurement point) and long format (one row per measurement point, which is
-  often more convenient for statistical analysis). This option is only available for queries that used n-point
-  averaging (not midpoint).
+  a group of columns for each measurement point) and long format (one row per measurement point, which is
+  often more convenient for statistical analysis). This option is only available for queries measured at n points.
+  Queries measured at a fixed step (*Every (ms)*) are always in long format, since their matches have different
+  numbers of points (see :ref:`measurement-points`). In long format, **Delete row(s)** removes the whole match that
+  the selected rows belong to.
 - **Open matches in split view**: when checked, clicking *View in annotation* opens the annotation beside the
   concordance; otherwise it opens in a new tab.
 - **Highlight targets**: show the target column(s) in bold red to make them easier to identify.
@@ -158,6 +164,16 @@ Renaming columns
 Double-click on a column header (or right-click and choose *Rename*) to give it a custom alias. This is useful
 for giving short, descriptive names to acoustic measurement columns (e.g. renaming ``F1`` to ``F1_Hz``).
 
+.. _unique-column-names:
+
+Column names must be **unique**. Phonometrica refuses any operation that would give two columns the same name and
+shows an error instead, leaving the concordance unchanged: renaming a column, adding a column (recoding,
+transforming, normalizing vowels, applying a coding protocol, or from a script), and merging. A name is taken if it is
+the current name of a column, the original name of a renamed column, or the name of a measurement column that only
+appears in the other layout (wide or long) of an acoustic concordance. For instance, a coding protocol with a field
+called ``Left context`` cannot be applied to a concordance that shows the left context; rename the field in the
+protocol first.
+
 Recoding columns
 ~~~~~~~~~~~~~~~~
 
@@ -193,6 +209,10 @@ text column header:
 - **Build coding protocol...** opens the protocol builder (see below). The clicked column supplies sample input for
   the live preview, and the protocol can be applied directly from the dialog when you're happy with it. This is the
   recommended entry point when you don't already have a ``.json`` protocol for your coding scheme.
+
+Each field becomes a column named after the field, so field names must differ from each other and from the
+concordance's existing columns: otherwise the protocol is not applied and no column is added (see
+:ref:`column names <unique-column-names>`).
 
 If some rows do not match the protocol, or contain field values that aren't defined in the protocol, Phonometrica
 will display a warning summarising how many rows are affected. Non-matching rows are left blank across all new

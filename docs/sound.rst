@@ -172,6 +172,14 @@ The ``Move cursor to nearest zero crossing`` button |zerocross| (shortcut ``Ctrl
 waveform crosses zero. If there is a selection, both its start and its end are moved to their nearest zero crossing. Cutting or annotating a sound at a zero
 crossing avoids audible clicks when the sound is played or extracted. The crossing is searched in the channel displayed by the waveform: the average of all
 channels if it is shown, otherwise the first visible channel. The time of a crossing is interpolated between the two samples on either side of it.
+If both edges of a short selection reach the same crossing, the selection becomes a cursor at that crossing. If the signal never changes sign (for
+instance in digital silence), Phonometrica tells you so and leaves the cursor where it is.
+
+.. note::
+
+   Phonometrica places the first sample of a sound at time 0, whereas Praat places it at the middle of the first
+   sampling period. The zero crossings found by both programs are the same, but the times reported by Praat are
+   half a sample later (about 0.03 ms at 16 kHz).
 
 
 Acoustic measurements

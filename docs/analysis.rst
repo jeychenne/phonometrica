@@ -899,8 +899,19 @@ on plot type change, since the auto-generated labels would no longer match the n
 Summary table
 ~~~~~~~~~~~~~
 
-Below the plot, a summary table shows descriptive statistics (count, mean, standard deviation,
-min, max) for the plotted variables, broken down by group if applicable.
+Below the plot, a summary table shows descriptive statistics for the plotted variables: count,
+mean, standard deviation, minimum and maximum, plus the quartiles (Q1, median, Q3) for box plots
+and histograms. The quartiles are computed as for the boxes of the plot, by linear interpolation
+between the two nearest values (type 7 in R).
+
+The table follows the plot's groupings: when **Facet** is set, the statistics are computed
+separately for each panel, and when **Group** is set, separately for each group within a panel (each box of a box plot, each overlaid histogram, each set of
+dodged bars, each coloured group of a scatter plot, each proportion curve). The facet and group
+levels appear as the first columns of the table. Like the plot, the table leaves out rows that
+have no value for the Facet or Group variable (or for the Label, Style or Pool variable of a
+scatter plot). The **Missing** column counts the rows that do not appear in the plot: for a
+histogram, it is given for each panel and group (rows without a value for X); for the other
+plots, it is a single total shown on the first row.
 
 The EDA plot can be **detached** into a resizable floating window using the maximize button
 in the toolbar. It can be exported to PNG, PDF, or SVG via the **Save as...** menu.
