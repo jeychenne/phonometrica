@@ -86,9 +86,13 @@ public:
 	// Remove column j (0-based). Shifts subsequent columns left.
 	void remove_column(intptr_t j);
 
-	// Duplicate column src (0-based) and insert the copy at position dest (0-based).
-	// dest may be column_count() to append at the end.
-	void duplicate_column(intptr_t src, intptr_t dest);
+	// Duplicate column src (0-based) and insert the copy, named `name`, at position dest (0-based).
+	// dest may be column_count() to append at the end. Throws if `name` is empty or already used by a column.
+	void duplicate_column(intptr_t src, intptr_t dest, const String &name);
+
+	// A free name for a copy of column src (0-based): "<name> (copy)", or "<name> (copy 2)", "<name> (copy 3)"...
+	// if that name is taken. Suggested as the default name when duplicating a column.
+	String copy_name(intptr_t src) const;
 
 	// Move column src (0-based) to position dest (0-based).
 	// dest is interpreted as the target position in the final layout.
@@ -104,7 +108,7 @@ public:
 	/// The result is a new in-memory Dataset added to the project.
 	Handle<Dataset> subset(const std::vector<int> &rows_0based, const String &label) const;
 
-	/// Set the header (column name) for column j (0-based).
+	/// Set the header (column name) for column j (0-based). Throws if another column already has that name.
 	void set_header(intptr_t j, const String &name);
 
 	/// Append a new numeric column with the given header and values.

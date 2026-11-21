@@ -165,6 +165,19 @@ void Dataset::read_from_csv(std::string_view sep)
         m_labels.append(std::move(label));
     }
 
+    // Two columns with the same name would be ambiguous (in scripts, filters, merges and models). Note that "x.num"
+    // and "x.text" both name a column "x".
+    for (intptr_t j = 0; j < m_labels.size(); j++)
+    {
+        for (intptr_t k = 0; k < j; k++)
+        {
+            if (m_labels[k] == m_labels[j]) {
+                // The caller (Document::open) already names the file.
+                throw error("there is more than one column named \"%\"", m_labels[j]);
+            }
+        }
+    }
+
     // Parse data.
     if (raw_data.empty()) return;
     nrow = raw_data.size();
@@ -428,16 +441,29 @@ void Dataset::remove_column(intptr_t j)
     ncol--;
 }
 
-void Dataset::duplicate_column(intptr_t src, intptr_t dest)
+String Dataset::copy_name(intptr_t src) const
+{
+    assert(src >= 0 && src < ncol);
+    String label = m_labels[src];
+    label.append(" (copy)");
+    for (int n = 2; has_column_named(label); n++)
+    {
+        label = m_labels[src];
+        label.append(String::format(" (copy %d)", n));
+    }
+    return label;
+}
+
+void Dataset::duplicate_column(intptr_t src, intptr_t dest, const String &name)
 {
     assert(src >= 0 && src < ncol);
     assert(dest >= 0 && dest <= ncol);
+    check_new_column_names({ name }, "Cannot duplicate column");
 
     auto cloned = std::unique_ptr<Column>(m_columns[src]->clone());
-    auto label = m_labels[src];
 
     // Inserting at dest == ncol appends at the end.
-    m_labels.insert(dest, std::move(label));
+    m_labels.insert(dest, name);
     m_columns.insert(dest, std::move(cloned));
     ncol++;
     m_content_modified = true;
@@ -712,6 +738,11 @@ Handle<Dataset> Dataset::merge(const DataTable &other, const String &label,
 	if (nrow != other.row_count()) {
 		throw error("Cannot merge: tables have different numbers of rows (% vs %)", nrow, other.row_count());
 	}
+	{
+		Array<String> names;
+		for (auto &entry : columns_to_add) names.append(entry.first);
+		check_new_column_names(names, "Cannot merge");
+	}
 
 	// Start with a copy of this dataset.
 	auto result = Handle<Dataset>::make(*this);
@@ -796,6 +827,12 @@ void Dataset::set_header(intptr_t j, const String &name)
 	if (j < 0 || j >= ncol) {
 		throw error("Column index % is out of range", j);
 	}
+	if (name.empty()) {
+		throw error("Cannot rename column \"%\": column names cannot be empty", m_labels[j]);
+	}
+	if (has_column_named(name, j)) {
+		throw error("Cannot rename column \"%\": there is already a column named \"%\"", m_labels[j], name);
+	}
 	m_labels[j] = name;
 	m_content_modified = true;
 }
@@ -805,6 +842,7 @@ void Dataset::add_numeric_column(const String &header, const std::vector<double>
 	if ((intptr_t)values.size() != nrow) {
 		throw error("Cannot add column '%': expected % values, got %", header, nrow, (intptr_t)values.size());
 	}
+	check_new_column_names({ header }, "Cannot add column");
 
 	auto new_col = std::make_unique<TColumn<double>>(nrow);
 	for (intptr_t i = 0; i < nrow; i++) {
@@ -822,6 +860,7 @@ void Dataset::add_text_column(const String &header, const std::vector<String> &v
 	if ((intptr_t)values.size() != nrow) {
 		throw error("Cannot add column '%': expected % values, got %", header, nrow, (intptr_t)values.size());
 	}
+	check_new_column_names({ header }, "Cannot add column");
 
 	auto new_col = std::make_unique<TColumn<String>>(nrow);
 	for (intptr_t i = 0; i < nrow; i++) {

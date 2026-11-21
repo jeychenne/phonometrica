@@ -27,6 +27,8 @@
 namespace phonometrica {
 
 std::set<Property> Property::known_properties;
+std::atomic<uint64_t> Property::the_revision{0};
+Signal<> Property::assignments_changed;
 std::set<String> Property::known_categories;
 std::unordered_map<String, const std::type_info*> Property::the_property_types;
 
@@ -436,6 +438,13 @@ void Property::clear_all()
 	known_properties.clear();
 	known_categories.clear();
 	the_property_types.clear();
+	touch();
+}
+
+void Property::touch()
+{
+	the_revision.fetch_add(1, std::memory_order_acq_rel);
+	assignments_changed();
 }
 
 } // namespace phonometrica

@@ -27,6 +27,12 @@
 #include <QAction>
 #include <QMessageBox>
 #include <QInputDialog>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QComboBox>
+#include <QLabel>
 #include <QGuiApplication>
 #include <QClipboard>
 #include <phon/gui/file_dialog.hpp>
@@ -1202,8 +1208,13 @@ void DatasetView::onNormalizeVowels()
 			}
 		}
 
-		// Append result columns.
+		// Append result columns. Check all the names first, so that a clash adds none of them.
 		auto names = dlg.outputColumnNames();
+		Array<String> new_names;
+		for (int f = 0; f < (int) result.size(); f++) {
+			new_names.append(String(names[f].toUtf8().constData()));
+		}
+		m_ds->check_new_column_names(new_names, "Cannot add normalized columns");
 		for (int f = 0; f < (int) result.size(); f++) {
 			m_ds->add_numeric_column(String(names[f].toUtf8().constData()), result[f]);
 			record(std::make_unique<AddDatasetColumnCommand>(this));
@@ -1232,6 +1243,14 @@ void DatasetView::onRenameColumn(int section)
 		QLineEdit::Normal, current, &ok);
 
 	if (!ok || new_name.trimmed().isEmpty()) return;
+
+	// Two columns with the same name would be ambiguous.
+	if (m_ds->has_column_named(String(new_name.trimmed().toUtf8().constData()), section))
+	{
+		QMessageBox::critical(this, tr("Rename column"),
+			tr("There is already a column named \"%1\" in this dataset.").arg(new_name.trimmed()));
+		return;
+	}
 
 	auto cmd = std::make_unique<RenameDatasetColumnCommand>(this, section,
 		current, new_name.trimmed());
@@ -1426,19 +1445,53 @@ void DatasetView::onDuplicateColumn(int section)
 	// Default: right after the source column.
 	int default_idx = (int) col + 1; // 0-based index in the list
 
-	bool ok;
-	auto choice = QInputDialog::getItem(this,
-		tr("Duplicate column"),
-		tr("Insert copy of \"%1\" at:").arg(col_name),
-		items, default_idx, false, &ok);
-	if (!ok) return;
+	// Ask for the copy's name and position in one dialog. The name must be free: the dialog stays open until it is.
+	QDialog dlg(this);
+	dlg.setWindowTitle(tr("Duplicate column"));
+	auto *form = new QFormLayout;
+	auto *name_edit = new QLineEdit;
+	auto suggested = m_ds->copy_name(col);
+	name_edit->setText(QString::fromUtf8(suggested.data(), (int) suggested.size()));
+	name_edit->selectAll();
+	auto *pos_combo = new QComboBox;
+	pos_combo->addItems(items);
+	pos_combo->setCurrentIndex(default_idx);
+	form->addRow(tr("Name of the copy:"), name_edit);
+	form->addRow(tr("Insert at:"), pos_combo);
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	auto *layout = new QVBoxLayout(&dlg);
+	layout->addWidget(new QLabel(tr("Duplicate column \"%1\".").arg(col_name)));
+	layout->addLayout(form);
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	connect(buttons, &QDialogButtonBox::accepted, &dlg, [&]() {
+		auto name = name_edit->text().trimmed();
+		if (name.isEmpty())
+		{
+			QMessageBox::critical(&dlg, tr("Duplicate column"), tr("Please enter a name for the copy."));
+			return;
+		}
+		if (m_ds->has_column_named(String(name.toUtf8().constData())))
+		{
+			QMessageBox::critical(&dlg, tr("Duplicate column"),
+				tr("There is already a column named \"%1\" in this dataset.").arg(name));
+			name_edit->setFocus();
+			name_edit->selectAll();
+			return;
+		}
+		dlg.accept();
+	});
+	if (dlg.exec() != QDialog::Accepted) return;
+
+	String new_name(name_edit->text().trimmed().toUtf8().constData());
 
 	// Parse the position number from the chosen item (displayed 1-based).
+	auto choice = pos_combo->currentText();
 	int dest = choice.left(choice.indexOf(QChar(0x2014)) - 1).trimmed().toInt() - 1;
 
 	try
 	{
-		m_ds->duplicate_column(col, dest);
+		m_ds->duplicate_column(col, dest, new_name);
 		m_proxy->adjustAfterColumnInsert(dest);
 		m_model->refreshAll();
 		m_table->resizeColumnsToContents();

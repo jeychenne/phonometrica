@@ -40,6 +40,7 @@
 #include <QInputDialog>
 #include <QGuiApplication>
 #include <QClipboard>
+#include <phon/application/property.hpp>
 #include <phon/gui/file_dialog.hpp>
 #include <QFileInfo>
 #include <algorithm>
@@ -439,6 +440,18 @@ void ConcordanceView::setupUi()
 			m_table->resizeColumnsToContents();
 		});
 	}
+
+	m_known_property_columns = m_conc->property_columns();
+	m_property_conn = Property::assignments_changed.connect([this]() {
+		// Can be emitted from a worker thread (files loading in parallel), and many times in a row: coalesce the
+		// notifications into one sync on the GUI thread. The context object drops the call if the view is gone.
+		if (!m_property_sync_pending.exchange(true)) {
+			QMetaObject::invokeMethod(this, [this]() {
+				m_property_sync_pending = false;
+				syncPropertyColumns();
+			}, Qt::QueuedConnection);
+		}
+	});
 
 	m_filter_bar = new FilterBar(m_proxy, this);
 	m_filter_bar->hide();
@@ -1047,6 +1060,7 @@ void ConcordanceView::onDeleteRows()
 	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
+	syncPropertyColumns();
 
 	auto cmd = std::make_unique<DeleteMatchesCommand>(this, std::move(removed));
 	record(std::move(cmd));
@@ -2691,6 +2705,43 @@ void ConcordanceView::refreshAfterRowChange()
 	Document::file_modified();
 	updateCountLabel();
 	emit titleChanged(label());
+	// Removing or restoring matches can empty or fill a property column.
+	syncPropertyColumns();
+}
+
+void ConcordanceView::syncPropertyColumns()
+{
+	Array<String> now = m_conc->property_columns();
+	auto &before = m_known_property_columns;
+	auto contains = [](const Array<String> &list, const String &s) {
+		for (auto &x : list) if (x == s) return true;
+		return false;
+	};
+
+	bool same = (now.size() == before.size());
+	for (intptr_t k = 0; same && k < now.size(); k++) {
+		same = (now[k] == before[k]);
+	}
+	if (same)
+	{
+		m_table->viewport()->update();
+		return;
+	}
+
+	// Property columns sit just before the Description column, so the columns before them keep their indices.
+	// Drop the columns that disappeared (highest first), then open the new ones (lowest first), so that filter
+	// rules stay on the columns they were set on.
+	int base = (int) (m_conc->column_count() - 1 - now.size());
+	for (intptr_t k = before.size() - 1; k >= 0; k--)
+	{
+		if (!contains(now, before[k])) m_proxy->adjustAfterColumnRemove(base + (int) k);
+	}
+	for (intptr_t k = 0; k < now.size(); k++)
+	{
+		if (!contains(before, now[k])) m_proxy->adjustAfterColumnInsert(base + (int) k);
+	}
+	m_known_property_columns = std::move(now);
+	refreshAfterStructuralChange();
 }
 
 void ConcordanceView::refreshAfterStructuralChange()

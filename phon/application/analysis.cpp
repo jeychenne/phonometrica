@@ -205,19 +205,16 @@ void Analysis::append_columns_to_source(const AppendColumnsRequest &request)
 	// front, so we either succeed completely or leave the source untouched.
 	// (add_numeric_column on Dataset/Concordance mutates state incrementally,
 	// so we cannot rely on them to roll back on a mid-request failure.)
+	Array<String> headers;
 	for (auto &col : request.columns)
 	{
 		if (col.values.size() != nr) {
 			throw error("Cannot append column '%': expected % values, got %",
 			            col.header, nr, col.values.size());
 		}
-		intptr_t nc = m_source->column_count();
-		for (intptr_t j = 0; j < nc; j++) {
-			if (m_source->get_header(j) == col.header) {
-				throw error("Source already has a column named '%'", col.header);
-			}
-		}
+		headers.append(col.header);
 	}
+	m_source->check_new_column_names(headers, "Cannot append columns");
 
 	// Dispatch by concrete type. Both Dataset and Concordance expose an
 	// identically-signed add_numeric_column(header, std::vector<double>).

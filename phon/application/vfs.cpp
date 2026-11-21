@@ -377,12 +377,14 @@ void Document::add_property(Property p, bool mutate)
 	remove_property(p.category());
 	m_properties.insert(std::move(p));
 	m_metadata_modified |= mutate;
+	Property::touch();
 }
 
 bool Document::remove_property(const Property &p)
 {
 	bool erased = m_properties.erase(p) > 0;
 	m_metadata_modified |= erased;
+	if (erased) Property::touch();
 
 	return erased;
 }
@@ -498,6 +500,7 @@ void Document::remove_property(const String &category, const String &value)
 		{
 			m_properties.erase(it);
 			m_metadata_modified = true;
+			Property::touch();
 
 			return;
 		}

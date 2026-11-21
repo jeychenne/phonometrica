@@ -129,6 +129,10 @@ public:
 
 	bool is_metadata_column(intptr_t col) const;
 
+	/// Property categories shown as columns, in the project's category order: only those that at least one match's
+	/// file has a non-empty value for. Recomputed when matches are removed/restored or any file's properties change.
+	const Array<String> &property_columns() const;
+
 	bool is_measurement_column(intptr_t col) const;
 
 	bool is_duration_column(intptr_t col) const;
@@ -391,11 +395,7 @@ public:
 	/// True if `name` is the name of a column of this concordance: its displayed name (alias) or its default name.
 	/// Measurement columns of the other layout (wide/long) are included, since toggling the layout must not create
 	/// duplicates either. Column `except_col` (0-based, -1 for none) is ignored, for renaming that column.
-	bool has_column_named(const String &name, intptr_t except_col = -1) const;
-
-	/// Throw an error if a name in `names` is empty, is already the name of a column (see has_column_named()), or
-	/// appears more than once in `names`. `context` starts the error message (e.g. "Cannot add column").
-	void check_new_column_names(const Array<String> &names, const char *context) const;
+	bool has_column_named(const String &name, intptr_t except_col = -1) const override;
 
 	/// Append a new numeric auxiliary column with the given header and values.
 	/// The values vector must have exactly row_count() elements. Throws if the header is already used.
@@ -587,6 +587,11 @@ protected:
 	bool m_per_match_pitch_range_available = false; // data is stored in meas (set at query exec time)
 	bool m_has_series = true;         // NPoint: per-point series data present
 	bool m_has_average = false;       // NPoint: average group present
+
+	// Cache for property_columns(): valid while m_property_revision == Property::revision() and the matches are unchanged.
+	mutable Array<String> m_property_columns;
+	mutable uint64_t m_property_revision = 0;
+	mutable bool m_property_columns_valid = false;
 	double m_measurement_step = 0;    // fixed-step series: step in seconds (0 = not a fixed-step series)
 	std::vector<intptr_t> m_row_offsets; // fixed-step series: first display row of each match (+ total at the end)
 

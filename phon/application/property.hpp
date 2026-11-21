@@ -27,7 +27,10 @@
 #include <set>
 #include <unordered_map>
 #include <any>
+#include <atomic>
+#include <cstdint>
 #include <phon/string.hpp>
+#include <phon/utils/signal.hpp>
 #include <phon/utils/ref_count.hpp>
 
 
@@ -128,9 +131,20 @@ public:
 	// Clear all global property data. Must be called when closing a project.
 	static void clear_all();
 
+	// Revision of the properties assigned to documents: it changes whenever a document gains or loses a property.
+	// Caches derived from those assignments (e.g. the property columns of a concordance) compare it to detect changes.
+	static uint64_t revision() { return the_revision.load(std::memory_order_acquire); }
+
+	// Record that a document's properties changed: bumps revision() and emits assignments_changed.
+	static void touch();
+
+	// Emitted after a document's properties changed, from whichever thread changed them.
+	static Signal<> assignments_changed;
+
 private:
 
 	static std::set<Property> known_properties;
+	static std::atomic<uint64_t> the_revision;
 	static std::set<String> known_categories;
 	static std::unordered_map<String, const std::type_info*> the_property_types;
 

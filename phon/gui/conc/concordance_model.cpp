@@ -43,6 +43,9 @@ int ConcordanceModel::columnCount(const QModelIndex &) const
 QVariant ConcordanceModel::data(const QModelIndex &index, int role) const
 {
 	if (!index.isValid()) return {};
+	// The column set can change before the view is reset (e.g. a file's properties were edited and the resync is
+	// still queued): never ask the concordance for a cell that no longer exists.
+	if (index.row() >= rowCount() || index.column() >= columnCount()) return {};
 
 	intptr_t row = index.row();
 	intptr_t col = index.column();
@@ -146,6 +149,7 @@ QVariant ConcordanceModel::headerData(int section, Qt::Orientation orientation, 
 {
 	if (orientation == Qt::Horizontal)
 	{
+		if (section >= columnCount()) return {};
 		if (role == Qt::DisplayRole)
 		{
 			auto text = m_conc->get_header(section);
@@ -221,9 +225,15 @@ Concordance::RemovedRow ConcordanceModel::removeMatch(int match_index)
 		endResetModel();
 		return data;
 	}
+	auto ncol = columnCount();
 	beginRemoveRows(QModelIndex(), match_index, match_index);
 	auto data = m_conc->remove_match(match_index);
 	endRemoveRows();
+	// The removed match may have been the only one with a value for some property, whose column then disappears.
+	if (columnCount() != ncol) {
+		beginResetModel();
+		endResetModel();
+	}
 	return data;
 }
 
@@ -236,9 +246,14 @@ void ConcordanceModel::restoreMatch(int match_index, Concordance::RemovedRow dat
 		endResetModel();
 		return;
 	}
+	auto ncol = columnCount();
 	beginInsertRows(QModelIndex(), match_index, match_index);
 	m_conc->restore_match(match_index, std::move(data));
 	endInsertRows();
+	if (columnCount() != ncol) {
+		beginResetModel();
+		endResetModel();
+	}
 }
 
 void ConcordanceModel::refreshRow(int row)

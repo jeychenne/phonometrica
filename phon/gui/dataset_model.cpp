@@ -110,7 +110,14 @@ bool DatasetModel::setHeaderData(int section, Qt::Orientation orientation, const
 	auto new_name = value.toString().trimmed();
 	if (new_name.isEmpty()) return false;
 
-	m_ds->set_header(section, String(new_name.toUtf8().constData()));
+	try {
+		m_ds->set_header(section, String(new_name.toUtf8().constData()));
+	}
+	catch (std::exception &) {
+		// The name is already used by another column. The view checks this before renaming; an exception must not
+		// escape into Qt's event loop.
+		return false;
+	}
 	m_ds->set_content_modified(true);
 	Document::file_modified();
 	emit headerDataChanged(Qt::Horizontal, section, section);

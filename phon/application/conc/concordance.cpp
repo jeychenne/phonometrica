@@ -21,6 +21,8 @@
 
 #include <cmath>
 #include <algorithm>
+#include <set>
+#include <unordered_set>
 #include <phon/application/conc/concordance.hpp>
 #include <phon/application/project.hpp>
 #include <phon/application/settings.hpp>
@@ -668,26 +670,6 @@ bool Concordance::has_column_named(const String &name, intptr_t except_col) cons
 	return false;
 }
 
-void Concordance::check_new_column_names(const Array<String> &names, const char *context) const
-{
-	for (intptr_t i = 0; i < names.size(); i++)
-	{
-		auto &name = names[i];
-		if (name.empty()) {
-			throw error("%: column names cannot be empty", context);
-		}
-		if (has_column_named(name)) {
-			throw error("%: there is already a column named \"%\" in this concordance", context, name);
-		}
-		for (intptr_t k = 0; k < i; k++)
-		{
-			if (names[k] == name) {
-				throw error("%: the name \"%\" is used more than once", context, name);
-			}
-		}
-	}
-}
-
 void Concordance::set_header_alias(const String &default_header, const String &alias)
 {
 	// Find the column being renamed so that it is not compared with itself.
@@ -824,13 +806,11 @@ String Concordance::get_default_header(intptr_t j) const
 	}
 
 	// We are now ready to consume the properties.
-	if (j < Property::category_count())
-	{
-		auto it = Property::get_categories().begin();
-		std::advance(it, j);
-		return *it;
+	auto &props = property_columns();
+	if (j < props.size()) {
+		return props[j];
 	}
-	assert(j == Property::category_count());
+	assert(j == props.size());
 
 	return "Description";
 }
@@ -1275,15 +1255,13 @@ String Concordance::get_cell(intptr_t i, intptr_t j) const
 	}
 
 	// We are now ready to consume the properties.
-	if (j < Property::category_count())
-	{
-		auto it = Property::get_categories().begin();
-		std::advance(it, j);
-		return m_matches[mi]->annotation()->get_property_value(*it);
+	auto &props = property_columns();
+	if (j < props.size()) {
+		return m_matches[mi]->annotation()->get_property_value(props[j]);
 	}
 
 	// We now reach the description
-	assert(j == Property::category_count());
+	assert(j == props.size());
 
 	return m_matches[mi]->annotation()->description();
 }
@@ -1547,7 +1525,7 @@ intptr_t Concordance::row_count() const
 intptr_t Concordance::column_count() const
 {
 	// Add 1 for description.
-	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + duration_column_count() + effective_extra_count() + aux_display_column_count() + Property::category_count() + 1;
+	return FILE_INFO_COLUMN_COUNT + context_column_count() + m_target_count + duration_column_count() + effective_extra_count() + aux_display_column_count() + property_columns().size() + 1;
 }
 
 
@@ -1905,6 +1883,7 @@ void Concordance::load()
 		else if (node.name() == str("Matches"))
 		{
 			parse_matches_from_xml(node);
+			m_property_columns_valid = false;
 		}
 	}
 
@@ -2584,6 +2563,37 @@ bool Concordance::is_measurement_time_column(intptr_t col) const
 	return false;
 }
 
+const Array<String> &Concordance::property_columns() const
+{
+	auto revision = Property::revision();
+	if (m_property_columns_valid && revision == m_property_revision) {
+		return m_property_columns;
+	}
+
+	// Categories with a non-empty value in at least one match's file. Many matches share a file: visit each once.
+	std::set<String> used;
+	std::unordered_set<const Annotation *> seen;
+	for (auto &match : m_matches)
+	{
+		auto *annot = match->annotation().get();
+		if (!annot || !seen.insert(annot).second) continue;
+		for (auto &p : annot->properties())
+		{
+			if (!p.value().empty()) used.insert(p.category());
+		}
+	}
+
+	m_property_columns.clear();
+	for (auto &category : Property::get_categories())
+	{
+		if (used.count(category)) m_property_columns.append(category);
+	}
+	m_property_revision = revision;
+	m_property_columns_valid = true;
+
+	return m_property_columns;
+}
+
 bool Concordance::is_metadata_column(intptr_t col) const
 {
 	intptr_t bound = FILE_INFO_COLUMN_COUNT + m_target_count + context_column_count() + duration_column_count() + effective_extra_count() + aux_display_column_count();
@@ -2730,6 +2740,7 @@ Concordance::RemovedRow Concordance::remove_match(intptr_t row)
 	}
 
 	rebuild_row_index();
+	m_property_columns_valid = false;
 	modify();
 	file_modified();
 
@@ -2775,6 +2786,7 @@ void Concordance::restore_match(intptr_t row, RemovedRow data)
 	}
 
 	rebuild_row_index();
+	m_property_columns_valid = false;
 	modify();
 	file_modified();
 }

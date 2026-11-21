@@ -257,6 +257,37 @@ void DataTable::to_csv(const String &path, const String &sep)
 // find_column: locate a column by header name (case-sensitive).
 // =====================================================================
 
+bool DataTable::has_column_named(const String &name, intptr_t except_col) const
+{
+	for (intptr_t j = 0; j < column_count(); j++)
+	{
+		if (j != except_col && get_header(j) == name) {
+			return true;
+		}
+	}
+	return false;
+}
+
+void DataTable::check_new_column_names(const Array<String> &names, const char *context) const
+{
+	for (intptr_t i = 0; i < names.size(); i++)
+	{
+		auto &name = names[i];
+		if (name.empty()) {
+			throw error("%: column names cannot be empty", context);
+		}
+		if (has_column_named(name)) {
+			throw error("%: there is already a column named \"%\"", context, name);
+		}
+		for (intptr_t k = 0; k < i; k++)
+		{
+			if (names[k] == name) {
+				throw error("%: the name \"%\" is used more than once", context, name);
+			}
+		}
+	}
+}
+
 intptr_t DataTable::find_column(const String &name) const
 {
 	auto ncol = column_count();

@@ -24,6 +24,7 @@
 #ifndef PHONOMETRICA_CONCORDANCE_VIEW_HPP
 #define PHONOMETRICA_CONCORDANCE_VIEW_HPP
 
+#include <atomic>
 #include <QTableView>
 #include <QToolBar>
 #include <QLabel>
@@ -71,6 +72,10 @@ public:
 	// Public helpers for undo/redo commands.
 	ConcordanceModel *concModel() const { return m_model; }
 	void refreshAfterRowChange();
+
+	// If the concordance's property columns changed (see Concordance::property_columns()), move the filter rules
+	// along with the remaining columns and rebuild the view; otherwise just repaint (values may have changed).
+	void syncPropertyColumns();
 	void refreshAfterStructuralChange();
 
 	// Select and scroll to a specific source-model row (0-based) and focus
@@ -186,6 +191,12 @@ private:
 	// Auto-disconnects when the view is destroyed, so scripts that call
 	// append() and trigger Project::updated() will refresh this view.
 	sigslot::scoped_connection m_project_update_conn;
+
+	// Property columns only exist for categories that some match's file has a value for, so editing a file's
+	// properties can add or remove columns. This connection schedules syncPropertyColumns() when that happens.
+	sigslot::scoped_connection m_property_conn;
+	Array<String> m_known_property_columns;   // property columns the model and filters were last set up with
+	std::atomic<bool> m_property_sync_pending{false};
 	DataFilterProxyModel *m_proxy = nullptr;
 	FilterBar *m_filter_bar = nullptr;
 	QTableView *m_table = nullptr;

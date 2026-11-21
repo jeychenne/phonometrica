@@ -68,6 +68,15 @@ public:
 	/// Returns -1 if not found.
 	intptr_t find_column(const String &name) const;
 
+	/// True if `name` is the name of a column of this table, ignoring column `except_col` (0-based, -1 for none, e.g.
+	/// for renaming that column). Subclasses with columns known by several names (aliases, layouts) extend it.
+	virtual bool has_column_named(const String &name, intptr_t except_col = -1) const;
+
+	/// Throw an error if a name in `names` is empty, is already the name of a column (see has_column_named()), or
+	/// appears more than once in `names`. `context` starts the error message (e.g. "Cannot add column"). Callers
+	/// check every name before adding any column, so that a clash leaves the table unchanged.
+	void check_new_column_names(const Array<String> &names, const char *context) const;
+
 	// ── Numeric cell serialization helpers ───────────────────────────
 	// These are the canonical round-trip format for a floating-point cell
 	// in any DataTable-based format (Concordance XML, Dataset CSV). "nan"
