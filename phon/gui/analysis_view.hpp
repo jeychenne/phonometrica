@@ -90,6 +90,7 @@ private slots:
 	void onModelSelected(int row);
 	void onDeleteModel();
 	void onRefitModel(int row);
+	void onExportToR();
 	void onRenameModel(QListWidgetItem *item);
 	void onCompareModels();
 	void onAddToData();
@@ -146,6 +147,10 @@ private:
 
 	// Returns the user label if set, otherwise "Model N" (1-based).
 	QString modelDisplayLabel(int index) const;
+	// Models that cannot be exported to R, as "label: reason" lines.
+	QStringList exportRSkipped(int *n_exportable = nullptr) const;
+	// Enable/disable the Models panel's Export to R button.
+	void updateExportRButton();
 	// Returns the full text for a model list item: "label: formula" or "label (B): formula".
 	QString modelListText(int index) const;
 	void updateDiagnosticPlot();
@@ -329,6 +334,7 @@ private:
 	QTabWidget *m_right_tabs = nullptr;
 	QPlainTextEdit *m_summary = nullptr;
 	QCheckBox *m_blup_check = nullptr;
+	QPushButton *m_export_r_button = nullptr;  // Models panel: export the analysis to R
 
 	// Diagnostics tab
 	QComboBox *m_plot_type_combo = nullptr;

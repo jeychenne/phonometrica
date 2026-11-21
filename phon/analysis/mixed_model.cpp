@@ -1436,19 +1436,28 @@ static ProfiledResult solve_gaussian_henderson(
 
 	// REML correction: add ½ log|XᵀV⁻¹X| to the ML profiled NLL.
 	//
-	// Derivation. The Schwarz / Schur identity on the Henderson matrix
+	// Derivation. The Schur identity on the Henderson matrix
 	//    H = (1/σ²)·[[X'X, X'Z], [Z'X, Z'Z]] + diag(0, D⁻¹)
-	// gives  log|H| = log|H_uu| + log|H_ββ − H_βu H_uu⁻¹ H_uβ|
-	// where the Schur complement S = H_ββ − H_βu H_uu⁻¹ H_uβ
-	// equals (1/σ²)·XᵀV⁻¹X (V = ZDZ' + σ²I) — standard LMM result.
-	// Hence  log|XᵀV⁻¹X| = log|H| − log|H_uu| + p·log(σ²).
+	// gives  log|H| = log|H_uu| + log|S|,  S = H_ββ − H_βu H_uu⁻¹ H_uβ.
+	// With H_uu = (1/σ²)(Z'Z + σ²D⁻¹),
+	//    S = (1/σ²)·X'[I − Z(Z'Z + σ²D⁻¹)⁻¹Z']X,
+	// and since V⁻¹ = (1/σ²)·[I − Z(Z'Z + σ²D⁻¹)⁻¹Z'] (Woodbury, V = ZDZ' + σ²I),
+	// the bracket is σ²V⁻¹ and the σ² factors cancel: S = XᵀV⁻¹X exactly.
+	// Hence  log|XᵀV⁻¹X| = log|H| − log|H_uu|  (log_det_Huu is computed with
+	// the same 1/σ² weights, so the two determinants are on the same scale).
+	//
+	// An earlier version added p·log(σ²) here, from taking S to be
+	// (1/σ²)·XᵀV⁻¹X. That term depends on σ², so it biased the REML
+	// estimates themselves (towards ML), not only the reported ℓ_R: on
+	// sleepstudy, σ̂ = 25.416 instead of lme4's 25.592 and ℓ_R was low by
+	// exactly (p/2)·log σ̂². It was found by the Export-to-R self-test
+	// (test/statistics/export_r), which compares against glmmTMB(REML = TRUE).
 	//
 	// Conventional REML form (matches lme4): also subtract the constant
 	// ½·p·log(2π) so that ℓ_R is a proper log-density on the (n−p)-dim
 	// residual space.
 	if (use_reml) {
-		double log_det_XtVinvX = log_det_H_full - log_det_Huu
-		                          + static_cast<double>(p) * std::log(sigma2);
+		double log_det_XtVinvX = log_det_H_full - log_det_Huu;
 		res.laplace_nll += 0.5 * log_det_XtVinvX
 		                   - 0.5 * static_cast<double>(p) * std::log(2.0 * M_PI);
 	}
@@ -2588,13 +2597,11 @@ struct LaplaceJointObjective
 		// solve_u_given_beta returns laplace_nll using IRLS log_det_Huu;
 		// for Student-t this differs from the observed-Hessian form
 		// glmmTMB uses, by an amount that varies with ν and σ.  Phase 2
-		// is normally skipped for Student-t (see "Phase 2 is skipped"
-		// comment in mixed_model body, line ~7045), but the
-		// phase2_student diagnostic flag re-enables it specifically
-		// for glmmTMB comparison — so the joint objective must
-		// minimise the same hybrid-Laplace NLL that PirlsObjective::eval
-		// does, otherwise enabling phase2_student would give a
-		// different MLE than the default Phase-1-only fit.
+		// (which runs for Student-t, see "Phase 2" in the mixed_model
+		// body) and the full-Laplace vcov both evaluate this objective,
+		// so it must minimise the same hybrid-Laplace NLL that
+		// PirlsObjective::eval does: otherwise Phase 2 would move to a
+		// different optimum than the one Phase 1 scored θ against.
 		//
 		// Coordination invariant: same hybrid correction at three
 		// sites, must stay in sync — see the invariant block in
@@ -7616,14 +7623,19 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		// out ignoring ∂log|H|/∂β; Phase 2 re-optimizes (β, θ)
 		// jointly with u profiled out, matching lme4/glmmTMB.
 		//
-		// For Student t, Phase 2 is skipped by default: the σ–ν
-		// correlation makes the joint (β, σ, ν) Hessian ill-
-		// conditioned. Phase 1 (PirlsObjective::eval) now applies
-		// the same observed-Hessian Laplace correction Phase 2 and
-		// glmmTMB use, so Phase 1's β̂ already matches the joint-
-		// optimization MLE — Phase 2 has no fit-quality benefit
-		// to add, only conditioning risk. The phase2_student
-		// override flag re-enables it for direct comparison.
+		// Student t runs Phase 2 too. An earlier version skipped it, on
+		// the grounds that Phase 1's objective already includes the
+		// observed-Hessian Laplace correction. That correction enters
+		// the objective for θ, but β̂ still comes from the PIRLS joint
+		// mode of (β, u), which ignores ∂½log|H_uu|/∂β -- and for
+		// Student t that derivative is not small: the weights
+		// (ν+1)(νσ²−r²)/(νσ²+r²)² swing with every residual, the more
+		// so the heavier the tail. On a real corpus model (n = 2190,
+		// crossed speaker/word intercepts, ν ≈ 3.3) skipping Phase 2 left
+		// β 0.05-0.07 SE away from the ML optimum and the log-likelihood
+		// 0.017 below glmmTMB's; with Phase 2 the two engines agree on
+		// the log-likelihood to 1e-8 relative. FitOptions.phase2_student
+		// can still turn it off.
 		{
 			// Get Phase 1 β̂ via one PIRLS call at converged θ
 			std::vector<Eigen::MatrixXd> D_inv_p1(G);
@@ -7657,19 +7669,10 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 
 			if (is_student)
 			{
-				// Phase 2 is skipped for Student-t by default: the
-				// σ-ν correlation can make the joint (β, σ, ν)
-				// Hessian ill-conditioned. Since PirlsObjective::eval
-				// applies the same observed-Hessian Laplace correction
-				// that LaplaceJointObjective::eval does (see line
-				// ~2048 and ~2207), Phase 1's β̂ now matches what
-				// joint optimization would produce — there's no fit-
-				// quality reason to run Phase 2. The phase2_student
-				// override flag (FitOptions.phase2_student) re-enables
-				// it for direct comparison against engines like
-				// glmmTMB that always do joint optimization.
-				bool run_phase2 = (init_overrides
-				                    && init_overrides->phase2_student);
+				// Phase 2 (joint β, θ, σ, ν) runs by default: see the
+				// comment above. It falls back to Phase 1's β̂ if it does
+				// not converge. FitOptions.phase2_student = false skips it.
+				bool run_phase2 = !init_overrides || init_overrides->phase2_student;
 
 				if (!run_phase2)
 				{
@@ -7901,6 +7904,7 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	Eigen::MatrixXd vcov;
 
 	{
+		const bool student_observed_info = (fam_used.name == "student") && !priors;
 		Eigen::VectorXd w_se(n);
 		if (is_gaussian)
 		{
@@ -7926,6 +7930,20 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 				w_se[i] = phi_sq * mu1m * mu1m * tri;
 			}
 		}
+		else if (student_observed_info)
+		{
+			// Student t (frequentist): observed information, as glmmTMB
+			// reports. The IRLS working weight (ν+1)/(νσ²+r²) that PIRLS
+			// iterates with is neither the observed nor the expected
+			// information for β: it gives SEs that are too small on
+			// heavy-tailed data (8% for a fixed-effects fit and up to 17% for
+			// within-group effects in a mixed fit on student_f1_robust.csv,
+			// where the observed form agrees with glmmTMB to 0.1% and 1.5%).
+			// The exact weight (ν+1)(νσ²−r²)/(νσ²+r²)² is negative for
+			// |r| > σ√ν; if that leaves C indefinite we fall back to the
+			// expected (Fisher) information below.
+			w_se = detail::student_laplace_weights(ym, final_inner.mu, fam_used.sigma, fam_used.nu);
+		}
 		else if (fam_used.custom_weights)
 		{
 			w_se = fam_used.custom_weights(ym, final_inner.mu);
@@ -7944,108 +7962,123 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		intptr_t J = lay.J_total;
 		intptr_t sdim = p + J;
 
-		Eigen::MatrixXd C = Eigen::MatrixXd::Zero(sdim, sdim);
+		// Henderson matrix C = [X'WX, X'WZ; Z'WX, Z'WZ + D⁻¹] for weights w.
+		auto build_C = [&](const Eigen::VectorXd &w) {
+			Eigen::MatrixXd C = Eigen::MatrixXd::Zero(sdim, sdim);
 
-		// X'WX (p × p)
-		for (intptr_t i = 0; i < n; i++)
-		{
-			for (intptr_t j1 = 0; j1 < p; j1++)
+			// X'WX (p × p)
+			for (intptr_t i = 0; i < n; i++)
 			{
-				double wx = Xm(i, j1) * w_se[i];
-				for (intptr_t j2 = j1; j2 < p; j2++) {
-					C(j1, j2) += wx * Xm(i, j2);
-				}
-			}
-		}
-		for (intptr_t j1 = 0; j1 < p; j1++) {
-			for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
-				C(j2, j1) = C(j1, j2);
-			}
-		}
-
-		// Prior precision on fixed effects (Bayesian posterior covariance).
-		if (priors && coef_names)
-		{
-			for (intptr_t j = 0; j < p; j++)
-			{
-				const auto &pr = priors->prior_for((*coef_names)[j]);
-				C(j, j) += 1.0 / (pr.sd * pr.sd);
-			}
-		}
-
-		// D⁻¹ blocks
-		for (intptr_t g = 0; g < G; g++)
-		{
-			intptr_t qg = lay.q[g];
-			auto &Dinv_g = D_inv_final[g];
-			for (intptr_t j = 0; j < lay.J[g]; j++)
-			{
-				intptr_t base = p + lay.offset[g] + j * qg;
-				for (intptr_t t1 = 0; t1 < qg; t1++) {
-					for (intptr_t t2 = 0; t2 < qg; t2++) {
-						C(base + t1, base + t2) += Dinv_g(t1, t2);
+				for (intptr_t j1 = 0; j1 < p; j1++)
+				{
+					double wx = Xm(i, j1) * w[i];
+					for (intptr_t j2 = j1; j2 < p; j2++) {
+						C(j1, j2) += wx * Xm(i, j2);
 					}
 				}
 			}
-		}
+			for (intptr_t j1 = 0; j1 < p; j1++) {
+				for (intptr_t j2 = j1 + 1; j2 < p; j2++) {
+					C(j2, j1) = C(j1, j2);
+				}
+			}
 
-		// X'WZ, Z'WX, Z'WZ
-		for (intptr_t i = 0; i < n; i++)
-		{
-			for (intptr_t g1 = 0; g1 < G; g1++)
+			// Prior precision on fixed effects (Bayesian posterior covariance).
+			if (priors && coef_names)
 			{
-				intptr_t j1 = groups[g1].indices[i];
-				intptr_t q1 = lay.q[g1];
-				intptr_t base1 = p + lay.offset[g1] + j1 * q1;
-
-				for (intptr_t t = 0; t < q1; t++)
+				for (intptr_t j = 0; j < p; j++)
 				{
-					double z_val = lay.Z(g1, i, t);
-					double wz_val = w_se[i] * z_val;
-
-					for (intptr_t j = 0; j < p; j++)
-					{
-						double val = Xm(i, j) * wz_val;
-						C(j, base1 + t) += val;
-						C(base1 + t, j) += val;
-					}
+					const auto &pr = priors->prior_for((*coef_names)[j]);
+					C(j, j) += 1.0 / (pr.sd * pr.sd);
 				}
+			}
 
-				// Z'WZ within-group
-				for (intptr_t t1 = 0; t1 < q1; t1++)
+			// D⁻¹ blocks
+			for (intptr_t g = 0; g < G; g++)
+			{
+				intptr_t qg = lay.q[g];
+				auto &Dinv_g = D_inv_final[g];
+				for (intptr_t j = 0; j < lay.J[g]; j++)
 				{
-					double wz1 = w_se[i] * lay.Z(g1, i, t1);
-					for (intptr_t t2 = t1; t2 < q1; t2++)
-					{
-						double val = wz1 * lay.Z(g1, i, t2);
-						C(base1 + t1, base1 + t2) += val;
-						if (t1 != t2) C(base1 + t2, base1 + t1) += val;
-					}
-				}
-
-				// Z'WZ cross-group
-				for (intptr_t g2 = g1 + 1; g2 < G; g2++)
-				{
-					intptr_t j2 = groups[g2].indices[i];
-					intptr_t q2 = lay.q[g2];
-					intptr_t base2 = p + lay.offset[g2] + j2 * q2;
-
-					for (intptr_t t1 = 0; t1 < q1; t1++)
-					{
-						double wz1 = w_se[i] * lay.Z(g1, i, t1);
-						for (intptr_t t2 = 0; t2 < q2; t2++)
-						{
-							double val = wz1 * lay.Z(g2, i, t2);
-							C(base1 + t1, base2 + t2) += val;
-							C(base2 + t2, base1 + t1) += val;
+					intptr_t base = p + lay.offset[g] + j * qg;
+					for (intptr_t t1 = 0; t1 < qg; t1++) {
+						for (intptr_t t2 = 0; t2 < qg; t2++) {
+							C(base + t1, base + t2) += Dinv_g(t1, t2);
 						}
 					}
 				}
 			}
-		}
+
+			// X'WZ, Z'WX, Z'WZ
+			for (intptr_t i = 0; i < n; i++)
+			{
+				for (intptr_t g1 = 0; g1 < G; g1++)
+				{
+					intptr_t j1 = groups[g1].indices[i];
+					intptr_t q1 = lay.q[g1];
+					intptr_t base1 = p + lay.offset[g1] + j1 * q1;
+
+					for (intptr_t t = 0; t < q1; t++)
+					{
+						double z_val = lay.Z(g1, i, t);
+						double wz_val = w[i] * z_val;
+
+						for (intptr_t j = 0; j < p; j++)
+						{
+							double val = Xm(i, j) * wz_val;
+							C(j, base1 + t) += val;
+							C(base1 + t, j) += val;
+						}
+					}
+
+					// Z'WZ within-group
+					for (intptr_t t1 = 0; t1 < q1; t1++)
+					{
+						double wz1 = w[i] * lay.Z(g1, i, t1);
+						for (intptr_t t2 = t1; t2 < q1; t2++)
+						{
+							double val = wz1 * lay.Z(g1, i, t2);
+							C(base1 + t1, base1 + t2) += val;
+							if (t1 != t2) C(base1 + t2, base1 + t1) += val;
+						}
+					}
+
+					// Z'WZ cross-group
+					for (intptr_t g2 = g1 + 1; g2 < G; g2++)
+					{
+						intptr_t j2 = groups[g2].indices[i];
+						intptr_t q2 = lay.q[g2];
+						intptr_t base2 = p + lay.offset[g2] + j2 * q2;
+
+						for (intptr_t t1 = 0; t1 < q1; t1++)
+						{
+							double wz1 = w[i] * lay.Z(g1, i, t1);
+							for (intptr_t t2 = 0; t2 < q2; t2++)
+							{
+								double val = wz1 * lay.Z(g2, i, t2);
+								C(base1 + t1, base2 + t2) += val;
+								C(base2 + t2, base1 + t1) += val;
+							}
+						}
+					}
+				}
+			}
+			return C;
+		};
+
+		Eigen::MatrixXd C = build_C(w_se);
 
 		// Var(β̂) = top-left p×p block of C⁻¹
 		Eigen::LDLT<Eigen::MatrixXd> ldlt(C);
+		if (student_observed_info && !(ldlt.info() == Eigen::Success && ldlt.isPositive()))
+		{
+			// Expected (Fisher) information for the Student-t location:
+			// (ν+1) / ((ν+3)σ²), the same for every observation, so C is PD.
+			const double sig = fam_used.sigma, nu_f = fam_used.nu;
+			w_se.setConstant((nu_f + 1.0) / ((nu_f + 3.0) * sig * sig));
+			C = build_C(w_se);
+			ldlt.compute(C);
+		}
 		Eigen::MatrixXd Cinv = ldlt.solve(Eigen::MatrixXd::Identity(sdim, sdim));
 		vcov = Cinv.topLeftCorner(p, p);
 
@@ -8141,9 +8174,11 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 	// includes ½ log|H_uu|) at the converged φ̂ = (β̂, θ̂), inverting,
 	// and extracting the top-left p×p block.
 	//
-	// We skip this pass in the cases where Henderson is already exact:
-	// Gaussian (no log-det correction), Student-t (Phase 2 skipped),
-	// and intercept-only models (H_uu is β-free in practice).  We also
+	// We skip this pass for Gaussian (Henderson is exact: no log-det
+	// correction) and for intercept-only models of the other families
+	// (H_uu is β-free in practice). Student t always takes it (see the
+	// condition below): with only the Henderson block, SEs were 1-4%
+	// below glmmTMB's on heavy-tailed data.  We also
 	// fall back to the Henderson vcov if the FD Hessian is numerically
 	// indefinite — rare, but can occur at quasi-singular random-slope
 	// fits where the variance component is at the boundary.
@@ -8241,7 +8276,11 @@ Model mixed_model(const Array<double> &y, const Array<double> &X,
 		}
 	}
 
-	if (!is_gaussian && fam.name != "student" && has_random_slopes && G > 0
+	// Student t (frequentist): the full Laplace vcov even for random-
+	// intercept-only models, because its observation weights depend on
+	// the residuals and hence on β, so ½ log|H_uu| is not β-free.
+	const bool student_full_vcov = fam.name == "student" && !priors;
+	if (!is_gaussian && (fam.name == "student" ? student_full_vcov : has_random_slopes) && G > 0
 	    && saved_theta.size() > 0)
 	{
 		intptr_t D_p2 = p + saved_theta.size();
@@ -8658,6 +8697,7 @@ Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
 	for (int k = 0; k < n_starts; k++)
 	{
 		InitOverrides ov;
+		ov.phase2_student = opts.phase2_student;
 		if (k > 0) {
 			ov.has_nu_init = true;
 			ov.nu_init = nu_grid[k];
@@ -8738,6 +8778,7 @@ Model mixed_model_multistart(const Array<double> &y, const Array<double> &X,
 		polish_ov.has_nu_init = true;
 		polish_ov.nu_init = best.nu;
 		polish_ov.tight_tolerance = true;
+		polish_ov.phase2_student = opts.phase2_student;
 
 		try {
 			Model polished = mixed_model(y, X, groups, fam, nullptr,

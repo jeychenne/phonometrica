@@ -22,9 +22,11 @@ a **top bar** for entering formulas, a **left panel** with column and model list
    What that means in practice:
 
    * **Check anything you publish.** For results that will appear in a paper or a thesis,
-     refit the final model in R (``lm``/``glm``, ``lme4``, ``glmmTMB``, ``brms``, ``mgcv``)
-     and confirm the numbers agree. Datasets are stored as plain CSV/TSV files, which R
-     reads directly, and the analysis view shows the formula it fitted.
+     confirm that R gives the same numbers. For frequentist models this takes one click:
+     click **Export to R…** in the Models panel (see `Exporting an analysis to R`_). This
+     writes the data and a ready-to-run R script that refits every frequentist model and
+     prints both sets of estimates side by side. For Bayesian models and GAMs, which cannot be exported,
+     refit the model in R yourself (``brms``, ``mgcv``).
    * **Expect small numerical differences.** Optimizers, convergence criteria and
      parameterizations differ between implementations. Coefficients and standard errors
      should agree to several digits; quantities at the end of long numerical chains (e.g.
@@ -311,6 +313,12 @@ Shift+click.
 - **Delete**: remove the selected model from the analysis.
 - **Compare**: run pairwise likelihood ratio tests on the selected models (or all models if
   fewer than two are selected). See `Model comparison`_ below.
+- **Add to data…**: append fitted values or residuals of the selected model to the source data.
+- **Export to R…**: write the data and an R script that refits all the models in R. See
+  `Exporting an analysis to R`_ below.
+
+Right-clicking a model gives further commands: **Refit**, **Rename…**, **Add to data…** and
+**Delete**.
 
 
 Summary tab
@@ -1022,7 +1030,9 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
 .. note::
 
    **Cross-checking a Student-t model in R.** The preview notice above recommends refitting
-   anything you intend to publish in R. Student *t* needs a little more care than the other
+   anything you intend to publish in R. **Export to R…** (see `Exporting an analysis to R`_)
+   generates a script that takes care of everything described in this note. If you write
+   the R code yourself, note that Student *t* needs a little more care than the other
    families, for three reasons.
 
    First, ``lme4`` does not offer a Student-t response at all. The reference implementation is
@@ -1146,6 +1156,141 @@ of ``fit()``:
 The option key is ``fit_method`` rather than the more natural ``method`` because the
 latter is a reserved keyword in the scripting engine. See the scripting API documentation
 for full details.
+
+
+Exporting an analysis to R
+--------------------------
+
+The models of an analysis can be exported to R all at once: click **Export to R…** in the
+Models panel. Phonometrica writes a folder, by default next to the ``.phon-analysis`` file,
+containing:
+
+``data.csv``
+   The data the models were fitted on: every row used by at least one model, and every
+   column used by at least one model.
+
+``fit.R``
+   A commented R script with one block per model, which fits the model and prints its
+   summary. Each block can be copied and run on its own after the script's "Data" section.
+
+``phonometrica_estimates.csv``
+   Phonometrica's estimates. After each model, ``fit.R`` prints the two sets of estimates
+   side by side, and it ends with a summary for all the models. Untick **Include comparison
+   with Phonometrica's estimates** if you only want the script.
+
+``README.txt``
+   What the files are, how to run the script, and how to read the comparison.
+
+Open ``fit.R`` in RStudio and click **Source**, or run ``Rscript fit.R`` from the folder.
+The script must run with the folder as its working directory.
+
+The export has two uses. The first is **verification**: you can check *your own* analysis
+against R, rather than relying on Phonometrica's test suite. The second is **handoff**: if
+you prefer to do your statistics in R, you can keep Phonometrica for corpus management,
+queries and acoustic measurements, and continue from a script that already works.
+
+Which models can be exported
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+=============================  ================  ======================================
+Phonometrica family            Random effects    R function
+=============================  ================  ======================================
+``gaussian``                   none              ``lm()``
+``gaussian``                   yes               ``glmmTMB(family = gaussian())``
+``binomial``                   none              ``glm(family = binomial)``
+``binomial``                   yes               ``glmmTMB(family = binomial)``
+``poisson``                    none              ``glm(family = poisson)``
+``poisson``                    yes               ``glmmTMB(family = poisson)``
+``negbin``                     either            ``glmmTMB(family = nbinom2)``
+``beta``                       either            ``glmmTMB(family = beta_family)``
+``student``                    either            ``glmmTMB(family = t_family)``
+=============================  ================  ======================================
+
+``glmmTMB`` is used for the negative binomial, beta and Student-t families even without
+random effects, because Phonometrica fits every family with a dispersion parameter by the
+same method as its mixed models. ``glmmTMB`` is then the like-for-like comparison, whereas
+``MASS::glm.nb`` or ``betareg`` would not be. The scripts need ``glmmTMB`` 1.1.8 or later.
+Mixed models are always fitted with the method Phonometrica used (ML or REML), whatever R's
+default.
+
+Models that cannot be exported are left out, and the export dialog lists them, with the
+reason, before anything is written; so do ``fit.R`` and the README. (If none of the models
+can be exported, the button is greyed out and its tooltip says why.) A model is left out
+in the following cases:
+
+* **Bayesian fits.** No R package fits the same approximation with the same priors, so any
+  script would agree on some quantities and not on others. That partial disagreement would
+  be easy to misread as an error.
+* **Models with smooth terms.** Phonometrica's spline basis is not ``mgcv``'s
+  parameterization, so the two fits cannot be compared term by term (see the note on GAMs
+  above).
+* **Formulas that R would parameterize differently.** Phonometrica always codes a factor with
+  treatment contrasts (one dummy variable per non-reference level). R does the same only
+  when the formula is *hierarchical*. For example, in ``y ~ vowel:gender`` without
+  ``vowel`` and ``gender``, or in a model without an intercept, R codes one of the factors
+  with a dummy variable for every level. The two programs would then estimate different
+  coefficients. Adding the missing lower-order terms (and the intercept) makes such a model
+  exportable.
+
+What the script does to match Phonometrica
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Most apparent disagreements between two statistics programs come from the data and the
+model specification, not from the estimation. ``fit.R`` rules these out explicitly:
+
+* It fits each model on exactly the rows Phonometrica used. Models need not use the same
+  rows: a row with a missing value in one of a model's columns is left out of that model
+  only. Each block of ``fit.R`` therefore selects its model's rows the same way (the rows
+  with no missing value in its columns), checks that it finds as many as Phonometrica used,
+  and drops factor levels that do not occur in them. Note that Phonometrica fits models on
+  the whole table, ignoring any filter applied in the table view; to analyse part of a
+  dataset, create a new one with **Subset**.
+* It gives every categorical variable its levels explicitly, with the reference level you
+  chose first, so that coefficients mean the same thing in both programs.
+* It reads categorical columns as text, so that codes such as ``01`` or ``308`` are not
+  turned into numbers.
+* It resets R's contrasts to treatment contrasts, in case your ``.Rprofile`` changes them.
+* It prints with ``print()``, so that output appears whether the script is run with
+  ``Rscript``, ``source()`` or RStudio's **Source** button.
+* It keeps column names that are not valid R names (e.g. ``F1 (Hz)``), writing them between
+  backticks in the formula. ``glmmTMB`` cannot use such a name for a random slope, so the
+  script uses a copy of that column under a valid name and says why.
+* For the Student-t family, it fits the model to a standardized response and transforms the
+  estimates back, because ``glmmTMB`` does not converge on a response in Hz (see the note
+  on cross-checking a Student-t model in R, under `Supported model types`_). This
+  transformation is exact.
+
+Reading the comparison
+~~~~~~~~~~~~~~~~~~~~~~
+
+For each model, the comparison lists each quantity, with Phonometrica's value, R's value, their difference,
+and the difference relative to the larger of 1 and R's value. For a coefficient, it also gives
+the difference in units of R's standard error (``diff.in.se``), which is the scale on which a
+difference matters for inference. The **status** column reads ``ok`` when the two agree within
+the tolerance expected for this kind of model, and ``CHECK`` when they do not. A coefficient
+always counts as agreeing when the two estimates are within 0.02 standard errors of each other:
+for a coefficient close to zero this can be a large *relative* difference, but it changes
+nothing about the conclusions.
+
+* Fixed-effects linear and generalized linear models (``lm``, ``glm``) should agree to many
+  digits.
+* Mixed models, and the negative binomial, beta and Student-t families, are fitted by
+  numerical optimization in both programs, so small differences are normal. Coefficients
+  and standard errors should agree to several significant digits. Log-likelihoods for
+  non-Gaussian mixed models may differ in the second decimal. Random-effect standard
+  deviations are the most sensitive quantity.
+* If R reports that its own fit did not converge, the script says so for that model: the differences then
+  reflect R's fit, not Phonometrica's. This typically happens when a random-effect standard
+  deviation is at or near zero. If Phonometrica itself flagged the model as weakly identified,
+  the script repeats that warning.
+
+The final summary gives, for each model, the number of values that agree and whether R's fit
+converged. All comparisons are kept in the R data frame ``cmp``, with one row per value and a
+``model`` column. If you find a ``CHECK`` you cannot
+explain, please report it with the exported folder, which contains everything needed to
+reproduce it.
+
+From a script, use :func:`export_r` (see the scripting documentation).
 
 
 Bayesian estimation

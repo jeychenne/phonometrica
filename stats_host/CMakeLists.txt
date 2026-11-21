@@ -27,6 +27,7 @@ add_executable(phon_stats
     ${CMAKE_SOURCE_DIR}/phon/analysis/statistics.cpp
     ${CMAKE_SOURCE_DIR}/phon/analysis/bayesian.cpp
     ${CMAKE_SOURCE_DIR}/phon/analysis/model_comparison.cpp
+    ${CMAKE_SOURCE_DIR}/phon/analysis/export_r.cpp
     ${CMAKE_SOURCE_DIR}/phon/utils/matrix.cpp
 )
 

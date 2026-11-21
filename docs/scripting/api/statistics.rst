@@ -107,6 +107,11 @@ Currently supported options:
   it is silently coerced to ML and the model carries a note explaining why. The key is
   named ``fit_method`` rather than the more natural ``method`` because the latter is a
   reserved keyword in the scripting engine.
+* ``reference_levels`` (table): the reference level of categorical variables, as a table
+  mapping variable names to levels, e.g. ``{ "vowel": "u" }``. Variables not listed use
+  the first level in alphabetical order. This is the scripting counterpart of setting a
+  reference level in the analysis view; it applies to fixed effects, random slopes and a
+  binary text response (whose reference level is coded 0).
 
 Validation is strict: any unknown key, or any unrecognized value, raises an error rather
 than being silently ignored (a typo like ``"RELM"`` should not silently demote a fit to ML).
@@ -129,6 +134,54 @@ Example::
    var m_reml2 = fit("y ~ x + (1|g)", ds, "gaussian", { "fit_method": "REML" })
 
    summarize(m_reml)   # shows a "Method: REML" line in the header
+
+------------
+
+.. function:: export_r(models, data, folder [, options])
+
+Exports frequentist models to R. ``models`` is a ``Model`` or a ``List`` of models, all
+fitted on ``data``. Writes ``folder`` (created if needed; files of the same name are
+overwritten) with:
+
+* ``data.csv``: every row and column used by at least one model;
+* ``fit.R``: an R script with one block per model, which fits it with ``lm()``, ``glm()``
+  or ``glmmTMB()`` depending on the family (on exactly the rows Phonometrica used) and
+  prints Phonometrica's and R's estimates side by side, followed by a summary;
+* ``phonometrica_estimates.csv``: Phonometrica's estimates, read by ``fit.R``;
+* ``README.txt``: what the files are and how to read the comparison.
+
+Returns the path of the folder. In a list, a model that cannot be exported (see
+:func:`r_export_blocker`, or a model whose data has changed since it was fitted) is left out,
+with a note printed on the output; an error is raised only if none can be exported. A single
+``Model`` that cannot be exported raises an error.
+
+``options`` is a ``Table`` with any of the following keys:
+
+* ``comparison`` (Boolean, default ``true``): write ``phonometrica_estimates.csv`` and the
+  comparison block of ``fit.R``.
+* ``reference_levels`` (table): the same table passed to :func:`fit`. Only needed for a
+  categorical variable that appears solely as a random slope; other levels are recorded
+  in the model.
+* ``analysis`` (string): a name shown in the header of ``fit.R`` and in the README.
+
+Example::
+
+   var ds = load("my_data.csv")
+   var refs = { "vowel": "u" }
+   var m1 = fit("f1 ~ vowel + gender + (1|speaker)", ds, { "reference_levels": refs })
+   var m2 = fit("f1 ~ vowel * gender + (1 + vowel|speaker)", ds, { "reference_levels": refs })
+   export_r([m1, m2], ds, "/home/me/f1_models_R", { "reference_levels": refs })
+
+See the *Analysis* user documentation for which models are covered and how to read the
+comparison.
+
+------------
+
+.. function:: r_export_blocker(model)
+
+Returns an empty string if :func:`export_r` can export ``model``, and otherwise the
+reason it cannot (e.g. a Bayesian fit, smooth terms, or a formula that R would
+parameterize differently).
 
 ------------
 

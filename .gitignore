@@ -10,3 +10,5 @@ build*/
 *.exe
 cmake-build-debug-visual-studio
 cmake-build-release-visual-studio
+# Export to R self-test output (test/statistics/export_r/run_export_r.sh)
+test/statistics/export_r/out/

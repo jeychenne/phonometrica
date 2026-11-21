@@ -29,6 +29,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <algorithm>
 #include <phon/analysis/formula.hpp>
 
 namespace phonometrica::stats {
@@ -105,13 +106,52 @@ String quote_name(const String &name)
 	return result;
 }
 
+// R's counterpart of quote_name: backticks around any name that is not a
+// syntactic R name in every locale (ASCII letters, digits, '.', '_', not
+// starting with a digit or with '.' followed by a digit, and not a reserved
+// word). Backticks around a syntactic name are legal, so erring on the side
+// of quoting (e.g. names with accented letters) is safe.
+String r_quote_name(const String &name)
+{
+	static const char *reserved[] = {"if", "else", "repeat", "while", "function", "for", "next", "break",
+	                                 "TRUE", "FALSE", "NULL", "Inf", "NaN", "NA", "NA_integer_", "NA_real_",
+	                                 "NA_complex_", "NA_character_", "in", "..."};
+	std::string s(name.data(), static_cast<size_t>(name.size()));
+	auto alpha = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); };
+	auto digit = [](char c) { return c >= '0' && c <= '9'; };
+
+	bool syntactic = !s.empty() && (alpha(s[0]) || s[0] == '.') && !(s[0] == '.' && s.size() > 1 && digit(s[1]));
+	for (size_t i = 0; syntactic && i < s.size(); i++)
+		syntactic = alpha(s[i]) || digit(s[i]) || s[i] == '.' || s[i] == '_';
+	for (auto *r : reserved)
+		if (syntactic && s == r) syntactic = false;
+	if (syntactic && s.size() > 2 && s[0] == '.' && s[1] == '.' &&
+	    std::all_of(s.begin() + 2, s.end(), digit))
+		syntactic = false;  // ..1, ..2
+	if (syntactic) return name;
+
+	std::string out = "`";
+	for (char c : s)
+	{
+		if (c == '`' || c == '\\') out += '\\';
+		out += c;
+	}
+	out += "`";
+	return String(out.c_str(), static_cast<intptr_t>(out.size()));
+}
+
 String FixedTerm::to_string() const
+{
+	return to_string(quote_name);
+}
+
+String FixedTerm::to_string(NameQuoter quote) const
 {
 	String result;
 	for (intptr_t i = 0; i < variables.size(); i++)
 	{
 		if (i > 0) result.append(":");
-		result.append(quote_name(variables[i]));
+		result.append(quote(variables[i]));
 	}
 	return result;
 }
@@ -129,7 +169,8 @@ String FixedTerm::to_string() const
 // term. Set to true on exit if any terms were emitted.
 static void append_term_array(String &result,
                               const Array<FixedTerm> &terms,
-                              bool &need_plus)
+                              bool &need_plus,
+                              NameQuoter quote_name = phonometrica::stats::quote_name)
 {
 	const intptr_t n = terms.size();
 	Array<bool> consumed;
@@ -217,7 +258,7 @@ static void append_term_array(String &result,
 		// Default: emit this term as-is (lone singleton, lone interaction,
 		// or any higher-order term).
 		if (need_plus) result.append(" + ");
-		result.append(term.to_string());
+		result.append(term.to_string(quote_name));
 		need_plus = true;
 		consumed[i] = true;
 	}
@@ -258,11 +299,16 @@ String SmoothTerm::to_string() const
 
 String RandomTerm::to_string() const
 {
+	return to_string(quote_name);
+}
+
+String RandomTerm::to_string(NameQuoter quote_name) const
+{
 	String result("(");
 	result.append(intercept ? "1" : "0");
 	// Either "1" or "0" was always emitted, so any slope must be preceded by " + ".
 	bool need_plus = true;
-	append_term_array(result, slopes, need_plus);
+	append_term_array(result, slopes, need_plus, quote_name);
 	result.append(" | ");
 	if (is_synthetic_group)
 	{
@@ -300,6 +346,18 @@ String RandomTerm::to_string() const
 
 String Formula::to_string() const
 {
+	return to_string(quote_name);
+}
+
+String Formula::to_r_string() const
+{
+	if (has_smooth_terms())
+		throw error("Smooth terms cannot be translated to R: Phonometrica's spline basis is not mgcv's");
+	return to_string(r_quote_name);
+}
+
+String Formula::to_string(NameQuoter quote_name) const
+{
 	String result = quote_name(response);
 	result.append(" ~ ");
 
@@ -330,7 +388,7 @@ String Formula::to_string() const
 	// is conservative on purpose). The same logic is applied to random-slope
 	// arrays in RandomTerm::to_string via the shared `append_term_array`
 	// helper, so `a*b` round-trips identically in both contexts.
-	append_term_array(result, fixed, need_plus);
+	append_term_array(result, fixed, need_plus, quote_name);
 
 	for (intptr_t i = 0; i < smooth.size(); i++)
 	{
@@ -342,7 +400,7 @@ String Formula::to_string() const
 	for (intptr_t i = 0; i < random.size(); i++)
 	{
 		if (need_plus) result.append(" + ");
-		result.append(random[i].to_string());
+		result.append(random[i].to_string(quote_name));
 		need_plus = true;
 	}
 

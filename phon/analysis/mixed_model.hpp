@@ -116,12 +116,11 @@ struct FitOptions
 	// The improvement is reported in fit_warning.
 	bool polish = false;
 
-	// Diagnostic / experimental: for Student-t, run Phase 2 (joint
-	// β + θ + σ + ν optimization) instead of skipping it. Phase 2 is
-	// skipped by default for Student-t because the σ-ν correlation
-	// can make the joint Hessian ill-conditioned, but on some
-	// datasets it converges and gives a tighter fit.
-	bool phase2_student = false;
+	// For Student-t, run Phase 2 (joint β + θ + σ + ν optimization of the
+	// Laplace likelihood), as for the other non-Gaussian families. On by
+	// default: without it β̂ is the PIRLS joint mode, which misses the
+	// ML optimum on heavy-tailed data. Set to false only for diagnosis.
+	bool phase2_student = true;
 
 	// Frequentist estimation method. Only meaningful for Gaussian LMMs;
 	// for all other paths, REML is silently coerced to ML with a
@@ -143,11 +142,9 @@ struct InitOverrides
 	// start near the converged optimum. Used by FitOptions.polish.
 	bool tight_tolerance = false;
 
-	// Experimental: enable Phase 2 (joint β/θ/σ/ν optimization) for
-	// Student-t models. Skipped by default due to σ-ν correlation
-	// concerns; this flag overrides the skip. Used by
-	// FitOptions.phase2_student.
-	bool phase2_student = false;
+	// Run Phase 2 (joint β/θ/σ/ν optimization) for Student-t models.
+	// Mirrors FitOptions.phase2_student (default true).
+	bool phase2_student = true;
 };
 
 //! Fit a mixed-effects model via Laplace approximation.

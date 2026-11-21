@@ -1,0 +1,215 @@
+# =====================================================================
+# test_export_r.phon — Phonometrica side of the "Export to R" self-test.
+#
+# The frequentist suite generates R references and compares inward
+# (gen_reference_*.R -> reference_*.json -> test_*.phon). This test
+# inverts it: Phonometrica fits a model, export_r() writes a runnable R
+# script plus Phonometrica's estimates, and run_export_r.sh runs every
+# script in R and fails if any quantity disagrees. A generated script
+# that runs but gives different numbers would manufacture a false
+# discrepancy in a user's own analysis, so the feature must not ship
+# without this.
+#
+# Run through run_export_r.sh, which also runs the R half:
+#     test/statistics/export_r/run_export_r.sh <path/to/phon_stats>
+#
+# Coverage (one export per case, written to out/<case>/):
+#   - every covered family, with and without random effects;
+#   - REML, and a grouping factor with numeric-looking codes;
+#   - nested (synthetic) groups, (1|school/classroom);
+#   - hazard 5: non-syntactic column names, numeric and categorical,
+#     with a non-ASCII character;
+#   - hazard 2: user-set reference levels, including one on a variable
+#     that is only a random slope (not covered by Model::variable_info);
+#   - a binary *text* response with a non-default success level;
+#   - an offset;
+#   - Student t on a Hz-scale response (student_f1_robust.csv), which
+#     exercises the standardize-and-back-transform path. Testing only an
+#     already-standardized response would leave that path unexercised.
+#
+# Negative cases are checked here directly: r_export_blocker() must
+# refuse Bayesian fits, GAMs and non-hierarchical formulas, and
+# export_r() must raise on them.
+# =====================================================================
+
+import stat_assert
+
+var OUT = join_path(get_directory(get_script_path()), "out")
+
+function data_path(name as String)
+    return resolve_data_path(name)
+end
+
+function export_case(tag as String, model as Object, data as Object, opts as Object)
+    var blocker = r_export_blocker(model)
+    if blocker != "" then
+        record_fail(tag & ": unexpectedly blocked: " & blocker)
+        return
+    end
+    try
+        export_r(model, data, join_path(OUT, tag), opts)
+        record_pass()
+    catch e
+        record_fail(tag & ": export_r() raised: " & e.message)
+    end
+end
+
+function expect_blocked(tag as String, model as Object, data as Object, fragment as String)
+    var blocker = r_export_blocker(model)
+    if blocker == "" then
+        record_fail(tag & ": r_export_blocker() should refuse this model")
+        return
+    end
+    if not contains(blocker, fragment) then
+        record_fail(tag & ": unexpected blocker message: " & blocker)
+        return
+    end
+    record_pass()
+    try
+        export_r(model, data, join_path(OUT, "blocked_" & tag))
+        record_fail(tag & ": export_r() should have raised")
+    catch e
+        record_pass()
+    end
+end
+
+start_section("EXPORT TO R")
+
+# ── Gaussian ─────────────────────────────────────────────────────────
+var gf1 = load(data_path("gaussian_f1.csv"))
+export_case("gaussian_lm", fit("f1 ~ vowel * gender", gf1), gf1, {})
+export_case("gaussian_mixed", fit("f1 ~ vowel * gender + (1 | speaker) + (1 | word)", gf1), gf1, {})
+
+# Random slopes, ML and REML. gaussian_f1.csv is simulated without by-speaker
+# vowel slopes, so (1 + vowel | speaker) sits on the boundary there and R does
+# not converge; sleepstudy has well-identified slopes. Subject holds
+# numeric-looking codes (308, 309, ...) that must be read as strings.
+var sleep = load(data_path("sleepstudy.tsv"))
+export_case("gaussian_slopes", fit("Reaction ~ Days + (1 + Days | Subject)", sleep), sleep, {})
+export_case("gaussian_reml", fit("Reaction ~ Days + (1 + Days | Subject)", sleep, {"fit_method": "REML"}), sleep, {})
+
+# Nested groups via slash sugar -> (1|school) + (1|classroom:school).
+var nested = load(data_path("nested_synthetic.csv"))
+export_case("gaussian_nested", fit("y ~ program + (1 | school/classroom)", nested), nested, {})
+
+# ── Binomial ─────────────────────────────────────────────────────────
+var schwa = load(data_path("binomial_schwa.csv"))
+export_case("binomial_glm", fit("realized ~ position * style", schwa, "binomial"), schwa, {})
+export_case("binomial_mixed", fit("realized ~ position + style + (1 | speaker) + (1 | word)", schwa, "binomial"), schwa, {})
+
+# Binary text response; "present" as the reference level makes "absent" the success (coded 1).
+var outcome = []
+var realized = get_column(schwa, "realized")
+for i = 1 to schwa.nrow do
+    if realized[i] == 1 then
+        append(outcome, "present")
+    else
+        append(outcome, "absent")
+    end
+end
+add_column(schwa, outcome, "outcome")
+var refs_outcome = {"outcome": "present"}
+export_case("binomial_text_response", fit("outcome ~ position + style + (1 | speaker)", schwa, "binomial", {"reference_levels": refs_outcome}), schwa, {"reference_levels": refs_outcome})
+
+# ── Poisson ──────────────────────────────────────────────────────────
+var disfl = load(data_path("poisson_disfluency.csv"))
+export_case("poisson_glm", fit("count ~ task * age", disfl, "poisson"), disfl, {})
+export_case("poisson_mixed", fit("count ~ task + age + (1 | speaker) + (1 | word)", disfl, "poisson"), disfl, {})
+
+# Offset: a deterministic, row-varying log exposure.
+var expo = []
+for i = 1 to disfl.nrow do
+    append(expo, "{log(1 + (i mod 5))}")
+end
+add_column(disfl, expo, "log_exposure")
+export_case("poisson_offset", fit("count ~ task + age + (1 | speaker) + offset(log_exposure)", disfl, "poisson"), disfl, {})
+
+# ── Negative binomial ────────────────────────────────────────────────
+var nb = load(data_path("negbin_counts.csv"))
+export_case("negbin_fixed", fit("count ~ condition * context", nb, "negbin"), nb, {})
+export_case("negbin_mixed", fit("count ~ condition + context + (1 | subject)", nb, "negbin"), nb, {})
+
+# ── Beta ─────────────────────────────────────────────────────────────
+var bv = load(data_path("beta_voicing.csv"))
+export_case("beta_fixed", fit("voicing ~ consonant * position", bv, "beta"), bv, {})
+export_case("beta_mixed", fit("voicing ~ consonant + position + (1 | speaker)", bv, "beta"), bv, {})
+
+# ── Student t, Hz-scale response ─────────────────────────────────────
+var st = load(data_path("student_f1_robust.csv"))
+export_case("student_fixed", fit("f1 ~ vowel + gender", st, "student"), st, {})
+export_case("student_mixed", fit("f1 ~ vowel + gender + (1 | speaker)", st, "student"), st, {})
+
+# ── Hazards 5 and 2: odd column names, user-set reference levels ────
+# Fixed part: a numeric response and a categorical predictor with spaces and a
+# non-ASCII letter, with a non-default reference level.
+var odd = load(data_path("gaussian_f1.csv"))
+add_column(odd, get_column(odd, "f1"), "F1 (Hz)")
+add_column(odd, get_column(odd, "vowel"), "voyelle prononcée")
+var refs_odd = {"voyelle prononcée": "u", "gender": "M"}
+export_case("odd_names_and_reference_levels", fit("'F1 (Hz)' ~ 'voyelle prononcée' * gender + (1 | speaker)", odd, "gaussian", {"reference_levels": refs_odd}), odd, {"reference_levels": refs_odd})
+
+# Random slope on a non-syntactic, categorical variable that appears ONLY as a
+# random slope (so its reference level must come from reference_levels, not
+# from Model::variable_info), and a non-syntactic numeric slope. glmmTMB
+# cannot fit non-syntactic slope names, so the script must alias them.
+var sl = load(data_path("sleepstudy.tsv"))
+var phase = []
+var days = get_column(sl, "Days")
+for i = 1 to sl.nrow do
+    if days[i] < 5 then
+        append(phase, "early (0-4)")
+    else
+        append(phase, "late (5-9)")
+    end
+end
+add_column(sl, phase, "study phase")
+add_column(sl, days, "days since start")
+var refs_sl = {"study phase": "late (5-9)"}
+export_case("odd_slope_numeric", fit("Reaction ~ 'days since start' + (1 + 'days since start' | Subject)", sl), sl, {})
+export_case("odd_slope_categorical", fit("Reaction ~ 'days since start' + (1 + 'study phase' | Subject)", sl, "gaussian", {"reference_levels": refs_sl}), sl, {"reference_levels": refs_sl})
+
+# ── Several models in one export ─────────────────────────────────────
+# One analysis, one folder, one script. The models are fitted on different
+# rows: f2 is missing in every 7th row, so the f2 model loses those rows,
+# and the level "z" of ctx occurs only there, so it must be dropped from that
+# model's factor (droplevels) or R would build an empty dummy. The Bayesian
+# model must be left out, with a note, without stopping the export.
+var multi = load(data_path("gaussian_f1.csv"))
+var f1v = get_column(multi, "f1")
+var f2 = []
+var ctx = []
+for i = 1 to multi.nrow do
+    if (i mod 7) == 0 then
+        append(f2, "")
+        append(ctx, "z")
+    else
+        append(f2, "{f1v[i] * 2 + (i mod 13)}")
+        if (i mod 2) == 0 then
+            append(ctx, "x")
+        else
+            append(ctx, "y")
+        end
+    end
+end
+add_column(multi, f2, "f2")
+add_column(multi, ctx, "ctx")
+var ma = fit("f1 ~ vowel + ctx + (1 | speaker)", multi)
+var mb = fit("f2 ~ vowel + ctx + (1 | speaker)", multi)
+var mc = fit("f1 ~ vowel * gender", multi)
+var md = fit("f1 ~ vowel", multi, "gaussian", Prior())
+try
+    export_r([ma, mb, mc, md], multi, join_path(OUT, "multi_model_rows_and_skip"))
+    record_pass()
+catch e
+    record_fail("multi_model_rows_and_skip: export_r() raised: " & e.message)
+end
+
+# ── Negative cases ───────────────────────────────────────────────────
+expect_blocked("bayesian", fit("f1 ~ vowel + gender", gf1, "gaussian", Prior()), gf1, "Bayesian")
+var gam = load(data_path("gam_test.csv"))
+expect_blocked("gam", fit("y_gauss ~ vowel + s(duration, k=8)", gam), gam, "smooth")
+expect_blocked("non_hierarchical", fit("f1 ~ vowel:gender", gf1), gf1, "hierarchical")
+expect_blocked("no_intercept", fit("f1 ~ 0 + vowel + gender", gf1), gf1, "no intercept")
+
+end_section()
+report()

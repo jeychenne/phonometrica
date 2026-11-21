@@ -44,6 +44,14 @@ namespace phonometrica::stats {
 // variable selector.
 String quote_name(const String &name);
 
+// The R counterpart: wrap a name in backticks unless it is a syntactic R
+// name (ASCII letters, digits, '.' and '_'; not a reserved word). Used by
+// Formula::to_r_string() for the "Export to R" script.
+String r_quote_name(const String &name);
+
+// Name-quoting policy for the formula serialisers.
+using NameQuoter = String (*)(const String &);
+
 
 // A single fixed-effects term, also reused as a random-slope term.
 // Simple term:      variables = {"vowel"}
@@ -64,6 +72,7 @@ struct FixedTerm
 
 	// String representation: "vowel" or "vowel:context"
 	String to_string() const;
+	String to_string(NameQuoter quote) const;
 };
 
 
@@ -117,6 +126,7 @@ struct RandomTerm
 	bool is_synthetic_group = false; // true if `group` is a colon-joined synthetic name (e.g. "school:classroom")
 
 	String to_string() const;
+	String to_string(NameQuoter quote) const;
 };
 
 
@@ -156,6 +166,16 @@ struct Formula
 
 	// Reconstruct the formula as a string.
 	String to_string() const;
+
+	// The same formula in R syntax: identical except that non-syntactic names
+	// are quoted with backticks (R) rather than single quotes (Phonometrica).
+	// Offsets, interactions, "0 +", random slopes and synthetic groupings
+	// ((1 | g2:g1), component order preserved) are already R syntax. Throws on
+	// smooth terms, whose basis has no mgcv equivalent.
+	String to_r_string() const;
+
+	// Serialise with a given name-quoting policy.
+	String to_string(NameQuoter quote) const;
 
 	// True if the formula has any random-effects terms.
 	bool has_random_effects() const { return !random.empty(); }

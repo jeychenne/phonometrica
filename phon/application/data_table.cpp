@@ -34,6 +34,7 @@
 #include <phon/application/conc/concordance.hpp>
 #include <phon/utils/file_system.hpp>
 #include <phon/analysis/fitting.hpp>
+#include <phon/analysis/export_r.hpp>
 #include <phon/analysis/emmeans.hpp>
 #include <phon/analysis/predict.hpp>
 #include <phon/analysis/scaled_residuals.hpp>
@@ -1031,7 +1032,35 @@ void DataTable::initialize(Runtime &rt)
 	// The option key is "fit_method" rather than "method" because "method"
 	// is a reserved keyword in the scripting language.
 
-	auto parse_fit_options = [](Isolate &iso, const Table &tab) -> stats::FitOptions {
+	// {variable: reference_level} table, shared by fit() and export_r() options.
+	auto parse_reference_levels = [](Isolate &iso, const Variant &v, const char *where) {
+		std::map<String, String> out;
+		if (!v.is<Table>())
+			iso.raise(String::format("[Type error] %s: \"reference_levels\" must be a table mapping "
+			                         "variable names to levels", where), 0);
+		Table t = v.to<Table>();
+		List keys = t.keys();
+		for (intptr_t n = 1; n <= keys.size(); n++)
+		{
+			Variant k = keys.get(n);
+			try
+			{
+				out[k.to<String>()] = t.get(k).to<String>();
+			}
+			catch (std::exception &)
+			{
+				iso.raise(String::format("[Type error] %s: \"reference_levels\" keys and values must be "
+				                         "strings", where), 0);
+			}
+		}
+		return out;
+	};
+
+	// "reference_levels" is the scripting counterpart of the analysis view's
+	// reference-level setting; it is parsed only when the caller asks for it.
+	auto parse_fit_options = [parse_reference_levels](Isolate &iso, const Table &tab,
+	                                                  std::map<String, String> *reference_levels = nullptr)
+	        -> stats::FitOptions {
 		stats::FitOptions opts;
 		List keys = tab.keys();
 		for (intptr_t n = 1; n <= keys.size(); n++)
@@ -1059,10 +1088,15 @@ void DataTable::initialize(Runtime &rt)
 					iso.raise(String::format("[Value error] fit() options: \"fit_method\" must be "
 					                         "\"ML\" or \"REML\" (got \"%s\")", val.data()), 0);
 			}
+			else if (key == "reference_levels" && reference_levels)
+			{
+				*reference_levels = parse_reference_levels(iso, tab.get(k), "fit() options");
+			}
 			else
 			{
 				iso.raise(String::format("[Value error] fit() options: unknown key \"%s\". "
-				                         "Supported keys: \"fit_method\".", key.data()), 0);
+				                         "Supported keys: \"fit_method\", \"reference_levels\".",
+				                         key.data()), 0);
 			}
 		}
 		return opts;
@@ -1093,10 +1127,11 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_function("fit",
 	                [note_gam, parse_fit_options](Isolate &iso, const String &formula, DataTable &data,
 	                                              const Table &options) -> Handle<Model> {
-		auto opts = parse_fit_options(iso, options);
+		std::map<String, String> refs;
+		auto opts = parse_fit_options(iso, options, &refs);
 		return guarded(iso, [&] {
 			data.open();
-			auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian", opts);
+			auto model = stats::fit(data, stats::Formula::parse(formula), "gaussian", opts, refs);
 			model.compute_pseudo_r2();
 			note_gam(iso, model);
 			return Handle<Model>::make(std::move(model));
@@ -1106,10 +1141,11 @@ void DataTable::initialize(Runtime &rt)
 	rt.add_function("fit",
 	                [note_gam, parse_fit_options](Isolate &iso, const String &formula, DataTable &data,
 	                                              const String &family, const Table &options) -> Handle<Model> {
-		auto opts = parse_fit_options(iso, options);
+		std::map<String, String> refs;
+		auto opts = parse_fit_options(iso, options, &refs);
 		return guarded(iso, [&] {
 			data.open();
-			auto model = stats::fit(data, stats::Formula::parse(formula), family, opts);
+			auto model = stats::fit(data, stats::Formula::parse(formula), family, opts, refs);
 			model.compute_pseudo_r2();
 			note_gam(iso, model);
 			return Handle<Model>::make(std::move(model));
@@ -1139,6 +1175,80 @@ void DataTable::initialize(Runtime &rt)
 			return Handle<Model>::make(std::move(model));
 		});
 	});
+
+	// ── export_r() ──────────────────────────────────────────────────────
+	//
+	// export_r(models, data, dir [, options]) -> String: write the "Export to R"
+	// folder (data.csv, fit.R, phonometrica_estimates.csv, README.txt) and
+	// return its path. `models` is a Model or a List of Models; a model in a
+	// list that cannot be exported is left out with a note on the output (a
+	// single Model raises instead). Options: "comparison" (Boolean, default
+	// true), "reference_levels" (the table passed to fit(); needed only for
+	// categorical variables that appear solely as random slopes) and
+	// "analysis" (String, shown in the script header).
+	// r_export_blocker(model) -> String: "" if the model can be exported,
+	// otherwise the reason it cannot (the GUI's tooltip text).
+
+	auto parse_export_options = [parse_reference_levels](Isolate &iso, const Table &options) {
+		stats::ExportROptions opts;
+		List keys = options.keys();
+		for (intptr_t n = 1; n <= keys.size(); n++)
+		{
+			Variant k = keys.get(n);
+			String key = k.is<String>() ? k.to<String>() : String();
+			if (key == "comparison")
+				opts.include_comparison = options.get(k).to<bool>();
+			else if (key == "reference_levels")
+				opts.reference_levels = parse_reference_levels(iso, options.get(k), "export_r() options");
+			else if (key == "analysis")
+				opts.analysis_path = options.get(k).to<String>();
+			else
+				iso.raise(String::format("[Value error] export_r() options: unknown key \"%s\". Supported keys: "
+				                         "\"comparison\", \"reference_levels\", \"analysis\".", key.data()), 0);
+		}
+		return opts;
+	};
+	auto export_models = [](Isolate &iso, const List &models, DataTable &data, const String &dir,
+	                        const stats::ExportROptions &opts) -> String {
+		std::vector<Handle<Model>> handles;
+		for (intptr_t n = 1; n <= models.size(); n++)
+			handles.push_back(guarded(iso, [&] { return models.get(n).to<Handle<Model>>(); }));
+		std::vector<stats::ExportRModel> items;
+		for (auto &h : handles)
+			items.push_back({h.get(), h->label});
+		return guarded(iso, [&] {
+			data.open();
+			auto res = stats::export_to_r(items, data, dir, opts);
+			for (auto &s : res.skipped)
+				iso.write_output(String::format("Not exported to R: %s: %s\n", s.label.data(), s.reason.data()));
+			return res.directory;
+		});
+	};
+
+	rt.add_function("export_r", [](Isolate &iso, const Model &m, DataTable &data, const String &dir) -> String {
+		return guarded(iso, [&] {
+			data.open();
+			return stats::export_to_r(m, data, dir).directory;
+		});
+	});
+	rt.add_function("export_r", [parse_export_options](Isolate &iso, const Model &m, DataTable &data,
+	                                                   const String &dir, const Table &options) -> String {
+		auto opts = parse_export_options(iso, options);
+		return guarded(iso, [&] {
+			data.open();
+			return stats::export_to_r(m, data, dir, opts).directory;
+		});
+	});
+	rt.add_function("export_r", [export_models](Isolate &iso, const List &models, DataTable &data,
+	                                            const String &dir) -> String {
+		return export_models(iso, models, data, dir, {});
+	});
+	rt.add_function("export_r", [export_models, parse_export_options](Isolate &iso, const List &models,
+	                                                                  DataTable &data, const String &dir,
+	                                                                  const Table &options) -> String {
+		return export_models(iso, models, data, dir, parse_export_options(iso, options));
+	});
+	rt.add_function("r_export_blocker", [](const Model &m) -> String { return stats::r_export_blocker(m); });
 
 	// ── filter() ────────────────────────────────────────────────────────
 

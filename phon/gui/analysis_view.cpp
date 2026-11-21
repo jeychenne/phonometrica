@@ -48,6 +48,16 @@
 #include <QFormLayout>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QCheckBox>
+#include <QDesktopServices>
+#include <QDir>
+#include <QFileInfo>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QUrl>
+#include <phon/analysis/export_r.hpp>
 #include <QDoubleValidator>
 #include <QHeaderView>
 #include <QEvent>
@@ -643,6 +653,11 @@ void AnalysisView::setupUi()
 	                                     "columns on the source data"));
 	m_add_to_data_button->setEnabled(false);
 	model_layout->addWidget(m_add_to_data_button);
+
+	// Export to R: all the analysis's models at once (see onExportToR).
+	m_export_r_button = new QPushButton(tr("Export to R…"));
+	m_export_r_button->setEnabled(false);
+	model_layout->addWidget(m_export_r_button);
 
 	// Enable right-click on the model list for Rename / Add to data / Delete.
 	m_model_list->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -1351,6 +1366,7 @@ void AnalysisView::setupUi()
 	connect(m_delete_button, &QPushButton::clicked, this, &AnalysisView::onDeleteModel);
 	connect(m_compare_button, &QPushButton::clicked, this, &AnalysisView::onCompareModels);
 	connect(m_add_to_data_button, &QPushButton::clicked, this, &AnalysisView::onAddToData);
+	connect(m_export_r_button, &QPushButton::clicked, this, &AnalysisView::onExportToR);
 	connect(m_model_list, &QListWidget::customContextMenuRequested,
 	        this, &AnalysisView::onModelListContextMenu);
 	connect(m_model_list, &QListWidget::itemDoubleClicked, this, &AnalysisView::onRenameModel);
@@ -1527,6 +1543,7 @@ void AnalysisView::populateModelList()
 		m_model_list->addItem(modelListText(i));
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
+	updateExportRButton();
 	updateAddToDataButton();
 
 	if (m_analysis->model_count() > 0) {
@@ -1635,6 +1652,7 @@ void AnalysisView::onFit()
 
 		m_delete_button->setEnabled(true);
 		m_compare_button->setEnabled(m_analysis->model_count() >= 2);
+		updateExportRButton();
 
 		m_right_tabs->setCurrentIndex(0); // switch to Summary tab
 		emit titleChanged(label());
@@ -1700,6 +1718,7 @@ void AnalysisView::onRefitModel(int row)
 		if (auto *item = m_model_list->item(row)) {
 			item->setText(modelListText(row));
 		}
+		updateExportRButton();
 
 		// Refresh the displayed view only if the refit'd model is the one
 		// currently shown. Otherwise leave the GUI untouched — right-click
@@ -1722,6 +1741,218 @@ void AnalysisView::onRefitModel(int row)
 
 		QMessageBox::critical(this, tr("Refit model"), QString::fromUtf8(e.what()));
 	}
+}
+
+
+// =====================================================================
+// Export to R
+// =====================================================================
+
+// Models that cannot be exported, as "label: reason" lines (empty if all can).
+QStringList AnalysisView::exportRSkipped(int *n_exportable) const
+{
+	QStringList skipped;
+	int ok = 0;
+	for (int i = 0; i < m_analysis->model_count(); i++)
+	{
+		String blocker = stats::r_export_blocker(m_analysis->model(i));
+		if (blocker.empty())
+			ok++;
+		else
+			skipped << modelDisplayLabel(i) + QStringLiteral(": ") +
+			               QString::fromUtf8(blocker.data(), (int)blocker.size());
+	}
+	if (n_exportable) *n_exportable = ok;
+	return skipped;
+}
+
+void AnalysisView::updateExportRButton()
+{
+	if (!m_export_r_button) return;
+	int n_ok = 0;
+	QStringList skipped = exportRSkipped(&n_ok);
+	if (m_analysis->model_count() == 0) {
+		m_export_r_button->setEnabled(false);
+		m_export_r_button->setToolTip(tr("Fit a model to export the analysis to R"));
+	}
+	else if (!m_analysis->has_source()) {
+		m_export_r_button->setEnabled(false);
+		m_export_r_button->setToolTip(tr("The source data of this analysis is not available"));
+	}
+	else if (n_ok == 0) {
+		m_export_r_button->setEnabled(false);
+		m_export_r_button->setToolTip(tr("None of the models can be exported to R:\n") + skipped.join('\n'));
+	}
+	else {
+		m_export_r_button->setEnabled(true);
+		m_export_r_button->setToolTip(tr("Write the data and an R script that fits every frequentist model "
+		                                 "and compares the estimates with Phonometrica's"));
+	}
+}
+
+void AnalysisView::onExportToR()
+{
+	// Exports every model of the analysis that R can fit equivalently, in one
+	// folder with one script (see phon/analysis/export_r.hpp). The others
+	// (Bayesian fits, GAMs, ...) are listed with the reason before and after.
+	const QString title = tr("Export to R");
+	auto to_q = [](const String &s) { return QString::fromUtf8(s.data(), (int)s.size()); };
+	auto to_s = [](const QString &s) { QByteArray b = s.toUtf8(); return String(b.constData(), (intptr_t)b.size()); };
+
+	auto *data = m_analysis->data();
+	if (!data) {
+		QMessageBox::critical(this, title, tr("The source data of this analysis is not available."));
+		return;
+	}
+	int n_ok = 0;
+	QStringList skipped = exportRSkipped(&n_ok);
+	if (n_ok == 0) {
+		QMessageBox::warning(this, title, tr("None of the models can be exported to R."),
+		                     QMessageBox::Ok);
+		return;
+	}
+
+	// Default location: beside the .phon-analysis file; for an unsaved
+	// analysis, beside the source data.
+	QString base_dir = lastDirectory();
+	QString analysis_name;
+	if (m_analysis->has_path()) {
+		QFileInfo info(to_q(m_analysis->path()));
+		base_dir = info.absolutePath();
+		analysis_name = info.completeBaseName();
+	}
+	else if (data->has_path()) {
+		QFileInfo info(to_q(data->path()));
+		base_dir = info.absolutePath();
+		analysis_name = info.completeBaseName();
+	}
+	const QString folder = to_q(stats::r_export_folder_name(to_s(analysis_name)));
+
+	// ── Dialog: destination folder, comparison checkbox, skipped models ──
+	QDialog dialog(this);
+	dialog.setWindowTitle(tr("Export analysis to R"));
+	auto *layout = new QVBoxLayout(&dialog);
+	auto *intro = new QLabel(n_ok == 1
+		? tr("Phonometrica will write the data, an R script that fits the model, and a README to a new folder.")
+		: tr("Phonometrica will write the data, an R script that fits the %1 models, and a README to a new "
+		     "folder.").arg(n_ok));
+	intro->setWordWrap(true);
+	layout->addWidget(intro);
+
+	if (!skipped.isEmpty()) {
+		auto *warn = new QLabel(tr("<b>%n model(s) will not be exported:</b>", "", (int)skipped.size()) +
+		                        QStringLiteral("<ul style='margin-top:2px'><li>") +
+		                        skipped.replaceInStrings(QStringLiteral("&"), QStringLiteral("&amp;"))
+		                               .replaceInStrings(QStringLiteral("<"), QStringLiteral("&lt;"))
+		                               .join(QStringLiteral("</li><li>")) +
+		                        QStringLiteral("</li></ul>"));
+		warn->setWordWrap(true);
+		warn->setTextFormat(Qt::RichText);
+		layout->addWidget(warn);
+	}
+
+	auto *form = new QFormLayout;
+	auto *dir_edit = new QLineEdit(QDir(base_dir).filePath(folder));
+	dir_edit->setMinimumWidth(420);
+	auto *browse = new QPushButton(tr("Browse…"));
+	auto *dir_row = new QHBoxLayout;
+	dir_row->addWidget(dir_edit, 1);
+	dir_row->addWidget(browse);
+	form->addRow(tr("Folder:"), dir_row);
+	layout->addLayout(form);
+
+	auto *compare = new QCheckBox(tr("Include comparison with Phonometrica's estimates"));
+	compare->setChecked(true);
+	compare->setToolTip(tr("After each model, the script prints Phonometrica's and R's estimates side by "
+	                       "side, so that you can check that the two programs agree"));
+	layout->addWidget(compare);
+
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+	buttons->button(QDialogButtonBox::Ok)->setText(tr("Export"));
+	layout->addWidget(buttons);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	connect(browse, &QPushButton::clicked, &dialog, [&]() {
+		QString start = QFileInfo(dir_edit->text()).absolutePath();
+		QString parent = QFileDialog::getExistingDirectory(&dialog, tr("Choose where to create the folder"), start);
+		if (!parent.isEmpty())
+			dir_edit->setText(QDir(parent).filePath(folder));
+	});
+
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+
+	QString dest = QDir::cleanPath(dir_edit->text().trimmed());
+	if (dest.isEmpty())
+		return;
+
+	// ── Existing folder: overwrite or pick a new name ───────────────
+	if (QFileInfo::exists(dest)) {
+		QMessageBox box(QMessageBox::Question, title,
+		                tr("The folder \"%1\" already exists.").arg(QDir::toNativeSeparators(dest)),
+		                QMessageBox::NoButton, this);
+		box.setInformativeText(tr("Overwriting replaces the exported files it contains; other files are left alone."));
+		auto *overwrite = box.addButton(tr("Overwrite"), QMessageBox::AcceptRole);
+		auto *rename = box.addButton(tr("Use a New Name"), QMessageBox::ActionRole);
+		box.addButton(QMessageBox::Cancel);
+		box.setDefaultButton(rename);
+		box.exec();
+		if (box.clickedButton() == rename) {
+			QString candidate;
+			int k = 2;
+			do {
+				candidate = dest + QStringLiteral("_%1").arg(k++);
+			} while (QFileInfo::exists(candidate));
+			dest = candidate;
+		}
+		else if (box.clickedButton() != overwrite) {
+			return;
+		}
+	}
+
+	stats::ExportROptions opts;
+	if (m_analysis->has_path())
+		opts.analysis_path = m_analysis->path();
+	opts.reference_levels = m_analysis->reference_levels();
+	opts.include_comparison = compare->isChecked();
+
+	std::vector<stats::ExportRModel> models;
+	for (int i = 0; i < m_analysis->model_count(); i++)
+		models.push_back({&m_analysis->model(i), to_s(modelDisplayLabel(i))});
+
+	stats::ExportRResult result;
+	try
+	{
+		QApplication::setOverrideCursor(Qt::WaitCursor);
+		data->open();
+		result = stats::export_to_r(models, *data, to_s(dest), opts);
+		QApplication::restoreOverrideCursor();
+		setLastDirectory(dest);
+	}
+	catch (std::exception &e)
+	{
+		QApplication::restoreOverrideCursor();
+		QMessageBox::critical(this, title, QString::fromUtf8(e.what()));
+		return;
+	}
+
+	QString info = tr("Open fit.R in R or RStudio and run it with this folder as the working directory. "
+	                  "README.txt explains the files and the comparison.");
+	if (!result.skipped.empty()) {
+		QStringList lines;
+		for (auto &sk : result.skipped)
+			lines << QStringLiteral("• ") + to_q(sk.label) + QStringLiteral(": ") + to_q(sk.reason);
+		info += QStringLiteral("\n\n") + tr("Not exported:") + QStringLiteral("\n") + lines.join('\n');
+	}
+	QMessageBox done(QMessageBox::Information, title,
+	                 tr("%n model(s) exported to:", "", (int)result.exported.size()) + QStringLiteral("\n") +
+	                 QDir::toNativeSeparators(dest),
+	                 QMessageBox::Ok, this);
+	done.setInformativeText(info);
+	auto *reveal = done.addButton(tr("Show Folder"), QMessageBox::ActionRole);
+	done.exec();
+	if (done.clickedButton() == reveal)
+		QDesktopServices::openUrl(QUrl::fromLocalFile(dest));
 }
 
 
@@ -1829,6 +2060,7 @@ void AnalysisView::onDeleteModel()
 
 	m_delete_button->setEnabled(m_analysis->model_count() > 0);
 	m_compare_button->setEnabled(m_analysis->model_count() >= 2);
+	updateExportRButton();
 	m_scaled_residuals.reset();
 	m_scaled_residuals_model = -1;
 	m_ppc.reset();
@@ -9686,6 +9918,7 @@ void AnalysisView::onModelListContextMenu(const QPoint &pos)
 	else if (chosen == add_act) {
 		onAddToData();
 	}
+
 	else if (chosen == delete_act) {
 		onDeleteModel();
 	}

@@ -31,6 +31,7 @@
  ***********************************************************************************************************************/
 
 #include <cmath>
+#include <map>
 #include <cstdio>
 #include <string>
 
@@ -38,6 +39,7 @@
 
 #include <phon/application/data_table.hpp> // the shim's headless table
 
+#include <phon/analysis/export_r.hpp>
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/model.hpp>
 #include <phon/analysis/prior.hpp>
@@ -91,13 +93,45 @@ void note_gam(Isolate &iso, const stats::Model &model)
 		iso.write_output("Note: GAM support (s() smooth terms) is experimental in this release.\n");
 }
 
+// Parse a {variable: reference_level} table (fit() option "reference_levels").
+std::map<String, String> parse_reference_levels(Isolate &iso, const Variant &v, const char *where)
+{
+	std::map<String, String> out;
+	if (!v.is<Table>())
+		iso.raise(String::format("[Type error] %s: \"reference_levels\" must be a table "
+		                         "mapping variable names to levels",
+		                         where),
+		          0);
+	Table t = v.to<Table>();
+	List keys = t.keys();
+	for (intptr_t i = 1; i <= keys.size(); ++i) // List::get is 1-based
+	{
+		Variant k = keys.get(i);
+		try
+		{
+			out[k.to<String>()] = t.get(k).to<String>();
+		}
+		catch (std::exception &)
+		{
+			iso.raise(String::format("[Type error] %s: \"reference_levels\" keys and values must be "
+			                         "strings",
+			                         where),
+			          0);
+		}
+	}
+	return out;
+}
+
 // The options-Table parser of the old fit_opts callbacks: strict key/value
-// validation ("fit_method" = ML | REML, case-insensitive).
-stats::FitOptions parse_fit_options(Isolate &iso, const Table &tab)
+// validation ("fit_method" = ML | REML, case-insensitive; "reference_levels"
+// = {variable: level}, the scripting counterpart of the analysis view's
+// reference-level setting).
+stats::FitOptions parse_fit_options(Isolate &iso, const Table &tab,
+                                    std::map<String, String> *reference_levels = nullptr)
 {
 	stats::FitOptions opts;
 	List keys = tab.keys();
-	for (intptr_t i = 0; i < keys.size(); ++i)
+	for (intptr_t i = 1; i <= keys.size(); ++i) // List::get is 1-based
 	{
 		Variant k = keys.get(i);
 		String key;
@@ -123,10 +157,14 @@ stats::FitOptions parse_fit_options(Isolate &iso, const Table &tab)
 				                         val.data()),
 				          0);
 		}
+		else if (key == "reference_levels" && reference_levels)
+		{
+			*reference_levels = parse_reference_levels(iso, tab.get(k), "fit() options");
+		}
 		else
 		{
 			iso.raise(String::format("[Value error] fit() options: unknown key \"%s\". "
-			                         "Supported keys: \"fit_method\".",
+			                         "Supported keys: \"fit_method\", \"reference_levels\".",
 			                         key.data()),
 			          0);
 		}
@@ -227,7 +265,7 @@ void register_data_natives(Runtime &rt)
 			                              (long) values.size(), (long) t.row_count()),
 			                          0);
 		                Array<String> cells;
-		                for (intptr_t i = 0; i < values.size(); ++i)
+		                for (intptr_t i = 1; i <= values.size(); ++i) // List::get is 1-based
 			                cells.append(values.get(i).to<String>());
 		                t.add_text_column(name, cells);
 	                });
@@ -295,11 +333,12 @@ void register_fit(Runtime &rt)
 	rt.add_function("fit",
 	                [](Isolate &iso, const String &formula, DataTable &data,
 	                   const Table &options) -> Handle<stats::Model> {
-		                auto opts = parse_fit_options(iso, options);
+		                std::map<String, String> refs;
+		                auto opts = parse_fit_options(iso, options, &refs);
 		                try
 		                {
 			                auto model =
-			                    stats::fit(data, stats::Formula::parse(formula), "gaussian", opts);
+			                    stats::fit(data, stats::Formula::parse(formula), "gaussian", opts, refs);
 			                model.compute_pseudo_r2();
 			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
@@ -314,11 +353,12 @@ void register_fit(Runtime &rt)
 	rt.add_function("fit",
 	                [](Isolate &iso, const String &formula, DataTable &data, const String &family,
 	                   const Table &options) -> Handle<stats::Model> {
-		                auto opts = parse_fit_options(iso, options);
+		                std::map<String, String> refs;
+		                auto opts = parse_fit_options(iso, options, &refs);
 		                try
 		                {
 			                auto model =
-			                    stats::fit(data, stats::Formula::parse(formula), family, opts);
+			                    stats::fit(data, stats::Formula::parse(formula), family, opts, refs);
 			                model.compute_pseudo_r2();
 			                note_gam(iso, model);
 			                return Handle<stats::Model>::make(std::move(model));
@@ -625,6 +665,103 @@ void register_model_fields(Runtime &rt)
 
 } // namespace
 
+// export_r(models, data, dir [, options]) -> String (the folder written).
+// `models` is a Model or a List of Models; a model that cannot be exported is
+// left out with a note on the output (a single Model raises instead).
+// Options: "comparison" (Boolean, default true), "reference_levels" (the same
+// table passed to fit(); needed only for categorical variables that appear
+// solely as random slopes), "analysis" (String, shown in the script header).
+// r_export_blocker(model) -> String: empty if the model can be exported,
+// otherwise the reason it cannot.
+stats::ExportROptions parse_export_options(Isolate &iso, const Table &options)
+{
+	stats::ExportROptions opts;
+	List keys = options.keys();
+	for (intptr_t i = 1; i <= keys.size(); ++i) // List::get is 1-based
+	{
+		Variant k = keys.get(i);
+		String key = k.is<String>() ? k.to<String>() : String();
+		if (key == "comparison")
+			opts.include_comparison = options.get(k).to<bool>();
+		else if (key == "reference_levels")
+			opts.reference_levels = parse_reference_levels(iso, options.get(k), "export_r() options");
+		else if (key == "analysis")
+			opts.analysis_path = options.get(k).to<String>();
+		else
+			iso.raise(String::format("[Value error] export_r() options: unknown key \"%s\". "
+			                         "Supported keys: \"comparison\", \"reference_levels\", "
+			                         "\"analysis\".",
+			                         key.data()),
+			          0);
+	}
+	return opts;
+}
+
+String export_models(Isolate &iso, const List &models, DataTable &data, const String &dir,
+                     const stats::ExportROptions &opts)
+{
+	std::vector<Handle<stats::Model>> handles;
+	std::vector<stats::ExportRModel> items;
+	for (intptr_t i = 1; i <= models.size(); ++i) // List::get is 1-based
+	{
+		Variant v = models.get(i);
+		if (!v.is<Handle<stats::Model>>())
+			iso.raise(String::format("[Type error] export_r(): element %ld of the list is not a Model", (long) i), 0);
+		handles.push_back(v.to<Handle<stats::Model>>());
+	}
+	for (auto &h : handles)
+		items.push_back({h.get(), h->label});
+	try
+	{
+		auto res = stats::export_to_r(items, data, dir, opts);
+		for (auto &s : res.skipped)
+		{
+			String msg = String::format("Not exported to R: %s: %s\n", s.label.data(), s.reason.data());
+			iso.write_output(msg);
+		}
+		return res.directory;
+	}
+	catch (std::exception &e)
+	{
+		raise_from(iso, e);
+	}
+}
+
+void register_export(Runtime &rt)
+{
+	auto run = [](Isolate &iso, const stats::Model &m, DataTable &data, const String &dir,
+	              const stats::ExportROptions &opts) -> String {
+		try
+		{
+			return stats::export_to_r(m, data, dir, opts).directory;
+		}
+		catch (std::exception &e)
+		{
+			raise_from(iso, e);
+		}
+	};
+
+	rt.add_function("export_r", [run](Isolate &iso, const stats::Model &m, DataTable &data,
+	                                  const String &dir) -> String {
+		return run(iso, m, data, dir, {});
+	});
+	rt.add_function("export_r", [run](Isolate &iso, const stats::Model &m, DataTable &data,
+	                                  const String &dir, const Table &options) -> String {
+		return run(iso, m, data, dir, parse_export_options(iso, options));
+	});
+	rt.add_function("export_r", [](Isolate &iso, const List &models, DataTable &data,
+	                               const String &dir) -> String {
+		return export_models(iso, models, data, dir, {});
+	});
+	rt.add_function("export_r", [](Isolate &iso, const List &models, DataTable &data,
+	                               const String &dir, const Table &options) -> String {
+		return export_models(iso, models, data, dir, parse_export_options(iso, options));
+	});
+
+	rt.add_function("r_export_blocker",
+	                [](const stats::Model &m) -> String { return stats::r_export_blocker(m); });
+}
+
 void register_bindings(Runtime &rt)
 {
 	register_classes(rt);
@@ -632,6 +769,7 @@ void register_bindings(Runtime &rt)
 	register_fit(rt);
 	register_priors(rt);
 	register_model_fields(rt);
+	register_export(rt);
 }
 
 } // namespace phonometrica::stats_host
