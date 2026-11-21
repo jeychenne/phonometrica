@@ -1,3 +1,31 @@
+phonometrica (0.9.10) unstable; urgency=medium
+
+  * formant queries select their analysis settings with Fast Track, a
+    reimplementation of Santiago Barreda's method (Barreda 2021); it
+    replaces Weenink's method and the method labelled "Optimal", and
+    queries saved with either still run with it
+  * the range of maximum frequencies defaults to 5000-7000 Hz, with presets
+    from Barreda's recommendations by speaker height; after a query, the
+    files in which many matches got an edge of the range are listed
+  * formant, pitch, intensity and spectral moments queries can measure at
+    a fixed step (every n ms), with results in long format
+  * column names must be unique in concordances and datasets: operations
+    that would create a duplicate name are refused with an error, and a
+    CSV file whose header repeats a name cannot be opened
+  * the PFC schwa protocol's context fields are renamed Left and Right
+  * concordances only show columns for the properties their files use
+  * duplicating a dataset column asks for the name of the copy
+  * new "move cursor to nearest zero crossing" button (Ctrl+0) in sound
+    and annotation views
+  * the summary table of exploratory plots follows the Facet and Group
+    variables, and the box plot summary reports Q1 and Q3
+  * fixed opening a match in Praat ("No Sound #-1 selected")
+  * fixed Delete row(s) and Create subset acting on the wrong matches in
+    the long format of a concordance
+  * improved compatibility with older versions of macOS
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Sat, 21 Nov 2026 12:00:00 +0000
+
 phonometrica (0.9.9) unstable; urgency=medium
 
   * audio playback now works with Bluetooth headphones and other output

@@ -1,17 +1,23 @@
 Release notes
 -------------
 
-Unreleased
-~~~~~~~~~~
+0.9.10 (21/11/2026)
+~~~~~~~~~~~~~~~~~~~
+
+**Formant measurement**
+
+- Automatic formant measurement now uses **Fast Track**, a reimplementation of Santiago Barreda's method (Barreda 2021). Each match is analysed at a range of maximum frequencies; the analysis whose formant tracks are best captured by smooth curves wins, and formants are read from those curves (or, optionally, measured with the winning setting). See :ref:`automatic parameter selection <automatic-formants>`.
+- Fast Track replaces **Weenink's method** and the method labelled **Optimal**, which are no longer offered for new queries. Queries saved with either still run with the method they were saved with.
+- The range of maximum frequencies now **defaults to 5000–7000 Hz**, and the editor offers Barreda's recommended ranges by speaker height. A range can also be set for each level of a property, such as sex or speaker. A new note in the documentation explains how to choose the range: a wider range is not safer.
+- After a query, Phonometrica lists the files in which **many matches got the lowest or highest maximum frequency** of the range, a sign that the range does not suit the speaker.
 
 **Acoustic queries**
 
-- Formant queries can select their analysis settings with **Fast Track**, a reimplementation of Santiago Barreda's method (Barreda 2021). Each match is analysed at a range of maximum frequencies; the analysis whose formant tracks are best captured by smooth curves wins, and formants are read from those curves (or, optionally, measured with the winning setting). The range can be set from Barreda's recommendations by speaker height (5000–7000 Hz by default), or per level of a property such as sex or speaker; the documentation explains how to choose it. After a query, Phonometrica lists the files in which many matches got the lowest or highest maximum frequency of the range, a sign that the range does not suit the speaker. Fast Track is now the only automatic method offered for new queries, replacing Weenink's method and the method labelled *Optimal*; queries saved with either still run with it. See :ref:`automatic parameter selection <automatic-formants>`.
 - Formant, pitch, intensity and spectral moments queries can now measure **at a fixed step** (*Every (ms)*, 5 ms by default) in addition to the midpoint and n points. The points are centred in each event, so their number depends on the event's duration; the results are always shown in long format, with the position of each point in the event and, optionally, its absolute time. See :ref:`measurement-points`.
 
 **Concordances and datasets**
 
-- **Column names must now be unique.** Renaming, adding (recode, transform, vowel normalization, coding protocols, scripts), duplicating and merging columns are refused with an error when they would create a second column with the same name. For instance, a coding protocol with a field named *Left context* can no longer be applied to a concordance that shows the left context. The fields of the PFC schwa protocol have been renamed *Left* and *Right* accordingly. A CSV file whose header repeats a column name cannot be opened as a dataset.
+- **Column names must now be unique.** Renaming, adding (recode, transform, vowel normalization, coding protocols, scripts), duplicating and merging columns are refused with an error when they would create a second column with the same name. For instance, a coding protocol with a field named *Left context* can no longer be applied to a concordance that shows the left context; the fields of the PFC schwa protocol have been renamed *Left* and *Right* accordingly. A CSV file whose header repeats a column name cannot be opened as a dataset.
 - Concordances only show columns for the **properties that their files actually use**, instead of one column per property in the project. The columns follow changes to the files' properties and to the matches, and the same columns are exported.
 - **Duplicating a dataset column** now asks for the name of the copy.
 
