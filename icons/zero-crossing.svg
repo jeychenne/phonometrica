@@ -1,0 +1,21 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <!-- zero line -->
+  <line x1="2" y1="12" x2="22" y2="12" stroke-width="1" />
+
+  <!-- one period of a wave, crossing zero in the middle -->
+  <path d="M2 12 C4.5 3 9.5 3 12 12 S19.5 21 22 12" />
+
+  <!-- cursor snapped to the crossing -->
+  <line x1="12" y1="2" x2="12" y2="22" stroke-width="1.5" stroke-dasharray="2 2" />
+  <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+</svg>

@@ -132,6 +132,9 @@ private slots:
 	void onToggleGlottalPulses(bool checked);
 	void onVoiceReport();
 	void onSelectWindow();
+
+	// Move the cursor (point selection) to the nearest zero crossing, or both edges of a span selection to theirs.
+	void onMoveToZeroCrossing();
 	void onGetFormants();
 	void onGetMeanFormants();
 	void onGetPitch();
@@ -209,6 +212,7 @@ private:
 	bool m_show_glottal_pulses = false;
 
 	QAction *m_zoom_sel_action = nullptr;
+	QAction *m_zero_crossing_action = nullptr;
 	QAction *m_play_sel_action = nullptr;
 	QAction *m_play_action = nullptr;
 

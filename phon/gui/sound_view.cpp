@@ -24,6 +24,7 @@
 #include <QHBoxLayout>
 #include <QScrollArea>
 #include <QKeyEvent>
+#include <cmath>
 #include <QMessageBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -326,6 +327,16 @@ void SoundView::createToolBar()
 	auto *sel_window_action = m_toolbar->addAction(QIcon(":/icons/select-window.svg"),
 	tr("Select window"));
 	connect(sel_window_action, &QAction::triggered, this, &SoundView::onSelectWindow);
+
+	m_zero_crossing_action = m_toolbar->addAction(QIcon(":/icons/zero-crossing.svg"),
+		tr("Move cursor to nearest zero crossing (Ctrl+0)"));
+	m_zero_crossing_action->setToolTip(tr("Move the cursor to the nearest zero crossing, or both edges of the "
+	                                      "selection to theirs (Ctrl+0)"));
+	m_zero_crossing_action->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+	m_zero_crossing_action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+	m_zero_crossing_action->setEnabled(false);
+	addAction(m_zero_crossing_action);
+	connect(m_zero_crossing_action, &QAction::triggered, this, &SoundView::onMoveToZeroCrossing);
 
 	m_toolbar->addSeparator();
 
@@ -1319,6 +1330,38 @@ void SoundView::onGoToTime()
 	m_model->setViewport(new_start, new_end);
 }
 
+void SoundView::onMoveToZeroCrossing()
+{
+	if (!m_model->hasSelection())
+		return;
+
+	// Search the channel the user is looking at: the average if it is shown, else the first visible channel.
+	int channel = 0;
+	if (!m_show_average && !m_visible_channels.empty())
+		channel = m_visible_channels.front();
+
+	double t1 = m_model->selectionStart();
+	double t2 = m_model->selectionEnd();
+	double z1 = m_sound->nearest_zero_crossing(channel, t1);
+	if (std::isnan(z1))
+	{
+		QMessageBox::information(this, tr("Zero crossing"),
+			tr("There is no zero crossing in this sound (the signal never changes sign)."));
+		return;
+	}
+
+	if (m_model->hasPointSelection())
+	{
+		m_model->setSelection(z1, z1);
+	}
+	else
+	{
+		// Snapping is monotonic, so z2 >= z1. If both edges reach the same crossing, the selection becomes a cursor.
+		double z2 = m_sound->nearest_zero_crossing(channel, t2);
+		m_model->setSelection(z1, z2);
+	}
+}
+
 void SoundView::onSelectWindow()
 {
 	QDialog dlg(this);
@@ -1912,6 +1955,7 @@ void SoundView::onSelectionChanged(double, double)
 	bool hasSpan = m_model->hasSpanSelection();
 	m_zoom_sel_action->setEnabled(hasSpan);
 	m_play_sel_action->setEnabled(hasSpan);
+	m_zero_crossing_action->setEnabled(m_model->hasSelection());
 	// Clear annotation event info — it will be re-set by AnnotationView::onEventSelected
 	// if the selection originated from an event click.
 	m_annot_status_text.clear();
@@ -1922,6 +1966,7 @@ void SoundView::onSelectionCleared()
 {
 	m_zoom_sel_action->setEnabled(false);
 	m_play_sel_action->setEnabled(false);
+	m_zero_crossing_action->setEnabled(false);
 	m_annot_status_text.clear();
 	updateStatusText();
 }

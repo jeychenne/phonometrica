@@ -62,6 +62,10 @@ If you click on any of these temporary anchors, it will be changed to a permanen
 Finally, you can move any anchor by clicking on it and dragging it with the mouse to the desired position. If anchors are shared, the anchor will be moved on all layers (of the same 
 type) that share this anchor. If anchors are not shared, the anchor will be moved on a single layer at a time.
 
+To place an anchor exactly at a zero crossing, click in the waveform to set the cursor, then click on the ``Move cursor to nearest zero crossing`` button
+|zerocross| in the toolbar (or press ``Ctrl+0``, ``Cmd+0`` on macOS). A dashed line shows the cursor's position on each layer: click on it in the layer you
+want to annotate to add an anchor there.
+
 
 Labelling events
 ~~~~~~~~~~~~~~~~
@@ -247,6 +251,10 @@ References
     :width: 16px
 
 .. |anchor| image:: ../icons/anchor.svg
+    :height: 16px
+    :width: 16px
+
+.. |zerocross| image:: ../icons/zero-crossing.svg
     :height: 16px
     :width: 16px
 

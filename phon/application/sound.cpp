@@ -21,7 +21,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
+#include <span>
 #if PHON_WINDOWS
 #include <windows.h>
 #endif
@@ -1117,6 +1119,52 @@ Array<double> Sound::average_channels(intptr_t first_frame, intptr_t last_frame)
     }
 
     return result;
+}
+
+double Sound::nearest_zero_crossing(int channel, double time) const
+{
+	const intptr_t n = m_nframes;
+	if (n < 2) return std::nan("");
+
+	// 0-based sample k is at time k / sample_rate.
+	const double sr = sample_rate();
+	std::span<const float> view;
+	if (channel >= 1) view = channel_view(channel);
+	auto sample = [&](intptr_t k) -> double {
+		return (channel >= 1) ? double(view[k]) : get_sample(0, k + 1);
+	};
+
+	// Crossing time between samples k and k+1, or -1 if they have the same sign.
+	auto crossing = [&](intptr_t k) -> double {
+		double a = sample(k), b = sample(k + 1);
+		if ((a < 0) == (b < 0)) return -1;
+		double frac = (a == b) ? 0.0 : a / (a - b);
+		return (double(k) + frac) / sr;
+	};
+
+	double best = std::nan("");
+	double best_dist = std::numeric_limits<double>::infinity();
+	auto consider = [&](intptr_t k) {
+		double t = crossing(k);
+		if (t < 0) return;
+		double dist = std::abs(t - time);
+		if (dist < best_dist) { best_dist = dist; best = t; }
+	};
+
+	// Walk outwards from the sample pair that contains `time`, checking one pair on each side per step, and stop
+	// once every unchecked pair is farther away than the best crossing found so far.
+	intptr_t k0 = std::clamp<intptr_t>(intptr_t(std::floor(time * sr)), 0, n - 2);
+	for (intptr_t d = 0; ; d++)
+	{
+		intptr_t left = k0 - d, right = k0 + d;
+		if (left < 0 && right > n - 2) break;
+		// The nearest point of pair (left, left+1) is at least (k0 - left - 1) samples from `time`; same on the right.
+		if ((double(d) - 1) / sr > best_dist) break;
+		if (left >= 0) consider(left);
+		if (d > 0 && right <= n - 2) consider(right);
+	}
+
+	return best;
 }
 
 double Sound::get_sample(int channel, intptr_t index) const

@@ -168,6 +168,11 @@ button |zoomsel|, or by clicking on the middle button of the mouse (i.e. the scr
 Finally, the ``View whole file`` button |zoomall| allows you to set the current window to the whole file, and the ``Select window`` button |select| allows you to select a specific 
 part of the sound file by setting its start and end points manually.
 
+The ``Move cursor to nearest zero crossing`` button |zerocross| (shortcut ``Ctrl+0``, ``Cmd+0`` on macOS) moves the cursor to the nearest point where the
+waveform crosses zero. If there is a selection, both its start and its end are moved to their nearest zero crossing. Cutting or annotating a sound at a zero
+crossing avoids audible clicks when the sound is played or extracted. The crossing is searched in the channel displayed by the waveform: the average of all
+channels if it is shown, otherwise the first visible channel. The time of a crossing is interpolated between the two samples on either side of it.
+
 
 Acoustic measurements
 ~~~~~~~~~~~~~~~~~~~~~
@@ -409,6 +414,10 @@ References
     :width: 16px
 
 .. |select| image:: ../icons/select-window.svg
+    :height: 16px
+    :width: 16px
+
+.. |zerocross| image:: ../icons/zero-crossing.svg
     :height: 16px
     :width: 16px
 

@@ -442,6 +442,7 @@ if(WITH_GUI)
         icons/tex.svg
         icons/check.svg
         icons/text-cursor.svg
+        icons/zero-crossing.svg
         icons/merge-tables.svg
         icons/filter-x.svg
         icons/filter.svg

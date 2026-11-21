@@ -155,6 +155,11 @@ public:
 
 	double get_sample(int channel, intptr_t index) const;
 
+	// Time (s) of the zero crossing nearest to `time` in the given channel (1-based; 0 = average of all channels),
+	// or NaN if the signal never crosses zero (e.g. digital silence). A crossing lies between two consecutive samples
+	// of opposite sign (zero counts as positive) and its time is interpolated linearly between them, as in Praat.
+	double nearest_zero_crossing(int channel, double time) const;
+
 	constexpr double get_intensity_window_duration() const
 	{
 		// Praat's settings: use 3.2 pitch periods
