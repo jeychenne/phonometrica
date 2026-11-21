@@ -1459,8 +1459,10 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "        cat(\"      Estimates along a flat direction of the likelihood (typically a random-effect\\n\",\n";
 		out += "            \"      SD at or near zero) are not expected to agree between programs.\\n\\n\", sep = \"\")\n";
 		out += "    }\n";
-		out += "    print(format(out[c(\"term\", \"quantity\", \"phonometrica\", \"R\", \"difference\",\n";
-		out += "                       \"rel.difference\", \"diff.in.se\", \"status\")], digits = 6), row.names = FALSE)\n";
+		out += "    shown <- format(out[c(\"term\", \"quantity\", \"phonometrica\", \"R\", \"difference\",\n";
+		out += "                          \"rel.difference\", \"diff.in.se\", \"status\")], digits = 6)\n";
+		out += "    shown$diff.in.se[is.na(out$diff.in.se)] <- \"\"   # only defined for estimates\n";
+		out += "    print(shown, row.names = FALSE)\n";
 		out += "    invisible(out)\n";
 		out += "}\n";
 	}
