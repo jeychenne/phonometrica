@@ -56,6 +56,7 @@
 #include <phon/analysis/formant_spectral.hpp>
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/weenink.hpp>
+#include <phon/analysis/fast_track.hpp>
 #include <phon/application/conc/query_pool.hpp>
 
 using namespace phonometrica;
@@ -116,6 +117,7 @@ struct CachedToken {
 	std::vector<CachedCand> cands;   // intrinsic candidates over the <ceiling, order> grid
 	double weenink_f[3] = {std::nan(""), std::nan(""), std::nan("")};
 	double base_f[3]    = {std::nan(""), std::nan(""), std::nan("")};
+	double fasttrack_f[3] = {std::nan(""), std::nan(""), std::nan("")};
 	speech::SpectralEnvelope env;    // cepstrally smoothed envelope peaks, computed once per token
 };
 
@@ -314,6 +316,20 @@ static bool build_token_cache(CachedToken &ct)
 		}
 	} catch (...) {}
 
+	// Fast Track reference (Barreda 2021), with the plugin's recommended ceiling range for the speaker's size (tall /
+	// medium / short, approximated by class: men / women / children), read from the winner's smooth tracks.
+	try {
+		speech::FastTrackSettings fs;
+		if (tk.cls == "man")        { fs.lowest_ceiling = 4500; fs.highest_ceiling = 6500; }
+		else if (tk.cls == "woman") { fs.lowest_ceiling = 5000; fs.highest_ceiling = 7000; }
+		else                        { fs.lowest_ceiling = 5500; fs.highest_ceiling = 7500; }
+		fs.window_size = WIN_SIZE;
+		auto ft = speech::fast_track(snd, CHANNEL, tk.t1, tk.t2, fs);
+		if (ft.ok) {
+			for (int k = 0; k < 3; ++k) ct.fasttrack_f[k] = ft.best().predict(k, t_mid);
+		}
+	} catch (...) {}
+
 	// Fixed baseline (5000 men / 5500 else, order 10).
 	try {
 		double c = (tk.cls == "man") ? 5000.0 : 5500.0;
@@ -324,7 +340,7 @@ static bool build_token_cache(CachedToken &ct)
 	return true;
 }
 
-enum class Ref { Intrinsic, Weenink, Baseline };
+enum class Ref { Intrinsic, Weenink, Baseline, FastTrack };
 
 static void
 evaluate(const std::vector<CachedToken> &cache, Ref ref, const speech::IntrinsicWeights &w,
@@ -334,6 +350,7 @@ evaluate(const std::vector<CachedToken> &cache, Ref ref, const speech::Intrinsic
 		const double *f = nullptr;
 		if      (ref == Ref::Intrinsic) f = select_cached(ct, w);
 		else if (ref == Ref::Weenink)   f = ct.weenink_f;
+		else if (ref == Ref::FastTrack) f = ct.fasttrack_f;
 		else                            f = ct.base_f;
 		if (!f) continue;
 		for (int k = 0; k < 3; ++k) {
@@ -1393,6 +1410,7 @@ int main(int argc, char **argv)
 
 	{ ErrAcc o; std::map<std::string, ErrAcc> vw, cl; evaluate(cache, Ref::Baseline,  w, o, &vw, &cl); print_report("Fixed baseline (5000 men / 5500 else, order 10)", o, vw, cl); }
 	{ ErrAcc o; std::map<std::string, ErrAcc> vw, cl; evaluate(cache, Ref::Weenink,   w, o, &vw, &cl); print_report("Weenink W (smoothness only)", o, vw, cl); }
+	{ ErrAcc o; std::map<std::string, ErrAcc> vw, cl; evaluate(cache, Ref::FastTrack, w, o, &vw, &cl); print_report("Fast Track (Barreda 2021; smooth tracks, ranges by speaker class)", o, vw, cl); }
 	{ ErrAcc o; std::map<std::string, ErrAcc> vw, cl; evaluate(cache, Ref::Intrinsic, w, o, &vw, &cl); print_report("Intrinsic ladder (default weights = 1, Cln off)", o, vw, cl); }
 
 	if (!external_file.empty()) run_external(tokens, external_file, external_label.c_str());

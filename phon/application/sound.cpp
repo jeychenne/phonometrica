@@ -449,6 +449,66 @@ Sound::get_formants(int channel, double time, int nformant, double nyquist_frequ
 	return result;
 }
 
+std::vector<std::vector<std::pair<double,double>>>
+Sound::get_formant_frames(int channel, const std::vector<double> &times, double ceiling, double window_size, int lpc_order)
+{
+	using namespace speech;
+	open();
+
+	std::vector<std::vector<std::pair<double,double>>> result(times.size());
+	if (times.empty()) return result;
+
+	const double sr = this->sample_rate();
+	const double Fs = 2 * ceiling;
+	const double physical_window = 2 * window_size; // the Gaussian window spans twice the nominal length
+
+	// Extract the span once, with a margin so that the resampler's edge effects stay outside the frames.
+	const double margin = 0.01;
+	const double t_from = times.front() - physical_window / 2 - margin;
+	const double t_to = times.back() + physical_window / 2 + margin;
+	auto k_from = intptr_t(std::floor(t_from * sr)); // 0-based sample k is at time k / sr
+	auto k_to = intptr_t(std::ceil(t_to * sr));
+	Array<double> input(k_to - k_from + 1, 0.0);
+	for (intptr_t k = std::max<intptr_t>(k_from, 0); k <= k_to && k < m_nframes; k++) {
+		input[k - k_from] = get_sample(channel, k + 1);
+	}
+
+	Array<double> signal = (Fs == sr) ? input : resample(input, sr, Fs);
+	pre_emphasis(signal, Fs, 50);
+	const double t_origin = double(k_from) / sr; // time of signal[0]
+
+	auto nwin = intptr_t(std::round(physical_window * Fs));
+	if (nwin < lpc_order + 2) return result;
+	auto win = create_window(nwin, nwin, WindowType::Gaussian);
+	Array<double> buffer(nwin, 0.0);
+	const double lowest_freq = 50.0;
+	const double highest_freq = Fs / 2 - lowest_freq;
+
+	for (size_t i = 0; i < times.size(); i++)
+	{
+		auto start = intptr_t(std::llround((times[i] - t_origin) * Fs - 0.5 * double(nwin)));
+		for (intptr_t j = 0; j < nwin; j++)
+		{
+			intptr_t k = start + j;
+			buffer[j] = (k >= 0 && k < signal.size()) ? signal[k] * win[j] : 0.0;
+		}
+
+		auto coeffs = get_lpc_coefficients(buffer, lpc_order);
+		std::vector<double> freqs, bw;
+		if (!speech::get_formants(coeffs, Fs, freqs, bw)) continue;
+
+		auto &frame = result[i];
+		for (size_t k = 0; k < freqs.size(); k++)
+		{
+			if (freqs[k] > lowest_freq && freqs[k] < highest_freq) {
+				frame.emplace_back(freqs[k], bw[k]);
+			}
+		}
+	}
+
+	return result;
+}
+
 double Sound::get_pitch(int channel, speech::PitchTracker method, double time, double min_pitch, double max_pitch, double threshold,
                         double octave_jump_cost, double voicing_cost, double silence_threshold, double octave_cost,
                         bool use_gaussian)

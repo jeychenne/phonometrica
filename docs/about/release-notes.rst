@@ -6,6 +6,7 @@ Unreleased
 
 **Acoustic queries**
 
+- Formant queries can select their analysis settings with **Fast Track**, a reimplementation of Santiago Barreda's method (Barreda 2021). Each match is analysed at a range of maximum frequencies; the analysis whose formant tracks are best captured by smooth curves wins, and formants are read from those curves (or, optionally, measured with the winning setting). The range can be set from Barreda's recommendations by speaker height (5000–7000 Hz by default), or per level of a property such as sex or speaker; the documentation explains how to choose it. After a query, Phonometrica lists the files in which many matches got the lowest or highest maximum frequency of the range, a sign that the range does not suit the speaker. Fast Track is now the only automatic method offered for new queries, replacing Weenink's method and the method labelled *Optimal*; queries saved with either still run with it. See :ref:`automatic parameter selection <automatic-formants>`.
 - Formant, pitch, intensity and spectral moments queries can now measure **at a fixed step** (*Every (ms)*, 5 ms by default) in addition to the midpoint and n points. The points are centred in each event, so their number depends on the event's duration; the results are always shown in long format, with the position of each point in the event and, optionally, its absolute time. See :ref:`measurement-points`.
 
 **Concordances and datasets**

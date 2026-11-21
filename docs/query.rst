@@ -219,13 +219,73 @@ text query editor with a panel for formant analysis settings:
 - **LPC order**: the number of prediction coefficients. By default, Phonometrica uses 2 × *number of formants* + 2.
 
 Formant values are measured at the **midpoint** of the matched event, at **n points** given as percentages of
-its duration, or **every n milliseconds** (see :ref:`measurement-points`). In automatic mode, the LPC parameters
-are chosen once for each match, over the whole event, and every point of that match is measured with them.
+its duration, or **every n milliseconds** (see :ref:`measurement-points`).
 
-**Weenink's method**: Phonometrica implements an automatic formant selection method based on
-Weenink (2015), which evaluates multiple LPC analyses with different parameter settings and selects the
-formant track that best matches reference values for the vowel category. To use this method, select
-*Automatic* instead of *Manual* in the formant settings panel.
+.. _automatic-formants:
+
+**Automatic parameter selection.** The analysis settings that suit a token depend on the speaker and on the vowel,
+and a wrong maximum frequency typically makes LPC merge two formants or split one. In **Semi-parametric
+(automatic)** mode, Phonometrica analyses each match with a range of settings and keeps the best analysis. The
+settings are chosen once for each match, over the whole event, and all the measurement points of the match use them.
+The selected **Max freq** and **LPC order** are added to the concordance for each match.
+
+Phonometrica selects the settings with a reimplementation of Santiago Barreda's **Fast Track** method [BAR2021]_.
+The event is analysed with Burg's method (5.5 formants, i.e. LPC order 11, frames every 2 ms) at several maximum
+frequencies evenly spaced over the range: *Steps* sets how many. In each analysis, the track of each formant is
+fitted with a smooth curve, a constant plus *Coefficients* cosine terms, and the analysis whose tracks stay closest
+to their smooth curves (the smallest sum, over formants, of the mean absolute deviation in Hz) wins. As in Fast
+Track, analyses that are implausible are ruled out: an F3 below 2000 Hz when F1 and F2 are less than 500 Hz apart
+and, when 4 formants are measured, an F4 below 2900 Hz or within 500 Hz of F3 while F1 and F2 are less than 1500 Hz
+apart. The selection uses the first 3 formants, or 4 if you measure 4 or more.
+
+The **Range** menu fills in the range of maximum frequencies with Barreda's recommendations: 4500–6500 Hz for
+speakers taller than 5'8" (173 cm), 5000–7000 Hz between 5'0" and 5'8" (152–173 cm), and 5500–7500 Hz for shorter
+speakers and children. The default is the middle range, 5000–7000 Hz. **Values** chooses what is measured: *Smooth
+tracks* (the default, as in Fast Track) reads the formants from the fitted curves of the winning analysis, while
+*Raw LPC values* measures them with the winning maximum frequency. Bandwidths are always raw LPC values. Frames are
+placed from the start to the end of the event, as Fast Track does on vowels extracted with its default 25 ms buffer.
+
+.. note:: **Choosing the range of maximum frequencies**
+
+   The range is the setting that matters most for the quality of the results, and a wider range is **not** safer.
+   It must include the right analysis for each token, but it should exclude analyses that are badly wrong: with a
+   maximum frequency much too low or much too high for a voice, LPC can produce formant tracks that are perfectly
+   smooth, and that look like another vowel produced by another type of speaker. Since Fast Track judges analyses
+   by their smoothness, it cannot tell such an analysis from the right one. Barreda (2021) warns that "maximum-formant
+   settings that are very inappropriate for a given sound can result in analyses that are extremely inaccurate, and
+   yet very difficult to distinguish from a good formant-track". In his evaluation on the vowels of Hillenbrand et al.
+   (1995), using one range for adult men (4800–6600 Hz) and another for the other speakers (5500–7300 Hz), instead of
+   4800–7300 Hz for everyone, substantially reduced the errors [BAR2021]_.
+
+   Barreda's advice, from the paper and from the `Fast Track wiki
+   <https://github.com/santiagobarreda/FastTrack/wiki/Getting-a-good-analysis>`_:
+
+   - Choose the range from the speaker's size, which determines the length of the vocal tract, using the presets of
+     the **Range** menu. They correspond roughly to adult men, adult women (and teenagers), and children, but it is
+     height rather than sex that matters: men and women of the same height need about the same range. There is a lot
+     of variation within each group, so individual voices may need adjustments.
+   - When a corpus contains different types of speakers, do not use one wide range for all of them. Give each group,
+     or each speaker if you have enough tokens per speaker, its own range with **Adjust maximum frequency by
+     property** (for instance with a property recording the speaker's sex, height or name).
+   - Check the results speaker by speaker. The **Max freq** column of the concordance shows the maximum frequency
+     selected for each match. If wrong measurements often come with the lowest maximum frequencies of the range, the
+     range should be raised; if they often come with the highest ones, it should be lowered.
+
+     Phonometrica helps with this check: after a Fast Track query, it lists the files (assuming one speaker per
+     file) in which at least 5 matches were measured and at least a quarter of them got the lowest, or the highest,
+     maximum frequency of their range. Such a pile-up suggests that the range does not suit the speaker. Look at
+     these matches: if their formants are wrong, the range reaches too far in that direction and should be moved
+     away from it; if they look right, the best value may lie beyond the range, which should be extended in that
+     direction.
+   - High front vowels, whose F3 and F4 are high, tend to need higher maximum frequencies than other vowels.
+
+   Studies that use Fast Track typically report Barreda's ranges by sex (4500–6500 Hz for men and 5000–7000 Hz for
+   women) or the ranges of his paper (4800–6600 Hz for men), with the tracks checked and the range adjusted for
+   individual speakers when needed.
+
+When **parameter overrides** by property are enabled (for instance by speaker gender), the range of maximum
+frequencies can be set separately for each level of the property, which is how Fast Track is meant to be used when
+speakers differ in size.
 
 Optionally, you can include **bandwidth** columns in the output. Formant values stored in Hertz can be
 converted to **ERB** or **Bark** scales on the fly using the Scales menu in the concordance toolbar
@@ -375,5 +435,7 @@ References
 .. [TAL1995] Talkin, David. 1995. A robust algorithm for pitch tracking (RAPT). In W. B. Kleijn & K. K. Paliwal (eds.), *Speech Coding and Synthesis*, 495–518. Amsterdam: Elsevier.
 
 .. [TAL2014] Talkin, David. 2014. REAPER: Robust Epoch And Pitch EstimatoR. Software, Google. https://github.com/google/REAPER.
+
+.. [BAR2021] Barreda, Santiago. 2021. Fast Track: fast (nearly) automatic formant-tracking using Praat. *Linguistics Vanguard* 7(1). https://doi.org/10.1515/lingvan-2020-0051. Software: https://github.com/santiagobarreda/FastTrack.
 
 .. [WEE2015] Weenink, David. 2015. Improved formant frequency measurements of short segments. *Proceedings of the 18th International Congress of Phonetic Sciences*. Glasgow: University of Glasgow.

@@ -42,12 +42,15 @@ public:
 	};
 
 	// Automatic (data-driven) LPC parameter selection strategy, used when automatic() is true.
-	//   Weenink   : legacy smoothness-only W criterion (kept for reproducibility / A-B comparison)
+	//   Weenink   : legacy smoothness-only W criterion (kept so that existing queries still run and reproduce)
 	//   Intrinsic : Phase-1 intrinsic ladder (roughness + instability + coverage + density + bandwidth + ordering)
+	//   FastTrack : Barreda's Fast Track (see phon/analysis/fast_track.hpp): the ceiling whose formant tracks are
+	//               best fitted by a smooth cosine model wins; formants are read from the smooth tracks by default.
 	enum class AutoMethod
 	{
 		Weenink,
-		Intrinsic
+		Intrinsic,
+		FastTrack
 	};
 
 	// Per-level parameter override. Zero in any field means "inherit the global setting".
@@ -131,6 +134,41 @@ public:
 
 	int lpc_order_high() const { return m_lpc_order2; }
 	void set_lpc_order_high(int o) { m_lpc_order2 = o; }
+
+	// ── Automatic mode (Fast Track) ──────────────────────────────────────
+	// The ceiling range is max_freq_low()..max_freq_high(); the LPC order is fixed (11, i.e. 5.5 formants).
+
+	// Number of ceilings analysed between the two bounds (inclusive).
+	int fast_track_steps() const { return m_ft_steps; }
+	void set_fast_track_steps(int n) { m_ft_steps = n; }
+
+	// Number of cosine terms in each formant's smooth model (plus an intercept).
+	int fast_track_coefficients() const { return m_ft_coeffs; }
+	void set_fast_track_coefficients(int n) { m_ft_coeffs = n; }
+
+	// If true, formant frequencies are read from the winning analysis's smooth tracks (Fast Track's output);
+	// otherwise they are the raw LPC values at the winning ceiling. Bandwidths are always raw LPC values.
+	bool fast_track_smooth() const { return m_ft_smooth; }
+	void set_fast_track_smooth(bool b) { m_ft_smooth = b; }
+
+	// ── Fast Track range check ───────────────────────────────────────────
+	// When many matches of a speaker are measured with the lowest or the highest maximum frequency of the range, the
+	// range probably does not suit that speaker (Barreda's advice is to move it). After execute() with Fast Track,
+	// range_edge_report() lists the files (one speaker per file is assumed) in which at least range_edge_min_matches
+	// matches were measured and at least range_edge_min_share of them got the same edge of their range. Transient: it
+	// is not saved with the query.
+	struct RangeEdgeReport
+	{
+		String file;              // the annotation's label
+		intptr_t matches = 0;     // matches measured with Fast Track in this file
+		intptr_t at_lowest = 0;   // ... whose maximum frequency is the lowest of the range
+		intptr_t at_highest = 0;  // ... whose maximum frequency is the highest of the range
+		double lowest = 0;        // lowest and highest maximum frequencies of the file's range (Hz)
+		double highest = 0;
+	};
+	static constexpr intptr_t range_edge_min_matches = 5;
+	static constexpr double range_edge_min_share = 0.25;
+	const std::vector<RangeEdgeReport> &range_edge_report() const { return m_range_edges; }
 
 	// ── Measurement points (for n-point methods) ─────────────────────────
 
@@ -218,6 +256,13 @@ protected:
 
 	void write() override;
 
+	// Range of maximum frequencies searched in automatic mode for the matches of an annotation: the global range, or
+	// the one set for the annotation's level of the override property.
+	std::pair<double,double> automatic_range(const Annotation &annot) const;
+
+	// Fill m_range_edges after a Fast Track run (see range_edge_report()).
+	void check_range_edges(const Array<AutoMatch> &matches);
+
 	// Run LPC/formant analysis on a single match and fill its measurement vector.
 	// Measure one match. In automatic mode, forced_ceiling > 0 skips selection and uses the given parameters
 	// (used by the consensus pass, which selects parameters corpus-wide before filling).
@@ -256,7 +301,11 @@ private:
 
 	// Automatic mode (Weenink)
 	bool m_automatic = false;
-	AutoMethod m_auto_method = AutoMethod::Intrinsic; // selection strategy when m_automatic is true
+	AutoMethod m_auto_method = AutoMethod::FastTrack; // selection strategy when m_automatic is true
+	int m_ft_steps = 20;           // Fast Track: number of ceilings
+	int m_ft_coeffs = 5;           // Fast Track: cosine terms per formant
+	bool m_ft_smooth = true;       // Fast Track: report the smooth tracks
+	std::vector<RangeEdgeReport> m_range_edges; // result of the last Fast Track run's range check
 	bool m_consensus = false;            // cross-token consensus (Phase 2b); requires automatic + Intrinsic
 	String m_speaker_property;           // annotation property naming the speaker; empty => one file = one speaker
 	String m_label_property;             // annotation property naming the vowel/label; empty => use a match target

@@ -20,6 +20,7 @@
  ***********************************************************************************************************************/
 
 #include <phon/runtime.hpp>
+#include <algorithm>
 #include <array>
 #include <map>
 #include <string>
@@ -31,6 +32,7 @@
 #include <phon/analysis/speech_utils.hpp>
 #include <phon/analysis/weenink.hpp>
 #include <phon/analysis/formant_selection.hpp>
+#include <phon/analysis/fast_track.hpp>
 #include <phon/utils/file_system.hpp>
 
 namespace phonometrica {
@@ -159,7 +161,10 @@ void FormantQuery::clear()
 	m_max_freq = 5500;
 	m_lpc_order = 11;
 	m_automatic = false;
-	m_auto_method = AutoMethod::Intrinsic;
+	m_auto_method = AutoMethod::FastTrack;
+	m_ft_steps = 20;
+	m_ft_coeffs = 5;
+	m_ft_smooth = true;
 	m_consensus = false;
 	m_speaker_property = String();
 	m_label_property = String();
@@ -250,6 +255,12 @@ Handle<Concordance> FormantQuery::execute()
 		});
 	}
 
+	// Fast Track: flag the files whose matches pile up at an edge of the range.
+	m_range_edges.clear();
+	if (m_automatic && m_auto_method == AutoMethod::FastTrack) {
+		check_range_edges(matches);
+	}
+
 	// Build concordance with formant metadata
 	auto conc = Handle<Concordance>::make(m_constraints.size(), m_context, m_context_length, std::move(matches), nullptr);
 
@@ -322,26 +333,17 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 	// Per-file parameter override lookup. We compute *local* copies of the parameters
 	// for this match so the const member fields stay untouched and concurrent matches
 	// (should we parallelize later) remain safe.
-	double local_max_freq   = m_max_freq;
-	double local_max_freq1  = m_max_freq1;
-	double local_max_freq2  = m_max_freq2;
+	double local_max_freq = m_max_freq;
+	auto [local_max_freq1, local_max_freq2] = automatic_range(*annot);
 
-	if (override_enabled())
+	if (override_enabled() && !m_automatic)
 	{
 		auto value = annot->get_property_value(m_override_category);
 		if (!value.empty())
 		{
 			auto it = m_override_levels.find(value);
-			if (it != m_override_levels.end())
-			{
-				auto &ov = it->second;
-				if (m_automatic) {
-					if (ov.max_freq_low  > 0) local_max_freq1 = ov.max_freq_low;
-					if (ov.max_freq_high > 0) local_max_freq2 = ov.max_freq_high;
-				}
-				else {
-					if (ov.max_freq > 0) local_max_freq = ov.max_freq;
-				}
+			if (it != m_override_levels.end() && it->second.max_freq > 0) {
+				local_max_freq = it->second.max_freq;
 			}
 		}
 	}
@@ -349,10 +351,25 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 	// Determine LPC parameters (manual or automatic)
 	double max_freq;
 	int lpc_order;
+	speech::FastTrackResult fast_track; // Fast Track: the winning analysis's smooth model
 
 	if (m_automatic)
 	{
-		if (forced_ceiling > 0)
+		if (m_auto_method == AutoMethod::FastTrack)
+		{
+			speech::FastTrackSettings fs;
+			fs.lowest_ceiling = local_max_freq1;
+			fs.highest_ceiling = local_max_freq2;
+			fs.nsteps = m_ft_steps;
+			fs.ncoeff = m_ft_coeffs;
+			fs.nformant = std::clamp(m_nformant, 3, 4);
+			fs.window_size = m_win_size;
+			fast_track = speech::fast_track(*sound, channel(), t1, t2, fs);
+			// A failed selection leaves max_freq at 0, which yields NaN below, as for the other methods.
+			max_freq = fast_track.ok ? fast_track.ceiling() : 0.0;
+			lpc_order = fs.lpc_order;
+		}
+		else if (forced_ceiling > 0)
 		{
 			// Parameters chosen upstream (e.g. by the consensus pass); skip per-match selection.
 			max_freq = forced_ceiling;
@@ -384,6 +401,24 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 	}
 
 	auto nf = m_nformant;
+
+	// Formants (nf x 2: frequency, bandwidth) at time t. With Fast Track in smooth mode, the frequencies of the
+	// formants it modelled (3 or 4) come from the winning analysis's smooth tracks; bandwidths, and any formant
+	// beyond those, are raw LPC values at the winning ceiling.
+	const bool smooth = m_automatic && m_auto_method == AutoMethod::FastTrack && m_ft_smooth && fast_track.ok;
+	auto formants_at = [&](double t) {
+		auto data = sound->get_formants(channel(), t, nf, max_freq, m_win_size, lpc_order);
+		if (smooth)
+		{
+			auto &model = fast_track.best();
+			int modelled = std::min<int>(nf, int(model.coefficients.size()));
+			for (int i = 0; i < modelled; i++) {
+				data(i, 0) = model.predict(i, t);
+			}
+		}
+		return data;
+	};
+
 	if (m_method == Method::Step)
 	{
 		// [F1..Fn, B1..Bn at each point] [Max freq, LPC order | Max freq] [time of the first point]
@@ -404,7 +439,7 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 		for (intptr_t k = 0; k < npoints; k++)
 		{
 			double t = t0 + double(k) * m_step;
-			auto data = sound->get_formants(channel(), t, nf, max_freq, m_win_size, lpc_order);
+			auto data = formants_at(t);
 			for (int i = 0; i < nf; i++) {
 				meas[idx++] = data(i, 0);
 			}
@@ -452,7 +487,7 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 	if (m_method == Method::Midpoint)
 	{
 		double t = (t1 + t2) / 2.0;
-		auto data = sound->get_formants(channel(), t, nf, max_freq, m_win_size, lpc_order);
+		auto data = formants_at(t);
 		fill_point(data);
 	}
 	else
@@ -467,7 +502,7 @@ void FormantQuery::measure_match(QueryMatch &match, double forced_ceiling, int f
 		for (auto p : m_points)
 		{
 			double t = t1 + (p / 100.0) * duration;
-			point_data.append(sound->get_formants(channel(), t, nf, max_freq, m_win_size, lpc_order));
+			point_data.append(formants_at(t));
 		}
 
 		// Time series: output each point's data
@@ -697,6 +732,77 @@ void FormantQuery::measure_matches_with_consensus(Array<AutoMatch> &matches)
 	query_progress(Stage::Measuring, progress_total, progress_total);
 }
 
+std::pair<double,double> FormantQuery::automatic_range(const Annotation &annot) const
+{
+	double low = m_max_freq1, high = m_max_freq2;
+	if (override_enabled())
+	{
+		auto value = annot.get_property_value(m_override_category);
+		if (!value.empty())
+		{
+			auto it = m_override_levels.find(value);
+			if (it != m_override_levels.end())
+			{
+				if (it->second.max_freq_low  > 0) low = it->second.max_freq_low;
+				if (it->second.max_freq_high > 0) high = it->second.max_freq_high;
+			}
+		}
+	}
+	return { low, high };
+}
+
+void FormantQuery::check_range_edges(const Array<AutoMatch> &matches)
+{
+	std::vector<RangeEdgeReport> files;
+	std::map<const Annotation *, size_t> index;
+
+	for (auto &match : matches)
+	{
+		// The selected maximum frequency is the first of the two trailing values (Max freq, LPC order), which are
+		// followed by the time of the first point with the Step method.
+		auto &meas = match->measurements;
+		size_t offset = (m_method == Method::Step) ? 3 : 2;
+		if (meas.size() < offset) continue;
+		double ceiling = meas[meas.size() - offset];
+		if (!std::isfinite(ceiling) || ceiling <= 0) continue; // not measured
+
+		auto *annot = match->annotation().get();
+		auto it = index.find(annot);
+		if (it == index.end())
+		{
+			auto [low, high] = automatic_range(*annot);
+			speech::FastTrackSettings fs;
+			fs.lowest_ceiling = low;
+			fs.highest_ceiling = high;
+			fs.nsteps = m_ft_steps;
+			auto ceilings = fs.ceilings();
+			RangeEdgeReport r;
+			r.file = annot->browser_label();
+			r.lowest = ceilings.front();
+			r.highest = ceilings.back();
+			it = index.emplace(annot, files.size()).first;
+			files.push_back(std::move(r));
+		}
+		auto &r = files[it->second];
+		r.matches++;
+		if (std::abs(ceiling - r.lowest) < 0.5) r.at_lowest++;
+		else if (std::abs(ceiling - r.highest) < 0.5) r.at_highest++;
+	}
+
+	for (auto &r : files)
+	{
+		if (r.matches < range_edge_min_matches) continue;
+		double threshold = range_edge_min_share * double(r.matches);
+		if (double(r.at_lowest) >= threshold || double(r.at_highest) >= threshold) {
+			m_range_edges.push_back(std::move(r));
+		}
+	}
+	// Worst files first.
+	auto share = [](const RangeEdgeReport &r) { return double(std::max(r.at_lowest, r.at_highest)) / double(r.matches); };
+	std::stable_sort(m_range_edges.begin(), m_range_edges.end(),
+	                 [&](const RangeEdgeReport &a, const RangeEdgeReport &b) { return share(a) > share(b); });
+}
+
 void FormantQuery::fill_missing(QueryMatch &match) const
 {
 	if (m_method == Method::Step) {
@@ -743,6 +849,9 @@ Handle<Query> FormantQuery::copy() const
 	c->m_freq_step = m_freq_step;
 	c->m_lpc_order1 = m_lpc_order1;
 	c->m_lpc_order2 = m_lpc_order2;
+	c->m_ft_steps = m_ft_steps;
+	c->m_ft_coeffs = m_ft_coeffs;
+	c->m_ft_smooth = m_ft_smooth;
 	c->m_series = m_series;
 	c->m_average = m_average;
 	c->m_initial_layout = m_initial_layout;
@@ -805,6 +914,10 @@ void FormantQuery::load()
 		}
 		else if (node.name() == str("FormantSettings"))
 		{
+			// Files written before Fast Track was added and without an AutoMethod entry used the intrinsic method,
+			// which was the default then: keep it for them, so that their results do not change.
+			m_auto_method = AutoMethod::Intrinsic;
+
 			// Parse formant-specific settings
 			for (auto child = node.first_child(); child; child = child.next_sibling())
 			{
@@ -851,7 +964,21 @@ void FormantQuery::load()
 				else if (child.name() == str("AutoMethod"))
 				{
 					auto val = str(child.text().get());
-					m_auto_method = (val == "weenink") ? AutoMethod::Weenink : AutoMethod::Intrinsic;
+					if (val == "weenink") m_auto_method = AutoMethod::Weenink;
+					else if (val == "fasttrack") m_auto_method = AutoMethod::FastTrack;
+					else m_auto_method = AutoMethod::Intrinsic;
+				}
+				else if (child.name() == str("FastTrackSteps"))
+				{
+					m_ft_steps = std::max(2, child.text().as_int(20));
+				}
+				else if (child.name() == str("FastTrackCoefficients"))
+				{
+					m_ft_coeffs = std::max(0, child.text().as_int(5));
+				}
+				else if (child.name() == str("FastTrackSmooth"))
+				{
+					m_ft_smooth = child.text().as_bool(true);
 				}
 				else if (child.name() == str("Consensus"))
 				{
@@ -1059,7 +1186,16 @@ void FormantQuery::write()
 
 	if (m_automatic)
 	{
-		add_data_node(fs_node, "AutoMethod", m_auto_method == AutoMethod::Weenink ? "weenink" : "intrinsic");
+		const char *auto_method = "intrinsic";
+		if (m_auto_method == AutoMethod::Weenink) auto_method = "weenink";
+		else if (m_auto_method == AutoMethod::FastTrack) auto_method = "fasttrack";
+		add_data_node(fs_node, "AutoMethod", auto_method);
+		if (m_auto_method == AutoMethod::FastTrack)
+		{
+			add_data_node(fs_node, "FastTrackSteps", String::convert((intptr_t)m_ft_steps));
+			add_data_node(fs_node, "FastTrackCoefficients", String::convert((intptr_t)m_ft_coeffs));
+			add_data_node(fs_node, "FastTrackSmooth", String::convert(m_ft_smooth));
+		}
 		add_data_node(fs_node, "Consensus", m_consensus ? "true" : "false");
 		if (!m_speaker_property.empty()) add_data_node(fs_node, "SpeakerProperty", m_speaker_property);
 		if (!m_label_property.empty()) add_data_node(fs_node, "LabelProperty", m_label_property);

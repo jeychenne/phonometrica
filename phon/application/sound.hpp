@@ -123,6 +123,14 @@ public:
 
 	Array<double> get_formants(int channel, const Array<double> &times, int nformant, double nyquist_frequency, double window_size, int lpc_order);
 
+	// Burg formant analysis of several frames at once, organised like Praat's "To Formant (burg)": the span covering
+	// all the frames is resampled to 2 * `ceiling` and pre-emphasised (from 50 Hz) once, then each frame is analysed
+	// with a Gaussian window of physical length 2 * `window_size` and LPC order `lpc_order`. For each time, returns
+	// every formant found between 50 Hz and `ceiling` - 50 Hz as (frequency, bandwidth) pairs in ascending frequency.
+	// Samples outside the file are taken as silence.
+	std::vector<std::vector<std::pair<double,double>>>
+	get_formant_frames(int channel, const std::vector<double> &times, double ceiling, double window_size, int lpc_order);
+
 	// Compute the full voice-quality battery (jitter, shimmer, HNR, pulse
 	// summary) over the half-open time interval [t1, t2). When channel == 0,
 	// the per-frame mean across channels is analysed (the "average" view).

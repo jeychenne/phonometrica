@@ -8,6 +8,7 @@ Phonometrica uses (parts of) the following open source libraries, sometimes with
 * CppAD, by Brad Bell and contributors (EPL-2.0 / GPL-2+), see `coin-or.github.io/CppAD <https://coin-or.github.io/CppAD/>`_
 * Eigen, by Benoît Jacob, Gaël Guennebaud and contributors (MPL-2), see `eigen.tuxfamily.org <http://eigen.tuxfamily.org>`_
 * fast_float, by the fast_float authors (Apache-2.0), see `github.com/fastfloat/fast_float <https://github.com/fastfloat/fast_float>`
+* Fast Track, by Santiago Barreda (MIT), see `github.com/santiagobarreda/FastTrack <https://github.com/santiagobarreda/FastTrack>`_. Phonometrica's Fast Track method for automatic formant measurement is a C++ reimplementation of its selection procedure (Barreda 2021, *Linguistics Vanguard* 7(1), https://doi.org/10.1515/lingvan-2020-0051).
 * FIR filter class, by Mike Perkins (BSD-3-Clause), see `cardinalpeak.com <https://www.cardinalpeak.com/blog/a-c-class-to-implement-low-pass-high-pass-and-band-pass-filters>`_
 * LBFGS++, by Yixuan Qiu, based on work by Naoaki Okazaki (MIT), see `lbfgspp.statr.me <https://lbfgspp.statr.me/>`_
 * Lucide icons, by Lucide icons and contributors (ISC License), see `lucide.dev <https://lucide.dev/>`_

@@ -24,6 +24,7 @@
 #include <QScrollArea>
 #include <QGridLayout>
 #include <QLabel>
+#include <cmath>
 #include <QMessageBox>
 #include <QTableWidget>
 #include <QTableWidgetItem>
@@ -255,28 +256,115 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	manual_layout->addStretch();
 	m_method_stack->addWidget(manual_page);
 
-	// Page 1: automatic (optimal ceiling/order selection)
+	// Page 1: automatic parameter selection
 	auto *auto_page = new QWidget;
 	auto *auto_layout = new QVBoxLayout(auto_page);
 	auto_layout->setContentsMargins(0, 0, 0, 0);
 
+	// Selection method. Fast Track (Barreda 2021) is the only method offered. Queries saved with an earlier method
+	// (Weenink's, or the experimental intrinsic ladder) keep it: loadQuery then adds it to this menu and shows the row.
+	m_auto_method_row = new QWidget;
+	auto *sel_row = new QHBoxLayout(m_auto_method_row);
+	sel_row->setContentsMargins(0, 0, 0, 0);
+	sel_row->addWidget(new QLabel(tr("Selection method:")));
+	m_auto_method_combo = new QComboBox;
+	m_auto_method_combo->addItem(tr("Fast Track"), int(FormantQuery::AutoMethod::FastTrack));
+	m_auto_method_combo->setItemData(0, tr("Barreda's Fast Track: the maximum frequency whose formant tracks are best "
+	                                       "fitted by a smooth curve wins (Barreda 2021)."), Qt::ToolTipRole);
+	m_auto_method_combo->setCurrentIndex(0);
+	sel_row->addWidget(m_auto_method_combo);
+	sel_row->addStretch();
+	auto_layout->addWidget(m_auto_method_row);
+	m_auto_method_row->setVisible(false);
+
 	auto *freq_row = new QHBoxLayout;
 	freq_row->addWidget(new QLabel(tr("Max frequency (Hz) from:")));
-	m_auto_freq_low_edit = new QLineEdit("4500");
+	// Default: Barreda's range for medium-height speakers (roughly adult women), the middle of his recommendations.
+	// A range wider than these is not safer: very wrong maximum frequencies yield smooth but wrong analyses.
+	m_auto_freq_low_edit = new QLineEdit("5000");
 	m_auto_freq_low_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_low_edit);
 	freq_row->addWidget(new QLabel(tr("to:")));
-	m_auto_freq_high_edit = new QLineEdit("6500");
+	m_auto_freq_high_edit = new QLineEdit("7000");
 	m_auto_freq_high_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_high_edit);
-	freq_row->addWidget(new QLabel(tr("step:")));
+	m_auto_freq_step_label = new QLabel(tr("step:"));
+	freq_row->addWidget(m_auto_freq_step_label);
 	m_auto_freq_step_edit = new QLineEdit("250");
 	m_auto_freq_step_edit->setFixedWidth(60);
 	freq_row->addWidget(m_auto_freq_step_edit);
 	freq_row->addStretch();
 	auto_layout->addLayout(freq_row);
 
-	auto *lpc_row = new QHBoxLayout;
+	// Fast Track settings: speaker presets for the range (Barreda's recommendations by speaker height), number of
+	// analyses, smoothness of the model, and which values to report.
+	m_ft_row = new QWidget;
+	auto *ft_layout = new QHBoxLayout(m_ft_row);
+	ft_layout->setContentsMargins(0, 0, 0, 0);
+	ft_layout->addWidget(new QLabel(tr("Range:")));
+	m_ft_preset_combo = new QComboBox;
+	struct Preset { const char *label; int low, high; };
+	static const Preset presets[] = {
+		{ QT_TR_NOOP("Tall speakers (4500–6500 Hz)"), 4500, 6500 },
+		{ QT_TR_NOOP("Medium-height speakers (5000–7000 Hz)"), 5000, 7000 },
+		{ QT_TR_NOOP("Short speakers, children (5500–7500 Hz)"), 5500, 7500 },
+	};
+	for (auto &p : presets) m_ft_preset_combo->addItem(tr(p.label), QPoint(p.low, p.high));
+	m_ft_preset_combo->addItem(tr("Custom"), QPoint(0, 0));
+	m_ft_preset_combo->setToolTip(tr("Fills in the range of maximum frequencies. Barreda recommends 4500–6500 Hz "
+	                                 "for speakers taller than 5'8\" (173 cm), 5000–7000 Hz between 5'0\" and 5'8\", "
+	                                 "and 5500–7500 Hz below 5'0\" (152 cm)."));
+	ft_layout->addWidget(m_ft_preset_combo);
+	ft_layout->addSpacing(8);
+	ft_layout->addWidget(new QLabel(tr("Steps:")));
+	m_ft_steps_spin = new QSpinBox;
+	m_ft_steps_spin->setRange(2, 100);
+	m_ft_steps_spin->setValue(20);
+	m_ft_steps_spin->setToolTip(tr("Number of maximum frequencies analysed, evenly spaced over the range"));
+	ft_layout->addWidget(m_ft_steps_spin);
+	ft_layout->addSpacing(8);
+	ft_layout->addWidget(new QLabel(tr("Coefficients:")));
+	m_ft_coeffs_spin = new QSpinBox;
+	m_ft_coeffs_spin->setRange(1, 15);
+	m_ft_coeffs_spin->setValue(5);
+	m_ft_coeffs_spin->setToolTip(tr("Number of cosine terms in the smooth model of each formant track "
+	                                "(more terms follow faster movements)"));
+	ft_layout->addWidget(m_ft_coeffs_spin);
+	ft_layout->addSpacing(8);
+	ft_layout->addWidget(new QLabel(tr("Values:")));
+	m_ft_values_combo = new QComboBox;
+	m_ft_values_combo->addItem(tr("Smooth tracks"));
+	m_ft_values_combo->addItem(tr("Raw LPC values"));
+	m_ft_values_combo->setToolTip(tr("Smooth tracks: formants read from the fitted curves, as in Fast Track. "
+	                                 "Raw LPC values: formants measured with the selected maximum frequency."));
+	ft_layout->addWidget(m_ft_values_combo);
+	ft_layout->addStretch();
+	auto_layout->addWidget(m_ft_row);
+
+	// Choosing a preset fills in the range; editing the range by hand selects the matching preset, or Custom.
+	connect(m_ft_preset_combo, QOverload<int>::of(&QComboBox::activated), this, [this](int index) {
+		auto range = m_ft_preset_combo->itemData(index).toPoint();
+		if (range.x() <= 0) return;
+		m_auto_freq_low_edit->setText(QString::number(range.x()));
+		m_auto_freq_high_edit->setText(QString::number(range.y()));
+	});
+	auto sync_preset = [this] {
+		int low = m_auto_freq_low_edit->text().toInt(), high = m_auto_freq_high_edit->text().toInt();
+		int custom = m_ft_preset_combo->count() - 1;
+		int found = custom;
+		for (int i = 0; i < custom; i++) {
+			auto r = m_ft_preset_combo->itemData(i).toPoint();
+			if (r.x() == low && r.y() == high) { found = i; break; }
+		}
+		m_ft_preset_combo->setCurrentIndex(found);
+	};
+	connect(m_auto_freq_low_edit, &QLineEdit::textChanged, this, [sync_preset](const QString &) { sync_preset(); });
+	connect(m_auto_freq_high_edit, &QLineEdit::textChanged, this, [sync_preset](const QString &) { sync_preset(); });
+	sync_preset();
+
+	m_auto_lpc_row = new QWidget;
+	auto *lpc_row = new QHBoxLayout(m_auto_lpc_row);
+	lpc_row->setContentsMargins(0, 0, 0, 0);
 	lpc_row->addWidget(new QLabel(tr("LPC order from:")));
 	m_auto_lpc_low_spin = new QSpinBox;
 	m_auto_lpc_low_spin->setRange(4, 30);
@@ -288,21 +376,12 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_auto_lpc_high_spin->setValue(14);
 	lpc_row->addWidget(m_auto_lpc_high_spin);
 	lpc_row->addStretch();
-	auto_layout->addLayout(lpc_row);
-
-	// Selection method: the intrinsic ladder (default) or Weenink's W (kept for comparison / reproducibility).
-	auto *sel_row = new QHBoxLayout;
-	sel_row->addWidget(new QLabel(tr("Selection method:")));
-	m_auto_method_combo = new QComboBox;
-	m_auto_method_combo->addItem(tr("Optimal (recommended)"));
-	m_auto_method_combo->addItem(tr("Weenink (legacy, for comparison)"));
-	m_auto_method_combo->setCurrentIndex(0);
-	sel_row->addWidget(m_auto_method_combo);
-	sel_row->addStretch();
-	auto_layout->addLayout(sel_row);
+	auto_layout->addWidget(m_auto_lpc_row);
 
 	// Cross-token consensus (Phase 2b): nudge each match's parameters toward its (speaker x vowel) cell centre.
-	auto *cons_row = new QHBoxLayout;
+	m_consensus_row = new QWidget;
+	auto *cons_row = new QHBoxLayout(m_consensus_row);
+	cons_row->setContentsMargins(0, 0, 0, 0);
 	m_consensus_check = new QCheckBox(tr("Use cross-token consensus"));
 	cons_row->addWidget(m_consensus_check);
 	cons_row->addWidget(new QLabel(tr("Speaker property:")));
@@ -311,10 +390,12 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_speaker_prop_edit->setFixedWidth(200);
 	cons_row->addWidget(m_speaker_prop_edit);
 	cons_row->addStretch();
-	auto_layout->addLayout(cons_row);
+	auto_layout->addWidget(m_consensus_row);
 
 	// Vowel/label grouping: a property, else fall back to a chosen match target (0 = reference target).
-	auto *label_row = new QHBoxLayout;
+	m_label_row = new QWidget;
+	auto *label_row = new QHBoxLayout(m_label_row);
+	label_row->setContentsMargins(0, 0, 0, 0);
 	label_row->addWidget(new QLabel(tr("Label property:")));
 	m_label_prop_edit = new QLineEdit;
 	m_label_prop_edit->setPlaceholderText(tr("(optional; blank = use match target)"));
@@ -327,10 +408,18 @@ QWidget *FormantQueryEditor::createFormantSettingsPanel()
 	m_label_target_spin->setToolTip(tr("Which match target supplies the label when no property is set (0 = reference target)."));
 	label_row->addWidget(m_label_target_spin);
 	label_row->addStretch();
-	auto_layout->addLayout(label_row);
-	// Consensus applies only to the Optimal (intrinsic) method.
+	auto_layout->addWidget(m_label_row);
+	// Fast Track has its own settings (and a fixed LPC order); consensus applies only to the intrinsic method.
 	auto sync_consensus = [this] {
-		bool intrinsic = (m_auto_method_combo->currentIndex() == 0);
+		auto method = FormantQuery::AutoMethod(m_auto_method_combo->currentData().toInt());
+		bool fast_track = (method == FormantQuery::AutoMethod::FastTrack);
+		m_ft_row->setVisible(fast_track);
+		m_auto_lpc_row->setVisible(!fast_track);
+		m_auto_freq_step_label->setVisible(!fast_track);
+		m_auto_freq_step_edit->setVisible(!fast_track);
+		bool intrinsic = (method == FormantQuery::AutoMethod::Intrinsic);
+		m_consensus_row->setVisible(intrinsic);
+		m_label_row->setVisible(intrinsic);
 		m_consensus_check->setEnabled(intrinsic);
 		bool on = intrinsic && m_consensus_check->isChecked();
 		m_speaker_prop_edit->setEnabled(on);
@@ -1116,17 +1205,25 @@ void FormantQueryEditor::parseQuery()
 		if (!ok || freq_low <= 0) throw std::runtime_error("Invalid minimum frequency");
 		double freq_high = m_auto_freq_high_edit->text().toDouble(&ok);
 		if (!ok || freq_high <= freq_low) throw std::runtime_error("Invalid maximum frequency");
-		double freq_step = m_auto_freq_step_edit->text().toDouble(&ok);
-		if (!ok || freq_step <= 0) throw std::runtime_error("Invalid frequency step");
-
+		auto method = FormantQuery::AutoMethod(m_auto_method_combo->currentData().toInt());
+		m_query->set_auto_method(method);
 		m_query->set_max_freq_low(freq_low);
 		m_query->set_max_freq_high(freq_high);
-		m_query->set_freq_step(freq_step);
-		m_query->set_lpc_order_low(m_auto_lpc_low_spin->value());
-		m_query->set_lpc_order_high(m_auto_lpc_high_spin->value());
-		m_query->set_auto_method(m_auto_method_combo->currentIndex() == 1
-		                         ? FormantQuery::AutoMethod::Weenink
-		                         : FormantQuery::AutoMethod::Intrinsic);
+
+		if (method == FormantQuery::AutoMethod::FastTrack)
+		{
+			m_query->set_fast_track_steps(m_ft_steps_spin->value());
+			m_query->set_fast_track_coefficients(m_ft_coeffs_spin->value());
+			m_query->set_fast_track_smooth(m_ft_values_combo->currentIndex() == 0);
+		}
+		else
+		{
+			double freq_step = m_auto_freq_step_edit->text().toDouble(&ok);
+			if (!ok || freq_step <= 0) throw std::runtime_error("Invalid frequency step");
+			m_query->set_freq_step(freq_step);
+			m_query->set_lpc_order_low(m_auto_lpc_low_spin->value());
+			m_query->set_lpc_order_high(m_auto_lpc_high_spin->value());
+		}
 		m_query->set_consensus(m_consensus_check->isChecked());
 		m_query->set_speaker_property(m_speaker_prop_edit->text());
 		m_query->set_label_property(m_label_prop_edit->text());
@@ -1269,6 +1366,7 @@ void FormantQueryEditor::onExecute()
 			Project::updated();
 		}
 
+		reportRangeEdges();
 		accept();
 	}
 	catch (std::exception &e)
@@ -1276,6 +1374,53 @@ void FormantQueryEditor::onExecute()
 		progress.close();
 		QMessageBox::critical(this, tr("Query error"), QString::fromUtf8(e.what()));
 	}
+}
+
+void FormantQueryEditor::reportRangeEdges()
+{
+	auto &files = m_query->range_edge_report();
+	if (files.empty()) return;
+
+	auto qstr = [](const String &s) { return QString::fromUtf8(s.data(), (int) s.size()); };
+	auto describe = [&](const FormantQuery::RangeEdgeReport &r) {
+		QStringList parts;
+		auto pct = [&](intptr_t n) { return int(std::round(100.0 * double(n) / double(r.matches))); };
+		double threshold = FormantQuery::range_edge_min_share * double(r.matches);
+		if (double(r.at_lowest) >= threshold) {
+			parts << tr("%1 of %2 matches (%3%) at the lowest value, %4 Hz")
+			         .arg(r.at_lowest).arg(r.matches).arg(pct(r.at_lowest)).arg(r.lowest);
+		}
+		if (double(r.at_highest) >= threshold) {
+			parts << tr("%1 of %2 matches (%3%) at the highest value, %4 Hz")
+			         .arg(r.at_highest).arg(r.matches).arg(pct(r.at_highest)).arg(r.highest);
+		}
+		return QStringLiteral("%1: %2").arg(qstr(r.file), parts.join(QStringLiteral("; ")));
+	};
+
+	const int shown = 10;
+	QStringList lines, all;
+	for (size_t i = 0; i < files.size(); i++)
+	{
+		auto line = describe(files[i]);
+		all << line;
+		if (int(i) < shown) lines << QStringLiteral("\u2022 ") + line;
+	}
+	if (int(files.size()) > shown) {
+		lines << tr("... and %1 more file(s) (see details).").arg(int(files.size()) - shown);
+	}
+
+	QMessageBox box(QMessageBox::Information, tr("Fast Track: range of maximum frequencies"),
+		tr("In the following file(s), many matches were measured with the lowest or the highest maximum frequency of "
+		   "the range, which suggests that the range does not suit these speakers:\n\n%1\n\n"
+		   "Check these matches (the Max freq column shows the value used for each one). If their formants are wrong, "
+		   "the range reaches too far in that direction: raise it if they are at the lowest value, lower it if they are "
+		   "at the highest. If they look right, the best value may lie beyond the range: extend it in that direction. "
+		   "You can give these speakers their own range with \"Adjust maximum frequency by property\".")
+		.arg(lines.join(QStringLiteral("\n"))), QMessageBox::Ok, this);
+	if (int(files.size()) > shown) {
+		box.setDetailedText(all.join(QStringLiteral("\n")));
+	}
+	box.exec();
 }
 
 void FormantQueryEditor::onSave()
@@ -1473,8 +1618,23 @@ void FormantQueryEditor::loadQuery()
 		m_auto_freq_step_edit->setText(QString::number(m_query->freq_step()));
 		m_auto_lpc_low_spin->setValue(m_query->lpc_order_low());
 		m_auto_lpc_high_spin->setValue(m_query->lpc_order_high());
-		m_auto_method_combo->setCurrentIndex(
-			m_query->auto_method() == FormantQuery::AutoMethod::Weenink ? 1 : 0);
+		// Only Fast Track is offered for new queries, but a query saved with an earlier method keeps it: add that method
+		// to the menu and show the menu, so the user can keep it or switch to Fast Track.
+		int method = int(m_query->auto_method());
+		if (m_auto_method_combo->findData(method) < 0)
+		{
+			if (m_query->auto_method() == FormantQuery::AutoMethod::Weenink) {
+				m_auto_method_combo->addItem(tr("Weenink (legacy)"), method);
+			}
+			else if (m_query->auto_method() == FormantQuery::AutoMethod::Intrinsic) {
+				m_auto_method_combo->addItem(tr("Intrinsic (experimental)"), method);
+			}
+		}
+		m_auto_method_row->setVisible(m_auto_method_combo->count() > 1);
+		m_auto_method_combo->setCurrentIndex(std::max(0, m_auto_method_combo->findData(method)));
+		m_ft_steps_spin->setValue(m_query->fast_track_steps());
+		m_ft_coeffs_spin->setValue(m_query->fast_track_coefficients());
+		m_ft_values_combo->setCurrentIndex(m_query->fast_track_smooth() ? 0 : 1);
 		m_consensus_check->setChecked(m_query->consensus());
 		m_speaker_prop_edit->setText(m_query->speaker_property());
 		m_label_prop_edit->setText(m_query->label_property());

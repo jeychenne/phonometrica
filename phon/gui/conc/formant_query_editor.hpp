@@ -84,6 +84,9 @@ private:
 
 	void parseQuery();
 	bool validateQuery();
+
+	// After a Fast Track run, tell the user about the files whose matches pile up at an edge of the range.
+	void reportRangeEdges();
 	void loadQuery();
 
 	// Override-section internals
@@ -138,13 +141,24 @@ private:
 	QLineEdit *m_max_freq_edit = nullptr;
 	QSpinBox *m_lpc_order_spin = nullptr;
 
-	// Automatic (Weenink) panel
+	// Automatic panel
 	QLineEdit *m_auto_freq_low_edit = nullptr;
 	QLineEdit *m_auto_freq_high_edit = nullptr;
+	QLabel *m_auto_freq_step_label = nullptr;
 	QLineEdit *m_auto_freq_step_edit = nullptr;
+	QWidget *m_auto_lpc_row = nullptr;
+	// Fast Track settings
+	QWidget *m_ft_row = nullptr;
+	QComboBox *m_ft_preset_combo = nullptr;
+	QSpinBox *m_ft_steps_spin = nullptr;
+	QSpinBox *m_ft_coeffs_spin = nullptr;
+	QComboBox *m_ft_values_combo = nullptr;
 	QSpinBox *m_auto_lpc_low_spin = nullptr;
 	QSpinBox *m_auto_lpc_high_spin = nullptr;
+	QWidget *m_auto_method_row = nullptr;   // only shown when a loaded query uses a legacy method
 	QComboBox *m_auto_method_combo = nullptr;
+	QWidget *m_consensus_row = nullptr;     // intrinsic method only
+	QWidget *m_label_row = nullptr;         // intrinsic method only
 	QCheckBox *m_consensus_check = nullptr;
 	QLineEdit *m_speaker_prop_edit = nullptr;
 	QLineEdit *m_label_prop_edit = nullptr;
