@@ -2088,12 +2088,19 @@ void SoundView::startPlayback(QAction *source, double from, double to)
 
 void SoundView::stopPlayback()
 {
-	m_playback_timer->stop();
-	m_player->stop();
-	m_model->clearPlayback();
+	// Also called by the destructor, which can run on a partly constructed view: when a subclass's constructor throws
+	// before initialize() (e.g. an AnnotationView whose annotation cannot be read), the toolbar and its actions do
+	// not exist yet, and both m_active_play_action and m_play_action are null.
+	if (m_playback_timer) m_playback_timer->stop();
+	if (m_player) m_player->stop();
+	if (m_model) m_model->clearPlayback();
 
 	// Restore the icon on whichever button was active.
-	if (m_active_play_action == m_play_action)
+	if (!m_active_play_action)
+	{
+		// Nothing is playing.
+	}
+	else if (m_active_play_action == m_play_action)
 	{
 		m_play_action->setIcon(QIcon(PLAY_ICON));
 		m_play_action->setToolTip(tr("Play current window"));

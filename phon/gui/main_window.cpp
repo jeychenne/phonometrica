@@ -2419,11 +2419,26 @@ void MainWindow::onDocumentRequested(Document *doc)
 			QApplication::processEvents();
 		});
 
-		auto *view = new SoundView(Handle<Sound>(sound));
+		// As for annotations: a sound that cannot be read must be reported, not crash the application.
+		// conn1/conn2 disconnect automatically when they leave scope.
+		SoundView *view = nullptr;
+		try
+		{
+			view = new SoundView(Handle<Sound>(sound));
+		}
+		catch (std::exception &e)
+		{
+			QApplication::restoreOverrideCursor();
+			m_progress_bar->setVisible(false);
+			statusBar()->clearMessage();
+			auto &path = sound->path();
+			QMessageBox::critical(this, tr("Cannot open sound"),
+				tr("Could not open \"%1\":\n%2").arg(QString::fromUtf8(path.data(), (int) path.size()),
+				                                       QString::fromUtf8(e.what())));
+			return;
+		}
 		addViewTab(view);
 
-		// conn1/conn2 disconnect automatically when they leave scope (including if the
-		// SoundView constructor above throws and the stack unwinds).
 		QApplication::restoreOverrideCursor();
 		m_progress_bar->setVisible(false);
 		statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);
@@ -2920,10 +2935,26 @@ AnnotationView *MainWindow::createAnnotationView(const Handle<Annotation> &annot
 		QApplication::processEvents();
 	});
 
-	auto *view = new AnnotationView(annot);
+	// The view reads the annotation (and its sound) when it is created, which fails if a file is missing or cannot be
+	// read. Report the error instead of letting the exception escape into Qt's event loop, which would terminate the
+	// application. conn1/conn2 disconnect automatically when they leave scope.
+	AnnotationView *view = nullptr;
+	try
+	{
+		view = new AnnotationView(annot);
+	}
+	catch (std::exception &e)
+	{
+		QApplication::restoreOverrideCursor();
+		m_progress_bar->setVisible(false);
+		statusBar()->clearMessage();
+		auto &path = annot->path();
+		QMessageBox::critical(this, tr("Cannot open annotation"),
+			tr("Could not open \"%1\":\n%2").arg(QString::fromUtf8(path.data(), (int) path.size()),
+			                                       QString::fromUtf8(e.what())));
+		return nullptr;
+	}
 
-	// conn1/conn2 disconnect automatically when they leave scope (including if the
-	// AnnotationView constructor above throws and the stack unwinds).
 	QApplication::restoreOverrideCursor();
 	m_progress_bar->setVisible(false);
 	statusBar()->showMessage(tr("Opened: %1").arg(qlabel), 2000);

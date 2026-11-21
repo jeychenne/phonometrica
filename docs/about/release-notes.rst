@@ -34,7 +34,7 @@ Release notes
 - **Opening a match in Praat** failed with *No Sound #-1 selected*: the script sent to Praat opened the recording as a LongSound but then looked for a Sound.
 - In the long format of a concordance, **Delete row(s)** and **Create subset** acted on the wrong matches.
 - Improved compatibility with older versions of macOS.
-
+- Fixed a crash when trying to open a file whose path contains corrupted accented characters.
 
 0.9.9 (16/11/2026)
 ~~~~~~~~~~~~~~~~~~
