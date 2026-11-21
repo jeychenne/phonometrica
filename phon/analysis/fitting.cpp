@@ -1836,7 +1836,10 @@ static void check_prior_scale_mismatch(Model &model,
 	const double sigma_threshold = 1.5 * y_sd;
 	bool sigma_inflated = (sigma > sigma_threshold);
 
-	// Student-specific: ν pinned at upper clamp (200) is an independent signal.
+	// Student-specific: ν pinned near the upper clamp (NU_MAX = 1000) is an
+	// independent signal. The 199 threshold predates the clamp being raised
+	// from 200 to 1000 (see student_bounds.hpp); it is kept because any ν in
+	// the hundreds already means the data carry no information on tail weight.
 	bool nu_pinned = (family == "student") && (model.nu >= 199.0);
 
 	if (!sigma_inflated && !nu_pinned) return;  // Fit looks fine, no warning.
@@ -1858,7 +1861,7 @@ static void check_prior_scale_mismatch(Model &model,
 	if (nu_pinned)
 	{
 		msg += "The degrees-of-freedom parameter nu has converged to its upper "
-		       "bound (200), indicating the fit has collapsed to an effectively "
+		       "bound (1000), indicating the fit has collapsed to an effectively "
 		       "Gaussian regime. ";
 	}
 

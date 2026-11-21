@@ -29,6 +29,28 @@ suppressPackageStartupMessages({
 })
 
 # --------------------------------------------------------------------
+# Student-t: nu at or above this is not compared against Phonometrica,
+# because the engine clamps nu to NU_MAX = 1000
+# (phon/analysis/student_bounds.hpp), so above it the two numbers are
+# not measuring the same thing and a comparison is meaningless by
+# construction.
+#
+# This is deliberately NOT the engine's lower "essentially Gaussian"
+# warning threshold of 199 (`nu_pinned`, phon/analysis/fitting.cpp).
+# Measured on monophtongues.csv M5, where nu ~ 216 and the likelihood
+# is already quite flat in nu, the two engines still agree to 0.17%
+# (216.453 vs 216.818) -- comfortably inside the suite's tolerances.
+# Skipping at 199 would therefore drop real coverage on exactly the
+# models where nu is hardest to pin down. The genuine failure mode is
+# not mild near-Gaussianity but total non-identification, where
+# glmmTMB's nu runs to 1e18 and beyond; that is what this guard is for,
+# and in practice such fits also fail to converge and are already
+# caught by is_boundary_reference() via a null loglik.
+# --------------------------------------------------------------------
+
+NU_COMPARISON_CUTOFF <- 1000
+
+# --------------------------------------------------------------------
 # Fit-summary extractors. One per (engine, family) cell as needed.
 # --------------------------------------------------------------------
 
@@ -68,12 +90,45 @@ extract_fit_glmmtmb <- function(m, family) {
         out$phi <- unname(sigma(m))
     } else if (family == "student") {
         out$sigma <- unname(sigma(m))
-        s <- summary(m)
-        # t_family puts log(nu) as the (Intercept) of the dispersion
-        # submodel. dispformula = ~1 ⇒ a single-row table.
-        disp <- s$coefficients$disp
-        if (!is.null(disp) && nrow(disp) >= 1L) {
-            out$nu <- exp(unname(disp[1, "Estimate"]))
+        # nu (the Student-t degrees of freedom) is an *extra family
+        # parameter*, not a coefficient of the dispersion submodel. An
+        # earlier version of this helper read it from
+        # summary(m)$coefficients$disp, which does not exist for t_family
+        # (checked on glmmTMB 1.1.13): the branch never fired, so
+        # reference_student.json silently shipped with no `nu` field and the
+        # `nu` comparison in lib/stat_assert.phon -- which is already wired
+        # up, and which skips absent reference keys -- was quietly inactive
+        # for every Student-t model. Phonometrica's nu had therefore never
+        # been validated against R.
+        #
+        # family_params() is the documented accessor. Fail loudly if it
+        # yields nothing: a silently missing nu is the bug this replaces.
+        fp <- glmmTMB::family_params(m)
+        if (length(fp) < 1L || !is.finite(fp[[1]])) {
+            stop("Student-t: could not extract nu. family_params() returned ",
+                 if (length(fp) == 0L) "nothing"
+                 else paste(format(fp), collapse = ", "))
+        }
+        nu_hat <- unname(fp[[1]])
+
+        # Non-identification guard: see NU_COMPARISON_CUTOFF above.
+        # Past the cutoff, `nu` is emitted as JSON null, which
+        # check_optional() in lib/stat_assert.phon skips. The value is
+        # still recorded as `nu_unchecked` so nothing is hidden from a
+        # human reading the reference, and the generator says so on
+        # stderr -- the previous bug here was a *silently* missing nu, and
+        # that must not recur in a new form.
+        if (nu_hat >= NU_COMPARISON_CUTOFF) {
+            out["nu"]        <- list(NULL)
+            out$nu_unchecked <- nu_hat
+            out$nu_skipped   <- sprintf(
+                "nu = %.3f >= %g: beyond the engine's nu clamp, not comparable",
+                nu_hat, NU_COMPARISON_CUTOFF)
+            message(sprintf(
+                "  [note] nu = %.3f >= %g -- emitted as null (beyond the engine's clamp); not checked",
+                nu_hat, NU_COMPARISON_CUTOFF))
+        } else {
+            out$nu <- nu_hat
         }
     }
     out

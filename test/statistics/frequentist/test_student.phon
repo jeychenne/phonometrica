@@ -19,10 +19,35 @@
 #
 # Tolerances. glmmTMB and Phonometrica target the same likelihood
 # (joint Laplace ML) but differ in optimiser path and Student-t
-# parameter handling — glmmTMB carries log(ν) as a dispformula
-# coefficient while Phonometrica uses joint (β, θ) Laplace-MAP
-# with exact Student-t Hessian weights and a multistart over ν.
-# Modest tolerances absorb the per-iterate drift.
+# parameter handling: Phonometrica uses joint (β, θ) Laplace-MAP with
+# exact Student-t Hessian weights and a multistart over ν. Modest
+# tolerances absorb the per-iterate drift.
+#
+# ν. The two engines parameterise the Student-t identically — σ is the
+# *scale* (not the SD) and ν the degrees of freedom; feeding glmmTMB's
+# sigma(m) and family_params(m) into Phonometrica's own density
+# (student_loglik, phon/analysis/family.hpp) reproduces logLik(m) to
+# ~3e-12. ν is therefore compared directly, with no transformation.
+#
+# Note that ν lives in glmmTMB's *extra family parameters*, reachable
+# only through family_params(); it is NOT a coefficient of the
+# dispersion submodel, and summary(m)$coefficients$disp does not exist
+# for t_family. An earlier version of _helpers.R read it from there, so
+# the reference silently shipped without a ν field and the ν
+# comparison below was inactive from the day it was written.
+#
+# ν is compared for all five models. Measured agreement against
+# glmmTMB on this dataset: M1 4.1e-4, M2 3.0e-4, M3 3.5e-4, M4 5.6e-4,
+# M5 1.7e-3 relative — all inside the tolerances below. M5 is the
+# interesting one: at ν ≈ 216 the likelihood is already quite flat in
+# ν, yet the two engines still land within 0.17% of each other
+# (216.453 vs 216.818).
+#
+# The generator skips ν only past NU_COMPARISON_CUTOFF = 1000, which is
+# the engine's own clamp (NU_MAX, phon/analysis/student_bounds.hpp):
+# above it the two numbers are not measuring the same thing. It is
+# deliberately not the lower "essentially Gaussian" warning threshold
+# of 199, which would have dropped M5's coverage for no good reason.
 # =====================================================================
 
 import stat_assert

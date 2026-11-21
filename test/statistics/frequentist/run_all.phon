@@ -25,11 +25,23 @@
 # Pre-requisites. Each reference_<family>.json must have been
 # generated from R first (gen_reference_all.R).
 #
-# Student-t is intentionally excluded from the v1.0 suite: the
-# glmmTMB references for that family are not trustworthy (see
-# test_student.phon's banner). When clean references are available —
-# most likely from the Bayesian suite via brms HMC — re-enable by
-# adding the import line below.
+# Student-t was excluded from this suite for a while, on the grounds
+# that the glmmTMB references for the family were not trustworthy. It
+# is back in as of 21/11/2026. What changed is the evidence, not the
+# references: the two engines were confirmed to parameterise the
+# Student-t identically (glmmTMB's sigma(m) is the *scale*, and
+# family_params(m) gives nu; feeding both into the engine's own
+# student_loglik reproduces logLik(m) to ~3e-12), and the earlier
+# convergence failures were traced to the *scale of the response*
+# rather than to the family — glmmTMB's t_family diverges on a Hz-scale
+# response but converges cleanly on monophtongues.csv, which this
+# family's reference uses. All five models now agree on every
+# quantity, nu included, to within 1.7e-3 relative.
+#
+# The same investigation found that nu had in fact never been compared
+# at all: _helpers.R read it from the dispersion submodel, which does
+# not exist for t_family, so the reference shipped without a nu field
+# and check_optional() silently skipped it. Fixed in the same pass.
 # =====================================================================
 
 import stat_assert
@@ -45,7 +57,10 @@ import test_real_schwa
 import test_gam
 import test_nested
 
-# Disabled: test_student — see its banner.
+# Real-corpus Student-t (monophtongues.csv). Last because it is the
+# slowest of the frequentist families: five models, two of them with
+# random slopes, each with a multistart over nu.
+import test_student
 
 # ── Final tally (runs after all imported tests). ─────────────────
 print("######################################################################")

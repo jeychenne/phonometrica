@@ -148,13 +148,31 @@ varies cleanly. Datasets and structure as currently committed:
 | Negative binomial *(sidecar)* | `owls.csv`    | `food * sex`                | `food`         | nest    |
 | Beta               | `beta_accuracy.csv`      | `difficulty * domain`       | `difficulty`   | subject, item |
 | Real binomial      | `schwa_eychenne2019.csv` | `dialect * gender + task`   | `task`         | subject, word |
-| Student-t          | (disabled)               | —                           | —              | —       |
+| Student-t          | `monophtongues.csv`      | `Voyelle * Condition + Sexe + Age` | `Voyelle` | `Sujet`, `Mot` |
 
-Student-t is intentionally excluded from the v1.0 frequentist suite.
-The glmmTMB references for that family aren't trustworthy (most
-fits report `converged=false` or null logLik). The right reference
-for Student-t is brms HMC, which lives in the Bayesian suite. See
-the banner in `test_student.phon` for full rationale.
+Student-t was excluded from this suite for a period, on the grounds
+that the glmmTMB references were untrustworthy (most fits reported
+`converged=false` or a null logLik). It was re-enabled on 21/11/2026,
+after those failures were traced to the **scale of the response**
+rather than to the family: glmmTMB's `t_family` diverges on a Hz-scale
+response (nu runs to 1e18 and beyond) but converges cleanly on
+`monophtongues.csv`, whose response has SD ~ 1.17. Multiplying that
+same response by 500 reproduces the divergence, which rules out the
+dataset as the explanation.
+
+The two engines were also confirmed to parameterise the Student-t
+identically: `sigma(m)` is the *scale* (not the SD) and
+`family_params(m)` gives nu, and feeding both into the engine's own
+`student_loglik` reproduces `logLik(m)` to ~3e-12. All five models
+agree on every reported quantity, nu included, to within 1.7e-3
+relative.
+
+Note that nu had never actually been compared before this: the
+extractor read it from the dispersion submodel, which does not exist
+for `t_family`, so the reference shipped with no `nu` field and
+`check_optional()` skipped the comparison. Both the extractor and the
+reference were fixed in the same pass, and nu is now skipped only past
+`NU_COMPARISON_CUTOFF = 1000`, which is the engine's own clamp.
 
 ## Engine choice and dual references
 

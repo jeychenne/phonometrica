@@ -964,9 +964,14 @@ Phonometrica's statistical engine supports the following model families:
   meaningful departure from normality.
   The engine fits Student-t models from multiple starting values for :math:`\nu` (covering the
   heavy-tailed-to-near-Gaussian range) and keeps the best converged fit, so users do not need to specify
-  initial values for :math:`\nu` or :math:`\sigma`. If a fit produces an unusually
-  large :math:`\nu` (:math:`\geq 199`), Phonometrica issues a warning indicating that the data are
-  essentially Gaussian and recommends switching to the Gaussian family.
+  initial values for :math:`\nu` or :math:`\sigma`. :math:`\nu` is constrained to the interval
+  [2, 1000]: the lower bound is a hard mathematical constraint (the Student-t variance
+  :math:`\sigma^2 \nu / (\nu - 2)` is undefined at :math:`\nu \leq 2`), while the upper bound is a
+  numerical convenience, since a Student-t with :math:`\nu` in the hundreds is already
+  indistinguishable from a Gaussian. A :math:`\nu` reported at or very near 1000 is therefore a
+  clamp rather than an estimate, and means the data carry essentially no information about tail
+  weight; fitting the same model with the **Continuous** (Gaussian) outcome is the more honest
+  choice in that case.
   Select **Continuous (robust)** in the Outcome dropdown to use this family, or pass ``"student"`` to
   the ``fit()`` scripting function.
 - **GAM**: generalized additive models with penalized regression splines, including by-variable
@@ -1012,6 +1017,73 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    500 simulated Gaussian observations confirmed that R-INLA, the reference implementation of the same class of
    approximation, produces an identical pattern (R-INLA mean = 20.1, 95% CI = [6.9, 55.5] where the correct posterior
    spans nearly the full prior range).
+
+
+.. note::
+
+   **Cross-checking a Student-t model in R.** The preview notice above recommends refitting
+   anything you intend to publish in R. Student *t* needs a little more care than the other
+   families, for three reasons.
+
+   First, ``lme4`` does not offer a Student-t response at all. The reference implementation is
+   `glmmTMB <https://CRAN.R-project.org/package=glmmTMB>`_, with ``family = t_family()``.
+
+   Second, the two parameters are reported in different places, and one of them is easy to
+   misread:
+
+   .. code:: r
+
+      m <- glmmTMB(f1 ~ vowel + (1 | speaker), data = d, family = t_family(), REML = FALSE)
+      sigma(m)                              # the SCALE, directly comparable to Phonometrica's sigma
+      unname(glmmTMB::family_params(m))[1]  # nu
+
+   ``sigma(m)`` is the scale :math:`\sigma`, *not* the standard deviation of the residuals
+   (which would be :math:`\sigma\sqrt{\nu/(\nu-2)}`), so it is compared against Phonometrica's
+   :math:`\sigma` as-is. And :math:`\nu` is an *extra family parameter*, reachable only through
+   ``family_params()``: it is not a coefficient of the dispersion submodel, and
+   ``summary(m)$coefficients$disp`` does not exist for ``t_family``.
+
+   Third, and most important in practice: **glmmTMB's** ``t_family`` **does not converge when the
+   response is on a Hertz scale.** Free estimation of :math:`\nu` is poorly conditioned, and on
+   a response whose standard deviation is in the tens or hundreds the optimizer typically
+   reports ``false convergence (8)`` with a non-positive-definite Hessian, a ``NA``
+   log-likelihood, and :math:`\nu` running off to :math:`10^{10}` or beyond. This is a property
+   of that optimizer, not a disagreement between the two implementations, and it affects
+   exactly the measurements phoneticians work with — formant frequencies and durations.
+
+   The fix is exact rather than approximate, because the Student *t* is a location-scale
+   family: fit on a standardized response :math:`z = (y - m)/s` and transform back.
+
+   .. code:: r
+
+      .m <- mean(d$f1); .s <- sd(d$f1)
+      d$.f1_z <- (d$f1 - .m) / .s
+      m <- glmmTMB(.f1_z ~ vowel + (1 | speaker), data = d,
+                   family = t_family(), REML = FALSE)
+
+   ================================  ==========================================
+   Quantity                          Back-transform to the response scale
+   ================================  ==========================================
+   slopes :math:`\beta`              :math:`\beta \cdot s`
+   intercept                         :math:`\beta \cdot s + m`
+   standard errors                   :math:`\mathrm{SE} \cdot s`
+   scale :math:`\sigma`              :math:`\sigma \cdot s`
+   random-effect SDs                 :math:`\mathrm{sd} \cdot s`
+   :math:`\nu`                       unchanged (invariant)
+   log-likelihood                    :math:`\log L - n \log s`
+   ================================  ==========================================
+
+   On a dataset where ``t_family`` converges on both scales, so that the two can be compared
+   directly, the back-transformed quantities agree with the raw-scale fit to about
+   :math:`10^{-6}` relative for the coefficients and :math:`10^{-9}` for the log-likelihood.
+   Since :math:`\nu` is invariant, the parameter that is hardest to pin down is also the one
+   that needs no correction.
+
+   Phonometrica's own validation suite compares all five of its Student-t test models against
+   ``glmmTMB`` on a corpus dataset whose response happens to be on a standardized scale, and
+   every reported quantity — coefficients, standard errors, variance components,
+   :math:`\sigma`, :math:`\nu` and the log-likelihood — agrees to within
+   :math:`2 \times 10^{-3}` relative.
 
 
 Frequentist estimation method (ML/REML)
@@ -1225,6 +1297,41 @@ When you are unsure, the PC default is the most forgiving choice. It is always g
 to refit with a different prior family as a sensitivity check: posterior summaries that
 change substantially across priors indicate that the data are too sparse to pin down the
 variance component, and results should be reported accordingly.
+
+
+.. note::
+
+   **Prior-scale mismatch warning.** For identity-link families (Gaussian and Student *t*),
+   the coefficients are on the scale of the response — hertz for formant data, milliseconds
+   for durations. A prior that is reasonable on a standardized scale, such as
+   :math:`\mathcal{N}(0, 10)`, is therefore extremely tight against coefficients in the
+   hundreds: it shrinks them toward zero while the optimizer compensates by inflating the
+   residual scale. The fit converges and the posterior summaries print without complaint, but
+   the estimates are driven by the prior rather than by the data.
+
+   After every Bayesian identity-link fit, Phonometrica checks for the two symptoms of this
+   and attaches an advisory warning to the model when it finds either:
+
+   * :math:`\sigma > 1.5 \times \mathrm{sd}(y)`. A healthy fit has
+     :math:`\sigma < \mathrm{sd}(y)` — the residual spread after subtracting
+     :math:`\mathbf{X}\hat{\boldsymbol{\beta}}` should be smaller than the total spread of
+     *y*. When it is larger, the fixed effects are explaining less variance than a
+     constant-mean fit would, which is only plausible when the prior dominates.
+   * For Student *t* only: :math:`\nu` has converged to its upper bound, which signals that
+     the fit has collapsed into an effectively Gaussian regime (with the residuals shrunk
+     toward zero, the likelihood is maximised as :math:`\nu \to \infty`).
+
+   The warning is advisory: the fit is returned either way. The remedy is normally to drop an
+   explicit fixed-effects prior so that the data-scaled defaults apply
+   (:math:`\mathcal{N}(\overline{y}, 2.5\,\mathrm{sd}(y))` for the intercept,
+   :math:`\mathcal{N}(0, 2.5\,\mathrm{sd}(y))` for slopes), or to set a prior SD of a
+   comparable order. Refitting the same model with **Frequentist** estimation is a reliable
+   sanity check: if the Bayesian estimates diverge substantially from the frequentist ones,
+   the prior is driving the result.
+
+   This check is Bayesian-only. Frequentist fits never produce it, and a large
+   :math:`\nu` in a frequentist Student-t fit carries no such warning — see the Student *t*
+   entry under `Supported model types`_ for what a clamped :math:`\nu` means there.
 
 
 Estimation method

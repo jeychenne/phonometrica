@@ -1,7 +1,7 @@
 {
   "family": "student",
   "dataset": "monophtongues.csv",
-  "generated_at": "2026-05-08 16:26:59 EDT",
+  "generated_at": "2026-11-21 11:19:46 EST",
   "R_version": "R version 4.5.0 (2025-04-11)",
   "glmmTMB_version": "1.1.13",
   "models": {
@@ -15,7 +15,8 @@
         "loglik": -1923.297318970343,
         "aic": 3862.594637940686,
         "bic": 3904.927887614082,
-        "sigma": 0.8476684230206
+        "sigma": 0.8476684230206,
+        "nu": 17.944100690252
       },
       "fixef": {
         "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]"],
@@ -34,7 +35,8 @@
         "loglik": -1583.520068200349,
         "aic": 3189.040136400699,
         "bic": 3247.248354701618,
-        "sigma": 0.5213640522634
+        "sigma": 0.5213640522634,
+        "nu": 5.536781798567
       },
       "fixef": {
         "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
@@ -56,7 +58,8 @@
         "loglik": -1571.100049804249,
         "aic": 3168.200099608499,
         "bic": 3236.991630327767,
-        "sigma": 0.4926573459397
+        "sigma": 0.4926573459397,
+        "nu": 5.219934581874
       },
       "fixef": {
         "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
@@ -78,7 +81,8 @@
         "loglik": -1532.833596484495,
         "aic": 3091.667192968989,
         "bic": 3160.458723688257,
-        "sigma": 0.4828204849308
+        "sigma": 0.4828204849308,
+        "nu": 5.443913545105
       },
       "fixef": {
         "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]", "Sexe[homme]:Age"],
@@ -100,7 +104,8 @@
         "loglik": -1910.329028159284,
         "aic": 3838.658056318568,
         "bic": 3886.282962201138,
-        "sigma": 0.8375478271198
+        "sigma": 0.8375478271198,
+        "nu": 216.453026300371
       },
       "fixef": {
         "names": ["Intercept", "Voyelle[ɑ]", "Condition[B]", "Sexe[homme]", "Age", "Voyelle[ɑ]:Condition[B]"],
