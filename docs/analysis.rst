@@ -9,36 +9,37 @@ or open an existing ``.phon-analysis`` file. The analysis view is divided into t
 a **top bar** for entering formulas, a **left panel** with column and model lists, and a
 **right panel** with tabs for results, post-hoc tests, diagnostics, and exploratory plots.
 
-.. admonition:: Preview feature
+.. admonition:: Validation and cross-checking
    :class: important
 
-   Phonometrica's statistical modeling is offered as a **preview**. It is not experimental
-   in the sense of being untested — it is validated continuously against reference
-   implementations in R, and the frequentist suite matches its oracle on every model it
-   covers. However, it is a young implementation of a large and intricate body of numerical
-   methods, and it has not yet had the years of use across many hands that a mature
-   statistical package has had.
+   Phonometrica's frequentist models are validated continuously against reference
+   implementations in R. The suite refits every supported family (Gaussian, including
+   REML; Binomial; Poisson; negative binomial; Beta; Student *t*) with fixed effects,
+   random intercepts, random slopes, and crossed and nested grouping factors, and
+   compares coefficients, standard errors, variance components, estimated marginal
+   means, residual diagnostics and information criteria against ``lm``, ``glmmTMB``,
+   ``lme4`` and ``MASS``. These model classes are ready for use in published work.
 
-   What that means in practice:
+   Two parts of the engine are less settled:
 
-   * **Check anything you publish.** For results that will appear in a paper or a thesis,
-     confirm that R gives the same numbers. For frequentist models this takes one click:
-     click **Export to R…** in the Models panel (see `Exporting an analysis to R`_). This
-     writes the data and a ready-to-run R script that refits every frequentist model and
-     prints both sets of estimates side by side. For Bayesian models and GAMs, which cannot be exported,
-     refit the model in R yourself (``brms``, ``mgcv``).
-   * **Expect small numerical differences.** Optimizers, convergence criteria and
-     parameterizations differ between implementations. Coefficients and standard errors
-     should agree to several digits; quantities at the end of long numerical chains (e.g.
-     Bayesian posterior summaries, smoothing parameters) may differ more.
-   * **Some cases are known not to match**, and are documented where they arise: GAM
-     smooths use a different basis parameterization from ``mgcv`` (see the note below),
-     and binomial GAMs may fail to converge on some datasets.
-   * **Please report discrepancies.** A reproducible example with a dataset and model formula is
-     very helpful to investigate and address any discrepancy you may encounter.
+   * **Generalized additive models** (smooth terms) are a **preview**. Phonometrica's
+     spline basis is not ``mgcv``'s parameterization, so the two are not directly
+     comparable and the validation suite does not compare them; binomial GAMs may also
+     fail to converge on some datasets. Use them to explore nonlinear structure, and
+     refit in ``mgcv`` for anything you intend to publish.
+   * **Bayesian estimation** is checked against ``brms`` at the level of inferential
+     equivalence: posterior means within a fraction of a posterior standard deviation,
+     which is the right bar for comparing a Laplace/CCD approximation against HMC, but
+     looser than the frequentist comparisons. Treat posterior summaries as approximate,
+     and refit in ``brms`` when a conclusion turns on a close call.
 
-   Nothing here is restricted or disabled: the label describes the maturity of the
-   implementation, not a limitation on what you can do with it.
+   Confirming a published result in R is good practice whatever the model, and for
+   frequentist models it takes one click: **Export to R…** in the Models panel (see
+   `Exporting an analysis to R`_) writes the data and a ready-to-run script that refits
+   every model and prints both sets of estimates side by side. Optimizers, convergence
+   criteria and parameterizations differ between implementations, so expect agreement
+   to several digits rather than to machine precision. Please report any discrepancy,
+   with a dataset and a model formula if you can.
 
 Support for statistical modeling was introduced in version 0.9. The core estimation
 engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented manually by the lead author.
@@ -46,9 +47,8 @@ More specialized modules, including Negative Binomial regression, Mixed-Effects 
 and residual diagnostics, were developed with the assistance of Claude Opus 4.6 (as of April 2026) using algorithmic guidance 
 from established literature and reference implementations in R.
 
-Our internal benchmarking shows an excellent match across a diverse suite of datasets when
-compared to reference R packages such as lme4, glmmTMB and brms. The preview caveats above
-describe the discrepancies that can nonetheless arise, and how to report them.
+The caveats above describe the discrepancies that can nonetheless arise, and how to
+report them.
 
 .. note::
    **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
@@ -1029,7 +1029,7 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
 
 .. note::
 
-   **Cross-checking a Student-t model in R.** The preview notice above recommends refitting
+   **Cross-checking a Student-t model in R.** The note above recommends confirming
    anything you intend to publish in R. **Export to R…** (see `Exporting an analysis to R`_)
    generates a script that takes care of everything described in this note. If you write
    the R code yourself, note that Student *t* needs a little more care than the other

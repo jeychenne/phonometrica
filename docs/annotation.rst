@@ -42,25 +42,27 @@ name (you can leave it empty), the layer's type (intervals vs instants) and the 
 .. figure:: img/layer_dialog.png
 
 Once the layer is created, it will appear below the sound plots. If it is an instant layer, it will be empty; otherwise, it will contain one interval spanning from the beginning to 
-the end of the file. Whatever type of layer you created, you can create new events by adding **anchors**, which are time stamps in the sound file. Phonometrica's data model is based 
-on **annotation graphs** [BIR2001]_, so annotations are represented as a single graph: time points (i.e. anchors) represent nodes in the graph, and events represent labeled arcs
-between these nodes. This means that an event always "knows" whether it shares an anchor with another event on another layer: this makes it easy to represent hierarchical 
-structures (e.g. words that contain syllables that contain segments) and alignment (e.g. words that are aligned with their part of speech).
+the end of the file. Whatever type of layer you created, you can create new events by adding **anchors**, which are time stamps in the sound file. Each layer is an independent sequence of events,
+and each event stores its own start and end times: no link between layers is recorded in the annotation itself. Relations between layers are computed from those times whenever
+they are needed, which is what lets a query express hierarchical structures (e.g. words that contain syllables that contain segments) and alignment (e.g. words that are aligned
+with their part of speech) without the annotation having to declare them in advance. These are the relations of the annotation graph framework [BIR2001]_, computed on demand
+rather than stored; see :ref:`complex-queries` for the ones you can use in a query.
 
 To create one or more anchors, click on the ``Add anchors`` button |anchor|. You can then move your cursor anywhere in the layer you want to annotate and a moving anchor will follow
 the mouse cursor: every time you click on the left button, a new anchor will be added where you click. Once you have added all the anchors you wanted, click again on the ``Add
 anchor`` button. To remove one or more anchors, click on the ``Remove anchors`` button |remove|, click on the anchors you want to delete, and click again on the ``Remove
 anchor`` button to let Phonometrica know that you have finished editing anchors.
 
-By default, if you have more than one layer of the same type (i.e. two or more instant layers or two or more interval layers), Phonometrica will add (or remove) an anchor on all the 
-instant layers if you added (or removed) an anchor on an instant layer, and on all the interval layers if you added (or removed) an anchor on an interval layer. This is because 
-anchors are shared across layers. If you prefer to edit anchors on a single layer at a time, click on the ``Share/unshare anchors`` button |share|. The icon will become a broken
-link |unshare|, which indicates that layers no longer share anchors. You can switch back and forth between the two modes (sharing and unsharing) at will, according to your needs.
-Note that when anchors are not shared, you can still share new anchors across layers: whenever you add an anchor on a layer, a dotted gray line will be projected on the other layers. 
-If you click on any of these temporary anchors, it will be changed to a permanent anchor. This allows you to have more control over which layers share which anchors.
+By default, each layer is edited on its own: adding or removing an anchor affects only the layer you clicked on, and the ``Share/unshare anchors`` button |unshare| in the
+toolbar shows a broken link. If you have more than one layer of the same type (i.e. two or more instant layers or two or more interval layers) and they are segmented at the same
+boundaries, you can edit them together: click on that button to turn anchor sharing on, and the icon will become an unbroken link |share|. While sharing is on, adding, removing
+or moving an anchor on one layer performs the same operation on all the visible layers of the same type. You can switch back and forth between the two modes at will, according
+to your needs. Note that even when anchors are not shared, you can still place an anchor at the same time on several layers: whenever you add an anchor on a layer, a dotted gray
+line will be projected on the other layers. If you click on any of these temporary anchors, it will be changed to a permanent anchor. This allows you to have more control over
+which layers get a boundary at a given time.
 
-Finally, you can move any anchor by clicking on it and dragging it with the mouse to the desired position. If anchors are shared, the anchor will be moved on all layers (of the same 
-type) that share this anchor. If anchors are not shared, the anchor will be moved on a single layer at a time.
+Finally, you can move any anchor by clicking on it and dragging it with the mouse to the desired position. If anchor sharing is on, the anchor will be moved on all the visible
+layers of the same type that have an anchor at that time. If it is off, the anchor will be moved on a single layer at a time.
 
 To place an anchor exactly at a zero crossing, click in the waveform to set the cursor, then click on the ``Move cursor to nearest zero crossing`` button
 |zerocross| in the toolbar (or press ``Ctrl+0``, ``Cmd+0`` on macOS). A dashed line shows the cursor's position on each layer: click on it in the layer you
@@ -98,7 +100,7 @@ Saving annotations
 To save an annotation, simply click on the ``Save annotation`` button |save| in the toolbar, or press ``Ctrl+S``. The annotation will be saved to Phonometrica's own native format (with a ``.phon-annot`` extension).
 This format is based on the XML standard and uses the UTF-8 encoding: as a result, it can be opened in any text editor and can be easily processed by any XML-compliant piece of software.
 
-In addition to the annotation graph itself, a native annotation file contains all the metadata associated with the file (properties, description, sound file). Therefore, you can easily share or move these files without
+In addition to the layers and their events, a native annotation file contains all the metadata associated with the file (properties, description, sound file). Therefore, you can easily share or move these files without
 losing any information.
 
 If you have modified several annotations, you can save them all at once using ``File > Save project`` (``Ctrl+Shift+S``), which will save

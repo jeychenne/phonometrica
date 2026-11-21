@@ -20,11 +20,11 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
 
    * **Project management**: organize files into projects with extensible metadata (properties).
    * **Sound visualization and analysis**: visualize waveforms, spectrograms, pitch tracks, glottal pulses, formant tracks, intensity curves, spectral slices.
-   * **Sound annotation**: create and edit multi-layer annotations based on annotation graphs; import and export Praat TextGrids.
+   * **Sound annotation**: create and edit multi-layer time-aligned annotations; import and export Praat TextGrids.
    * **Speech processing**: detect silences to pre-segment recordings for manual annotation; automatic speech recognition via whisper.cpp (runs locally on CPU, requires a model file).
    * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract duration, formant, pitch, voice quality, intensity, and spectral moment measurements.
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; vowel normalization (Lobanov, Nearey, Watt & Fabricius); toggle between wide and long formats; perform set operations on concordances.
-   * **Statistical analysis** (*preview*): frequentist and Bayesian linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and support generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations. These features are extensively tested against reference implementations in R, but are offered as a preview: see :ref:`analysis-view` for what that means and for the cases where exporting to R remains the better choice.
+   * **Statistical analysis**: frequentist and Bayesian linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and support for generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations. The frequentist models are validated continuously against reference implementations in R; GAMs are offered as a preview, and Bayesian estimation is approximate by construction. See :ref:`analysis-view` for what that means and for exporting an analysis to R.
    * **Scripting engine**: Phonometrica can be configured and extended with a powerful and easy-to-use scripting language, JSON-based plugins, and coding protocols.
    * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
