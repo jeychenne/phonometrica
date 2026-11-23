@@ -26,14 +26,16 @@ a **top bar** for entering formulas, a **left panel** with column and model list
      newer than the regression models, so cross-check them in R before publishing.
    * **Bayesian models** are fitted with deterministic approximations in the spirit of INLA
      — Laplace approximations and numerical integration over the variance parameters (see
-     `Estimation method`_) — rather than by MCMC sampling. Results come in seconds, but they
-     are approximations, and they are validated as such: against R-INLA, which uses the same
-     kind of approximation, and against ``brms``, whose MCMC sampling is exact up to Monte
-     Carlo error and therefore serves as the reference. Posterior means typically agree with
-     ``brms`` to within a fraction of a posterior standard deviation. The approximations are
-     weakest for strongly skewed posteriors (such as the Student *t* degrees of freedom ν),
-     very small samples and nearly separated binary outcomes; when a conclusion rests on such
-     a case, or on a close call, confirm it with ``brms``.
+     `Estimation method`_) — rather than by MCMC sampling. Results come in seconds, and in
+     practice the approximations are very accurate for the models used in phonetics and
+     sociophonetics, which is why INLA is widely used in applied statistics. They are
+     validated against R-INLA, which uses the same kind of approximation, and against
+     ``brms``, whose MCMC sampling is exact up to Monte Carlo error and therefore serves as the
+     reference: posterior means and credible intervals typically agree with ``brms`` to within
+     a small fraction of a posterior standard deviation. A few situations are harder for any
+     approximation — strongly skewed posteriors (such as the Student *t* degrees of freedom
+     ν), very small samples and nearly separated binary outcomes — and when a conclusion rests
+     on one of them, or on a close call, it is worth confirming with ``brms``.
 
    For frequentist models, GAMs included, checking a result in R takes one click: **Export to
    R…** in the Models panel (see `Exporting an analysis to R`_) writes the data and a
