@@ -6,12 +6,14 @@
 # Runs the generated fit.R exactly as a user would (working directory =
 # the export folder) and inspects the `cmp` comparison table it leaves
 # behind. Exits non-zero if R's fit did not converge, or if any row is
-# anything but "ok" (for any model in the script): "CHECK" is a numerical disagreement beyond the
+# anything but "ok" or "flat" (for any model in the script): "flat" is a GAM
+# smoothing parameter that is not identified (any large value gives the same
+# fit), "CHECK" is a numerical disagreement beyond the
 # script's own tolerance, "not in R" is a name-mapping bug in the
 # generator, "NA in R" is an R fit too degenerate to compare.
 #
 # The fixtures in test_export_r.phon are chosen to be well identified,
-# so on them every row must be "ok". The tolerances are the generated
+# so on them every row must be "ok" (or "flat"). The tolerances are the generated
 # script's own -- the self-test validates the very thresholds a user sees.
 # =====================================================================
 
@@ -35,7 +37,7 @@ if (!exists("cmp") || !is.data.frame(cmp) || nrow(cmp) == 0L) {
     quit(status = 1)
 }
 
-bad <- cmp[cmp$status != "ok", , drop = FALSE]
+bad <- cmp[!cmp$status %in% c("ok", "flat"), , drop = FALSE]
 if (!all(cmp$converged)) {
     cat(sprintf("FAIL %-32s R's fit did not converge for: %s\n", tag,
                 paste(unique(cmp$label[!cmp$converged]), collapse = ", ")))
@@ -48,6 +50,6 @@ if (nrow(bad) > 0L) {
     quit(status = 1)
 }
 
-worst <- max(abs(cmp$rel.difference), na.rm = TRUE)
+worst <- max(abs(cmp$rel.difference[cmp$status == "ok"]), na.rm = TRUE)
 cat(sprintf("ok   %-32s %d model(s), %3d values, max |rel.difference| = %.2e\n", tag,
             length(unique(cmp$model)), nrow(cmp), worst))

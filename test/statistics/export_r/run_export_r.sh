@@ -10,7 +10,7 @@
 # 2. Runs every generated fit.R in R via check_export.R and fails if any
 #    estimate disagrees beyond the script's own tolerance.
 #
-# Requirements: R with glmmTMB (>= 1.1.8). phon_stats defaults to
+# Requirements: R with glmmTMB (>= 1.1.8) and mgcv (>= 1.9). phon_stats defaults to
 # $PHON_STATS, then to phon_stats on the PATH.
 # =====================================================================
 set -u

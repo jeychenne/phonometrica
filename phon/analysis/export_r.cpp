@@ -33,6 +33,9 @@
  *   method          REML/ML is always written out.                                                                    *
  *   Student t       glmmTMB's t_family diverges on a Hz-scale response, so the script fits a standardized response    *
  *                   and transforms back (exact for a location-scale family).                                          *
+ *   smooths         GAMs go to mgcv::gam() with the basis spelled out (s(x) is "cr" here, "tp" in mgcv) and the       *
+ *                   same criterion (GCV.Cp, or REML). mgcv cannot read non-syntactic names in such a formula, so the  *
+ *                   script aliases them. Compared per smooth: EDF and log10(sp), keyed by mgcv's label.               *
  *                                                                                                                     *
  * Coefficients are joined on a canonical R-side key: the R coefficient name without backticks, with the components of *
  * an interaction sorted bytewise (R orders interaction components by first appearance in the formula, which need not  *
@@ -386,27 +389,31 @@ struct FamilySpec
 	const char *link;        // the only link the engine uses for it
 	const char *glmmtmb;     // glmmTMB family constructor
 	const char *glm;         // stats::glm family, or nullptr if fixed-effects fits go through glmmTMB too
+	const char *mgcv;        // mgcv::gam family, for models with smooth terms
 };
 
 const FamilySpec *find_family(const String &family)
 {
 	static const FamilySpec specs[] = {
-		{"gaussian", "identity", "gaussian()", nullptr /* lm() */},
-		{"binomial", "logit", "binomial(link = \"logit\")", "binomial(link = \"logit\")"},
-		{"poisson", "log", "poisson(link = \"log\")", "poisson(link = \"log\")"},
-		{"negbin", "log", "nbinom2(link = \"log\")", nullptr},
-		{"beta", "logit", "beta_family(link = \"logit\")", nullptr},
-		{"student", "identity", "t_family(link = \"identity\")", nullptr},
+		{"gaussian", "identity", "gaussian()", nullptr /* lm() */, "gaussian(link = \"identity\")"},
+		{"binomial", "logit", "binomial(link = \"logit\")", "binomial(link = \"logit\")", "binomial(link = \"logit\")"},
+		{"poisson", "log", "poisson(link = \"log\")", "poisson(link = \"log\")", "poisson(link = \"log\")"},
+		{"negbin", "log", "nbinom2(link = \"log\")", nullptr, "nb(link = \"log\")"},
+		{"beta", "logit", "beta_family(link = \"logit\")", nullptr, "betar(link = \"logit\")"},
+		{"student", "identity", "t_family(link = \"identity\")", nullptr, "scat(link = \"identity\")"},
 	};
 	for (auto &s : specs)
 		if (family == s.family) return &s;
 	return nullptr;
 }
 
-enum class Engine { Lm, Glm, GlmmTMB };
+enum class Engine { Lm, Glm, GlmmTMB, Gam };
 
 Engine choose_engine(const Model &m)
 {
+	// Smooth terms: mgcv::gam(). Phonometrica refuses smooth terms together with
+	// (1 | g) random effects (random effects go in as s(g, bs = "re")).
+	if (m.has_smooth_terms()) return Engine::Gam;
 	if (m.has_random_effects()) return Engine::GlmmTMB;
 	if (m.family == "gaussian") return Engine::Lm;
 	if (m.family == "binomial" || m.family == "poisson") return Engine::Glm;
@@ -517,6 +524,16 @@ std::vector<NamedColumn> term_columns(const std::vector<const VarDesc *> &vars, 
 // Everything the writers need, resolved and cross-checked once.
 // ─────────────────────────────────────────────────────────────────────
 
+// One smooth of a GAM, as mgcv counts them: one per s() term, or one per level
+// of the by-variable for a by-factor smooth (the order of Model::smooth_terms
+// and Model::smooth_log_lambda).
+struct SmoothDesc
+{
+	std::string phon;  // "s(duration):vowel[a]"
+	std::string r;     // mgcv's label, "s(duration):vowela"
+	std::string phon_variable;  // Model::SmoothResult::variable: "duration:a" for a by-level
+};
+
 struct Plan
 {
 	const Model *model = nullptr;
@@ -528,6 +545,7 @@ struct Plan
 	std::vector<NamedColumn> fixed;                 // fixed-effect coefficients
 	std::vector<std::vector<NamedColumn>> re_terms; // per random-effects group
 	std::vector<std::string> re_labels;             // "speaker", "school:class"
+	std::vector<SmoothDesc> smooths;                // GAMs only
 	bool student_scaled = false;
 
 	const VarDesc *var(const std::string &name) const
@@ -560,12 +578,28 @@ void compute_names(Plan &plan)
 	plan.fixed.clear();
 	plan.re_terms.clear();
 	plan.re_labels.clear();
+	plan.smooths.clear();
 	if (f.intercept) plan.fixed.push_back({"Intercept", "(Intercept)"});
 	for (auto &t : f.fixed)
 	{
 		std::vector<const VarDesc *> comps;
 		for (auto &v : t.variables) comps.push_back(plan.var(str(v)));
 		for (auto &c : term_columns(comps, false)) plan.fixed.push_back(c);
+	}
+	// mgcv labels a smooth "s(x)", "s(x):g<level>" for a level of a by-factor and
+	// "s(g):x" for a numeric by-variable (a random slope with bs = "re").
+	for (auto &st : f.smooth)
+	{
+		const VarDesc *x = plan.var(str(st.variable));
+		std::string p = "s(" + x->name + ")", r = "s(" + x->rname + ")";
+		const VarDesc *by = st.has_by() ? plan.var(str(st.by)) : nullptr;
+		if (!by)
+			plan.smooths.push_back({p, r, x->name});
+		else if (by->numeric)
+			plan.smooths.push_back({p + ":" + by->name, r + ":" + by->rname, x->name});
+		else
+			for (auto &lv : by->levels)
+				plan.smooths.push_back({p + ":" + by->name + "[" + lv + "]", r + ":" + by->rname + lv, x->name + ":" + lv});
 	}
 	for (intptr_t k = 0; k < f.random.size(); k++)
 	{
@@ -619,6 +653,11 @@ Plan make_plan(const Model &model, const DataTable &data, const ExportROptions &
 	for (auto &rt : f.random)
 		for (auto &t : rt.slopes)
 			for (auto &v : t.variables) add_predictor(v);
+	for (auto &st : f.smooth)
+	{
+		add_predictor(st.variable);
+		if (st.has_by()) add_predictor(st.by);
+	}
 	for (auto &rt : f.random)
 		for (auto &g : split_group(rt.group, rt.is_synthetic_group))
 			add_var(plan.vars, data, g).grouping = true;
@@ -718,9 +757,16 @@ Plan make_plan(const Model &model, const DataTable &data, const ExportROptions &
 		fail(std::string("The random effects of this model do not match its formula.") + stale_data_hint);
 	compute_names(plan);
 
-	bool names_ok = static_cast<intptr_t>(plan.fixed.size()) == model.coef_names.size();
+	// A GAM's coefficients are the parametric ones, then the smooths' basis
+	// coefficients ("s(duration).1", ...), which are not compared.
+	intptr_t n_basis = 0;
+	for (auto &sm : model.smooth_terms) n_basis += sm.col_count;
+	bool names_ok = static_cast<intptr_t>(plan.fixed.size()) + n_basis == model.coef_names.size() &&
+	                model.beta.size() == model.coef_names.size() && model.se.size() == model.coef_names.size();
 	for (size_t i = 0; names_ok && i < plan.fixed.size(); i++)
 		names_ok = plan.fixed[i].phon == str(model.coef_names[i]);
+	for (intptr_t i = static_cast<intptr_t>(plan.fixed.size()); names_ok && i < model.coef_names.size(); i++)
+		names_ok = str(model.coef_names[i]).compare(0, 2, "s(") == 0;
 	if (!names_ok)
 		fail(std::string("The fixed-effect coefficients of this model do not match its formula and data.") +
 		     stale_data_hint);
@@ -738,7 +784,14 @@ Plan make_plan(const Model &model, const DataTable &data, const ExportROptions &
 			     stale_data_hint);
 	}
 
-	plan.student_scaled = model.family == "student";
+	bool smooths_ok = static_cast<intptr_t>(plan.smooths.size()) == model.smooth_terms.size() &&
+	                  model.smooth_log_lambda.size() == model.smooth_terms.size();
+	for (size_t i = 0; smooths_ok && i < plan.smooths.size(); i++)
+		smooths_ok = plan.smooths[i].phon_variable == str(model.smooth_terms[i].variable);
+	if (!smooths_ok)
+		fail(std::string("The smooth terms of this model do not match its formula and data.") + stale_data_hint);
+
+	plan.student_scaled = model.family == "student" && plan.engine != Engine::Gam;
 	return plan;
 }
 
@@ -797,8 +850,21 @@ std::string phon_version()
 #endif
 }
 
+// Does Phonometrica (and hence the script) select a GAM's smoothing parameters
+// by REML? Negative binomial, beta and Student t GAMs always are, with their
+// extra parameter estimated jointly; otherwise only on request.
+bool gam_reml(const Model &m)
+{
+	return m.method == Method::REML || m.family == "negbin" || m.family == "beta" || m.family == "student";
+}
+
 std::string method_label(const Model &m)
 {
+	if (m.has_smooth_terms())
+	{
+		if (gam_reml(m)) return "REML";
+		return m.family == "gaussian" ? "GCV" : "UBRE";
+	}
 	return m.method == Method::REML ? "REML" : "ML";
 }
 
@@ -833,54 +899,66 @@ struct Export
 			if (c.name == name) return &c;
 		return nullptr;
 	}
-	bool any_glmmtmb() const
+	bool any_engine(Engine e) const
 	{
 		for (auto &p : plans)
-			if (p.engine == Engine::GlmmTMB) return true;
+			if (p.engine == e) return true;
 		return false;
 	}
+	bool any_glmmtmb() const { return any_engine(Engine::GlmmTMB); }
+	bool any_gam() const { return any_engine(Engine::Gam); }
 };
 
 // glmmTMB (checked on 1.1.13) cannot fit a random slope whose variable has a
 // non-syntactic name: it stops with "fnames == names(mf) is not TRUE",
-// although such names work in the fixed part and as grouping factors. Those
+// although such names work in the fixed part and as grouping factors. mgcv
+// (checked on 1.9-3) rejects a non-syntactic name anywhere in a formula with
+// smooth terms (interpret.gam parses the names back with str2lang). Those
 // variables get a syntactic alias, used for the variable everywhere in that
-// model's R formula so that the fixed and random parts still refer to the
-// same column. Aliases are chosen once for the whole export, so that a
-// column has the same alias in every model.
+// model's R formula so that all its parts still refer to the same column.
+// Aliases are chosen once for the whole export, so that a column has the same
+// alias in every model.
 void apply_aliases(Export &ex)
 {
 	std::set<std::string> taken;
 	for (auto &c : ex.columns) taken.insert(c.name);
 	for (auto &plan : ex.plans)
 	{
-		if (plan.engine != Engine::GlmmTMB) continue;
-		for (auto &rt : plan.formula.random)
-			for (auto &t : rt.slopes)
-				for (auto &v : t.variables)
-				{
-					Column *c = ex.column(str(v));
-					if (!c || !c->alias.empty() || r_name(c->name) == c->name) continue;
-					std::string a;
-					for (unsigned char ch : c->name)
-					{
-						bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-						          ch == '.' || ch == '_';
-						if (ok) a += static_cast<char>(ch);
-						else if (a.empty() || a.back() != '_') a += '_';
-					}
-					if (a.empty() || !((a[0] >= 'a' && a[0] <= 'z') || (a[0] >= 'A' && a[0] <= 'Z'))) a = "x_" + a;
-					std::string base = a;
-					for (int k = 2; taken.count(a) || r_name(a) != a; k++) a = base + "_" + std::to_string(k);
-					taken.insert(a);
-					c->alias = a;
-				}
+		std::vector<std::string> need;
+		if (plan.engine == Engine::GlmmTMB)
+		{
+			for (auto &rt : plan.formula.random)
+				for (auto &t : rt.slopes)
+					for (auto &v : t.variables) need.push_back(str(v));
+		}
+		else if (plan.engine == Engine::Gam)
+		{
+			for (auto &v : plan.vars) need.push_back(v.name);
+		}
+		for (auto &name : need)
+		{
+			Column *c = ex.column(name);
+			if (!c || !c->alias.empty() || r_name(c->name) == c->name) continue;
+			std::string a;
+			for (unsigned char ch : c->name)
+			{
+				bool ok = (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
+				          ch == '.' || ch == '_';
+				if (ok) a += static_cast<char>(ch);
+				else if (a.empty() || a.back() != '_') a += '_';
+			}
+			if (a.empty() || !((a[0] >= 'a' && a[0] <= 'z') || (a[0] >= 'A' && a[0] <= 'Z'))) a = "x_" + a;
+			std::string base = a;
+			for (int k = 2; taken.count(a) || r_name(a) != a; k++) a = base + "_" + std::to_string(k);
+			taken.insert(a);
+			c->alias = a;
+		}
 	}
 
-	// Rename aliased variables in each glmmTMB model's R formula and names.
+	// Rename aliased variables in each glmmTMB or mgcv model's R formula and names.
 	for (auto &plan : ex.plans)
 	{
-		if (plan.engine != Engine::GlmmTMB) continue;
+		if (plan.engine != Engine::GlmmTMB && plan.engine != Engine::Gam) continue;
 		bool changed = false;
 		for (auto &v : plan.vars)
 		{
@@ -893,14 +971,26 @@ void apply_aliases(Export &ex)
 			}
 		}
 		if (!changed) continue;
+		auto rename_one = [&](String &name) {
+			if (auto *v = plan.var(str(name)); v && !v->alias.empty()) name = String(v->alias.c_str());
+		};
 		auto rename = [&](Array<FixedTerm> &terms) {
 			for (auto &t : terms)
-				for (auto &name : t.variables)
-					if (auto *v = plan.var(str(name)); v && !v->alias.empty()) name = String(v->alias.c_str());
+				for (auto &name : t.variables) rename_one(name);
 		};
 		plan.r_formula = plan.formula;
 		rename(plan.r_formula.fixed);
 		for (auto &rt : plan.r_formula.random) rename(rt.slopes);
+		if (plan.engine == Engine::Gam)
+		{
+			rename_one(plan.r_formula.response);
+			for (auto &st : plan.r_formula.smooth)
+			{
+				rename_one(st.variable);
+				if (st.has_by()) rename_one(st.by);
+			}
+			if (plan.r_formula.has_offset()) rename_one(plan.r_formula.offset);
+		}
 		compute_names(plan);
 	}
 }
@@ -1045,6 +1135,12 @@ std::vector<EstRow> make_estimates(const Plan &plan)
 			rows.push_back({"varcomp", term, key, "sd", std::sqrt(grp.variance[t])});
 		}
 	}
+	for (size_t i = 0; i < plan.smooths.size(); i++)
+	{
+		const auto &sm = plan.smooths[i];
+		rows.push_back({"smooth", sm.phon, sm.r, "edf", m.smooth_terms[i].edf});
+		rows.push_back({"smooth", sm.phon, sm.r, "log10_sp", m.smooth_log_lambda[i]});
+	}
 	if (m.family == "gaussian")
 		rows.push_back({"dispersion", "sd(residual)", "dispersion", "sigma", m.rse});
 	else if (m.family == "negbin")
@@ -1058,8 +1154,14 @@ std::vector<EstRow> make_estimates(const Plan &plan)
 	}
 	rows.push_back({"fit", "n", "fit", "nobs", static_cast<double>(m.nobs)});
 	rows.push_back({"fit", "log-likelihood", "fit", "loglik", m.loglik});
-	rows.push_back({"fit", "AIC", "fit", "aic", m.aic});
-	rows.push_back({"fit", "BIC", "fit", "bic", m.bic});
+	// mgcv's AIC and BIC of a REML fit count edf2, the EDF corrected for
+	// smoothing-parameter uncertainty (Wood, Pya & Saefken 2016), which
+	// Phonometrica does not compute: they are not comparable.
+	if (plan.engine != Engine::Gam || !gam_reml(m))
+	{
+		rows.push_back({"fit", "AIC", "fit", "aic", m.aic});
+		rows.push_back({"fit", "BIC", "fit", "bic", m.bic});
+	}
 	return rows;
 }
 
@@ -1137,6 +1239,7 @@ std::string engine_name(Engine e)
 		case Engine::Lm: return "lm()";
 		case Engine::Glm: return "glm()";
 		case Engine::GlmmTMB: return "glmmTMB()";
+		case Engine::Gam: return "mgcv::gam()";
 	}
 	return "";
 }
@@ -1197,16 +1300,24 @@ std::string make_model_block(const Export &ex, size_t k, const ExportROptions &o
 		if (!v.alias.empty()) aliases += col_ref(df, v.alias) + " <- " + col_ref(df, v.name) + "\n";
 	if (!aliases.empty())
 	{
-		out += "# glmmTMB cannot fit a random slope on a column whose name is not a syntactic R\n";
-		out += "# name (it stops with \"fnames == names(mf) is not TRUE\"), so the formula uses a\n";
-		out += "# copy under a syntactic name.\n";
+		if (plan.engine == Engine::Gam)
+		{
+			out += "# mgcv cannot read a formula with smooth terms that refers to a column whose name\n";
+			out += "# is not a syntactic R name, so the formula uses a copy under a syntactic name.\n";
+		}
+		else
+		{
+			out += "# glmmTMB cannot fit a random slope on a column whose name is not a syntactic R\n";
+			out += "# name (it stops with \"fnames == names(mf) is not TRUE\"), so the formula uses a\n";
+			out += "# copy under a syntactic name.\n";
+		}
 		out += aliases;
 	}
 	out += "\n";
 
 	std::string r_formula = str(plan.r_formula.to_r_string());
 	const bool compare = opts.include_comparison;
-	std::string beta_e, se_e, sd_e = "numeric(0)", disp_e = "numeric(0)", fit_e, conv_e, tol_e;
+	std::string beta_e, se_e, sd_e = "numeric(0)", disp_e = "numeric(0)", fit_e, conv_e, tol_e, smooth_e;
 
 	if (plan.student_scaled)
 	{
@@ -1248,6 +1359,34 @@ std::string make_model_block(const Export &ex, size_t k, const ExportROptions &o
 		disp_e = "c(sigma = .sigma, nu = .nu)";
 		fit_e = "c(nobs = nobs(" + mod + "), loglik = .loglik, aic = AIC(" + mod + ") + 2 * nobs(" + mod +
 		        ") * log(.s),\n              bic = BIC(" + mod + ") + 2 * nobs(" + mod + ") * log(.s))";
+	}
+	else if (plan.engine == Engine::Gam)
+	{
+		const bool reml = gam_reml(m);
+		const std::string sum = "s" + idx;
+		if (reml && m.method != Method::REML)
+			out += "# Phonometrica always selects the smoothing parameters of a " + str(m.family) +
+			       " GAM by REML,\n# estimating the family's extra parameter jointly, as mgcv does.\n";
+		else if (!reml)
+			out += std::string("# method = \"GCV.Cp\" is GCV for a Gaussian model and UBRE (Mallows' Cp) for a\n") +
+			       "# family with a known scale, as in Phonometrica.\n";
+		out += mod + " <- gam(" + r_formula + ",\n";
+		out += std::string(mod.size() + 8, ' ') + "data = " + df + ", family = " + plan.fam->mgcv +
+		       ", method = " + (reml ? "\"REML\"" : "\"GCV.Cp\"") + ")\n";
+		out += sum + " <- summary(" + mod + ")\n";
+		out += "print(" + sum + ")\n";
+		out += "print(logLik(" + mod + "))\n";
+		beta_e = "setNames(" + sum + "$p.table[, \"Estimate\"], rownames(" + sum + "$p.table))";
+		se_e = "setNames(" + sum + "$p.table[, \"Std. Error\"], rownames(" + sum + "$p.table))";
+		if (m.family == "gaussian") disp_e = "c(sigma = sqrt(" + mod + "$sig2))";
+		else if (m.family == "negbin") disp_e = "c(theta = " + mod + "$family$getTheta(TRUE))";
+		else if (m.family == "beta") disp_e = "c(phi = " + mod + "$family$getTheta(TRUE))";
+		else if (m.family == "student")
+			disp_e = "setNames(" + mod + "$family$getTheta(TRUE)[c(2, 1)], c(\"sigma\", \"nu\"))";
+		fit_e = "c(nobs = length(" + mod + "$y), loglik = as.numeric(logLik(" + mod + "))";
+		if (!reml) fit_e += ", aic = AIC(" + mod + "), bic = BIC(" + mod + ")";
+		fit_e += ")";
+		smooth_e = ".smooths(" + mod + ")";
 	}
 	else if (plan.engine == Engine::Lm)
 	{
@@ -1294,6 +1433,10 @@ std::string make_model_block(const Export &ex, size_t k, const ExportROptions &o
 			conv_e = "isTRUE(" + mod + "$fit$convergence == 0) && isTRUE(" + mod + "$sdr$pdHess)";
 			tol_e = mixed ? ".tol_mixed" : ".tol_laplace";
 			break;
+		case Engine::Gam:
+			conv_e = ".gam_converged(" + mod + ")";
+			tol_e = ".tol_gam";
+			break;
 	}
 	std::string note = "NULL";
 	if (!m.well_identified)
@@ -1306,6 +1449,7 @@ std::string make_model_block(const Export &ex, size_t k, const ExportROptions &o
 	out += "    sd = " + sd_e + ",\n";
 	out += "    disp = " + disp_e + ",\n";
 	out += "    fit = " + fit_e + ",\n";
+	if (!smooth_e.empty()) out += "    smooth = " + smooth_e + ",\n";
 	out += "    tol = " + tol_e + ", converged = " + conv_e + ",\n";
 	out += "    weak = " + note + ")\n";
 	return out;
@@ -1341,6 +1485,12 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "library(glmmTMB)\n";
 		out += "if (packageVersion(\"glmmTMB\") < \"1.1.8\")\n";
 		out += "    warning(\"This script was generated for glmmTMB >= 1.1.8.\")\n";
+	}
+	if (ex.any_gam())
+	{
+		out += "library(mgcv)\n";
+		out += "if (packageVersion(\"mgcv\") < \"1.9\")\n";
+		out += "    warning(\"This script was generated for mgcv >= 1.9.\")\n";
 	}
 
 	// ── Data ─────────────────────────────────────────────────────────
@@ -1422,8 +1572,39 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "# An estimate also agrees if it differs by at most 2% of its standard error: a\n";
 		out += "# coefficient close to zero can differ by much more than 2% of its value while the\n";
 		out += "# two programs agree on everything that matters for inference.\n";
+		if (ex.any_gam())
+		{
+			out += "# GAMs: both programs select the smoothing parameters numerically. EDFs are on the\n";
+			out += "# scale of max(1, |EDF|), log10(smoothing parameter) on the scale of max(1, |log10|).\n";
+			out += ".tol_gam <- c(estimate = 2e-3, se = 5e-3, sigma = 1e-3, theta = 1e-2, phi = 1e-2,\n";
+			out += "              nu = 1e-2, edf = 1e-2, log10_sp = 1e-2, nobs = 0, loglik = 1e-4, aic = 1e-4,\n";
+			out += "              bic = 1e-4)\n";
+		}
 		out += ".tol_in_se <- 0.02\n\n";
-		out += ".compare <- function(model, label, beta, se, sd, disp, fit, tol, converged, weak = NULL) {\n";
+		if (ex.any_gam())
+		{
+			out += "# EDF and log10(smoothing parameter) of each smooth of a GAM, keyed by mgcv's label.\n";
+			out += "# `flat`: the smooth sits in its penalty null space (EDF within 0.01 of the null\n";
+			out += "# space dimension: a straight line for bs = \"cr\", a zero variance for bs = \"re\"),\n";
+			out += "# or the smoothing parameter is above 1e8. Any large value then gives the same fit,\n";
+			out += "# so the smoothing parameter is not identified and is not compared.\n";
+			out += ".smooths <- function(m) {\n";
+			out += "    lab <- vapply(m$smooth, function(s) s$label, \"\")\n";
+			out += "    edf <- vapply(m$smooth, function(s) sum(m$edf[s$first.para:s$last.para]), 0)\n";
+			out += "    sp <- vapply(m$smooth, function(s) log10(m$sp[[s$first.sp]]), 0)\n";
+			out += "    nsd <- vapply(m$smooth, function(s) as.numeric(s$null.space.dim), 0)\n";
+			out += "    data.frame(key = lab, edf = edf, log10_sp = sp, flat = edf - nsd < 0.01 | sp > 8)\n";
+			out += "}\n\n";
+			out += "# A GAM fit has converged if both the coefficients (inner iteration) and the\n";
+			out += "# smoothing parameters (outer Newton iteration, or magic() for a Gaussian GCV fit) have.\n";
+			out += ".gam_converged <- function(m) {\n";
+			out += "    outer <- if (is.null(m$outer.info)) isTRUE(m$mgcv.conv$fully.converged)\n";
+			out += "             else identical(m$outer.info$conv, \"full convergence\")\n";
+			out += "    isTRUE(m$converged) && outer\n";
+			out += "}\n\n";
+		}
+		out += ".compare <- function(model, label, beta, se, sd, disp, fit, tol, converged, weak = NULL,\n";
+		out += "                     smooth = NULL) {\n";
 		out += "    r <- rbind(\n";
 		out += "        data.frame(key = .canon(names(beta)), quantity = \"estimate\", R = unname(beta)),\n";
 		out += "        data.frame(key = .canon(names(se)), quantity = \"se\", R = unname(se)),\n";
@@ -1432,6 +1613,9 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "        data.frame(key = rep(\"dispersion\", length(disp)), quantity = as.character(names(disp)),\n";
 		out += "                   R = unname(disp)),\n";
 		out += "        data.frame(key = \"fit\", quantity = names(fit), R = unname(fit)))\n";
+		out += "    if (!is.null(smooth))\n";
+		out += "        r <- rbind(r, data.frame(key = smooth$key, quantity = \"edf\", R = smooth$edf),\n";
+		out += "                   data.frame(key = smooth$key, quantity = \"log10_sp\", R = smooth$log10_sp))\n";
 		out += "    ref <- .ref[.ref$model == model, ]\n";
 		out += "    i <- match(paste(ref$key, ref$quantity, sep = \"\\r\"), paste(r$key, r$quantity, sep = \"\\r\"))\n";
 		out += "    out <- data.frame(model = model, label = label, term = ref$term, quantity = ref$quantity,\n";
@@ -1445,8 +1629,11 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "    close <- abs(out$rel.difference) <= tol[out$quantity] + 1e-12\n";
 		out += "    tiny <- out$quantity == \"estimate\" & abs(out$diff.in.se) <= .tol_in_se\n";
 		out += "    ok <- (!is.na(close) & close) | (!is.na(tiny) & tiny)\n";
+		out += "    # A smoothing parameter that is not identified (see .smooths) is not compared.\n";
+		out += "    flat <- out$quantity == \"log10_sp\" &\n";
+		out += "        (ref$key %in% smooth$key[smooth$flat] | (!is.na(out$phonometrica) & out$phonometrica > 8))\n";
 		out += "    out$status <- ifelse(is.na(i), \"not in R\", ifelse(is.na(out$R), \"NA in R\",\n";
-		out += "                  ifelse(ok, \"ok\", \"CHECK\")))\n";
+		out += "                  ifelse(ok, \"ok\", ifelse(flat, \"flat\", \"CHECK\"))))\n";
 		out += "    out$converged <- converged\n";
 		out += "    cat(\"\\n==== \", label, \": Phonometrica vs R ====\\n\\n\", sep = \"\")\n";
 		out += "    if (!converged)\n";
@@ -1481,8 +1668,10 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += ")\n";
 		out += "cat(\"\\n==== Summary: Phonometrica vs R ====\\n\\n\")\n";
 		out += "print(do.call(rbind, lapply(split(cmp, factor(cmp$model, levels = unique(cmp$model))),\n";
-		out += "    function(x) data.frame(model = x$label[1], values = nrow(x), ok = sum(x$status == \"ok\"),\n";
-		out += "                           check = sum(x$status != \"ok\"), R.converged = x$converged[1]))),\n";
+		out += "    function(x) data.frame(model = x$label[1], values = nrow(x),\n";
+		out += "                           ok = sum(x$status %in% c(\"ok\", \"flat\")),\n";
+		out += "                           check = sum(!x$status %in% c(\"ok\", \"flat\")),\n";
+		out += "                           R.converged = x$converged[1]))),\n";
 		out += "    row.names = FALSE)\n";
 		out += "cat(\"\\nrel.difference is relative to max(1, |R|); diff.in.se is the difference between the\\n\",\n";
 		out += "    \"estimates in units of R's standard error, and an estimate within 0.02 SE counts as\\n\",\n";
@@ -1491,6 +1680,12 @@ std::string make_fit_r(const Export &ex, const ExportROptions &opts)
 		out += "    \"different Laplace implementations, so log-likelihoods may differ in the second\\n\",\n";
 		out += "    \"decimal; random-effect SDs are the most sensitive quantity. The data frame `cmp`\\n\",\n";
 		out += "    \"holds every comparison.\\n\", sep = \"\")\n";
+		if (ex.any_gam())
+		{
+			out += "cat(\"\\nGAMs: \\\"flat\\\" marks a smoothing parameter that is not identified (the smooth is\\n\",\n";
+			out += "    \"a straight line, or a zero variance for bs = \\\"re\\\"), so any large value gives the\\n\",\n";
+			out += "    \"same fit; it is not a disagreement. See README.txt about by-factor smooths.\\n\", sep = \"\")\n";
+		}
 		if (!ex.skipped.empty())
 		{
 			out += "cat(\"\\nNot exported:\\n\")\n";
@@ -1544,6 +1739,8 @@ std::string make_readme(const Export &ex, const ExportROptions &opts)
 	out += "The script must run with this folder as its working directory.\n";
 	if (ex.any_glmmtmb())
 		out += "It needs the glmmTMB package (install.packages(\"glmmTMB\")), version 1.1.8 or later.\n";
+	if (ex.any_gam())
+		out += "It needs the mgcv package (installed with R), version 1.9 or later.\n";
 	out += "Each model has its own block in fit.R, which you can copy and run on its own after\n";
 	out += "the \"Data\" section.\n\n";
 
@@ -1568,6 +1765,39 @@ std::string make_readme(const Export &ex, const ExportROptions &opts)
 		out += "estimates back, because glmmTMB's t_family does not converge reliably on a\n";
 		out += "response in its original units (e.g. Hz). Student t is a location-scale family,\n";
 		out += "so this is exact; nu is unchanged by the transform.\n\n";
+	}
+
+	if (ex.any_gam())
+	{
+		out += "About GAMs\n----------\n\n";
+		out += "Models with smooth terms are fitted with mgcv::gam(). Each smooth is written with\n";
+		out += "its basis spelled out (s(x) is a cubic regression spline, bs = \"cr\", in\n";
+		out += "Phonometrica but a thin plate spline in mgcv), so that both programs use the same\n";
+		out += "basis, constraint and penalty scaling. The smoothing parameters are selected by\n";
+		out += "GCV (Gaussian) or UBRE (Poisson, binomial) -- method = \"GCV.Cp\" in mgcv -- or by\n";
+		out += "REML when the model was fitted with REML. Negative binomial, beta and Student t\n";
+		out += "GAMs are always fitted by REML, with theta, phi or sigma and nu estimated jointly.\n\n";
+		out += "The comparison covers the parametric coefficients and their standard errors, the\n";
+		out += "effective degrees of freedom (EDF) and log10(smoothing parameter) of each smooth\n";
+		out += "(one per level of the by-variable of a by-factor smooth), the log-likelihood and\n";
+		out += "the family's extra parameters. Phonometrica writes a smooth's coefficients\n";
+		out += "differently (\"s(duration):a.1\" where mgcv writes \"s(duration):vowela.1\"); they\n";
+		out += "are not compared one by one, since the EDF and smoothing parameter summarize them.\n";
+		out += "AIC and BIC are compared for GCV/UBRE fits only: for a REML fit, mgcv counts\n";
+		out += "edf2, an EDF corrected for smoothing-parameter uncertainty, which Phonometrica\n";
+		out += "does not compute.\n\n";
+		out += "A smoothing parameter marked \"flat\" is not identified: the smooth is a straight\n";
+		out += "line (or, for bs = \"re\", has zero variance), and any large value gives the same\n";
+		out += "fit. The EDF is still compared.\n\n";
+		out += "When the selection criterion is nearly flat, the two programs can stop at\n";
+		out += "different smoothing parameters. This happens most with by-factor smooths, which\n";
+		out += "have one smoothing parameter per level: for a level with little curvature, GCV or\n";
+		out += "UBRE can change very little over a wide range of values, and mgcv's Newton\n";
+		out += "iteration may stop before the minimum Phonometrica finds (or the reverse). The EDF\n";
+		out += "and smoothing parameter of that level then differ although both fits are valid,\n";
+		out += "and the other levels and smooths should still agree. To see which solution is\n";
+		out += "better, refit in R with Phonometrica's smoothing parameters (sp = 10^log10_sp in\n";
+		out += "gam(), from phonometrica_estimates.csv) and compare the criterion, m$gcv.ubre.\n\n";
 	}
 
 	if (opts.include_comparison)
@@ -1598,9 +1828,6 @@ String r_export_blocker(const Model &model)
 	if (model.is_bayesian())
 		return "Bayesian fits cannot be exported to R. Refit with frequentist estimation to export, "
 		       "or see the documentation on checking Bayesian results.";
-	if (model.has_smooth_terms())
-		return "Models with smooth terms cannot be exported to R yet: the export does not generate "
-		       "mgcv::gam() scripts.";
 	auto *fam = find_family(model.family);
 	if (!fam)
 		return String::format("The '%s' family cannot be exported to R.", model.family.data());
@@ -1619,9 +1846,13 @@ String r_export_blocker(const Model &model)
 	{
 		return String::format("The model's formula cannot be read: %s", e.what());
 	}
-	if (f.has_smooth_terms())
-		return "Models with smooth terms cannot be exported to R yet: the export does not generate "
-		       "mgcv::gam() scripts.";
+	if (f.has_smooth_terms() != model.has_smooth_terms())
+		return "The smooth terms of this model do not match its formula. Refit it to export it to R.";
+	if (f.has_smooth_terms() && f.has_random_effects())
+		return "Models with both smooth terms and (1 | group) random effects cannot be exported to R.";
+	if (model.has_smooth_terms() && model.smooth_log_lambda.size() != model.smooth_terms.size())
+		return "This model was saved by an older version of Phonometrica that did not record its smoothing "
+		       "parameters. Refit it to export it to R.";
 
 	auto msg = formula_coding_blocker(f, [&](const std::string &v) { return model_says_categorical(model, v); });
 	if (!msg.empty()) return String(msg.c_str());
