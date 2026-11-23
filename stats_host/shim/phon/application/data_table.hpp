@@ -69,6 +69,13 @@ public:
 	// integral -> integer form, else the double's default conversion.
 	void add_numeric_column(const String &name, const double *values, intptr_t n);
 
+	// Give a column-less table `n` empty rows, so columns can then be added
+	// (the real Dataset::create_empty). No-op on a table that has columns.
+	void set_row_count(intptr_t n)
+	{
+		if (m_labels.size() == 0) m_rows = Array<Array<String>>(n, Array<String>());
+	}
+
 private:
 	String m_path;
 	Array<String> m_labels;
@@ -81,6 +88,8 @@ private:
 struct Dataset final : DataTable
 {
 	using DataTable::DataTable;
+	Dataset() = default;
+	explicit Dataset(const DataTable &other) : DataTable(other) {}
 };
 
 } // namespace phonometrica

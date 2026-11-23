@@ -55,6 +55,7 @@ import test_negbin
 import test_beta
 import test_real_schwa
 import test_gam
+import test_gam_predict
 import test_nested
 
 # Real-corpus Student-t (monophtongues.csv). Last because it is the

@@ -435,6 +435,16 @@ As above, but with an ``options`` table that controls the output. All fields are
   prediction. The standard error treats the BLUPs as fixed (matching ``lme4``'s
   ``predict.merMod`` default behaviour); a future release will add an option to propagate
   ``u`` uncertainty into the interval.
+* ``re_smooths`` (``String``, default ``"all"``): which random-effect smooths
+  (``s(g, bs=re)`` and ``s(g, by=x, bs=re)``) of a GAM contribute to the prediction.
+
+  - ``"all"`` (default): all of them, as mgcv's ``predict.gam`` does. Each row gets the
+    random intercept (and slope) of its level of ``g``. A level that was not seen at fit
+    time gets a random effect of zero, i.e. the population-level prediction.
+  - ``"none"``: **population-level prediction**: every random-effect smooth is set to zero
+    (mgcv's ``exclude`` argument). ``newdata`` then needs no column for the grouping factor.
+  - A grouping-factor name (e.g. ``"speaker"``): only the random-effect smooths of that
+    factor.
 
 Example::
 
@@ -475,6 +485,25 @@ conditional mean including the BLUP contribution per group. With a non-default
 ``re_form`` (``"all"`` or a specific group name), the BLUPs are folded in and ``Fit`` on
 the response scale matches ``model.fitted`` at training rows.
 
+**GAMs.** Smooth terms are evaluated at the new values exactly as mgcv's ``predict.gam``
+does (validated against it to better than 1e-6 relative, standard errors included). Outside
+the range of the data, cubic regression splines continue linearly. For a by-factor smooth
+``s(x, by=group)``, each row gets the curve of its own level of ``group``; a level that was
+not seen at fit time cannot be predicted (``NaN``). Random-effect smooths are controlled by
+``re_smooths`` (see above). Note the difference in defaults with ``(1|group)`` mixed models:
+``re_form`` defaults to population-level prediction, whereas ``re_smooths``, like mgcv,
+includes the random effects.
+
+Example (by-factor smooth)::
+
+   var ds = load("formants.csv")
+   var m = fit("F2 ~ vowel + s(time, by=vowel) + s(speaker, bs=re)", ds)
+
+   # Population-level F2 trajectory of each vowel, on the link scale
+   var opts = {}
+   opts["re_smooths"] = "none"
+   var p = predict(m, ds, opts)
+
 **Bayesian models.** The same arithmetic produces the posterior mean of the predicted value
 and the posterior SD, because for Bayesian fits ``model.beta`` and ``model.vcov`` hold the
 posterior mean and posterior covariance respectively. The ``CI lower`` and ``CI upper``
@@ -484,11 +513,11 @@ does not need to branch on estimation type — the interpretation comes from the
 **Limitations.** The function refuses cleanly, with an explanatory error message, in the
 following cases:
 
-* Models with **by-factor smooths** (``s(x, by=...)``) or **random-effect smooths**
-  (``s(g, bs="re")``).
 * ``opts["type"] = "pi"`` or ``"both"``: prediction intervals are not yet implemented.
 * ``opts["re_form"]`` set to anything other than ``"none"``, ``"all"``, or the name of a
   random-effects group present in the fitted model.
+* ``opts["re_smooths"]`` set to anything other than ``"all"``, ``"none"``, or the grouping
+  factor of a random-effect smooth in the model.
 
 For visualizing predictions interactively, use the **Effects** tab in the analysis view
 (see :ref:`analysis-view`); it calls into ``predict()`` internally, including for

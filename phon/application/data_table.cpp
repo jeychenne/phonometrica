@@ -1716,7 +1716,7 @@ void DataTable::initialize(Runtime &rt)
 	//
 	// `predict(model)`                 at training rows (in-session only).
 	// `predict(model, newdata)`        at the rows of newdata (echoes columns).
-	// `predict(model, newdata, opts)`  opts: type / scale / bare / ci_level / re_form.
+	// `predict(model, newdata, opts)`  opts: type / scale / bare / ci_level / re_form / re_smooths.
 	// Adds "Fit", "SE fit", "CI lower", "CI upper" columns; registers the
 	// result Dataset under the project's Data folder.
 
@@ -1736,6 +1736,9 @@ void DataTable::initialize(Runtime &rt)
 		}
 		if (auto v = opts_tbl.get(key("re_form")); !v.is_null()) {
 			opts.re_form = v.to<String>();
+		}
+		if (auto v = opts_tbl.get(key("re_smooths")); !v.is_null()) {
+			opts.re_smooths = v.to<String>();
 		}
 		return opts;
 	};

@@ -42,6 +42,7 @@
 #include <phon/analysis/export_r.hpp>
 #include <phon/analysis/fitting.hpp>
 #include <phon/analysis/model.hpp>
+#include <phon/analysis/predict.hpp>
 #include <phon/analysis/prior.hpp>
 
 #include "printers.hpp"
@@ -762,6 +763,77 @@ void register_export(Runtime &rt)
 	                [](const stats::Model &m) -> String { return stats::r_export_blocker(m); });
 }
 
+// predict(model [, newdata [, options]]) -> Dataset: the app's predict()
+// natives (phon/application/data_table.cpp). The result echoes newdata's
+// columns (unless options.bare) and appends "Fit", "SE fit", "CI lower",
+// "CI upper". Headless there is no project to register the result in.
+stats::PredictOptions parse_predict_options(Isolate &iso, const Table &tab)
+{
+	stats::PredictOptions opts;
+	List keys = tab.keys();
+	for (intptr_t i = 1; i <= keys.size(); ++i) // List::get is 1-based
+	{
+		Variant k = keys.get(i);
+		String key = k.is<String>() ? k.to<String>() : String();
+		Variant v = tab.get(k);
+		if (key == "type")
+			opts.type = v.to<String>();
+		else if (key == "scale")
+			opts.scale = v.to<String>();
+		else if (key == "bare")
+			opts.bare = v.to<bool>();
+		else if (key == "ci_level")
+			opts.ci_level = v.to<double>();
+		else if (key == "re_form")
+			opts.re_form = v.to<String>();
+		else if (key == "re_smooths")
+			opts.re_smooths = v.to<String>();
+		else
+			iso.raise(String::format("[Value error] predict() options: unknown key \"%s\". "
+			                         "Supported keys: \"type\", \"scale\", \"bare\", "
+			                         "\"ci_level\", \"re_form\", \"re_smooths\".",
+			                         key.data()),
+			          0);
+	}
+	return opts;
+}
+
+Handle<Dataset> prediction_dataset(Isolate &iso, const stats::PredictResult &result,
+                                   const DataTable *echo)
+{
+	if (!result.ok)
+		iso.raise(String::format("predict(): %s", result.error.data()), 0);
+	auto ds = echo ? Handle<Dataset>::make(*echo) : Handle<Dataset>::make();
+	if (!echo)
+		ds->set_row_count(result.fit.size());
+	intptr_t n = result.fit.size();
+	ds->add_numeric_column(String("Fit"), result.fit.data(), n);
+	ds->add_numeric_column(String("SE fit"), result.se_fit.data(), n);
+	ds->add_numeric_column(String("CI lower"), result.ci_lower.data(), n);
+	ds->add_numeric_column(String("CI upper"), result.ci_upper.data(), n);
+	return ds;
+}
+
+void register_predict(Runtime &rt)
+{
+	rt.add_function("predict", [](Isolate &iso, const stats::Model &model) -> Handle<Dataset> {
+		stats::PredictOptions opts;
+		return prediction_dataset(iso, stats::predict_at_training(model, opts), nullptr);
+	});
+	rt.add_function("predict",
+	                [](Isolate &iso, const stats::Model &model, DataTable &newdata) -> Handle<Dataset> {
+		                stats::PredictOptions opts;
+		                return prediction_dataset(iso, stats::predict_at(model, newdata, opts), &newdata);
+	                });
+	rt.add_function("predict",
+	                [](Isolate &iso, const stats::Model &model, DataTable &newdata,
+	                   const Table &options) -> Handle<Dataset> {
+		                auto opts = parse_predict_options(iso, options);
+		                auto result = stats::predict_at(model, newdata, opts);
+		                return prediction_dataset(iso, result, opts.bare ? nullptr : &newdata);
+	                });
+}
+
 void register_bindings(Runtime &rt)
 {
 	register_classes(rt);
@@ -770,6 +842,7 @@ void register_bindings(Runtime &rt)
 	register_priors(rt);
 	register_model_fields(rt);
 	register_export(rt);
+	register_predict(rt);
 }
 
 } // namespace phonometrica::stats_host

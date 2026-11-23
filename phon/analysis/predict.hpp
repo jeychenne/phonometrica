@@ -22,7 +22,10 @@
  *            - Fixed-effects models, all six families.                                                                *
  *            - Mixed-effects models: population-level prediction (re_form = "none", default).                         *
  *              Conditional prediction (re_form = "all", using BLUPs) is deferred.                                     *
- *            - GAM smooths via persisted basis_data.                                                                  *
+ *            - GAM smooths via persisted basis_data. By-factor smooths s(x, by=f): each level's block is the shared   *
+ *              basis at x for rows of that level, zeros otherwise (an unseen level of f cannot be predicted).         *
+ *              Random-effect smooths s(g, bs="re") and s(g, by=z, bs="re"): always included, as in mgcv; an unseen   *
+ *              level of g gives the population-level prediction (random effect = 0), as predict.gam does.            *
  *            - Both Frequentist and Bayesian estimation. For Bayesian models, the same X·β / x'Vx arithmetic          *
  *              produces posterior mean and posterior SD because model.beta and model.vcov are populated with          *
  *              the posterior mean and posterior covariance (set by bayesian_adjust / mixture summaries). The          *
@@ -32,7 +35,6 @@
  *                                                                                                                     *
  *          Documented refusals (clear errors when invoked):                                                           *
  *            - re_form = "all" on a mixed-effects model: conditional prediction not yet implemented.                  *
- *            - By-factor smooths (s(x, by=f)) and re-smooths (s(g, bs="re")): not yet supported.                      *
  *            - type = "pi" or "both": prediction intervals deferred to a later release.                               *
  *                                                                                                                     *
  ***********************************************************************************************************************/
@@ -64,6 +66,18 @@ struct PredictOptions
 	//   "all"            — conditional on the BLUPs: deferred. Will refuse.
 	String re_form = "none";
 
+	// GAM random-effect smooths s(g, bs="re") [and s(g, by=z, bs="re")]:
+	// which ones contribute to the prediction.
+	//   "all" (default) — all of them, as mgcv's predict.gam does. A row
+	//                     whose level of g was not seen at fit time gets a
+	//                     zero random effect (population level).
+	//   "none"          — population-level prediction: every re smooth is
+	//                     set to zero (predict.gam's `exclude`). Their
+	//                     grouping and slope columns may be absent from
+	//                     newdata.
+	//   "<g>"           — only the re smooths whose grouping factor is g.
+	String re_smooths = "all";
+
 	// allow_new_levels: deferred (mixed-effects path is refused regardless)
 };
 
@@ -80,6 +94,23 @@ struct PredictResult
 	Array<double> ci_lower;  // CI lower bound (transformed to response scale if requested)
 	Array<double> ci_upper;  // CI upper bound (transformed to response scale if requested)
 };
+
+// How a Model::SmoothResult maps back onto the data: the covariate it is a
+// function of, and for a by-factor slice (s(x, by=f), one SmoothResult per
+// level of f) the level it belongs to. For a random-effect smooth
+// s(g, bs="re"), `variable` is the grouping factor and `by` the optional
+// numeric random-slope covariate.
+struct SmoothTermKey
+{
+	String variable;            // covariate (x), or grouping factor (g) for "re"
+	String by;                  // by-variable name, empty if none
+	String level;               // by-factor level of this slice, empty otherwise
+	bool random_effect = false; // bs="re"
+
+	bool is_by_factor() const { return !by.empty() && !random_effect; }
+};
+
+SmoothTermKey smooth_term_key(const Model::SmoothResult &sm);
 
 // Predict at training rows. Uses model.fitted, model.X, and model.vcov directly.
 // Available only in the same session that fit the model: model.X is not
