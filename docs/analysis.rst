@@ -31,7 +31,8 @@ a **top bar** for entering formulas, a **left panel** with column and model list
      fits, coefficients, EDF, smoothing parameters, dispersion parameters and the
      smooth-term tests of ``summary.gam`` agree to several digits. The AIC of REML fits omits
      ``mgcv``'s correction for smoothing-parameter uncertainty. GAMs are newer than the
-     regression models, though, so check results in ``mgcv`` before publishing.
+     regression models, though, so check results in ``mgcv`` before publishing: **Export to
+     R…** writes the ``mgcv::gam()`` script for you.
    * **Bayesian estimation** is checked against ``brms`` at the level of inferential
      equivalence: posterior means within a fraction of a posterior standard deviation,
      which is the right bar for comparing a Laplace/CCD approximation against HMC, but
@@ -70,12 +71,14 @@ report them.
    agree with mgcv to about 1e-4 when both programs select the same smoothing parameters; since
    a smooth's test depends on its λ, a smooth whose λ differs (see below) has a different
    statistic too. For confirmatory analyses where exact agreement with mgcv matters, refit the
-   model in mgcv. Spell out the basis there: Phonometrica's ``s(duration, k=8)`` is mgcv's
-   ``s(duration, bs = "cr", k = 8)``, whereas a bare ``s(duration)`` in mgcv is a thin plate
-   spline. With the basis spelled out, the two tools use the same basis, identifiability
-   constraint and penalty scaling, so log(λ) values are on the same scale; they can still differ
-   somewhat because the smoothing parameters are selected by a different algorithm. Export to R
-   does not handle models with smooth terms yet.
+   model in mgcv; **Export to R…** (see `Exporting an analysis to R`_) writes the script and
+   compares the two fits. If you write the R code yourself, spell out the basis: Phonometrica's
+   ``s(duration, k=8)`` is mgcv's ``s(duration, bs = "cr", k = 8)``, whereas a bare
+   ``s(duration)`` in mgcv is a thin plate spline. With the basis spelled out, the two tools use
+   the same basis, identifiability constraint and penalty scaling, so log(λ) values are on the
+   same scale; they can still differ when the selection criterion is nearly flat (most often
+   for one level of a by-factor smooth), because the smoothing parameters are selected by a
+   different algorithm.
    Smoothing parameters are selected by GCV (Gaussian) or UBRE (Poisson, binomial) by
    default, as with mgcv's default ``method = "GCV.Cp"``; pass ``{"fit_method": "REML"}`` to
    ``fit()`` to select them by REML instead, as with ``method = "REML"``. Negative binomial,
@@ -1251,6 +1254,7 @@ Phonometrica family            Random effects    R function
 ``negbin``                     either            ``glmmTMB(family = nbinom2)``
 ``beta``                       either            ``glmmTMB(family = beta_family)``
 ``student``                    either            ``glmmTMB(family = t_family)``
+any, with smooth terms         none, ``bs=re``   ``mgcv::gam()``
 =============================  ================  ======================================
 
 ``glmmTMB`` is used for the negative binomial, beta and Student-t families even without
@@ -1260,6 +1264,16 @@ same method as its mixed models. ``glmmTMB`` is then the like-for-like compariso
 Mixed models are always fitted with the method Phonometrica used (ML or REML), whatever R's
 default.
 
+Models with smooth terms (GAMs) are fitted with ``mgcv::gam()`` (``mgcv`` 1.9 or later, which
+comes with R), with the families ``gaussian()``, ``poisson()``, ``binomial()``, ``nb()``,
+``betar()`` and ``scat()``. Each smooth is written with its basis spelled out
+(``s(duration, bs = "cr", k = 8)``, ``s(speaker, bs = "re")``), so that both programs build
+the same basis, constraint and penalty. The script selects the smoothing parameters as
+Phonometrica did: ``method = "GCV.Cp"`` (GCV for Gaussian models, UBRE for Poisson and
+binomial) by default, and ``method = "REML"`` for a model fitted with REML and always for the
+negative binomial, beta and Student-t families, whose extra parameter both programs estimate
+jointly with the smoothing parameters.
+
 Models that cannot be exported are left out, and the export dialog lists them, with the
 reason, before anything is written; so do ``fit.R`` and the README. (If none of the models
 can be exported, the button is greyed out and its tooltip says why.) A model is left out
@@ -1268,9 +1282,6 @@ in the following cases:
 * **Bayesian fits.** No R package fits the same approximation with the same priors, so any
   script would agree on some quantities and not on others. That partial disagreement would
   be easy to misread as an error.
-* **Models with smooth terms.** The export does not generate ``mgcv`` scripts yet. To check a
-  GAM in R, refit it with ``mgcv::gam()``, spelling out the basis as described in the note on
-  GAMs above.
 * **Formulas that R would parameterize differently.** Phonometrica always codes a factor with
   treatment contrasts (one dummy variable per non-reference level). R does the same only
   when the formula is *hierarchical*. For example, in ``y ~ vowel:gender`` without
@@ -1300,7 +1311,8 @@ model specification, not from the estimation. ``fit.R`` rules these out explicit
 * It prints with ``print()``, so that output appears whether the script is run with
   ``Rscript``, ``source()`` or RStudio's **Source** button.
 * It keeps column names that are not valid R names (e.g. ``F1 (Hz)``), writing them between
-  backticks in the formula. ``glmmTMB`` cannot use such a name for a random slope, so the
+  backticks in the formula. ``glmmTMB`` cannot use such a name for a random slope, and
+  ``mgcv`` cannot use one anywhere in a formula with smooth terms, so in those cases the
   script uses a copy of that column under a valid name and says why.
 * For the Student-t family, it fits the model to a standardized response and transforms the
   estimates back, because ``glmmTMB`` does not converge on a response in Hz (see the note
@@ -1314,7 +1326,8 @@ For each model, the comparison lists each quantity, with Phonometrica's value, R
 and the difference relative to the larger of 1 and R's value. For a coefficient, it also gives
 the difference in units of R's standard error (``diff.in.se``), which is the scale on which a
 difference matters for inference. The **status** column reads ``ok`` when the two agree within
-the tolerance expected for this kind of model, and ``CHECK`` when they do not. A coefficient
+the tolerance expected for this kind of model, and ``CHECK`` when they do not (GAMs add
+``flat``, see below). A coefficient
 always counts as agreeing when the two estimates are within 0.02 standard errors of each other:
 for a coefficient close to zero this can be a large *relative* difference, but it changes
 nothing about the conclusions.
@@ -1326,6 +1339,24 @@ nothing about the conclusions.
   and standard errors should agree to several significant digits. Log-likelihoods for
   non-Gaussian mixed models may differ in the second decimal. Random-effect standard
   deviations are the most sensitive quantity.
+* For a GAM, the comparison covers the parametric coefficients and their standard errors,
+  the effective degrees of freedom (EDF) and log10(smoothing parameter) of each smooth (one
+  per level of a by-factor smooth), the log-likelihood and the family's extra parameters
+  (σ, θ, φ, or σ and ν). The coefficients of the smooths' bases are not compared one by one:
+  the EDF and smoothing parameter summarize them, and the two programs name them differently
+  (``s(duration):a.1`` in Phonometrica, ``s(duration):vowela.1`` in ``mgcv``). AIC and BIC
+  are compared for GCV/UBRE fits only, because for a REML fit ``mgcv`` counts an EDF
+  corrected for smoothing-parameter uncertainty, which Phonometrica does not compute.
+
+  A smoothing parameter is marked ``flat`` rather than ``ok`` or ``CHECK`` when it is not
+  identified: the smooth is a straight line (or, for ``bs=re``, has zero variance), and any
+  large value gives the same fit; its EDF is still compared. More generally, when the
+  selection criterion is nearly flat over a range of values, the two programs can stop at
+  different smoothing parameters. This happens most often for one level of a by-factor
+  smooth, which has its own smoothing parameter: the EDF and smoothing parameter of that
+  level then differ although both fits are valid, and the other smooths still agree. To see
+  which solution is better, refit in R with Phonometrica's smoothing parameters (``sp =``
+  in ``gam()``) and compare the criterion, ``m$gcv.ubre``.
 * If R reports that its own fit did not converge, the script says so for that model: the differences then
   reflect R's fit, not Phonometrica's. This typically happens when a random-effect standard
   deviation is at or near zero. If Phonometrica itself flagged the model as weakly identified,

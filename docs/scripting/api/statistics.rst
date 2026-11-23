@@ -144,8 +144,9 @@ fitted on ``data``. Writes ``folder`` (created if needed; files of the same name
 overwritten) with:
 
 * ``data.csv``: every row and column used by at least one model;
-* ``fit.R``: an R script with one block per model, which fits it with ``lm()``, ``glm()``
-  or ``glmmTMB()`` depending on the family (on exactly the rows Phonometrica used) and
+* ``fit.R``: an R script with one block per model, which fits it with ``lm()``, ``glm()``,
+  ``glmmTMB()`` or, for a model with smooth terms, ``mgcv::gam()`` (on exactly the rows
+  Phonometrica used) and
   prints Phonometrica's and R's estimates side by side, followed by a summary;
 * ``phonometrica_estimates.csv``: Phonometrica's estimates, read by ``fit.R``;
 * ``README.txt``: what the files are and how to read the comparison.
@@ -180,8 +181,8 @@ comparison.
 .. function:: r_export_blocker(model)
 
 Returns an empty string if :func:`export_r` can export ``model``, and otherwise the
-reason it cannot (e.g. a Bayesian fit, smooth terms, or a formula that R would
-parameterize differently).
+reason it cannot (e.g. a Bayesian fit, or a formula that R would parameterize
+differently).
 
 ------------
 

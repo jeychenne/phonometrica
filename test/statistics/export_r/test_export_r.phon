@@ -26,10 +26,14 @@
 #   - Student t on a Hz-scale response (student_f1_robust.csv), which
 #     exercises the standardize-and-back-transform path. Testing only an
 #     already-standardized response would leave that path unexercised.
+#   - GAMs (mgcv::gam): GCV, UBRE, REML, the extended families, a
+#     by-factor smooth, bs=re smooths (intercepts, and slopes whose
+#     variance is shrunk to zero, so their λ is not identified), and
+#     non-syntactic names, which mgcv cannot read at all.
 #
 # Negative cases are checked here directly: r_export_blocker() must
-# refuse Bayesian fits, GAMs and non-hierarchical formulas, and
-# export_r() must raise on them.
+# refuse Bayesian fits and non-hierarchical formulas, and export_r()
+# must raise on them.
 # =====================================================================
 
 import stat_assert
@@ -168,6 +172,51 @@ var refs_sl = {"study phase": "late (5-9)"}
 export_case("odd_slope_numeric", fit("Reaction ~ 'days since start' + (1 + 'days since start' | Subject)", sl), sl, {})
 export_case("odd_slope_categorical", fit("Reaction ~ 'days since start' + (1 + 'study phase' | Subject)", sl, "gaussian", {"reference_levels": refs_sl}), sl, {"reference_levels": refs_sl})
 
+# ── GAMs (mgcv::gam) ─────────────────────────────────────────────────
+# Datasets and models from test/statistics/frequentist/test_gam.phon.
+var gam = load(data_path("gam_test.csv"))
+var gam_ext = load(data_path("gam_ext.csv"))
+var reml = {"fit_method": "REML"}
+export_case("gam_gaussian_gcv", fit("y_gauss ~ vowel + s(duration, k=10)", gam), gam, {})
+export_case("gam_poisson_ubre", fit("y_count ~ s(duration, k=8) + s(age, k=8)", gam, "poisson"), gam, {})
+export_case("gam_binomial_ubre", fit("y_bin ~ s(duration, k=8) + s(age, k=8)", gam, "binomial"), gam, {})
+export_case("gam_gaussian_reml", fit("y_gauss ~ s(duration, k=8) + s(age, k=8)", gam, "gaussian", reml), gam, {})
+export_case("gam_poisson_reml", fit("y_count ~ s(duration, k=8) + s(age, k=8)", gam, "poisson", reml), gam, {})
+# Extended families: REML, θ / φ / σ, ν estimated jointly. The negative
+# binomial smooth is a straight line, so its λ is not identified ("flat").
+export_case("gam_negbin", fit("y_nb ~ s(duration, k=8)", gam, "negbin"), gam, {})
+export_case("gam_beta", fit("y_beta ~ s(duration, k=8) + s(age, k=8)", gam_ext, "beta"), gam_ext, {})
+export_case("gam_student", fit("y_t ~ s(duration, k=8)", gam_ext, "student"), gam_ext, {})
+# By-factor smooth: one λ per level, mgcv label "s(duration):vowela". Under GCV
+# the criterion is flat for level u on this dataset (see test_gam.phon, M4),
+# so the by-factor case uses REML.
+export_case("gam_by_factor", fit("y_gauss ~ vowel + s(duration, by=vowel, k=8)", gam, "gaussian", reml), gam, {})
+# Random-effect smooths: intercepts alongside a spline, and uncorrelated slopes
+# (numeric by-variable) whose variance both programs shrink to ~0.
+export_case("gam_re", fit("y_gauss ~ vowel + s(duration, k=8) + s(speaker, bs=re)", gam), gam, {})
+export_case("gam_re_slopes", fit("y_gauss ~ duration + s(speaker, bs=re) + s(speaker, by=duration, bs=re)", gam), gam, {})
+# Non-syntactic names in the response, a smooth, a by-factor (with a user-set
+# reference level), a bs=re grouping variable and its numeric by-variable: the
+# script must alias them all. Two models, because with the by-factor smooth and
+# s('locuteur id', bs=re) together, the REML criterion is flat for level i
+# (Phonometrica reaches a straight line, with a slightly lower REML score than
+# mgcv, which stops at EDF 1.04): a real but documented disagreement, not what
+# this case is about.
+var gam_odd = load(data_path("gam_test.csv"))
+add_column(gam_odd, get_column(gam_odd, "y_gauss"), "y (Hz)")
+add_column(gam_odd, get_column(gam_odd, "duration"), "durée (ms)")
+add_column(gam_odd, get_column(gam_odd, "vowel"), "voyelle prononcée")
+add_column(gam_odd, get_column(gam_odd, "speaker"), "locuteur id")
+var refs_gam = {"voyelle prononcée": "u"}
+var go1 = fit("'y (Hz)' ~ 'voyelle prononcée' + s('durée (ms)', by='voyelle prononcée', k=8)", gam_odd, "gaussian", {"fit_method": "REML", "reference_levels": refs_gam})
+var go2 = fit("'y (Hz)' ~ 'durée (ms)' + s('locuteur id', bs=re) + s('locuteur id', by='durée (ms)', bs=re)", gam_odd)
+try
+    export_r([go1, go2], gam_odd, join_path(OUT, "gam_odd_names"), {"reference_levels": refs_gam})
+    record_pass()
+catch e
+    record_fail("gam_odd_names: export_r() raised: " & e.message)
+end
+
 # ── Several models in one export ─────────────────────────────────────
 # One analysis, one folder, one script. The models are fitted on different
 # rows: f2 is missing in every 7th row, so the f2 model loses those rows,
@@ -197,8 +246,11 @@ var ma = fit("f1 ~ vowel + ctx + (1 | speaker)", multi)
 var mb = fit("f2 ~ vowel + ctx + (1 | speaker)", multi)
 var mc = fit("f1 ~ vowel * gender", multi)
 var md = fit("f1 ~ vowel", multi, "gaussian", Prior())
+# A GAM alongside glmmTMB models: mgcv attaches nlme, which must not get in
+# glmmTMB's way.
+var me = fit("f2 ~ vowel + s(speaker, bs=re)", multi)
 try
-    export_r([ma, mb, mc, md], multi, join_path(OUT, "multi_model_rows_and_skip"))
+    export_r([ma, mb, mc, md, me], multi, join_path(OUT, "multi_model_rows_and_skip"))
     record_pass()
 catch e
     record_fail("multi_model_rows_and_skip: export_r() raised: " & e.message)
@@ -206,8 +258,6 @@ end
 
 # ── Negative cases ───────────────────────────────────────────────────
 expect_blocked("bayesian", fit("f1 ~ vowel + gender", gf1, "gaussian", Prior()), gf1, "Bayesian")
-var gam = load(data_path("gam_test.csv"))
-expect_blocked("gam", fit("y_gauss ~ vowel + s(duration, k=8)", gam), gam, "smooth")
 expect_blocked("non_hierarchical", fit("f1 ~ vowel:gender", gf1), gf1, "hierarchical")
 expect_blocked("no_intercept", fit("f1 ~ 0 + vowel + gender", gf1), gf1, "no intercept")
 
