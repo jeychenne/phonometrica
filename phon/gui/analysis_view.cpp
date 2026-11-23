@@ -7815,6 +7815,54 @@ static SourceStats compute_source_stats(const DataTable &dt,
 	return s;
 }
 
+// By-factor smooths s(x, by=f) are stored as one SmoothResult per level of
+// f. The levels of f in slice order, or empty if `f` is not the by-factor
+// of any smooth.
+static Array<String> by_smooth_levels(const stats::Model &m, const String &f)
+{
+	Array<String> levels;
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		if (!key.is_by_factor() || key.by != f) continue;
+		bool seen = false;
+		for (intptr_t k = 0; k < levels.size(); k++)
+			if (levels[k] == key.level) { seen = true; break; }
+		if (!seen) levels.append(key.level);
+	}
+	return levels;
+}
+
+// The by-factor of the first by-factor smooth of covariate x, or empty.
+static String by_factor_of(const stats::Model &m, const String &x)
+{
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		if (key.is_by_factor() && key.variable == x) return key.by;
+	}
+	return String();
+}
+
+// Random-effect smooths s(g, bs=re): the fitted levels of g, or empty if
+// `g` is not the grouping factor of any.
+static Array<String> re_smooth_levels(const stats::Model &m, const String &g)
+{
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto &sm = m.smooth_terms[i];
+		if (sm.basis_data.type == "re" && sm.variable == g) return sm.basis_data.levels;
+	}
+	return Array<String>();
+}
+
+static bool has_re_smooths(const stats::Model &m)
+{
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+		if (stats::smooth_term_key(m.smooth_terms[i]).random_effect) return true;
+	return false;
+}
+
 } // anonymous namespace
 
 
@@ -7855,10 +7903,23 @@ void AnalysisView::populateEffectsFocalCombo()
 	// only the fixed-effects loop into variable_info), but they are valid
 	// focal predictors — the smooth basis is replayed by predict().
 	// Skip names already added.
+	// A by-factor smooth s(x, by=f) contributes x (its SmoothResult names
+	// are "x:level"); a random-slope smooth s(g, by=z, bs=re) contributes
+	// the numeric z, and a random-intercept smooth nothing (g is a grouping
+	// factor, offered under Random instead).
+	QString first_smooth_x;
+	QString first_smooth_by;
 	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
 	{
-		auto &sm = m.smooth_terms[i];
-		auto qname = QString::fromUtf8(sm.variable.data(), (int) sm.variable.size());
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		const String &x = key.random_effect ? key.by : key.variable;
+		if (x.empty()) continue;
+		auto qname = QString::fromUtf8(x.data(), (int) x.size());
+		if (!key.random_effect && first_smooth_x.isEmpty()) {
+			first_smooth_x = qname;
+			if (key.is_by_factor())
+				first_smooth_by = QString::fromUtf8(key.by.data(), (int) key.by.size());
+		}
 		if (m_effects_focal_combo->findText(qname) < 0) {
 			m_effects_focal_combo->addItem(qname);
 		}
@@ -7875,6 +7936,24 @@ void AnalysisView::populateEffectsFocalCombo()
 		auto qname = QString::fromUtf8(vi.name.data(), (int) vi.name.size());
 		m_effects_by_combo->addItem(qname);
 	}
+	// By-factors of s(x, by=f) smooths, even when f has no parametric term.
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		if (!key.is_by_factor()) continue;
+		auto qname = QString::fromUtf8(key.by.data(), (int) key.by.size());
+		if (m_effects_by_combo->findText(qname) < 0)
+			m_effects_by_combo->addItem(qname);
+	}
+
+	// For a GAM, open on the first smooth: its covariate as focal and, for a
+	// by-factor smooth, one curve per level of the factor.
+	if (!first_smooth_x.isEmpty())
+	{
+		m_effects_focal_combo->setCurrentIndex(m_effects_focal_combo->findText(first_smooth_x));
+		if (!first_smooth_by.isEmpty())
+			m_effects_by_combo->setCurrentIndex(m_effects_by_combo->findText(first_smooth_by));
+	}
 
 	// Random: every random-effects group on the model. Only meaningful for
 	// mixed-effects models; for fixed-effects-only models the combo stays at
@@ -7885,6 +7964,15 @@ void AnalysisView::populateEffectsFocalCombo()
 		auto &re = m.random_effects[g];
 		auto qname = QString::fromUtf8(re.group_name.data(), (int) re.group_name.size());
 		m_effects_re_combo->addItem(qname);
+	}
+	// GAM random-effect smooths s(g, bs=re): their grouping factors.
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		if (!key.random_effect) continue;
+		auto qname = QString::fromUtf8(key.variable.data(), (int) key.variable.size());
+		if (m_effects_re_combo->findText(qname) < 0)
+			m_effects_re_combo->addItem(qname);
 	}
 
 	m_effects_focal_combo->blockSignals(false);
@@ -7937,12 +8025,18 @@ void AnalysisView::onEffectsRandomChanged()
 				                                (int) re.group_name.size());
 				if (rg_q == gname) { found = g; break; }
 			}
+			Array<String> level_names;
 			if (found >= 0) {
-				auto &re = m.random_effects[found];
+				level_names = m.random_effects[found].level_names;
+			} else {
+				// GAM random-effect smooth s(g, bs=re).
+				level_names = re_smooth_levels(m, String(gname.toUtf8().constData()));
+			}
+			if (!level_names.empty()) {
 				QStringList lvls;
-				for (intptr_t l = 0; l < re.level_names.size(); l++) {
-					lvls << QString::fromUtf8(re.level_names[l].data(),
-					                          (int) re.level_names[l].size());
+				for (intptr_t l = 0; l < level_names.size(); l++) {
+					lvls << QString::fromUtf8(level_names[l].data(),
+					                          (int) level_names[l].size());
 				}
 				m_effects_re_levels->setItems(lvls);
 				m_effects_re_levels->setCheckedItems(lvls);
@@ -7999,28 +8093,6 @@ void AnalysisView::updateEffectsPlot()
 
 	auto &m = m_analysis->model(m_current_model);
 
-	// Refusals — match the underlying predict_at() refusals so the user
-	// sees a clear explanation rather than an obscure error. Mixed-effects
-	// and Bayesian models are now both supported (population-level prediction
-	// with u=0; posterior mean and credible interval for Bayesian); the
-	// caption below adapts to the model type.
-	for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
-		auto &sm = m.smooth_terms[i];
-		if (!sm.by.empty()) {
-			show_message(tr(
-				"Effects plots are not yet supported for models with "
-				"by-factor smooths (s(x, by=...)). "
-				"This will be added in a future release."));
-			return;
-		}
-		if (sm.basis == "re") {
-			show_message(tr(
-				"Effects plots are not yet supported for models with "
-				"random-effect smooths (s(g, bs=\"re\"))."));
-			return;
-		}
-	}
-
 	if (!m_analysis->has_source()) {
 		show_message(tr(
 			"Effects plots require access to the source data. "
@@ -8070,11 +8142,15 @@ void AnalysisView::updateEffectsPlot()
 		auto &vi = m.variable_info[i];
 		if (vi.numeric) all_numeric.push_back(vi.name);
 	}
+	// Smooth covariates: x of s(x) and s(x, by=f) (whose SmoothResult names
+	// are "x:level"), and the numeric slope z of s(g, by=z, bs=re).
 	for (intptr_t i = 0; i < m.smooth_terms.size(); i++) {
-		auto &sm = m.smooth_terms[i];
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		const String &x = key.random_effect ? key.by : key.variable;
+		if (x.empty()) continue;
 		bool already = false;
-		for (auto &n : all_numeric) if (n == sm.variable) { already = true; break; }
-		if (!already) all_numeric.push_back(sm.variable);
+		for (auto &n : all_numeric) if (n == x) { already = true; break; }
+		if (!already) all_numeric.push_back(x);
 	}
 
 	auto src_stats = compute_source_stats(*src, all_numeric);
@@ -8086,6 +8162,23 @@ void AnalysisView::updateEffectsPlot()
 	// the combo could in principle offer focal=A, by=A simultaneously.
 	String by_name;
 	Array<String> by_levels;
+	bool re_selected = (m_effects_re_combo->currentIndex() > 0);
+
+	// A covariate with a by-factor smooth s(x, by=f) has one curve per level
+	// of f: without a by-factor, the plot would silently show the reference
+	// level's curve only. Select f in the By combo (unless Random faceting
+	// is on, which holds f at its reference level and says so).
+	if (!re_selected && m_effects_by_combo->currentIndex() <= 0)
+	{
+		String f = by_factor_of(m, focal_name);
+		int idx = f.empty() ? -1 : m_effects_by_combo->findText(QString::fromUtf8(f.data(), (int) f.size()));
+		if (idx > 0) {
+			m_effects_by_combo->blockSignals(true);
+			m_effects_by_combo->setCurrentIndex(idx);
+			m_effects_by_combo->blockSignals(false);
+		}
+	}
+
 	bool has_by = (m_effects_by_combo->currentIndex() > 0);
 	if (has_by)
 	{
@@ -8100,6 +8193,11 @@ void AnalysisView::updateEffectsPlot()
 					by_levels = vi.levels;
 					break;
 				}
+			}
+			if (by_levels.empty()) {
+				// By-factor of a smooth with no parametric term of its own.
+				by_levels = by_smooth_levels(m, candidate);
+				if (!by_levels.empty()) by_name = candidate;
 			}
 			if (by_levels.empty()) has_by = false;
 		}
@@ -8251,15 +8349,35 @@ void AnalysisView::updateEffectsPlot()
 		std::vector<String> vals((size_t) n_rows, vi.levels[0]);
 		grid->add_text_column(vi.name, vals);
 	}
+	// By-factors of s(x, by=f) smooths without a parametric term of their
+	// own (so not in variable_info): also at their reference (first) level.
+	for (intptr_t i = 0; i < m.smooth_terms.size(); i++)
+	{
+		auto key = stats::smooth_term_key(m.smooth_terms[i]);
+		if (!key.is_by_factor() || key.by == focal_name) continue;
+		if (has_by && key.by == by_name) continue;
+		if (grid->find_column(key.by) >= 0) continue;
+		std::vector<String> vals((size_t) n_rows, by_smooth_levels(m, key.by)[0]);
+		grid->add_text_column(key.by, vals);
+	}
 	grid->mark_loaded();
 
 	// ── Run predict ─────────────────────────────────────────────────
 	stats::PredictOptions opts;
 	opts.scale = "response";
 	opts.bare = true;
+	// GAM random-effect smooths s(g, bs=re): population level (zero) unless
+	// g is the selected Random group.
+	opts.re_smooths = "none";
 	if (re_active) {
-		// Tell predict() to add Z·u from this group's BLUPs per row.
-		opts.re_form = re_group_name;
+		if (!re_smooth_levels(m, re_group_name).empty()) {
+			// Include this grouping factor's random-effect smooths (intercepts
+			// and slopes) for the level in each row.
+			opts.re_smooths = re_group_name;
+		} else {
+			// Tell predict() to add Z·u from this group's BLUPs per row.
+			opts.re_form = re_group_name;
+		}
 	}
 	auto pr = stats::predict_at(m, *grid, opts);
 	if (!pr.ok) {
@@ -8326,7 +8444,7 @@ void AnalysisView::updateEffectsPlot()
 	// usual population-level wording with a "Conditional on <group>" prefix.
 	QString caption;
 	bool bayesian = m.is_bayesian();
-	bool mixed    = m.has_random_effects();
+	bool mixed    = m.has_random_effects() || has_re_smooths(m);
 	if (re_active)
 	{
 		QString gq = QString::fromUtf8(re_group_name.data(),

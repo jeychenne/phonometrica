@@ -1,0 +1,118 @@
+# =====================================================================
+# test_gam_predict.phon — validates predict() for GAMs against mgcv's
+# predict.gam(type = "link", se.fit = TRUE), via
+# reference_gam_predict.json (gen_reference_gam_predict.R).
+# Data: test/data/gam_test.csv (fit), test/data/gam_newdata.csv (new data:
+# every vowel, three fitted speakers and an unseen one, durations inside
+# and outside the observed range).
+#
+# Covers by-factor smooths (s(x, by=f): each level's columns are zero for
+# rows of the other levels), random-effect smooths (s(g, bs=re) and
+# s(g, by=x, bs=re); an unseen level gives the population-level
+# prediction, as in mgcv; re_smooths = "none" excludes them, as
+# predict.gam's `exclude` does), and linear extrapolation of the cr basis.
+#
+# mgcv was refitted with sp fixed at Phonometrica's λ (see the R script),
+# so the comparison isolates predict() from the λ search; the first check
+# for each model is that Phonometrica still selects that λ. Measured on
+# 23/11/2026: fits agree to 2e-9 relative, SEs to 1.3e-8.
+#
+# Run from test/statistics/frequentist/, e.g.:
+#   phon_stats -I ../lib test_gam_predict.phon
+# =====================================================================
+
+import stat_assert
+
+var DATA = ""
+var NEWDATA = ""
+var REF  = ""
+try
+    DATA = resolve_data_path("gam_test.csv")
+    NEWDATA = resolve_data_path("gam_newdata.csv")
+    REF  = resolve_sibling("reference_gam_predict.json")
+catch err
+    DATA = "../../data/gam_test.csv"
+    NEWDATA = "../../data/gam_newdata.csv"
+    REF  = "reference_gam_predict.json"
+end
+
+var pred_refs = load_reference(REF)["models"]
+var pred_data = load(DATA)
+var pred_newdata = load(NEWDATA)
+
+function check_gam_predict(tag as String, data as Object, newdata as Object, reference as Object, rtol as Number)
+    var model = null
+    try
+        model = fit(reference["formula"], data, reference["family"])
+    catch err
+        record_fail(tag & ": fit() threw exception: " & err.message)
+        return
+    end
+
+    # The reference was computed at these λ; anything else would compare
+    # predictions of two different models.
+    var ref_sp = coerce_to_list(reference["log10_sp"])
+    var sp = model.smooth_log_lambda
+    if len(sp) != len(ref_sp) then
+        record_fail(tag & ": " & len(sp) & " smoothing parameters, reference has " & len(ref_sp))
+        return
+    end
+    for i = 1 to len(ref_sp) do
+        check(tag & ".log10_sp[" & i & "] (regenerate the reference if the fitter changed)", sp[i], ref_sp[i], 0.000001, 0.0)
+    end
+
+    var p = null
+    try
+        p = predict(model, newdata, {"scale": "link", "bare": true})
+    catch err
+        record_fail(tag & ": predict() threw exception: " & err.message)
+        return
+    end
+    var fits = get_column(p, "Fit")
+    var ses = get_column(p, "SE fit")
+    var ref_fit = reference["fit"]
+    var ref_se = reference["se"]
+    check_int(tag & ".nrow", len(fits), len(ref_fit))
+    for i = 1 to len(ref_fit) do
+        check(tag & ".fit[" & i & "]", fits[i], ref_fit[i], rtol, 0.0)
+        check(tag & ".se[" & i & "]", ses[i], ref_se[i], rtol, 0.0)
+    end
+
+    # Population level: random-effect smooths excluded.
+    if reference["fit_pop"] != null then
+        var pp = predict(model, newdata, {"scale": "link", "bare": true, "re_smooths": "none"})
+        var pfits = get_column(pp, "Fit")
+        var pses = get_column(pp, "SE fit")
+        var ref_pfit = reference["fit_pop"]
+        var ref_pse = reference["se_pop"]
+        for i = 1 to len(ref_pfit) do
+            check(tag & ".fit_pop[" & i & "]", pfits[i], ref_pfit[i], rtol, 0.0)
+            check(tag & ".se_pop[" & i & "]", pses[i], ref_pse[i], rtol, 0.0)
+        end
+    end
+
+    # On the training data, predict(model, data) rebuilds the design row by
+    # row; it must reproduce the fitted values (response scale) exactly.
+    var q = predict(model, data, {"bare": true})
+    var qfit = get_column(q, "Fit")
+    var fitted = model.fitted
+    var worst = 0.0
+    for i = 1 to len(fitted) do
+        var r = abs(qfit[i] - fitted[i]) / abs(fitted[i])
+        if r > worst then
+            worst = r
+        end
+    end
+    check(tag & ".training rows (max rel. diff to fitted)", worst, 0.0, 0.0, 0.000000001)
+end
+
+
+start_section("GAM PREDICT")
+
+check_gam_predict("M4", pred_data, pred_newdata, pred_refs["M4"], 0.000001)
+check_gam_predict("M6", pred_data, pred_newdata, pred_refs["M6"], 0.000001)
+check_gam_predict("M7", pred_data, pred_newdata, pred_refs["M7"], 0.000001)
+check_gam_predict("M8", pred_data, pred_newdata, pred_refs["M8"], 0.000001)
+check_gam_predict("M12", pred_data, pred_newdata, pred_refs["M12"], 0.000001)
+
+end_section()

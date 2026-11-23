@@ -60,9 +60,8 @@ report them.
    is intended for exploratory analysis of nonlinear effects: identifying whether a smooth
    captures meaningful structure, inspecting the shape of fitted curves, and comparing terms by EDF.
    Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
-   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values all work normally,
-   except that prediction does not yet support by-factor smooths (``s(x, by=group)``) or
-   random-effect smooths (``bs=re``).
+   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values (including
+   by-factor smooths ``s(x, by=group)`` and random-effect smooths ``bs=re``) all work normally.
    Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
    with s(age) alongside categorical predictors). For confirmatory analyses where exact agreement
    with mgcv matters — F-tests for smooth terms, mgcv's REML/GCV penalty selection — refit the
@@ -697,16 +696,31 @@ Click **Export...** to save the current plot as a PNG image, a PDF document, or 
 vector graphic. PDF and SVG produce sharp output suitable for publication; PNG is convenient
 for slides and web pages.
 
+Generalized additive models
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For a GAM, the tab opens on the covariate of the first smooth term, drawn as a curve over
+the range of the data.
+
+- **By-factor smooths.** For a model like ``F2 ~ vowel + s(time, by=vowel)``, there is one
+  curve per vowel: picking ``time`` as the **Predictor** selects ``vowel`` as **By**
+  automatically, since each vowel has a trajectory of its own and a single curve would only
+  show the reference vowel's.
+- **Random-effect smooths.** Terms like ``s(speaker, bs=re)`` and
+  ``s(speaker, by=time, bs=re)`` behave like ``(1|speaker)`` and ``(0+time|speaker)``
+  above: the default plot is the population-level prediction (random effects = 0), and
+  choosing ``speaker`` in **Random** draws one curve per speaker, including each speaker's
+  random intercept and slope. Unlike for mixed models, these per-speaker intervals include
+  the uncertainty of the random effects, as in mgcv.
+
 When the tab is unavailable
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A few model types are not yet supported. The Effects tab will show a short explanatory
-message instead of a plot in these cases:
+The Effects tab shows a short explanatory message instead of a plot when it cannot build
+one, for example when the source data cannot be found or when the model has no predictor
+that can be used as a focal variable.
 
-- Models with **by-factor smooths** (terms like ``s(x, by=group)``).
-- Models with **random-effect smooths** (terms like ``s(g, bs="re")``).
-
-For other limitations or for use cases not covered by the GUI, see the :func:`predict`
+For use cases not covered by the GUI, see the :func:`predict`
 function in the scripting reference, which exposes the same machinery with finer-grained
 control (custom reference grids, link-scale output, joining the predictions back into a
 dataset, and so on).

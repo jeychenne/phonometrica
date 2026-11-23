@@ -61,18 +61,22 @@ namespace {
 // validated inside predict_at_training / predict_at, not here.
 static String validate_scope(const Model &model, const PredictOptions &opts)
 {
-	for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
+	if (opts.re_smooths != "all" && opts.re_smooths != "none")
 	{
-		auto &sm = model.smooth_terms[i];
-		if (!sm.by.empty()) {
-			return String("does not yet support by-factor smooths "
-			              "(s(x, by=...)). This will be added in a future "
-			              "release.");
+		bool found = false;
+		std::string valid = "\"all\", \"none\"";
+		for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
+		{
+			auto &sm = model.smooth_terms[i];
+			if (sm.basis_data.type != "re" && sm.basis != "re") continue;
+			if (sm.variable == opts.re_smooths) found = true;
+			std::string g(sm.variable.data(), sm.variable.size());
+			if (valid.find("\"" + g + "\"") == std::string::npos)
+				valid += ", \"" + g + "\"";
 		}
-		if (sm.basis == "re") {
-			return String("does not yet support random-effect "
-			              "smooths (s(g, bs=\"re\")). This will be added in "
-			              "a future release.");
+		if (!found) {
+			return String::format("re_smooths must be one of %s. Got \"%s\".", valid.c_str(),
+			                      std::string(opts.re_smooths.data(), opts.re_smooths.size()).c_str());
 		}
 	}
 	if (opts.type != "ci") {
@@ -409,60 +413,167 @@ static bool build_param_row(const DataTable &newdata, intptr_t row,
 }
 
 
+// Whether a smooth term contributes under opts.re_smooths: always for
+// non-"re" smooths; for s(g, bs="re") per the option.
+static bool smooth_included(const Model::SmoothResult &sm, const PredictOptions &opts)
+{
+	if (sm.basis_data.type != "re" && sm.basis != "re") return true;
+	if (opts.re_smooths == "all") return true;
+	if (opts.re_smooths == "none") return false;
+	return sm.variable == opts.re_smooths;
+}
+
+
+// Parse a numeric cell of newdata. Returns false (with row_error set) on an
+// empty or non-numeric cell; `what` names the predictor in the message.
+static bool parse_numeric_cell(const String &cell, double &value, String &row_error,
+                               const char *what)
+{
+	if (cell.empty()) {
+		row_error = String::format("missing value (%s)", what);
+		return false;
+	}
+	try
+	{
+		std::string s(cell.data(), cell.size());
+		size_t pos = 0;
+		value = std::stod(s, &pos);
+		while (pos < s.size() && std::isspace((unsigned char) s[pos])) pos++;
+		if (pos != s.size()) {
+			row_error = String::format("non-numeric value (%s)", what);
+			return false;
+		}
+	}
+	catch (...)
+	{
+		row_error = String::format("non-numeric value (%s)", what);
+		return false;
+	}
+	return true;
+}
+
+
 // Build the smooth-block portion of x_row for one row, in-place at
 // the correct column offsets (sm.col_start .. sm.col_start + col_count).
 // Returns false if a smooth's basis_data is missing (model loaded from
-// an older save) or if the new-data x value can't be parsed.
+// an older save) or if a new-data cell can't be used.
+//
+// Three kinds of blocks, mirroring fitting.cpp and mgcv's Predict.matrix:
+//   - plain smooth s(x): the constrained cr basis evaluated at x.
+//   - by-factor slice of s(x, by=f): the same full-data basis (shared
+//     constraint, as in mgcv) evaluated at x when the row's f equals the
+//     slice level, zeros otherwise. A value of f matching none of the
+//     slices is an unseen level: the row cannot be predicted.
+//   - random-effect smooth s(g, bs="re") [, by=z]: indicator (or z) in the
+//     column of the row's level of g. An unseen level of g gives an all-zero
+//     block, i.e. population-level prediction (u = 0), as predict.gam does.
+//     By default the block is included, as mgcv includes s(g, bs="re")
+//     terms unless they are explicitly excluded; opts.re_smooths can
+//     exclude them (zero block).
 static bool build_smooth_row(const DataTable &newdata, intptr_t row,
-                             const Model &model,
+                             const Model &model, const PredictOptions &opts,
                              const std::map<String, intptr_t> &col_idx,
                              std::vector<double> &x_row,
                              String &row_error)
 {
+	auto column_of = [&](const String &name, intptr_t &col) -> bool {
+		auto it = col_idx.find(name);
+		if (it == col_idx.end()) {
+			row_error = String::format("variable '%s' (smooth term) not present in newdata",
+			                           std::string(name.data(), name.size()).c_str());
+			return false;
+		}
+		col = it->second;
+		return true;
+	};
+
+	// Cell values of the by-factors already checked against their levels
+	// (a by-factor spans several slices; the unseen-level check runs once).
+	std::map<String, bool> by_factor_checked;
+
 	for (intptr_t i = 0; i < model.smooth_terms.size(); i++)
 	{
 		auto &sm = model.smooth_terms[i];
 		auto &bd = sm.basis_data;
+		auto key = smooth_term_key(sm);
+		if (!smooth_included(sm, opts)) continue; // block stays at zero
 		if (bd.type.empty())
 		{
 			row_error = String::format(
 				"smooth term s(%s) has no persisted basis data — refit the "
 				"model in this session and call predict() before saving",
-				std::string(sm.variable.data(), sm.variable.size()).c_str());
+				std::string(key.variable.data(), key.variable.size()).c_str());
 			return false;
 		}
 
-		auto it = col_idx.find(sm.variable);
-		if (it == col_idx.end())
+		if (bd.type == "re")
 		{
-			row_error = String::format(
-				"variable '%s' (smooth term) not present in newdata",
-				std::string(sm.variable.data(), sm.variable.size()).c_str());
-			return false;
-		}
-
-		String cell = newdata.get_cell(row, it->second);
-		if (cell.empty()) {
-			row_error = String("missing value (smooth predictor)");
-			return false;
-		}
-		double xv = 0;
-		try
-		{
-			std::string s(cell.data(), cell.size());
-			size_t pos = 0;
-			xv = std::stod(s, &pos);
-			while (pos < s.size() && std::isspace((unsigned char) s[pos])) pos++;
-			if (pos != s.size()) {
-				row_error = String("non-numeric value (smooth predictor)");
+			intptr_t gcol;
+			if (!column_of(key.variable, gcol)) return false;
+			String cell = newdata.get_cell(row, gcol);
+			if (cell.empty()) {
+				row_error = String("missing value (random-effect grouping factor)");
 				return false;
 			}
+			double value = 1.0;
+			if (!sm.by.empty())
+			{
+				intptr_t zcol;
+				if (!column_of(sm.by, zcol)) return false;
+				if (!parse_numeric_cell(newdata.get_cell(row, zcol), value, row_error,
+				                        "random-slope covariate"))
+					return false;
+			}
+			for (intptr_t j = 0; j < bd.levels.size() && j < sm.col_count; j++)
+			{
+				if (bd.levels[j] == cell) {
+					x_row[(size_t)(sm.col_start + j)] = value;
+					break;
+				}
+			}
+			// Unseen level: the block stays at zero (population level).
+			continue;
 		}
-		catch (...)
+
+		if (key.is_by_factor())
 		{
-			row_error = String("non-numeric value (smooth predictor)");
-			return false;
+			intptr_t fcol;
+			if (!column_of(sm.by, fcol)) return false;
+			String level = newdata.get_cell(row, fcol);
+			if (level.empty()) {
+				row_error = String("missing value (by-factor)");
+				return false;
+			}
+			if (!by_factor_checked[sm.by])
+			{
+				bool known = false;
+				for (intptr_t k = 0; k < model.smooth_terms.size() && !known; k++)
+				{
+					auto &other = model.smooth_terms[k];
+					if (other.by != sm.by || other.basis_data.type == "re") continue;
+					auto okey = smooth_term_key(other);
+					known = (okey.variable == key.variable && okey.level == level);
+				}
+				if (!known)
+				{
+					row_error = String::format(
+						"unseen level '%s' for by-variable '%s'",
+						std::string(level.data(), level.size()).c_str(),
+						std::string(sm.by.data(), sm.by.size()).c_str());
+					return false;
+				}
+				by_factor_checked[sm.by] = true;
+			}
+			if (level != key.level) {
+				continue; // another level's slice: columns stay at zero
+			}
 		}
+
+		intptr_t xcol;
+		if (!column_of(key.variable, xcol)) return false;
+		double xv = 0;
+		if (!parse_numeric_cell(newdata.get_cell(row, xcol), xv, row_error, "smooth predictor"))
+			return false;
 
 		// Evaluate the basis at this single x.
 		std::vector<double> x_new = { xv };
@@ -722,6 +833,32 @@ static bool resolve_re_groups(const Model &model, const PredictOptions &opts,
 } // anonymous namespace
 
 
+SmoothTermKey smooth_term_key(const Model::SmoothResult &sm)
+{
+	SmoothTermKey key;
+	key.by = sm.by;
+	key.random_effect = (sm.basis == "re" || sm.basis_data.type == "re");
+	key.variable = sm.variable;
+	if (!sm.by.empty() && !key.random_effect)
+	{
+		// By-factor slice: fitting.cpp labels it "<x>:<level>". Variable names
+		// are formula identifiers and cannot contain ':', so the first ':'
+		// separates them even when the level itself contains one.
+		intptr_t pos = -1;
+		for (intptr_t i = 0; i < (intptr_t) sm.variable.size(); i++)
+		{
+			if (sm.variable.data()[i] == ':') { pos = i; break; }
+		}
+		if (pos >= 0)
+		{
+			key.variable = String(sm.variable.data(), pos);
+			key.level = String(sm.variable.data() + pos + 1, (intptr_t) sm.variable.size() - pos - 1);
+		}
+	}
+	return key;
+}
+
+
 // =====================================================================
 // Public: predict_at_training
 // =====================================================================
@@ -808,11 +945,22 @@ PredictResult predict_at_training(const Model &model, const PredictOptions &opts
 
 	Eigen::Map<const Eigen::MatrixXd> Xmap(model.X.data(), n, p);
 
+	// Columns of random-effect smooths excluded by opts.re_smooths.
+	std::vector<intptr_t> excluded_cols;
+	for (intptr_t k = 0; k < model.smooth_terms.size(); k++)
+	{
+		auto &sm = model.smooth_terms[k];
+		if (smooth_included(sm, opts)) continue;
+		for (intptr_t j = 0; j < sm.col_count; j++)
+			excluded_cols.push_back(sm.col_start + j);
+	}
+
 	for (intptr_t i = 0; i < n; i++)
 	{
 		// .row(i) returns a row expression; .transpose() makes it a column
 		// vector for dot/matrix-vector ops.
 		Eigen::VectorXd xi = Xmap.row(i).transpose();
+		for (intptr_t c : excluded_cols) xi[c] = 0.0;
 		double eta_row = xi.dot(beta);
 		double q = xi.dot(V * xi);
 
@@ -908,11 +1056,22 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 	}
 	for (intptr_t i = 0; i < formula.smooth.size(); i++)
 	{
+		auto &st = formula.smooth[i];
+		if (st.basis == "re" && (opts.re_smooths == "none"
+		    || (opts.re_smooths != "all" && opts.re_smooths != st.variable)))
+			continue; // excluded: its columns are not needed
 		if (require_col(formula.smooth[i].variable) < 0) {
 			out.error = String::format(
 				"predict(): newdata is missing required column '%s' (smooth)",
 				std::string(formula.smooth[i].variable.data(),
 				            formula.smooth[i].variable.size()).c_str());
+			return out;
+		}
+		auto &by = formula.smooth[i].by;
+		if (!by.empty() && require_col(by) < 0) {
+			out.error = String::format(
+				"predict(): newdata is missing required column '%s' (smooth by-variable)",
+				std::string(by.data(), by.size()).c_str());
 			return out;
 		}
 	}
@@ -951,7 +1110,7 @@ PredictResult predict_at(const Model &model, const DataTable &newdata,
 		bool ok = build_param_row(newdata, row, formula, model, coef_idx, col_idx,
 		                          x_row, row_error);
 		if (ok && !model.smooth_terms.empty()) {
-			ok = build_smooth_row(newdata, row, model, col_idx, x_row, row_error);
+			ok = build_smooth_row(newdata, row, model, opts, col_idx, x_row, row_error);
 		}
 		if (!ok)
 		{
