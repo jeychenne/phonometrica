@@ -23,10 +23,14 @@ a **top bar** for entering formulas, a **left panel** with column and model list
    Two parts of the engine are less settled:
 
    * **Generalized additive models** (smooth terms) are a **preview**. Phonometrica's
-     spline basis is not ``mgcv``'s parameterization, so the two are not directly
-     comparable and the validation suite does not compare them; binomial GAMs may also
-     fail to converge on some datasets. Use them to explore nonlinear structure, and
-     refit in ``mgcv`` for anything you intend to publish.
+     ``s(x)`` builds the same basis and penalty as ``mgcv``'s ``s(x, bs = "cr")`` (not
+     ``mgcv``'s default thin plate spline). The validation suite compares GAMs of every
+     family with ``mgcv``, under both ``method = "GCV.Cp"`` and ``method = "REML"``
+     (fit, coefficients, EDF, smoothing parameters and dispersion parameters agree
+     closely), but smooth-term F statistics and p-values do not yet use ``mgcv``'s test,
+     and the AIC of REML fits omits ``mgcv``'s correction for smoothing-parameter
+     uncertainty. Use them to explore nonlinear structure, and refit in ``mgcv`` for
+     anything you intend to publish.
    * **Bayesian estimation** is checked against ``brms`` at the level of inferential
      equivalence: posterior means within a fraction of a posterior standard deviation,
      which is the right bar for comparing a Laplace/CCD approximation against HMC, but
@@ -59,10 +63,20 @@ report them.
    WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values all work normally.
    Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
    with s(age) alongside categorical predictors). For confirmatory analyses where exact agreement
-   with mgcv matters — basis-equivalent coefficients, F-tests for smooth terms, mgcv's REML/GCV
-   penalty selection — export to R and use mgcv directly. Phonometrica's cr basis is not the same
-   parameterization as mgcv's default and per-smooth coefficients, EDF magnitudes, and log(λ)
-   values are not directly comparable across the two tools.
+   with mgcv matters — F-tests for smooth terms, mgcv's REML/GCV penalty selection — refit the
+   model in mgcv. Spell out the basis there: Phonometrica's ``s(duration, k=8)`` is mgcv's
+   ``s(duration, bs = "cr", k = 8)``, whereas a bare ``s(duration)`` in mgcv is a thin plate
+   spline. With the basis spelled out, the two tools use the same basis, identifiability
+   constraint and penalty scaling, so log(λ) values are on the same scale; they can still differ
+   somewhat because the smoothing parameters are selected by a different algorithm. Export to R
+   does not handle models with smooth terms yet.
+   Smoothing parameters are selected by GCV (Gaussian) or UBRE (Poisson, binomial) by
+   default, as with mgcv's default ``method = "GCV.Cp"``; pass ``{"fit_method": "REML"}`` to
+   ``fit()`` to select them by REML instead, as with ``method = "REML"``. Negative binomial,
+   beta and Student *t* GAMs always use REML, which also estimates their extra parameters
+   (θ, φ, or σ and ν) jointly with the smoothing parameters, as mgcv does for these families.
+   Bayesian GAMs (fitted with a ``Prior()``) also select their smoothing parameters by REML,
+   which is the empirical-Bayes choice under the Bayesian reading of the smoothing penalty.
    Known limit: binomial GAMs may not converge on near-saturated data (small n with k × number of
    smooths approaching n). If the intercept comes back at an extreme value with predicted
    probabilities collapsed to 0 or 1, drop k or the number of smooth terms.
@@ -138,6 +152,8 @@ space — the set of functions with zero second derivative — is the family of 
 (intercept + slope), which are left unpenalized. An identifiability constraint (sum-to-zero
 across the data) is absorbed into the basis, reducing the effective dimension from *k* to
 *k* − 1. This ensures the smooth is identifiable in the presence of a model intercept.
+Beyond the outermost knots (i.e. outside the range of the data), predictions continue the
+curve as a straight line, as for any natural spline.
 
 For example:
 
@@ -152,7 +168,8 @@ penalty is the identity matrix, which shrinks all group adjustments toward zero.
 mathematically equivalent to a random effect with variance σ²_u = σ²_ε / λ, where λ is
 the smoothing parameter estimated by GCV (Generalized Cross-Validation, an efficient
 approximation to leave-one-out cross-validation that selects the degree of smoothing by
-minimizing prediction error). The key difference from ``bs=cr`` is that
+minimizing prediction error). For Poisson and binomial models, whose scale is known, the
+closely related UBRE criterion (Mallows' C\ :sub:`p`) is used instead, as in ``mgcv``. The key difference from ``bs=cr`` is that
 ``bs=re`` does not model a smooth curve — it models a set of discrete group-level
 adjustments.
 

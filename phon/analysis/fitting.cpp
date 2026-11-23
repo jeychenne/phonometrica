@@ -1124,48 +1124,21 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 
 		// ── scale.penalty (mgcv default scale.penalty=TRUE) ──────────
 		//
-		// Rescale each slice's S so mean(|diag(S)|) ≈ mean(|diag(B'B)|),
-		// where B is the slice-specific (possibly zero-masked) basis.
-		// This makes log10(λ) values directly comparable to mgcv's
-		// m$sp and brings the natural-scale optimum inside the GCV
-		// grid range [−5, +5] used in regression.cpp.
-		//
-		// Per-slice (not per-formula-term) is essential: by-factor
-		// smooths share one underlying basis but each level's B is
-		// zero-masked, so the appropriate scale is set by that level's
-		// non-zero rows alone — matching mgcv's per-penalty-block
-		// scaling. Random-effect smooths (bs="re") skip rescaling, also
-		// matching mgcv (no.rescale=TRUE).
+		// Multiply each slice's S by the factor build_cr_basis computed the
+		// way mgcv's smoothCon() does: ‖B_raw‖∞² / ‖S_raw‖₁, on the raw
+		// full-data basis. log10(λ) is then on the same scale as mgcv's
+		// log10(m$sp). By-factor slices are copies of one basis and so share
+		// the factor, as in mgcv (the scale is fixed before the by-split).
+		// Random-effect smooths (bs="re") keep S_scale = 1: mgcv does not
+		// rescale them either (S.scale is 1 for "re" terms).
 		for (auto &sl : smooth_slices)
 		{
 			auto &sb = sl.basis;
-			if (sb.type == "re") continue;
-			intptr_t nr = sb.B.nrow();
-			intptr_t nc = sb.B.ncol();
-			if (nr == 0 || nc == 0) continue;
-			double mean_BtB = 0.0;
-			for (intptr_t j = 0; j < nc; j++) {
-				double col_sq = 0.0;
-				for (intptr_t i = 0; i < nr; i++) {
-					double v = sb.B(i, j);
-					col_sq += v * v;
-				}
-				mean_BtB += col_sq;
-			}
-			mean_BtB /= (double) nc;
-			double mean_S = 0.0;
+			if (sb.type == "re" || sb.S_scale == 1.0) continue;
 			intptr_t Sn = sb.S.nrow();
-			for (intptr_t j = 0; j < Sn; j++) {
-				mean_S += std::abs(sb.S(j, j));
-			}
-			if (Sn > 0) mean_S /= (double) Sn;
-			if (mean_BtB > 0.0 && mean_S > 0.0)
-			{
-				double scale = mean_BtB / mean_S;
-				for (intptr_t i = 0; i < Sn; i++) {
-					for (intptr_t j = 0; j < Sn; j++) {
-						sb.S(i, j) *= scale;
-					}
+			for (intptr_t i = 0; i < Sn; i++) {
+				for (intptr_t j = 0; j < Sn; j++) {
+					sb.S(i, j) *= sb.S_scale;
 				}
 			}
 		}
@@ -1290,33 +1263,19 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 			ranges.push_back(std::move(scr));
 		}
 
+		// Smoothing-parameter selection: GCV (Gaussian) / UBRE (Poisson,
+		// binomial) by default, REML on request (fit_method = "REML"), as
+		// mgcv's method = "GCV.Cp" and "REML". Negative binomial, beta and
+		// Student t always use REML, with θ / φ / σ, ν estimated jointly.
+		bool reml = opts && opts->method == Method::REML;
 		if (family == "gaussian")
 		{
-			model = penalized_lm(dm.y, dm.X, S_aug, n_parametric, ranges, progress, off);
+			model = penalized_lm(dm.y, dm.X, S_aug, n_parametric, ranges, progress, off, reml);
 		}
 		else
 		{
 			auto fam = Family::from_name(family);
-			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter, off);
-
-			// The penalized GLM path uses IRLS with a fixed Family object and
-			// does not estimate a dispersion parameter.  For negative binomial
-			// this means θ stays at its default (1.0) rather than being fit to
-			// the data, which yields a mis-specified fit and an unreliable
-			// AIC.  Surface this as a warning so the user isn't silently given
-			// a wrong answer; for GAMs with count data, Poisson is supported
-			// correctly, and if overdispersion is a concern θ can be fit
-			// separately on the unsmoothed model and inspected.
-			if (family == "negbin") {
-				model.fit_warning = String(
-					"Negative-binomial GAMs are fit with a fixed dispersion "
-					"parameter θ = 1 (no outer θ estimation in the penalized "
-					"IRLS path).  Coefficients and AIC from this fit should "
-					"not be trusted.  For count data with smooth terms, use "
-					"family=\"poisson\"; if overdispersion is suspected, fit "
-					"the unsmoothed model with family=\"negbin\" to estimate "
-					"θ and report it separately.");
-			}
+			model = penalized_glm(dm.y, dm.X, S_aug, fam, n_parametric, ranges, progress, max_iter, off, reml);
 		}
 
 		// Persist per-smooth basis state on the returned model so predict()
@@ -1390,13 +1349,13 @@ static Model fit_impl(const DataTable &data, const Formula &formula, const Strin
 	// guard prevents a double-warning on the (negbin|beta|student)+no-RE
 	// path, which routes through mixed_model_multistart() with empty
 	// groups and is handled by mixed_model()'s own coercion logic.
-	if (opts && opts->method == Method::REML && !went_through_mixed_model)
+	// GAMs honour REML themselves (smoothing-parameter selection), so they
+	// are exempt.
+	if (opts && opts->method == Method::REML && !went_through_mixed_model && model.smooth_terms.empty())
 	{
 		String reason;
 		if (model.family != "gaussian")
 			reason = "REML applies to Gaussian models only";
-		else if (!model.smooth_terms.empty())
-			reason = "REML on GAMs is not supported in this release";
 		else
 			reason = "REML applies to mixed-effects models only (no random effects in formula)";
 
@@ -1942,8 +1901,18 @@ Model fit(const DataTable &data, const Formula &formula, const String &family,
 	bool uses_laplace = formula.has_random_effects()
 	                 || family == "negbin" || family == "beta" || family == "student";
 
+	// GAMs: smoothing parameters by REML. Under the Bayesian reading of the
+	// smoothing penalty (an improper Gaussian prior on the basis
+	// coefficients, with precision λS), REML is the empirical-Bayes choice
+	// of λ — the marginal likelihood of the data given λ (Wood 2011; 2017,
+	// §6.10) — and so the one that matches a Bayesian fit; GCV/UBRE, the
+	// frequentist default, target prediction error instead.
+	FitOptions gam_opts;
+	gam_opts.method = Method::REML;
+	const FitOptions *opts = formula.has_smooth_terms() ? &gam_opts : nullptr;
+
 	Model model = fit_impl(data, formula, family, reference_levels, progress,
-	                         uses_laplace ? &scaled_priors : nullptr, max_iter);
+	                         uses_laplace ? &scaled_priors : nullptr, max_iter, opts);
 
 	if (uses_laplace)
 	{

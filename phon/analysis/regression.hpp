@@ -115,7 +115,8 @@ struct SmoothColumnRange
 
 
 //! Fits a penalized linear regression model (Gaussian GAM) via penalized OLS
-//! with smoothing parameter(s) selected by GCV.
+//! with one smoothing parameter per smooth selected by GCV (mgcv's default
+//! method = "GCV.Cp") or, if reml is set, by REML (method = "REML").
 //!
 //! \param y response vector (n observations).
 //! \param X augmented design matrix (n × p, parametric + smooth basis columns).
@@ -127,11 +128,17 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
                    const Array<double> &S, intptr_t n_parametric,
                    const std::vector<SmoothColumnRange> &smooth_ranges = {},
                    FittingCallback progress = nullptr,
-                   const Array<double> &offset = Array<double>());
+                   const Array<double> &offset = Array<double>(),
+                   bool reml = false);
 
 
-//! Fits a penalized GLM (non-Gaussian GAM) via penalized IWLS
-//! with smoothing parameter selected by GCV at each outer iteration.
+//! Fits a penalized GLM (non-Gaussian GAM) via penalized IWLS, with one
+//! smoothing parameter per smooth selected by outer iteration as in mgcv's
+//! method = "GCV.Cp" (UBRE, for Poisson and binomial) or, if reml is set,
+//! by REML (Laplace approximate marginal likelihood). Negative binomial,
+//! beta and Student t always use REML, as mgcv does for its extended
+//! families, with their extra parameters (θ; φ; σ and ν) estimated jointly
+//! with λ. Each candidate is scored on the converged P-IRLS fit.
 //!
 //! \param y response vector.
 //! \param X augmented design matrix (parametric + smooth basis columns).
@@ -147,7 +154,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     const std::vector<SmoothColumnRange> &smooth_ranges = {},
                     FittingCallback progress = nullptr,
                     int max_iter = 50,
-                    const Array<double> &offset = Array<double>());
+                    const Array<double> &offset = Array<double>(),
+                    bool reml = false);
 
 } // namespace phonometrica::stats
 

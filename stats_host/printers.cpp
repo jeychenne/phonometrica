@@ -107,13 +107,7 @@ void print_model_summary(Isolate &iso, const stats::Model &m)
 		}
 	}
 	emit(iso, "Formula: %s\n", m.formula.data());
-	if (m.is_bayesian()) {
-		emit(iso, "Estimation: Bayesian (Gaussian approximation)\n");
-	} else if (m.method == stats::Method::REML) {
-		emit(iso, "Estimation: Frequentist (restricted maximum likelihood)\n");
-	} else {
-		emit(iso, "Estimation: Frequentist (maximum likelihood)\n");
-	}
+	emit(iso, "Estimation: %s\n", m.estimation_label());
 	emit(iso, "Observations: %ld\n", (long)m.nobs);
 
 	// Experimental notice: smooth terms are not yet at production parity.
@@ -245,7 +239,7 @@ void print_model_summary(Isolate &iso, const stats::Model &m)
 	else
 	{
 		// ── Frequentist summary ─────────────────────────────────
-		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
+		const char *stat_label = (m.is_gaussian() || (m.is_student() && m.smooth_terms.empty())) ? "t value" : "z value";
 		emit(iso, "Fixed effects:\n");
 
 		int name_w = summary_column_width(m.coef_names, 24);
@@ -312,7 +306,7 @@ void print_model_summary(Isolate &iso, const stats::Model &m)
 
 		emit(iso, "Approximate significance of smooth terms:\n");
 		emit(iso, (lbl_fmt + " %8s %8s %10s %12s\n").c_str(),
-		          "", "edf", "Ref.df", "F", "p-value");
+		          "", "edf", "Ref.df", m.is_gaussian() ? "F" : "Chi.sq", "p-value");
 
 		std::string row_fmt = lbl_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
 

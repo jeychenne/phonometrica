@@ -7382,7 +7382,7 @@ QString AnalysisView::formatLatex(const stats::Model &m) const
 		tex += QStringLiteral("\\begin{tabular}{lrrrr}\n");
 		tex += QStringLiteral("\\hline\n");
 
-		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "$t$" : "$z$";
+		const char *stat_label = (m.is_gaussian() || (m.is_student() && m.smooth_terms.empty())) ? "$t$" : "$z$";
 		tex += QStringLiteral(" & Estimate & Std.~Error & %1 & $p$ \\\\\n")
 			.arg(QString::fromUtf8(stat_label));
 		tex += QStringLiteral("\\hline\n");
@@ -8578,13 +8578,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 	text += QStringLiteral("Formula: %1\n")
 		.arg(QString::fromUtf8(m.formula.data(), (int)m.formula.size()));
-	if (m.is_bayesian()) {
-		text += QStringLiteral("Estimation: Bayesian (Gaussian approximation)\n");
-	} else if (m.method == stats::Method::REML) {
-		text += QStringLiteral("Estimation: Frequentist (restricted maximum likelihood)\n");
-	} else {
-		text += QStringLiteral("Estimation: Frequentist (maximum likelihood)\n");
-	}
+	text += QStringLiteral("Estimation: %1\n").arg(QString::fromUtf8(m.estimation_label()));
 	text += QStringLiteral("Observations: %1\n").arg(m.nobs);
 
 	// Experimental notice for models containing smooth terms.  Mirrors
@@ -8666,7 +8660,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 	}
 	else
 	{
-		const char *stat_label = (m.is_gaussian() || m.is_student()) ? "t value" : "z value";
+		const char *stat_label = (m.is_gaussian() || (m.is_student() && m.smooth_terms.empty())) ? "t value" : "z value";
 		text += QStringLiteral("Fixed effects:\n");
 		text += QString::asprintf((hdr_fmt + " %12s %12s %12s %12s\n").c_str(),
 		                           "", "Estimate", "Std.Error", stat_label, "Pr(>|t|)");
@@ -8763,7 +8757,7 @@ QString AnalysisView::formatSummary(const stats::Model &m) const
 
 		text += QStringLiteral("Approximate significance of smooth terms:\n");
 		text += QString::asprintf((sm_fmt + " %8s %8s %10s %12s\n").c_str(),
-		                           "", "edf", "Ref.df", "F", "p-value");
+		                           "", "edf", "Ref.df", m.is_gaussian() ? "F" : "Chi.sq", "p-value");
 
 		std::string sm_row = sm_fmt + " %8.3f %8.3f %10.2f %12s%s\n";
 

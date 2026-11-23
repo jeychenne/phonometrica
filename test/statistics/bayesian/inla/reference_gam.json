@@ -2,7 +2,7 @@
   "chapter": "Ch9",
   "dataset": "mgcv::gamSim(1, n=400, seed=2), brinla::kyphosis",
   "engine": "inla",
-  "generated_at": "2026-05-12 08:14:51 EDT",
+  "generated_at": "2026-11-22 19:31:34 EST",
   "R_version": "R version 4.5.0 (2025-04-11)",
   "INLA_version": "25.10.19",
   "brinla_version": "0.1.0",
@@ -17,24 +17,44 @@
       "converged": true,
       "fit": {
         "nobs": 400,
-        "waic": 1698.757429608523,
-        "p_waic": 19.391443165811
+        "waic": 1698.784452153026,
+        "p_waic": 19.403768694297
       },
       "fixef": {
         "names": ["Intercept"],
-        "post_mean": [7.946127830282],
-        "post_sd": [0.1029407553093],
-        "ci_lower": [7.744139324407],
-        "ci_upper": [8.148044830388],
-        "pd": [0.9999998133785]
+        "post_mean": [7.945911588729],
+        "post_sd": [0.1028935813033],
+        "ci_lower": [7.744014326755],
+        "ci_upper": [8.147735446022],
+        "pd": [0.9999998133946]
       },
       "hyper": {
         "names": ["sd(residual)"],
-        "post_mean": [1.968982563399],
-        "post_sd": [0.07137080924227],
-        "ci_lower": [1.83297358072],
-        "ci_upper": [2.113249433037]
+        "post_mean": [1.969230424668],
+        "post_sd": [0.07138057401152],
+        "ci_lower": [1.833962275507],
+        "ci_upper": [2.114262759869]
       }
+    },
+    "M_K": {
+      "formula": "Kyphosis ~ s(Age) + s(StartVert) + s(NumVert)",
+      "engine": "inla",
+      "family": "binomial",
+      "converged": true,
+      "fit": {
+        "nobs": 83,
+        "waic": 73.151017897677,
+        "p_waic": 4.079275836407
+      },
+      "fixef": {
+        "names": ["Intercept"],
+        "post_mean": [-0.4706774050026],
+        "post_sd": [0.5172854675465],
+        "ci_lower": [-1.485022926518],
+        "ci_upper": [0.5436680738816],
+        "pd": [0.8191540766239]
+      },
+      "hyper": null
     }
   }
 }

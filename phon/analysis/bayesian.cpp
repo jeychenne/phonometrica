@@ -44,10 +44,24 @@ namespace phonometrica::stats {
 
 void bayesian_adjust(Model &model, const PriorSpec &priors)
 {
-	intptr_t p = model.nfixed;
-	if (p <= 0) return;
+	// p covers ALL coefficients, including the smooth-basis coefficients of a
+	// GAM: model.nfixed counts the parametric ones only (the leading block).
+	// The posterior update, the skewness correction and the Laplace term all
+	// need the full vector — with the parametric block alone, η̂ = Xβ̂ drops
+	// every smooth, which pushed a binomial GAM's intercept from −3.1 to
+	// −12.7 on kyphosis, and a p×p view of the full covariance reads the
+	// wrong entries as soon as there are two parametric terms. The posterior
+	// summary arrays still cover the parametric block, as their consumers
+	// expect.
+	const intptr_t p_par = model.nfixed;
+	intptr_t p = model.beta.size();
+	if (p <= 0 || p_par <= 0) return;
 	if (!model.has_vcov()) {
 		throw error("Cannot compute Bayesian posterior: variance-covariance matrix not available");
+	}
+	if (model.vcov.nrow() != p || model.vcov.ncol() != p) {
+		throw error("Cannot compute Bayesian posterior: covariance matrix is %×% for % coefficients",
+		            model.vcov.nrow(), model.vcov.ncol(), p);
 	}
 
 	// ── 1. Build the prior precision matrix for fixed effects ────────
@@ -234,15 +248,15 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	boost::math::normal_distribution<double> normal;
 	double z_975 = boost::math::quantile(normal, 0.975); // ≈ 1.96
 
-	model.posterior_mean = Array<double>(p, 0.0);
-	model.posterior_mode = Array<double>(p, 0.0);
-	model.posterior_median = Array<double>(p, 0.0);
-	model.posterior_sd = Array<double>(p, 0.0);
-	model.ci_lower = Array<double>(p, 0.0);
-	model.ci_upper = Array<double>(p, 0.0);
-	model.pd = Array<double>(p, 0.0);
+	model.posterior_mean = Array<double>(p_par, 0.0);
+	model.posterior_mode = Array<double>(p_par, 0.0);
+	model.posterior_median = Array<double>(p_par, 0.0);
+	model.posterior_sd = Array<double>(p_par, 0.0);
+	model.ci_lower = Array<double>(p_par, 0.0);
+	model.ci_upper = Array<double>(p_par, 0.0);
+	model.pd = Array<double>(p_par, 0.0);
 
-	for (intptr_t j = 0; j < p; j++)
+	for (intptr_t j = 0; j < p_par; j++)
 	{
 		double mean = beta_post[j];
 		double var = Sigma_post(j, j);
@@ -283,7 +297,7 @@ void bayesian_adjust(Model &model, const PriorSpec &priors)
 	// frequentist standard errors and Wald statistics.
 	for (intptr_t j = 0; j < p; j++)
 	{
-		model.se[j] = model.posterior_sd[j];
+		model.se[j] = std::sqrt(std::max(Sigma_post(j, j), 0.0));
 		model.stat[j] = (model.se[j] > 0) ? model.beta[j] / model.se[j] : 0.0;
 		// p-values are not meaningful in Bayesian context; set to NaN.
 		model.p[j] = std::numeric_limits<double>::quiet_NaN();

@@ -292,6 +292,28 @@ String SmoothTerm::to_string() const
 	return result;
 }
 
+String SmoothTerm::to_r_string() const
+{
+	String result("s(");
+	result.append(r_quote_name(variable));
+	if (!by.empty())
+	{
+		result.append(", by = ");
+		result.append(r_quote_name(by));
+	}
+	result.append(", bs = \"");
+	result.append(basis);
+	result.append("\"");
+	// mgcv ignores k for "re" (the dimension is the number of levels).
+	if (basis != "re")
+	{
+		result.append(", k = ");
+		result.append(std::to_string(k));
+	}
+	result.append(")");
+	return result;
+}
+
 
 // =====================================================================
 // RandomTerm
@@ -351,8 +373,6 @@ String Formula::to_string() const
 
 String Formula::to_r_string() const
 {
-	if (has_smooth_terms())
-		throw error("Smooth terms cannot be translated to R: Phonometrica's spline basis is not mgcv's");
 	return to_string(r_quote_name);
 }
 
@@ -393,7 +413,7 @@ String Formula::to_string(NameQuoter quote_name) const
 	for (intptr_t i = 0; i < smooth.size(); i++)
 	{
 		if (need_plus) result.append(" + ");
-		result.append(smooth[i].to_string());
+		result.append(quote_name == r_quote_name ? smooth[i].to_r_string() : smooth[i].to_string());
 		need_plus = true;
 	}
 

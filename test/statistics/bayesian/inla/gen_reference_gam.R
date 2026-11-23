@@ -5,21 +5,16 @@
 #   M_A — gamSim Gaussian:
 #       y ~ s(x0) + s(x1) + s(x2) + s(x3)              (n=400, simulated)
 #
-# Deferred: M_K kyphosis binomial.
-#   Kyphosis ~ s(Age) + s(StartVert) + s(NumVert)      (n=83)
-#   Phon converges to a degenerate fit on this dataset: intercept
-#   ≈ −14.5 (logit-scale → predicted probability ≈ 5e-7 everywhere),
-#   WAIC NaNs from log(0) in pointwise likelihoods on the 17 positive
-#   cases. INLA fits cleanly (intercept −0.47 ± 0.52). Diagnosis: n=83
-#   with 17 positives, k=10 × 3 smooths = 30 basis parameters → near
-#   saturation; the binomial likelihood is flat in directions where
-#   smooth(positive_case) → +∞ (quasi-separation), and Phon's
-#   smoothing-penalty selection for the Bayesian binomial-GAM path
-#   doesn't keep the joint solution bounded. This is a real Phon-side
-#   issue surfaced by the smoke test, not a tolerance one. Reactivation:
-#   restore `M_K = entry_mk` to the `models` list at the bottom of this
-#   file once Phon produces a bounded fit. The fit code below is
-#   preserved for that.
+#   M_K — kyphosis binomial:
+#       Kyphosis ~ s(Age) + s(StartVert) + s(NumVert)  (n=83)
+#   Deferred until 22/11/2026, when Phon's Bayesian binomial GAM was
+#   degenerate on it (intercept ≈ −12.7, WAIC ≈ 580 against INLA's 73):
+#   bayesian_adjust worked on the parametric block alone, so its
+#   skewness correction used η = intercept, without the smooths. Only its
+#   WAIC and p_WAIC are compared (see test_gam.phon): the intercept means
+#   something else in the two fits, because INLA's rw2 terms sum to zero
+#   over their 20 inla.group values whereas mgcv's and Phon's smooths sum
+#   to zero over the 83 observations, and Age is far from uniform.
 #
 #
 # ★★★ Apples-to-oranges comparison ★★★
@@ -180,12 +175,9 @@ entry_mk <- build_gam_entry_inla(
 )
 
 # ── Serialise ─────────────────────────────────────────────────────────
-# M_K is deferred — see header comment "Deferred: M_K kyphosis binomial".
-# The fit code above is preserved for one-line reactivation: append
-# M_K = entry_mk to this list once Phon's binomial GAM produces a
-# bounded fit on kyphosis.
 models <- list(
-    M_A = entry_ma
+    M_A = entry_ma,
+    M_K = entry_mk
 )
 
 write_reference_inla(

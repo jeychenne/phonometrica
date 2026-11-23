@@ -27,16 +27,20 @@
 # post-v1.0 when the basis-parity rewrite lands.
 # =====================================================================
 
-let B = import("../../lib/bayes_assert")
+import stat_assert
+import bayes_assert
 
-let DATA_GAM_SIM  = B.resolve_sibling("../../../data/gam_sim_brinla.csv")
-let DATA_KYPHOSIS = B.resolve_sibling("../../../data/kyphosis_brinla.csv")
-let REF           = B.resolve_sibling("reference_gam.json")
+# Three levels below test/, so the data path is spelled out rather than
+# going through resolve_data_path (which assumes two).
+var DATA_GAM_SIM  = resolve_sibling("../../../data/gam_sim_brinla.csv")
+var DATA_KYPHOSIS = resolve_sibling("../../../data/kyphosis_brinla.csv")
+var DATA_GAM_TEST = resolve_sibling("../../../data/gam_test.csv")
+var REF           = resolve_sibling("reference_gam.json")
 
-let refs_root = B.load_reference(REF)
-let refs = refs_root["models"]
+var refs_root = load_reference(REF)
+var refs = refs_root["models"]
 
-B.start_section("BAYESIAN GAM (Ch9 INLA-reference, smoke test)")
+start_section("BAYESIAN GAM (Ch9 INLA-reference, smoke test)")
 
 # ── Loose tolerance for the basis-mismatched comparison ───────────
 # Five times wider than tol_inla on means; ten times wider on CIs;
@@ -45,7 +49,7 @@ B.start_section("BAYESIAN GAM (Ch9 INLA-reference, smoke test)")
 # is bumped specifically — Phon's k=10 cr basis runs ~14 effective
 # parameters on gam_sim while INLA's 20-knot rw2 runs ~19; the
 # 5-unit gap is a structural property of the bases, not drift.
-let tol_gam = B.default_tolerance()
+var tol_gam = default_tolerance()
 tol_gam["mean_rel"]       = 0.30
 tol_gam["mean_abs"]       = 0.20
 tol_gam["sd_rel"]         = 0.50
@@ -60,38 +64,70 @@ tol_gam["waic_abs"]       = 25.0
 tol_gam["pwaic_abs"]      = 10.0
 
 # ── M_A: gamSim Gaussian ──────────────────────────────────────────
-let d_gam_sim = load(DATA_GAM_SIM)
-B.bayes_fit_and_check("M_A", "y ~ s(x0) + s(x1) + s(x2) + s(x3)", d_gam_sim, "gaussian", refs["M_A"], tol_gam)
+var d_gam_sim = load(DATA_GAM_SIM)
+bayes_fit_and_check("M_A", "y ~ s(x0) + s(x1) + s(x2) + s(x3)", d_gam_sim, "gaussian", refs["M_A"], tol_gam)
 
-# ── M_K: kyphosis binomial — DEFERRED ─────────────────────────────
-# Phon converges to a degenerate fit on kyphosis: intercept ≈ −14.5
-# (logit scale → predicted Kyphosis probability ≈ 5e-7 everywhere),
-# WAIC computation NaNs from log(0) in pointwise likelihoods on the
-# 17 positive cases.
+# ── M_K: kyphosis binomial ────────────────────────────────────────
+# Re-enabled 22/11/2026. Until then Phon's Bayesian binomial GAM was
+# degenerate here (intercept ≈ −12.7, WAIC ≈ 580 against INLA's 73):
+# bayesian_adjust worked on the parametric block alone, so its skewness
+# correction evaluated η with the intercept only, without the smooths.
 #
-# Diagnosis: kyphosis has n=83 with 17 positives; the formula s(Age) +
-# s(StartVert) + s(NumVert) at k=10 each puts 30 smooth-basis
-# parameters against the data. The binomial likelihood is flat in
-# directions where smooth(positive_case) → +∞ (quasi-separation), and
-# Phon's smoothing-penalty selection for the Bayesian binomial GAM
-# path doesn't keep the joint solution bounded. Phon's IRLS step-
-# halving accepts the converged-but-saturated iterate.
-#
-# This is a real Phon-side issue, not a tolerance one (the gap is
-# ~14 log-odds units against tol_gam mean_abs=0.20 — orders of
-# magnitude past anything reasonable). INLA fits the same model
-# cleanly with intercept −0.47 ± 0.52.
-#
-# Pre-requisite for re-enabling: Phon's binomial GAM produces a
-# bounded fit on this dataset. Likely fix area: smooth-penalty
-# selection for non-Gaussian families with k×n_smooths near n
-# (kyphosis has 30 smooth-basis params for n=83 — near-saturated).
-#
-# The reference fit for M_K stays in gen_reference_gam.R for one-line
-# reactivation once Phon's binomial GAM converges to a bounded fit
-# on kyphosis.
-#
-# let d_kyphosis = load(DATA_KYPHOSIS)
-# B.bayes_fit_and_check("M_K", "Kyphosis ~ s(Age) + s(StartVert) + s(NumVert)", d_kyphosis, "binomial", refs["M_K"], tol_gam)
+# Compared: convergence, WAIC and p_WAIC. NOT compared: the intercept,
+# which means something else in the two fits — INLA's rw2 terms sum to
+# zero over their 20 inla.group values, mgcv's and Phon's smooths over the
+# 83 observations, and Age is far from uniform (Phon −2.7 ± 0.5, mgcv's
+# REML fit −2.75, INLA −0.47 ± 0.52). The reference's fixef block is kept
+# in the JSON but emptied here; a separate bound on the intercept guards
+# against the old degenerate fit.
+var d_kyphosis = load(DATA_KYPHOSIS)
+var ref_k = refs["M_K"]
+ref_k["fixef"] = {"names": [], "post_mean": [], "post_sd": [], "ci_lower": [], "ci_upper": [], "pd": []}
+var m_k = null
+try
+    m_k = fit("Kyphosis ~ s(Age) + s(StartVert) + s(NumVert)", d_kyphosis, "binomial", Prior())
+catch err
+    record_fail("M_K: fit() threw exception: " & err.message)
+end
+if m_k != null then
+    bayes_check_fit("M_K", m_k, ref_k, tol_gam)
+    var b0 = get_coef(m_k)[1]
+    if b0 > -6.0 and b0 < 1.0 then
+        record_pass()
+    else
+        record_fail("M_K intercept " & b0 & " outside [-6, 1]: degenerate fit")
+    end
+end
 
-B.end_section()
+end_section()
+
+# =====================================================================
+# Consistency with the penalized fit (no INLA reference)
+# =====================================================================
+# With the default (weak) priors, a Bayesian GAM's parametric posterior
+# should sit on the penalized REML fit it starts from: posterior SDs
+# within 1% of the frequentist SEs, posterior means within 0.1 SD. Until
+# 22/11/2026 bayesian_adjust read the parametric block of the covariance
+# as if it were the whole matrix, so with more than one parametric
+# column the SDs were garbage (vowel: 0.23 and 0.38 instead of 3.47 for
+# the Gaussian model, 0 and 0.02 instead of 0.17 for the binomial one).
+
+start_section("BAYESIAN GAM (consistency with the penalized fit)")
+
+var d_gt = load(DATA_GAM_TEST)
+var cons_forms = ["y_gauss ~ vowel + s(duration, k=8)", "y_bin ~ vowel + s(duration, k=8)"]
+var cons_fams = ["gaussian", "binomial"]
+for i = 1 to len(cons_forms) do
+    var tag = "C" & i & " (" & cons_fams[i] & ")"
+    var mf = fit(cons_forms[i], d_gt, cons_fams[i], {"fit_method": "REML"})
+    var mb = fit(cons_forms[i], d_gt, cons_fams[i], Prior())
+    var bf = get_coef(mf)
+    for j = 1 to 3 do
+        var name = mf.coef_names[j]
+        check(tag & " posterior SD[" & name & "]", mb.posterior_sd[j], mf.se[j], 0.01, 0.0)
+        check(tag & " posterior mean[" & name & "]", mb.posterior_mean[j], bf[j], 0.0, 0.1 * mf.se[j])
+    end
+end
+
+end_section()
+

@@ -95,6 +95,16 @@ struct SmoothTerm
 
 	// String representation: "s(duration)" or "s(duration, k=15)" or "s(duration, by=speaker)"
 	String to_string() const;
+
+	// The equivalent mgcv term. The basis is always spelled out, because a bare
+	// s(x) is a cubic regression spline here but a thin plate spline in mgcv:
+	//   s(duration)              → s(duration, bs = "cr", k = 10)
+	//   s(duration, by=vowel)    → s(duration, by = vowel, bs = "cr", k = 10)
+	//   s(speaker, bs=re)        → s(speaker, bs = "re")
+	//   s(speaker, by=x, bs=re)  → s(speaker, by = x, bs = "re")
+	// With these, mgcv builds the same basis, constraint and penalty (scaled
+	// the same way), so the coefficients are directly comparable.
+	String to_r_string() const;
 };
 
 
@@ -170,8 +180,8 @@ struct Formula
 	// The same formula in R syntax: identical except that non-syntactic names
 	// are quoted with backticks (R) rather than single quotes (Phonometrica).
 	// Offsets, interactions, "0 +", random slopes and synthetic groupings
-	// ((1 | g2:g1), component order preserved) are already R syntax. Throws on
-	// smooth terms, whose basis has no mgcv equivalent.
+	// ((1 | g2:g1), component order preserved) are already R syntax. Smooth
+	// terms become their mgcv equivalent (see SmoothTerm::to_r_string).
 	String to_r_string() const;
 
 	// Serialise with a given name-quoting policy.

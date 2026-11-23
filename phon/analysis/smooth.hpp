@@ -72,8 +72,18 @@ struct SmoothBasis
 	intptr_t null_dim;     // dimension of penalty null space (2 for "cr": intercept + slope)
 
 	Array<double> B;       // n × k_eff basis matrix (identifiability constraint absorbed)
-	Array<double> S;       // k_eff × k_eff penalty matrix (absorbed)
+	Array<double> S;       // k_eff × k_eff penalty matrix (absorbed, NOT yet rescaled)
 	Array<double> knots;   // k knot positions
+
+	// Penalty rescaling factor, mgcv's scale.penalty = TRUE (smoothCon):
+	//   S_scale = ‖B_raw‖∞² / ‖S_raw‖₁
+	// i.e. (max absolute row sum of the unconstrained basis over the fitting
+	// data)² over the max absolute column sum of the unconstrained penalty.
+	// The fitter multiplies S by this factor so that λ is on mgcv's scale and
+	// log10(λ) can be compared with log10(m$sp) directly. By-factor smooths
+	// share the factor of the full-data basis, as in mgcv. 1 for "re" bases,
+	// which mgcv does not rescale.
+	double S_scale = 1.0;
 
 	// Internal: k × k matrix F mapping knot values to second derivatives at knots.
 	// F[0,:] = F[k-1,:] = 0 (natural boundary conditions).

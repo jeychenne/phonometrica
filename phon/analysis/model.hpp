@@ -365,6 +365,23 @@ struct Model
 
 	bool is_frequentist() const { return estimation == Estimation::Frequentist; }
 
+	// The "Estimation:" line of model summaries. GAMs name the criterion
+	// that selected their smoothing parameters: GCV (Gaussian) or UBRE
+	// (Poisson, binomial) by default, REML on request and always for
+	// negative binomial, beta and Student t.
+	const char *estimation_label() const
+	{
+		if (is_bayesian()) return "Bayesian (Gaussian approximation)";
+		if (!smooth_terms.empty())
+		{
+			if (method == Method::REML) return "Frequentist (penalized likelihood, smoothing parameters by REML)";
+			if (family == "gaussian") return "Frequentist (penalized likelihood, smoothing parameters by GCV)";
+			return "Frequentist (penalized likelihood, smoothing parameters by UBRE)";
+		}
+		if (method == Method::REML) return "Frequentist (restricted maximum likelihood)";
+		return "Frequentist (maximum likelihood)";
+	}
+
 	bool has_source_rows() const { return !source_rows.empty(); }
 
 	// Scatter a per-observation vector (length nobs) back to source-table

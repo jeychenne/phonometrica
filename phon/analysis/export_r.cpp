@@ -1599,8 +1599,8 @@ String r_export_blocker(const Model &model)
 		return "Bayesian fits cannot be exported to R. Refit with frequentist estimation to export, "
 		       "or see the documentation on checking Bayesian results.";
 	if (model.has_smooth_terms())
-		return "Models with smooth terms cannot be exported: Phonometrica's spline basis is not mgcv's "
-		       "parameterization, so the two fits are not directly comparable.";
+		return "Models with smooth terms cannot be exported to R yet: the export does not generate "
+		       "mgcv::gam() scripts.";
 	auto *fam = find_family(model.family);
 	if (!fam)
 		return String::format("The '%s' family cannot be exported to R.", model.family.data());
@@ -1620,8 +1620,8 @@ String r_export_blocker(const Model &model)
 		return String::format("The model's formula cannot be read: %s", e.what());
 	}
 	if (f.has_smooth_terms())
-		return "Models with smooth terms cannot be exported: Phonometrica's spline basis is not mgcv's "
-		       "parameterization, so the two fits are not directly comparable.";
+		return "Models with smooth terms cannot be exported to R yet: the export does not generate "
+		       "mgcv::gam() scripts.";
 
 	auto msg = formula_coding_blocker(f, [&](const std::string &v) { return model_says_categorical(model, v); });
 	if (!msg.empty()) return String(msg.c_str());

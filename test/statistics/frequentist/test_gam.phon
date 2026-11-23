@@ -1,7 +1,22 @@
 # =====================================================================
 # test_gam.phon — validates Phonometrica's GAM engine against
 # reference_gam.json (produced by gen_reference_gam.R using mgcv).
-# Dataset: test/data/gam_test.csv (already in the repo)
+# Datasets: test/data/gam_test.csv, and test/data/gam_ext.csv for the
+# beta and Student-t responses (gen_data_gam_ext.R).
+#
+# All references use mgcv's bs="cr" basis, which is what Phonometrica's
+# s() implements; basis, constraint and penalty scaling are identical, so
+# EDF and log10(λ) are compared directly. M models use method="GCV.Cp"
+# (Phonometrica's default: GCV, or UBRE for Poisson/binomial), R models
+# method="REML" (fit_method = "REML"), X models the extended families
+# (negative binomial, beta, Student t), which both programs always fit by
+# REML with their extra parameters estimated jointly with λ.
+# Tolerances are set just above the discrepancies measured on
+# 22/11/2026. Apart from M4 (see there), fits agree to ~1e-4 relative
+# (log-likelihood, coefficients, EDF, log10(λ), θ/φ/σ/ν); the loosest
+# are intercept SEs: 2% for the bs=re models under GCV, 0.3% for Student t.
+# Known gaps: smooth F statistics (see check_gam); AIC of REML fits, which
+# is not compared (see gen_reference_gam.R).
 #
 # Run from test/statistics/frequentist/  e.g.:
 #   cd test/statistics/frequentist
@@ -15,12 +30,15 @@ import stat_assert
 # test/statistics/frequentist/.
 
 var DATA = ""
+var DATA_EXT = ""
 var REF  = ""
 try
     DATA = resolve_data_path("gam_test.csv")
+    DATA_EXT = resolve_data_path("gam_ext.csv")
     REF  = resolve_sibling("reference_gam.json")
 catch err
     DATA = "../../data/gam_test.csv"
+    DATA_EXT = "../../data/gam_ext.csv"
     REF  = "reference_gam.json"
 end
 
@@ -28,35 +46,70 @@ end
 var refs_root = load_reference(REF)
 var refs      = refs_root["models"]
 var d         = load(DATA)
+var e         = load(DATA_EXT)
+
+# As fit_and_check_gam, with fit_method = "REML".
+function fit_and_check_gam_reml(tag as String, formula as String, data as Object, family as String, reference as Object, rtol_fit as Number, rtol_coef as Number, rtol_edf as Number)
+    var model = null
+    try
+        model = fit(formula, data, family, {"fit_method": "REML"})
+    catch err
+        record_fail(tag & ": fit() threw exception: " & err.message)
+        return
+    end
+    if model.fit_method != "REML" then
+        record_fail(tag & ": fit_method is " & model.fit_method & ", expected REML")
+    end
+    check_gam(tag, model, reference, rtol_fit, rtol_coef, rtol_edf)
+end
 
 
-var m5 = fit("y_count ~ s(duration, bs=cr, k=8)", d, "poisson")
-print("M5 niter:    " & m5.niter)
-print("M5 converged:" & m5.converged)
-print("M5 loglik:   " & m5.loglik)
-print("M5 nobs:     " & m5.nobs)
-print("M5 intercept:" & get_coef(m5)[1])
-print("M5 β count:  " & len(get_coef(m5)))
-print("β: " & get_coef(m5))
+start_section("GAM")
 
+# fit_and_check_gam(tag, formula, data, family, ref, rtol_fit, rtol_coef, rtol_edf)
 
-# start_section("GAM")
-# 
-# fit_and_check_gam("M1", "y_gauss ~ s(duration, bs=cr, k=10)", d, "gaussian", refs["M1"], 0.01, 0.02, 0.15)
-# 
-# fit_and_check_gam("M2", "y_gauss ~ vowel + s(duration, bs=cr, k=10)", d, "gaussian", refs["M2"], 0.01, 0.02, 0.15)
-# 
-# fit_and_check_gam("M3", "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "gaussian", refs["M3"], 0.01, 0.02, 0.15)
-# 
-# fit_and_check_gam("M4", "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)", d, "gaussian", refs["M4"], 0.01, 0.02, 0.20)
-# 
-# fit_and_check_gam("M5", "y_count ~ s(duration, bs=cr, k=8)", d, "poisson", refs["M5"], 0.02, 0.02, 0.15)
-# 
-# 
-# var m5 = fit("y_count ~ s(duration, bs=cr, k=8)", d, "poisson")
-# print "M5 Phonometrica log10(λ): " & m5.smooth_log_lambda
-# print "M5 EDF: " & m5.smooth_edf
-# print "M5 F (Chi.sq): " & m5.smooth_F
-# 
-# 
-# end_section()
+# Gaussian, cubic regression splines.
+fit_and_check_gam("M1", "y_gauss ~ s(duration, bs=cr, k=10)", d, "gaussian", refs["M1"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("M2", "y_gauss ~ vowel + s(duration, bs=cr, k=10)", d, "gaussian", refs["M2"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("M3", "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "gaussian", refs["M3"], 0.0001, 0.005, 0.05)
+# By-factor smooth: for level u Phonometrica finds log10(λ) = 3.62 (EDF
+# 1.69) where mgcv stops at 3.86 (EDF 1.49). Phonometrica's point has the
+# lower GCV score (1697.119 vs 1697.216; evaluated at mgcv's λ it
+# reproduces mgcv's score exactly): mgcv's Newton iteration stops short on
+# this flat stretch. Hence the looser EDF and fit tolerances.
+fit_and_check_gam("M4", "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)", d, "gaussian", refs["M4"], 0.0002, 0.005, 0.15)
+
+# Gaussian, random-effect smooths (bs=re): intercepts, uncorrelated
+# slopes (whose variance mgcv and Phonometrica both shrink to ~0 here),
+# and a spline alongside random intercepts.
+fit_and_check_gam("M6", "y_gauss ~ duration + s(speaker, bs=re)", d, "gaussian", refs["M6"], 0.0001, 0.015, 0.05)
+fit_and_check_gam("M7", "y_gauss ~ duration + s(speaker, bs=re) + s(speaker, by=duration, bs=re)", d, "gaussian", refs["M7"], 0.0001, 0.015, 0.05)
+fit_and_check_gam("M8", "y_gauss ~ vowel + s(duration, bs=cr, k=8) + s(speaker, bs=re)", d, "gaussian", refs["M8"], 0.0001, 0.02, 0.05)
+
+# Binomial. The smooth is a straight line in both fits (EDF 1.00), so λ is
+# unidentified and not compared (see check_gam).
+fit_and_check_gam("M9", "y_bin ~ s(duration, bs=cr, k=8)", d, "binomial", refs["M9"], 0.0001, 0.005, 0.05)
+
+# Poisson and binomial: λ selected by UBRE (mgcv's GCV.Cp for a known
+# scale), one smoothing parameter per smooth.
+fit_and_check_gam("M5", "y_count ~ s(duration, bs=cr, k=8)", d, "poisson", refs["M5"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("M10", "y_count ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "poisson", refs["M10"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("M11", "y_bin ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "binomial", refs["M11"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("M12", "y_count ~ duration + s(speaker, bs=re)", d, "poisson", refs["M12"], 0.0001, 0.005, 0.05)
+# REML smoothing-parameter selection.
+fit_and_check_gam_reml("R1", "y_gauss ~ s(duration, bs=cr, k=10)", d, "gaussian", refs["R1"], 0.0001, 0.005, 0.05)
+fit_and_check_gam_reml("R2", "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "gaussian", refs["R2"], 0.0001, 0.005, 0.05)
+fit_and_check_gam_reml("R3", "y_gauss ~ duration + s(speaker, bs=re)", d, "gaussian", refs["R3"], 0.0001, 0.015, 0.05)
+fit_and_check_gam_reml("R4", "y_count ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "poisson", refs["R4"], 0.0001, 0.005, 0.05)
+fit_and_check_gam_reml("R5", "y_bin ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", d, "binomial", refs["R5"], 0.0001, 0.005, 0.05)
+
+# Extended families: REML whatever fit_method says, θ (negbin), φ (beta),
+# σ and ν (Student t) estimated jointly with λ.
+fit_and_check_gam("X1", "y_nb ~ s(duration, bs=cr, k=8)", d, "negbin", refs["X1"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("X2", "y_beta ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", e, "beta", refs["X2"], 0.0001, 0.005, 0.05)
+fit_and_check_gam("X3", "y_t ~ s(duration, bs=cr, k=8)", e, "student", refs["X3"], 0.0001, 0.005, 0.05)
+
+# Not tested: a Poisson by-factor smooth on this dataset, whose UBRE has two
+# almost equal minima for one level (see gen_reference_gam.R).
+
+end_section()

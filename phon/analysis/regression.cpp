@@ -38,6 +38,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
+#include <numeric>
 #include <optional>
 #include <string>
 
@@ -1064,6 +1066,139 @@ Model beta_regression(const Array<double> &y, const Array<double> &X, int max_it
 // Penalized linear model (Gaussian GAM) with GCV
 // =====================================================================
 
+// Search range for log10(λ), shared by the GAM engines. With penalties
+// scaled as in mgcv (scale.penalty) the optimum grows roughly with n, and
+// smooths at their linear limit have very large optima (mgcv reports
+// log10(sp) > 10 for some), hence the asymmetric range. The upper bound also
+// stops the searches from drifting on rounding noise: as λ → ∞ the criteria
+// flatten out, and under REML log|X'WX + S_λ| − log|S_λ|₊ only cancels to
+// within rounding error, while (X'WX + S_λ) becomes too ill-conditioned for
+// an accurate EDF. At 10¹² a smooth is already a straight line (EDF = null
+// space dimension to 4 decimals on every model in the test suite).
+static constexpr double LOG_LAMBDA_MIN = -5.0;
+static constexpr double LOG_LAMBDA_MAX = 12.0;
+
+// Nelder–Mead minimization of f from x0 (with f(x0) = f0), initial simplex
+// step `step` along each axis. Stops when the simplex is smaller than
+// x_tol and its values agree to f_rtol, or after max_iter iterations.
+// Used to polish the smoothing-parameter searches: the coordinate searches
+// stop at a 0.05 resolution in log10(λ), and their coordinates can be
+// strongly correlated. f is expected to record its best point itself.
+static void nelder_mead(const std::function<double(const Eigen::VectorXd &)> &f,
+                        const Eigen::VectorXd &x0, double f0, double step,
+                        double x_tol = 1e-3, double f_rtol = 1e-9, int max_iter = 300)
+{
+	using Eigen::VectorXd;
+	const intptr_t d = x0.size();
+	if (d == 0) return;
+	std::vector<VectorXd> simplex(d + 1, x0);
+	std::vector<double> fv(d + 1);
+	fv[0] = f0;
+	for (intptr_t j = 0; j < d; j++)
+	{
+		simplex[j + 1][j] += step;
+		fv[j + 1] = f(simplex[j + 1]);
+	}
+	for (int it = 0; it < max_iter; it++)
+	{
+		std::vector<intptr_t> order(d + 1);
+		std::iota(order.begin(), order.end(), 0);
+		std::sort(order.begin(), order.end(), [&](intptr_t a, intptr_t b) { return fv[a] < fv[b]; });
+		std::vector<VectorXd> sx;
+		std::vector<double> sf;
+		for (auto o : order) { sx.push_back(simplex[o]); sf.push_back(fv[o]); }
+		simplex = std::move(sx);
+		fv = std::move(sf);
+
+		double size = 0;
+		for (intptr_t j = 1; j <= d; j++) size = std::max(size, (simplex[j] - simplex[0]).cwiseAbs().maxCoeff());
+		if (size < x_tol && std::abs(fv[d] - fv[0]) <= f_rtol * (1.0 + std::abs(fv[0]))) break;
+
+		VectorXd centroid = VectorXd::Zero(d);
+		for (intptr_t j = 0; j < d; j++) centroid += simplex[j];
+		centroid /= (double) d;
+		VectorXd xr = centroid + (centroid - simplex[d]);
+		double fr = f(xr);
+		if (fr < fv[0])
+		{
+			VectorXd xe = centroid + 2.0 * (centroid - simplex[d]);
+			double fe = f(xe);
+			if (fe < fr) { simplex[d] = xe; fv[d] = fe; } else { simplex[d] = xr; fv[d] = fr; }
+		}
+		else if (fr < fv[d - 1])
+		{
+			simplex[d] = xr; fv[d] = fr;
+		}
+		else
+		{
+			VectorXd xc = centroid + 0.5 * (simplex[d] - centroid);
+			double fc = f(xc);
+			if (fc < fv[d]) { simplex[d] = xc; fv[d] = fc; }
+			else
+			{
+				for (intptr_t j = 1; j <= d; j++)
+				{
+					simplex[j] = simplex[0] + 0.5 * (simplex[j] - simplex[0]);
+					fv[j] = f(simplex[j]);
+				}
+			}
+		}
+	}
+}
+
+// Rank and log pseudo-determinant of each penalty block S_j (λ_j = 1).
+//
+// Every smooth (or by-factor level) penalizes its own columns only, so
+// S_λ = Σ_j λ_j S_j is block diagonal and
+//   log|S_λ|₊ = Σ_j ( r_j log λ_j + log|S_j|₊ ),
+// which the REML criterion needs at every candidate λ. Computing r_j and
+// log|S_j|₊ once avoids an eigendecomposition per evaluation.
+struct PenaltyBlockDet
+{
+	intptr_t rank = 0;
+	double logdet = 0;   // log|S_j|₊ (product of the positive eigenvalues)
+};
+
+static std::vector<PenaltyBlockDet>
+penalty_block_dets(const Eigen::MatrixXd &S, const std::vector<SmoothColumnRange> &smooth_ranges)
+{
+	std::vector<PenaltyBlockDet> out;
+	for (auto &sr : smooth_ranges)
+	{
+		Eigen::MatrixXd Sj = S.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
+		Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Sj, Eigen::EigenvaluesOnly);
+		auto ev = es.eigenvalues();
+		double tol = std::max(ev.maxCoeff(), 0.0) * 1e-10;
+		PenaltyBlockDet d;
+		for (intptr_t i = 0; i < ev.size(); i++)
+		{
+			if (ev[i] > tol) { d.rank++; d.logdet += std::log(ev[i]); }
+		}
+		out.push_back(d);
+	}
+	return out;
+}
+
+// log|S_λ|₊ for log10(λ) values ll (see penalty_block_dets).
+static double log_pdet_S(const std::vector<PenaltyBlockDet> &dets, const std::vector<double> &ll)
+{
+	double v = 0;
+	for (size_t j = 0; j < dets.size(); j++) {
+		v += (double) dets[j].rank * ll[j] * M_LN10 + dets[j].logdet;
+	}
+	return v;
+}
+
+// Log-determinant of a symmetric positive definite matrix, or +∞ if the
+// Cholesky factorization fails (not positive definite).
+static double log_det_spd(const Eigen::MatrixXd &M)
+{
+	Eigen::LLT<Eigen::MatrixXd> llt(M);
+	if (llt.info() != Eigen::Success) return std::numeric_limits<double>::infinity();
+	return 2.0 * llt.matrixL().toDenseMatrix().diagonal().array().log().sum();
+}
+
+
 // Evaluate GCV score for a given smoothing parameter λ.
 // Returns {gcv_score, edf, rss} for the penalized OLS:
 //   β̂(λ) = (X'X + λS)⁻¹ X'y
@@ -1114,7 +1249,8 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
                    const Array<double> &S, intptr_t n_parametric,
                    const std::vector<SmoothColumnRange> &smooth_ranges,
                    FittingCallback progress,
-                   const Array<double> &offset)
+                   const Array<double> &offset,
+                   bool reml)
 {
 	using namespace Eigen;
 
@@ -1153,12 +1289,52 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		}
 	}
 
-	// ── Per-smooth λ optimization via alternating GCV ────────────
+	// ── Per-smooth λ optimization ────────────────────────────────
+	//
+	// Criterion, as mgcv's gam():
+	//   GCV (method = "GCV.Cp", the default):
+	//     V(λ) = n RSS / (n − τ)²,  τ = tr((X'X + S_λ)⁻¹ X'X)
+	//   REML (method = "REML"), with the scale φ profiled out:
+	//     V(λ) = (n − M_p)/2 · (1 + log(2π φ̂)) + ½ log|X'X + S_λ| − ½ log|S_λ|₊
+	//     φ̂ = (RSS + β̂'S_λβ̂) / (n − M_p)
+	//   where M_p = p − rank(S_λ) is the dimension of the unpenalized space.
+	//   This is mgcv's REML score (m$gcv.ubre) at its optimum: the same
+	//   expression with φ free reduces to it at φ = φ̂.
 	//
 	// For K=1 or K=0 this reduces to the single-λ case.
 	// For K>1, we cycle: optimize λ_j holding others fixed, repeat.
 
 	std::vector<double> log_lambda(K, 0.0); // log10(λ_j), initialized to 0.0 (λ=1)
+
+	auto build_S = [&](const std::vector<double> &ll) -> MatrixXd {
+		MatrixXd Sl = MatrixXd::Zero(p, p);
+		for (intptr_t j = 0; j < K; j++) Sl += std::pow(10.0, ll[j]) * S_blocks[j];
+		return Sl;
+	};
+
+	auto dets = penalty_block_dets(Sm, smooth_ranges);
+	intptr_t rank_S = 0;
+	for (auto &dj : dets) rank_S += dj.rank;
+	const double n_minus_Mp = (double) n - (double) (p - rank_S);
+
+	auto score = [&](const std::vector<double> &ll) -> double {
+		MatrixXd Sl = build_S(ll);
+		MatrixXd M = XtX + Sl;
+		LDLT<MatrixXd> ldlt(M);
+		VectorXd b = ldlt.solve(Xty);
+		double rss = (ym_work - Xm * b).squaredNorm();
+		if (!reml)
+		{
+			double edf = ldlt.solve(XtX).trace();
+			double denom = (double) n - edf;
+			return (denom > 0.5) ? (double) n * rss / (denom * denom) : 1e30;
+		}
+		double phi = (rss + b.dot(Sl * b)) / n_minus_Mp;
+		if (!(phi > 0) || n_minus_Mp <= 0) return 1e30;
+		double ldM = log_det_spd(M);
+		if (!std::isfinite(ldM)) return 1e30;
+		return 0.5 * n_minus_Mp * (1.0 + std::log(2.0 * M_PI * phi)) + 0.5 * ldM - 0.5 * log_pdet_S(dets, ll);
+	};
 
 	auto fixed_ll = read_diag_fixed_log_lambda();
 	bool gcv_overridden = false;
@@ -1179,25 +1355,23 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 	if (!gcv_overridden)
 	{
-	// Step 1: Initialize with single-λ GCV.
+	// Step 1: Initialize with a common λ.
+	//
+	// The penalties are scaled as in mgcv (scale.penalty), on which the optimal
+	// λ grows roughly in proportion to n, and near-linear smooths have large
+	// optima (mgcv reports log10(sp) > 10 for some). Hence the asymmetric range
+	// log10(λ) ∈ [−5, 12].
 	if (K > 0)
 	{
-		double best_gcv = std::numeric_limits<double>::max();
-		for (int g = -50; g <= 50; g++)
+		double best = std::numeric_limits<double>::max();
+		for (int g = -50; g <= 120; g++)
 		{
-			double log_lam = 0.1 * g;
-			double lam = std::pow(10.0, log_lam);
-			MatrixXd M = XtX + lam * Sm;
-			LDLT<MatrixXd> ldlt(M);
-			VectorXd beta = ldlt.solve(Xty);
-			double rss = (ym_work - Xm * beta).squaredNorm();
-			double edf = ldlt.solve(XtX).trace();
-			double denom = (double)n - edf;
-			double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
-			if (gcv < best_gcv)
+			std::vector<double> ll(K, 0.1 * g);
+			double v = score(ll);
+			if (v < best)
 			{
-				best_gcv = gcv;
-				for (intptr_t j = 0; j < K; j++) log_lambda[j] = log_lam;
+				best = v;
+				log_lambda = ll;
 			}
 		}
 	}
@@ -1215,57 +1389,34 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 		for (intptr_t j = 0; j < K; j++)
 		{
-			// Build penalty from all OTHER smooths at their current λ.
-			MatrixXd S_other = MatrixXd::Zero(p, p);
-			for (intptr_t k = 0; k < K; k++)
-			{
-				if (k != j) {
-					S_other += std::pow(10.0, log_lambda[k]) * S_blocks[k];
-				}
-			}
-
-			// GCV-optimize λ_j on a grid.
-			double best_gcv = std::numeric_limits<double>::max();
+			double best = std::numeric_limits<double>::max();
 			double best_log_lam = log_lambda[j];
+			std::vector<double> ll = log_lambda;
 
-			// Coarse grid: 30 points around current value ± 3.5
+			// Coarse grid: 31 points around current value ± 3.45
 			double center = log_lambda[j];
 			for (int g = -15; g <= 15; g++)
 			{
-				double log_lam = center + 0.23 * g;
-				double lam = std::pow(10.0, log_lam);
-				MatrixXd M = XtX + S_other + lam * S_blocks[j];
-				LDLT<MatrixXd> ldlt(M);
-				VectorXd beta = ldlt.solve(Xty);
-				double rss = (ym_work - Xm * beta).squaredNorm();
-				double edf = ldlt.solve(XtX).trace();
-				double denom = (double)n - edf;
-				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
-				if (gcv < best_gcv)
+				ll[j] = std::clamp(center + 0.23 * g, LOG_LAMBDA_MIN, LOG_LAMBDA_MAX);
+				double v = score(ll);
+				if (v < best)
 				{
-					best_gcv = gcv;
-					best_log_lam = log_lam;
+					best = v;
+					best_log_lam = ll[j];
 				}
 			}
 
-			// Fine grid: 10 points around best
+			// Fine grid: 11 points around best
 			double lo = best_log_lam - 0.25;
 			double hi = best_log_lam + 0.25;
 			for (int g = 0; g <= 10; g++)
 			{
-				double log_lam = lo + (hi - lo) * g / 10.0;
-				double lam = std::pow(10.0, log_lam);
-				MatrixXd M = XtX + S_other + lam * S_blocks[j];
-				LDLT<MatrixXd> ldlt(M);
-				VectorXd beta = ldlt.solve(Xty);
-				double rss = (ym_work - Xm * beta).squaredNorm();
-				double edf = ldlt.solve(XtX).trace();
-				double denom = (double)n - edf;
-				double gcv = (denom > 0.5) ? (double)n * rss / (denom * denom) : 1e30;
-				if (gcv < best_gcv)
+				ll[j] = std::clamp(lo + (hi - lo) * g / 10.0, LOG_LAMBDA_MIN, LOG_LAMBDA_MAX);
+				double v = score(ll);
+				if (v < best)
 				{
-					best_gcv = gcv;
-					best_log_lam = log_lam;
+					best = v;
+					best_log_lam = ll[j];
 				}
 			}
 
@@ -1279,6 +1430,23 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 		// Convergence: all log(λ) changed by less than 0.05 (≈ 12% in λ)
 		if (max_change < 0.05 && cycle > 0) break;
+	}
+
+	// Step 3: Nelder–Mead polish of all log10(λ_j) jointly (see the GLM
+	// path), below the coordinate search's 0.05 resolution.
+	if (K > 0)
+	{
+		double best = score(log_lambda);
+		auto eval = [&](const VectorXd &x) -> double {
+			std::vector<double> ll(K);
+			for (intptr_t j = 0; j < K; j++) ll[j] = std::clamp(x[j], LOG_LAMBDA_MIN, LOG_LAMBDA_MAX);
+			double v = score(ll);
+			if (v < best) { best = v; log_lambda = ll; }
+			return v;
+		};
+		VectorXd x0(K);
+		for (intptr_t j = 0; j < K; j++) x0[j] = log_lambda[j];
+		nelder_mead(eval, x0, best, 0.1);
 	}
 
 	if (progress) progress(total_steps, total_steps);
@@ -1307,7 +1475,10 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	// for parametric terms when penalized smooth/random-effect terms are present,
 	// because the off-diagonal blocks of (X'X + S)⁻¹ propagate the smooth
 	// uncertainty into the parametric SEs.
-	double sigma2 = rss / ((double)n - edf_total);
+	// Scale: RSS/(n − τ) under GCV; under REML the REML estimate
+	// (RSS + β̂'S_λβ̂)/(n − M_p), as mgcv's sig2 for method = "REML".
+	double sigma2 = reml ? (rss + beta_vec.dot(S_final * beta_vec)) / n_minus_Mp
+	                     : rss / ((double)n - edf_total);
 	if (sigma2 <= 0) sigma2 = 1e-10;
 	MatrixXd Minv = llt.solve(MatrixXd::Identity(p, p));
 	MatrixXd Vb = sigma2 * Minv;
@@ -1426,8 +1597,10 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 	double sigma2_ml = rss / (double)n;
 	if (sigma2_ml <= 0) sigma2_ml = 1e-10;
 	model.loglik = -0.5 * n * (std::log(2.0 * M_PI) + std::log(sigma2_ml) + 1.0);
-	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
-	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
+	// The estimated scale σ² counts as one more parameter, as in mgcv's
+	// logLik.gam (df = sum(edf) + 1 for the Gaussian family) and in lm().
+	model.aic = -2.0 * model.loglik + 2.0 * (edf_total + 1.0);
+	model.bic = -2.0 * model.loglik + std::log((double)n) * (edf_total + 1.0);
 	model.deviance = rss;
 
 	double ss_total = (ym.array() - ym.mean()).square().sum();
@@ -1439,9 +1612,86 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 
 	model.converged = true;
 	model.niter = 0;
+	model.method = reml ? Method::REML : Method::ML;
 
 	return model;
 }
+
+// Per-observation derivatives of the log-likelihood with respect to the
+// linear predictor η, for each family's (only supported) default link:
+//   d1     = ∂ℓ_i/∂η_i                   (score)
+//   w_iter = P-IRLS weight: expected information, or for Student t the
+//            EM-type weight (ν+1)/(νσ² + r²), which is always positive
+//   w_obs  = −∂²ℓ_i/∂η_i²                (observed information)
+// P-IRLS iterates β ← (X'W X + S)⁻¹ X'W z with z = η + d1/w_iter, whose fixed
+// point solves the penalized score equations X'd1 = Sβ for any positive
+// weights, i.e. it converges to the penalized MLE of the family itself.
+// (A working response built from V(μ) and dμ/dη alone would instead give a
+// quasi-likelihood estimate for beta, and least squares for Student t.)
+// For canonical links (Poisson log, binomial logit) all three weights
+// coincide. w_obs is what the Laplace approximation in REML needs, as in
+// mgcv's extended families (full Newton weights).
+struct EtaDerivs
+{
+	Eigen::VectorXd d1, w_iter, w_obs;
+};
+
+static void eta_derivs(const Family &fam, const Eigen::VectorXd &y, const Eigen::VectorXd &mu, EtaDerivs &o)
+{
+	intptr_t n = y.size();
+	o.d1.resize(n);
+	o.w_iter.resize(n);
+	o.w_obs.resize(n);
+	const String &f = fam.name;
+	for (intptr_t i = 0; i < n; i++)
+	{
+		double yi = y[i], m = mu[i];
+		double d1, wi, wo;
+		if (f == "poisson")
+		{
+			d1 = yi - m;  wi = wo = m;
+		}
+		else if (f == "binomial")
+		{
+			d1 = yi - m;  wi = wo = m * (1.0 - m);
+		}
+		else if (f == "negbin")
+		{
+			double th = fam.theta, q = m + th;
+			d1 = th * (yi - m) / q;
+			wi = m * th / q;
+			wo = m * th * (yi + th) / (q * q);
+		}
+		else if (f == "beta")
+		{
+			double phi = fam.phi;
+			m = std::clamp(m, 1e-10, 1.0 - 1e-10);
+			double yc = std::clamp(yi, 1e-10, 1.0 - 1e-10);
+			double a = m * phi, b = (1.0 - m) * phi, g1 = m * (1.0 - m);
+			double dl_dmu = phi * (std::log(yc) - std::log1p(-yc)
+			                       - boost::math::digamma(a) + boost::math::digamma(b));
+			double info_mu = phi * phi * (boost::math::trigamma(a) + boost::math::trigamma(b));
+			d1 = dl_dmu * g1;
+			wi = info_mu * g1 * g1;
+			wo = wi - dl_dmu * g1 * (1.0 - 2.0 * m);   // − d²ℓ/dη², with d²μ/dη² = g1(1 − 2μ)
+		}
+		else if (f == "student")
+		{
+			double nu = fam.nu, s2 = fam.sigma * fam.sigma, r = yi - m, q = nu * s2 + r * r;
+			d1 = (nu + 1.0) * r / q;
+			wi = (nu + 1.0) / q;
+			wo = (nu + 1.0) * (nu * s2 - r * r) / (q * q);
+		}
+		else   // gaussian, identity link
+		{
+			d1 = yi - m;  wi = wo = 1.0;
+		}
+		o.d1[i] = d1;
+		o.w_iter[i] = std::max(wi, 1e-10);
+		o.w_obs[i] = wo;
+	}
+}
+
 
 Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     const Array<double> &S, const Family &fam,
@@ -1449,7 +1699,8 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
                     const std::vector<SmoothColumnRange> &smooth_ranges,
                     FittingCallback progress,
                     int max_iter,
-                    const Array<double> &offset)
+                    const Array<double> &offset,
+                    bool reml_requested)
 {
 	using namespace Eigen;
 
@@ -1472,7 +1723,6 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	// PIRLS step and make convergence both slow and prone to landing
 	// on a sub-optimal stationary point of the (otherwise strictly
 	// convex) penalized objective.
-	VectorXd beta = VectorXd::Zero(p);
 	VectorXd mu(n);
 	if (fam.name == "poisson")
 	{
@@ -1512,144 +1762,390 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		mu = fam.linkinv(eta_full);
 	}
 
-	double lambda = 1.0; // will be optimized
-	bool converged = false;
-	int iter = 0;
-	double dev_prev = std::numeric_limits<double>::infinity();
+	const VectorXd eta_start = eta;   // Xβ scale (offset removed)
+	const VectorXd mu_start = mu;
 
-	// Diagnostic override of GCV smoothing-parameter selection.
-	// penalized_glm uses a single global λ, so we take the first value
-	// from the env-var list (warning if more than one is given).
-	auto fixed_ll_glm = read_diag_fixed_log_lambda();
-	bool gcv_overridden = false;
-	if (fixed_ll_glm.has_value())
+	auto full_eta = [&](const VectorXd &e) -> VectorXd {
+		if (has_off) return e + off;
+		return e;
+	};
+
+	// ── Per-smooth penalty blocks ────────────────────────────────
+
+	intptr_t K = (intptr_t) smooth_ranges.size();
+	std::vector<MatrixXd> S_blocks(K, MatrixXd::Zero(p, p));
+	for (intptr_t j = 0; j < K; j++)
 	{
-		if (fixed_ll_glm->empty())
+		auto &sr = smooth_ranges[j];
+		for (intptr_t r = 0; r < sr.col_count; r++) {
+			for (intptr_t c = 0; c < sr.col_count; c++) {
+				S_blocks[j](sr.col_start + r, sr.col_start + c) = Sm(sr.col_start + r, sr.col_start + c);
+			}
+		}
+	}
+	auto build_S = [&](const std::vector<double> &ll) -> MatrixXd {
+		MatrixXd Sl = MatrixXd::Zero(p, p);
+		for (intptr_t j = 0; j < K; j++) Sl += std::pow(10.0, ll[j]) * S_blocks[j];
+		return Sl;
+	};
+	auto dets = penalty_block_dets(Sm, smooth_ranges);
+	intptr_t rank_S = 0;
+	for (auto &dj : dets) rank_S += dj.rank;
+	const double M_p = (double) (p - rank_S);
+
+	// ── Selection criterion ──────────────────────────────────────
+	//
+	// Smoothing parameters are selected by "outer" iteration, as in mgcv's
+	// gam() (default optimizer): every candidate is scored on the fit P-IRLS
+	// converges to, not on the working linear model of one IRLS step
+	// ("performance iteration", which mgcv has dropped and which lands on a
+	// different λ). The criteria are mgcv's:
+	//
+	//   UBRE (method = "GCV.Cp", known scale: Poisson, binomial)
+	//     V = D/n + 2τ/n − 1,   τ = tr((X'WX + S_λ)⁻¹ X'WX)
+	//   REML (method = "REML"; always for negative binomial, beta and Student
+	//   t, as for mgcv's extended families), the Laplace approximate
+	//   marginal likelihood with the scale fixed at 1:
+	//     V = −ℓ(β̂) + ½β̂'S_λβ̂ + ½ log|X'W_obs X + S_λ| − ½ log|S_λ|₊ − (M_p/2) log 2π
+	//
+	// D is taken as −2ℓ, which differs from the deviance by a constant that
+	// does not move the minimum. The extra parameters of the extended
+	// families (log θ; log φ; log σ and log ν) are REML coordinates too and
+	// are estimated jointly with λ, as mgcv does.
+	const bool extended = fam.name == "negbin" || fam.name == "beta" || fam.name == "student";
+	const bool reml = reml_requested || extended;
+	if (!reml && fam.name != "poisson" && fam.name != "binomial")
+		throw error("Smoothing-parameter selection is not defined for the '%' family", fam.name);
+
+	// Extra-parameter coordinates (natural log scale) and the family they define.
+	std::vector<double> log_theta;
+	if (fam.name == "negbin" || fam.name == "beta")
+	{
+		// Moment-based start, ignoring the smooth (so the dispersion is
+		// overstated); the search corrects it.
+		double m = ym.mean();
+		double v = (ym.array() - m).square().sum() / std::max<double>(1.0, (double) n - 1.0);
+		double start;
+		if (fam.name == "negbin")
+			start = (v > m) ? m * m / (v - m) : 100.0;
+		else
+			start = (v > 0) ? m * (1.0 - m) / v - 1.0 : 10.0;
+		log_theta.push_back(std::log(std::clamp(start, 0.05, 1e4)));
+	}
+	else if (fam.name == "student")
+	{
+		// σ from the MAD (robust to the heavy tails), ν = 5.
+		std::vector<double> dev(ym.data(), ym.data() + n);
+		std::nth_element(dev.begin(), dev.begin() + n / 2, dev.end());
+		double med = dev[n / 2];
+		for (auto &v : dev) v = std::abs(v - med);
+		std::nth_element(dev.begin(), dev.begin() + n / 2, dev.end());
+		double sd = 1.4826 * dev[n / 2];
+		if (!(sd > 0)) sd = std::max(1e-6, std::sqrt((ym.array() - ym.mean()).square().mean()));
+		log_theta.push_back(std::log(sd));
+		log_theta.push_back(std::log(5.0));
+	}
+	const intptr_t n_theta = (intptr_t) log_theta.size();
+
+	auto make_family = [&](const std::vector<double> &lt) -> Family {
+		if (fam.name == "negbin") return Family::negbin(std::exp(lt[0]));
+		if (fam.name == "beta") return Family::beta(std::exp(lt[0]));
+		if (fam.name == "student")
+			return Family::student(std::exp(lt[0]), std::clamp(std::exp(lt[1]), NU_MIN, NU_MAX));
+		return fam;
+	};
+
+	// ── P-IRLS at fixed λ (and θ) ────────────────────────────────
+
+	const double pirls_tol = extended ? 1e-11 : 1e-7;
+	const int pirls_max_iter = extended ? std::max(max_iter, 200) : max_iter;
+
+	struct PirlsFit
+	{
+		VectorXd beta, eta, mu;
+		double ll = -std::numeric_limits<double>::infinity();
+		double score = std::numeric_limits<double>::infinity();
+		bool converged = false;
+		int iter = 0;
+	};
+
+	auto pirls = [&](const Family &F, const std::vector<double> &ll_lambda, const VectorXd &eta0,
+	                 const VectorXd &mu0, const VectorXd &beta0, bool have_beta0) -> PirlsFit
+	{
+		MatrixXd Sl = build_S(ll_lambda);
+		PirlsFit f;
+		f.eta = eta0;
+		f.mu = mu0;
+		f.beta = beta0;
+		bool have_beta = have_beta0;
+		double pdev_prev = std::numeric_limits<double>::infinity();
+		double dev_prev = std::numeric_limits<double>::infinity();
+		EtaDerivs dv;
+		VectorXd z(n);
+
+		for (f.iter = 0; f.iter < pirls_max_iter; f.iter++)
 		{
-			std::fprintf(stderr,
-				"[PHON_DIAG_FIXED_LOG_LAMBDA] empty list; ignoring override.\n");
+			eta_derivs(F, ym, f.mu, dv);
+			z = f.eta + (dv.d1.array() / dv.w_iter.array()).matrix();
+			MatrixXd XtWX = Xm.transpose() * dv.w_iter.asDiagonal() * Xm;
+			VectorXd XtWz = Xm.transpose() * (dv.w_iter.array() * z.array()).matrix();
+			LDLT<MatrixXd> ldlt(XtWX + Sl);
+			VectorXd beta_new = ldlt.solve(XtWz);
+
+			// Step halving (as in mgcv's gam.fit3): back off towards the
+			// previous β while the penalized deviance is non-finite or rises.
+			VectorXd eta_new, mu_new;
+			double dev_new = 0, pdev_new = 0;
+			for (int half = 0; half < 30; half++)
+			{
+				eta_new = Xm * beta_new;
+				mu_new = F.linkinv(full_eta(eta_new));
+				dev_new = -2.0 * F.loglik(ym, mu_new);
+				pdev_new = dev_new + beta_new.dot(Sl * beta_new);
+				bool bad = !std::isfinite(pdev_new) ||
+				           (have_beta && pdev_new > pdev_prev + 1e-7 * (0.1 + std::abs(pdev_prev)));
+				if (!bad || !have_beta) break;
+				beta_new = 0.5 * (beta_new + f.beta);
+			}
+			if (!std::isfinite(pdev_new)) return f;   // diverged: score stays +inf
+
+			f.beta = beta_new;
+			f.eta = eta_new;
+			f.mu = mu_new;
+			f.ll = -0.5 * dev_new;
+			have_beta = true;
+
+			// Convergence: relative change in deviance below pirls_tol (β can
+			// plateau in flat regions before the deviance does). mgcv's
+			// gam.fit3 uses 1e-7, but it takes full Newton steps; with
+			// expected-information or EM weights convergence is linear, and
+			// the criteria are compared to ~1e-6 absolute on deviances in the
+			// thousands, so the extended families get a tighter tolerance.
+			double dev_change = std::abs(dev_new - dev_prev) / (0.1 + std::abs(dev_new));
+			dev_prev = dev_new;
+			pdev_prev = pdev_new;
+			if (f.iter > 0 && dev_change < pirls_tol)
+			{
+				f.converged = true;
+				break;
+			}
+		}
+
+		// Score the converged fit.
+		eta_derivs(F, ym, f.mu, dv);
+		if (reml)
+		{
+			MatrixXd H = Xm.transpose() * dv.w_obs.asDiagonal() * Xm + Sl;
+			double ldH = log_det_spd(H);
+			if (!std::isfinite(ldH)) return f;   // not a maximum: score stays +inf
+			f.score = -f.ll + 0.5 * f.beta.dot(Sl * f.beta) + 0.5 * ldH
+			          - 0.5 * log_pdet_S(dets, ll_lambda) - 0.5 * M_p * std::log(2.0 * M_PI);
 		}
 		else
 		{
-			if (fixed_ll_glm->size() > 1)
-			{
-				std::fprintf(stderr,
-					"[PHON_DIAG_FIXED_LOG_LAMBDA] penalized_glm uses a single global λ; using first value (%g).\n",
-					(*fixed_ll_glm)[0]);
-			}
-			lambda = std::pow(10.0, (*fixed_ll_glm)[0]);
-			gcv_overridden = true;
+			MatrixXd XtWX = Xm.transpose() * dv.w_iter.asDiagonal() * Xm;
+			LDLT<MatrixXd> ldlt(XtWX + Sl);
+			double tau = ldlt.solve(XtWX).trace();
+			f.score = -2.0 * f.ll / (double) n + 2.0 * tau / (double) n - 1.0;
 		}
-	}
+		return f;
+	};
 
-	for (iter = 0; iter < max_iter; iter++)
+	// ── Search over log10(λ_j) and the extra parameters ──────────
+
+	std::vector<double> log_lambda(K, 0.0);
+
+	// Diagnostic override: one value per penalty block, or a single value
+	// applied to all of them. The extra parameters are still estimated.
+	auto fixed_ll_glm = read_diag_fixed_log_lambda();
+	bool lambda_fixed = false;
+	if (fixed_ll_glm.has_value())
 	{
-		// Working weights and response
-		VectorXd mu_eta_vec = fam.mu_eta(mu);
-		VectorXd var_vec = fam.variance(mu);
-		VectorXd eta_xb = Xm * beta;
-		VectorXd w(n), z(n);
-
-		for (intptr_t i = 0; i < n; i++)
-		{
-			double dmu = std::max(std::abs(mu_eta_vec[i]), 1e-10);
-			double v = std::max(var_vec[i], 1e-10);
-			w[i] = dmu * dmu / v;
-			// Working response on Xβ scale (without offset)
-			z[i] = eta_xb[i] + (ym[i] - mu[i]) / dmu;
+		if ((intptr_t) fixed_ll_glm->size() == K) {
+			log_lambda = *fixed_ll_glm;
+			lambda_fixed = true;
+		} else if (fixed_ll_glm->size() == 1) {
+			std::fill(log_lambda.begin(), log_lambda.end(), (*fixed_ll_glm)[0]);
+			lambda_fixed = true;
+		} else {
+			std::fprintf(stderr,
+				"[PHON_DIAG_FIXED_LOG_LAMBDA] expected 1 or %lld value(s) for this model, got %lld; ignoring override.\n",
+				(long long) K, (long long) fixed_ll_glm->size());
 		}
-
-		// Penalized WLS: (X'WX + λS) β = X'Wz
-		MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
-		VectorXd XtWz = Xm.transpose() * (w.array() * z.array()).matrix();
-
-		if (!gcv_overridden)
-		{
-		// GCV for λ selection on this working model.
-		// GCV_w(λ) = Σ w_i (z_i - x_i'β)² / (n - edf)²
-		double best_gcv = std::numeric_limits<double>::max();
-		double best_lam = lambda;
-
-		// Grid search near current λ
-		for (int k = -50; k <= 50; k++)
-		{
-			double log_lam = 0.1 * k;
-			double lam = std::pow(10.0, log_lam);
-
-			MatrixXd M = XtWX + lam * Sm;
-			LDLT<MatrixXd> ldlt(M);
-			VectorXd b = ldlt.solve(XtWz);
-			VectorXd r = z - Xm * b;
-			double wrss = (w.array() * r.array().square()).sum();
-			MatrixXd Z = ldlt.solve(XtWX);
-			double edf = Z.trace();
-			double denom = (double)n - edf;
-			double g = (denom > 0.5) ? (double)n * wrss / (denom * denom) : 1e30;
-
-			if (g < best_gcv)
-			{
-				best_gcv = g;
-				best_lam = lam;
-			}
-		}
-		lambda = best_lam;
-		}
-
-		// Solve at optimal (or fixed) λ
-		MatrixXd M = XtWX + lambda * Sm;
-		LDLT<MatrixXd> ldlt(M);
-		VectorXd beta_new = ldlt.solve(XtWz);
-
-		// Update β, η, μ from the PWLS solve.
-		beta = beta_new;
-		eta = Xm * beta;
-		if (has_off) eta += off;
-		mu = fam.linkinv(eta);
-
-		// Convergence: relative change in deviance < 1e-7, matching
-		// mgcv's gam.fit3.  Deviance-based testing is more robust than
-		// β-relative-change in penalized fits where β can plateau in a
-		// flat region of the objective before reaching the true minimum.
-		double dev_new = -2.0 * fam.loglik(ym, mu);
-		double dev_change = std::abs(dev_new - dev_prev) / (0.1 + std::abs(dev_new));
-		dev_prev = dev_new;
-
-		if (iter > 0 && dev_change < 1e-7)
-		{
-			converged = true;
-			break;
-		}
-
-		if (iter % 5 == 0 && progress)
-			progress(iter, max_iter);
 	}
 
-	if (progress) progress(max_iter, max_iter);
+	PirlsFit best;
+	best.eta = eta_start;
+	best.mu = mu_start;
+	best.beta = VectorXd::Zero(p);
+	bool have_best = false;
+	Family fam_cur = make_family(log_theta);
+
+	const intptr_t n_coord = (lambda_fixed ? 0 : K) + n_theta;
+	int max_cycles = (n_coord > 1) ? 15 : 1;
+	int total_steps = std::max<int>(1, 69 + (int) n_coord * 40 * std::min(max_cycles, 4));
+	int step = 0;
+	auto tick = [&]() {
+		step++;
+		if (progress && step % 5 == 0) progress(std::min(step, total_steps), total_steps);
+	};
+
+	if (!lambda_fixed && K > 0)
+	{
+		// Step 1: a common λ for all blocks, log10(λ) ∈ [−5, 12] (see
+		// penalized_lm for the range), swept from the smoothest end so that
+		// each fit starts from its neighbour's (and from a near-linear,
+		// well-conditioned fit at the start).
+		PirlsFit prev;
+		bool have_prev = false;
+		for (int g = 48; g >= -20; g--)
+		{
+			std::vector<double> ll(K, 0.25 * g);
+			PirlsFit f = have_prev ? pirls(fam_cur, ll, prev.eta, prev.mu, prev.beta, true)
+			                       : pirls(fam_cur, ll, eta_start, mu_start, VectorXd::Zero(p), false);
+			tick();
+			if (std::isfinite(f.ll)) { prev = f; have_prev = true; }
+			if (f.score < best.score)
+			{
+				best = f;
+				log_lambda = ll;
+				have_best = true;
+			}
+		}
+	}
+	else
+	{
+		best = pirls(fam_cur, log_lambda, eta_start, mu_start, VectorXd::Zero(p), false);
+		have_best = std::isfinite(best.score);
+	}
+
+	// Step 2: coordinate search, one coordinate at a time with the others
+	// held fixed (as in penalized_lm): a coarse pass (λ: ±3.5 decades in
+	// steps of 0.25; θ: ±2 on the log scale in steps of 0.25) then a fine pass
+	// (±0.25 in steps of 0.05). A single smooth with no extra parameter only
+	// needs the fine pass around the grid optimum.
+	for (int cycle = 0; have_best && n_coord > 0 && cycle < max_cycles; cycle++)
+	{
+		double max_change = 0;
+		for (intptr_t c = 0; c < n_coord; c++)
+		{
+			bool is_theta = lambda_fixed || c >= K;
+			intptr_t idx = is_theta ? c - (lambda_fixed ? 0 : K) : c;
+			auto get = [&]() { return is_theta ? log_theta[idx] : log_lambda[idx]; };
+			const double cycle_start = get();
+
+			std::vector<double> coarse;
+			if (is_theta) {
+				for (int g = -8; g <= 8; g++) coarse.push_back(0.25 * g);
+			} else if (n_coord > 1) {
+				for (int g = -14; g <= 14; g++) coarse.push_back(0.25 * g);
+			}
+			std::vector<double> fine;
+			for (int g = -5; g <= 5; g++) fine.push_back(0.05 * g);
+
+			for (int pass = 0; pass < 2; pass++)
+			{
+				const std::vector<double> &offsets = (pass == 0) ? coarse : fine;
+				double center = get();
+				PirlsFit start = best;
+				for (double off_g : offsets)
+				{
+					if (off_g == 0.0) continue;
+					std::vector<double> ll = log_lambda, lt = log_theta;
+					if (is_theta) {
+						lt[idx] = center + off_g;
+					} else {
+						ll[idx] = std::clamp(center + off_g, LOG_LAMBDA_MIN, LOG_LAMBDA_MAX);
+						if (ll[idx] == log_lambda[idx]) continue;
+					}
+					Family F = is_theta ? make_family(lt) : fam_cur;
+					PirlsFit f = pirls(F, ll, start.eta, start.mu, start.beta, true);
+					tick();
+					if (f.score < best.score)
+					{
+						best = f;
+						log_lambda = ll;
+						log_theta = lt;
+						fam_cur = F;
+					}
+				}
+			}
+			max_change = std::max(max_change, std::abs(get() - cycle_start));
+		}
+		if (max_change < 0.05) break;
+	}
+	// Step 3: Nelder–Mead polish over all coordinates jointly. The extra
+	// parameters are often strongly correlated with each other (σ and ν for
+	// Student t) or with λ, which one-at-a-time search approaches only
+	// slowly; the simplex settles the joint optimum well below the
+	// coordinate search's 0.05 resolution.
+	if (have_best && n_coord > 0)
+	{
+		const intptr_t nl = lambda_fixed ? 0 : K;
+		auto eval = [&](const VectorXd &x) -> double {
+			std::vector<double> ll = log_lambda, lt = log_theta;
+			for (intptr_t j = 0; j < nl; j++) ll[j] = std::clamp(x[j], LOG_LAMBDA_MIN, LOG_LAMBDA_MAX);
+			for (intptr_t j = 0; j < n_theta; j++) lt[j] = x[nl + j];
+			Family F = make_family(lt);
+			PirlsFit f = pirls(F, ll, best.eta, best.mu, best.beta, true);
+			tick();
+			if (f.score < best.score)
+			{
+				best = f;
+				log_lambda = ll;
+				log_theta = lt;
+				fam_cur = F;
+			}
+			return f.score;
+		};
+		VectorXd x0(n_coord);
+		for (intptr_t j = 0; j < nl; j++) x0[j] = log_lambda[j];
+		for (intptr_t j = 0; j < n_theta; j++) x0[nl + j] = log_theta[j];
+		nelder_mead(eval, x0, best.score, 0.1);
+	}
+
+	if (progress) progress(total_steps, total_steps);
+
+	// Final fit at the selected λ (and θ), warm-started from the best
+	// candidate, so the reported β, μ, convergence flag and iteration count
+	// are those of a complete P-IRLS run at exactly these values.
+	MatrixXd S_lambda = build_S(log_lambda);
+	PirlsFit final_fit = have_best ? pirls(fam_cur, log_lambda, best.eta, best.mu, best.beta, true)
+	                               : pirls(fam_cur, log_lambda, eta_start, mu_start, VectorXd::Zero(p), false);
+	VectorXd beta = final_fit.beta;
+	mu = final_fit.mu;
+	bool converged = final_fit.converged;
+	// Iterations of the final P-IRLS run (f.iter is the 0-based index of the
+	// iteration at which it stopped).
+	int iter = std::min(final_fit.iter + 1, pirls_max_iter);
 
 	// ── Final quantities at convergence ──────────────────────────
+	//
+	// Covariance and EDF from the observed information (X'W_obs X + S_λ), as
+	// mgcv's full-Newton weights; identical to the expected information for
+	// canonical links. Falls back to the iteration weights if the observed
+	// information is not positive definite.
 
-	VectorXd mu_eta_vec = fam.mu_eta(mu);
-	VectorXd var_vec = fam.variance(mu);
-	VectorXd w(n);
-	for (intptr_t i = 0; i < n; i++)
-	{
-		double dmu = std::max(std::abs(mu_eta_vec[i]), 1e-10);
-		double v = std::max(var_vec[i], 1e-10);
-		w[i] = dmu * dmu / v;
-	}
-
-	MatrixXd XtWX = Xm.transpose() * w.asDiagonal() * Xm;
-	MatrixXd M = XtWX + lambda * Sm;
+	EtaDerivs dv;
+	eta_derivs(fam_cur, ym, mu, dv);
+	MatrixXd XtWX = Xm.transpose() * dv.w_obs.asDiagonal() * Xm;
+	MatrixXd M = XtWX + S_lambda;
 	LDLT<MatrixXd> ldlt(M);
+	if (ldlt.info() != Eigen::Success || !ldlt.isPositive() || ldlt.vectorD().minCoeff() <= 0)
+	{
+		XtWX = Xm.transpose() * dv.w_iter.asDiagonal() * Xm;
+		M = XtWX + S_lambda;
+		ldlt.compute(M);
+	}
 	MatrixXd Minv = ldlt.solve(MatrixXd::Identity(p, p));
 	MatrixXd Minv_XtWX = ldlt.solve(XtWX);
 	double edf_total = Minv_XtWX.trace();
 
-	// Bayesian posterior covariance: Vp = (X'WX + λS)⁻¹
+	// Bayesian posterior covariance: Vp = (X'WX + S_λ)⁻¹
 	// Matches mgcv's default. See penalized_lm for rationale.
 	MatrixXd Vb = Minv;
 
-	// ── Per-smooth EDF and F-test ────────────────────────────────
+	// ── Per-smooth EDF and test ──────────────────────────────────
 
 	Array<Model::SmoothResult> smooth_results;
 
@@ -1684,13 +2180,12 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 			}
 			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
 
-			// For GLMs the dispersion parameter is fixed (1.0 for Poisson and
-			// binomial), so mgcv's smooth significance test reports the
-			// quadratic form Chi.sq = β'V⁻¹β directly and tests it against a
-			// χ²(ref_df) distribution.  This differs from the Gaussian path,
-			// where σ² is unknown and the test reports F = quad / ref_df
-			// against F(ref_df, n−edf).  We follow the same convention:
-			// the F_stat field carries Chi.sq for GLMs and F for Gaussians.
+			// The dispersion is fixed (1.0 for Poisson and binomial; θ, φ, σ
+			// enter the likelihood directly for the others), so, as mgcv, the
+			// smooth test reports the quadratic form Chi.sq = β'V⁻¹β directly
+			// and tests it against χ²(ref_df). The Gaussian path reports
+			// F = quad / ref_df against F(ref_df, n−edf) instead: the F_stat
+			// field carries Chi.sq here and F there.
 			sm.F_stat = quad;
 
 			try {
@@ -1747,28 +2242,28 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 		model.residuals[i] = ym[i] - mu[i];
 	}
 
+	// Extra parameters. They count as parameters in AIC/BIC (mgcv adds
+	// n.theta to the degrees of freedom of logLik.gam for extended families).
+	if (fam.name == "negbin") model.theta = fam_cur.theta;
+	if (fam.name == "beta") model.phi = fam_cur.phi;
+	if (fam.name == "student") { model.sigma = fam_cur.sigma; model.nu = fam_cur.nu; }
+	double df_model = edf_total + (double) n_theta;
+
 	model.nobs = n;
 	model.nfixed = p;
-	model.loglik = fam.loglik(ym, mu);
-	model.aic = -2.0 * model.loglik + 2.0 * edf_total;
-	model.bic = -2.0 * model.loglik + std::log((double)n) * edf_total;
+	model.loglik = fam_cur.loglik(ym, mu);
+	model.aic = -2.0 * model.loglik + 2.0 * df_model;
+	model.bic = -2.0 * model.loglik + std::log((double)n) * df_model;
 	model.deviance = -2.0 * model.loglik;
 	model.niter = iter;
 	model.converged = converged;
+	model.method = reml ? Method::REML : Method::ML;
 	model.smooth_terms = std::move(smooth_results);
 
-	// Surface the chosen λ. penalized_glm uses a single global λ; for
-	// caller convenience we replicate it across the per-smooth array
-	// (one entry per penalty block) so the field has the same shape as
-	// in penalized_lm.  TODO: split penalized_glm into per-block λ to
-	// match mgcv, then this becomes a real per-block array.
-	{
-		intptr_t K_glm = (intptr_t) smooth_ranges.size();
-		model.smooth_log_lambda = Array<double>(K_glm, 0.0);
-		double log_lam = std::log10(std::max(lambda, 1e-300));
-		for (intptr_t j = 0; j < K_glm; j++) {
-			model.smooth_log_lambda[j] = log_lam;
-		}
+	// One log10(λ) per penalty block, in smooth_ranges order (as penalized_lm).
+	model.smooth_log_lambda = Array<double>(K, 0.0);
+	for (intptr_t j = 0; j < K; j++) {
+		model.smooth_log_lambda[j] = log_lambda[j];
 	}
 
 	return model;

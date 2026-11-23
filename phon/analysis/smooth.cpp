@@ -212,18 +212,41 @@ static Matrix<double> evaluate_cr_basis(const std::vector<double> &x,
 	{
 		double xi = x[i];
 
-		// Find the interval: t[l] <= xi <= t[l+1].
-		// Clamp to [knots[0], knots[k-1]].
-		intptr_t l;
-		if (xi <= knots[0])
+		// Outside the boundary knots a natural cubic spline is linear, so
+		// extrapolate along the tangent at the boundary knot (as mgcv's crspl
+		// does). With p = 0 or 1 in the derivative of the interval formula
+		// below:
+		//   s'(t[0])   = (f[1] − f[0]) / h[0]       − h[0]   (2δ[0] + δ[1])     / 6
+		//   s'(t[k−1]) = (f[k−1] − f[k−2]) / h[k−2] + h[k−2] (δ[k−2] + 2δ[k−1]) / 6
+		// (δ[0] = δ[k−1] = 0 for a natural spline; kept for clarity.)
+		if (xi < knots[0])
 		{
-			l = 0;
-			xi = knots[0];
+			double hl = h[0];
+			double dx = xi - knots[0];  // < 0
+			B(i, 0) += 1.0 - dx / hl;
+			B(i, 1) += dx / hl;
+			for (intptr_t j = 0; j < k; j++) {
+				B(i, j) -= dx * hl * (2.0 * F(0, j) + F(1, j)) / 6.0;
+			}
+			continue;
 		}
-		else if (xi >= knots[k - 1])
+		if (xi > knots[k - 1])
+		{
+			double hl = h[k - 2];
+			double dx = xi - knots[k - 1];  // > 0
+			B(i, k - 1) += 1.0 + dx / hl;
+			B(i, k - 2) -= dx / hl;
+			for (intptr_t j = 0; j < k; j++) {
+				B(i, j) += dx * hl * (F(k - 2, j) + 2.0 * F(k - 1, j)) / 6.0;
+			}
+			continue;
+		}
+
+		// Find the interval: t[l] <= xi <= t[l+1].
+		intptr_t l;
+		if (xi == knots[k - 1])
 		{
 			l = k - 2;
-			xi = knots[k - 1];
 		}
 		else
 		{
@@ -343,15 +366,31 @@ SmoothBasis build_cr_basis(const std::vector<double> &x, intptr_t k)
 
 	auto absorbed = absorb_constraint(B_raw, cm.S);
 
-	// Note: scale.penalty (mgcv's default) is applied per-slice in
-	// fitting.cpp, not here.  For by-factor smooths each slice has a
-	// zero-masked B with effective row count = n_level, so the scale
-	// must be computed against THAT B and not the full-data B.
+	// ── Penalty scale (mgcv scale.penalty) ───────────────────────────
+	//
+	// mgcv computes this in smoothCon() on the raw basis, before the
+	// constraint is absorbed and before a by-factor splits the basis into
+	// per-level copies, so every level shares it:
+	//   maXX = norm(X, "I")^2;  maS = norm(S) / maXX;  S <- S / maS
+	// The fitter applies it (fitting.cpp); it does not change the fit,
+	// only the scale on which λ is reported and searched.
+
+	double max_row_sum = 0.0;
+	for (intptr_t i = 0; i < n; i++) {
+		max_row_sum = std::max(max_row_sum, B_raw.row(i).cwiseAbs().sum());
+	}
+	double max_col_sum = 0.0;
+	for (intptr_t j = 0; j < k; j++) {
+		max_col_sum = std::max(max_col_sum, cm.S.col(j).cwiseAbs().sum());
+	}
 
 	// ── Pack into SmoothBasis ────────────────────────────────────────
 
 	SmoothBasis sb;
 	sb.type = "cr";
+	if (max_col_sum > 0.0 && max_row_sum > 0.0) {
+		sb.S_scale = max_row_sum * max_row_sum / max_col_sum;
+	}
 	sb.k = k;
 	sb.k_eff = k - 1;
 	sb.penalty_rank = k - 2;
@@ -459,67 +498,32 @@ SmoothBasis build_re_basis(const Array<String> &levels,
 	intptr_t J = levels.size();
 	bool has_slope = !slope_values.empty();
 
-	// Build raw B: n × J matrix.
-	// For random intercepts: B[i,j] = 1 if obs i belongs to level j.
-	// For random slopes:     B[i,j] = x_i if obs i belongs to level j.
-	Matrix<double> B_raw = Matrix<double>::Zero(nobs, J);
-	for (intptr_t i = 0; i < nobs; i++)
-	{
-		double val = has_slope ? slope_values[i] : 1.0;
-		B_raw(i, indices[i]) = val;
-	}
-
-	// S_raw: J × J identity penalty.
-	Matrix<double> S_raw = Matrix<double>::Identity(J, J);
-
+	// B: n × J. Random intercepts: B[i,j] = 1 if obs i belongs to level j.
+	//            Random slopes:     B[i,j] = x_i if obs i belongs to level j.
+	// S: J × J identity.
+	//
+	// No identifiability constraint in either case, as in mgcv: smooth.construct.re
+	// sets an empty constraint matrix, and a numeric by-variable would drop the
+	// centring constraint anyway. The identity penalty shrinks the random
+	// intercepts/slopes towards zero, so a fixed intercept/slope alongside them
+	// stays identifiable.
 	SmoothBasis sb;
 	sb.type = "re";
 	sb.variable = "";    // set by caller after construction
 	sb.levels = levels;  // preserved for predict-time level lookup
+	sb.k = J;
+	sb.k_eff = J;
+	sb.penalty_rank = J;
+	sb.null_dim = 0;
 
-	if (has_slope)
-	{
-		// For random slopes, apply a sum-to-zero constraint (matching mgcv):
-		// the average random slope is forced to zero, absorbing one column.
-		auto absorbed = absorb_constraint(B_raw, S_raw);
-
-		sb.k = J;
-		sb.k_eff = J - 1;
-		sb.penalty_rank = J - 1;
-		sb.null_dim = 0;
-
-		sb.B = Array<double>(nobs, sb.k_eff, 0.0);
-		for (intptr_t j = 0; j < sb.k_eff; j++) {
-			for (intptr_t i = 0; i < nobs; i++) {
-				sb.B(i, j) = absorbed.B(i, j);
-			}
-		}
-
-		sb.S = Array<double>(sb.k_eff, sb.k_eff, 0.0);
-		for (intptr_t j = 0; j < sb.k_eff; j++) {
-			for (intptr_t i = 0; i < sb.k_eff; i++) {
-				sb.S(i, j) = absorbed.S(i, j);
-			}
-		}
+	sb.B = Array<double>(nobs, J, 0.0);
+	for (intptr_t i = 0; i < nobs; i++) {
+		sb.B(i, indices[i]) = has_slope ? slope_values[i] : 1.0;
 	}
-	else
-	{
-		// Random intercepts: no constraint. The penalty shrinks intercepts
-		// toward zero; the fixed intercept captures the population mean.
-		sb.k = J;
-		sb.k_eff = J;
-		sb.penalty_rank = J;
-		sb.null_dim = 0;
 
-		sb.B = Array<double>(nobs, J, 0.0);
-		for (intptr_t i = 0; i < nobs; i++) {
-			sb.B(i, indices[i]) = 1.0;
-		}
-
-		sb.S = Array<double>(J, J, 0.0);
-		for (intptr_t j = 0; j < J; j++) {
-			sb.S(j, j) = 1.0;
-		}
+	sb.S = Array<double>(J, J, 0.0);
+	for (intptr_t j = 0; j < J; j++) {
+		sb.S(j, j) = 1.0;
 	}
 
 	// Knots, F_deriv2, Z_absorb: not applicable for re basis (left empty).
