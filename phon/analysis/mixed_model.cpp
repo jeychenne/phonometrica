@@ -2392,7 +2392,7 @@ struct PirlsObjective
 			// Sites (2) and (3) are required to keep the Hessian and the
 			// CCD reweighting consistent with this MAP.
 			//
-			// ν is clamped to [2, 200] before the prior call to match the
+			// ν is clamped to [NU_MIN, NU_MAX] before the prior call to match the
 			// existing family-evaluation clamp pattern. Without this clamp,
 			// L-BFGS central-difference gradients straddle the prior
 			// support boundary and produce -1e30-vs-finite stencils that
@@ -2578,7 +2578,7 @@ struct LaplaceJointObjective
 			// Site 1 finds the with-prior MAP, the FD Hessian here must
 			// be computed under the same objective.
 			//
-			// ν is clamped to [2, 200] for the same reason as Site 1 —
+			// ν is clamped to [NU_MIN, NU_MAX] for the same reason as Site 1 —
 			// see the comment there. The clamp also keeps the FD
 			// Hessian well-defined when saved_theta lands at or near
 			// the boundary (the post-fit no-RE path computes H via
@@ -3730,7 +3730,7 @@ static GridPointResult eval_pirls_grid_point(
 		// with-prior posterior, consistent with where the MAP (theta_star)
 		// was found upstream.
 		//
-		// ν is clamped to [2, 200] to match Sites 1/2 — the CCD grid
+		// ν is clamped to [NU_MIN, NU_MAX] to match Sites 1/2 — the CCD grid
 		// can spread far from theta_star, so grid points outside the
 		// prior support are routine. Clamping makes the prior contribution
 		// saturate cleanly at the boundary so the per-grid-point NLL is
@@ -4933,7 +4933,7 @@ static DiagNllBreakdown diag_eval_gaussian_breakdown(
 //     D_tt = σ_t² regardless of correlation.
 //   * Residual SD (Gaussian): exp(θ[n_chol]).
 //   * NB θ, Beta φ, Student σ: exp(θ[n_chol]).
-//   * Student ν: exp(θ[n_chol+1]) (clamped to [2, 200]).
+//   * Student ν: exp(θ[n_chol+1]) (clamped to [NU_MIN, NU_MAX]).
 //
 // Computing moments of X directly over the grid and reporting a symmetric
 // CI E[X] ± z·SD[X] is wrong: for any non-trivial CV, the lognormal is
@@ -4948,7 +4948,7 @@ static DiagNllBreakdown diag_eval_gaussian_breakdown(
 //   95% CI  = [exp(μ − z·σ), exp(μ + z·σ)]   (symmetric in log space)
 //
 // `lower_bound` / `upper_bound` clamp the final summary to the parameter's
-// support; relevant only for Student ν ∈ [2, 200].
+// support; relevant only for Student ν ∈ [NU_MIN, NU_MAX].
 static void write_lognormal_hyper(Model &model, intptr_t idx,
                                     const String &name,
                                     double log_mean, double log_sd,
@@ -4972,6 +4972,119 @@ static void write_lognormal_hyper(Model &model, intptr_t idx,
 	model.hyper_posterior_sd[idx]   = sd_X;
 	model.hyper_ci_lower[idx]       = lo;
 	model.hyper_ci_upper[idx]       = up;
+}
+
+
+// =====================================================================
+// Skew-aware summary for one log-scale hyperparameter (1-D slice)
+// =====================================================================
+//
+// write_lognormal_hyper assumes log X is Gaussian, centred at the joint
+// mode. That is accurate when log X is close to symmetric, but not for
+// Student-t ν on near-Gaussian data: the data bound ν from below but
+// hardly from above, so even log ν keeps a long right tail (brms
+// skewness ≈ 0.4 on the monophthong M1 model). Centring a Gaussian at the
+// mode then puts the posterior mean and upper CI too low (M1: upper
+// 95% bound 37 vs 44 in brms).
+//
+// This helper integrates the joint posterior numerically along log X
+// instead. The other coordinates follow the line of conditional means
+// under the Laplace covariance Σ,
+//
+//   φ(x) = φ̂ + (x − x̂) · Σ[:, k] / Σ[k, k],
+//
+// so the log-density on the slice is −f(φ(x)) and the off-slice
+// coordinates are handled by their Gaussian approximation (INLA's
+// simplified treatment of a single hyperparameter, without the
+// log-determinant change along the line). Moments of X = exp(x) and the
+// equal-tailed 95% interval come from trapezoid integration on a fine
+// grid spanning [x̂ − 6s, x̂ + 8s] intersected with [log lo, log hi].
+//
+// Returns false (and writes nothing) if the slice is not usable, e.g.
+// non-finite objective values or mass left at an interior grid edge; the
+// caller then falls back to write_lognormal_hyper.
+template <class Objective>
+static bool write_slice_hyper(Model &model, intptr_t idx, const String &name,
+                              const Objective &obj,
+                              const Eigen::VectorXd &phi_hat,
+                              const Eigen::MatrixXd &Sigma, intptr_t k,
+                              double lower_bound, double upper_bound,
+                              intptr_t N = 241)
+{
+	double s2 = Sigma(k, k);
+	if (!(s2 > 0) || !std::isfinite(s2)) return false;
+	double s = std::sqrt(s2);
+	double x_hat = phi_hat[k];
+	Eigen::VectorXd dir = Sigma.col(k) / s2;
+
+	double log_lo = (lower_bound > 0) ? std::log(lower_bound) : -std::numeric_limits<double>::infinity();
+	double log_hi = std::isfinite(upper_bound) ? std::log(upper_bound) : std::numeric_limits<double>::infinity();
+	double a = std::max(x_hat - 6.0 * s, log_lo);
+	double b = std::min(x_hat + 8.0 * s, log_hi);
+	if (!(b > a)) return false;
+
+	if (N < 3) return false;
+	double h = (b - a) / (N - 1);
+	double f0 = obj.eval(phi_hat);
+	if (!std::isfinite(f0)) return false;
+
+	std::vector<double> x(N), lp(N);
+	double max_lp = -std::numeric_limits<double>::infinity();
+	for (intptr_t i = 0; i < N; i++)
+	{
+		x[i] = a + i * h;
+		Eigen::VectorXd phi = phi_hat + (x[i] - x_hat) * dir;
+		double f = obj.eval(phi);
+		if (!std::isfinite(f)) return false;
+		lp[i] = f0 - f;
+		max_lp = std::max(max_lp, lp[i]);
+	}
+
+	std::vector<double> dens(N);
+	for (intptr_t i = 0; i < N; i++) dens[i] = std::exp(lp[i] - max_lp);
+
+	// Mass left at a grid edge that is not a support bound means the
+	// range was too narrow (Laplace s badly underestimated): give up.
+	constexpr double edge_tol = 1e-4;
+	if (a > log_lo && dens.front() > edge_tol) return false;
+	if (b < log_hi && dens.back() > edge_tol) return false;
+
+	// Trapezoid integration of 1, X, X², plus the CDF for quantiles.
+	std::vector<double> cdf(N, 0.0);
+	double m0 = 0, m1 = 0, m2 = 0;
+	for (intptr_t i = 1; i < N; i++)
+	{
+		double d0 = dens[i - 1], d1 = dens[i];
+		double e0 = std::exp(x[i - 1]), e1 = std::exp(x[i]);
+		m0 += 0.5 * h * (d0 + d1);
+		m1 += 0.5 * h * (d0 * e0 + d1 * e1);
+		m2 += 0.5 * h * (d0 * e0 * e0 + d1 * e1 * e1);
+		cdf[i] = m0;
+	}
+	if (!(m0 > 0) || !std::isfinite(m2)) return false;
+
+	auto quantile = [&](double q) {
+		double target = q * m0;
+		for (intptr_t i = 1; i < N; i++)
+		{
+			if (cdf[i] >= target)
+			{
+				double t = (cdf[i] > cdf[i - 1]) ? (target - cdf[i - 1]) / (cdf[i] - cdf[i - 1]) : 0.0;
+				return std::exp(x[i - 1] + t * h);
+			}
+		}
+		return std::exp(x.back());
+	};
+
+	double mean_X = m1 / m0;
+	double var_X  = m2 / m0 - mean_X * mean_X;
+
+	model.hyper_names[idx]          = name;
+	model.hyper_posterior_mean[idx] = std::clamp(mean_X, lower_bound, upper_bound);
+	model.hyper_posterior_sd[idx]   = std::sqrt(std::max(var_X, 0.0));
+	model.hyper_ci_lower[idx]       = std::clamp(quantile(0.025), lower_bound, upper_bound);
+	model.hyper_ci_upper[idx]       = std::clamp(quantile(0.975), lower_bound, upper_bound);
+	return true;
 }
 
 
@@ -6252,7 +6365,7 @@ static void inla_grid_integrate_pirls(
 			}
 
 			// Dispersion parameters: NB θ_nb=exp(θ[n_chol]); Beta φ=exp(θ[n_chol]);
-			// Student σ=exp(θ[n_chol]), ν=clamp(exp(θ[n_chol+1]), 2, 200).
+			// Student σ=exp(θ[n_chol]), ν=clamp(exp(θ[n_chol+1]), NU_MIN, NU_MAX).
 			for (intptr_t j = 0; j < n_disp; j++) {
 				double dv = std::exp(theta_k[n_chol + j]);
 				if (fam.name == "student" && j == 1)
@@ -6627,11 +6740,38 @@ static void inla_grid_integrate_pirls(
 			}
 			idx++;
 
-			// ν (degrees of freedom) ∈ [2, 200]. Clamp log-values during
-			// accumulation to [log 2, log 200] so the moments reflect the
+			// ν (degrees of freedom) ∈ [NU_MIN, NU_MAX]. Clamp log-values during
+			// accumulation to [log NU_MIN, log NU_MAX] so the moments reflect the
 			// constrained support — matches the previous σ-space code's
-			// clamp(exp(θ), 2, 200) before accumulation. The helper then
+			// clamp(exp(θ), NU_MIN, NU_MAX) before accumulation. The helper then
 			// clamps the back-transformed mean/CI to the same support.
+			// Same right-skew issue as the no-RE path (write_slice_hyper):
+			// integrate p(θ|y) along the log ν line of conditional means,
+			// Σ_θ = T T'. Each point is one PIRLS solve, so use a coarser
+			// grid than the no-RE path.
+			struct GridSliceObjective
+			{
+				const Family &fam;
+				const Eigen::Map<Matrix<double>> &Xm;
+				const Eigen::Map<ColVector<double>> &ym;
+				const GroupLayout &lay;
+				intptr_t n, p, n_chol;
+				const Eigen::VectorXd &beta_init;
+				const PriorSpec *priors;
+				const Array<String> *coef_names;
+				const Eigen::VectorXd *off_ptr;
+				const Eigen::VectorXd &u_init;
+				double eval(const Eigen::VectorXd &theta) const
+				{
+					return eval_pirls_grid_point(theta, fam, Xm, ym, lay, n, p, n_chol, beta_init,
+					                             priors, coef_names, off_ptr, u_init).neg_log_posterior;
+				}
+			};
+			GridSliceObjective slice_obj{fam, Xm, ym, lay, n, p, n_chol, beta_init,
+			                             priors, coef_names, off_ptr, u_warm_init};
+			Eigen::MatrixXd Sigma_theta = T * T.transpose();
+			if (!write_slice_hyper(model, idx, String("nu(student)"), slice_obj,
+			                       theta_star, Sigma_theta, n_chol + 1, NU_MIN, NU_MAX, 61))
 			{
 				static const double log_lo = LOG_NU_MIN;
 				static const double log_hi = LOG_NU_MAX;
@@ -6898,7 +7038,11 @@ static void no_re_bayesian_laplace(
 			write_lognormal_hyper(model, 0, String("sigma(student)"),
 			                       log_sigma, log_sd, z_975, 1e-10);
 		}
-		// ν ∈ [2, 200] (the same clamp solve_pirls / LaplaceJointObjective use).
+		// ν ∈ [NU_MIN, NU_MAX] (the same clamp solve_pirls / LaplaceJointObjective use).
+		// log ν stays right-skewed on near-Gaussian data, so integrate the
+		// slice numerically (see write_slice_hyper); lognormal as fallback.
+		if (!write_slice_hyper(model, 1, String("nu(student)"), joint_obj,
+		                       phi_hat, Sigma, p + 1, NU_MIN, NU_MAX))
 		{
 			double log_nu = saved_theta[1];
 			double log_sd = std::sqrt(std::max(Sigma(p + 1, p + 1), 0.0));

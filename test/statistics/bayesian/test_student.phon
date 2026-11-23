@@ -3,13 +3,20 @@
 # corpus. Five models match frequentist/test_student.phon.
 #
 # Phonometrica reports the Student-t hyperparameters as
-# `sigma(student)` and `nu(student)` in hyper_names. The brms
-# reference uses uniform(2, 200) on ν matching Phonometrica's
-# effectively-flat ν prior within its [2, 200] clamp range.
+# `sigma(student)` and `nu(student)` in hyper_names. Both sides use the
+# same ν prior: Gamma(2, 0.1) on ν ≥ 2 (Phonometrica's default
+# PriorSpec::student_nu, which is also brms's default).
 #
-# Hyperparameter tolerances are loosened: per the May 2026 Student-t
-# validation, residual ~0.1-unit ν undershoot and ~6-unit p_WAIC
-# undercount at high RE complexity are Laplace-vs-HMC fundamentals.
+# Remaining ν gap on the random-slope models (M3, M4): with the priors
+# matched, Phonometrica's log-ν posterior is centred 0.07-0.11 above brms
+# (0.5-0.6 posterior SD on ν), with the right spread. The grid points
+# all use the exact observed-information Laplace term (no Fisher
+# fallback), and integrating β out of p(θ|y) moves ν by < 0.06, so the
+# shift is the Laplace error of ∫ p(y|u) p(u) du under a heavy-tailed
+# likelihood. It grows with random-effect complexity: 0.3 SD on M2
+# (crossed intercepts), 0.5-0.6 SD on M3/M4 (adding a by-subject slope).
+# Only ν is loosened for M3/M4; their variance components keep the
+# model-wide tolerances.
 # =====================================================================
 
 import stat_assert
@@ -39,6 +46,10 @@ tol_slope["hyper_mean_rel"] = 0.40
 tol_slope["hyper_sd_rel"]   = 0.45
 tol_slope["hyper_ci_rel"]   = 0.55
 tol_slope["pwaic_abs"]      = 8.0
+# ν only (see header): Laplace bias of ~0.6 SD on the centre, ~0.9 SD on
+# the upper 95% bound once its right skew is integrated.
+tol_slope["hyper[nu(student)]_mean_rel"] = 0.75
+tol_slope["hyper[nu(student)]_ci_rel"]   = 1.00
 
 bayes_fit_and_check("M1", "E1 ~ Voyelle * Condition + Sexe + Age", d, "student", refs["M1"], tol_default)
 bayes_fit_and_check("M2", "E1 ~ Voyelle * Condition + Sexe * Age + (1|Sujet) + (1|Mot)", d, "student", refs["M2"], tol_default)

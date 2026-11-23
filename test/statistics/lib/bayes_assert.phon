@@ -67,6 +67,22 @@ function scale_tolerance(rel as Number, atol as Number, ref_scale as Number)
 end
 
 # --------------------------------------------------------------------
+# hyper_tol — hyperparameter tolerance lookup with a per-name override.
+# tol["hyper[<name>]_<key>"] (e.g. tol["hyper[nu(student)]_mean_rel"])
+# wins over the model-wide tol["hyper_<key>"], so one poorly
+# approximated hyperparameter can be loosened without loosening the
+# variance components of the same model.
+# --------------------------------------------------------------------
+
+function hyper_tol(tol as Object, name as String, key as String)
+    var override_key = "hyper[" & name & "]_" & key
+    if contains(tol, override_key) then
+        return tol[override_key]
+    end
+    return tol["hyper_" & key]
+end
+
+# --------------------------------------------------------------------
 # check_within — Bayesian-style numeric check with rel/abs tolerance
 # computed against an explicit ref_scale (typically brms' posterior SD).
 # --------------------------------------------------------------------
@@ -220,15 +236,15 @@ function bayes_check_fit(tag as String, model as Object, reference as Object, to
                     scale_ref = m_exp
                 end
 
-                check_within(tag & " hyper.mean[" & r_name & "]", m_act, m_exp, scale_ref, tol["hyper_mean_rel"], tol["hyper_mean_abs"])
+                check_within(tag & " hyper.mean[" & r_name & "]", m_act, m_exp, scale_ref, hyper_tol(tol, r_name, "mean_rel"), hyper_tol(tol, r_name, "mean_abs"))
                 if s_act != null then
-                    check_within(tag & " hyper.sd[" & r_name & "]", s_act, s_exp, scale_ref, tol["hyper_sd_rel"], tol["hyper_sd_abs"])
+                    check_within(tag & " hyper.sd[" & r_name & "]", s_act, s_exp, scale_ref, hyper_tol(tol, r_name, "sd_rel"), hyper_tol(tol, r_name, "sd_abs"))
                 end
                 if lo_act != null and lo_exp != null then
-                    check_within(tag & " hyper.lo[" & r_name & "]", lo_act, lo_exp, scale_ref, tol["hyper_ci_rel"], tol["hyper_ci_abs"])
+                    check_within(tag & " hyper.lo[" & r_name & "]", lo_act, lo_exp, scale_ref, hyper_tol(tol, r_name, "ci_rel"), hyper_tol(tol, r_name, "ci_abs"))
                 end
                 if hi_act != null and hi_exp != null then
-                    check_within(tag & " hyper.hi[" & r_name & "]", hi_act, hi_exp, scale_ref, tol["hyper_ci_rel"], tol["hyper_ci_abs"])
+                    check_within(tag & " hyper.hi[" & r_name & "]", hi_act, hi_exp, scale_ref, hyper_tol(tol, r_name, "ci_rel"), hyper_tol(tol, r_name, "ci_abs"))
                 end
             end
         end

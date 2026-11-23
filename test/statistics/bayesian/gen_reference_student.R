@@ -4,10 +4,11 @@
 # corpus (private), same five formulas mixing E1/E2 responses.
 #
 # Phonometrica exposes Student-t hyperparameters as `sigma(student)`
-# and `nu(student)`. The brms-side prior on ν is uniform(2, 200) to
-# match Phonometrica's effectively-flat ν prior within its [2, 200]
-# clamp range — the May 2026 Student-t validation used the same flat
-# ν prior.
+# and `nu(student)`. The brms-side prior on ν is gamma(2, 0.1) with
+# lb = 2, matching Phonometrica's default PriorSpec::student_nu and its
+# NU_MIN clamp (see phon_default_priors in _helpers.R). The May 2026
+# reference used uniform(2, 200), Phonometrica's default at the time;
+# it was regenerated on 2026-11-22 after the default changed.
 #
 # Five models:
 #   M1 — E1 ~ Voyelle * Condition + Sexe + Age                          (no RE)
@@ -18,8 +19,8 @@
 #
 # Runtime caveat:
 #   Random-slope `(1+Voyelle|Sujet)` with multi-level Voyelle creates
-#   a large RE covariance block, slow to sample. Plan for ~30-90 min
-#   per model on M3-M5. Stan models are cached.
+#   a large RE covariance block. With brms 2.22 each model samples in
+#   1-4 min (Nov 2026); fits are cached under stan_cache/.
 # =====================================================================
 
 source("_helpers.R")

@@ -122,14 +122,20 @@ phon_default_priors <- function(y, family, has_random_effects = TRUE,
     if (family == "beta") {
         pri <- c(pri, prior_string("gamma(1, 0.01)", class = "phi"))
     }
-    # Student-t degrees of freedom. Phonometrica uses an effectively flat
-    # prior on ν within its [2, 200] clamp range (multi-start at ν ∈
-    # {3, 5, 10, 30}). brms default is gamma(2, 0.1); we override with a
-    # uniform prior on the same support so the brms posterior reflects
-    # data alone, matching the May 2026 Student-t validation.
+    # Student-t degrees of freedom. Phonometrica's default ν prior is
+    # Gamma(2, 0.1) (PriorSpec::student_nu, prior.hpp), which is also
+    # brms's default. It is stated explicitly here, with lb = 2 to match
+    # Phonometrica's NU_MIN clamp (brms's own default lower bound is 1).
+    # The upper clamp NU_MAX = 1000 is left out: Gamma(2, 0.1) puts
+    # ~1e-42 mass above it.
+    #
+    # History: the May 2026 references used uniform(2, 200), the
+    # then-default in Phonometrica. Commit 94193a1 (2026-05-12) switched
+    # Phonometrica to Gamma(2, 0.1) without regenerating the reference,
+    # which made ν fail on every model (badly on the near-Gaussian M1/M5,
+    # where the prior dominates the right tail).
     if (family == "student") {
-        pri <- c(pri, prior_string("uniform(2, 200)", class = "nu",
-                                    lb = 2, ub = 200))
+        pri <- c(pri, prior_string("gamma(2, 0.1)", class = "nu", lb = 2))
     }
     if (has_correlated_random) {
         # LKJ(1): uniform over correlation matrices. Equivalent to
@@ -463,7 +469,7 @@ write_reference_brms <- function(family, models, dataset, path) {
                 "sd ~ PC(2.5*sd(y_link), 0.05) i.e.",
                 "exponential(-log(0.05)/scale); sigma ~ same",
                 "(Gaussian/Student); shape ~ Gamma(1, 0.01) (NB);",
-                "phi ~ Gamma(1, 0.01) (Beta); nu ~ Uniform(2, 200)",
+                "phi ~ Gamma(1, 0.01) (Beta); nu ~ Gamma(2, 0.1) truncated to nu >= 2",
                 "(Student); cor ~ LKJ(1)."
             )
         ),
