@@ -2001,7 +2001,7 @@ References
 - Searle, S.R., Speed, F.M. & Milliken, G.A. (1980). Population marginal means in the
   linear model: an alternative to least squares means. *The American Statistician*,
   34(4), 216–221.
-- Simpson, D., Rue, H., Riebler, A., Martino, T.G. & Sørbye, S.H. (2017). Penalising model
+- Simpson, D., Rue, H., Riebler, A., Martins, T.G. & Sørbye, S.H. (2017). Penalising model
   component complexity: a principled, practical approach to constructing priors. *Statistical
   Science*, 32(1), 1–28.
 - Tierney, L. & Kadane, J.B. (1986). Accurate approximations for posterior moments and
