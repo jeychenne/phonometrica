@@ -26,10 +26,9 @@ a **top bar** for entering formulas, a **left panel** with column and model list
      ``s(x)`` builds the same basis and penalty as ``mgcv``'s ``s(x, bs = "cr")`` (not
      ``mgcv``'s default thin plate spline). The validation suite compares GAMs of every
      family with ``mgcv``, under both ``method = "GCV.Cp"`` and ``method = "REML"``
-     (fit, coefficients, EDF, smoothing parameters and dispersion parameters agree
-     closely), but smooth-term F statistics and p-values do not yet use ``mgcv``'s test,
-     and the AIC of REML fits omits ``mgcv``'s correction for smoothing-parameter
-     uncertainty. Use them to explore nonlinear structure, and refit in ``mgcv`` for
+     (fit, coefficients, EDF, smoothing parameters, dispersion parameters and the
+     smooth-term tests of ``summary.gam`` agree closely), but the AIC of REML fits omits
+     ``mgcv``'s correction for smoothing-parameter uncertainty. Use them to explore nonlinear structure, and refit in ``mgcv`` for
      anything you intend to publish.
    * **Bayesian estimation** is checked against ``brms`` at the level of inferential
      equivalence: posterior means within a fraction of a posterior standard deviation,
@@ -64,8 +63,13 @@ report them.
    except that prediction does not yet support by-factor smooths (``s(x, by=group)``) or
    random-effect smooths (``bs=re``).
    Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
-   with s(age) alongside categorical predictors). For confirmatory analyses where exact agreement
-   with mgcv matters — F-tests for smooth terms, mgcv's REML/GCV penalty selection — refit the
+   with s(age) alongside categorical predictors). Smooth-term tests are those of mgcv's
+   ``summary.gam``: Wood's (2013a) test for splines, whose reference degrees of freedom follow
+   the EDF, and the random-effect test of Wood (2013b) for ``bs=re`` terms, with an *F*
+   statistic for Gaussian models and χ² for the other families. On the validation datasets they
+   agree with mgcv to about 1e-4 when both programs select the same smoothing parameters; since
+   a smooth's test depends on its λ, a smooth whose λ differs (see below) has a different
+   statistic too. For confirmatory analyses where exact agreement with mgcv matters, refit the
    model in mgcv. Spell out the basis there: Phonometrica's ``s(duration, k=8)`` is mgcv's
    ``s(duration, bs = "cr", k = 8)``, whereas a bare ``s(duration)`` in mgcv is a thin plate
    spline. With the basis spelled out, the two tools use the same basis, identifiability
@@ -354,7 +358,8 @@ The Summary tab displays detailed results for the selected model:
 - **Gaussian models**: residual standard error, R², and adjusted R².
 - **Smooth terms** (GAM): a separate table showing effective degrees of freedom (EDF),
   reference degrees of freedom, test statistic (*F* for Gaussian models, χ² for the other
-  families), and approximate *p*-value for each smooth.
+  families), and approximate *p*-value for each smooth, computed as in mgcv's ``summary.gam``
+  (Wood 2013a for splines, Wood 2013b for ``bs=re`` terms).
 - **Random effects** (mixed models): variance and standard deviation for each random term,
   plus the covariance structure (correlations between random slopes).
 - **Pseudo R²** (mixed models): Nakagawa & Schielzeth (2013) marginal and conditional R².
@@ -1956,6 +1961,10 @@ References
 - Watanabe, S. (2010). Asymptotic equivalence of Bayes cross validation and widely
   applicable information criterion in singular learning theory. *Journal of Machine Learning
   Research*, 11, 3571–3594.
+- Wood, S.N. (2013a). On p-values for smooth components of an extended generalized additive
+  model. *Biometrika*, 100(1), 221–228.
+- Wood, S.N. (2013b). A simple test for random effects in regression models. *Biometrika*,
+  100(4), 1005–1010.
 - Wood, S.N. (2017). *Generalized Additive Models: An Introduction with R* (2nd ed.).
   CRC Press.
 

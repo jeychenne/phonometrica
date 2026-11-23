@@ -30,6 +30,7 @@
 #include <boost/math/distributions/students_t.hpp>
 #include <boost/math/distributions/chi_squared.hpp>
 #include <boost/math/distributions/fisher_f.hpp>
+#include <boost/math/quadrature/gauss_kronrod.hpp>
 #include <boost/math/special_functions/digamma.hpp>
 #include <boost/math/special_functions/trigamma.hpp>
 #include <phon/analysis/regression.hpp>
@@ -1199,6 +1200,484 @@ static double log_det_spd(const Eigen::MatrixXd &M)
 }
 
 
+// ── Smooth-term significance tests (mgcv's summary.gam) ──────────────
+//
+// Spline smooths use Wood (2013a, Biometrika 100(1):221–228), as mgcv's
+// testStat(): a pseudo-inverse of the smooth's covariance whose rank
+// follows the EDF, with the fractional part of the rank handled by a
+// rank-2 block, and p-values from the matching weighted sum of χ²
+// (or its ratio with a χ²/df for an estimated scale). Random-effect smooths
+// (bs = "re", no unpenalized null space) use the random-effect test of
+// Wood (2013b, Biometrika 100(4):1005–1010), as mgcv's reTest().
+
+// Upper tail P(Σ_j λ_j χ²_{h_j} > q) of a weighted sum of independent
+// central χ² variables, by numerical inversion of the characteristic
+// function (Imhof 1961):
+//   P = ½ + (1/π) ∫₀^∞ sin θ(u) / (u ρ(u)) du
+//   θ(u) = ½ Σ h_j atan(λ_j u) − ½ q u,   ρ(u) = Π (1 + λ_j² u²)^{h_j/4}.
+// mgcv's psum.chisq() evaluates the same probability by Davies' (1980)
+// algorithm with absolute accuracy 2e-5; this agrees with it to that
+// accuracy and is accurate to about 1e-10 itself.
+static double psum_chisq(double q, const std::vector<double> &lambda_in, const std::vector<double> &df_in)
+{
+	namespace bq = boost::math::quadrature;
+	std::vector<double> lb, h;
+	double lmax = 0;
+	for (size_t j = 0; j < lambda_in.size(); j++)
+	{
+		if (lambda_in[j] != 0 && df_in[j] > 0)
+		{
+			lb.push_back(lambda_in[j]);
+			h.push_back(df_in[j]);
+			lmax = std::max(lmax, std::abs(lambda_in[j]));
+		}
+	}
+	if (lb.empty()) return q < 0 ? 1.0 : 0.0;
+	bool any_neg = false;
+	for (double l : lb) any_neg |= (l < 0);
+	if (!any_neg && q <= 0) return 1.0;
+
+	auto theta = [&](double u) {
+		double s = 0;
+		for (size_t j = 0; j < lb.size(); j++) s += h[j] * std::atan(lb[j] * u);
+		return 0.5 * (s - q * u);
+	};
+	auto dtheta = [&](double u) {
+		double s = 0;
+		for (size_t j = 0; j < lb.size(); j++) s += h[j] * lb[j] / (1 + lb[j] * lb[j] * u * u);
+		return 0.5 * (s - q);
+	};
+	// Envelope 1/(u ρ(u)). Its log-slope −1 − s(u), s(u) = ½ Σ h λ²u²/(1+λ²u²),
+	// steepens with u, so ∫_U^∞ envelope ≤ envelope(U) · U / s(U).
+	auto envelope = [&](double u) {
+		double lr = 0;
+		for (size_t j = 0; j < lb.size(); j++) lr += 0.25 * h[j] * std::log1p(lb[j] * lb[j] * u * u);
+		return std::exp(-lr) / u;
+	};
+	auto tail_bound = [&](double u) {
+		double s = 0;
+		for (size_t j = 0; j < lb.size(); j++) {
+			double z = lb[j] * lb[j] * u * u;
+			s += 0.5 * h[j] * z / (1 + z);
+		}
+		return s > 0 ? envelope(u) * u / s : HUGE_VAL;
+	};
+	auto f = [&](double u) {
+		if (u <= 0) return dtheta(0.0);
+		return std::sin(theta(u)) * envelope(u);
+	};
+	auto integrate = [&](double a, double b) {
+		return bq::gauss_kronrod<double, 31>::integrate(f, a, b, 15, 1e-12);
+	};
+	auto prob = [](double integral) { return std::clamp(0.5 + integral / M_PI, 0.0, 1.0); };
+
+	const double eps = 1e-12;
+	double total = 0;
+
+	if (q <= 0)
+	{
+		// No linear phase (the estimated-scale tests, where q = 0): the
+		// integrand does not oscillate in the tail. Geometric segments.
+		double a = 0, b = 1.0 / lmax;
+		for (int it = 0; it < 200; it++)
+		{
+			total += integrate(a, b);
+			if (tail_bound(b) < eps) break;
+			a = b;
+			b *= 2;
+		}
+		return prob(total);
+	}
+
+	// q > 0: θ eventually decreases like −q u/2, so the tail oscillates with
+	// half-period → 2π/q and decays slowly when Σ h is small. Integrate up
+	// to the point u_m past which θ is monotone, then between successive
+	// zeros of sin θ, and sum that alternating series with Wynn's ε-algorithm.
+	double um = 0;
+	if (dtheta(0) >= 0)
+	{
+		double lo = 0, hi = 1.0 / lmax;
+		while (dtheta(hi) >= 0) { lo = hi; hi *= 2; }
+		for (int it = 0; it < 100; it++) {
+			double mid = 0.5 * (lo + hi);
+			(dtheta(mid) >= 0 ? lo : hi) = mid;
+		}
+		um = hi;
+	}
+	const double half = 2 * M_PI / q;
+	double a = 0;
+	while (a < um)
+	{
+		double b = std::min(um, a + half);
+		total += integrate(a, b);
+		a = b;
+	}
+	if (a > 0 && tail_bound(a) < eps) return prob(total);
+
+	// θ is strictly decreasing on [a, ∞): find u ≥ from with θ(u) = target.
+	auto next_zero = [&](double from, double target) {
+		double lo = from, hi = from + half;
+		while (theta(hi) > target) { lo = hi; hi += half; }
+		for (int it = 0; it < 200 && hi - lo > 1e-15 * hi; it++) {
+			double mid = 0.5 * (lo + hi);
+			(theta(mid) > target ? lo : hi) = mid;
+		}
+		return 0.5 * (lo + hi);
+	};
+	double m = std::floor(theta(a) / M_PI);
+	if (m * M_PI == theta(a)) m -= 1;
+
+	std::vector<double> sums;
+	double S = total, best = S, prev_best = HUGE_VAL;
+	int stable = 0;
+	for (int it = 0; it < 400; it++)
+	{
+		double b = next_zero(a, m * M_PI);
+		S += integrate(a, b);
+		a = b;
+		m -= 1;
+		if (tail_bound(a) < eps) { best = S; break; }
+		sums.push_back(S);
+
+		// Wynn's ε-algorithm on the last (up to) 40 partial sums:
+		// ε_{k+1}(i) = ε_{k−1}(i+1) + 1 / (ε_k(i+1) − ε_k(i)); even columns
+		// are the accelerated estimates.
+		size_t start = sums.size() > 40 ? sums.size() - 40 : 0;
+		std::vector<double> cur(sums.begin() + (std::ptrdiff_t) start, sums.end());
+		std::vector<double> prevcol(cur.size() + 1, 0.0);
+		double est = cur.back();
+		for (size_t col = 1; cur.size() > 1; col++)
+		{
+			std::vector<double> nxt(cur.size() - 1);
+			bool degenerate = false;
+			for (size_t i = 0; i + 1 < cur.size(); i++) {
+				double d = cur[i + 1] - cur[i];
+				if (d == 0) { degenerate = true; break; }
+				nxt[i] = prevcol[i + 1] + 1.0 / d;
+			}
+			if (degenerate) break;
+			prevcol = std::move(cur);
+			cur = std::move(nxt);
+			if (col % 2 == 0) est = cur.back();
+		}
+		best = est;
+		if (std::abs(best - prev_best) < 1e-11) { if (++stable >= 3) break; }
+		else stable = 0;
+		prev_best = best;
+	}
+	return prob(best);
+}
+
+struct SmoothTest
+{
+	double stat = 0;   // Chi.sq (the F statistic is stat / rank for an estimated scale)
+	double pval = 1;
+	double rank = 0;   // Ref.df
+};
+
+// mgcv's testStat(p, X, V, rank, type = 0, res.df): Wood (2013a).
+//   beta_s: the smooth's coefficients; Rt: any k×k factor with Rt'Rt equal
+//   to the smooth's block of X'WX (mgcv: R factor of the QR of those columns
+//   of the model's R); V: the smooth's block of Vp; rank: min(k, edf1);
+//   res_df: residual df if the scale is estimated, ≤ 0 otherwise.
+static SmoothTest wood_test_stat(const Eigen::VectorXd &beta_s, const Eigen::MatrixXd &Rt,
+                                 const Eigen::MatrixXd &V, double rank, double res_df)
+{
+	using namespace Eigen;
+	intptr_t nc = beta_s.size();
+	MatrixXd Vt = Rt * V * Rt.transpose();
+	Vt = 0.5 * (Vt + Vt.transpose()).eval();
+	SelfAdjointEigenSolver<MatrixXd> es(Vt);
+	// Decreasing order, with the first entry of each eigenvector made
+	// non-negative, as mgcv (the sign matters in the fractional-rank block).
+	VectorXd ev = es.eigenvalues().reverse();
+	MatrixXd U = es.eigenvectors().rowwise().reverse();
+	for (intptr_t j = 0; j < nc; j++) {
+		if (U(0, j) < 0) U.col(j) *= -1.0;
+	}
+
+	intptr_t k = std::max<intptr_t>(0, (intptr_t) std::floor(rank));
+	double nu = std::abs(rank - (double) k);
+	intptr_t k1 = (nu > 0) ? k + 1 : k;
+	double ev_max = ev.maxCoeff();
+	intptr_t r_est = 0;
+	for (intptr_t j = 0; j < nc; j++) {
+		if (ev[j] > ev_max * std::pow(std::numeric_limits<double>::epsilon(), 0.9)) r_est++;
+	}
+	if (r_est < k1) {
+		k1 = k = r_est;
+		nu = 0;
+		rank = (double) r_est;
+	}
+	if (k1 == 0) return {0.0, 1.0, 0.0};
+
+	MatrixXd vec = U.leftCols(k1);
+	MatrixXd vec1;
+	if (nu > 0 && k > 0)
+	{
+		for (intptr_t j = 0; j < k - 1; j++) vec.col(j) /= std::sqrt(ev[j]);
+		double b12 = std::sqrt(std::max(0.0, 0.5 * nu * (1 - nu)));
+		Matrix2d B;
+		B << 1, b12, b12, nu;
+		Matrix2d ev2 = Vector2d(1.0 / std::sqrt(ev[k - 1]), 1.0 / std::sqrt(ev[k1 - 1])).asDiagonal();
+		B = ev2 * B * ev2;
+		SelfAdjointEigenSolver<Matrix2d> eb(B);
+		Matrix2d rB = eb.eigenvectors() * eb.eigenvalues().cwiseMax(0.0).cwiseSqrt().asDiagonal()
+		              * eb.eigenvectors().transpose();
+		MatrixXd pair = vec.middleCols(k - 1, 2);
+		vec1 = vec;
+		vec1.middleCols(k - 1, 2) = pair * Vector2d(-1.0, 1.0).asDiagonal() * rB;
+		vec.middleCols(k - 1, 2) = pair * rB;
+	}
+	else
+	{
+		intptr_t nscale = (k == 0) ? 1 : k;
+		for (intptr_t j = 0; j < vec.cols(); j++) vec.col(j) /= std::sqrt(ev[std::min(j, nscale - 1)]);
+		vec1 = vec;
+		if (k == 1) rank = 1;
+	}
+
+	VectorXd Rp = Rt * beta_s;
+	double d = (vec.transpose() * Rp).squaredNorm();
+	double d1 = (vec1.transpose() * Rp).squaredNorm();
+
+	double rank1 = rank;
+	double pval = 2;
+	if (nu > 0)
+	{
+		std::vector<double> val;
+		if (k1 == 1) {
+			rank1 = 1;
+			val = {1.0};
+		}
+		else {
+			val.assign((size_t) k1, 1.0);
+			double rp = nu + 1;
+			val[k - 1] = (rp + std::sqrt(rp * (2 - rp))) / 2;
+			val[k1 - 1] = rp - val[k - 1];
+		}
+		std::vector<double> df(val.size(), 1.0);
+		if (res_df <= 0) {
+			pval = 0.5 * (psum_chisq(d, val, df) + psum_chisq(d1, val, df));
+		}
+		else {
+			double k0 = std::max(1.0, std::round(res_df));
+			auto with_scale = [&](double dd) {
+				std::vector<double> l = val, h = df;
+				l.push_back(-dd / k0);
+				h.push_back(k0);
+				return psum_chisq(0.0, l, h);
+			};
+			pval = 0.5 * (with_scale(d) + with_scale(d1));
+		}
+	}
+	if (pval > 1)
+	{
+		if (res_df <= 0) {
+			boost::math::chi_squared chisq(rank1);
+			pval = 0.5 * (boost::math::cdf(boost::math::complement(chisq, d)) +
+			              boost::math::cdf(boost::math::complement(chisq, d1)));
+		}
+		else {
+			boost::math::fisher_f fdist(rank1, res_df);
+			pval = 0.5 * (boost::math::cdf(boost::math::complement(fdist, d / rank1)) +
+			              boost::math::cdf(boost::math::complement(fdist, d1 / rank1)));
+		}
+	}
+	return {d, std::min(1.0, pval), rank};
+}
+
+static Eigen::MatrixXd submatrix(const Eigen::MatrixXd &A, const std::vector<intptr_t> &rows, const std::vector<intptr_t> &cols)
+{
+	Eigen::MatrixXd B((intptr_t) rows.size(), (intptr_t) cols.size());
+	for (size_t i = 0; i < rows.size(); i++) {
+		for (size_t j = 0; j < cols.size(); j++) B((intptr_t) i, (intptr_t) j) = A(rows[i], cols[j]);
+	}
+	return B;
+}
+
+// mgcv's reTest(b, m) (with recov()): Wood (2013b). The other random-effect
+// smooths are integrated out, i.e. treated as part of the error, and the
+// test statistic is β_m' (Rm'Rm) β_m / σ², with Rm'Rm the Schur complement
+// of the remaining penalized normal matrix on smooth m. Its null
+// distribution is Σ ev_j χ²₁ (ev: eigenvalues of Ve_m Rm'Rm / σ²), divided
+// by χ²_k/k for an estimated scale.
+static SmoothTest random_effect_test(intptr_t m, const std::vector<SmoothColumnRange> &ranges,
+                                     const Eigen::VectorXd &beta, const Eigen::MatrixXd &Vp,
+                                     const Eigen::MatrixXd &XtWX, const Eigen::MatrixXd &S_lambda,
+                                     double sig2, bool est_scale, double res_df)
+{
+	using namespace Eigen;
+	intptr_t p = beta.size();
+	const double eps08 = std::pow(std::numeric_limits<double>::epsilon(), 0.8);
+	const auto &sm = ranges[(size_t) m];
+
+	std::vector<bool> rind((size_t) p, false);
+	bool other_re = false;
+	for (size_t i = 0; i < ranges.size(); i++)
+	{
+		if ((intptr_t) i == m || ranges[i].basis != "re") continue;
+		other_re = true;
+		for (intptr_t j = 0; j < ranges[i].col_count; j++) rind[(size_t) (ranges[i].col_start + j)] = true;
+	}
+
+	MatrixXd Ve, G;
+	std::vector<intptr_t> keep;  // columns of G (all but the other random effects)
+	if (!other_re)
+	{
+		// Frequentist covariance Ve = Vp X'WX Vp / σ²; G = X'WX + S_λ.
+		Ve = Vp * XtWX * Vp / sig2;
+		G = XtWX + S_lambda;
+		for (intptr_t j = 0; j < p; j++) keep.push_back(j);
+	}
+	else
+	{
+		// R with R'R = X'WX (any square root will do: everything below is
+		// invariant to R → QR), then Σ = I + R₂ S₂⁻ R₂' for the other random
+		// effects (columns 2), Ve = Vp R'ΣR Vp / σ², G = R₁'ΣR₁ + S₁.
+		SelfAdjointEigenSolver<MatrixXd> ex(0.5 * (XtWX + XtWX.transpose()));
+		MatrixXd R = ex.eigenvalues().cwiseMax(0.0).cwiseSqrt().asDiagonal() * ex.eigenvectors().transpose();
+		std::vector<intptr_t> idx2;
+		for (intptr_t j = 0; j < p; j++) (rind[(size_t) j] ? idx2 : keep).push_back(j);
+		std::vector<intptr_t> all(p);
+		std::iota(all.begin(), all.end(), 0);
+		MatrixXd S2 = submatrix(S_lambda, idx2, idx2);
+		SelfAdjointEigenSolver<MatrixXd> es2(0.5 * (S2 + S2.transpose()));
+		VectorXd d2 = es2.eigenvalues();
+		double d2max = d2.maxCoeff();
+		for (intptr_t j = 0; j < d2.size(); j++) d2[j] = (d2[j] > d2max * eps08) ? 1.0 / d2[j] : 0.0;
+		MatrixXd S2inv = es2.eigenvectors() * d2.asDiagonal() * es2.eigenvectors().transpose();
+		MatrixXd R2 = submatrix(R, all, idx2);
+		MatrixXd Sigma = MatrixXd::Identity(p, p) + R2 * S2inv * R2.transpose();
+		MatrixXd RtSR = R.transpose() * Sigma * R;
+		Ve = Vp * RtSR * Vp / sig2;
+		G = submatrix(RtSR, keep, keep) + submatrix(S_lambda, keep, keep);
+	}
+	Ve = 0.5 * (Ve + Ve.transpose()).eval();
+
+	// Schur complement of G on smooth m's columns.
+	std::vector<intptr_t> im, io;
+	for (size_t i = 0; i < keep.size(); i++)
+	{
+		bool in_m = keep[i] >= sm.col_start && keep[i] < sm.col_start + sm.col_count;
+		(in_m ? im : io).push_back((intptr_t) i);
+	}
+	MatrixXd Gmm = submatrix(G, im, im);
+	MatrixXd Schur = Gmm;
+	if (!io.empty())
+	{
+		MatrixXd Goo = submatrix(G, io, io);
+		MatrixXd Gom = submatrix(G, io, im);
+		LDLT<MatrixXd> ldoo(Goo);
+		Schur -= Gom.transpose() * ldoo.solve(Gom);
+	}
+	Schur = 0.5 * (Schur + Schur.transpose()).eval();
+
+	std::vector<intptr_t> cols_m;
+	for (intptr_t j = 0; j < sm.col_count; j++) cols_m.push_back(sm.col_start + j);
+	VectorXd b_m = beta.segment(sm.col_start, sm.col_count);
+	MatrixXd Ve_m = submatrix(Ve, cols_m, cols_m);
+
+	SmoothTest res;
+	res.stat = b_m.dot(Schur * b_m) / sig2;
+
+	// Eigenvalues of Rm Ve_m Rm' / σ², Rm'Rm = Schur.
+	SelfAdjointEigenSolver<MatrixXd> esS(Schur);
+	MatrixXd Rm = esS.eigenvalues().cwiseMax(0.0).cwiseSqrt().asDiagonal() * esS.eigenvectors().transpose();
+	MatrixXd C = Rm * Ve_m * Rm.transpose() / sig2;
+	SelfAdjointEigenSolver<MatrixXd> esC(0.5 * (C + C.transpose()));
+	VectorXd ev = esC.eigenvalues().cwiseMax(0.0);
+	double ev_max = ev.maxCoeff();
+	std::vector<double> lam;
+	for (intptr_t j = 0; j < ev.size(); j++)
+	{
+		if (ev[j] > ev_max * eps08) res.rank += 1;
+		lam.push_back(ev[j]);
+	}
+	if (ev_max <= 0) return {res.stat, 1.0, 0.0};
+
+	if (est_scale)
+	{
+		double k = std::max(1.0, std::round(res_df));
+		std::vector<double> h(lam.size(), 1.0);
+		lam.push_back(-res.stat / k);
+		h.push_back(k);
+		res.pval = psum_chisq(0.0, lam, h);
+	}
+	else
+	{
+		res.pval = psum_chisq(res.stat, lam, std::vector<double>(lam.size(), 1.0));
+	}
+	return res;
+}
+
+// Per-smooth EDF and significance test, as mgcv's summary.gam.
+//   F_infl: (X'WX + S_λ)⁻¹ X'WX, whose diagonal gives the EDF;
+//   Vp: Bayesian covariance; sig2: scale (1 if fixed);
+//   est_scale: Gaussian (F test against res_df = n − Σ edf) or not (χ²).
+static Array<Model::SmoothResult>
+smooth_term_tests(const std::vector<SmoothColumnRange> &ranges, const Eigen::VectorXd &beta,
+                  const Eigen::MatrixXd &Vp, const Eigen::MatrixXd &XtWX, const Eigen::MatrixXd &S_lambda,
+                  const Eigen::MatrixXd &F_infl, double sig2, bool est_scale, double res_df)
+{
+	using namespace Eigen;
+	Array<Model::SmoothResult> out;
+	for (size_t i = 0; i < ranges.size(); i++)
+	{
+		auto &sr = ranges[i];
+		Model::SmoothResult sm;
+		sm.variable = sr.variable;
+		sm.by = sr.by;
+		sm.basis = sr.basis;
+		sm.k = sr.k;
+		sm.col_start = sr.col_start;
+		sm.col_count = sr.col_count;
+
+		// edf = Σ diag(F); edf1 = Σ (2F − F²)_jj, the alternative EDF that
+		// sets the rank of the test (mgcv's edf1).
+		sm.edf = 0;
+		double edf1 = 0;
+		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++)
+		{
+			sm.edf += F_infl(j, j);
+			edf1 += 2 * F_infl(j, j) - F_infl.row(j).dot(F_infl.col(j));
+		}
+
+		SmoothTest t;
+		if (sr.basis == "re")
+		{
+			t = random_effect_test((intptr_t) i, ranges, beta, Vp, XtWX, S_lambda, sig2, est_scale, res_df);
+		}
+		else
+		{
+			MatrixXd Ablk = XtWX.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
+			Ablk = 0.5 * (Ablk + Ablk.transpose()).eval();
+			MatrixXd Rt;
+			LLT<MatrixXd> llt(Ablk);
+			if (llt.info() == Success) {
+				Rt = llt.matrixU();
+			}
+			else {
+				SelfAdjointEigenSolver<MatrixXd> ea(Ablk);
+				Rt = ea.eigenvalues().cwiseMax(0.0).cwiseSqrt().asDiagonal() * ea.eigenvectors().transpose();
+			}
+			VectorXd b_s = beta.segment(sr.col_start, sr.col_count);
+			MatrixXd V_s = Vp.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
+			double rank = std::min((double) sr.col_count, edf1);
+			t = wood_test_stat(b_s, Rt, V_s, rank, est_scale ? res_df : -1.0);
+		}
+
+		// The F_stat field carries F = Chi.sq / Ref.df for an estimated
+		// scale (Gaussian) and Chi.sq otherwise, as mgcv's s.table.
+		sm.ref_df = t.rank;
+		sm.F_stat = (est_scale && t.rank > 0) ? t.stat / t.rank : t.stat;
+		sm.p_value = t.pval;
+		out.append(std::move(sm));
+	}
+	return out;
+}
+
+
 // Evaluate GCV score for a given smoothing parameter λ.
 // Returns {gcv_score, edf, rss} for the penalized OLS:
 //   β̂(λ) = (X'X + λS)⁻¹ X'y
@@ -1516,53 +1995,10 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 		}
 	}
 
-	// ── Per-smooth EDF and F-test ────────────────────────────────
+	// ── Per-smooth EDF and test (mgcv's summary.gam) ─────────────
 
-	for (auto &sr : smooth_ranges)
-	{
-		Model::SmoothResult sm;
-		sm.variable = sr.variable;
-		sm.by = sr.by;
-		sm.basis = sr.basis;
-		sm.k = sr.k;
-		sm.col_start = sr.col_start;
-		sm.col_count = sr.col_count;
-
-		sm.edf = 0;
-		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
-			sm.edf += Minv_XtX(j, j);
-		}
-		// For random-effect smooths (bs="re"), the reference df for the F-test
-		// is the basis dimension (number of levels), not the shrunken edf.
-		sm.ref_df = (sr.basis == "re") ? (double)sr.col_count : sm.edf;
-
-		if (sm.edf > 0.001)
-		{
-			VectorXd beta_s = beta_vec.segment(sr.col_start, sr.col_count);
-			MatrixXd Vb_s = Vb.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
-
-			SelfAdjointEigenSolver<MatrixXd> es(Vb_s);
-			VectorXd evals = es.eigenvalues();
-			MatrixXd evecs = es.eigenvectors();
-			double tol = evals.maxCoeff() * 1e-10;
-			VectorXd evals_inv = VectorXd::Zero(sr.col_count);
-			for (intptr_t j = 0; j < sr.col_count; j++) {
-				if (evals[j] > tol) evals_inv[j] = 1.0 / evals[j];
-			}
-			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
-			sm.F_stat = quad / sm.ref_df;
-
-			double resid_df = std::max(1.0, (double)n - edf_total);
-			try {
-				boost::math::fisher_f fdist(sm.ref_df, resid_df);
-				sm.p_value = 1.0 - boost::math::cdf(fdist, sm.F_stat);
-			} catch (...) {
-				sm.p_value = 0;
-			}
-		}
-
-		model.smooth_terms.append(std::move(sm));
-	}
+	model.smooth_terms = smooth_term_tests(smooth_ranges, beta_vec, Vb, XtX, S_final, Minv_XtX,
+	                                       sigma2, true, (double)n - edf_total);
 
 	// Surface the GCV-selected log10(λ) per penalty block on the model so
 	// callers (and the diagnostic env-var override) can introspect what the
@@ -1623,6 +2059,7 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 //   w_iter = P-IRLS weight: expected information, or for Student t the
 //            EM-type weight (ν+1)/(νσ² + r²), which is always positive
 //   w_obs  = −∂²ℓ_i/∂η_i²                (observed information)
+//   w_exp  = E[−∂²ℓ_i/∂η_i²]             (expected information)
 // P-IRLS iterates β ← (X'W X + S)⁻¹ X'W z with z = η + d1/w_iter, whose fixed
 // point solves the penalized score equations X'd1 = Sβ for any positive
 // weights, i.e. it converges to the penalized MLE of the family itself.
@@ -1630,10 +2067,11 @@ Model penalized_lm(const Array<double> &y, const Array<double> &X,
 // quasi-likelihood estimate for beta, and least squares for Student t.)
 // For canonical links (Poisson log, binomial logit) all three weights
 // coincide. w_obs is what the Laplace approximation in REML needs, as in
-// mgcv's extended families (full Newton weights).
+// mgcv's extended families (full Newton weights); w_exp is what mgcv uses
+// for the covariance and EDF it reports (Dd()$EDmu2).
 struct EtaDerivs
 {
-	Eigen::VectorXd d1, w_iter, w_obs;
+	Eigen::VectorXd d1, w_iter, w_obs, w_exp;
 };
 
 static void eta_derivs(const Family &fam, const Eigen::VectorXd &y, const Eigen::VectorXd &mu, EtaDerivs &o)
@@ -1642,11 +2080,12 @@ static void eta_derivs(const Family &fam, const Eigen::VectorXd &y, const Eigen:
 	o.d1.resize(n);
 	o.w_iter.resize(n);
 	o.w_obs.resize(n);
+	o.w_exp.resize(n);
 	const String &f = fam.name;
 	for (intptr_t i = 0; i < n; i++)
 	{
 		double yi = y[i], m = mu[i];
-		double d1, wi, wo;
+		double d1, wi, wo, we = -1;
 		if (f == "poisson")
 		{
 			d1 = yi - m;  wi = wo = m;
@@ -1681,6 +2120,7 @@ static void eta_derivs(const Family &fam, const Eigen::VectorXd &y, const Eigen:
 			d1 = (nu + 1.0) * r / q;
 			wi = (nu + 1.0) / q;
 			wo = (nu + 1.0) * (nu * s2 - r * r) / (q * q);
+			we = (nu + 1.0) / ((nu + 3.0) * s2);
 		}
 		else   // gaussian, identity link
 		{
@@ -1689,6 +2129,7 @@ static void eta_derivs(const Family &fam, const Eigen::VectorXd &y, const Eigen:
 		o.d1[i] = d1;
 		o.w_iter[i] = std::max(wi, 1e-10);
 		o.w_obs[i] = wo;
+		o.w_exp[i] = (we < 0) ? o.w_iter[i] : we;   // w_iter is the expected information but for Student t
 	}
 }
 
@@ -2121,22 +2562,18 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 
 	// ── Final quantities at convergence ──────────────────────────
 	//
-	// Covariance and EDF from the observed information (X'W_obs X + S_λ), as
-	// mgcv's full-Newton weights; identical to the expected information for
-	// canonical links. Falls back to the iteration weights if the observed
-	// information is not positive definite.
+	// Covariance and EDF from the expected information (X'W_exp X + S_λ), as
+	// mgcv reports them: for its extended families (nb, betar, scat) Vp, R
+	// and edf use the expected weights Dd()$EDmu2 at convergence, not the
+	// Newton weights of the fit (checked against mgcv 1.9-3 to 1e-12). The
+	// two coincide for canonical links (Poisson, binomial). The expected
+	// weights are positive, so X'W_exp X + S_λ is positive definite.
 
 	EtaDerivs dv;
 	eta_derivs(fam_cur, ym, mu, dv);
-	MatrixXd XtWX = Xm.transpose() * dv.w_obs.asDiagonal() * Xm;
+	MatrixXd XtWX = Xm.transpose() * dv.w_exp.asDiagonal() * Xm;
 	MatrixXd M = XtWX + S_lambda;
 	LDLT<MatrixXd> ldlt(M);
-	if (ldlt.info() != Eigen::Success || !ldlt.isPositive() || ldlt.vectorD().minCoeff() <= 0)
-	{
-		XtWX = Xm.transpose() * dv.w_iter.asDiagonal() * Xm;
-		M = XtWX + S_lambda;
-		ldlt.compute(M);
-	}
 	MatrixXd Minv = ldlt.solve(MatrixXd::Identity(p, p));
 	MatrixXd Minv_XtWX = ldlt.solve(XtWX);
 	double edf_total = Minv_XtWX.trace();
@@ -2145,59 +2582,14 @@ Model penalized_glm(const Array<double> &y, const Array<double> &X,
 	// Matches mgcv's default. See penalized_lm for rationale.
 	MatrixXd Vb = Minv;
 
-	// ── Per-smooth EDF and test ──────────────────────────────────
+	// ── Per-smooth EDF and test (mgcv's summary.gam) ─────────────
+	//
+	// The scale is fixed (1 for Poisson and binomial; θ, φ, σ enter the
+	// likelihood directly for the extended families), so, as mgcv, the
+	// tests report Chi.sq against a (weighted) χ² reference.
 
-	Array<Model::SmoothResult> smooth_results;
-
-	for (auto &sr : smooth_ranges)
-	{
-		Model::SmoothResult sm;
-		sm.variable = sr.variable;
-		sm.by = sr.by;
-		sm.basis = sr.basis;
-		sm.k = sr.k;
-		sm.col_start = sr.col_start;
-		sm.col_count = sr.col_count;
-
-		sm.edf = 0;
-		for (intptr_t j = sr.col_start; j < sr.col_start + sr.col_count; j++) {
-			sm.edf += Minv_XtWX(j, j);
-		}
-		sm.ref_df = (sr.basis == "re") ? (double)sr.col_count : sm.edf;
-
-		if (sm.edf > 0.001)
-		{
-			VectorXd beta_s = beta.segment(sr.col_start, sr.col_count);
-			MatrixXd Vb_s = Vb.block(sr.col_start, sr.col_start, sr.col_count, sr.col_count);
-
-			SelfAdjointEigenSolver<MatrixXd> es(Vb_s);
-			VectorXd evals = es.eigenvalues();
-			MatrixXd evecs = es.eigenvectors();
-			double tol = evals.maxCoeff() * 1e-10;
-			VectorXd evals_inv = VectorXd::Zero(sr.col_count);
-			for (intptr_t j = 0; j < sr.col_count; j++) {
-				if (evals[j] > tol) evals_inv[j] = 1.0 / evals[j];
-			}
-			double quad = (evecs.transpose() * beta_s).array().square().matrix().dot(evals_inv);
-
-			// The dispersion is fixed (1.0 for Poisson and binomial; θ, φ, σ
-			// enter the likelihood directly for the others), so, as mgcv, the
-			// smooth test reports the quadratic form Chi.sq = β'V⁻¹β directly
-			// and tests it against χ²(ref_df). The Gaussian path reports
-			// F = quad / ref_df against F(ref_df, n−edf) instead: the F_stat
-			// field carries Chi.sq here and F there.
-			sm.F_stat = quad;
-
-			try {
-				boost::math::chi_squared chisq(sm.ref_df);
-				sm.p_value = 1.0 - boost::math::cdf(chisq, sm.F_stat);
-			} catch (...) {
-				sm.p_value = 0;
-			}
-		}
-
-		smooth_results.append(std::move(sm));
-	}
+	Array<Model::SmoothResult> smooth_results =
+		smooth_term_tests(smooth_ranges, beta, Vb, XtWX, S_lambda, Minv_XtWX, 1.0, false, -1.0);
 
 	// ── Build Model ──────────────────────────────────────────────
 

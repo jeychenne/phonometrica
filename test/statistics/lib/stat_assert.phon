@@ -129,6 +129,20 @@ function check(label as String, actual as Number, expected as Number, rtol as Nu
     end
 end
 
+# P-values: relative to the p-value itself rather than to max(|p|, 1), so
+# that small p-values are compared meaningfully, with an absolute floor of
+# 2e-5 — the accuracy of the Davies algorithm R packages such as mgcv use
+# for weighted χ² tails (references keep 6 significant digits).
+function check_pvalue(label as String, actual as Number, expected as Number, rtol as Number)
+    var diff = abs(actual - expected)
+    if diff <= 2e-5 or diff <= rtol * abs(expected) then
+        n_passed += 1
+    else
+        n_failed += 1
+        print("    FAIL: {label}: got {actual}, expected {expected} (rtol={rtol}, atol=2e-5)")
+    end
+end
+
 # Exact equality for integer-valued quantities (nobs, ncoef, ngroup ...).
 function check_int(label as String, actual as Number, expected as Number)
     if actual == expected then
@@ -507,13 +521,12 @@ function check_gam(tag as String, model as Object, reference as Object, rtol_fit
             for i = 1 to n_ref do
                 var sname = ref_names[i]
                 check(tag & " EDF[" & sname & "]", act_edf[i], ref_edf[i], rtol_edf, 0.05)
-                # KNOWN GAP: smooth-term F (and hence p) is not mgcv's test.
-                # Phonometrica uses a full pseudo-inverse of Vb with
-                # ref.df = edf; mgcv uses Wood's (2013) rank-truncated
-                # statistic. F comes out 13-30% higher on gam_test.csv, so
-                # this only guards against gross regressions until the
-                # Wood (2013) test is implemented; then tighten to rtol_edf.
-                check(tag & " F[" & sname & "]", act_F[i], ref_F[i], 0.35, 1.0)
+                # Smooth-term tests as mgcv's summary.gam: Wood's (2013)
+                # rank-truncated statistic for splines, the random-effect
+                # test (Wood 2013b) for bs=re. F is Chi.sq / Ref.df for
+                # Gaussian models, Chi.sq itself otherwise.
+                check(tag & " F[" & sname & "]", act_F[i], ref_F[i], rtol_edf, 0.001)
+                check_pvalue(tag & " p[" & sname & "]", act_p[i], ref_p[i], rtol_edf)
             end
         end
 
