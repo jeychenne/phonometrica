@@ -25,7 +25,9 @@ smooth_block <- function(m, s) {
     edf      = I(round(as.numeric(s$edf), 4)),
     F        = I(if (has_F) round(as.numeric(s$s.table[,"F"]), 4)
                else       round(as.numeric(s$s.table[,"Chi.sq"]), 4)),
-    p        = I(round(as.numeric(s$s.table[,"p-value"]), 6)),
+    # Significant digits rather than decimals, so small p-values keep
+    # their relative precision.
+    p        = I(signif(as.numeric(s$s.table[,"p-value"]), 6)),
     log10_sp = I(round(as.numeric(log10(m$sp)), 4))
   )
 }
@@ -136,7 +138,9 @@ out$models$X3 <- ref_model(y_t ~ s(duration, bs="cr", k=8),
 out$meta <- list(engine="mgcv", version=as.character(packageVersion("mgcv")),
                  R_version=R.version$version.string, dataset="gam_test.csv",
                  generated=format(Sys.time(),"%Y-%m-%d %H:%M:%S %Z"))
-write(toJSON(out, pretty=TRUE, auto_unbox=TRUE), "reference_gam.json")
+# digits = NA: keep the values as rounded above (toJSON's default would
+# cut everything to 4 decimals).
+write(toJSON(out, pretty=TRUE, auto_unbox=TRUE, digits=NA), "reference_gam.json")
 cat("Written: reference_gam.json\n\n")
 for (nm in names(out$models)) {
   mo <- out$models[[nm]]

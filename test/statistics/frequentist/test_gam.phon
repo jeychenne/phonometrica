@@ -12,11 +12,14 @@
 # (negative binomial, beta, Student t), which both programs always fit by
 # REML with their extra parameters estimated jointly with λ.
 # Tolerances are set just above the discrepancies measured on
-# 22/11/2026. Apart from M4 (see there), fits agree to ~1e-4 relative
-# (log-likelihood, coefficients, EDF, log10(λ), θ/φ/σ/ν); the loosest
-# are intercept SEs: 2% for the bs=re models under GCV, 0.3% for Student t.
-# Known gaps: smooth F statistics (see check_gam); AIC of REML fits, which
-# is not compared (see gen_reference_gam.R).
+# 23/11/2026. Apart from M4 (see there), fits agree to ~1e-4 relative
+# (log-likelihood, coefficients, EDF, log10(λ), θ/φ/σ/ν), the loosest
+# being intercept SEs (2% for the bs=re models under GCV). Smooth-term
+# tests (Wood's 2013 statistic, or the random-effect test for bs=re) agree
+# to ~1e-4 in F/Chi.sq; p-values to mgcv's own accuracy (Davies'
+# algorithm, 2e-5 absolute), except X1 (see there).
+# Known gap: AIC of REML fits, which is not compared (see
+# gen_reference_gam.R).
 #
 # Run from test/statistics/frequentist/  e.g.:
 #   cd test/statistics/frequentist
@@ -76,8 +79,11 @@ fit_and_check_gam("M3", "y_gauss ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)"
 # 1.69) where mgcv stops at 3.86 (EDF 1.49). Phonometrica's point has the
 # lower GCV score (1697.119 vs 1697.216; evaluated at mgcv's λ it
 # reproduces mgcv's score exactly): mgcv's Newton iteration stops short on
-# this flat stretch. Hence the looser EDF and fit tolerances.
-fit_and_check_gam("M4", "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)", d, "gaussian", refs["M4"], 0.0002, 0.005, 0.15)
+# this flat stretch. Hence the looser EDF and fit tolerances, which also
+# cover that level's smooth test (F 2.71 vs 3.45, p 0.065 vs 0.072): at
+# Phonometrica's λ, mgcv's summary.gam gives F = 2.708319, p = 0.064707,
+# the values Phonometrica reports. The other two levels agree to 1e-3.
+fit_and_check_gam("M4", "y_gauss ~ vowel + s(duration, by=vowel, bs=cr, k=8)", d, "gaussian", refs["M4"], 0.0002, 0.005, 0.25)
 
 # Gaussian, random-effect smooths (bs=re): intercepts, uncorrelated
 # slopes (whose variance mgcv and Phonometrica both shrink to ~0 here),
@@ -105,6 +111,10 @@ fit_and_check_gam_reml("R5", "y_bin ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=
 
 # Extended families: REML whatever fit_method says, θ (negbin), φ (beta),
 # σ and ν (Student t) estimated jointly with λ.
+# X1: the smooth is a straight line; Phonometrica's λ reaches its upper
+# bound (EDF 1.0000) where mgcv stops at log10(λ) = 6.78 (EDF 1.0031).
+# The smooth test is sensitive to that last 0.003 of EDF: p = 0.001635 vs
+# 0.001665 (1.8%); at λ = 1e12 mgcv gives p = 0.001635 too.
 fit_and_check_gam("X1", "y_nb ~ s(duration, bs=cr, k=8)", d, "negbin", refs["X1"], 0.0001, 0.005, 0.05)
 fit_and_check_gam("X2", "y_beta ~ s(duration, bs=cr, k=8) + s(age, bs=cr, k=8)", e, "beta", refs["X2"], 0.0001, 0.005, 0.05)
 fit_and_check_gam("X3", "y_t ~ s(duration, bs=cr, k=8)", e, "student", refs["X3"], 0.0001, 0.005, 0.05)
