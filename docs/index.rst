@@ -24,7 +24,7 @@ acoustic analysis, and statistical modeling into a single workflow. The main fea
    * **Speech processing**: detect silences to pre-segment recordings for manual annotation; automatic speech recognition via whisper.cpp (runs locally on CPU, requires a model file).
    * **Text and acoustic queries**: search for text patterns across annotation layers using simple or complex multi-constraint queries; extract duration, formant, pitch, voice quality, intensity, and spectral moment measurements.
    * **Concordance and dataset views**: browse, filter, recode, transform, and merge query results; vowel normalization (Lobanov, Nearey, Watt & Fabricius); toggle between wide and long formats; perform set operations on concordances.
-   * **Statistical analysis**: frequentist and Bayesian linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and support for generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations. The frequentist models are validated continuously against reference implementations in R; GAMs are offered as a preview, and Bayesian estimation is approximate by construction. See :ref:`analysis-view` for what that means and for exporting an analysis to R.
+   * **Statistical analysis**: frequentist and Bayesian linear, logistic, Poisson, negative binomial, beta, and robust Student *t* regression models, including mixed-effects models and support for generalized additive models (GAMs); post-hoc and diagnostic tests; exploratory visualizations. The frequentist models are validated continuously against reference implementations in R; GAMs are offered as a preview, and Bayesian estimation is approximate by construction. See :ref:`analysis-view` for details and for exporting an analysis to R.
    * **Scripting engine**: Phonometrica can be configured and extended with a powerful and easy-to-use scripting language, JSON-based plugins, and coding protocols.
    * **Research notes**: keep free-form rich-text notes alongside your data, organized within the project.
    * **Standard-based**: Phonometrica files are encoded in XML and Unicode.
@@ -48,14 +48,14 @@ Phonometrica |release|
 ----------------------
 
 -  Windows:
-   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.10/setup_phonometrica.exe>`__
+   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/setup_phonometrica.exe>`__
 -  macOS (ARM):
-   `Phonometrica-0.9.10.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.10/Phonometrica-0.9.10.dmg>`__
+   `Phonometrica-0.9.11.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/Phonometrica-0.9.11.dmg>`__
 -  macOS (Intel):
-   `Phonometrica-0.9.10-intel.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.10/Phonometrica-0.9.10-intel.dmg>`__
+   `Phonometrica-0.9.11-intel.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/Phonometrica-0.9.11-intel.dmg>`__
 -  Linux (Debian/Ubuntu):
-   `phonometrica-0.9.10.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.10/phonometrica_0.9.10_amd64.deb>`__
--  source code: `phonometrica-0.9.10.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.10.zip>`__ | `phonometrica-0.9.10.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.10.tar.gz>`__
+   `phonometrica-0.9.11.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/phonometrica_0.9.11_amd64.deb>`__
+-  source code: `phonometrica-0.9.11.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.11.zip>`__ | `phonometrica-0.9.11.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.11.tar.gz>`__
 
 
 Documentation

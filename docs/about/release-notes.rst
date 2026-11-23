@@ -1,6 +1,28 @@
 Release notes
 -------------
 
+0.9.11 (23/11/2026)
+~~~~~~~~~~~~~~~~~~~
+
+**Generalized additive models (GAMs)**
+
+- Smooth terms now match R's **mgcv**: ``s(x)`` builds exactly the same spline and penalty as mgcv's ``s(x, bs = "cr")``, and smoothing parameters are on the same scale, so the two programs' results can be compared directly. The validation suite now checks GAMs of every family against mgcv.
+- **Poisson and binomial GAMs** choose their smoothness as mgcv does, with a separate smoothing parameter for each smooth term. They were often too smooth before.
+- **REML** can now be used to select the smoothness of any GAM (``{"fit_method": "REML"}`` in scripts).
+- **Negative binomial, beta and Student t GAMs** now fit the right model: their extra parameter (θ, φ, or σ and ν) is estimated together with the smooths, as in mgcv. It used to be fixed, and beta and Student t GAMs did not use their own likelihood.
+- Random slopes written as ``s(group, by=x, bs=re)`` no longer force the slopes to average zero, as in mgcv.
+- Predictions beyond the range of the data continue the curve as a straight line instead of leveling off.
+- The model summary states how the smoothness was selected (GCV, UBRE or REML), and the table of smooth terms shows χ² rather than *F* for non-Gaussian models.
+
+**Bayesian models**
+
+- Bayesian GAMs with more than one parametric term reported wrong posterior standard deviations, and binomial GAMs could collapse to an extreme intercept. Both are fixed, and Bayesian GAMs now select their smoothness by REML.
+- In Bayesian Student t models, the credible interval for ν now reflects the skewness of its posterior and agrees much more closely with Stan when the data are close to Gaussian.
+
+**Fixes**
+
+- AIC and BIC of Gaussian GAMs were 2 units too low (the residual variance was not counted as a parameter).
+
 0.9.10 (21/11/2026)
 ~~~~~~~~~~~~~~~~~~~
 

@@ -1,3 +1,24 @@
+phonometrica (0.9.11) unstable; urgency=medium
+
+  * smooth terms match R's mgcv: s(x) builds the same spline and penalty
+    as mgcv's s(x, bs = "cr"), with smoothing parameters on the same scale
+  * Poisson and binomial GAMs select their smoothness as mgcv does, with a
+    separate smoothing parameter for each smooth term
+  * REML can select the smoothness of any GAM
+  * negative binomial, beta and Student t GAMs estimate their extra
+    parameter together with the smooths and use their own likelihood
+  * random slopes s(group, by=x, bs=re) are no longer forced to average
+    zero; predictions beyond the data continue the curve linearly
+  * the model summary states how the smoothness was selected, and smooth
+    terms of non-Gaussian models are tested with chi-square
+  * fixed wrong posterior standard deviations in Bayesian GAMs with more
+    than one parametric term, and degenerate Bayesian binomial GAMs
+  * the credible interval for nu in Bayesian Student t models reflects the
+    skewness of its posterior
+  * fixed AIC and BIC of Gaussian GAMs, which were 2 units too low
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Mon, 23 Nov 2026 12:00:00 +0000
+
 phonometrica (0.9.10) unstable; urgency=medium
 
   * formant queries select their analysis settings with Fast Track, a

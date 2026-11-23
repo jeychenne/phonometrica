@@ -60,7 +60,9 @@ report them.
    is intended for exploratory analysis of nonlinear effects: identifying whether a smooth
    captures meaningful structure, inspecting the shape of fitted curves, and comparing terms by EDF.
    Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
-   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values all work normally.
+   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values all work normally,
+   except that prediction does not yet support by-factor smooths (``s(x, by=group)``) or
+   random-effect smooths (``bs=re``).
    Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
    with s(age) alongside categorical predictors). For confirmatory analyses where exact agreement
    with mgcv matters — F-tests for smooth terms, mgcv's REML/GCV penalty selection — refit the
@@ -77,9 +79,9 @@ report them.
    (θ, φ, or σ and ν) jointly with the smoothing parameters, as mgcv does for these families.
    Bayesian GAMs (fitted with a ``Prior()``) also select their smoothing parameters by REML,
    which is the empirical-Bayes choice under the Bayesian reading of the smoothing penalty.
-   Known limit: binomial GAMs may not converge on near-saturated data (small n with k × number of
-   smooths approaching n). If the intercept comes back at an extreme value with predicted
-   probabilities collapsed to 0 or 1, drop k or the number of smooth terms.
+   Binomial GAMs on near-saturated data (small n with k × number of smooths approaching n)
+   can still be fragile. If the intercept comes back at an extreme value with predicted probabilities
+   collapsed to 0 or 1, drop k or the number of smooth terms.
 
 
 Top bar
@@ -166,10 +168,12 @@ For example:
 categorical factor. The basis is an indicator matrix (one column per level), and the
 penalty is the identity matrix, which shrinks all group adjustments toward zero. This is
 mathematically equivalent to a random effect with variance σ²_u = σ²_ε / λ, where λ is
-the smoothing parameter estimated by GCV (Generalized Cross-Validation, an efficient
-approximation to leave-one-out cross-validation that selects the degree of smoothing by
-minimizing prediction error). For Poisson and binomial models, whose scale is known, the
-closely related UBRE criterion (Mallows' C\ :sub:`p`) is used instead, as in ``mgcv``. The key difference from ``bs=cr`` is that
+the smoothing parameter, estimated by default by GCV (Generalized Cross-Validation, an
+efficient approximation to leave-one-out cross-validation that selects the degree of
+smoothing by minimizing prediction error). For Poisson and binomial models, whose scale is
+known, the closely related UBRE criterion (Mallows' C\ :sub:`p`) is used instead, as in
+``mgcv``; with REML, λ is estimated by restricted maximum likelihood, as a variance
+component would be in a mixed model. The key difference from ``bs=cr`` is that
 ``bs=re`` does not model a smooth curve — it models a set of discrete group-level
 adjustments.
 
@@ -200,7 +204,7 @@ smoothing parameter):
    **Why two terms instead of one?** Unlike the mixed-model syntax where
    ``(1 + duration | speaker)`` bundles intercept and slope into a single term, the GAM
    framework requires separate smooth terms because each one has its own smoothing parameter
-   (and therefore its own variance component), estimated independently by GCV. The formula
+   (and therefore its own variance component), estimated separately. The formula
    ``s(speaker, bs=re) + s(speaker, by=duration, bs=re)`` is the standard way to express
    this in mgcv and in Phonometrica. Removing the slope variable from the formula (e.g.
    right-clicking *duration* and choosing *Remove from formula*) will remove the slope term
@@ -217,7 +221,8 @@ You can also cross grouping factors:
    **When to use** ``bs=re`` **vs** ``(1|group)``. Both express random intercepts, but they
    go through different estimation paths:
 
-   - ``s(speaker, bs=re)`` is estimated in the **penalized regression** (GAM) framework via GCV.
+   - ``s(speaker, bs=re)`` is estimated in the **penalized regression** (GAM) framework, with
+     its variance selected by GCV/UBRE or REML like any other smoothing parameter.
      Use this when your model already includes smooth terms like ``s(duration)``.
    - ``(1|speaker)`` is estimated in the **mixed model** framework via Laplace approximation.
      Use this when your model has only parametric fixed effects (no smooth terms).
@@ -348,7 +353,8 @@ The Summary tab displays detailed results for the selected model:
 - **Goodness of fit**: AIC, BIC, and log-likelihood.
 - **Gaussian models**: residual standard error, R², and adjusted R².
 - **Smooth terms** (GAM): a separate table showing effective degrees of freedom (EDF),
-  reference degrees of freedom, *F*-statistic, and approximate *p*-value for each smooth.
+  reference degrees of freedom, test statistic (*F* for Gaussian models, χ² for the other
+  families), and approximate *p*-value for each smooth.
 - **Random effects** (mixed models): variance and standard deviation for each random term,
   plus the covariance structure (correlations between random slopes).
 - **Pseudo R²** (mixed models): Nakagawa & Schielzeth (2013) marginal and conditional R².
@@ -1030,18 +1036,15 @@ intercepts) and ``s(group, by=x, bs=re)`` terms (random slopes).
    When fitting a Bayesian Student-t regression model, Phonometrica reports a posterior distribution
    for the degrees-of-freedom parameter ν, which controls how heavy-tailed the residual distribution is.
    This posterior is computed using a numerical approximation (INLA) rather than full Markov chain Monte Carlo sampling.
-   The approximation works well when the data are clearly non-Gaussian — for instance, when ν is estimated to be below 10,
-   indicating substantial heavy-tailed behaviour — but tends to produce credible intervals for ν that are too narrow
-   when the residuals are close to Gaussian (ν above roughly 30), in which case the data contain little information
-   about ν and the true posterior is wide and diffuse. Concretely, if a full MCMC sampler such as Stan reports a 95%
-   credible interval of [5, 195] for ν on a given dataset, Phonometrica may report something like [7, 55] for the same model.
-   This does not affect the estimates or credible intervals for the regression coefficients, the random-effect standard
-   deviations, or the model comparison scores (WAIC, LOO-IC), which remain reliable regardless of how well ν is identified.
-   Users who need accurate uncertainty quantification specifically for ν in near-Gaussian models are advised to verify
-   the result with an external MCMC tool. This is not a bug specific to Phonometrica: a validation experiment using
-   500 simulated Gaussian observations confirmed that R-INLA, the reference implementation of the same class of
-   approximation, produces an identical pattern (R-INLA mean = 20.1, 95% CI = [6.9, 55.5] where the correct posterior
-   spans nearly the full prior range).
+   Because the posterior of ν is skewed to the right, particularly when the residuals are close to Gaussian and the
+   data carry little information about tail weight, Phonometrica integrates it numerically rather than summarizing it
+   with a symmetric approximation. Validated against ``brms`` (Stan) with the same prior, the result agrees closely on
+   near-Gaussian data — for instance a 95% credible interval of [10.8, 41.9] against [10.6, 44.4] from Stan — and when
+   ν is low. On models with random slopes and crossed random effects, ν can come out somewhat higher than Stan's
+   estimate (by about half a posterior standard deviation). This does not affect the estimates or credible intervals
+   for the regression coefficients, the random-effect standard deviations, or the model comparison scores (WAIC,
+   LOO-IC). Users who need precise uncertainty quantification specifically for ν are advised to verify the result with
+   an external MCMC tool.
 
 
 .. note::
@@ -1119,14 +1122,19 @@ Frequentist estimation method (ML/REML)
 For frequentist Gaussian linear mixed models, Phonometrica offers a choice between
 **maximum likelihood (ML)** and **restricted maximum likelihood (REML)**. ML is the default
 and applies to all model types. REML is an opt-in alternative for Gaussian models with at
-least one random-effects term — for all other configurations (non-Gaussian families,
-fixed-effects-only Gaussian, GAMs, Bayesian fits), REML is silently coerced to ML and a
-note is attached to the model.
+least one random-effects term — for other models without smooth terms (non-Gaussian
+families, fixed-effects-only Gaussian models), REML is silently coerced to ML and a note is
+attached to the model.
+
+GAMs are the exception: for a model with smooth terms, REML selects the smoothing parameters
+instead of GCV/UBRE, whatever the family (see the note on GAMs at the top of this page).
+Negative binomial, beta and Student *t* GAMs, and Bayesian GAMs, always use it.
 
 To switch a fit to REML, open the **Fitting options** popup (|settings|) next to the
 **Fit** button and select **REML** in the **Method** dropdown. The dropdown is enabled only
 when the current family is Gaussian and the formula contains a random-effects term; in any
-other configuration it is greyed out with a tooltip explaining why.
+other configuration it is greyed out with a tooltip explaining why. To request REML for a
+GAM, use the ``fit_method`` option in a script (see below).
 
 When to use REML
 ~~~~~~~~~~~~~~~~
@@ -1158,7 +1166,8 @@ estimates and the fixed-effects standard errors you report.
 Output and reproducibility
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-REML fits are tagged with a ``Method: REML`` line in the model summary, and the choice is
+REML fits are identified on the **Estimation** line of the model summary ("restricted maximum
+likelihood", or "smoothing parameters by REML" for GAMs), and the choice is
 saved with the model. The **Refit** button on the model panel preserves the original
 method, so a REML model stays REML after a refit.
 
@@ -1238,9 +1247,9 @@ in the following cases:
 * **Bayesian fits.** No R package fits the same approximation with the same priors, so any
   script would agree on some quantities and not on others. That partial disagreement would
   be easy to misread as an error.
-* **Models with smooth terms.** Phonometrica's spline basis is not ``mgcv``'s
-  parameterization, so the two fits cannot be compared term by term (see the note on GAMs
-  above).
+* **Models with smooth terms.** The export does not generate ``mgcv`` scripts yet. To check a
+  GAM in R, refit it with ``mgcv::gam()``, spelling out the basis as described in the note on
+  GAMs above.
 * **Formulas that R would parameterize differently.** Phonometrica always codes a factor with
   treatment contrasts (one dummy variable per non-reference level). R does the same only
   when the formula is *hierarchical*. For example, in ``y ~ vowel:gender`` without
@@ -1360,6 +1369,8 @@ measurement scale (Hz, bark, semitones, milliseconds, etc.):
 - **Residual SD** (Gaussian family): :math:`\mathrm{PC}(s, 0.05)`.
 - **Dispersion parameters**: :math:`\mathrm{Gamma}(1, 0.01)` for negative binomial :math:`\theta`
   and beta :math:`\varphi`.
+- **Student** *t* **degrees of freedom**: :math:`\mathrm{Gamma}(2, 0.1)` for :math:`\nu`, restricted to
+  the interval [2, 1000] (prior mean 20).
 
 Here :math:`y_{\text{link}}` denotes the response on the link scale (identity for Gaussian/Student,
 logit for binomial/beta, log for Poisson/NB). The priors are broad enough that they have
