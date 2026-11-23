@@ -233,7 +233,7 @@ private:
 	void updatePriorDefaultsLabel();
 	void updatePriorResidualVisibility();
 	void updatePriorPcAlphaVisibility();
-	void updateMethodVisibility();   // show ML/REML row only when family is Gaussian and formula has (|)
+	void updateMethodVisibility();   // enable ML/REML row for Gaussian LMMs (formula has (|)) and GAMs (formula has s())
 
 	// ── Detachable-plot helper ───────────────────────────────────────
 	//

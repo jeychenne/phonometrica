@@ -1623,7 +1623,7 @@ void AnalysisView::onFit()
 		// Build FitOptions from the GUI. Currently only `method` (ML/REML)
 		// is exposed in the UI. The struct is passed only when the user
 		// has selected REML AND the Method row is enabled (i.e. the choice
-		// is applicable — Gaussian LMM). Otherwise pass nullptr so
+		// is applicable — Gaussian LMM, or a GAM). Otherwise pass nullptr so
 		// Analysis::fit() falls through to the legacy path. If REML is
 		// selected but inapplicable, we still pass it through — the engine
 		// records a fit_warning so the user knows REML was requested but
@@ -9807,26 +9807,75 @@ void AnalysisView::updatePriorResidualVisibility()
 		w->setVisible(is_gaussian);
 }
 
-// Enable the ML/REML row only when the model is a Gaussian linear mixed
-// model: family == "gaussian" AND the formula contains a random-effects
-// term. For all other cases REML doesn't apply and the engine would
-// coerce to ML anyway. The row is always *visible* so the user can see
-// the option exists; it's *disabled* when not applicable, with a tooltip
-// explaining why, so the absence isn't mistaken for "feature not
-// implemented".
+// Enable the ML/REML row where the choice means something:
+//   - Gaussian linear mixed models (family == "gaussian" and a random-effects
+//     term): ML vs REML for the variance components;
+//   - GAMs (formula with an s() term), any family: how the smoothing
+//     parameters are selected, GCV/UBRE (the first item, mgcv's default
+//     method = "GCV.Cp") or REML. The items are relabelled accordingly.
+//     Negative binomial, beta and Student t GAMs always use REML, so the
+//     row then shows REML, disabled.
+// For all other cases REML doesn't apply and the engine would coerce to ML
+// anyway. The row is always *visible* so the user can see the option exists;
+// it's *disabled* when not applicable, with a tooltip explaining why, so the
+// absence isn't mistaken for "feature not implemented".
 //
-// The detection of "(|)" is heuristic — a substring search for the "(|"
-// pattern won't catch malformed formulas, but Formula::parse would catch
-// those at fit time. The intent here is just to grey out the option in
-// configurations where it can't possibly be honoured.
+// The detection of "(|)" and "s(" is heuristic — a substring search won't
+// catch malformed formulas, but Formula::parse would catch those at fit
+// time. The intent here is just to grey out the option in configurations
+// where it can't possibly be honoured.
 void AnalysisView::updateMethodVisibility()
 {
 	if (!m_method_combo || !m_method_label) return;
+	static const QRegularExpression smooth_re(QStringLiteral(R"((^|[^A-Za-z0-9_.'])s\s*\()"));
+	const QString formula = m_formula_edit->text();
 	QString family_data = m_family_combo->currentData().toString();
 	bool is_gaussian = (family_data == QStringLiteral("gaussian"));
-	bool has_re = m_formula_edit->text().contains(QStringLiteral("(")) &&
-	              m_formula_edit->text().contains(QStringLiteral("|"));
-	bool applicable = is_gaussian && has_re;
+	bool has_re = formula.contains(QStringLiteral("(")) && formula.contains(QStringLiteral("|"));
+	bool has_smooth = smooth_re.match(formula).hasMatch();
+	bool always_reml = has_smooth && (family_data == QStringLiteral("negbin")
+	                                  || family_data == QStringLiteral("beta")
+	                                  || family_data == QStringLiteral("student"));
+
+	if (has_smooth)
+	{
+		m_method_combo->setItemText(0, tr("GCV / UBRE"));
+		m_method_combo->setItemText(1, tr("REML"));
+		m_method_combo->setItemData(0, tr("Smoothing parameters selected by GCV (Gaussian) or UBRE\n"
+		                                   "(Poisson, binomial), as mgcv's default method = \"GCV.Cp\"."),
+		                            Qt::ToolTipRole);
+		m_method_combo->setItemData(1, tr("Smoothing parameters selected by REML, as mgcv's\n"
+		                                   "method = \"REML\"."),
+		                            Qt::ToolTipRole);
+	}
+	else
+	{
+		m_method_combo->setItemText(0, tr("Maximum likelihood"));
+		m_method_combo->setItemText(1, tr("Restricted maximum likelihood"));
+		m_method_combo->setItemData(0, tr("Maximum likelihood (default for Gaussian LMMs)."),
+		                            Qt::ToolTipRole);
+		m_method_combo->setItemData(1, tr("Restricted maximum likelihood: gives unbiased\n"
+		                                   "variance-component estimates and matches lme4's\n"
+		                                   "default. Cannot be used to compare models with\n"
+		                                   "different fixed effects (refit with maximum\n"
+		                                   "likelihood for that)."),
+		                            Qt::ToolTipRole);
+	}
+
+	if (always_reml)
+	{
+		// The engine uses REML whatever is selected; show that, disabled.
+		QString reason = tr("Negative binomial, beta and Student t GAMs always select their smoothing\n"
+		                    "parameters by REML, which also estimates the family's extra parameter.");
+		m_method_combo->setCurrentIndex(1);
+		m_method_combo->setEnabled(false);
+		m_method_label->setEnabled(false);
+		m_method_combo->setToolTip(reason);
+		m_method_label->setToolTip(reason);
+		return;
+	}
+
+	bool applicable = has_smooth || (is_gaussian && has_re);
 	m_method_combo->setEnabled(applicable);
 	m_method_label->setEnabled(applicable);
 	if (applicable) {

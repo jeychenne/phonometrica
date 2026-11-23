@@ -22,14 +22,16 @@ a **top bar** for entering formulas, a **left panel** with column and model list
 
    Two parts of the engine are less settled:
 
-   * **Generalized additive models** (smooth terms) are a **preview**. Phonometrica's
-     ``s(x)`` builds the same basis and penalty as ``mgcv``'s ``s(x, bs = "cr")`` (not
-     ``mgcv``'s default thin plate spline). The validation suite compares GAMs of every
-     family with ``mgcv``, under both ``method = "GCV.Cp"`` and ``method = "REML"``
-     (fit, coefficients, EDF, smoothing parameters, dispersion parameters and the
-     smooth-term tests of ``summary.gam`` agree closely), but the AIC of REML fits omits
-     ``mgcv``'s correction for smoothing-parameter uncertainty. Use them to explore nonlinear structure, and refit in ``mgcv`` for
-     anything you intend to publish.
+   * **Generalized additive models** (smooth terms) cover a subset of ``mgcv``: cubic
+     regression splines (``bs = "cr"``), by-factor smooths and random-effect smooths, with
+     smoothing parameters selected by GCV/UBRE or REML. Phonometrica's ``s(x)`` builds the
+     same basis and penalty as ``mgcv``'s ``s(x, bs = "cr")`` (not ``mgcv``'s default thin
+     plate spline). Within that scope they are validated against ``mgcv`` like the other
+     models, for every family and under both ``method = "GCV.Cp"`` and ``method = "REML"``:
+     fits, coefficients, EDF, smoothing parameters, dispersion parameters and the
+     smooth-term tests of ``summary.gam`` agree to several digits. The AIC of REML fits omits
+     ``mgcv``'s correction for smoothing-parameter uncertainty. GAMs are newer than the
+     regression models, though, so check results in ``mgcv`` before publishing.
    * **Bayesian estimation** is checked against ``brms`` at the level of inferential
      equivalence: posterior means within a fraction of a posterior standard deviation,
      which is the right bar for comparing a Laplace/CCD approximation against HMC, but
@@ -55,10 +57,9 @@ report them.
 
 .. note::
    **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
-   terms — cubic regression splines and random-effect smooths. Currently, GAM support
-   is intended for exploratory analysis of nonlinear effects: identifying whether a smooth
-   captures meaningful structure, inspecting the shape of fitted curves, and comparing terms by EDF.
-   Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
+   terms — cubic regression splines and random-effect smooths — for modelling nonlinear effects:
+   whether a smooth captures meaningful structure, the shape of the fitted curves, and how
+   terms compare by EDF and significance tests. Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
    WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values (including
    by-factor smooths ``s(x, by=group)`` and random-effect smooths ``bs=re``) all work normally.
    Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
@@ -1150,10 +1151,11 @@ instead of GCV/UBRE, whatever the family (see the note on GAMs at the top of thi
 Negative binomial, beta and Student *t* GAMs, and Bayesian GAMs, always use it.
 
 To switch a fit to REML, open the **Fitting options** popup (|settings|) next to the
-**Fit** button and select **REML** in the **Method** dropdown. The dropdown is enabled only
-when the current family is Gaussian and the formula contains a random-effects term; in any
-other configuration it is greyed out with a tooltip explaining why. To request REML for a
-GAM, use the ``fit_method`` option in a script (see below).
+**Fit** button and select **REML** in the **Method** dropdown. The dropdown is enabled when
+the current family is Gaussian and the formula contains a random-effects term, and for any
+formula with smooth terms, where its choices read **GCV / UBRE** and **REML**. For negative
+binomial, beta and Student *t* GAMs it shows REML, greyed out, since these always use it. In
+any other configuration it is greyed out with a tooltip explaining why.
 
 When to use REML
 ~~~~~~~~~~~~~~~~
