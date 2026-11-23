@@ -12,83 +12,42 @@ a **top bar** for entering formulas, a **left panel** with column and model list
 .. admonition:: Validation and cross-checking
    :class: important
 
-   Phonometrica's frequentist models are validated continuously against reference
-   implementations in R. The suite refits every supported family (Gaussian, including
-   REML; Binomial; Poisson; negative binomial; Beta; Student *t*) with fixed effects,
-   random intercepts, random slopes, and crossed and nested grouping factors, and
-   compares coefficients, standard errors, variance components, estimated marginal
-   means, residual diagnostics and information criteria against ``lm``, ``glmmTMB``,
-   ``lme4`` and ``MASS``. These model classes are ready for use in published work.
+   Phonometrica's statistical engine is validated continuously against reference
+   implementations in R:
 
-   Two parts of the engine are less settled:
+   * **Regression models** of every supported family (Gaussian, binomial, Poisson, negative
+     binomial, beta, Student *t*), with fixed effects, random intercepts and slopes, and
+     crossed and nested grouping factors, under ML and REML, are compared with ``lm``,
+     ``lme4``, ``glmmTMB`` and ``MASS``: coefficients, standard errors, variance components,
+     estimated marginal means, residual diagnostics and information criteria. They are ready
+     for use in published work.
+   * **Generalized additive models** are compared with ``mgcv`` in the same way, for every
+     family. They cover a subset of what ``mgcv`` offers (see `Smooth terms (GAM)`_) and are
+     newer than the regression models, so cross-check them in R before publishing.
+   * **Bayesian models** are fitted with deterministic approximations in the spirit of INLA
+     — Laplace approximations and numerical integration over the variance parameters (see
+     `Estimation method`_) — rather than by MCMC sampling. Results come in seconds, but they
+     are approximations, and they are validated as such: against R-INLA, which uses the same
+     kind of approximation, and against ``brms``, whose MCMC sampling is exact up to Monte
+     Carlo error and therefore serves as the reference. Posterior means typically agree with
+     ``brms`` to within a fraction of a posterior standard deviation. The approximations are
+     weakest for strongly skewed posteriors (such as the Student *t* degrees of freedom ν),
+     very small samples and nearly separated binary outcomes; when a conclusion rests on such
+     a case, or on a close call, confirm it with ``brms``.
 
-   * **Generalized additive models** (smooth terms) cover a subset of ``mgcv``: cubic
-     regression splines (``bs = "cr"``), by-factor smooths and random-effect smooths, with
-     smoothing parameters selected by GCV/UBRE or REML. Phonometrica's ``s(x)`` builds the
-     same basis and penalty as ``mgcv``'s ``s(x, bs = "cr")`` (not ``mgcv``'s default thin
-     plate spline). Within that scope they are validated against ``mgcv`` like the other
-     models, for every family and under both ``method = "GCV.Cp"`` and ``method = "REML"``:
-     fits, coefficients, EDF, smoothing parameters, dispersion parameters and the
-     smooth-term tests of ``summary.gam`` agree to several digits. The AIC of REML fits omits
-     ``mgcv``'s correction for smoothing-parameter uncertainty. GAMs are newer than the
-     regression models, though, so check results in ``mgcv`` before publishing: **Export to
-     R…** writes the ``mgcv::gam()`` script for you.
-   * **Bayesian estimation** is checked against ``brms`` at the level of inferential
-     equivalence: posterior means within a fraction of a posterior standard deviation,
-     which is the right bar for comparing a Laplace/CCD approximation against HMC, but
-     looser than the frequentist comparisons. Treat posterior summaries as approximate,
-     and refit in ``brms`` when a conclusion turns on a close call.
+   For frequentist models, GAMs included, checking a result in R takes one click: **Export to
+   R…** in the Models panel (see `Exporting an analysis to R`_) writes the data and a
+   ready-to-run script that refits every model and prints both sets of estimates side by
+   side. Optimizers and convergence criteria differ between implementations, so expect
+   agreement to several digits rather than to machine precision. Please report any
+   discrepancy, with a dataset and a model formula if you can.
 
-   Confirming a published result in R is good practice whatever the model, and for
-   frequentist models it takes one click: **Export to R…** in the Models panel (see
-   `Exporting an analysis to R`_) writes the data and a ready-to-run script that refits
-   every model and prints both sets of estimates side by side. Optimizers, convergence
-   criteria and parameterizations differ between implementations, so expect agreement
-   to several digits rather than to machine precision. Please report any discrepancy,
-   with a dataset and a model formula if you can.
-
-Support for statistical modeling was introduced in version 0.9. The core estimation
-engines (covering fixed-effects Linear, Binomial, and Poisson regressions) were implemented manually by the lead author.
-More specialized modules, including Negative Binomial regression, Mixed-Effects models, and Bayesian inference, along with post-hoc tests 
-and residual diagnostics, were developed with the assistance of Claude Opus 4.6 (as of April 2026) using algorithmic guidance 
-from established literature and reference implementations in R.
-
-The caveats above describe the discrepancies that can nonetheless arise, and how to
-report them.
-
-.. note::
-   **Generalized additive models (smooth terms).** Phonometrica supports ``s()`` smooth
-   terms — cubic regression splines and random-effect smooths — for modelling nonlinear effects:
-   whether a smooth captures meaningful structure, the shape of the fitted curves, and how
-   terms compare by EDF and significance tests. Smooths integrate with the rest of the engine — Bayesian priors, posterior predictive checks,
-   WAIC/LOO comparison, EMMs at fixed x-values, and prediction at new x-values (including
-   by-factor smooths ``s(x, by=group)`` and random-effect smooths ``bs=re``) all work normally.
-   Use Phonometrica's GAMs when smooth terms are part of a broader model (e.g. a vowel formant model
-   with s(age) alongside categorical predictors). Smooth-term tests are those of mgcv's
-   ``summary.gam``: Wood's (2013a) test for splines, whose reference degrees of freedom follow
-   the EDF, and the random-effect test of Wood (2013b) for ``bs=re`` terms, with an *F*
-   statistic for Gaussian models and χ² for the other families. On the validation datasets they
-   agree with mgcv to about 1e-4 when both programs select the same smoothing parameters; since
-   a smooth's test depends on its λ, a smooth whose λ differs (see below) has a different
-   statistic too. For confirmatory analyses where exact agreement with mgcv matters, refit the
-   model in mgcv; **Export to R…** (see `Exporting an analysis to R`_) writes the script and
-   compares the two fits. If you write the R code yourself, spell out the basis: Phonometrica's
-   ``s(duration, k=8)`` is mgcv's ``s(duration, bs = "cr", k = 8)``, whereas a bare
-   ``s(duration)`` in mgcv is a thin plate spline. With the basis spelled out, the two tools use
-   the same basis, identifiability constraint and penalty scaling, so log(λ) values are on the
-   same scale; they can still differ when the selection criterion is nearly flat (most often
-   for one level of a by-factor smooth), because the smoothing parameters are selected by a
-   different algorithm.
-   Smoothing parameters are selected by GCV (Gaussian) or UBRE (Poisson, binomial) by
-   default, as with mgcv's default ``method = "GCV.Cp"``; pass ``{"fit_method": "REML"}`` to
-   ``fit()`` to select them by REML instead, as with ``method = "REML"``. Negative binomial,
-   beta and Student *t* GAMs always use REML, which also estimates their extra parameters
-   (θ, φ, or σ and ν) jointly with the smoothing parameters, as mgcv does for these families.
-   Bayesian GAMs (fitted with a ``Prior()``) also select their smoothing parameters by REML,
-   which is the empirical-Bayes choice under the Bayesian reading of the smoothing penalty.
-   Binomial GAMs on near-saturated data (small n with k × number of smooths approaching n)
-   can still be fragile. If the intercept comes back at an extreme value with predicted probabilities
-   collapsed to 0 or 1, drop k or the number of smooth terms.
+Support for statistical modeling was introduced in version 0.9. The core estimation engines
+(fixed-effects linear, binomial and Poisson regression) were implemented by the lead author.
+The more specialized modules — negative binomial regression, mixed-effects models, Bayesian
+inference, post-hoc tests and residual diagnostics — were developed with the assistance of
+Claude Opus 4.6 (as of April 2026), following the statistical literature and reference
+implementations in R, and are held to the validation described above.
 
 
 Top bar
@@ -255,6 +214,49 @@ You can also cross grouping factors:
    the penalty will prevent overfitting — but it makes computation slower. Setting *k* too low
    can prevent the model from capturing genuine patterns. A useful rule of thumb: if the EDF
    reported in the summary is close to *k* − 1, consider increasing *k*.
+
+Smoothing parameters
+^^^^^^^^^^^^^^^^^^^^
+
+Each smooth has its own smoothing parameter λ, which sets how wiggly its curve can be. By
+default, λ is selected by GCV (Gaussian models) or UBRE (Poisson and binomial models), as with
+``mgcv``'s default ``method = "GCV.Cp"``. Choose **REML** in the **Method** option of the
+fitting options, or pass ``{"fit_method": "REML"}`` to ``fit()``, to select it by restricted
+maximum likelihood instead, as with ``method = "REML"``. Negative binomial, beta and Student
+*t* GAMs always use REML, which also estimates their extra parameter (θ, φ, or σ and ν)
+together with the smoothing parameters, as ``mgcv`` does. Bayesian GAMs use REML too: under
+the Bayesian reading of the smoothing penalty, it is the empirical-Bayes choice of λ.
+
+For each smooth, the summary reports its effective degrees of freedom (EDF) and the
+significance test of ``mgcv``'s ``summary.gam``: Wood's (2013a) test for splines and Wood's
+(2013b) test for random-effect smooths, with an *F* statistic for Gaussian models and χ² for
+the other families.
+
+Smooths work with the rest of the engine: Bayesian priors, posterior predictive checks,
+WAIC/LOO comparison, EMMs at fixed x-values and prediction at new x-values. They cannot yet
+be combined with ``(1|group)`` random effects in the same formula (see the note above on
+``bs=re``).
+
+Binomial GAMs on near-saturated data (small n, with *k* × the number of smooths approaching
+n) can be fragile. If the intercept comes back at an extreme value, with predicted
+probabilities collapsed to 0 or 1, reduce *k* or the number of smooth terms.
+
+Comparison with mgcv
+^^^^^^^^^^^^^^^^^^^^
+
+Phonometrica's ``s(duration, k=8)`` is ``mgcv``'s ``s(duration, bs = "cr", k = 8)``: the two
+programs build the same basis, identifiability constraint and penalty, so smoothing
+parameters are on the same scale and fits agree to several digits. If you write the R code
+yourself, spell out the basis, because a bare ``s(duration)`` in ``mgcv`` is a thin plate
+spline; **Export to R…** (see `Exporting an analysis to R`_) does this for you. Two
+differences remain:
+
+- When the selection criterion is nearly flat — most often for one level of a by-factor
+  smooth — the two programs can settle on different smoothing parameters, and so report a
+  different EDF and test for that smooth. Phonometrica searches a grid of values before
+  refining, whereas ``mgcv`` follows a Newton search from its starting point; in the cases
+  examined during validation, Phonometrica's choice had the lower criterion value.
+- The AIC of REML fits omits ``mgcv``'s correction for smoothing-parameter uncertainty.
 
 Random effects
 ~~~~~~~~~~~~~~
@@ -1150,7 +1152,7 @@ families, fixed-effects-only Gaussian models), REML is silently coerced to ML an
 attached to the model.
 
 GAMs are the exception: for a model with smooth terms, REML selects the smoothing parameters
-instead of GCV/UBRE, whatever the family (see the note on GAMs at the top of this page).
+instead of GCV/UBRE, whatever the family (see `Smoothing parameters`_).
 Negative binomial, beta and Student *t* GAMs, and Bayesian GAMs, always use it.
 
 To switch a fit to REML, open the **Fitting options** popup (|settings|) next to the
