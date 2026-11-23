@@ -23,13 +23,12 @@ a **top bar** for entering formulas, a **left panel** with column and model list
      for use in published work.
    * **Generalized additive models** are compared with ``mgcv`` in the same way, for every
      family. They cover a subset of what ``mgcv`` offers (see `Smooth terms (GAM)`_) and are
-     newer than the regression models, so cross-check them in R before publishing.
+     newer than the regression models, so you are encouraged to cross-check them in R before publishing.
    * **Bayesian models** are fitted with deterministic approximations in the spirit of INLA
      — Laplace approximations and numerical integration over the variance parameters (see
      `Estimation method`_) — rather than by MCMC sampling. Results come in seconds, and in
      practice the approximations are very accurate for the models used in phonetics and
-     sociophonetics, which is why INLA is widely used in applied statistics. They are
-     validated against R-INLA, which uses the same kind of approximation, and against
+     sociophonetics. They are validated against R-INLA, which uses the same kind of approximation, and against
      ``brms``, whose MCMC sampling is exact up to Monte Carlo error and therefore serves as the
      reference: posterior means and credible intervals typically agree with ``brms`` to within
      a small fraction of a posterior standard deviation. A few situations are harder for any
@@ -48,8 +47,8 @@ Support for statistical modeling was introduced in version 0.9. The core estimat
 (fixed-effects linear, binomial and Poisson regression) were implemented by the lead author.
 The more specialized modules — negative binomial regression, mixed-effects models, Bayesian
 inference, post-hoc tests and residual diagnostics — were developed with the assistance of
-Claude Opus 4.6 (as of April 2026), following the statistical literature and reference
-implementations in R, and are held to the validation described above.
+Claude Opus 4.6 (as of April 2026) to 5.5 (as of November 2026), following the statistical literature and reference
+implementations in R, and are continuously validated against Phonometrica's test suite.
 
 
 Top bar
