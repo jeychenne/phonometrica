@@ -6,9 +6,12 @@ Release notes
 
 **Generalized additive models (GAMs)**
 
-- Smooth terms now match R's **mgcv**: ``s(x)`` builds exactly the same spline and penalty as mgcv's ``s(x, bs = "cr")``, and smoothing parameters are on the same scale, so the two programs' results can be compared directly. The validation suite now checks GAMs of every family against mgcv.
+- Smooth terms now match R's **mgcv**: ``s(x)`` builds exactly the same spline and penalty as mgcv's ``s(x, bs = "cr")``, and smoothing parameters are on the same scale, so the two programs' results can be compared directly. The validation suite now checks GAMs of every family against mgcv, and the documentation no longer describes them as a preview.
 - **Poisson and binomial GAMs** choose their smoothness as mgcv does, with a separate smoothing parameter for each smooth term. They were often too smooth before.
-- **REML** can now be used to select the smoothness of any GAM (``{"fit_method": "REML"}`` in scripts).
+- **REML** can now be used to select the smoothness of any GAM, from the **Method** option in the Analysis view's fitting options or with ``{"fit_method": "REML"}`` in scripts.
+- **Significance tests of smooth terms** now give the same statistics and *p*-values as mgcv's ``summary.gam`` (Wood's 2013 tests for splines and random-effect smooths).
+- **By-factor smooths** (``s(x, by=group)``) and **random-effect smooths** (``bs=re``) can now be used with ``predict()`` and plotted in the **Effects** tab, with one curve per level. A new ``re_smooths`` option of ``predict()`` chooses which random-effect smooths to include.
+- **Export to R** now handles GAMs: it writes an ``mgcv::gam()`` script that refits the model and prints both sets of estimates side by side.
 - **Negative binomial, beta and Student t GAMs** now fit the right model: their extra parameter (θ, φ, or σ and ν) is estimated together with the smooths, as in mgcv. It used to be fixed, and beta and Student t GAMs did not use their own likelihood.
 - Random slopes written as ``s(group, by=x, bs=re)`` no longer force the slopes to average zero, as in mgcv.
 - Predictions beyond the range of the data continue the curve as a straight line instead of leveling off.

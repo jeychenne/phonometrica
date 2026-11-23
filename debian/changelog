@@ -4,7 +4,12 @@ phonometrica (0.9.11) unstable; urgency=medium
     as mgcv's s(x, bs = "cr"), with smoothing parameters on the same scale
   * Poisson and binomial GAMs select their smoothness as mgcv does, with a
     separate smoothing parameter for each smooth term
-  * REML can select the smoothness of any GAM
+  * REML can select the smoothness of any GAM, from the Analysis view or
+    in scripts
+  * significance tests of smooth terms match mgcv's summary.gam
+  * by-factor and random-effect smooths work with predict() and are
+    plotted in the Effects tab; predict() has a new re_smooths option
+  * Export to R handles GAMs, with an mgcv::gam() script
   * negative binomial, beta and Student t GAMs estimate their extra
     parameter together with the smooths and use their own likelihood
   * random slopes s(group, by=x, bs=re) are no longer forced to average
