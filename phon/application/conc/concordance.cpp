@@ -3177,6 +3177,27 @@ void Concordance::add_text_column(const String &header, const std::vector<String
 	modify();
 }
 
+void Concordance::append_aux_columns(Array<AuxColumn> columns)
+{
+	Array<String> names;
+	for (auto &col : columns) names.append(col.header);
+	check_new_column_names(names, "Cannot add columns");
+
+	const intptr_t n = m_matches.size();
+	for (auto &col : columns)
+	{
+		intptr_t size = (col.type == AuxColumnType::Text) ? col.text_data.size() : col.num_data.size();
+		if (size != n) {
+			throw error("Cannot add column '%': expected % values, got %", col.header, n, size);
+		}
+	}
+
+	for (auto &col : columns) {
+		m_aux_columns.append(std::move(col));
+	}
+	modify();
+}
+
 ProtocolApplyResult Concordance::apply_protocol(intptr_t source_col, const Protocol &protocol, bool translate)
 {
 	const intptr_t n_cols = column_count();

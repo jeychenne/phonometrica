@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <algorithm>
 #include <phon/gui/conc/concordance_commands.hpp>
 #include <phon/gui/conc/concordance_view.hpp>
 
@@ -54,32 +55,60 @@ void DeleteMatchesCommand::undo()
 //  AddConcAuxColumnCommand
 // ─────────────────────────────────────────────────
 
+std::vector<int> AddConcAuxColumnCommand::displayColumns(intptr_t aux) const
+{
+	// Aux columns are not the last columns of the model (property and description columns follow them), so look
+	// them up rather than assuming they come last.
+	auto conc = m_view->concModel()->concordance();
+	std::vector<int> cols;
+	for (intptr_t j = 0; j < conc->column_count(); j++) {
+		if (conc->resolve_aux_column(j) == aux) cols.push_back(int(j));
+	}
+	return cols;
+}
+
 bool AddConcAuxColumnCommand::execute()
 {
-	// Called on redo: restore the previously saved column.
+	// Called on redo: restore the previously saved columns.
 	if (m_has_saved)
 	{
 		auto conc = m_view->concModel()->concordance();
-		conc->restore_aux_column(conc->aux_stored_count(), std::move(m_saved_col));
+		intptr_t first = conc->aux_stored_count();
+		for (auto &col : m_saved_cols) {
+			conc->restore_aux_column(conc->aux_stored_count(), std::move(col));
+		}
+		m_saved_cols.clear();
 		m_has_saved = false;
 		m_view->refreshAfterStructuralChange();
-		// The restored column is now the last one in the model.
-		int inserted_col = m_view->concModel()->columnCount() - 1;
-		m_view->adjustFiltersAfterColumnInsert(inserted_col);
+
+		// Shift filter rules past the inserted columns, lowest first, using their final positions.
+		for (intptr_t c = first; c < conc->aux_stored_count(); c++) {
+			for (int j : displayColumns(c)) m_view->adjustFiltersAfterColumnInsert(j);
+		}
 	}
-	// On first call (via record()), the column was already added by the view code.
+	// On first call (via record()), the columns were already added by the view code.
 	return true;
 }
 
 void AddConcAuxColumnCommand::undo()
 {
 	auto conc = m_view->concModel()->concordance();
-	intptr_t last = conc->aux_stored_count() - 1;
-	// The column to remove maps to the last source-model column.
-	int removed_col = m_view->concModel()->columnCount() - 1;
-	m_saved_col = conc->extract_aux_column(last);
+	int count = std::min<int>(m_count, int(conc->aux_stored_count()));
+	m_saved_cols.clear();
+
+	for (int k = 0; k < count; k++)
+	{
+		intptr_t last = conc->aux_stored_count() - 1;
+		auto cols = displayColumns(last);
+		for (auto it = cols.rbegin(); it != cols.rend(); ++it) {
+			m_view->adjustFiltersAfterColumnRemove(*it);
+		}
+		m_saved_cols.push_back(conc->extract_aux_column(last));
+	}
+
+	// Columns were extracted last first: put them back in their original order.
+	std::reverse(m_saved_cols.begin(), m_saved_cols.end());
 	m_has_saved = true;
-	m_view->adjustFiltersAfterColumnRemove(removed_col);
 	m_view->refreshAfterStructuralChange();
 }
 

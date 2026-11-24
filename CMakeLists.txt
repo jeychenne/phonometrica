@@ -444,6 +444,7 @@ if(WITH_GUI)
         icons/text-cursor.svg
         icons/zero-crossing.svg
         icons/merge-tables.svg
+        icons/import-columns.svg
         icons/filter-x.svg
         icons/filter.svg
         icons/scissors.svg
@@ -667,4 +668,9 @@ if(WITH_APPLICATION)
     add_executable(test_query tools/test_query.cpp)
     target_link_libraries(test_query PRIVATE phon-app phon_engine)
     add_test(NAME query COMMAND test_query ${CMAKE_CURRENT_SOURCE_DIR}/test/data)
+
+    # Headless test of the import of CSV columns into a concordance (see tools/test_column_import.cpp).
+    add_executable(test_column_import tools/test_column_import.cpp)
+    target_link_libraries(test_column_import PRIVATE phon-app phon_engine)
+    add_test(NAME column_import COMMAND test_column_import)
 endif()

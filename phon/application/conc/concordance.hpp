@@ -405,6 +405,11 @@ public:
 	/// The values vector must have exactly row_count() elements.
 	void add_text_column(const String &header, const std::vector<String> &values);
 
+	/// Append auxiliary columns, all or none. Each column must hold one value per match (match_count(), whatever the
+	/// layout). Throws, leaving the concordance unchanged, if a header is already used or a column has the wrong
+	/// number of values.
+	void append_aux_columns(Array<AuxColumn> columns);
+
 	/// Apply a coding protocol to the text of column `source_col` (0-based), appending one new
 	/// text aux column per protocol field. Cells are read via get_cell() so any text column is
 	/// accepted (targets, aux columns, file info, context, metadata); measurement (numeric)

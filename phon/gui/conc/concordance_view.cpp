@@ -47,6 +47,7 @@
 #include <phon/gui/conc/concordance_view.hpp>
 #include <phon/gui/conc/concordance_commands.hpp>
 #include <phon/gui/conc/protocol_builder_dialog.hpp>
+#include <phon/gui/conc/import_columns_dialog.hpp>
 #include <phon/gui/bookmark_editor.hpp>
 #include <phon/gui/recode_dialog.hpp>
 #include <phon/gui/transform_dialog.hpp>
@@ -204,6 +205,24 @@ void ConcordanceView::setupUi()
 
 	auto *merge_action = m_toolbar->addAction(QIcon(":/icons/merge-tables.svg"), tr("Merge"));
 	merge_action->setToolTip(tr("Horizontal merge: add columns from another table"));
+
+	// -- Import columns from a CSV file: one entry per way of matching the file's lines to the rows --
+	auto *import_menu = new QMenu(this);
+	import_menu->setToolTipsVisible(true);
+	auto *import_id_action = import_menu->addAction(tr("Match by ID..."));
+	import_id_action->setToolTip(tr("Match rows with lines of the file through a column of unique IDs"));
+	auto *import_line_action = import_menu->addAction(tr("Match by line..."));
+	import_line_action->setToolTip(tr("Add the lines of the file to the rows in order (one line per match)"));
+	auto *import_lookup_action = import_menu->addAction(tr("Look up by key..."));
+	import_lookup_action->setToolTip(tr("Look up each row's key (e.g. a word) in the file and copy its properties "
+	                                    "(frequency, neighborhood density...)"));
+
+	auto *import_action = new QAction(QIcon(":/icons/import-columns.svg"), tr("Import columns"), this);
+	import_action->setToolTip(tr("Add columns from a CSV file"));
+	import_action->setMenu(import_menu);
+	m_toolbar->addAction(import_action);
+	if (auto *ib = qobject_cast<QToolButton *>(m_toolbar->widgetForAction(import_action)))
+		ib->setPopupMode(QToolButton::InstantPopup);
 
 	m_toolbar->addSeparator();
 
@@ -586,6 +605,9 @@ void ConcordanceView::setupUi()
 	connect(intersect_action, &QAction::triggered, this, &ConcordanceView::onIntersection);
 	connect(compl_action, &QAction::triggered, this, &ConcordanceView::onComplement);
 	connect(merge_action, &QAction::triggered, this, &ConcordanceView::onMerge);
+	connect(import_id_action, &QAction::triggered, this, [this]() { onImportColumns(ColumnImportMode::ById); });
+	connect(import_line_action, &QAction::triggered, this, [this]() { onImportColumns(ColumnImportMode::ByLine); });
+	connect(import_lookup_action, &QAction::triggered, this, [this]() { onImportColumns(ColumnImportMode::Lookup); });
 	connect(rename_action, &QAction::triggered, this, &ConcordanceView::onRename);
 	connect(analyze_action, &QAction::triggered, this, [this]() {
 		emit requestAnalysis(m_conc);
@@ -1553,6 +1575,26 @@ void ConcordanceView::onMerge()
 	{
 		QMessageBox::critical(this, tr("Error"), QString::fromUtf8(e.what()));
 	}
+}
+
+void ConcordanceView::onImportColumns(ColumnImportMode mode)
+{
+	intptr_t first_new = m_conc->aux_stored_count();
+
+	ImportColumnsDialog dlg(m_conc, mode, this);
+	if (dlg.exec() != QDialog::Accepted || dlg.importedColumnCount() == 0) return;
+
+	refreshAfterStructuralChange();
+
+	// The new columns come before the property and description columns: shift filter rules on those columns.
+	for (intptr_t c = first_new; c < m_conc->aux_stored_count(); c++)
+	{
+		for (intptr_t j = 0; j < m_conc->column_count(); j++) {
+			if (m_conc->resolve_aux_column(j) == c) adjustFiltersAfterColumnInsert(int(j));
+		}
+	}
+
+	record(std::make_unique<AddConcAuxColumnCommand>(this, dlg.importedColumnCount(), "Import columns"));
 }
 
 // ── Display toggles ─────────────────────────────────────

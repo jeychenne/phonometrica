@@ -39,6 +39,8 @@
 
 namespace phonometrica {
 
+enum class ColumnImportMode;
+
 class ConcordanceView final : public View
 {
 	Q_OBJECT
@@ -115,6 +117,7 @@ private:
 	void onIntersection();
 	void onComplement();
 	void onMerge();
+	void onImportColumns(ColumnImportMode mode);
 
 	void onToggleFilter();
 	void onClearFilters();

@@ -49,6 +49,48 @@ concordance, matching rows by position. This is useful, for instance, to combine
 the same set of tokens. When both tables have a column with the same name but different values, Phonometrica offers to add
 the other table's column with a ``(B)`` suffix, since two columns cannot share a name (see :ref:`column names <unique-column-names>`).
 
+.. _import-columns:
+
+Importing columns from a CSV file
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The |importcols| **Import columns** button adds columns from a CSV file (or any delimited text file) to the concordance.
+Its menu offers three ways of deciding which line of the file goes with which row of the concordance:
+
+- **Match by ID**: the concordance and the file both have a column of unique identifiers, and each row receives the
+  values of the line that has the same ID. IDs must be unique in the concordance; lines of the file whose ID is not
+  in the concordance are ignored.
+- **Match by line**: the first data line of the file goes to the first row, the second to the second row, and so on.
+  The file must have exactly one data line per match. This is useful to bring back data that was exported from the
+  concordance and processed in another program.
+- **Look up by key**: each row looks up its key in the file and receives the values of the matching line. Unlike an
+  ID, the same key can occur on many rows. For instance, if the concordance has the words you searched for and you
+  have a lexicon with the frequency, neighborhood density, etc. of each word, look up the match column in the
+  lexicon's word column to add these properties to every occurrence of each word.
+
+The dialog shows the first lines of the file. The separator (tab, comma, semicolon, vertical bar, or any other string)
+is guessed from the first line and can be changed; fields may be enclosed in double quotes, in which case they can
+contain the separator. If the first line does not contain column names, uncheck **First line contains column names**
+and the columns are named *Column 1*, *Column 2*, etc.
+
+When matching by ID or by key, choose the key column in the concordance and in the file. Keys are compared after
+removing surrounding spaces, and **Ignore case** makes the comparison case-insensitive. A key may occur on several lines
+of the file only if these lines have the same values in the columns you import; otherwise Phonometrica cannot tell which
+line to use and reports the problem.
+
+Check the columns you want to import. You can rename a new column by double-clicking its name: names must be unique
+(see :ref:`column names <unique-column-names>`), so a column whose name is already used in the concordance is proposed
+with a ``(CSV)`` suffix.
+
+A value is *missing* when a row has no matching line in the file, or when the file's cell is empty or holds a
+missing-value marker (``NA``, ``nan``). You can leave missing cells empty, insert ``nan``, insert a value of your choice,
+or report an error, in which case nothing is imported. Before you import, the dialog tells you how many rows found a
+line in the file and how many values are missing.
+
+A column whose values are all numbers (or missing) is imported as a numeric column; any other column is imported as
+text. Note that a custom value for missing cells that is not a number (e.g. ``unknown``) makes the column a text column.
+Importing columns can be undone with ``Ctrl+Z``.
+
 Filtering
 ~~~~~~~~~
 
@@ -301,6 +343,10 @@ bindings are currently registered for these actions.
     :width: 16px
 
 .. |merge| image:: ../icons/merge-tables.svg
+    :height: 16px
+    :width: 16px
+
+.. |importcols| image:: ../icons/import-columns.svg
     :height: 16px
     :width: 16px
 

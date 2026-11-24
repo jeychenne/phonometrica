@@ -66,27 +66,33 @@ private:
 // ─────────────────────────────────────────────────
 //  AddConcAuxColumnCommand
 // ─────────────────────────────────────────────────
-// Recorded after a recode/transform/metric operation has appended
-// an aux column to the concordance. Undo removes the last aux column.
+// Recorded after a recode/transform/metric/import operation has appended
+// `count` aux columns to the concordance. Undo removes the last `count`
+// aux columns; redo puts them back.
 
 class AddConcAuxColumnCommand : public Command
 {
 public:
 
-	AddConcAuxColumnCommand(ConcordanceView *view) :
-		m_view(view) {}
+	explicit AddConcAuxColumnCommand(ConcordanceView *view, int count = 1, String description = "Add column") :
+		m_view(view), m_count(count), m_description(std::move(description)) {}
 
 	bool execute() override;
 	void undo() override;
 
-	String description() const override { return "Add column"; }
+	String description() const override { return m_description; }
 
 private:
 
-	ConcordanceView *m_view;
+	// Source-model columns (0-based) displaying aux column `aux` (an aux column can show derived columns too).
+	std::vector<int> displayColumns(intptr_t aux) const;
 
-	// Saved column for undo (populated on first undo, reused on subsequent undos).
-	Concordance::AuxColumn m_saved_col;
+	ConcordanceView *m_view;
+	int m_count;
+	String m_description;
+
+	// Columns saved by undo, in their original order (reused by redo).
+	std::vector<Concordance::AuxColumn> m_saved_cols;
 	bool m_has_saved = false;
 };
 
