@@ -1,6 +1,17 @@
 Release notes
 -------------
 
+0.9.12 (24/11/2026)
+~~~~~~~~~~~~~~~~~~~
+
+**Concordances**
+
+- The new **Import columns** button adds columns from a CSV file to a concordance (see :ref:`import-columns`). The file's lines can be matched with the concordance's rows in three ways: **by ID**, through a column of unique identifiers present in both; **by line**, in order; or **by key lookup**, where each row looks up a value such as its word in the file, so that properties from a lexicon (frequency, neighborhood density, etc.) can be added to every occurrence of each word. The dialog previews the file, guesses its separator, lets you choose and rename the columns to import, and tells you how many rows were matched before importing. Missing values can be left empty, set to ``nan`` or to a value of your choice, or reported as an error.
+
+**Fixes**
+
+- Undoing the addition of a column to a concordance (e.g. a metric column or a recoded column) could move filter rules to the wrong column.
+
 0.9.11 (23/11/2026)
 ~~~~~~~~~~~~~~~~~~~
 

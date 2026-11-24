@@ -48,14 +48,14 @@ Phonometrica |release|
 ----------------------
 
 -  Windows:
-   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/setup_phonometrica.exe>`__
+   `setup\_phonometrica.exe <https://github.com/jeychenne/phonometrica/releases/download/v0.9.12/setup_phonometrica.exe>`__
 -  macOS (ARM):
-   `Phonometrica-0.9.11.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/Phonometrica-0.9.11.dmg>`__
+   `Phonometrica-0.9.12.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.12/Phonometrica-0.9.12.dmg>`__
 -  macOS (Intel):
-   `Phonometrica-0.9.11-intel.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/Phonometrica-0.9.11-intel.dmg>`__
+   `Phonometrica-0.9.12-intel.dmg <https://github.com/jeychenne/phonometrica/releases/download/v0.9.12/Phonometrica-0.9.12-intel.dmg>`__
 -  Linux (Debian/Ubuntu):
-   `phonometrica-0.9.11.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.11/phonometrica_0.9.11_amd64.deb>`__
--  source code: `phonometrica-0.9.11.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.11.zip>`__ | `phonometrica-0.9.11.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.11.tar.gz>`__
+   `phonometrica-0.9.12.deb <https://github.com/jeychenne/phonometrica/releases/download/v0.9.12/phonometrica_0.9.12_amd64.deb>`__
+-  source code: `phonometrica-0.9.12.zip <https://github.com/jeychenne/phonometrica/archive/v0.9.12.zip>`__ | `phonometrica-0.9.12.tar.gz <https://github.com/jeychenne/phonometrica/archive/v0.9.12.tar.gz>`__
 
 
 Documentation

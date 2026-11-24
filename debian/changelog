@@ -1,3 +1,14 @@
+phonometrica (0.9.12) unstable; urgency=medium
+
+  * concordances can import columns from a CSV file, matching the file's
+    lines with the rows by ID, by line order, or by looking up a key such
+    as a word in a lexicon; the separator, the columns to import and the
+    handling of missing values can be chosen
+  * fixed filter rules that could move to the wrong column when undoing
+    the addition of a column to a concordance
+
+ -- Julien Eychenne <julien.eychenne@usherbrooke.ca>  Tue, 24 Nov 2026 12:00:00 +0000
+
 phonometrica (0.9.11) unstable; urgency=medium
 
   * smooth terms match R's mgcv: s(x) builds the same spline and penalty
