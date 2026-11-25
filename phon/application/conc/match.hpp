@@ -85,6 +85,9 @@ public:
 
 	Target *reference_target() const;
 
+	/// 1-based position of the reference target in the target chain (as used by get_value() etc.), or 0 if there is none.
+	intptr_t reference_index() const;
+
 	/// Serialize this match as a <Match> node under `root`. If any target's
 	/// stored start_time no longer maps to an event on its layer (e.g. because
 	/// the annotation was edited since the query was run), that target is

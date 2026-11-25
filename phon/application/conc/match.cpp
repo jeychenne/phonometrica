@@ -145,6 +145,20 @@ QueryMatch::Target *QueryMatch::reference_target() const
 	return nullptr;
 }
 
+intptr_t QueryMatch::reference_index() const
+{
+	intptr_t i = 1;
+
+	for (auto t = m_target.get(); t; t = t->next.get(), i++)
+	{
+		if (t->is_reference) {
+			return i;
+		}
+	}
+
+	return 0;
+}
+
 int QueryMatch::to_xml(xml_node root) const
 {
 	auto node = root.append_child("Match");

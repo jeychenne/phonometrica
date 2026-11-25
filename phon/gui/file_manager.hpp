@@ -56,6 +56,8 @@ public:
 
 	void setFilterText(const QString &text);
 
+	const QString &filterText() const { return m_filterText; }
+
 protected:
 
 	bool filterAcceptsRow(int sourceRow, const QModelIndex &sourceParent) const override;
@@ -77,11 +79,17 @@ public:
 
 	explicit FileManager(Project *project, QWidget *parent = nullptr);
 
-	// Full refresh of the tree (e.g. after project open/close).
+	// Full refresh of the tree. The user's expanded/collapsed folders are preserved, except
+	// right after a project is opened, when the default expansion is applied.
 	void refresh();
 
-	// Expand the root directories that should be expanded on startup.
+	// Default expansion (on project open): expand the root directories, plus any folder
+	// flagged for expansion in the VFS.
 	void expandRoots();
+
+	// Expand (and reveal) folders flagged for expansion in the VFS because their content was
+	// modified, then clear the flag so they are not forcibly re-expanded on later refreshes.
+	void expandPendingDirectories();
 
 	// Expand all visible items (used when filtering).
 	void expandAll();
@@ -160,6 +168,13 @@ private:
 
 	// Temporarily stores expanded elements during a model reset.
 	std::unordered_set<Element *> m_expanded_save;
+
+	// Expanded elements before a search filter was entered, restored when the filter is cleared.
+	std::unordered_set<Element *> m_expanded_before_filter;
+
+	// Whether the next refresh should apply the default expansion (set when a project is closed,
+	// i.e. before a project is opened or created).
+	bool m_default_expansion = true;
 };
 
 } // namespace phonometrica

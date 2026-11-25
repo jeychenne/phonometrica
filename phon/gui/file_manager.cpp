@@ -262,6 +262,8 @@ FileManager::FileManager(Project *project, QWidget *parent) :
 	m_project->notify_closed.connect([this]() {
 		m_search->clear();
 		refresh();
+		// Next project gets the default expansion.
+		m_default_expansion = true;
 	});
 
 	m_project->metadata_updated.connect([this]() {
@@ -433,47 +435,64 @@ void FileManager::setupKeyboardShortcuts()
 
 void FileManager::refresh()
 {
+	// The model reset saves and restores the user's expanded folders (see constructor),
+	// so we only need to add the default/pending expansions on top of it.
 	m_model->refresh();
 	m_proxy->invalidate();
 
-	if (m_search->text().isEmpty())
-		expandRoots();
-	else
+	if (!m_search->text().isEmpty())
+	{
 		expandAll();
+	}
+	else if (m_default_expansion)
+	{
+		expandRoots();
+		// Keep applying the default expansion until the project has content: refreshes also
+		// happen while the project is closed/empty, before a project is loaded.
+		if (!m_project->empty())
+			m_default_expansion = false;
+	}
+	else
+	{
+		expandPendingDirectories();
+	}
 }
 
 void FileManager::expandRoots()
 {
 	for (int i = 0; i < ProjectModel::ROOT_COUNT; i++)
 	{
-		auto sourceRoot = m_model->index(i, 0, QModelIndex());
-		auto proxyRoot = toProxy(sourceRoot);
+		auto proxyRoot = toProxy(m_model->index(i, 0, QModelIndex()));
 		if (proxyRoot.isValid())
 			m_tree->expand(proxyRoot);
-
-		// Also expand subdirectories that were marked expanded in the VFS.
-		auto *dir = dynamic_cast<Directory *>(m_model->elementFromIndex(sourceRoot));
-		if (dir && dir->expanded())
-		{
-			std::function<void(const QModelIndex &)> expandRecursive;
-			expandRecursive = [&](const QModelIndex &proxyParent)
-			{
-				int rows = m_proxy->rowCount(proxyParent);
-				for (int r = 0; r < rows; r++)
-				{
-					auto proxyChild = m_proxy->index(r, 0, proxyParent);
-					auto sourceChild = toSource(proxyChild);
-					auto *childDir = dynamic_cast<Directory *>(m_model->elementFromIndex(sourceChild));
-					if (childDir && childDir->expanded())
-					{
-						m_tree->expand(proxyChild);
-						expandRecursive(proxyChild);
-					}
-				}
-			};
-			expandRecursive(proxyRoot);
-		}
 	}
+
+	expandPendingDirectories();
+}
+
+void FileManager::expandPendingDirectories()
+{
+	std::function<void(const QModelIndex &)> visit = [&](const QModelIndex &proxyParent)
+	{
+		int rows = m_proxy->rowCount(proxyParent);
+		for (int r = 0; r < rows; r++)
+		{
+			auto proxyChild = m_proxy->index(r, 0, proxyParent);
+			auto *dir = dynamic_cast<Directory *>(m_model->elementFromIndex(toSource(proxyChild)));
+			if (!dir) continue;
+
+			if (dir->expanded())
+			{
+				// Reveal the folder: expand it and all its ancestors.
+				for (auto idx = proxyChild; idx.isValid(); idx = idx.parent())
+					m_tree->expand(idx);
+				dir->set_expanded(false);
+			}
+			visit(proxyChild);
+		}
+	};
+
+	visit(QModelIndex());
 }
 
 void FileManager::expandAll()
@@ -863,12 +882,33 @@ void FileManager::onSelectionChanged()
 
 void FileManager::onFilterTextChanged(const QString &text)
 {
+	bool was_filtering = !m_proxy->filterText().isEmpty();
+
+	// Remember the user's tree before the filter expands everything.
+	if (!was_filtering && !text.isEmpty())
+	{
+		m_expanded_save.clear();
+		saveExpandedState(QModelIndex());
+		m_expanded_before_filter = std::move(m_expanded_save);
+		m_expanded_save.clear();
+	}
+
 	m_proxy->setFilterText(text);
 
 	if (text.isEmpty())
-		expandRoots();
+	{
+		// Restore the tree as it was before filtering.
+		collapseRecursively(QModelIndex());
+		m_expanded_save = std::move(m_expanded_before_filter);
+		m_expanded_before_filter.clear();
+		restoreExpandedState(QModelIndex());
+		m_expanded_save.clear();
+		expandPendingDirectories();
+	}
 	else
+	{
 		expandAll();
+	}
 }
 
 // ---------------------------------------------------------

@@ -515,6 +515,14 @@ void ConcordanceView::setupUi()
 	m_target_spin = new QSpinBox;
 	m_target_spin->setRange(1, m_conc->target_count());
 	m_target_spin->setEnabled(m_conc->target_count() > 1);
+	// Default to the query's reference constraint, so that viewing/playing a match uses the
+	// target the user designated (e.g. the vowel rather than the word containing it).
+	if (m_conc->match_count() > 0)
+	{
+		auto ref = m_conc->get_match(0).reference_index();
+		if (ref >= 1 && ref <= m_conc->target_count())
+			m_target_spin->setValue(int(ref));
+	}
 	info_row->addWidget(m_target_spin);
 
 	layout->addLayout(info_row);
@@ -1010,7 +1018,7 @@ void ConcordanceView::onBookmark()
 
 	int src = mapToSourceRow(row);
 	auto &match = m_conc->get_match(src);
-	int target = m_target_spin->value() - 1;
+	int target = m_target_spin->value(); // QueryMatch target indices are 1-based
 	auto context = m_conc->get_context(src);
 
 	// Default title is the match value; the user can edit it in the dialog.
@@ -2060,7 +2068,7 @@ void ConcordanceView::onContextMenu(const QPoint &pos)
 
 	if (praat::available() && match.annotation()->is_textgrid())
 	{
-		int target = m_target_spin->value() - 1;
+		int target = m_target_spin->value(); // QueryMatch target indices are 1-based
 		auto layer = match.get_layer(target);
 		auto start = match.get_start_time(target);
 		auto end = match.get_end_time(target);
@@ -2159,7 +2167,7 @@ void ConcordanceView::playMatch(int row)
 	auto &annot = match.annotation();
 	if (!annot->has_sound()) return;
 
-	int target = m_target_spin->value() - 1;
+	int target = m_target_spin->value(); // QueryMatch target indices are 1-based
 	double start = match.get_start_time(target);
 	double end = match.get_end_time(target);
 
@@ -2183,7 +2191,7 @@ void ConcordanceView::playMatch(int row)
 void ConcordanceView::viewMatch(int row)
 {
 	auto &match = m_conc->get_match(row);
-	int target = m_target_spin->value() - 1;
+	int target = m_target_spin->value(); // QueryMatch target indices are 1-based
 	auto layer = match.get_layer(target);
 	auto start = match.get_start_time(target);
 	auto end = match.get_end_time(target);
