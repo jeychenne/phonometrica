@@ -19,6 +19,7 @@
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
+#include <QApplication>
 #include <QFontDatabase>
 #include <QStringList>
 #include <phon/application/settings.hpp>
@@ -86,6 +87,44 @@ QFont monoFont(const QString &preferredFamily, int pointSize)
         return QFont(preferredFamily, pointSize);
     }
     return defaultMonoFont(pointSize);
+}
+
+QFont ipaFont(qreal pointSize)
+{
+	static const QStringList families = [] {
+		const QStringList candidates = {
+			// SIL fonts, designed for phonetic transcription. Recent versions of Charis
+			// and Gentium dropped the "SIL"/"Plus" suffix from the family name.
+			QStringLiteral("Charis SIL"), QStringLiteral("Charis"),
+			QStringLiteral("Doulos SIL"),
+			QStringLiteral("Gentium Plus"), QStringLiteral("Gentium Book Plus"), QStringLiteral("Gentium"),
+			QStringLiteral("Andika"),
+			// Good general-purpose Unicode fonts with IPA coverage.
+			QStringLiteral("Noto Sans"), QStringLiteral("Noto Serif"),
+#if defined(Q_OS_MACOS)
+			QStringLiteral("Lucida Grande"), QStringLiteral("Arial Unicode MS"),
+#elif defined(Q_OS_WIN)
+			QStringLiteral("Segoe UI"), QStringLiteral("Cambria"), QStringLiteral("Arial Unicode MS"),
+#else
+			QStringLiteral("DejaVu Sans"), QStringLiteral("FreeSerif"),
+#endif
+		};
+		QStringList result;
+		for (const auto &family : candidates)
+		{
+			if (QFontDatabase::hasFamily(family))
+				result.append(family);
+		}
+		return result;
+	}();
+
+	QFont font = QApplication::font();
+	if (!families.isEmpty())
+		font.setFamilies(families);
+	if (pointSize > 0)
+		font.setPointSizeF(pointSize);
+
+	return font;
 }
 
 } // namespace phonometrica

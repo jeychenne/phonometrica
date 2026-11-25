@@ -31,6 +31,7 @@
 #include <QLineEdit>
 #include <Qsci/qsciscintilla.h>
 #include <phon/gui/ipa_panel.hpp>
+#include <phon/gui/font_helpers.hpp>
 
 namespace phonometrica {
 
@@ -375,16 +376,8 @@ QPushButton *IpaPanel::makeButton(const QString &display, const QString &insert,
 	btn->setToolTip(tooltip);
 	btn->setFixedSize(32, 28);
 
-	// A font that renders IPA well. Try Charis SIL / Doulos SIL / Noto Sans,
-	// falling back to whatever the system provides.
-	QFont font;
-	font.setFamilies({
-		QStringLiteral("Charis SIL"),
-		QStringLiteral("Doulos SIL"),
-		QStringLiteral("Noto Sans"),
-	});
-	font.setPointSize(13);
-	btn->setFont(font);
+	// A font that renders IPA well (Charis/Doulos SIL if available).
+	btn->setFont(ipaFont(13));
 
 	btn->setStyleSheet(QStringLiteral(
 		"QPushButton { border: 1px solid palette(mid); border-radius: 2px; padding: 0; }"

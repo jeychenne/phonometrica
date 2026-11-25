@@ -29,6 +29,7 @@
 #include <QPixmap>
 #include <QMessageBox>
 #include <phon/gui/layer_widget.hpp>
+#include <phon/gui/font_helpers.hpp>
 
 namespace phonometrica {
 
@@ -81,6 +82,9 @@ LayerWidget::LayerWidget(TimeModel *model, const Handle<Annotation> &annot, intp
 	QWidget::setMouseTracking(true);
 	setFocusPolicy(Qt::ClickFocus);
 	setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+	// Labels are often phonetic transcriptions: the default UI font (e.g. San Francisco on macOS)
+	// renders combining diacritics such as the nasal tilde poorly.
+	setFont(ipaFont());
 
 	connect(m_model, &TimeModel::viewportChanged, this, [this](double, double) {
 		if (m_editing_event >= 0) cancelEdit();

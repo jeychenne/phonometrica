@@ -15,7 +15,7 @@
  *                                                                                                                     *
  * Created: 05/04/2026                                                                                                 *
  *                                                                                                                     *
- * Purpose: pick monospace font.                                                                                       *
+ * Purpose: pick monospace/IPA fonts.                                                                                  *
  *                                                                                                                     *
  ***********************************************************************************************************************/
 
@@ -36,6 +36,14 @@ QFont defaultMonoFont(int pointSize = -1);
 // Try a specific family first (e.g. from a combo box selection),
 // fall back to the platform default.
 QFont monoFont(const QString &preferredFamily, int pointSize = -1);
+
+// Return a proportional font suitable for phonetic transcriptions (IPA symbols and
+// combining diacritics such as the nasal tilde). Prefers SIL fonts (Charis, Doulos,
+// Gentium) when installed, then good Unicode fonts available on the platform. Installed
+// candidates are chained as fallback families so that missing glyphs are taken from the
+// next IPA-capable font rather than an arbitrary system font. If pointSize <= 0, the
+// application font's size is used.
+QFont ipaFont(qreal pointSize = -1);
 
 } // namespace phonometrica
 
